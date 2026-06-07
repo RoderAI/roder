@@ -4605,6 +4605,29 @@ impl AppServer {
         &self,
         params: MemoryProviderSetParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let descriptor = self
+            .runtime
+            .registry()
+            .embedding_providers
+            .iter()
+            .map(|provider| provider.descriptor())
+            .find(|descriptor| descriptor.id == params.provider_id)
+            .ok_or_else(|| {
+                invalid_params(format!(
+                    "unknown memory embedding provider {:?}",
+                    params.provider_id
+                ))
+            })?;
+        if !descriptor
+            .models
+            .iter()
+            .any(|model| model.id == params.model)
+        {
+            return Err(invalid_params(format!(
+                "unknown model {:?} for memory embedding provider {:?}",
+                params.model, params.provider_id
+            )));
+        }
         let selected = MemoryProviderSelection {
             provider_id: params.provider_id,
             model: params.model,

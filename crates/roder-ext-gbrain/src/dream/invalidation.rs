@@ -124,7 +124,7 @@ pub fn propose_invalidation_links(
         }
     }
 
-    decisions.sort_by(|a, b| decision_key(a).cmp(&decision_key(b)));
+    decisions.sort_by_key(decision_key);
     decisions.dedup_by(|a, b| decision_key(a) == decision_key(b));
     decisions
 }

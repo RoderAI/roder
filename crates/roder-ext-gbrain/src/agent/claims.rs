@@ -217,6 +217,12 @@ fn validate_one(
                 .to_string(),
         );
     }
+    if claim.claim_type == ClaimType::Contradiction
+        && (dedup_count(&claim.supporting_record_numbers) < 2
+            || dedup_count(&claim.supporting_artifact_ids) < 2)
+    {
+        reasons.push("contradiction claim requires evidence for both sides".to_string());
+    }
 
     for record_number in &claim.supporting_record_numbers {
         if !by_record.contains_key(record_number) {
@@ -290,6 +296,41 @@ fn validate_one(
         {
             reasons.push(
                 "since_as_of claim lacks explicit change, replacement, or unchanged support"
+                    .to_string(),
+            );
+        }
+        if claim.temporal_scope == ClaimTemporalScope::SinceAsOf
+            && !claim_text_says_unchanged(&claim.claim_text)
+            && distinct_record_dates(&supported_records) < 2
+        {
+            reasons
+                .push("since_as_of claim requires separate as-of and current evidence".to_string());
+        }
+        if claim.claim_type == ClaimType::Direct
+            && supported_records
+                .iter()
+                .any(|record| source_type_is_inferred(record))
+        {
+            reasons.push("direct claim cites inferred or analytical source evidence".to_string());
+        }
+        if claim.claim_type == ClaimType::Contradiction
+            && !has_contradiction_resolution_language(&format!(
+                "{}\n{}",
+                claim.claim_text, support_text
+            ))
+        {
+            reasons.push(
+                "contradiction claim lacks conflict language or a resolution state".to_string(),
+            );
+        }
+        if has_causal_language(&claim.claim_text) && !has_causal_language(&support_text) {
+            reasons.push("causal claim lacks causal support language".to_string());
+        }
+        if asks_for_evidence_chain(&claim.claim_text)
+            && dedup_count(&claim.supporting_record_numbers) < 2
+        {
+            reasons.push(
+                "evidence-chain claim requires off-cluster support from multiple records"
                     .to_string(),
             );
         }
@@ -514,6 +555,79 @@ fn claim_text_says_unchanged(text: &str) -> bool {
     lower.contains("unchanged")
         || lower.contains("still current")
         || lower.contains("still in effect")
+}
+
+fn distinct_record_dates(records: &[&EvidenceRecord]) -> usize {
+    records
+        .iter()
+        .filter_map(|record| {
+            let date = record.date.trim();
+            (!date.is_empty()).then_some(date)
+        })
+        .collect::<HashSet<_>>()
+        .len()
+}
+
+fn source_type_is_inferred(record: &EvidenceRecord) -> bool {
+    let lower = format!("{} {}", record.status, record.note).to_ascii_lowercase();
+    [
+        "source_type=inferred",
+        "source_type: inferred",
+        "source_type=analysis",
+        "source_type: analysis",
+        "analytical summary",
+        "derived inference",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn has_contradiction_resolution_language(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    [
+        "contradict",
+        "conflict",
+        "disagree",
+        "both sides",
+        "resolved",
+        "unresolved",
+        "superseded",
+        "replacement",
+        "invalidated",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn has_causal_language(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    [
+        "because",
+        "caused",
+        "causes",
+        "causal",
+        "due to",
+        "led to",
+        "resulted in",
+        "as a result",
+        "therefore",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn asks_for_evidence_chain(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    [
+        "evidence chain",
+        "justification chain",
+        "walk through",
+        "supported by each",
+        "which documents",
+        "supporting documents",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn dedup_count<T>(items: &[T]) -> usize

@@ -92,10 +92,10 @@ pub fn extract_statements(chunk: &RawTextChunk) -> Result<Vec<DreamStatement>, E
             start = Some(idx);
         }
 
-        if is_sentence_boundary(&chunk.text, idx, ch) {
-            if let Some(statement_start) = start.take() {
-                push_statement(chunk, statement_start, idx + ch.len_utf8(), &mut statements)?;
-            }
+        if is_sentence_boundary(&chunk.text, idx, ch)
+            && let Some(statement_start) = start.take()
+        {
+            push_statement(chunk, statement_start, idx + ch.len_utf8(), &mut statements)?;
         }
     }
 

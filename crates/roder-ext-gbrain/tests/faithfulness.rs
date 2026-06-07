@@ -182,3 +182,132 @@ fn rejects_since_as_of_claim_without_explicit_change_support() {
         "{trace:#?}"
     );
 }
+
+#[test]
+fn rejects_contradiction_without_both_sides_and_resolution_state() {
+    let claim = claim(
+        "The Acme owner is contradictory.",
+        ClaimType::Contradiction,
+        vec!["ART-EV-2023-009-001"],
+        vec![1],
+        vec![quote(
+            1,
+            "ART-EV-2023-009-001",
+            "Acme account owner is Maya Patel",
+        )],
+    );
+
+    let trace = validate_claim_ledger(&[claim], &evidence());
+    assert_eq!(trace.rejected.len(), 1);
+    assert!(
+        trace
+            .failures
+            .iter()
+            .any(|failure| failure.reason.contains("both sides")),
+        "{trace:#?}"
+    );
+}
+
+#[test]
+fn rejects_since_as_of_delta_without_separate_current_evidence() {
+    let mut claim = claim(
+        "Maya Patel changed the Acme ownership after 2023-03-12.",
+        ClaimType::TemporalStatus,
+        vec!["ART-EV-2023-009-001"],
+        vec![1],
+        vec![quote(
+            1,
+            "ART-EV-2023-009-001",
+            "The decision was recorded on 2023-03-12",
+        )],
+    );
+    claim.temporal_scope = ClaimTemporalScope::SinceAsOf;
+
+    let trace = validate_claim_ledger(&[claim], &evidence());
+    assert!(
+        trace
+            .failures
+            .iter()
+            .any(|failure| failure.reason.contains("separate as-of and current")),
+        "{trace:#?}"
+    );
+}
+
+#[test]
+fn rejects_direct_claim_from_inferred_source_type() {
+    let inferred = vec![
+        EvidenceRecord::new(
+            1,
+            "ART-EV-2023-009-003",
+            "Acme account owner is Maya Patel.",
+        )
+        .with_note("source_type=inferred analytical summary"),
+    ];
+    let claim = claim(
+        "Maya Patel owns Acme.",
+        ClaimType::Direct,
+        vec!["ART-EV-2023-009-003"],
+        vec![1],
+        vec![quote(
+            1,
+            "ART-EV-2023-009-003",
+            "Acme account owner is Maya Patel",
+        )],
+    );
+
+    let trace = validate_claim_ledger(&[claim], &inferred);
+    assert!(
+        trace
+            .failures
+            .iter()
+            .any(|failure| failure.reason.contains("inferred")),
+        "{trace:#?}"
+    );
+}
+
+#[test]
+fn rejects_causal_claim_without_causal_support_language() {
+    let claim = claim(
+        "Maya Patel owns Acme because the March review caused the transfer.",
+        ClaimType::Derived,
+        vec!["ART-EV-2023-009-001", "ART-EV-2023-009-002"],
+        vec![1, 2],
+        vec![
+            quote(1, "ART-EV-2023-009-001", "Acme account owner is Maya Patel"),
+            quote(2, "ART-EV-2023-009-002", "ownership transfer was unchanged"),
+        ],
+    );
+
+    let trace = validate_claim_ledger(&[claim], &evidence());
+    assert!(
+        trace
+            .failures
+            .iter()
+            .any(|failure| failure.reason.contains("causal")),
+        "{trace:#?}"
+    );
+}
+
+#[test]
+fn rejects_evidence_chain_claim_with_single_record_support() {
+    let claim = claim(
+        "The evidence chain for Acme is supported by each document.",
+        ClaimType::Derived,
+        vec!["ART-EV-2023-009-001"],
+        vec![1],
+        vec![quote(
+            1,
+            "ART-EV-2023-009-001",
+            "Acme account owner is Maya Patel",
+        )],
+    );
+
+    let trace = validate_claim_ledger(&[claim], &evidence());
+    assert!(
+        trace
+            .failures
+            .iter()
+            .any(|failure| failure.reason.contains("multiple records")),
+        "{trace:#?}"
+    );
+}

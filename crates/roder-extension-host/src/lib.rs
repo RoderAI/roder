@@ -53,6 +53,11 @@ use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_webwright::WebwrightExtension;
 use roder_ext_xai::XaiExtension;
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
+use roder_ext_zeroentropy_embeddings::{
+    DEFAULT_ENDPOINT as ZEROENTROPY_EMBEDDINGS_DEFAULT_ENDPOINT, ZeroEntropyEmbeddingProvider,
+    ZeroEntropyEmbeddingsConfig, ZeroEntropyEmbeddingsExtension, ZeroEntropyEncodingFormat,
+    ZeroEntropyLatency,
+};
 use roder_ext_zerolang::{ZerolangConfig, ZerolangExtension};
 use semver::Version;
 
@@ -226,14 +231,19 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         .clone()
         .or_else(|| env_nonempty("OPENAI_API_KEY"));
     let google_embeddings_config = google_embeddings_config(config.gemini_api_key.clone());
+    let zeroentropy_embeddings_config = zeroentropy_embeddings_config();
     let google_embedding_provider = Arc::new(GoogleEmbeddingProvider::new(
         google_embeddings_config.clone(),
+    )) as Arc<dyn EmbeddingProvider>;
+    let zeroentropy_embedding_provider = Arc::new(ZeroEntropyEmbeddingProvider::new(
+        zeroentropy_embeddings_config.clone(),
     )) as Arc<dyn EmbeddingProvider>;
     let openai_embedding_provider = openai_embedding_key
         .clone()
         .map(|key| Arc::new(OpenAiEmbeddingProvider::new(Some(key))) as Arc<dyn EmbeddingProvider>);
     let memory_embedding_provider = match selected_memory_embedding_provider_id().as_deref() {
         Some("google") => Some(google_embedding_provider.clone()),
+        Some("zeroentropy") => Some(zeroentropy_embedding_provider.clone()),
         Some("openai") | None => openai_embedding_provider.clone(),
         Some(_) => None,
     };
@@ -386,6 +396,9 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         builder.install(OpenAiEmbeddingsExtension::from_env())?;
     }
     builder.install(GoogleEmbeddingsExtension::new(google_embeddings_config))?;
+    builder.install(ZeroEntropyEmbeddingsExtension::new(
+        zeroentropy_embeddings_config,
+    ))?;
 
     builder.build()
 }
@@ -447,6 +460,50 @@ fn google_embeddings_config(gemini_api_key: Option<String>) -> GoogleEmbeddingsC
         .or_else(|| provider_config.and_then(|provider| provider.endpoint.clone()))
         .unwrap_or_else(|| GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT.to_string());
     GoogleEmbeddingsConfig { api_key, endpoint }
+}
+
+fn zeroentropy_embeddings_config() -> ZeroEntropyEmbeddingsConfig {
+    let config = roder_config::load_config().unwrap_or_default();
+    let provider_config = config.embedding_providers.get("zeroentropy");
+    let api_key = env_nonempty("RODER_ZEROENTROPY_API_KEY")
+        .or_else(|| {
+            provider_config
+                .and_then(|provider| provider.api_key_env.as_deref())
+                .and_then(env_nonempty)
+        })
+        .or_else(|| env_nonempty("ZEROENTROPY_API_KEY"));
+    let endpoint = env_nonempty("RODER_ZEROENTROPY_EMBEDDINGS_ENDPOINT")
+        .or_else(|| provider_config.and_then(|provider| provider.endpoint.clone()))
+        .unwrap_or_else(|| ZEROENTROPY_EMBEDDINGS_DEFAULT_ENDPOINT.to_string());
+    let encoding_format = provider_config
+        .and_then(|provider| provider.encoding_format.as_deref())
+        .and_then(parse_zeroentropy_encoding_format)
+        .unwrap_or_default();
+    let latency = provider_config
+        .and_then(|provider| provider.latency.as_deref())
+        .and_then(parse_zeroentropy_latency);
+    ZeroEntropyEmbeddingsConfig {
+        api_key,
+        endpoint,
+        encoding_format,
+        latency,
+    }
+}
+
+fn parse_zeroentropy_encoding_format(value: &str) -> Option<ZeroEntropyEncodingFormat> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "float" => Some(ZeroEntropyEncodingFormat::Float),
+        "base64" => Some(ZeroEntropyEncodingFormat::Base64),
+        _ => None,
+    }
+}
+
+fn parse_zeroentropy_latency(value: &str) -> Option<ZeroEntropyLatency> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "fast" => Some(ZeroEntropyLatency::Fast),
+        "slow" => Some(ZeroEntropyLatency::Slow),
+        _ => None,
+    }
 }
 
 fn env_nonempty(name: &str) -> Option<String> {
@@ -838,6 +895,18 @@ mod tests {
                 .embedding_providers
                 .iter()
                 .any(|provider| provider.descriptor().id == "google")
+        );
+    }
+
+    #[test]
+    fn default_registry_installs_zeroentropy_embedding_provider_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .embedding_providers
+                .iter()
+                .any(|provider| provider.descriptor().id == "zeroentropy")
         );
     }
 

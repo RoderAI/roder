@@ -22,11 +22,21 @@ pub struct EmbeddingProviderDescriptor {
     pub models: Vec<EmbeddingModelDescriptor>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddingInputType {
+    Query,
+    #[default]
+    Document,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingRequest {
     pub model: String,
     pub inputs: Vec<String>,
+    #[serde(default)]
+    pub input_type: EmbeddingInputType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dimensions: Option<usize>,
 }
@@ -69,5 +79,36 @@ impl EmbeddingProviderFactory {
 
     pub fn create(&self) -> Arc<dyn EmbeddingProvider> {
         self.provider.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedding_request_serializes_query_intent() {
+        let request = EmbeddingRequest {
+            model: "zembed-1".to_string(),
+            inputs: vec!["what changed?".to_string()],
+            input_type: EmbeddingInputType::Query,
+            dimensions: Some(2560),
+        };
+
+        let json = serde_json::to_value(request).unwrap();
+
+        assert_eq!(json["inputType"], "query");
+        assert_eq!(json["dimensions"], 2560);
+    }
+
+    #[test]
+    fn embedding_request_defaults_to_document_intent() {
+        let request: EmbeddingRequest = serde_json::from_value(serde_json::json!({
+            "model": "zembed-1",
+            "inputs": ["stored memory"]
+        }))
+        .unwrap();
+
+        assert_eq!(request.input_type, EmbeddingInputType::Document);
     }
 }

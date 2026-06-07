@@ -87,6 +87,10 @@ name = "roder-ext-google-embeddings"
 version_group = "roder"
 
 [[package]]
+name = "roder-ext-zeroentropy-embeddings"
+version_group = "roder"
+
+[[package]]
 name = "roder-ext-jsonl-thread-store"
 version_group = "roder"
 

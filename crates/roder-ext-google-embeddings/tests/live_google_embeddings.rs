@@ -1,4 +1,4 @@
-use roder_api::embeddings::{EmbeddingProvider, EmbeddingRequest};
+use roder_api::embeddings::{EmbeddingInputType, EmbeddingProvider, EmbeddingRequest};
 use roder_ext_google_embeddings::{DEFAULT_MODEL, GoogleEmbeddingProvider, GoogleEmbeddingsConfig};
 
 #[tokio::test]
@@ -26,6 +26,7 @@ async fn live_gemini_embedding_2_with_api_key() {
         .embed(EmbeddingRequest {
             model: DEFAULT_MODEL.to_string(),
             inputs: vec!["hello from roder live embedding check".to_string()],
+            input_type: EmbeddingInputType::Document,
             dimensions: Some(8),
         })
         .await

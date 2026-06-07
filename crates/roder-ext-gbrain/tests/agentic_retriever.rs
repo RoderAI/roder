@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use roder_api::memory::MemoryScope;
-use roder_api::tools::ToolRegistry;
+use roder_api::policy_mode::PolicyMode;
+use roder_api::tools::{ToolCall, ToolExecutionContext, ToolRegistry, ToolResult};
 use roder_ext_gbrain::agent::prompts::agentic_retrieval_system_prompt;
 use roder_ext_gbrain::agent::retriever::{
     AgenticRetriever, AgenticRetrieverConfig, FakeToolPlanner, ModelSelectedToolCall, ProviderTurn,
 };
 use roder_ext_gbrain::{
-    CaptureInput, Embedder, GbrainStore, GbrainToolContributor, is_read_only_tool,
-    read_only_tool_names,
+    CaptureInput, DreamMode, DreamParams, DreamPolicy, Embedder, GbrainStore,
+    GbrainToolContributor, is_read_only_tool, read_only_tool_names,
 };
 use serde_json::json;
 
@@ -22,6 +23,23 @@ fn read_only_registry(store: Arc<GbrainStore>) -> ToolRegistry {
         .contribute_read_only(&mut registry)
         .unwrap();
     registry
+}
+
+async fn run_tool(registry: &ToolRegistry, name: &str, args: serde_json::Value) -> ToolResult {
+    let tool = registry.get(name).expect("registered tool");
+    tool.execute(
+        ToolExecutionContext::new("agentic-retriever-test", "turn-1", PolicyMode::Default),
+        ToolCall {
+            id: format!("call-{name}"),
+            name: name.to_string(),
+            raw_arguments: args.to_string(),
+            arguments: args,
+            thread_id: "agentic-retriever-test".to_string(),
+            turn_id: "turn-1".to_string(),
+        },
+    )
+    .await
+    .unwrap()
 }
 
 #[test]
@@ -93,6 +111,70 @@ async fn read_only_tools_return_structured_observations() {
         trace.observations[1].result.data["status"],
         "not_yet_dreamed"
     );
+}
+
+#[tokio::test]
+async fn graph_tools_use_dreamed_rows_before_raw_fallback() {
+    let store = store();
+    let scope = MemoryScope::Project("helix".to_string());
+    for text in [
+        "Maya owns the Acme account as of 2024-01-01.",
+        "The Acme account was discussed in thread thread-acme.",
+    ] {
+        let mut input = CaptureInput::new(scope.clone(), text);
+        input.metadata = json!({"thread_id": "thread-acme"});
+        store.capture(input).await.unwrap();
+    }
+    store
+        .dream(DreamParams {
+            mode: DreamMode::Enrich,
+            scope: scope.clone(),
+            since: None,
+            run_policy: DreamPolicy::Eval,
+            workers: 1,
+            dry_run: false,
+            cancellation_token: None,
+            reasoner_model: None,
+        })
+        .await
+        .unwrap();
+
+    let registry = read_only_registry(store);
+    let start = run_tool(
+        &registry,
+        "gbrain_find_start_nodes",
+        json!({"query": "Acme owner", "scope": "project:helix", "limit": 5}),
+    )
+    .await;
+    assert_eq!(
+        start.data["observations"][0]["observationType"],
+        "dream_start_node"
+    );
+    assert_eq!(start.data["trace"]["fallback"], false);
+    let node_id = start.data["observations"][0]["node"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let explain = run_tool(&registry, "gbrain_explain_node", json!({"nodeId": node_id})).await;
+    assert_eq!(
+        explain.data["observations"][0]["observationType"],
+        "dream_node_explanation"
+    );
+    assert!(
+        !explain.data["observations"][0]["evidenceCards"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let neighbors = run_tool(
+        &registry,
+        "gbrain_expand_neighbors",
+        json!({"nodeId": node_id, "depth": 1}),
+    )
+    .await;
+    assert_eq!(neighbors.data["trace"]["fallback"], false);
 }
 
 #[tokio::test]

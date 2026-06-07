@@ -323,7 +323,7 @@ impl ToolRegistry {
 
 fn keep_tool_for_edit_tool(name: &str, edit_tool: Option<&str>) -> bool {
     match name {
-        "apply_patch" => matches!(edit_tool, Some("patch")),
+        "apply_patch" => true,
         "write_file" | "edit" | "multi_edit" => !matches!(edit_tool, Some("patch")),
         _ => true,
     }
@@ -387,5 +387,18 @@ mod tests {
             item.schema.as_ref().map(|schema| schema.format.clone()),
             Some(DiscoverySchemaFormat::JsonSchema)
         );
+    }
+
+    #[test]
+    fn apply_patch_is_kept_for_all_edit_tool_profiles() {
+        assert!(keep_tool_for_edit_tool("apply_patch", None));
+        assert!(keep_tool_for_edit_tool("apply_patch", Some("edit")));
+        assert!(keep_tool_for_edit_tool("apply_patch", Some("patch")));
+
+        assert!(keep_tool_for_edit_tool("edit", None));
+        assert!(keep_tool_for_edit_tool("edit", Some("edit")));
+        assert!(!keep_tool_for_edit_tool("edit", Some("patch")));
+        assert!(!keep_tool_for_edit_tool("multi_edit", Some("patch")));
+        assert!(!keep_tool_for_edit_tool("write_file", Some("patch")));
     }
 }

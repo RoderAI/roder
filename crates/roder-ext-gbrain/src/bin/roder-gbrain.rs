@@ -5,7 +5,7 @@
 //!
 //! Subcommands:
 //!   capture       (reads a JSON object on stdin) -> {"id": "..."}
-//!   import --input <path|-> --format jsonl --scope S --source NAME
+//!   import --input <path|-> --format jsonl|directory --scope S --source NAME
 //!   consolidate                                  -> {"supersession_links":N,"contradiction_links":M}
 //!   dream --mode enrich|refine|compact|full --scope S
 //!   dream-status --run-id ID
@@ -14,26 +14,34 @@
 //!   version                                      -> {"version":"...","commit":"..."}
 //!
 //! Storage path: --db <path> or $GBRAIN_DB (default: $TMPDIR/roder-gbrain.sqlite3).
-//! Embeddings: selected by $RODER_MEMORY_EMBEDDING_PROVIDER (`google` or
-//! `openai`), else OpenAI when $OPENAI_API_KEY is set, else deterministic local.
+//! Embeddings: selected by $RODER_MEMORY_EMBEDDING_PROVIDER (`google`,
+//! `zeroentropy`, or `openai`), else OpenAI when $OPENAI_API_KEY is set, else
+//! deterministic local.
 
 use std::collections::HashMap;
+use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Instant;
 
 use roder_api::embeddings::EmbeddingProvider;
 use roder_api::memory::MemoryScope;
+use roder_api::tools::ToolRegistry;
 use roder_ext_gbrain::dream::{DreamMode, DreamPolicy};
 use roder_ext_gbrain::import::{DedupeMode, ImportBatchInput, ImportBatchParams};
 use roder_ext_gbrain::model::{AsOf, parse_flexible};
 use roder_ext_gbrain::render::render_recall;
 use roder_ext_gbrain::store::{CaptureInput, DreamParams, GbrainStore, RecallParams};
 use roder_ext_gbrain::tools::{fact_json, parse_scope};
-use roder_ext_gbrain::{AgentBudget, DecisionAgent, Embedder, build_reasoner};
+use roder_ext_gbrain::{
+    AgentBudget, AgenticToolRunnerConfig, DecisionAgent, Embedder, EngineAgenticToolRunner,
+    GbrainToolContributor, build_inference_engine, build_reasoner,
+};
 use roder_ext_google_embeddings::{GoogleEmbeddingProvider, GoogleEmbeddingsConfig};
 use roder_ext_openai_embeddings::OpenAiEmbeddingProvider;
+use roder_ext_zeroentropy_embeddings::{ZeroEntropyEmbeddingProvider, ZeroEntropyEmbeddingsConfig};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::OffsetDateTime;
@@ -92,6 +100,66 @@ async fn answer_cmd(
         Some(date) => Some(parse_flexible(date)?),
         None => None,
     };
+    if flags.contains_key("agentic-tools")
+        || std::env::var("RODER_GBRAIN_AGENTIC_TOOLS")
+            .ok()
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        let selected = build_inference_engine(flags.get("model").cloned())?;
+        let mut registry = ToolRegistry::default();
+        GbrainToolContributor::new(store.clone()).contribute_read_only(&mut registry)?;
+        let runner = EngineAgenticToolRunner::new(
+            selected.engine,
+            selected.provider,
+            selected.model,
+            selected.reasoning_level,
+        )
+        .with_config(AgenticToolRunnerConfig {
+            parallel_tool_calls: bool_flag_or_env(
+                flags,
+                "parallel-tool-calls",
+                "RODER_GBRAIN_PARALLEL_TOOL_CALLS",
+                true,
+            )?,
+            ..AgenticToolRunnerConfig::default()
+        });
+        let question_kind =
+            optional_flag_or_env(flags, "question-kind", "RODER_GBRAIN_QUESTION_KIND");
+        let eval_result_id =
+            optional_flag_or_env(flags, "eval-result-id", "RODER_GBRAIN_EVAL_RESULT_ID");
+        let snapshot = store.memory_snapshot(scope.clone()).await?;
+        let started_at = Instant::now();
+        let mut result = runner
+            .answer_with_tools(registry, &query, scope.clone(), as_of)
+            .await?;
+        result.trace.record_memory_snapshot(snapshot);
+        let feedback = result.trace.to_query_feedback_input(
+            &query,
+            &result.answer,
+            scope,
+            question_kind,
+            eval_result_id,
+            Some(started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
+        );
+        let feedback_row = store.append_query_feedback(feedback).await?;
+        result
+            .trace
+            .record_query_feedback_id(feedback_row.id.clone());
+        if let Some(path) = write_full_trace_if_requested(&feedback_row.id, &result.trace)? {
+            result.trace.record_full_trace_path(path);
+        }
+        println!(
+            "{}",
+            json!({
+                "answer": result.answer,
+                "cited_artifact_ids": result.provenance,
+                "query_feedback_id": feedback_row.id,
+                "trace": result.trace,
+            })
+        );
+        return Ok(());
+    }
+
     let reasoner = build_reasoner(flags.get("model").cloned())?;
     let mut budget = AgentBudget::default();
     if let Some(n) = flags.get("max-subqueries").and_then(|v| v.parse().ok()) {
@@ -145,6 +213,9 @@ fn embedding_provider_from_env() -> Option<Arc<dyn EmbeddingProvider>> {
         Some("google") => Some(Arc::new(GoogleEmbeddingProvider::new(
             GoogleEmbeddingsConfig::from_env(),
         )) as Arc<dyn EmbeddingProvider>),
+        Some("zeroentropy") => Some(Arc::new(ZeroEntropyEmbeddingProvider::new(
+            ZeroEntropyEmbeddingsConfig::from_env(),
+        )) as Arc<dyn EmbeddingProvider>),
         Some("openai") | None => std::env::var("OPENAI_API_KEY")
             .ok()
             .filter(|key| !key.trim().is_empty())
@@ -153,6 +224,73 @@ fn embedding_provider_from_env() -> Option<Arc<dyn EmbeddingProvider>> {
             }),
         Some(_) => None,
     }
+}
+
+fn optional_flag_or_env(
+    flags: &HashMap<String, String>,
+    flag_name: &str,
+    env_name: &str,
+) -> Option<String> {
+    flags
+        .get(flag_name)
+        .or_else(|| flags.get(&flag_name.replace('-', "_")))
+        .cloned()
+        .or_else(|| std::env::var(env_name).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn bool_flag_or_env(
+    flags: &HashMap<String, String>,
+    flag_name: &str,
+    env_name: &str,
+    default: bool,
+) -> anyhow::Result<bool> {
+    if flags.contains_key(flag_name) || flags.contains_key(&flag_name.replace('-', "_")) {
+        return Ok(true);
+    }
+    let negative_flag = format!("no-{flag_name}");
+    let negative_underscore_flag = negative_flag.replace('-', "_");
+    if flags.contains_key(&negative_flag) || flags.contains_key(&negative_underscore_flag) {
+        return Ok(false);
+    }
+    let Some(value) = optional_flag_or_env(flags, flag_name, env_name) else {
+        return Ok(default);
+    };
+    parse_bool_flag(&value)
+        .ok_or_else(|| anyhow::anyhow!("invalid boolean value {value:?} for {flag_name}"))
+}
+
+fn parse_bool_flag(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn write_full_trace_if_requested(
+    trace_id: &str,
+    trace: &impl serde::Serialize,
+) -> anyhow::Result<Option<String>> {
+    let Some(dir) = std::env::var("GBRAIN_TRACE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    else {
+        return Ok(None);
+    };
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("agentic-{trace_id}.json"));
+    fs::write(&path, serde_json::to_vec_pretty(trace)?)?;
+    Ok(Some(display_path(&path)))
+}
+
+fn display_path(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
 }
 
 #[derive(Debug, Deserialize)]

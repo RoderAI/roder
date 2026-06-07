@@ -16,6 +16,7 @@ pub const PROVIDER_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_CLAUDE_CODE: &str = "claude-code";
 pub const PROVIDER_GEMINI: &str = "gemini";
 pub const PROVIDER_GOOGLE: &str = "google";
+pub const PROVIDER_ZEROENTROPY: &str = "zeroentropy";
 pub const PROVIDER_XAI: &str = "xai";
 pub const PROVIDER_SUPERGROK: &str = "supergrok";
 pub const PROVIDER_OPENCODE: &str = "opencode";
@@ -895,6 +896,23 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         hidden: true,
     },
     ModelCatalogEntry {
+        id: "zembed-1",
+        display_name: "ZeroEntropy zembed-1",
+        description: "ZeroEntropy embedding model for local semantic memories.",
+        provider: PROVIDER_ZEROENTROPY,
+        default_reasoning: REASONING_NONE,
+        supported_reasoning: &[],
+        context_window: 0,
+        max_context_window: 0,
+        auto_compact_token_limit: 0,
+        supports_compaction: false,
+        supports_images: false,
+        supports_tools: false,
+        supports_structured: false,
+        edit_tool: None,
+        hidden: true,
+    },
+    ModelCatalogEntry {
         id: "mock",
         display_name: "Mock",
         description: "Local deterministic mock provider for tests and offline development.",
@@ -1489,6 +1507,19 @@ mod tests {
                 .all(|model| model.id != "gemini-embedding-2")
         );
         let model = lookup_model("gemini-embedding-2").unwrap();
+        assert!(model.hidden);
+        assert!(!model.supports_tools);
+    }
+
+    #[test]
+    fn zeroentropy_embedding_model_is_hidden_from_chat_lists() {
+        assert!(lookup_model("zembed-1").is_some());
+        assert!(
+            models_for_provider(PROVIDER_ZEROENTROPY, false)
+                .iter()
+                .all(|model| model.id != "zembed-1")
+        );
+        let model = lookup_model("zembed-1").unwrap();
         assert!(model.hidden);
         assert!(!model.supports_tools);
     }

@@ -1,6 +1,6 @@
 use roder_api::embeddings::{
-    EmbeddingModelDescriptor, EmbeddingProvider, EmbeddingProviderDescriptor, EmbeddingRequest,
-    EmbeddingResponse, EmbeddingVector,
+    EmbeddingInputType, EmbeddingModelDescriptor, EmbeddingProvider, EmbeddingProviderDescriptor,
+    EmbeddingRequest, EmbeddingResponse, EmbeddingVector,
 };
 use serde::{Deserialize, Serialize};
 
@@ -119,12 +119,12 @@ impl EmbeddingProvider for GoogleEmbeddingProvider {
         if request.inputs.is_empty() {
             anyhow::bail!("embedding request must include at least one input");
         }
-        if let Some(dimensions) = request.dimensions {
-            if dimensions == 0 || dimensions > DEFAULT_DIMENSIONS {
-                anyhow::bail!(
-                    "Google embeddings dimensions must be between 1 and {DEFAULT_DIMENSIONS}"
-                );
-            }
+        if let Some(dimensions) = request.dimensions
+            && (dimensions == 0 || dimensions > DEFAULT_DIMENSIONS)
+        {
+            anyhow::bail!(
+                "Google embeddings dimensions must be between 1 and {DEFAULT_DIMENSIONS}"
+            );
         }
 
         let model = if request.model.trim().is_empty() {
@@ -138,7 +138,13 @@ impl EmbeddingProvider for GoogleEmbeddingProvider {
         let mut embeddings = Vec::with_capacity(request.inputs.len());
         for (index, input) in request.inputs.into_iter().enumerate() {
             let values = self
-                .embed_one(&api_key, &model, input, request.dimensions)
+                .embed_one(
+                    &api_key,
+                    &model,
+                    input,
+                    request.input_type,
+                    request.dimensions,
+                )
                 .await?;
             embeddings.push(EmbeddingVector { index, values });
         }
@@ -156,6 +162,7 @@ impl GoogleEmbeddingProvider {
         api_key: &str,
         model: &str,
         input: String,
+        input_type: EmbeddingInputType,
         dimensions: Option<usize>,
     ) -> anyhow::Result<Vec<f32>> {
         let mut url = reqwest::Url::parse(&format!(
@@ -167,7 +174,12 @@ impl GoogleEmbeddingProvider {
         let body = GoogleEmbeddingRequest {
             model: Self::model_path(model),
             content: GoogleContent {
-                parts: vec![GooglePart { text: input }],
+                parts: vec![GooglePart {
+                    text: match input_type {
+                        EmbeddingInputType::Query => query_input(&input),
+                        EmbeddingInputType::Document => document_input(None, &input),
+                    },
+                }],
             },
             output_dimensionality: dimensions,
         };
@@ -277,6 +289,7 @@ mod tests {
         .embed(EmbeddingRequest {
             model: DEFAULT_MODEL.to_string(),
             inputs: vec!["hello".to_string()],
+            input_type: EmbeddingInputType::Document,
             dimensions: None,
         })
         .await
@@ -297,6 +310,7 @@ mod tests {
             .embed(EmbeddingRequest {
                 model: DEFAULT_MODEL.to_string(),
                 inputs: vec!["hello".to_string()],
+                input_type: EmbeddingInputType::Query,
                 dimensions: Some(3),
             })
             .await
@@ -309,7 +323,7 @@ mod tests {
         let request = server.requests().join("\n");
         assert!(request.contains("POST /models/gemini-embedding-2:embedContent?key=test-key"));
         assert!(request.contains("\"model\":\"models/gemini-embedding-2\""));
-        assert!(request.contains("\"text\":\"hello\""));
+        assert!(request.contains("\"text\":\"task: search result | query: hello\""));
         assert!(request.contains("\"outputDimensionality\":3"));
     }
 
@@ -320,6 +334,7 @@ mod tests {
             .embed(EmbeddingRequest {
                 model: "text-embedding-004".to_string(),
                 inputs: vec!["hello".to_string()],
+                input_type: EmbeddingInputType::Document,
                 dimensions: None,
             })
             .await
@@ -342,6 +357,7 @@ mod tests {
             .embed(EmbeddingRequest {
                 model: DEFAULT_MODEL.to_string(),
                 inputs: vec!["first".to_string(), "second".to_string()],
+                input_type: EmbeddingInputType::Document,
                 dimensions: Some(1),
             })
             .await
@@ -356,8 +372,8 @@ mod tests {
             vec![0, 1]
         );
         let request = server.requests().join("\n");
-        assert!(request.contains("\"text\":\"first\""));
-        assert!(request.contains("\"text\":\"second\""));
+        assert!(request.contains("\"text\":\"text: first\""));
+        assert!(request.contains("\"text\":\"text: second\""));
     }
 
     #[tokio::test]
@@ -373,6 +389,7 @@ mod tests {
             .embed(EmbeddingRequest {
                 model: DEFAULT_MODEL.to_string(),
                 inputs: vec!["hello".to_string()],
+                input_type: EmbeddingInputType::Document,
                 dimensions: None,
             })
             .await

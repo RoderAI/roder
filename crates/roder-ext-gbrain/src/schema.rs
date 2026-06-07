@@ -9,6 +9,12 @@ pub const SCHEMA_VERSION: i64 = 1;
 
 static SQLITE_VEC_AUTO_EXTENSION: Once = Once::new();
 
+type SqliteVecAutoExtension = unsafe extern "C" fn(
+    *mut rusqlite::ffi::sqlite3,
+    *mut *mut c_char,
+    *const rusqlite::ffi::sqlite3_api_routines,
+) -> c_int;
+
 unsafe extern "C" {
     #[link_name = "sqlite3_vec_init"]
     fn sqlite3_vec_init_for_connection(
@@ -27,9 +33,11 @@ pub struct SqliteVecStatus {
 
 pub fn register_sqlite_vec(conn: &Connection) -> SqliteVecStatus {
     SQLITE_VEC_AUTO_EXTENSION.call_once(|| unsafe {
-        sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite_vec::sqlite3_vec_init as *const (),
-        )));
+        sqlite3_auto_extension(Some(
+            std::mem::transmute::<*const (), SqliteVecAutoExtension>(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            ),
+        ));
     });
 
     unsafe {
@@ -461,6 +469,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
           used_events TEXT NOT NULL DEFAULT '[]',
           duration_ms INTEGER,
           tool_call_count INTEGER NOT NULL DEFAULT 0,
+          stop_reason TEXT,
           answer_length INTEGER,
           response_hash TEXT,
           eval_result_id TEXT,
@@ -476,21 +485,42 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         "#,
     )?;
     record_sqlite_vec_status(conn, &vec_status)?;
-    if vec_status.available {
-        if let Err(err) = create_vec0_tables(conn) {
-            record_sqlite_vec_status(
-                conn,
-                &SqliteVecStatus {
-                    registered: true,
-                    available: false,
-                    error: Some(format!("vec0 table creation failed: {err}")),
-                },
-            )?;
-        }
+    if vec_status.available
+        && let Err(err) = create_vec0_tables(conn)
+    {
+        record_sqlite_vec_status(
+            conn,
+            &SqliteVecStatus {
+                registered: true,
+                available: false,
+                error: Some(format!("vec0 table creation failed: {err}")),
+            },
+        )?;
     }
+    ensure_column(conn, "gbrain_query_feedback", "stop_reason", "TEXT")?;
     conn.execute(
         "INSERT OR IGNORE INTO gbrain_schema(version, applied_at) VALUES (?1, datetime('now'))",
         [SCHEMA_VERSION],
+    )?;
+    Ok(())
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    column_type: &str,
+) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for existing in columns {
+        if existing? == column {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
+        [],
     )?;
     Ok(())
 }

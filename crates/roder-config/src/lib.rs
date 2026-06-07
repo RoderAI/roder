@@ -547,6 +547,8 @@ pub struct EmbeddingProviderConfig {
     pub endpoint: Option<String>,
     pub command: Option<Vec<String>>,
     pub dimensions: Option<usize>,
+    pub encoding_format: Option<String>,
+    pub latency: Option<String>,
 }
 
 impl Default for EmbeddingProviderConfig {
@@ -558,6 +560,8 @@ impl Default for EmbeddingProviderConfig {
             endpoint: None,
             command: None,
             dimensions: None,
+            encoding_format: None,
+            latency: None,
         }
     }
 }
@@ -1544,6 +1548,15 @@ mod tests {
             endpoint = "https://generativelanguage.googleapis.com/v1beta"
             model = "gemini-embedding-2"
             dimensions = 3072
+
+            [embedding_providers.zeroentropy]
+            enabled = true
+            api_key_env = "ZEROENTROPY_API_KEY"
+            endpoint = "https://api.zeroentropy.dev/v1"
+            model = "zembed-1"
+            dimensions = 2560
+            encoding_format = "base64"
+            latency = "fast"
             "#,
         )
         .unwrap();
@@ -1570,6 +1583,19 @@ mod tests {
         );
         assert_eq!(google.model.as_deref(), Some("gemini-embedding-2"));
         assert_eq!(google.dimensions, Some(3072));
+        let zeroentropy = &config.embedding_providers["zeroentropy"];
+        assert_eq!(
+            zeroentropy.api_key_env.as_deref(),
+            Some("ZEROENTROPY_API_KEY")
+        );
+        assert_eq!(
+            zeroentropy.endpoint.as_deref(),
+            Some("https://api.zeroentropy.dev/v1")
+        );
+        assert_eq!(zeroentropy.model.as_deref(), Some("zembed-1"));
+        assert_eq!(zeroentropy.dimensions, Some(2560));
+        assert_eq!(zeroentropy.encoding_format.as_deref(), Some("base64"));
+        assert_eq!(zeroentropy.latency.as_deref(), Some("fast"));
     }
 
     #[test]

@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use roder_api::inference::InferenceEngine;
 use serde_json::Value;
 
 /// A completion plus its token usage (for cost telemetry).
@@ -63,6 +64,23 @@ impl Reasoner for Box<dyn Reasoner> {
 /// (default "medium"). No provider HTTP is re-implemented here — gbrain uses
 /// roder's own primitives.
 pub fn build_reasoner(model: Option<String>) -> anyhow::Result<Box<dyn Reasoner>> {
+    let selected = build_inference_engine(model)?;
+    Ok(Box::new(crate::infer::EngineReasoner::new(
+        selected.engine,
+        selected.provider,
+        selected.model,
+        selected.reasoning_level,
+    )))
+}
+
+pub struct BuiltInferenceEngine {
+    pub engine: Arc<dyn InferenceEngine>,
+    pub provider: String,
+    pub model: String,
+    pub reasoning_level: Option<String>,
+}
+
+pub fn build_inference_engine(model: Option<String>) -> anyhow::Result<BuiltInferenceEngine> {
     use roder_api::catalog::{PROVIDER_ANTHROPIC, PROVIDER_OPENAI};
 
     let model = model.unwrap_or_else(|| "claude-sonnet-4-6".to_string());
@@ -77,30 +95,27 @@ pub fn build_reasoner(model: Option<String>) -> anyhow::Result<Box<dyn Reasoner>
         .filter(|e| ["minimal", "low", "medium", "high", "xhigh", "max"].contains(&e.as_str()))
         .unwrap_or_else(|| "medium".to_string());
 
-    let reasoner: Box<dyn Reasoner> = if is_openai {
+    if is_openai {
         let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
             anyhow::anyhow!("OPENAI_API_KEY not set (required for the GPT answerer)")
         })?;
-        let engine = Arc::new(roder_ext_openai_responses::OpenAiResponsesEngine::new(key));
-        Box::new(crate::infer::EngineReasoner::new(
-            engine,
-            PROVIDER_OPENAI,
+        Ok(BuiltInferenceEngine {
+            engine: Arc::new(roder_ext_openai_responses::OpenAiResponsesEngine::new(key)),
+            provider: PROVIDER_OPENAI.to_string(),
             model,
-            Some(effort),
-        ))
+            reasoning_level: Some(effort),
+        })
     } else {
         let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
             anyhow::anyhow!("ANTHROPIC_API_KEY not set (required for agentic mode)")
         })?;
-        let engine = Arc::new(roder_ext_anthropic::AnthropicEngine::new(key));
-        Box::new(crate::infer::EngineReasoner::new(
-            engine,
-            PROVIDER_ANTHROPIC,
+        Ok(BuiltInferenceEngine {
+            engine: Arc::new(roder_ext_anthropic::AnthropicEngine::new(key)),
+            provider: PROVIDER_ANTHROPIC.to_string(),
             model,
-            Some(effort),
-        ))
-    };
-    Ok(reasoner)
+            reasoning_level: Some(effort),
+        })
+    }
 }
 
 /// Pull the first JSON value (object or array) out of a model response, tolerant

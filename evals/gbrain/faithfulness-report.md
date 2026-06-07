@@ -25,11 +25,17 @@ Local final result files currently present:
 
 | Result path | Overall | Faithfulness | Hallucination | Questions |
 |---|---:|---:|---:|---:|
-| `results/bitemporal-gbrain/helix-small.json` | 0.709 | 0.273 | 0.727 | 11 |
+| `results/bitemporal-gbrain/helix-small.json` | 0.727 | 0.182 | 0.818 | 11 |
 | `results/bitemporal-gbrain/helix-medium.json` | 0.661 | 0.370 | 0.630 | 73 |
 | `results/bitemporal-gbrain-opus/helix-small.json` | 0.783 | 0.182 | 0.818 | 11 |
 | `results/bitemporal-gbrain-opus/helix-medium.json` | 0.581 | 0.151 | 0.849 | 73 |
 | `results/bitemporal-gbrain-gpt55-strict/helix-medium.json` | 0.359 | 0.521 | 0.479 | 73 |
+
+See `evals/gbrain/agentic-trace-report.md` for the 2026-06-07 trace audit that
+adds the newer Google Embeddings, ZeroEntropy, strict-high, and phase84 small
+runs. That audit records the fixed-loop trace shape: concise rows use `0`
+subqueries and `2` LLM calls, while strict/thorough rows use exactly `3`
+subqueries and `4` LLM calls.
 
 The gpt-5.5 medium strict run is not equivalent to the Claude/Sonnet broadened
 medium run. It improves faithfulness over Sonnet's `0.3699` plateau, but it

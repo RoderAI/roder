@@ -4,6 +4,7 @@ pub mod entities;
 pub mod extract;
 pub mod graph_layout;
 pub mod invalidation;
+pub mod materialize;
 pub mod ontology;
 pub mod relevance;
 pub mod scheduler;
@@ -24,6 +25,7 @@ pub use invalidation::{
     DerivedEventCandidate, DreamLinkCandidate, DreamLinkKind, InvalidationDecision,
     propose_invalidation_links,
 };
+pub use materialize::{GraphMaterializationStats, materialize_dream_graph};
 pub use ontology::{
     OntologyEdgeDef, OntologyNodeDef, PredicateFamilyDef, seed_ontology_edges, seed_ontology_nodes,
     seed_predicate_families,

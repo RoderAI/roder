@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use roder_api::embeddings::{EmbeddingProvider, EmbeddingRequest};
+use roder_api::embeddings::{EmbeddingInputType, EmbeddingProvider, EmbeddingRequest};
 use sha2::{Digest, Sha256};
 
 pub const LOCAL_PROVIDER: &str = "local";
@@ -64,11 +64,21 @@ impl Embedder {
         &self.model
     }
 
-    pub async fn embed(&self, text: &str) -> Embedding {
+    pub async fn embed_document(&self, text: &str) -> Embedding {
+        self.embed_with_type(text, EmbeddingInputType::Document)
+            .await
+    }
+
+    pub async fn embed_query(&self, text: &str) -> Embedding {
+        self.embed_with_type(text, EmbeddingInputType::Query).await
+    }
+
+    async fn embed_with_type(&self, text: &str, input_type: EmbeddingInputType) -> Embedding {
         if let Some(provider) = &self.provider {
             let request = EmbeddingRequest {
                 model: self.model.clone(),
                 inputs: vec![text.to_string()],
+                input_type,
                 dimensions: None,
             };
             // Retry transient provider errors before degrading. A silent fallback
@@ -184,6 +194,10 @@ fn normalize(mut values: Vec<f32>) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::embeddings::{
+        EmbeddingModelDescriptor, EmbeddingProviderDescriptor, EmbeddingResponse, EmbeddingVector,
+    };
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn local_embedding_is_deterministic_and_discriminative() {
@@ -204,8 +218,55 @@ mod tests {
     async fn embedder_without_provider_is_local() {
         let embedder = Embedder::new(None);
         assert_eq!(embedder.provider_id(), LOCAL_PROVIDER);
-        let out = embedder.embed("hello world").await;
+        let out = embedder.embed_document("hello world").await;
         assert_eq!(out.provider_id, LOCAL_PROVIDER);
         assert_eq!(out.values.len(), LOCAL_DIMENSIONS);
+    }
+
+    #[derive(Clone)]
+    struct RecordingProvider {
+        seen: Arc<Mutex<Vec<EmbeddingInputType>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for RecordingProvider {
+        fn descriptor(&self) -> EmbeddingProviderDescriptor {
+            EmbeddingProviderDescriptor {
+                id: "recording".to_string(),
+                name: "Recording".to_string(),
+                default_model: "recording-model".to_string(),
+                models: vec![EmbeddingModelDescriptor {
+                    id: "recording-model".to_string(),
+                    dimensions: 1,
+                    default: true,
+                }],
+            }
+        }
+
+        async fn embed(&self, request: EmbeddingRequest) -> anyhow::Result<EmbeddingResponse> {
+            self.seen.lock().unwrap().push(request.input_type);
+            Ok(EmbeddingResponse {
+                provider_id: "recording".to_string(),
+                model: request.model,
+                embeddings: vec![EmbeddingVector {
+                    index: 0,
+                    values: vec![1.0],
+                }],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn embedder_sends_document_and_query_intents() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let embedder = Embedder::new(Some(Arc::new(RecordingProvider { seen: seen.clone() })));
+
+        embedder.embed_document("stored fact").await;
+        embedder.embed_query("find fact").await;
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![EmbeddingInputType::Document, EmbeddingInputType::Query]
+        );
     }
 }

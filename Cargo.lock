@@ -3201,6 +3201,7 @@ dependencies = [
  "roder-ext-openai-embeddings",
  "roder-ext-subagents",
  "roder-ext-webwright",
+ "roder-ext-zeroentropy-embeddings",
  "roder-extension-host",
  "roder-protocol",
  "roder-roadmap",
@@ -3548,6 +3549,7 @@ dependencies = [
  "roder-ext-google-embeddings",
  "roder-ext-openai-embeddings",
  "roder-ext-openai-responses",
+ "roder-ext-zeroentropy-embeddings",
  "rusqlite",
  "semver",
  "serde",
@@ -4114,6 +4116,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-zeroentropy-embeddings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-zerolang"
 version = "0.1.0"
 dependencies = [
@@ -4184,6 +4201,7 @@ dependencies = [
  "roder-ext-webwright",
  "roder-ext-xai",
  "roder-ext-xiaomi-mimo",
+ "roder-ext-zeroentropy-embeddings",
  "roder-ext-zerolang",
  "roder-tools",
  "roder-web-search",

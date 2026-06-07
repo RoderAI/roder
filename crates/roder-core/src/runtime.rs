@@ -4404,7 +4404,7 @@ mod tests {
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
-        assert!(!tool_names.contains(&"apply_patch"));
+        assert!(tool_names.contains(&"apply_patch"));
         assert!(tool_names.contains(&"edit"));
         assert!(tool_names.contains(&"multi_edit"));
         assert!(tool_names.contains(&"write_file"));

@@ -363,12 +363,14 @@ async fn run_memory_cli(args: &[String]) -> anyhow::Result<()> {
             let Some(provider_id) = args.get(2) else {
                 anyhow::bail!("usage: roder memory providers set PROVIDER --model MODEL");
             };
-            let model = args
+            let Some(model) = args
                 .iter()
                 .position(|arg| arg == "--model")
                 .and_then(|idx| args.get(idx + 1))
                 .cloned()
-                .unwrap_or_else(|| "text-embedding-3-large".to_string());
+            else {
+                anyhow::bail!("usage: roder memory providers set PROVIDER --model MODEL");
+            };
             let res = client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),

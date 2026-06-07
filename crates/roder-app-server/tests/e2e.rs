@@ -52,6 +52,7 @@ use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_subagents::{
     InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
 };
+use roder_ext_zeroentropy_embeddings::ZeroEntropyEmbeddingsExtension;
 use roder_extension_host::{
     DefaultRegistryConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
     build_default_registry,
@@ -2686,6 +2687,9 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
     builder
         .install(GoogleEmbeddingsExtension::with_api_key("test-key"))
         .unwrap();
+    builder
+        .install(ZeroEntropyEmbeddingsExtension::with_api_key("test-key"))
+        .unwrap();
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
@@ -2778,6 +2782,12 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
             .iter()
             .any(|provider| provider.id == "google"
                 && provider.default_model == "gemini-embedding-2")
+    );
+    assert!(
+        providers
+            .providers
+            .iter()
+            .any(|provider| provider.id == "zeroentropy" && provider.default_model == "zembed-1")
     );
 
     let preview: MemoryRecallPreviewResult = request(
@@ -5906,6 +5916,7 @@ async fn tools_list_exposes_default_coding_tools() {
         "write_file",
         "edit",
         "multi_edit",
+        "apply_patch",
         "spawn_agent",
         "send_message",
         "followup_task",

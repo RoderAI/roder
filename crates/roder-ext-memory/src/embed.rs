@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use roder_api::embeddings::{EmbeddingProvider, EmbeddingRequest};
+use roder_api::embeddings::{EmbeddingInputType, EmbeddingProvider, EmbeddingRequest};
 
 use crate::vector;
 
@@ -52,7 +52,22 @@ impl MemoryEmbedder {
         provider_id == self.provider_id || provider_id == FALLBACK_PROVIDER
     }
 
-    pub async fn embed(&self, text: &str, model: Option<&str>) -> MemoryEmbedding {
+    pub async fn embed_document(&self, text: &str, model: Option<&str>) -> MemoryEmbedding {
+        self.embed_with_type(text, model, EmbeddingInputType::Document)
+            .await
+    }
+
+    pub async fn embed_query(&self, text: &str, model: Option<&str>) -> MemoryEmbedding {
+        self.embed_with_type(text, model, EmbeddingInputType::Query)
+            .await
+    }
+
+    async fn embed_with_type(
+        &self,
+        text: &str,
+        model: Option<&str>,
+        input_type: EmbeddingInputType,
+    ) -> MemoryEmbedding {
         let model = model
             .map(str::trim)
             .filter(|model| !model.is_empty())
@@ -61,6 +76,7 @@ impl MemoryEmbedder {
             let request = EmbeddingRequest {
                 model: model.to_string(),
                 inputs: vec![text.to_string()],
+                input_type,
                 dimensions: None,
             };
             match provider.embed(request).await {
@@ -96,5 +112,62 @@ impl MemoryEmbedder {
             model: FALLBACK_MODEL.to_string(),
             values: vector::fake_embedding(text),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::embeddings::{
+        EmbeddingModelDescriptor, EmbeddingProviderDescriptor, EmbeddingResponse, EmbeddingVector,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct RecordingProvider {
+        seen: Arc<Mutex<Vec<EmbeddingInputType>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for RecordingProvider {
+        fn descriptor(&self) -> EmbeddingProviderDescriptor {
+            EmbeddingProviderDescriptor {
+                id: "recording".to_string(),
+                name: "Recording".to_string(),
+                default_model: "recording-model".to_string(),
+                models: vec![EmbeddingModelDescriptor {
+                    id: "recording-model".to_string(),
+                    dimensions: 1,
+                    default: true,
+                }],
+            }
+        }
+
+        async fn embed(&self, request: EmbeddingRequest) -> anyhow::Result<EmbeddingResponse> {
+            self.seen.lock().unwrap().push(request.input_type);
+            Ok(EmbeddingResponse {
+                provider_id: "recording".to_string(),
+                model: request.model,
+                embeddings: vec![EmbeddingVector {
+                    index: 0,
+                    values: vec![1.0],
+                }],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_embedder_sends_document_and_query_intents() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let embedder =
+            MemoryEmbedder::new(Some(Arc::new(RecordingProvider { seen: seen.clone() })));
+
+        embedder.embed_document("stored memory", None).await;
+        embedder.embed_query("find memory", None).await;
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![EmbeddingInputType::Document, EmbeddingInputType::Query]
+        );
     }
 }

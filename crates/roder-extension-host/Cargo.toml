@@ -55,6 +55,7 @@ roder-ext-webwright.workspace = true
 roder-ext-web-search.workspace = true
 roder-ext-xai.workspace = true
 roder-ext-xiaomi-mimo.workspace = true
+roder-ext-zeroentropy-embeddings.workspace = true
 roder-ext-zerolang.workspace = true
 roder-web-search.workspace = true
 roder-tools.workspace = true

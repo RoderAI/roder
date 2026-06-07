@@ -4531,8 +4531,8 @@ Examples:
 {
   "method": "memory/provider/set",
   "params": {
-    "providerId": "google",
-    "model": "gemini-embedding-2"
+    "providerId": "zeroentropy",
+    "model": "zembed-1"
   }
 }
 ```
@@ -4542,8 +4542,11 @@ Behavior:
 - `memory/provider/list` returns registered embedding providers and the selected
   provider/model from config, defaulting to OpenAI
   `text-embedding-3-large`. First-party remote providers include `openai` with
-  `text-embedding-3-large` and `google` with `gemini-embedding-2`.
-- `memory/provider/set` writes config and emits `memory/providerChanged`.
+  `text-embedding-3-large`, `google` with `gemini-embedding-2`, and
+  `zeroentropy` with `zembed-1`.
+- `memory/provider/set` validates the provider/model against registered
+  embedding-provider descriptors, writes config, and emits
+  `memory/providerChanged`.
 
 ## Chrome browser methods
 

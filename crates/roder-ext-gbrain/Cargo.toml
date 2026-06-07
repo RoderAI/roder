@@ -33,6 +33,7 @@ roder-ext-anthropic.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-openai-embeddings.workspace = true
 roder-ext-google-embeddings.workspace = true
+roder-ext-zeroentropy-embeddings.workspace = true
 rusqlite.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }

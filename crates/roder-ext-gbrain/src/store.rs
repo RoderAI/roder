@@ -21,11 +21,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 
-use crate::dream::{DreamMode, DreamPolicy, DreamStatus};
+use crate::dream::{DreamMode, DreamPolicy, DreamStatus, GraphMaterializationStats};
 use crate::embed::{Embedder, Embedding};
-use crate::import::{
-    DedupeMode, ImportBatchInput, ImportBatchParams, ImportBatchResult, JsonlImportRecord,
-};
+use crate::import::{DedupeMode, ImportBatchParams, ImportBatchResult, load_import_batch};
 use crate::model::{AsOf, FactStatus, TemporalFact, content_hash, format_time, parse_time};
 use crate::retrieval::{Candidate, Scored, fuse};
 use crate::schema;
@@ -38,6 +36,7 @@ const CONTRADICTS: &str = "contradicts";
 /// the cluster of artifacts sharing a thread/event, so we surface that cluster.
 const EXPANSION_SEED_HITS: usize = 3;
 const EXPANSION_CAP: usize = 12;
+const DREAM_ALGORITHM_VERSION: &str = "phase84-materialized-v2";
 
 /// Parameters for capturing a new fact.
 #[derive(Debug, Clone)]
@@ -142,6 +141,69 @@ pub struct DreamRunReport {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryFeedbackInput {
+    pub scope: Option<MemoryScope>,
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_kind: Option<String>,
+    #[serde(default)]
+    pub used_nodes: Vec<String>,
+    #[serde(default)]
+    pub used_cards: Vec<String>,
+    #[serde(default)]
+    pub used_events: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    pub tool_call_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_length: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_result_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryFeedbackRow {
+    pub id: String,
+    pub scope_id: Option<String>,
+    pub question: String,
+    pub question_kind: Option<String>,
+    pub used_nodes: Vec<String>,
+    pub used_cards: Vec<String>,
+    pub used_events: Vec<String>,
+    pub duration_ms: Option<u64>,
+    pub tool_call_count: usize,
+    pub stop_reason: Option<String>,
+    pub answer_length: Option<usize>,
+    pub response_hash: Option<String>,
+    pub eval_result_id: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySnapshotReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_snapshot_high_watermark: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_dream_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_ontology_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_snapshot_version: Option<String>,
+    pub graph_node_count: usize,
+    pub graph_edge_count: usize,
+    pub evidence_card_count: usize,
+    pub query_feedback_count: usize,
+}
+
 // --------------------------------------------------------------------------- //
 // Factory
 // --------------------------------------------------------------------------- //
@@ -237,13 +299,13 @@ impl GbrainStore {
 
     /// Capture a new fact (embedding computed before the DB lock is taken).
     pub async fn capture(&self, input: CaptureInput) -> anyhow::Result<TemporalFact> {
-        let embedding = self.embedder.embed(&input.text).await;
+        let embedding = self.embedder.embed_document(&input.text).await;
         self.with_conn(|conn| capture_blocking(conn, input, embedding))
     }
 
     /// Hybrid recall over the snapshot defined by `params.as_of`.
     pub async fn recall(&self, params: RecallParams) -> anyhow::Result<RecallResult> {
-        let query_embedding = self.embedder.embed(&params.query).await;
+        let query_embedding = self.embedder.embed_query(&params.query).await;
         self.with_conn(|conn| recall_blocking(conn, &params, &query_embedding))
     }
 
@@ -392,52 +454,48 @@ impl GbrainStore {
         })
     }
 
-    /// Import raw facts from a batch payload. JSONL file/string input is
-    /// supported now; directory import is reserved for the graph-shaped importer.
+    /// Import raw facts from a batch payload. JSONL file/string input and
+    /// markdown corpus directory input are supported.
     pub async fn import_batch(
         &self,
         params: ImportBatchParams,
     ) -> anyhow::Result<ImportBatchResult> {
-        if params.format != "jsonl" {
-            anyhow::bail!(
-                "unsupported import format {:?}; jsonl is implemented, directory is TODO",
-                params.format
-            );
-        }
-        let source_path = match &params.input {
-            ImportBatchInput::Path(path) => {
-                if path.is_dir() {
-                    anyhow::bail!("directory import is TODO for phase 84");
-                }
-                Some(path.display().to_string())
-            }
-            ImportBatchInput::JsonlString(_) => None,
-        };
-        let body = match &params.input {
-            ImportBatchInput::Path(path) => std::fs::read_to_string(path)
-                .with_context(|| format!("read import input {}", path.display()))?,
-            ImportBatchInput::JsonlString(payload) => payload.clone(),
-        };
-        let source_hash = content_hash(&body);
+        let ImportBatchParams {
+            input,
+            format,
+            scope,
+            source,
+            dedupe,
+            dream_after_import,
+            metadata,
+        } = params;
+        let dream_after_import_mode = dream_after_import
+            .as_deref()
+            .map(parse_import_dream_mode)
+            .transpose()?
+            .flatten();
+        let loaded = load_import_batch(&input, &format)?;
+        let source_path = loaded.source_path.clone();
+        let source_hash = loaded.source_hash.clone();
         let run_id = uuid::Uuid::new_v4().to_string();
         let started_at = OffsetDateTime::now_utc();
         self.with_conn(|conn| {
-            let scope_id = ensure_scope(conn, &params.scope)?;
+            let scope_id = ensure_scope(conn, &scope)?;
             conn.execute(
                 "INSERT INTO gbrain_import_runs(id, scope_id, source_path, source_hash, started_at, status, metadata)
                  VALUES (?1, ?2, ?3, ?4, ?5, 'running', ?6)",
                 params![
                     run_id,
                     scope_id,
-                    source_path,
-                    source_hash,
+                    source_path.as_deref(),
+                    source_hash.as_str(),
                     format_time(started_at),
                     serde_json::to_string(&json!({
-                        "source": params.source,
-                        "format": params.format,
-                        "dedupe": params.dedupe.as_str(),
-                        "dream_after_import": params.dream_after_import,
-                        "metadata": params.metadata,
+                        "source": source,
+                        "format": format,
+                        "dedupe": dedupe.as_str(),
+                        "dream_after_import": dream_after_import,
+                        "metadata": metadata,
                     }))?,
                 ],
             )?;
@@ -447,32 +505,16 @@ impl GbrainStore {
         let mut total = 0usize;
         let mut inserted = 0usize;
         let mut skipped_duplicates = 0usize;
-        let mut errors = 0usize;
+        let errors = loaded.errors;
         let mut fact_ids = Vec::new();
 
-        for (line_index, line) in body.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
+        for loaded_record in loaded.records {
             total += 1;
-            let record: JsonlImportRecord = match serde_json::from_str(line) {
-                Ok(record) => record,
-                Err(_) => {
-                    errors += 1;
-                    continue;
-                }
-            };
+            let record = loaded_record.record;
             let record_hash = content_hash(&record.text);
             let source_id = record.source_id.clone();
             let duplicate = self.with_conn(|conn| {
-                import_duplicate_exists(
-                    conn,
-                    &params.scope,
-                    params.dedupe,
-                    source_id.as_deref(),
-                    &record_hash,
-                )
+                import_duplicate_exists(conn, &scope, dedupe, source_id.as_deref(), &record_hash)
             })?;
             if duplicate {
                 skipped_duplicates += 1;
@@ -487,7 +529,7 @@ impl GbrainStore {
                 if let Some(source_id) = &record.source_id {
                     map.insert("source_id".into(), json!(source_id));
                 }
-                if let Some(source) = &params.source {
+                if let Some(source) = &source {
                     map.insert("source".into(), json!(source));
                 }
                 if let Some(thread_id) = &record.thread_id {
@@ -497,7 +539,7 @@ impl GbrainStore {
                     map.insert("slug".into(), json!(slug));
                 }
                 map.insert("import_run_id".into(), json!(run_id));
-                map.insert("import_line".into(), json!(line_index + 1));
+                map.insert("import_line".into(), json!(loaded_record.line_index + 1));
             }
 
             let mut provenance = record.provenance;
@@ -513,7 +555,7 @@ impl GbrainStore {
                 }
             }
 
-            let mut input = CaptureInput::new(params.scope.clone(), record.text);
+            let mut input = CaptureInput::new(scope.clone(), record.text);
             input.subject = record.subject;
             input.metadata = metadata;
             input.provenance = provenance;
@@ -551,20 +593,101 @@ impl GbrainStore {
                     if errors == 0 {
                         None::<String>
                     } else {
-                        Some(format!("{errors} JSONL record(s) failed to parse"))
+                        Some(format!("{errors} import record(s) failed to parse"))
                     },
                     serde_json::to_string(&json!({
-                        "source": params.source,
-                        "format": params.format,
-                        "dedupe": params.dedupe.as_str(),
+                        "source": source,
+                        "format": format,
+                        "dedupe": dedupe.as_str(),
                         "total": total,
                         "inserted": inserted,
                         "skipped_duplicates": skipped_duplicates,
                         "errors": errors,
-                        "dream_after_import": params.dream_after_import,
-                        "metadata": params.metadata,
+                        "dream_after_import": dream_after_import,
+                        "metadata": metadata,
                     }))?,
                     run_id,
+                ],
+            )?;
+            Ok(())
+        })?;
+
+        let dream_report = if errors == 0 {
+            if let Some(mode) = dream_after_import_mode {
+                Some(
+                    self.dream(DreamParams {
+                        mode,
+                        scope: scope.clone(),
+                        since: None,
+                        run_policy: DreamPolicy::Import,
+                        workers: 1,
+                        dry_run: false,
+                        cancellation_token: None,
+                        reasoner_model: None,
+                    })
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "post-import dream failed for import run {run_id} with mode {}",
+                            mode.as_str()
+                        )
+                    })?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let (node_count, edge_count) =
+            self.with_conn(|conn| count_materialized_graph_rows(conn, &scope))?;
+        let dream_metadata = dream_report.as_ref().map(|report| {
+            json!({
+                "dream_run_id": report.id,
+                "dream_mode": report.mode.as_str(),
+                "dream_algorithm_version": report.algorithm_version,
+                "derived_statement_count": report.derived_statement_count,
+                "derived_event_count": report.derived_event_count,
+            })
+        });
+        let dream_run_id = dream_report.as_ref().map(|report| report.id.as_str());
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO gbrain_import_manifest(
+                    id, import_run_id, source_hash, source_path, source_prefix, corpus_prefix,
+                    replacement_policy, fact_count, statement_count, node_count, edge_count,
+                    added_at, metadata
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    run_id,
+                    source_hash,
+                    source_path.as_deref(),
+                    source.as_deref(),
+                    source_path.as_deref().or(source.as_deref()),
+                    dedupe.as_str(),
+                    inserted as i64,
+                    dream_report
+                        .as_ref()
+                        .map(|report| report.derived_statement_count)
+                        .unwrap_or(0) as i64,
+                    node_count as i64,
+                    edge_count as i64,
+                    format_time(OffsetDateTime::now_utc()),
+                    serde_json::to_string(&json!({
+                        "source": source,
+                        "format": format,
+                        "scope_id": scope.stable_id(),
+                        "total": total,
+                        "inserted": inserted,
+                        "skipped_duplicates": skipped_duplicates,
+                        "errors": errors,
+                        "dream_after_import": dream_after_import,
+                        "dream_run_id": dream_run_id,
+                        "dream": dream_metadata,
+                        "metadata": metadata,
+                    }))?,
                 ],
             )?;
             Ok(())
@@ -573,10 +696,10 @@ impl GbrainStore {
         Ok(ImportBatchResult {
             run_id,
             status: status.to_string(),
-            scope_id: params.scope.stable_id(),
-            source: params.source,
-            format: params.format,
-            dedupe: params.dedupe,
+            scope_id: scope.stable_id(),
+            source,
+            format,
+            dedupe,
             total,
             inserted,
             skipped_duplicates,
@@ -585,8 +708,9 @@ impl GbrainStore {
         })
     }
 
-    /// Run explicit at-rest dream maintenance. This minimal phase-84 runner only
-    /// records the ledger and reuses `consolidate` for refine/full link rebuilds.
+    /// Run explicit at-rest dream maintenance. The phase-84 runner records the
+    /// ledger, rebuilds links, and materializes graph/evidence rows for
+    /// Obsidian/app-server visualization before query-time retrieval starts.
     pub async fn dream(&self, params: DreamParams) -> anyhow::Result<DreamRunReport> {
         let run_id = uuid::Uuid::new_v4().to_string();
         let started_at = OffsetDateTime::now_utc();
@@ -606,7 +730,7 @@ impl GbrainStore {
                     scope_id,
                     params.mode.as_str(),
                     format_time(started_at),
-                    "phase84-minimal-v1",
+                    DREAM_ALGORITHM_VERSION,
                     params.reasoner_model,
                     params.run_policy.as_str(),
                     params.cancellation_token,
@@ -619,20 +743,30 @@ impl GbrainStore {
 
         let mut derived_event_count = 0usize;
         let mut invalidated_event_count = 0usize;
+        let mut materialized = GraphMaterializationStats::default();
         if !params.dry_run && matches!(params.mode, DreamMode::Refine | DreamMode::Full) {
             let stats = self.consolidate(Some(params.scope.clone())).await?;
             derived_event_count = stats.supersession_links + stats.contradiction_links;
             invalidated_event_count = stats.contradiction_links;
         }
+        if !params.dry_run {
+            materialized = self.with_conn(|conn| {
+                crate::dream::materialize_dream_graph(conn, &params.scope, &run_id, started_at)
+            })?;
+            derived_event_count += materialized.derived_event_count();
+        }
+        let derived_statement_count = materialized.derived_statement_count();
 
         let finished_at = OffsetDateTime::now_utc();
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE gbrain_dream_runs
-                 SET finished_at = ?1, status = 'completed', derived_event_count = ?2, invalidated_event_count = ?3
-                 WHERE id = ?4",
+                 SET finished_at = ?1, status = 'completed', derived_statement_count = ?2,
+                     derived_event_count = ?3, invalidated_event_count = ?4
+                 WHERE id = ?5",
                 params![
                     format_time(finished_at),
+                    derived_statement_count as i64,
                     derived_event_count as i64,
                     invalidated_event_count as i64,
                     run_id,
@@ -646,13 +780,13 @@ impl GbrainStore {
             scope_id,
             mode: params.mode,
             status: DreamStatus::Completed,
-            algorithm_version: "phase84-minimal-v1".into(),
+            algorithm_version: DREAM_ALGORITHM_VERSION.into(),
             run_policy: params.run_policy,
             started_at,
             finished_at: Some(finished_at),
             workers,
             input_fact_count,
-            derived_statement_count: 0,
+            derived_statement_count,
             derived_event_count,
             invalidated_event_count,
             reasoner_model: params.reasoner_model,
@@ -664,10 +798,83 @@ impl GbrainStore {
         self.with_conn(|conn| load_dream_run(conn, run_id))
     }
 
+    pub async fn append_query_feedback(
+        &self,
+        input: QueryFeedbackInput,
+    ) -> anyhow::Result<QueryFeedbackRow> {
+        self.with_conn(|conn| append_query_feedback(conn, input))
+    }
+
+    pub async fn load_query_feedback(
+        &self,
+        scope: Option<MemoryScope>,
+    ) -> anyhow::Result<Vec<QueryFeedbackRow>> {
+        self.with_conn(|conn| load_query_feedback(conn, scope.as_ref()))
+    }
+
+    pub async fn memory_snapshot(
+        &self,
+        scope: Option<MemoryScope>,
+    ) -> anyhow::Result<MemorySnapshotReport> {
+        self.with_conn(|conn| load_memory_snapshot(conn, scope.as_ref()))
+    }
+
+    pub async fn find_dream_start_nodes(
+        &self,
+        query: &str,
+        scope: Option<MemoryScope>,
+        node_kinds: &[String],
+        limit: usize,
+    ) -> anyhow::Result<Vec<Value>> {
+        self.with_conn(|conn| {
+            find_dream_start_nodes(conn, query, scope.as_ref(), node_kinds, limit)
+        })
+    }
+
+    pub async fn expand_dream_neighbors(
+        &self,
+        node_id: &str,
+        edge_kinds: &[String],
+        depth: usize,
+    ) -> anyhow::Result<Vec<Value>> {
+        self.with_conn(|conn| expand_dream_neighbors(conn, node_id, edge_kinds, depth))
+    }
+
+    pub async fn find_dream_paths(
+        &self,
+        source_node_id: &str,
+        target_node_id: &str,
+        relation_filter: &[String],
+        budget: usize,
+    ) -> anyhow::Result<Vec<Value>> {
+        self.with_conn(|conn| {
+            find_dream_paths(
+                conn,
+                source_node_id,
+                target_node_id,
+                relation_filter,
+                budget,
+            )
+        })
+    }
+
+    pub async fn explain_dream_node(&self, node_id: &str) -> anyhow::Result<Option<Value>> {
+        self.with_conn(|conn| explain_dream_node(conn, node_id))
+    }
+
+    pub async fn dream_node_community(
+        &self,
+        node_id: Option<&str>,
+        community_id: Option<&str>,
+        include_members: bool,
+    ) -> anyhow::Result<Option<Value>> {
+        self.with_conn(|conn| dream_node_community(conn, node_id, community_id, include_members))
+    }
+
     /// In-place update of a fact's text/metadata (re-embeds). Used by the
     /// generic `MemoryStore::put` update path.
     async fn update_in_place(&self, id: &str, text: String, metadata: Value) -> anyhow::Result<()> {
-        let embedding = self.embedder.embed(&text).await;
+        let embedding = self.embedder.embed_document(&text).await;
         self.with_conn(|conn| {
             let now = OffsetDateTime::now_utc();
             let tx = conn.unchecked_transaction()?;
@@ -687,6 +894,686 @@ impl GbrainStore {
             Ok(())
         })
     }
+}
+
+fn append_query_feedback(
+    conn: &Connection,
+    input: QueryFeedbackInput,
+) -> anyhow::Result<QueryFeedbackRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let scope_id = input
+        .scope
+        .as_ref()
+        .map(|scope| ensure_scope(conn, scope))
+        .transpose()?;
+    let created_at = OffsetDateTime::now_utc();
+    conn.execute(
+        "INSERT INTO gbrain_query_feedback(
+            id, scope_id, question, question_kind, used_nodes, used_cards, used_events,
+            duration_ms, tool_call_count, stop_reason, answer_length, response_hash,
+            eval_result_id, created_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            id,
+            scope_id,
+            input.question,
+            input.question_kind,
+            serde_json::to_string(&input.used_nodes)?,
+            serde_json::to_string(&input.used_cards)?,
+            serde_json::to_string(&input.used_events)?,
+            input.duration_ms.map(|value| value as i64),
+            input.tool_call_count as i64,
+            input.stop_reason,
+            input.answer_length.map(|value| value as i64),
+            input.response_hash,
+            input.eval_result_id,
+            format_time(created_at),
+        ],
+    )?;
+    load_query_feedback_by_id(conn, &id)
+}
+
+fn load_query_feedback(
+    conn: &Connection,
+    scope: Option<&MemoryScope>,
+) -> anyhow::Result<Vec<QueryFeedbackRow>> {
+    let scope_id = scope.map(MemoryScope::stable_id);
+    let mut stmt = if scope_id.is_some() {
+        conn.prepare(
+            "SELECT id, scope_id, question, question_kind, used_nodes, used_cards, used_events,
+                    duration_ms, tool_call_count, stop_reason, answer_length, response_hash,
+                    eval_result_id, created_at
+             FROM gbrain_query_feedback
+             WHERE scope_id = ?1
+             ORDER BY created_at, id",
+        )?
+    } else {
+        conn.prepare(
+            "SELECT id, scope_id, question, question_kind, used_nodes, used_cards, used_events,
+                    duration_ms, tool_call_count, stop_reason, answer_length, response_hash,
+                    eval_result_id, created_at
+             FROM gbrain_query_feedback
+             ORDER BY created_at, id",
+        )?
+    };
+    let rows = if let Some(scope_id) = scope_id {
+        stmt.query_map(params![scope_id], query_feedback_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    } else {
+        stmt.query_map([], query_feedback_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    Ok(rows)
+}
+
+fn load_query_feedback_by_id(conn: &Connection, id: &str) -> anyhow::Result<QueryFeedbackRow> {
+    Ok(conn.query_row(
+        "SELECT id, scope_id, question, question_kind, used_nodes, used_cards, used_events,
+                duration_ms, tool_call_count, stop_reason, answer_length, response_hash,
+                eval_result_id, created_at
+         FROM gbrain_query_feedback
+         WHERE id = ?1",
+        params![id],
+        query_feedback_from_row,
+    )?)
+}
+
+fn query_feedback_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueryFeedbackRow> {
+    let used_nodes: String = row.get(4)?;
+    let used_cards: String = row.get(5)?;
+    let used_events: String = row.get(6)?;
+    let duration_ms: Option<i64> = row.get(7)?;
+    let tool_call_count: i64 = row.get(8)?;
+    let answer_length: Option<i64> = row.get(10)?;
+    let created_at: String = row.get(13)?;
+    Ok(QueryFeedbackRow {
+        id: row.get(0)?,
+        scope_id: row.get(1)?,
+        question: row.get(2)?,
+        question_kind: row.get(3)?,
+        used_nodes: serde_json::from_str(&used_nodes).unwrap_or_default(),
+        used_cards: serde_json::from_str(&used_cards).unwrap_or_default(),
+        used_events: serde_json::from_str(&used_events).unwrap_or_default(),
+        duration_ms: duration_ms.map(|value| value.max(0) as u64),
+        tool_call_count: tool_call_count.max(0) as usize,
+        stop_reason: row.get(9)?,
+        answer_length: answer_length.map(|value| value.max(0) as usize),
+        response_hash: row.get(11)?,
+        eval_result_id: row.get(12)?,
+        created_at: parse_time(&created_at).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                13,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    err.to_string(),
+                )),
+            )
+        })?,
+    })
+}
+
+fn load_memory_snapshot(
+    conn: &Connection,
+    scope: Option<&MemoryScope>,
+) -> anyhow::Result<MemorySnapshotReport> {
+    let scope_id = scope.map(MemoryScope::stable_id);
+    let raw_snapshot_high_watermark: Option<String> = match &scope_id {
+        Some(scope_id) => conn.query_row(
+            "SELECT MAX(ingested_at) FROM gbrain_facts WHERE scope_id = ?1",
+            params![scope_id],
+            |row| row.get(0),
+        )?,
+        None => conn.query_row("SELECT MAX(ingested_at) FROM gbrain_facts", [], |row| {
+            row.get(0)
+        })?,
+    };
+    let selected_dream_run: Option<(String, String)> = match &scope_id {
+        Some(scope_id) => conn
+            .query_row(
+                "SELECT id, algorithm_version
+                 FROM gbrain_dream_runs
+                 WHERE scope_id = ?1 AND status = 'completed'
+                 ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
+                 LIMIT 1",
+                params![scope_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?,
+        None => conn
+            .query_row(
+                "SELECT id, algorithm_version
+                 FROM gbrain_dream_runs
+                 WHERE status = 'completed'
+                 ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
+                 LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?,
+    };
+    let selected_ontology_version: Option<String> = conn
+        .query_row(
+            "SELECT version
+             FROM gbrain_ontology_nodes
+             WHERE active = 1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let graph_node_count = count_active_by_scope(conn, "gbrain_nodes", &scope_id)?;
+    let evidence_card_count = count_active_by_scope(conn, "gbrain_evidence_cards", &scope_id)?;
+    let graph_edge_count = match &scope_id {
+        Some(scope_id) => conn.query_row(
+            "SELECT COUNT(DISTINCT e.id)
+             FROM gbrain_edges e
+             JOIN gbrain_nodes source ON source.id = e.source_node_id
+             JOIN gbrain_nodes target ON target.id = e.target_node_id
+             WHERE e.active = 1 AND (source.scope_id = ?1 OR target.scope_id = ?1)",
+            params![scope_id],
+            |row| row.get::<_, i64>(0),
+        )?,
+        None => conn.query_row(
+            "SELECT COUNT(*) FROM gbrain_edges WHERE active = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?,
+    }
+    .max(0) as usize;
+    let query_feedback_count = match &scope_id {
+        Some(scope_id) => conn.query_row(
+            "SELECT COUNT(*) FROM gbrain_query_feedback WHERE scope_id = ?1",
+            params![scope_id],
+            |row| row.get::<_, i64>(0),
+        )?,
+        None => conn.query_row("SELECT COUNT(*) FROM gbrain_query_feedback", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+    }
+    .max(0) as usize;
+
+    Ok(MemorySnapshotReport {
+        raw_snapshot_high_watermark,
+        selected_dream_run_id: selected_dream_run.as_ref().map(|(id, _)| id.clone()),
+        selected_ontology_version,
+        derived_snapshot_version: selected_dream_run.map(|(_, version)| version),
+        graph_node_count,
+        graph_edge_count,
+        evidence_card_count,
+        query_feedback_count,
+    })
+}
+
+fn count_active_by_scope(
+    conn: &Connection,
+    table: &str,
+    scope_id: &Option<String>,
+) -> anyhow::Result<usize> {
+    let count: i64 = match scope_id {
+        Some(scope_id) => conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE scope_id = ?1 AND active = 1"),
+            params![scope_id],
+            |row| row.get(0),
+        )?,
+        None => conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE active = 1"),
+            [],
+            |row| row.get(0),
+        )?,
+    };
+    Ok(count.max(0) as usize)
+}
+
+fn find_dream_start_nodes(
+    conn: &Connection,
+    query: &str,
+    scope: Option<&MemoryScope>,
+    node_kinds: &[String],
+    limit: usize,
+) -> anyhow::Result<Vec<Value>> {
+    let scope_id = scope.map(MemoryScope::stable_id);
+    let mut stmt = conn.prepare(
+        "SELECT n.id, n.label, n.node_kind, n.source_artifact, n.source_location,
+                n.source_span, n.source_fact_id, n.created_by_run_id, n.confidence,
+                f.text, n.scope_id
+         FROM gbrain_nodes n
+         LEFT JOIN gbrain_facts f ON f.id = n.source_fact_id
+         WHERE n.active = 1
+         ORDER BY n.created_at DESC
+         LIMIT 2000",
+    )?;
+    let mut observations = Vec::new();
+    for row in stmt.query_map([], dream_node_candidate_from_row)? {
+        let candidate = row?;
+        if let Some(scope_id) = &scope_id
+            && candidate.scope_id.as_deref() != Some(scope_id.as_str())
+        {
+            continue;
+        }
+        if !node_kinds.is_empty()
+            && !node_kinds
+                .iter()
+                .any(|kind| kind.eq_ignore_ascii_case(&candidate.node_kind))
+        {
+            continue;
+        }
+        let score = lexical_score(
+            query,
+            &[
+                candidate.label.as_str(),
+                candidate.source_artifact.as_deref().unwrap_or_default(),
+                candidate.text.as_deref().unwrap_or_default(),
+            ],
+        );
+        if score == 0 && !query.trim().is_empty() {
+            continue;
+        }
+        observations.push((score, dream_node_observation(conn, &candidate)?));
+    }
+    observations.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    Ok(observations
+        .into_iter()
+        .take(limit.max(1))
+        .map(|(_, observation)| observation)
+        .collect())
+}
+
+fn expand_dream_neighbors(
+    conn: &Connection,
+    node_id: &str,
+    edge_kinds: &[String],
+    depth: usize,
+) -> anyhow::Result<Vec<Value>> {
+    let max_depth = depth.clamp(1, 4);
+    let mut frontier = vec![node_id.to_string()];
+    let mut seen_nodes = HashSet::from([node_id.to_string()]);
+    let mut seen_edges = HashSet::new();
+    let mut observations = Vec::new();
+    for current_depth in 1..=max_depth {
+        let mut next = Vec::new();
+        for current in &frontier {
+            for edge in dream_edges_for_node(conn, current, edge_kinds)? {
+                let edge_id = edge["id"].as_str().unwrap_or_default().to_string();
+                if !seen_edges.insert(edge_id) {
+                    continue;
+                }
+                let source = edge["sourceNodeId"].as_str().unwrap_or_default();
+                let target = edge["targetNodeId"].as_str().unwrap_or_default();
+                let neighbor_id = if source == current { target } else { source };
+                let neighbor = load_dream_node(conn, neighbor_id)?;
+                observations.push(json!({
+                    "observationType": "dream_neighbor",
+                    "depth": current_depth,
+                    "edge": edge,
+                    "node": neighbor,
+                    "trace": {
+                        "source": "gbrain_edges",
+                        "readOnly": true,
+                        "fallback": false,
+                    }
+                }));
+                if seen_nodes.insert(neighbor_id.to_string()) {
+                    next.push(neighbor_id.to_string());
+                }
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    Ok(observations)
+}
+
+fn find_dream_paths(
+    conn: &Connection,
+    source_node_id: &str,
+    target_node_id: &str,
+    relation_filter: &[String],
+    budget: usize,
+) -> anyhow::Result<Vec<Value>> {
+    let mut observations = Vec::new();
+    for edge in dream_edges_for_node(conn, source_node_id, relation_filter)? {
+        let source = edge["sourceNodeId"].as_str().unwrap_or_default();
+        let target = edge["targetNodeId"].as_str().unwrap_or_default();
+        if source == target_node_id || target == target_node_id {
+            observations.push(json!({
+                "observationType": "dream_path",
+                "pathKind": "direct",
+                "nodes": [load_dream_node(conn, source_node_id)?, load_dream_node(conn, target_node_id)?],
+                "edges": [edge],
+                "trace": {"source": "gbrain_edges", "readOnly": true, "fallback": false}
+            }));
+        }
+    }
+    if !observations.is_empty() {
+        return Ok(observations.into_iter().take(budget.max(1)).collect());
+    }
+
+    for first_edge in dream_edges_for_node(conn, source_node_id, relation_filter)? {
+        let first_source = first_edge["sourceNodeId"].as_str().unwrap_or_default();
+        let first_target = first_edge["targetNodeId"].as_str().unwrap_or_default();
+        let midpoint = if first_source == source_node_id {
+            first_target
+        } else {
+            first_source
+        };
+        for second_edge in dream_edges_for_node(conn, midpoint, relation_filter)? {
+            let second_source = second_edge["sourceNodeId"].as_str().unwrap_or_default();
+            let second_target = second_edge["targetNodeId"].as_str().unwrap_or_default();
+            if second_source == target_node_id || second_target == target_node_id {
+                observations.push(json!({
+                    "observationType": "dream_path",
+                    "pathKind": "two_hop",
+                    "nodes": [
+                        load_dream_node(conn, source_node_id)?,
+                        load_dream_node(conn, midpoint)?,
+                        load_dream_node(conn, target_node_id)?
+                    ],
+                    "edges": [first_edge, second_edge],
+                    "trace": {"source": "gbrain_edges", "readOnly": true, "fallback": false}
+                }));
+                if observations.len() >= budget.max(1) {
+                    return Ok(observations);
+                }
+            }
+        }
+    }
+    Ok(observations)
+}
+
+fn explain_dream_node(conn: &Connection, node_id: &str) -> anyhow::Result<Option<Value>> {
+    let Some(node) = load_dream_node_optional(conn, node_id)? else {
+        return Ok(None);
+    };
+    let evidence_cards = evidence_cards_for_node(conn, node_id)?;
+    let edges = dream_edges_for_node(conn, node_id, &[])?;
+    Ok(Some(json!({
+        "observationType": "dream_node_explanation",
+        "node": node,
+        "evidenceCards": evidence_cards,
+        "edges": edges,
+        "trace": {
+            "source": "gbrain_nodes",
+            "readOnly": true,
+            "fallback": false,
+        }
+    })))
+}
+
+fn dream_node_community(
+    conn: &Connection,
+    node_id: Option<&str>,
+    community_id: Option<&str>,
+    include_members: bool,
+) -> anyhow::Result<Option<Value>> {
+    if let Some(community_id) = community_id {
+        let community = conn
+            .query_row(
+                "SELECT id, scope_id, version, label, cohesion_score, dream_run_id
+                 FROM gbrain_communities
+                 WHERE id = ?1 AND active = 1",
+                params![community_id],
+                |row| {
+                    Ok(json!({
+                        "id": row.get::<_, String>(0)?,
+                        "scopeId": row.get::<_, String>(1)?,
+                        "version": row.get::<_, String>(2)?,
+                        "label": row.get::<_, Option<String>>(3)?,
+                        "cohesionScore": row.get::<_, f64>(4)?,
+                        "dreamRunId": row.get::<_, Option<String>>(5)?,
+                    }))
+                },
+            )
+            .optional()?;
+        if let Some(community) = community {
+            return Ok(Some(json!({
+                "observationType": "dream_community",
+                "community": community,
+                "members": if include_members {
+                    community_members(conn, community_id)?
+                } else {
+                    Vec::<Value>::new()
+                },
+                "trace": {"source": "gbrain_communities", "readOnly": true, "fallback": false}
+            })));
+        }
+    }
+    if let Some(node_id) = node_id {
+        let Some(node) = load_dream_node_optional(conn, node_id)? else {
+            return Ok(None);
+        };
+        let neighbors = expand_dream_neighbors(conn, node_id, &[], 1)?;
+        return Ok(Some(json!({
+            "observationType": "dream_local_community",
+            "community": {
+                "id": format!("local:{node_id}"),
+                "label": node["label"],
+                "communityKind": "local_neighborhood",
+            },
+            "members": if include_members { neighbors } else { Vec::<Value>::new() },
+            "trace": {"source": "gbrain_edges", "readOnly": true, "fallback": false}
+        })));
+    }
+    Ok(None)
+}
+
+#[derive(Debug)]
+struct DreamNodeCandidate {
+    id: String,
+    label: String,
+    node_kind: String,
+    source_artifact: Option<String>,
+    source_location: Option<String>,
+    source_span: Option<String>,
+    source_fact_id: Option<String>,
+    dream_run_id: Option<String>,
+    confidence: String,
+    text: Option<String>,
+    scope_id: Option<String>,
+}
+
+fn dream_node_candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DreamNodeCandidate> {
+    Ok(DreamNodeCandidate {
+        id: row.get(0)?,
+        label: row.get(1)?,
+        node_kind: row.get(2)?,
+        source_artifact: row.get(3)?,
+        source_location: row.get(4)?,
+        source_span: row.get(5)?,
+        source_fact_id: row.get(6)?,
+        dream_run_id: row.get(7)?,
+        confidence: row.get(8)?,
+        text: row.get(9)?,
+        scope_id: row.get(10)?,
+    })
+}
+
+fn dream_node_observation(conn: &Connection, node: &DreamNodeCandidate) -> anyhow::Result<Value> {
+    Ok(json!({
+        "observationType": "dream_start_node",
+        "node": dream_node_json(node),
+        "evidenceCards": evidence_cards_for_source_fact(conn, node.source_fact_id.as_deref())?,
+        "trace": {
+            "source": "gbrain_nodes",
+            "readOnly": true,
+            "fallback": false,
+            "dreamRunId": node.dream_run_id,
+        }
+    }))
+}
+
+fn dream_node_json(node: &DreamNodeCandidate) -> Value {
+    json!({
+        "id": node.id,
+        "label": node.label,
+        "kind": node.node_kind,
+        "sourceArtifact": node.source_artifact,
+        "sourceLocation": node.source_location,
+        "sourceSpan": node.source_span,
+        "sourceFactId": node.source_fact_id,
+        "dreamRunId": node.dream_run_id,
+        "confidence": node.confidence,
+    })
+}
+
+fn load_dream_node(conn: &Connection, node_id: &str) -> anyhow::Result<Value> {
+    load_dream_node_optional(conn, node_id)?
+        .ok_or_else(|| anyhow::anyhow!("dream node not found: {node_id}"))
+}
+
+fn load_dream_node_optional(conn: &Connection, node_id: &str) -> anyhow::Result<Option<Value>> {
+    conn.query_row(
+        "SELECT id, label, node_kind, source_artifact, source_location, source_span,
+                source_fact_id, created_by_run_id, confidence, NULL, scope_id
+         FROM gbrain_nodes
+         WHERE id = ?1 AND active = 1",
+        params![node_id],
+        |row| dream_node_candidate_from_row(row).map(|node| dream_node_json(&node)),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn dream_edges_for_node(
+    conn: &Connection,
+    node_id: &str,
+    relation_filter: &[String],
+) -> anyhow::Result<Vec<Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, source_node_id, target_node_id, relation, confidence, source_artifact,
+                source_location, source_span, evidence_ids, directed, original_direction,
+                ontology_edge_id, dream_run_id, valid_at, invalid_at, transaction_at
+         FROM gbrain_edges
+         WHERE active = 1 AND (source_node_id = ?1 OR target_node_id = ?1)
+         ORDER BY created_at DESC
+         LIMIT 200",
+    )?;
+    let mut edges = Vec::new();
+    for row in stmt.query_map(params![node_id], dream_edge_from_row)? {
+        let edge = row?;
+        if !relation_filter.is_empty()
+            && !relation_filter.iter().any(|relation| {
+                edge["relation"]
+                    .as_str()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(relation))
+            })
+        {
+            continue;
+        }
+        edges.push(edge);
+    }
+    Ok(edges)
+}
+
+fn dream_edge_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let evidence_ids: String = row.get(8)?;
+    let directed: i64 = row.get(9)?;
+    Ok(json!({
+        "id": row.get::<_, String>(0)?,
+        "sourceNodeId": row.get::<_, String>(1)?,
+        "targetNodeId": row.get::<_, String>(2)?,
+        "relation": row.get::<_, String>(3)?,
+        "confidence": row.get::<_, String>(4)?,
+        "sourceArtifact": row.get::<_, Option<String>>(5)?,
+        "sourceLocation": row.get::<_, Option<String>>(6)?,
+        "sourceSpan": row.get::<_, Option<String>>(7)?,
+        "evidenceIds": serde_json::from_str::<Vec<String>>(&evidence_ids).unwrap_or_default(),
+        "directed": directed != 0,
+        "originalDirection": row.get::<_, Option<String>>(10)?,
+        "ontologyEdgeId": row.get::<_, Option<String>>(11)?,
+        "dreamRunId": row.get::<_, Option<String>>(12)?,
+        "validAt": row.get::<_, Option<String>>(13)?,
+        "invalidAt": row.get::<_, Option<String>>(14)?,
+        "transactionAt": row.get::<_, Option<String>>(15)?,
+    }))
+}
+
+fn evidence_cards_for_node(conn: &Connection, node_id: &str) -> anyhow::Result<Vec<Value>> {
+    let source_fact_id: Option<String> = conn
+        .query_row(
+            "SELECT source_fact_id FROM gbrain_nodes WHERE id = ?1",
+            params![node_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    evidence_cards_for_source_fact(conn, source_fact_id.as_deref())
+}
+
+fn evidence_cards_for_source_fact(
+    conn: &Connection,
+    source_fact_id: Option<&str>,
+) -> anyhow::Result<Vec<Value>> {
+    let Some(source_fact_id) = source_fact_id else {
+        return Ok(Vec::new());
+    };
+    let pattern = format!("%\"{source_fact_id}\"%");
+    let mut stmt = conn.prepare(
+        "SELECT id, title, summary, quote_spans, source_fact_ids, temporal_status,
+                neighboring_event_ids, confidence, dream_run_id
+         FROM gbrain_evidence_cards
+         WHERE active = 1 AND source_fact_ids LIKE ?1
+         ORDER BY created_at DESC
+         LIMIT 20",
+    )?;
+    let cards = stmt
+        .query_map(params![pattern], evidence_card_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(cards)
+}
+
+fn evidence_card_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let quote_spans: String = row.get(3)?;
+    let source_fact_ids: String = row.get(4)?;
+    let neighboring_event_ids: String = row.get(6)?;
+    Ok(json!({
+        "id": row.get::<_, String>(0)?,
+        "title": row.get::<_, String>(1)?,
+        "summary": row.get::<_, String>(2)?,
+        "quoteSpans": serde_json::from_str::<Vec<Value>>(&quote_spans).unwrap_or_default(),
+        "sourceFactIds": serde_json::from_str::<Vec<String>>(&source_fact_ids).unwrap_or_default(),
+        "temporalStatus": row.get::<_, Option<String>>(5)?,
+        "neighboringEventIds": serde_json::from_str::<Vec<String>>(&neighboring_event_ids).unwrap_or_default(),
+        "confidence": row.get::<_, String>(7)?,
+        "dreamRunId": row.get::<_, Option<String>>(8)?,
+    }))
+}
+
+fn community_members(conn: &Connection, community_id: &str) -> anyhow::Result<Vec<Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT node_id, membership_score, hub, noise
+         FROM gbrain_community_members
+         WHERE community_id = ?1
+         ORDER BY membership_score DESC, node_id
+         LIMIT 100",
+    )?;
+    let members = stmt
+        .query_map(params![community_id], |row| {
+            let node_id: String = row.get(0)?;
+            Ok(json!({
+                "node": load_dream_node(conn, &node_id).unwrap_or(Value::Null),
+                "membershipScore": row.get::<_, f64>(1)?,
+                "hub": row.get::<_, i64>(2)? != 0,
+                "noise": row.get::<_, i64>(3)? != 0,
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(members)
+}
+
+fn lexical_score(query: &str, fields: &[&str]) -> usize {
+    let haystack = fields.join(" ").to_ascii_lowercase();
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|term| term.len() > 2)
+        .map(str::to_ascii_lowercase)
+        .filter(|term| haystack.contains(term))
+        .count()
 }
 
 // --------------------------------------------------------------------------- //
@@ -1189,6 +2076,43 @@ fn import_duplicate_exists(
         DedupeMode::ContentHash => by_content_hash,
         DedupeMode::Both => by_source_id || by_content_hash,
     })
+}
+
+fn parse_import_dream_mode(value: &str) -> anyhow::Result<Option<DreamMode>> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "none" | "off" | "false" | "no" => Ok(None),
+        "enrich" => Ok(Some(DreamMode::Enrich)),
+        "refine" => Ok(Some(DreamMode::Refine)),
+        "compact" => Ok(Some(DreamMode::Compact)),
+        "full" => Ok(Some(DreamMode::Full)),
+        other => {
+            anyhow::bail!(
+                "unknown dream_after_import mode {other:?}; expected enrich|refine|compact|full"
+            )
+        }
+    }
+}
+
+fn count_materialized_graph_rows(
+    conn: &Connection,
+    scope: &MemoryScope,
+) -> anyhow::Result<(usize, usize)> {
+    let scope_id = scope.stable_id();
+    let node_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM gbrain_nodes WHERE scope_id = ?1",
+        params![scope_id],
+        |row| row.get(0),
+    )?;
+    let edge_count: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT e.id)
+         FROM gbrain_edges e
+         JOIN gbrain_nodes source ON source.id = e.source_node_id
+         JOIN gbrain_nodes target ON target.id = e.target_node_id
+         WHERE source.scope_id = ?1 OR target.scope_id = ?1",
+        params![scope.stable_id()],
+        |row| row.get(0),
+    )?;
+    Ok((node_count.max(0) as usize, edge_count.max(0) as usize))
 }
 
 pub(crate) fn count_facts_since(

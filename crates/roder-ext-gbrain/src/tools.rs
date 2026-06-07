@@ -190,10 +190,10 @@ impl ToolExecutor for GbrainTool {
             Op::SearchRaw => self.search_raw(&call).await,
             Op::FindContradictions => self.find_contradictions(&call).await,
             Op::FindStartNodes => self.find_start_nodes(&call).await,
-            Op::ExpandNeighbors => self.not_yet_dreamed(&call, "neighbors").await,
-            Op::FindPaths => self.not_yet_dreamed(&call, "paths").await,
-            Op::ExplainNode => self.not_yet_dreamed(&call, "node").await,
-            Op::GetCommunity => self.not_yet_dreamed(&call, "community").await,
+            Op::ExpandNeighbors => self.expand_neighbors(&call).await,
+            Op::FindPaths => self.find_paths(&call).await,
+            Op::ExplainNode => self.explain_node(&call).await,
+            Op::GetCommunity => self.get_community(&call).await,
             Op::RetrievalNote => self.retrieval_note(&call).await,
             Op::RespondToQuery => self.respond_to_query(&call).await,
         };
@@ -504,12 +504,40 @@ impl GbrainTool {
 
     async fn find_start_nodes(&self, call: &ToolCall) -> anyhow::Result<(String, Value)> {
         let args: FindStartNodesArgs = parse(call)?;
+        let scope = args.scope.as_deref().map(parse_scope);
+        let dream_observations = self
+            .store
+            .find_dream_start_nodes(
+                &args.query,
+                scope.clone(),
+                &args.node_kinds,
+                args.limit.unwrap_or(8),
+            )
+            .await?;
+        if !dream_observations.is_empty() {
+            return Ok((
+                format!(
+                    "{} dreamed start node observation(s)",
+                    dream_observations.len()
+                ),
+                json!({
+                    "tool": call.name,
+                    "readOnly": true,
+                    "observations": dream_observations,
+                    "trace": {
+                        "source": "gbrain_nodes",
+                        "readOnly": true,
+                        "fallback": false,
+                    }
+                }),
+            ));
+        }
         let result = self
             .store
             .recall(RecallParams {
                 query: args.query,
                 as_of: parse_as_of(args.as_of.as_deref())?,
-                scope: args.scope.as_deref().map(parse_scope),
+                scope,
                 include_global: true,
                 limit: args.limit.unwrap_or(8),
                 expand: false,
@@ -534,7 +562,7 @@ impl GbrainTool {
                         "source": "gbrain_facts",
                         "readOnly": true,
                         "requestedNodeKinds": requested_node_kinds.clone(),
-                        "fallback": "raw_until_dream_graph_schema_lands",
+                        "fallback": "raw_no_matching_dream_nodes",
                     }
                 })
             })
@@ -545,6 +573,115 @@ impl GbrainTool {
                 "tool": call.name,
                 "readOnly": true,
                 "observations": observations,
+                "status": "raw_fallback",
+            }),
+        ))
+    }
+
+    async fn expand_neighbors(&self, call: &ToolCall) -> anyhow::Result<(String, Value)> {
+        let args: ExpandNeighborsArgs = parse(call)?;
+        let observations = self
+            .store
+            .expand_dream_neighbors(&args.node_id, &args.edge_kinds, args.depth.unwrap_or(1))
+            .await?;
+        if observations.is_empty() {
+            return self.not_yet_dreamed(call, "neighbors").await;
+        }
+        Ok((
+            format!("{} dreamed neighbor observation(s)", observations.len()),
+            json!({
+                "tool": call.name,
+                "readOnly": true,
+                "observations": observations,
+                "trace": {
+                    "source": "gbrain_edges",
+                    "readOnly": true,
+                    "fallback": false,
+                    "asOf": args.as_of,
+                }
+            }),
+        ))
+    }
+
+    async fn find_paths(&self, call: &ToolCall) -> anyhow::Result<(String, Value)> {
+        let args: FindPathsArgs = parse(call)?;
+        let observations = self
+            .store
+            .find_dream_paths(
+                &args.source_node_id,
+                &args.target_node_id,
+                &args.relation_filter,
+                args.budget.unwrap_or(20),
+            )
+            .await?;
+        if observations.is_empty() {
+            return self.not_yet_dreamed(call, "paths").await;
+        }
+        Ok((
+            format!("{} dreamed path observation(s)", observations.len()),
+            json!({
+                "tool": call.name,
+                "readOnly": true,
+                "observations": observations,
+                "trace": {
+                    "source": "gbrain_edges",
+                    "readOnly": true,
+                    "fallback": false,
+                    "asOf": args.as_of,
+                    "confidenceFilter": args.confidence_filter,
+                }
+            }),
+        ))
+    }
+
+    async fn explain_node(&self, call: &ToolCall) -> anyhow::Result<(String, Value)> {
+        let args: ExplainNodeArgs = parse(call)?;
+        let Some(observation) = self.store.explain_dream_node(&args.node_id).await? else {
+            return self.not_yet_dreamed(call, "node").await;
+        };
+        Ok((
+            "1 dreamed node explanation".to_string(),
+            json!({
+                "tool": call.name,
+                "readOnly": true,
+                "observations": [observation],
+                "trace": {
+                    "source": "gbrain_nodes",
+                    "readOnly": true,
+                    "fallback": false,
+                    "includeSources": args.include_sources,
+                    "includeAliases": args.include_aliases,
+                    "includeCommunity": args.include_community,
+                }
+            }),
+        ))
+    }
+
+    async fn get_community(&self, call: &ToolCall) -> anyhow::Result<(String, Value)> {
+        let args: GetCommunityArgs = parse(call)?;
+        let Some(observation) = self
+            .store
+            .dream_node_community(
+                args.node_id.as_deref(),
+                args.community_id.as_deref(),
+                args.include_members.unwrap_or(true),
+            )
+            .await?
+        else {
+            return self.not_yet_dreamed(call, "community").await;
+        };
+        Ok((
+            "1 dreamed community observation".to_string(),
+            json!({
+                "tool": call.name,
+                "readOnly": true,
+                "observations": [observation],
+                "trace": {
+                    "source": "gbrain_communities",
+                    "readOnly": true,
+                    "fallback": false,
+                    "includeHubs": args.include_hubs,
+                }
             }),
         ))
     }
@@ -601,6 +738,8 @@ impl GbrainTool {
                 "citedEvidenceIds": args.cited_evidence_ids,
                 "confidence": args.confidence,
                 "openQuestions": args.open_questions,
+                "claims": args.claims,
+                "rejectedClaims": args.rejected_claims,
             }),
         ))
     }
@@ -894,6 +1033,58 @@ struct FindStartNodesArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ExpandNeighborsArgs {
+    node_id: String,
+    #[serde(default)]
+    edge_kinds: Vec<String>,
+    #[serde(default)]
+    depth: Option<usize>,
+    #[serde(default)]
+    as_of: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FindPathsArgs {
+    source_node_id: String,
+    target_node_id: String,
+    #[serde(default)]
+    relation_filter: Vec<String>,
+    #[serde(default)]
+    confidence_filter: Vec<String>,
+    #[serde(default)]
+    as_of: Option<String>,
+    #[serde(default)]
+    budget: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExplainNodeArgs {
+    node_id: String,
+    #[serde(default)]
+    include_sources: Option<bool>,
+    #[serde(default)]
+    include_aliases: Option<bool>,
+    #[serde(default)]
+    include_community: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetCommunityArgs {
+    #[serde(default)]
+    node_id: Option<String>,
+    #[serde(default)]
+    community_id: Option<String>,
+    #[serde(default)]
+    include_members: Option<bool>,
+    #[serde(default)]
+    include_hubs: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RetrievalNoteArgs {
     note: String,
     #[serde(default)]
@@ -912,6 +1103,10 @@ struct RespondToQueryArgs {
     confidence: Option<String>,
     #[serde(default)]
     open_questions: Vec<String>,
+    #[serde(default)]
+    claims: Vec<Value>,
+    #[serde(default)]
+    rejected_claims: Vec<Value>,
 }
 
 // --------------------------------------------------------------------------- //
@@ -1065,9 +1260,9 @@ fn schema(op: Op) -> Value {
         Op::Import => json!({
             "type": "object",
             "properties": {
-                "input": { "type": "string", "description": "Local JSONL file path. Use payload when passing inline JSONL." },
+                "input": { "type": "string", "description": "Local JSONL file path or Markdown corpus directory. Use payload when passing inline JSONL." },
                 "payload": { "type": "string", "description": "Inline JSONL payload supplied by the caller." },
-                "format": { "type": "string", "enum": ["jsonl"], "default": "jsonl" },
+                "format": { "type": "string", "enum": ["jsonl", "directory", "markdown", "markdown_dir", "corpus"], "default": "jsonl" },
                 "scope": scope_schema(),
                 "source": { "type": "string" },
                 "dedupe": { "type": "string", "enum": ["source_id", "content_hash", "both"], "default": "both" },
@@ -1195,7 +1390,9 @@ fn schema(op: Op) -> Value {
                 "message": { "type": "string", "description": "Free-form final answer. Cite evidence ids naturally when useful." },
                 "citedEvidenceIds": { "type": "array", "items": { "type": "string" } },
                 "confidence": { "type": "string", "enum": ["high", "medium", "low", "unsupported"] },
-                "openQuestions": { "type": "array", "items": { "type": "string" } }
+                "openQuestions": { "type": "array", "items": { "type": "string" } },
+                "claims": { "type": "array", "items": { "type": "object" }, "description": "Optional accepted claim ledger objects with support ids, temporal scope, and quote spans." },
+                "rejectedClaims": { "type": "array", "items": { "type": "object" }, "description": "Optional rejected claim ledger objects with rejection reasons." }
             },
             "required": ["message"],
             "additionalProperties": false

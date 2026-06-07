@@ -1002,7 +1002,7 @@ async fn steer_turn_is_included_in_next_provider_request() {
 }
 
 #[tokio::test]
-async fn runtime_advertises_apply_patch_only_for_patch_models() {
+async fn runtime_advertises_apply_patch_for_default_edit_models() {
     let engine = Arc::new(ToolLoopEngine {
         requests: Mutex::new(Vec::new()),
         tool_rounds: 0,
@@ -1067,6 +1067,57 @@ async fn runtime_advertises_apply_patch_only_for_patch_models() {
         assert!(!names.contains(&excluded.to_string()), "{names:?}");
     }
     assert!(names.contains(&"read_file".to_string()), "{names:?}");
+}
+
+#[tokio::test]
+async fn runtime_keeps_apply_patch_for_edit_profile_models() {
+    let engine = Arc::new(ToolLoopEngine {
+        requests: Mutex::new(Vec::new()),
+        tool_rounds: 0,
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.tool_contributor(Arc::new(EditSurfaceContributor));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "edit-model".to_string(),
+                model_edit_tools: std::collections::HashMap::from([(
+                    "edit-model".to_string(),
+                    "edit".to_string(),
+                )]),
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_edit_tools".to_string(),
+            message: "edit please".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            reasoning_override: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
+            instructions: default_instructions(),
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+
+    wait_for_completed(&mut events, "thread_edit_tools").await;
+
+    let requests = engine.requests.lock().unwrap();
+    let names = request_tool_names(&requests[0]);
+    for included in ["apply_patch", "write_file", "edit", "multi_edit", "read_file"] {
+        assert!(names.contains(&included.to_string()), "{names:?}");
+    }
 }
 
 #[tokio::test]

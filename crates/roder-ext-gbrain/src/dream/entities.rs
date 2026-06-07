@@ -305,7 +305,7 @@ fn detect_merge_candidate(
     let nickname_match = left.kind == EntityKind::Person && left_name.matches_alias(&right_name);
     let shared_relationships = shared_relationship_keys(left, right);
 
-    if !same_name && !(nickname_match && !shared_relationships.is_empty()) {
+    if !(same_name || nickname_match && !shared_relationships.is_empty()) {
         return None;
     }
 

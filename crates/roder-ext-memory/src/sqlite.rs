@@ -183,7 +183,7 @@ impl SqliteMemoryStore {
         }
         Some(
             self.embedder
-                .embed(&query.text, query.model.as_deref())
+                .embed_query(&query.text, query.model.as_deref())
                 .await,
         )
     }
@@ -196,7 +196,7 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn put(&self, record: MemoryRecord) -> anyhow::Result<MemoryId> {
-        let embedding = self.embedder.embed(&record.text, None).await;
+        let embedding = self.embedder.embed_document(&record.text, None).await;
         self.put_blocking(record, embedding)
     }
 

@@ -1,0 +1,205 @@
+{
+  "generated_at": "2026-06-07",
+  "source_results_root": "/Users/pz/w/OrgMemBench/results",
+  "live_provider_calls": false,
+  "source_files_inspected": [
+    {
+      "path": "crates/roder-ext-gbrain/src/infer.rs",
+      "finding": "EngineReasoner::complete builds AgentInferenceRequest with tools: Vec::new() and tool_choice: ToolChoice::None."
+    },
+    {
+      "path": "crates/roder-ext-gbrain/src/agent/retriever.rs",
+      "finding": "AgenticRetriever is a read-only provider-style loop foundation driven by ToolPlanner/FakeToolPlanner, not a live provider-native tool bridge."
+    }
+  ],
+  "trace_shape_facts": {
+    "concise_runs": {
+      "llm_calls_set": [2],
+      "subquery_count_set": [0],
+      "result_paths": [
+        "results/bitemporal-gbrain/helix-small.json",
+        "results/bitemporal-gbrain/helix-medium.json"
+      ]
+    },
+    "strict_or_thorough_runs": {
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "result_paths": [
+        "results/bitemporal-gbrain-gpt55-medium-google-emb2-small-p6/helix-small.json",
+        "results/bitemporal-gbrain-gpt55-strict/helix-medium.json",
+        "results/bitemporal-gbrain-gpt55-strict-high/helix-medium.json",
+        "results/bitemporal-gbrain-phase84-small-p6-high/helix-small.json",
+        "results/bitemporal-gbrain-sonnet-medium-google-emb2-small-p8/helix-small.json",
+        "results/bitemporal-gbrain-sonnet-medium-zeroentropy-predream-small-p8-obsidian/helix-small.json",
+        "results/bitemporal-gbrain-sonnet-medium-zeroentropy-small-p8-obsidian/helix-small.json"
+      ]
+    },
+    "missing_agentic_trace_fields": [
+      "trace.provider_turns",
+      "trace.tool_calls",
+      "trace.tool_observations",
+      "trace.retrieval_notes",
+      "trace.responded_via",
+      "trace.final_confidence",
+      "trace.open_questions",
+      "trace.stop_reason",
+      "memory_snapshot_ids",
+      "quote_span_coverage",
+      "citation_precision"
+    ]
+  },
+  "runs": [
+    {
+      "result_path": "results/bitemporal-gbrain/helix-small.json",
+      "accuracy_mean": 0.7265,
+      "faithfulness_rate": 0.1818,
+      "query_count": 11,
+      "failure_modes": {"hallucination": 7, "none": 2, "wrong_synthesis": 2},
+      "llm_calls_set": [2],
+      "subquery_count_set": [0],
+      "max_evidence_pool": 27,
+      "max_verified_claims": 0,
+      "max_dropped_claims": 0
+    },
+    {
+      "result_path": "results/bitemporal-gbrain/helix-medium.json",
+      "accuracy_mean": 0.6608,
+      "faithfulness_rate": 0.3699,
+      "query_count": 73,
+      "failure_modes": {"hallucination": 32, "none": 15, "retrieval_miss": 10, "wrong_abstain": 1, "wrong_synthesis": 15},
+      "llm_calls_set": [2],
+      "subquery_count_set": [0],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 0,
+      "max_dropped_claims": 0
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-opus/helix-small.json",
+      "accuracy_mean": 0.7833,
+      "faithfulness_rate": 0.1818,
+      "query_count": 11,
+      "failure_modes": {"hallucination": 9, "none": 1, "retrieval_miss": 1},
+      "llm_calls_set": [],
+      "subquery_count_set": [],
+      "max_evidence_pool": 10,
+      "max_verified_claims": 0,
+      "max_dropped_claims": 0
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-opus/helix-medium.json",
+      "accuracy_mean": 0.5805,
+      "faithfulness_rate": 0.1507,
+      "query_count": 73,
+      "failure_modes": {"hallucination": 53, "none": 9, "retrieval_miss": 2, "wrong_synthesis": 9},
+      "llm_calls_set": [],
+      "subquery_count_set": [],
+      "max_evidence_pool": 10,
+      "max_verified_claims": 0,
+      "max_dropped_claims": 0
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-gpt55-strict/helix-medium.json",
+      "accuracy_mean": 0.3594,
+      "faithfulness_rate": 0.5205,
+      "query_count": 73,
+      "failure_modes": {"hallucination": 26, "retrieval_miss": 28, "wrong_abstain": 16, "wrong_synthesis": 3},
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 13,
+      "max_dropped_claims": 6
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-gpt55-strict-high/helix-medium.json",
+      "accuracy_mean": 0.4009,
+      "faithfulness_rate": 0.4932,
+      "query_count": 73,
+      "failure_modes": {"hallucination": 24, "none": 3, "retrieval_miss": 31, "wrong_abstain": 9, "wrong_synthesis": 6},
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 16,
+      "max_dropped_claims": 6
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-gpt55-medium-google-emb2-small-p6/helix-small.json",
+      "accuracy_mean": 0.553,
+      "faithfulness_rate": 0.7273,
+      "query_count": 11,
+      "failure_modes": {"hallucination": 3, "none": 1, "retrieval_miss": 6, "wrong_abstain": 1},
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 12,
+      "max_dropped_claims": 6
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-sonnet-medium-google-emb2-small-p8/helix-small.json",
+      "accuracy_mean": 0.603,
+      "faithfulness_rate": 0.0909,
+      "query_count": 11,
+      "failure_modes": {"hallucination": 8, "none": 1, "wrong_synthesis": 2},
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 12,
+      "max_dropped_claims": 6
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-phase84-small-p6-high/helix-small.json",
+      "accuracy_mean": 0.4636,
+      "faithfulness_rate": 0.2727,
+      "query_count": 11,
+      "failure_modes": {"hallucination": 3, "none": 1, "retrieval_miss": 6, "wrong_synthesis": 1},
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 15,
+      "max_dropped_claims": 6
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-sonnet-medium-zeroentropy-small-p8-obsidian/helix-small.json",
+      "accuracy_mean": 0.6,
+      "faithfulness_rate": 0.1818,
+      "query_count": 11,
+      "failure_modes": {"hallucination": 9, "retrieval_miss": 1, "wrong_synthesis": 1},
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 11,
+      "max_dropped_claims": 6
+    },
+    {
+      "result_path": "results/bitemporal-gbrain-sonnet-medium-zeroentropy-predream-small-p8-obsidian/helix-small.json",
+      "accuracy_mean": 0.6341,
+      "faithfulness_rate": 0.2727,
+      "query_count": 11,
+      "failure_modes": {"hallucination": 8, "none": 1, "retrieval_miss": 1, "wrong_abstain": 1},
+      "llm_calls_set": [4],
+      "subquery_count_set": [3],
+      "max_evidence_pool": 40,
+      "max_verified_claims": 15,
+      "max_dropped_claims": 6
+    }
+  ],
+  "representative_hallucination_despite_verified_claims": [
+    {"result_path": "results/bitemporal-gbrain-gpt55-strict/helix-medium.json", "question_id": "Q-0001", "failure_mode": "hallucination", "score": 0.1875, "faithful": false, "verified_claims": 8, "dropped_claims": 3, "evidence_pool": 31, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-gpt55-strict/helix-medium.json", "question_id": "Q-0014", "failure_mode": "hallucination", "score": 0.225, "faithful": false, "verified_claims": 5, "dropped_claims": 5, "evidence_pool": 39, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-gpt55-strict/helix-medium.json", "question_id": "Q-0015", "failure_mode": "hallucination", "score": 0.0625, "faithful": false, "verified_claims": 7, "dropped_claims": 2, "evidence_pool": 37, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-gpt55-strict/helix-medium.json", "question_id": "Q-0020", "failure_mode": "hallucination", "score": 0.5, "faithful": false, "verified_claims": 6, "dropped_claims": 1, "evidence_pool": 30, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-gpt55-strict/helix-medium.json", "question_id": "Q-0028", "failure_mode": "hallucination", "score": 0.875, "faithful": false, "verified_claims": 9, "dropped_claims": 0, "evidence_pool": 29, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-sonnet-medium-google-emb2-small-p8/helix-small.json", "question_id": "Q-0004", "failure_mode": "hallucination", "score": 0.7833, "faithful": false, "verified_claims": 9, "dropped_claims": 2, "evidence_pool": 40, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-sonnet-medium-google-emb2-small-p8/helix-small.json", "question_id": "Q-0005", "failure_mode": "hallucination", "score": 0.4667, "faithful": false, "verified_claims": 10, "dropped_claims": 2, "evidence_pool": 37, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-sonnet-medium-google-emb2-small-p8/helix-small.json", "question_id": "Q-0010", "failure_mode": "hallucination", "score": 0.3, "faithful": false, "verified_claims": 12, "dropped_claims": 4, "evidence_pool": 28, "llm_calls": 4, "subqueries": 3}
+  ],
+  "representative_retrieval_miss_or_wrong_abstain_large_pool": [
+    {"result_path": "results/bitemporal-gbrain/helix-medium.json", "question_id": "Q-0002", "failure_mode": "wrong_abstain", "score": 0.0, "faithful": true, "verified_claims": 0, "dropped_claims": 0, "evidence_pool": 21, "llm_calls": 2, "subqueries": 0},
+    {"result_path": "results/bitemporal-gbrain/helix-medium.json", "question_id": "Q-0007", "failure_mode": "retrieval_miss", "score": 0.8625, "faithful": true, "verified_claims": 0, "dropped_claims": 0, "evidence_pool": 21, "llm_calls": 2, "subqueries": 0},
+    {"result_path": "results/bitemporal-gbrain/helix-medium.json", "question_id": "Q-0029", "failure_mode": "retrieval_miss", "score": 0.875, "faithful": true, "verified_claims": 0, "dropped_claims": 0, "evidence_pool": 20, "llm_calls": 2, "subqueries": 0},
+    {"result_path": "results/bitemporal-gbrain/helix-medium.json", "question_id": "Q-0065", "failure_mode": "retrieval_miss", "score": 0.4333, "faithful": true, "verified_claims": 0, "dropped_claims": 0, "evidence_pool": 21, "llm_calls": 2, "subqueries": 0},
+    {"result_path": "results/bitemporal-gbrain-gpt55-medium-google-emb2-small-p6/helix-small.json", "question_id": "Q-0001", "failure_mode": "retrieval_miss", "score": 0.675, "faithful": true, "verified_claims": 7, "dropped_claims": 1, "evidence_pool": 27, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-gpt55-medium-google-emb2-small-p6/helix-small.json", "question_id": "Q-0004", "failure_mode": "retrieval_miss", "score": 0.7333, "faithful": true, "verified_claims": 12, "dropped_claims": 4, "evidence_pool": 40, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-gpt55-medium-google-emb2-small-p6/helix-small.json", "question_id": "Q-0010", "failure_mode": "wrong_abstain", "score": 0.0, "faithful": true, "verified_claims": 0, "dropped_claims": 6, "evidence_pool": 28, "llm_calls": 4, "subqueries": 3},
+    {"result_path": "results/bitemporal-gbrain-gpt55-strict/helix-medium.json", "question_id": "Q-0007", "failure_mode": "retrieval_miss", "score": 0.3375, "faithful": true, "verified_claims": 4, "dropped_claims": 4, "evidence_pool": 39, "llm_calls": 4, "subqueries": 3}
+  ]
+}

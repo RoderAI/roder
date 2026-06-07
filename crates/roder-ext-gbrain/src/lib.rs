@@ -49,9 +49,12 @@ pub use dream::{
 };
 pub use embed::Embedder;
 pub use import::{DedupeMode, ImportBatchInput, ImportBatchParams, ImportBatchResult};
-pub use infer::EngineReasoner;
+pub use infer::{
+    AgenticToolAnswer, AgenticToolRunnerConfig, AgenticToolTrace, EngineAgenticToolRunner,
+    EngineReasoner,
+};
 pub use model::{AsOf, FactStatus, TemporalFact};
-pub use reason::{Reasoner, build_reasoner};
+pub use reason::{BuiltInferenceEngine, Reasoner, build_inference_engine, build_reasoner};
 pub use store::{
     CaptureInput, ConsolidateStats, DreamParams, DreamRunReport, GbrainStore, GbrainStoreFactory,
     RecallParams, RecallResult,
