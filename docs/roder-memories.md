@@ -19,8 +19,13 @@ roder memory update <id> "new text"
 roder memory delete <id>
 roder memory providers list
 roder memory providers set openai --model text-embedding-3-large
+roder memory providers set google --model gemini-embedding-2
 roder memory reembed --scope project --provider openai --model text-embedding-3-large
+roder memory reembed --scope project --provider google --model gemini-embedding-2
 ```
+
+`roder memory reembed` is currently a queue placeholder. New saves, updates,
+queries, and recall previews use the selected provider/model immediately.
 
 ## App-Server
 
@@ -40,10 +45,18 @@ Memory events are streamed as `memory/saved`, `memory/updated`, `memory/deleted`
 
 ## Embeddings
 
-The provider-neutral embedding contract lives in `roder-api`. `roder-ext-openai-embeddings` registers provider id `openai` and defaults to `text-embedding-3-large`. Live OpenAI checks are gated behind:
+The provider-neutral embedding contract lives in `roder-api`. First-party remote providers are:
+
+- `openai`: provided by `roder-ext-openai-embeddings`, default model `text-embedding-3-large`.
+- `google`: provided by `roder-ext-google-embeddings`, default model `gemini-embedding-2`.
+
+Google Gemini Embedding 2 uses the Gemini API-key `embedContent` endpoint. Roder resolves the key from `RODER_GOOGLE_EMBEDDINGS_API_KEY`, `GEMINI_API_TOKEN`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_API_KEY`, or `GOOGLE_AI_API_KEY`, in that order. Text retrieval prompts can use Google's documented instruction format, for example `task: search result | query: ...` for queries and `title: ... | text: ...` for documents.
+
+Live checks are gated behind:
 
 ```sh
 RODER_LIVE_EMBEDDINGS=1 cargo test -p roder-ext-openai-embeddings live -- --ignored
+RODER_GOOGLE_EMBEDDINGS_LIVE=1 cargo test -p roder-ext-google-embeddings live -- --ignored
 ```
 
 Normal tests use deterministic fake vectors and do not require network or secrets.
@@ -64,6 +77,13 @@ enabled = true
 api_key_env = "OPENAI_API_KEY"
 model = "text-embedding-3-large"
 
+[embedding_providers.google]
+enabled = true
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-embedding-2"
+endpoint = "https://generativelanguage.googleapis.com/v1beta"
+dimensions = 3072
+
 [embedding_providers.local]
 enabled = true
 command = ["local-embedder", "--json"]
@@ -78,5 +98,4 @@ When `memories.jsonl` exists beside the SQLite database, `roder-ext-memory` impo
 
 ## Privacy
 
-Project memories and global memories are local by default. Selecting OpenAI embeddings sends memory text to the OpenAI embeddings API. Use a local command provider or another embedding extension for fully local embedding.
-
+Project memories and global memories are local by default. Selecting OpenAI embeddings sends memory text to the OpenAI embeddings API. Selecting Google embeddings sends memory text to the Gemini API. Use a local command provider or another local embedding extension for fully local embedding.

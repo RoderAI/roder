@@ -4532,6 +4532,7 @@ impl AppServer {
         &self,
         params: MemoryQueryParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let selected_provider = selected_memory_provider();
         let results = self
             .memory_store()?
             .search(MemoryQuery {
@@ -4539,8 +4540,8 @@ impl AppServer {
                 text: params.text.clone(),
                 limit: params.limit.unwrap_or(10),
                 include_global: params.include_global,
-                provider_id: None,
-                model: None,
+                provider_id: Some(selected_provider.provider_id),
+                model: Some(selected_provider.model),
             })
             .await
             .map_err(internal_error)?;
@@ -4597,6 +4598,7 @@ impl AppServer {
         &self,
         params: MemoryRecallPreviewParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let selected_provider = selected_memory_provider();
         let results = self
             .memory_store()?
             .search(MemoryQuery {
@@ -4604,8 +4606,8 @@ impl AppServer {
                 text: params.text,
                 limit: params.limit.unwrap_or(5),
                 include_global: params.include_global,
-                provider_id: None,
-                model: None,
+                provider_id: Some(selected_provider.provider_id),
+                model: Some(selected_provider.model),
             })
             .await
             .map_err(internal_error)?;

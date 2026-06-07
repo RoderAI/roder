@@ -544,6 +544,7 @@ pub struct EmbeddingProviderConfig {
     pub enabled: bool,
     pub model: Option<String>,
     pub api_key_env: Option<String>,
+    pub endpoint: Option<String>,
     pub command: Option<Vec<String>>,
     pub dimensions: Option<usize>,
 }
@@ -554,6 +555,7 @@ impl Default for EmbeddingProviderConfig {
             enabled: true,
             model: None,
             api_key_env: None,
+            endpoint: None,
             command: None,
             dimensions: None,
         }
@@ -1535,6 +1537,13 @@ mod tests {
             enabled = true
             command = ["embedder", "--json"]
             dimensions = 384
+
+            [embedding_providers.google]
+            enabled = true
+            api_key_env = "GEMINI_API_KEY"
+            endpoint = "https://generativelanguage.googleapis.com/v1beta"
+            model = "gemini-embedding-2"
+            dimensions = 3072
             "#,
         )
         .unwrap();
@@ -1553,6 +1562,14 @@ mod tests {
                 .unwrap()[0],
             "embedder"
         );
+        let google = &config.embedding_providers["google"];
+        assert_eq!(google.api_key_env.as_deref(), Some("GEMINI_API_KEY"));
+        assert_eq!(
+            google.endpoint.as_deref(),
+            Some("https://generativelanguage.googleapis.com/v1beta")
+        );
+        assert_eq!(google.model.as_deref(), Some("gemini-embedding-2"));
+        assert_eq!(google.dimensions, Some(3072));
     }
 
     #[test]

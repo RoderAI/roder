@@ -14,7 +14,8 @@
 //!   version                                      -> {"version":"...","commit":"..."}
 //!
 //! Storage path: --db <path> or $GBRAIN_DB (default: $TMPDIR/roder-gbrain.sqlite3).
-//! Embeddings: OpenAI when $OPENAI_API_KEY is set, else deterministic local.
+//! Embeddings: selected by $RODER_MEMORY_EMBEDDING_PROVIDER (`google` or
+//! `openai`), else OpenAI when $OPENAI_API_KEY is set, else deterministic local.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -31,6 +32,7 @@ use roder_ext_gbrain::render::render_recall;
 use roder_ext_gbrain::store::{CaptureInput, DreamParams, GbrainStore, RecallParams};
 use roder_ext_gbrain::tools::{fact_json, parse_scope};
 use roder_ext_gbrain::{AgentBudget, DecisionAgent, Embedder, build_reasoner};
+use roder_ext_google_embeddings::{GoogleEmbeddingProvider, GoogleEmbeddingsConfig};
 use roder_ext_openai_embeddings::OpenAiEmbeddingProvider;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -130,11 +132,27 @@ fn open_store(flags: &HashMap<String, String>) -> anyhow::Result<GbrainStore> {
         .map(PathBuf::from)
         .or_else(|| std::env::var("GBRAIN_DB").ok().map(PathBuf::from))
         .unwrap_or_else(|| std::env::temp_dir().join("roder-gbrain.sqlite3"));
-    let provider: Option<Arc<dyn EmbeddingProvider>> = std::env::var("OPENAI_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-        .map(|key| Arc::new(OpenAiEmbeddingProvider::new(Some(key))) as Arc<dyn EmbeddingProvider>);
+    let provider = embedding_provider_from_env();
     GbrainStore::open(db, Embedder::new(provider))
+}
+
+fn embedding_provider_from_env() -> Option<Arc<dyn EmbeddingProvider>> {
+    match std::env::var("RODER_MEMORY_EMBEDDING_PROVIDER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .as_deref()
+    {
+        Some("google") => Some(Arc::new(GoogleEmbeddingProvider::new(
+            GoogleEmbeddingsConfig::from_env(),
+        )) as Arc<dyn EmbeddingProvider>),
+        Some("openai") | None => std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+            .map(|key| {
+                Arc::new(OpenAiEmbeddingProvider::new(Some(key))) as Arc<dyn EmbeddingProvider>
+            }),
+        Some(_) => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]

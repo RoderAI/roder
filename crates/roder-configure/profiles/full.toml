@@ -12,6 +12,7 @@ extensions = [
   "disk-context",
   "firecrawl-search",
   "gemini",
+  "google-embeddings",
   "jsonl-thread-store",
   "memory",
   "notify-desktop",

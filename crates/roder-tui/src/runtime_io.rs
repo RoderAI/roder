@@ -322,8 +322,7 @@ mod tests {
         // Required so terminals that fully implement the Kitty protocol (Ghostty) send
         // the shifted codepoint, letting crossterm emit uppercase/shifted symbols.
         assert!(
-            keyboard_enhancement_flags()
-                .contains(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS)
+            keyboard_enhancement_flags().contains(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS)
         );
     }
 

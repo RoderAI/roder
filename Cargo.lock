@@ -3194,6 +3194,7 @@ dependencies = [
  "roder-core",
  "roder-dynamic-workflows",
  "roder-evals",
+ "roder-ext-google-embeddings",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-openai-embeddings",
@@ -3210,7 +3211,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "sqlite-vec",
  "time",
  "tokio",
  "tokio-tungstenite",
@@ -3285,7 +3285,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "sqlite-vec",
  "time",
 ]
 
@@ -3331,7 +3330,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.11.0",
- "sqlite-vec",
  "time",
  "toml",
  "uuid",
@@ -3399,7 +3397,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "sqlite-vec",
  "time",
  "tokio",
 ]
@@ -3465,12 +3462,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures",
+ "reqwest",
  "roder-api",
  "semver",
  "serde",
  "serde_json",
  "time",
  "tokio",
+ "tokio-tungstenite",
  "uuid",
 ]
 
@@ -3543,6 +3543,7 @@ dependencies = [
  "futures",
  "roder-api",
  "roder-ext-anthropic",
+ "roder-ext-google-embeddings",
  "roder-ext-openai-embeddings",
  "roder-ext-openai-responses",
  "rusqlite",
@@ -3553,6 +3554,7 @@ dependencies = [
  "sqlite-vec",
  "time",
  "tokio",
+ "unicode-normalization",
  "uuid",
 ]
 
@@ -3579,6 +3581,20 @@ dependencies = [
  "async-trait",
  "roder-api",
  "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-google-embeddings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -3625,7 +3641,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "sqlite-vec",
  "time",
  "tokio",
  "uuid",
@@ -4133,6 +4148,7 @@ dependencies = [
  "roder-ext-gbrain",
  "roder-ext-gemini",
  "roder-ext-git",
+ "roder-ext-google-embeddings",
  "roder-ext-google-speech",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",

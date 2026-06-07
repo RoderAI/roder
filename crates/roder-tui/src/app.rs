@@ -17,6 +17,7 @@ mod plan_panel;
 mod plan_review;
 mod plugin_browser;
 mod processes;
+mod progress;
 #[allow(dead_code)]
 mod remote;
 mod roadmap_workspace;
@@ -32,7 +33,6 @@ mod subagent_trace_tests;
 #[allow(dead_code)]
 mod team_panes;
 mod team_ui;
-mod progress;
 mod thread_resume;
 mod tool_detail;
 mod tool_timeline;
@@ -115,6 +115,7 @@ use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
 use plugin_browser::PluginBrowserState;
+use progress::{ProgressReporter, TerminalProgress};
 use remote::{RemotePanelController, render_remote_panel_lines};
 use roadmap_workspace::{RoadmapWorkspaceMeta, render_roadmap_workspace};
 use roder_roadmap::ThreadAttachment;
@@ -126,7 +127,6 @@ use tool_timeline::{
     TimelineFocus, TimelineSettings, TimelineState, ToolTimelineEntry, TurnCompletedSummary,
     fallback_entry,
 };
-use progress::{ProgressReporter, TerminalProgress};
 use turn_timer::TurnTimer;
 use voice::{VoiceConfig, VoiceMode, VoiceState};
 

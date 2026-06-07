@@ -45,6 +45,7 @@ use roder_core::{
     CreateThreadRequest, PendingPlanExit, Runtime, RuntimeConfig, StartTurnRequest,
     default_instructions, fake_provider::FakeInferenceEngine, media_artifacts::MediaArtifactStore,
 };
+use roder_ext_google_embeddings::GoogleEmbeddingsExtension;
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
@@ -2682,6 +2683,9 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
     builder
         .install(OpenAiEmbeddingsExtension::with_api_key("test-key"))
         .unwrap();
+    builder
+        .install(GoogleEmbeddingsExtension::with_api_key("test-key"))
+        .unwrap();
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
@@ -2767,6 +2771,13 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
             .providers
             .iter()
             .any(|provider| provider.id == "openai")
+    );
+    assert!(
+        providers
+            .providers
+            .iter()
+            .any(|provider| provider.id == "google"
+                && provider.default_model == "gemini-embedding-2")
     );
 
     let preview: MemoryRecallPreviewResult = request(

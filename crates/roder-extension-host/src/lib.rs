@@ -9,6 +9,7 @@ use roder_api::catalog::{
     PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
     PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
+use roder_api::embeddings::EmbeddingProvider;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -21,11 +22,15 @@ use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_chrome::ChromeExtension;
 use roder_ext_claude_code::{ClaudeCodeConfig, ClaudeCodeExtension};
 use roder_ext_cursor::{CursorConfig, CursorExtension};
+use roder_ext_gbrain::GbrainExtension;
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
+use roder_ext_google_embeddings::{
+    DEFAULT_ENDPOINT as GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT, GoogleEmbeddingProvider,
+    GoogleEmbeddingsConfig, GoogleEmbeddingsExtension,
+};
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
-use roder_ext_gbrain::GbrainExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
@@ -216,7 +221,24 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         ..GoogleSpeechConfig::default()
     }))?;
 
-    if let Some(openai_key) = config.openai_api_key {
+    let openai_embedding_key = config
+        .openai_api_key
+        .clone()
+        .or_else(|| env_nonempty("OPENAI_API_KEY"));
+    let google_embeddings_config = google_embeddings_config(config.gemini_api_key.clone());
+    let google_embedding_provider = Arc::new(GoogleEmbeddingProvider::new(
+        google_embeddings_config.clone(),
+    )) as Arc<dyn EmbeddingProvider>;
+    let openai_embedding_provider = openai_embedding_key
+        .clone()
+        .map(|key| Arc::new(OpenAiEmbeddingProvider::new(Some(key))) as Arc<dyn EmbeddingProvider>);
+    let memory_embedding_provider = match selected_memory_embedding_provider_id().as_deref() {
+        Some("google") => Some(google_embedding_provider.clone()),
+        Some("openai") | None => openai_embedding_provider.clone(),
+        Some(_) => None,
+    };
+
+    if let Some(openai_key) = config.openai_api_key.clone() {
         builder.install(OpenAiResponsesExtension::new(openai_key))?;
     }
     if let Some(anthropic_key) = config.anthropic_api_key {
@@ -228,7 +250,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         setting_sources: config.claude_code_setting_sources,
         workspace: config.workspace.clone(),
     }))?;
-    if let Some(gemini_key) = config.gemini_api_key {
+    if let Some(gemini_key) = config.gemini_api_key.clone() {
         builder.install(GeminiExtension::new(gemini_key))?;
     }
     builder.install(XaiExtension::new(config.xai_api_key, config.xai_base_url))?;
@@ -347,22 +369,23 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             builder.install(PostgresSessionExtension::new(postgres))?;
         }
     }
-    builder.install(MemoryExtension::new(roder_home.join("memory")))?;
+    builder.install(
+        MemoryExtension::new(roder_home.join("memory"))
+            .with_embedding_provider(memory_embedding_provider.clone()),
+    )?;
     // Bi-temporal gbrain memory: registered AFTER MemoryExtension so the default
-    // sqlite-memory store stays primary (`memory_stores.first()`). Uses real
-    // OpenAI embeddings when a key is present, deterministic local otherwise.
-    let gbrain_embedder = std::env::var("OPENAI_API_KEY")
-        .ok()
-        .filter(|key| !key.trim().is_empty())
-        .map(|key| {
-            Arc::new(OpenAiEmbeddingProvider::new(Some(key)))
-                as Arc<dyn roder_api::embeddings::EmbeddingProvider>
-        });
+    // sqlite-memory store stays primary (`memory_stores.first()`). It shares the
+    // same selected embedding provider as the regular memory store.
     builder.install(GbrainExtension::new(
         roder_home.join("gbrain"),
-        gbrain_embedder,
+        memory_embedding_provider,
     ))?;
-    builder.install(OpenAiEmbeddingsExtension::from_env())?;
+    if let Some(key) = openai_embedding_key {
+        builder.install(OpenAiEmbeddingsExtension::with_api_key(key))?;
+    } else {
+        builder.install(OpenAiEmbeddingsExtension::from_env())?;
+    }
+    builder.install(GoogleEmbeddingsExtension::new(google_embeddings_config))?;
 
     builder.build()
 }
@@ -393,6 +416,43 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_XIAOMI_MIMO
             | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
     )
+}
+
+fn selected_memory_embedding_provider_id() -> Option<String> {
+    if let Some(provider) = env_nonempty("RODER_MEMORY_EMBEDDING_PROVIDER") {
+        return Some(provider);
+    }
+    roder_config::load_config()
+        .ok()
+        .and_then(|config| config.memories.unwrap_or_default().embedding_provider)
+        .filter(|provider| !provider.trim().is_empty())
+}
+
+fn google_embeddings_config(gemini_api_key: Option<String>) -> GoogleEmbeddingsConfig {
+    let config = roder_config::load_config().unwrap_or_default();
+    let provider_config = config.embedding_providers.get("google");
+    let api_key = env_nonempty("RODER_GOOGLE_EMBEDDINGS_API_KEY")
+        .or_else(|| {
+            provider_config
+                .and_then(|provider| provider.api_key_env.as_deref())
+                .and_then(env_nonempty)
+        })
+        .or(gemini_api_key)
+        .or_else(|| env_nonempty("GEMINI_API_TOKEN"))
+        .or_else(|| env_nonempty("GEMINI_API_KEY"))
+        .or_else(|| env_nonempty("GOOGLE_API_KEY"))
+        .or_else(|| env_nonempty("GOOGLE_GENAI_API_KEY"))
+        .or_else(|| env_nonempty("GOOGLE_AI_API_KEY"));
+    let endpoint = env_nonempty("RODER_GOOGLE_EMBEDDINGS_ENDPOINT")
+        .or_else(|| provider_config.and_then(|provider| provider.endpoint.clone()))
+        .unwrap_or_else(|| GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT.to_string());
+    GoogleEmbeddingsConfig { api_key, endpoint }
+}
+
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn roder_home_dir() -> anyhow::Result<PathBuf> {
@@ -767,6 +827,18 @@ mod tests {
 
         assert!(registry.speech_transcriber("openai-speech").is_some());
         assert!(registry.speech_transcriber("google-speech").is_some());
+    }
+
+    #[test]
+    fn default_registry_installs_google_embedding_provider_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .embedding_providers
+                .iter()
+                .any(|provider| provider.descriptor().id == "google")
+        );
     }
 
     #[test]
