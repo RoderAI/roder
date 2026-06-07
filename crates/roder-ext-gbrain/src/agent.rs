@@ -243,13 +243,29 @@ impl<R: Reasoner> DecisionAgent<R> {
         let answer = if evidence_empty {
             "The available records do not contain enough evidence to answer this.".to_string()
         } else {
-            let draft = self
-                .call(
-                    "synthesize",
-                    CONCISE_SYS,
-                    &concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref()),
-                )
-                .await?;
+            let synth_prompt = concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref());
+            // Self-consistency (opt-in, GBRAIN_SELF_CONSISTENCY=N>=2): synthesize N
+            // independent drafts and keep only facts a MAJORITY assert. Stochastic
+            // fabrications vary run-to-run so they drop out; stable grounded facts
+            // survive in every run, preserving coverage — a frontier-shifter the
+            // single-draft strip can't be.
+            let n_self = std::env::var("GBRAIN_SELF_CONSISTENCY")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|n| (2..=4).contains(n))
+                .unwrap_or(1);
+            let draft = if n_self >= 2 {
+                let mut drafts = Vec::with_capacity(n_self);
+                for i in 0..n_self {
+                    self.progress.step("synthesize", &format!("sample {}/{n_self}", i + 1));
+                    drafts.push(self.call("synthesize", CONCISE_SYS, &synth_prompt).await?);
+                }
+                self.progress.step("consensus", &format!("{n_self} samples"));
+                self.call("consensus", CONSENSUS_SYS, &consensus_prompt(question, &drafts))
+                    .await?
+            } else {
+                self.call("synthesize", CONCISE_SYS, &synth_prompt).await?
+            };
             // Free deterministic guard: drop slug-shaped cites not in the pool.
             let draft = strip_phantom_cites(&draft, &evidence);
             let idx = build_ground_index(&evidence);
@@ -322,13 +338,19 @@ impl<R: Reasoner> DecisionAgent<R> {
             contradictions,
             llm_calls: if evidence_empty {
                 0
-            } else if std::env::var("GBRAIN_FAITHFUL_VERIFY")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("on"))
-                .unwrap_or(false)
-            {
-                3
             } else {
-                2
+                let n_self = std::env::var("GBRAIN_SELF_CONSISTENCY")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|n| (2..=4).contains(n))
+                    .unwrap_or(1);
+                let synth = if n_self >= 2 { n_self + 1 } else { 1 }; // samples + consensus
+                let verify = usize::from(
+                    std::env::var("GBRAIN_FAITHFUL_VERIFY")
+                        .map(|v| v == "1" || v.eq_ignore_ascii_case("on"))
+                        .unwrap_or(false),
+                );
+                synth + 1 + verify // + strip
             },
             input_tokens: self.tokens_in.load(Ordering::Relaxed),
             output_tokens: self.tokens_out.load(Ordering::Relaxed),
@@ -695,6 +717,28 @@ beside the span; if that record does not contain the value, delete the value (it
 record) — do not move the [SLUG]. For 'OFF-CLUSTER records' in a walk-through answer, drop those records' \
 bullets unless their own text directly states the conclusion being justified. 6) Keep it relevant and output \
 ONLY the corrected answer text, no preamble or notes.";
+
+const CONSENSUS_SYS: &str = "You are given several INDEPENDENT answers to the SAME question, each written from \
+the SAME records. Produce ONE consolidated answer containing ONLY facts asserted by a MAJORITY of the inputs. \
+A specific (name, date, number, percentage, event, causal claim, attribution, quote) that appears in only ONE \
+input is unreliable — DROP it. Keep every fact the inputs agree on (preserve coverage), stay concise, and copy \
+[SLUG] citations exactly as they appear. NEVER add a fact, name, date, number, or [SLUG] not present in a \
+majority of the inputs; never invent a reconciliation. If the inputs broadly agree, return their shared \
+content; if they mostly disagree, return only the few facts they share. For 'as of <date>' / change questions \
+keep only changes a majority state. Output ONLY the consolidated answer, no preamble.";
+
+fn consensus_prompt(question: &str, drafts: &[String]) -> String {
+    let mut s = format!(
+        "Question: {question}\n\nYou are given {} independent answers from the same records. Keep ONLY what a \
+         MAJORITY agree on; drop anything in just one.\n",
+        drafts.len()
+    );
+    for (i, d) in drafts.iter().enumerate() {
+        s.push_str(&format!("\n--- ANSWER {} ---\n{}\n", i + 1, d));
+    }
+    s.push_str("\nReturn the consolidated answer.");
+    s
+}
 
 fn concise_prompt(
     question: &str,
