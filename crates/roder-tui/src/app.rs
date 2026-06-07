@@ -300,8 +300,8 @@ impl Theme {
                 mode_plan: Color::Indexed(75),
                 mode_bypass: Color::Indexed(196),
                 dialog: Color::Indexed(62),
-                dialog_bg: Color::Indexed(235),
-                dialog_shadow: Color::Indexed(232),
+                dialog_bg: Color::Reset,
+                dialog_shadow: Color::Reset,
                 dialog_key_bg: Color::Indexed(238),
                 selection_fg: Color::Reset,
                 selection_bg: Color::Indexed(212),
@@ -338,8 +338,8 @@ impl Theme {
             mode_plan: Color::Indexed(25),
             mode_bypass: Color::Indexed(160),
             dialog: Color::Indexed(62),
-            dialog_bg: Color::Indexed(255),
-            dialog_shadow: Color::Indexed(250),
+            dialog_bg: Color::Reset,
+            dialog_shadow: Color::Reset,
             dialog_key_bg: Color::Indexed(252),
             selection_fg: Color::Reset,
             selection_bg: Color::Indexed(198),
@@ -9599,6 +9599,17 @@ mod tests {
             let theme = Theme::for_dark_background(dark);
             assert_eq!(theme.text, Color::Reset);
             assert_eq!(theme.text_strong, Color::Reset);
+        }
+    }
+
+    #[test]
+    fn baseline_dialog_surface_uses_terminal_background() {
+        for dark in [true, false] {
+            let theme = Theme::for_dark_background(dark);
+            assert_eq!(theme.body_background, None);
+            assert_eq!(theme.dialog_bg, Color::Reset);
+            assert_eq!(theme.dialog_shadow, Color::Reset);
+            assert_eq!(theme.dialog_surface().bg, Some(Color::Reset));
         }
     }
 
