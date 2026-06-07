@@ -13,7 +13,7 @@ use time::OffsetDateTime;
 use crate::files::{parse, result};
 use crate::workspace::Workspace;
 
-const DESIGN_PATH: &str = ".roderdesign";
+const DESIGN_DIR_NAME: &str = "design";
 const DESIGN_VERSION: &str = "0.1";
 
 pub(crate) fn register(registry: &mut ToolRegistry, workspace: Workspace) -> anyhow::Result<()> {
@@ -161,7 +161,7 @@ impl ToolExecutor for DesignReadTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "design_read".to_string(),
-            description: "Read or create the workspace .roderdesign document for the AI-controlled Design canvas.".to_string(),
+            description: "Read or create the project-specific ~/.roder/design/<project>.roderdesign document for the AI-controlled Design canvas.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {},
@@ -185,7 +185,7 @@ impl ToolExecutor for DesignReadTool {
                 workspace.display(&path),
                 document.nodes.len()
             ),
-            json!({ "path": workspace.display(&path), "document": document }),
+            json!({ "path": workspace.display(&path), "document": document, "nodeAliases": design_node_aliases(&document) }),
             false,
         ))
     }
@@ -230,6 +230,7 @@ impl ToolExecutor for DesignBatchGetTool {
         let args = parse::<BatchGetArgs>(&call)?;
         let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
         let (path, document) = load_or_create(&workspace)?;
+        let args = resolve_batch_get_aliases(&document, args);
         let nodes = batch_get(&document, &args);
         Ok(result(
             call,
@@ -238,7 +239,7 @@ impl ToolExecutor for DesignBatchGetTool {
                 nodes.len(),
                 workspace.display(&path)
             ),
-            json!({ "path": workspace.display(&path), "nodes": nodes }),
+            json!({ "path": workspace.display(&path), "nodes": nodes, "nodeAliases": design_node_aliases(&document) }),
             false,
         ))
     }
@@ -249,7 +250,7 @@ impl ToolExecutor for DesignVariablesTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "design_get_variables".to_string(),
-            description: "Read variables/tokens from the workspace .roderdesign document."
+            description: "Read variables/tokens from the project-specific ~/.roder/design/<project>.roderdesign document."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -285,7 +286,7 @@ impl ToolExecutor for DesignSetVariablesTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "design_set_variables".to_string(),
-            description: "Merge or replace variables/tokens in the workspace .roderdesign document. Prefer this over generic design_patch for token-only updates.".to_string(),
+            description: "Merge or replace variables/tokens in the project-specific ~/.roder/design/<project>.roderdesign document. Prefer this over generic design_patch for token-only updates.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -335,7 +336,7 @@ impl ToolExecutor for DesignSnapshotLayoutTool {
         ToolSpec {
             name: "design_snapshot_layout".to_string(),
             description:
-                "Read design node layout rectangles and basic layout problems from .roderdesign."
+                "Read design node layout rectangles and basic layout problems from the project-specific .roderdesign document."
                     .to_string(),
             parameters: json!({
                 "type": "object",
@@ -405,7 +406,8 @@ impl ToolExecutor for DesignSpawnAgentsTool {
         let allow_patch = args.allow_patch.unwrap_or(false);
         let allow_export = args.allow_export.unwrap_or(true);
         let require_review = args.require_review.unwrap_or(true);
-        let instructions = design_spawn_agent_instructions(&args, allow_patch, allow_export, require_review);
+        let instructions =
+            design_spawn_agent_instructions(&args, allow_patch, allow_export, require_review);
         Ok(result(
             call,
             format!(
@@ -496,6 +498,7 @@ impl ToolExecutor for DesignExportNodesTool {
         std::fs::create_dir_all(&export_dir)?;
         let mut exported = Vec::new();
         for node_id in args.node_ids {
+            let node_id = resolve_node_alias(&document, &node_id).unwrap_or(node_id);
             let node = document
                 .nodes
                 .get(&node_id)
@@ -521,14 +524,14 @@ impl ToolExecutor for DesignPatchTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "design_patch".to_string(),
-            description: "Apply typed patch operations to the workspace .roderdesign document. Supports insert_node, update_node, delete_node, and set_variables.".to_string(),
+            description: "Apply typed patch operations to the project-specific ~/.roder/design/<project>.roderdesign document. Supports insert_node, update_node, delete_node, and set_variables.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "operations": {
                         "type": "array",
                         "minItems": 1,
-                        "items": { "type": "object" }
+                        "items": design_patch_operation_schema()
                     }
                 },
                 "required": ["operations"],
@@ -548,6 +551,7 @@ impl ToolExecutor for DesignPatchTool {
         let (path, mut document) = load_or_create(&workspace)?;
         let applied = args.operations.len();
         for operation in args.operations {
+            let operation = resolve_operation_aliases(&document, operation);
             apply_operation(&mut document, operation)?;
         }
         document.updated_at = now_iso();
@@ -564,8 +568,107 @@ impl ToolExecutor for DesignPatchTool {
     }
 }
 
+fn design_document_path(workspace: &Workspace) -> anyhow::Result<PathBuf> {
+    let home = dirs::home_dir().context("resolve home directory for design document")?;
+    Ok(home
+        .join(".roder")
+        .join(DESIGN_DIR_NAME)
+        .join(design_document_file_name(workspace)))
+}
+
+fn design_patch_operation_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "op": { "const": "insert_node" },
+                    "parentId": { "type": ["string", "null"], "description": "Optional parent id or simple alias such as n1." },
+                    "index": { "type": "integer", "minimum": 0 },
+                    "node": { "type": "object", "description": "Complete design node with id, type, name, geometry, and optional childIds." }
+                },
+                "required": ["op", "node"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "op": { "const": "update_node" },
+                    "nodeId": { "type": "string", "description": "Canonical node id or simple alias such as n1." },
+                    "patch": { "type": "object", "description": "Partial node fields to merge into the target node." }
+                },
+                "required": ["op", "nodeId", "patch"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "op": { "const": "delete_node" },
+                    "nodeId": { "type": "string", "description": "Canonical node id or simple alias such as n1." },
+                    "recursive": { "type": "boolean", "default": false }
+                },
+                "required": ["op", "nodeId"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "op": { "const": "reorder_node" },
+                    "nodeId": { "type": "string", "description": "Canonical node id or simple alias such as n1." },
+                    "index": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["op", "nodeId", "index"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "op": { "const": "set_variables" },
+                    "variables": { "type": "object" },
+                    "replace": { "type": "boolean", "default": false }
+                },
+                "required": ["op", "variables"],
+                "additionalProperties": false
+            }
+        ]
+    })
+}
+
+fn design_document_file_name(workspace: &Workspace) -> String {
+    let root = workspace.root();
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+    let slug = slugify_project_name(name);
+    let stable = stable_id("project", &root.display().to_string());
+    format!("{slug}-{stable}.roderdesign")
+}
+
+fn slugify_project_name(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_dash = false;
+        } else if !last_dash && !slug.is_empty() {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        "project".to_string()
+    } else {
+        slug.chars().take(48).collect()
+    }
+}
+
 fn load_or_create(workspace: &Workspace) -> anyhow::Result<(PathBuf, DesignDocument)> {
-    let path = workspace.resolve_for_write(DESIGN_PATH)?;
+    let path = design_document_path(workspace)?;
     if path.exists() {
         let text =
             std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
@@ -621,6 +724,9 @@ fn new_document(workspace: &Workspace) -> DesignDocument {
 }
 
 fn save(path: &PathBuf, document: &DesignDocument) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let text = serde_json::to_string_pretty(document)?;
     let tmp = path.with_extension(format!("roderdesign.tmp.{}", std::process::id()));
     std::fs::write(&tmp, text)?;
@@ -702,6 +808,56 @@ fn batch_get(document: &DesignDocument, args: &BatchGetArgs) -> Vec<Value> {
         }
     }
     result
+}
+
+fn design_node_aliases(document: &DesignDocument) -> Vec<Value> {
+    document
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, (node_id, node))| {
+            json!({
+                "alias": format!("n{}", index + 1),
+                "nodeId": node_id,
+                "name": node.get("name").and_then(Value::as_str).unwrap_or_default(),
+                "type": node.get("type").and_then(Value::as_str).unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+fn resolve_node_alias(document: &DesignDocument, id_or_alias: &str) -> Option<String> {
+    if document.nodes.contains_key(id_or_alias) {
+        return Some(id_or_alias.to_string());
+    }
+    let alias = id_or_alias.strip_prefix('n')?;
+    let index = alias.parse::<usize>().ok()?.checked_sub(1)?;
+    document.nodes.keys().nth(index).cloned()
+}
+
+fn resolve_batch_get_aliases(document: &DesignDocument, mut args: BatchGetArgs) -> BatchGetArgs {
+    args.node_ids = args
+        .node_ids
+        .into_iter()
+        .map(|id| resolve_node_alias(document, &id).unwrap_or(id))
+        .collect();
+    args.parent_id = args
+        .parent_id
+        .map(|id| resolve_node_alias(document, &id).unwrap_or(id));
+    args
+}
+
+fn resolve_operation_aliases(document: &DesignDocument, mut operation: Value) -> Value {
+    if let Some(object) = operation.as_object_mut() {
+        for key in ["nodeId", "parentId"] {
+            if let Some(value) = object.get(key).and_then(Value::as_str).map(str::to_string) {
+                if let Some(resolved) = resolve_node_alias(document, &value) {
+                    object.insert(key.to_string(), Value::String(resolved));
+                }
+            }
+        }
+    }
+    operation
 }
 
 fn push_node(
@@ -1141,29 +1297,46 @@ fn design_spawn_agent_plan(
     let mut seen = HashSet::new();
     let mut planned = Vec::new();
     for scope_id in &args.scope_node_ids {
+        let scope_id = resolve_node_alias(document, scope_id).unwrap_or_else(|| scope_id.clone());
         if !seen.insert(scope_id.clone()) {
             continue;
         }
         let node = document
             .nodes
-            .get(scope_id)
+            .get(&scope_id)
             .with_context(|| format!("unknown scope node id: {scope_id}"))?;
         let node_type = node.get("type").and_then(Value::as_str).unwrap_or("node");
         if !can_scope_design_agent(node_type) {
-            bail!("scope node {scope_id} is type {node_type}; expected frame, group, component, or instance");
+            bail!(
+                "scope node {scope_id} is type {node_type}; expected frame, group, component, or instance"
+            );
         }
         let name = node
             .get("name")
             .and_then(Value::as_str)
-            .unwrap_or(scope_id)
+            .unwrap_or(&scope_id)
             .to_string();
         let child_count = node
             .get("childIds")
             .and_then(Value::as_array)
             .map(Vec::len)
             .unwrap_or(0);
-        let parent_id = node.get("parentId").and_then(Value::as_str).map(str::to_string);
+        let parent_id = node
+            .get("parentId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let alias = design_node_aliases(document)
+            .into_iter()
+            .find(|alias| alias.get("nodeId").and_then(Value::as_str) == Some(scope_id.as_str()))
+            .and_then(|alias| {
+                alias
+                    .get("alias")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| scope_id.clone());
         planned.push(json!({
+            "alias": alias,
             "scopeNodeId": scope_id,
             "scopeName": name,
             "scopeType": node_type,
@@ -1199,7 +1372,7 @@ fn design_guidelines() -> Value {
         "categories": [
             {
                 "name": "workflow",
-                "description": "How Roder agents should work with .roderdesign documents.",
+                "description": "How Roder agents should work with project-specific .roderdesign documents.",
                 "guidelines": [
                     "Call design_read before editing.",
                     "Use design_batch_get to combine node reads and searches.",
@@ -1380,7 +1553,12 @@ fn reorder_node(document: &mut DesignDocument, id: &str, index: usize) -> anyhow
         .get(id)
         .with_context(|| format!("unknown nodeId: {id}"))?
         .get("parentId")
-        .or_else(|| document.nodes.get(id).and_then(|node| node.get("parent_id")))
+        .or_else(|| {
+            document
+                .nodes
+                .get(id)
+                .and_then(|node| node.get("parent_id"))
+        })
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
     if let Some(parent_id) = parent_id {
@@ -1480,6 +1658,40 @@ mod tests {
         assert!(svg.contains(r#"opacity="0.5""#));
         assert!(svg.contains(r#"transform="rotate(15 "#));
         assert!(svg.contains(r#"preserveAspectRatio="xMidYMid slice""#));
+    }
+
+    #[test]
+    fn node_aliases_resolve_for_tool_reads_and_patches() {
+        let mut document = DesignDocument {
+            version: "0.1".to_string(),
+            document_id: "doc".to_string(),
+            title: "Test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            nodes: BTreeMap::from([(
+                "frame-root".to_string(),
+                json!({ "id": "frame-root", "type": "frame", "name": "Frame", "x": 0, "y": 0, "width": 800, "height": 600 }),
+            )]),
+            root_ids: vec!["frame-root".to_string()],
+            variables: BTreeMap::new(),
+            assets: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        };
+        assert_eq!(
+            resolve_node_alias(&document, "n1"),
+            Some("frame-root".to_string())
+        );
+        let operation = resolve_operation_aliases(
+            &document,
+            json!({ "op": "update_node", "nodeId": "n1", "patch": { "name": "Hero" } }),
+        );
+        apply_operation(&mut document, operation).unwrap();
+        assert_eq!(
+            document.nodes["frame-root"]
+                .get("name")
+                .and_then(Value::as_str),
+            Some("Hero")
+        );
     }
 
     #[test]
@@ -1732,18 +1944,60 @@ mod tests {
         };
         set_design_variables(
             &mut document,
-            BTreeMap::from([("color.primary".to_string(), json!({ "kind": "color", "value": "#2563eb" }))]),
+            BTreeMap::from([(
+                "color.primary".to_string(),
+                json!({ "kind": "color", "value": "#2563eb" }),
+            )]),
             false,
         );
         assert!(document.variables.contains_key("color.primary"));
 
         set_design_variables(
             &mut document,
-            BTreeMap::from([("space.4".to_string(), json!({ "kind": "spacing", "value": 16 }))]),
+            BTreeMap::from([(
+                "space.4".to_string(),
+                json!({ "kind": "spacing", "value": 16 }),
+            )]),
             true,
         );
         assert!(!document.variables.contains_key("color.primary"));
         assert!(document.variables.contains_key("space.4"));
+    }
+
+    #[test]
+    fn design_patch_schema_requires_operations_not_top_level_patch() {
+        let workspace = Workspace::new(std::env::temp_dir()).unwrap();
+        let schema = DesignPatchTool { workspace }.spec().parameters;
+        assert_eq!(schema["required"], serde_json::json!(["operations"]));
+        assert_eq!(schema["additionalProperties"], serde_json::json!(false));
+        assert!(schema["properties"].get("patch").is_none());
+        let op_schema = &schema["properties"]["operations"]["items"]["oneOf"];
+        assert!(op_schema.as_array().is_some_and(|items| items.len() >= 5));
+        assert!(op_schema.to_string().contains("update_node"));
+        assert!(op_schema.to_string().contains("nodeId"));
+    }
+
+    #[test]
+    fn design_document_path_uses_home_roder_design_project_file() {
+        let root = std::env::temp_dir().join(format!(
+            "Roder Design Test {}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let path = design_document_path(&workspace).unwrap();
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap();
+        assert!(file_name.starts_with("roder-design-test-"));
+        assert!(file_name.contains("-project_"));
+        assert!(file_name.ends_with(".roderdesign"));
+        assert!(
+            path.parent()
+                .is_some_and(|parent| parent.ends_with(".roder/design"))
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1781,7 +2035,9 @@ mod tests {
         assert_eq!(document.root_ids, vec!["frame-b", "frame-a"]);
         reorder_node(&mut document, "text-a", 1).unwrap();
         assert_eq!(
-            document.nodes["frame-a"].get("childIds").and_then(Value::as_array),
+            document.nodes["frame-a"]
+                .get("childIds")
+                .and_then(Value::as_array),
             Some(&vec![json!("text-b"), json!("text-a")])
         );
     }
@@ -1841,8 +2097,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.len(), 1);
-        assert_eq!(plan[0].get("scopeNodeId").and_then(Value::as_str), Some("frame-1"));
-        assert_eq!(plan[0].get("scopeName").and_then(Value::as_str), Some("Hero frame"));
+        assert_eq!(
+            plan[0].get("scopeNodeId").and_then(Value::as_str),
+            Some("frame-1")
+        );
+        assert_eq!(
+            plan[0].get("scopeName").and_then(Value::as_str),
+            Some("Hero frame")
+        );
         assert_eq!(plan[0].get("childCount").and_then(Value::as_u64), Some(1));
     }
 
