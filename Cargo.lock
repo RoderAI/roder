@@ -3536,9 +3536,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "reqwest",
+ "futures",
  "roder-api",
+ "roder-ext-anthropic",
  "roder-ext-openai-embeddings",
+ "roder-ext-openai-responses",
  "rusqlite",
  "semver",
  "serde",

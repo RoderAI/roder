@@ -74,7 +74,7 @@ pub fn build_reasoner(model: Option<String>) -> anyhow::Result<Box<dyn Reasoner>
     let effort = std::env::var("GBRAIN_REASONING_EFFORT")
         .ok()
         .map(|e| e.trim().to_ascii_lowercase())
-        .filter(|e| ["minimal", "low", "medium", "high"].contains(&e.as_str()))
+        .filter(|e| ["minimal", "low", "medium", "high", "xhigh", "max"].contains(&e.as_str()))
         .unwrap_or_else(|| "medium".to_string());
 
     let reasoner: Box<dyn Reasoner> = if is_openai {
