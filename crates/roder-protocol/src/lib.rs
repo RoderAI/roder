@@ -8,6 +8,7 @@ use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
     ContextArtifactKind,
 };
+
 use roder_api::automations::{
     AutomationConcurrencyPolicy, AutomationDefinition, AutomationId, AutomationProject,
     AutomationRunId, AutomationRunState, AutomationRunSummary, AutomationSchedule, CatchUpPolicy,
@@ -1366,11 +1367,23 @@ pub struct DesignDocumentResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DesignNodeAlias {
+    pub alias: String,
+    pub node_id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub node_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesignEditorStateResult {
     pub path: String,
     pub document: RoderDesignDocument,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub selected_node_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub node_aliases: Vec<DesignNodeAlias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1410,6 +1423,8 @@ pub struct DesignNodeSearchPattern {
 pub struct DesignBatchGetResult {
     pub path: String,
     pub nodes: Vec<RoderDesignNode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub node_aliases: Vec<DesignNodeAlias>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1512,6 +1527,7 @@ pub struct DesignGuidelinesResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesignSpawnedAgentScope {
+    pub alias: String,
     pub scope_node_id: String,
     pub scope_name: String,
     #[serde(rename = "type")]

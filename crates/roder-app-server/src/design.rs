@@ -7,9 +7,9 @@ use roder_protocol::{
     DesignExportNodesParams, DesignExportNodesResult, DesignExportedNode,
     DesignGetEditorStateParams, DesignGetGuidelinesParams, DesignGetScreenshotParams,
     DesignGetVariablesParams, DesignGuidelineCategory, DesignGuidelinesResult, DesignLayoutNode,
-    DesignNodeSearchPattern, DesignPatchOperation, DesignPatchParams, DesignPatchResult,
-    DesignScreenshotResult, DesignSetSelectionParams,
-    DesignSetVariablesParams, DesignSnapshotLayoutParams, DesignSnapshotLayoutResult, DesignSpawnAgentsParams,
+    DesignNodeAlias, DesignNodeSearchPattern, DesignPatchOperation, DesignPatchParams,
+    DesignPatchResult, DesignScreenshotResult, DesignSetSelectionParams, DesignSetVariablesParams,
+    DesignSnapshotLayoutParams, DesignSnapshotLayoutResult, DesignSpawnAgentsParams,
     DesignSpawnAgentsResult, DesignSpawnedAgentScope, DesignVariablesResult, DesignWorkspaceParams,
     JsonRpcError, RoderDesignDocument, RoderDesignMetadata, RoderDesignNode,
 };
@@ -17,7 +17,7 @@ use time::OffsetDateTime;
 
 use crate::AppServer;
 
-const DESIGN_FILE_NAME: &str = ".roderdesign";
+const DESIGN_DIR_NAME: &str = "design";
 const DESIGN_VERSION: &str = "0.1";
 
 impl AppServer {
@@ -31,6 +31,7 @@ impl AppServer {
         Ok(serde_json::to_value(DesignEditorStateResult {
             path: path.display().to_string(),
             selected_node_ids: document.metadata.selected_node_ids.clone(),
+            node_aliases: design_node_aliases(&document),
             document,
             schema: params.include_schema.then(design_schema),
             rules: params.include_schema.then(|| DESIGN_RULES.to_string()),
@@ -45,12 +46,21 @@ impl AppServer {
         let (path, mut document) = self
             .load_or_create_design_document(&params.workspace_id, params.root_id.as_deref())
             .await?;
-        for node_id in &params.selected_node_ids {
+        let selected_node_ids = params
+            .selected_node_ids
+            .iter()
+            .map(|node_id| {
+                resolve_node_alias(&document, node_id).unwrap_or_else(|| node_id.clone())
+            })
+            .collect::<Vec<_>>();
+        for node_id in &selected_node_ids {
             if !document.nodes.contains_key(node_id) {
-                return Err(invalid_params(format!("unknown selected nodeId: {node_id}")));
+                return Err(invalid_params(format!(
+                    "unknown selected nodeId: {node_id}"
+                )));
             }
         }
-        document.metadata.selected_node_ids = params.selected_node_ids;
+        document.metadata.selected_node_ids = selected_node_ids;
         document.updated_at = now_iso();
         save_design_document(&path, &document).await?;
         let _ = self
@@ -69,6 +79,7 @@ impl AppServer {
         Ok(serde_json::to_value(DesignEditorStateResult {
             path: path.display().to_string(),
             selected_node_ids: document.metadata.selected_node_ids.clone(),
+            node_aliases: design_node_aliases(&document),
             document,
             schema: None,
             rules: None,
@@ -97,10 +108,13 @@ impl AppServer {
         let (path, document) = self
             .load_or_create_design_document(&params.workspace_id, params.root_id.as_deref())
             .await?;
+        let mut params = params;
+        resolve_batch_get_aliases(&document, &mut params);
         let nodes = batch_get_nodes(&document, &params);
         Ok(serde_json::to_value(DesignBatchGetResult {
             path: path.display().to_string(),
             nodes,
+            node_aliases: design_node_aliases(&document),
         })
         .unwrap())
     }
@@ -182,6 +196,8 @@ impl AppServer {
         let (path, document) = self
             .load_or_create_design_document(&params.workspace_id, params.root_id.as_deref())
             .await?;
+        let mut params = params;
+        resolve_spawn_agent_aliases(&document, &mut params);
         let planned = spawn_agent_scopes(&document, &params)?;
         Ok(serde_json::to_value(DesignSpawnAgentsResult {
             path: path.display().to_string(),
@@ -211,6 +227,7 @@ impl AppServer {
         let export_dir = export_directory(&path, params.output_dir.as_deref()).await?;
         let mut exported = Vec::new();
         for node_id in params.node_ids {
+            let node_id = resolve_node_alias(&document, &node_id).unwrap_or(node_id);
             let node = document
                 .nodes
                 .get(&node_id)
@@ -251,12 +268,17 @@ impl AppServer {
             .as_deref()
             .is_some_and(|format| format != "svg")
         {
-            return Err(invalid_params("only svg screenshot fallback is supported in this phase"));
+            return Err(invalid_params(
+                "only svg screenshot fallback is supported in this phase",
+            ));
         }
         let (path, document) = self
             .load_or_create_design_document(&params.workspace_id, params.root_id.as_deref())
             .await?;
-        let svg = if let Some(node_id) = &params.node_id {
+        let node_id = params.node_id.as_deref().map(|node_id| {
+            resolve_node_alias(&document, node_id).unwrap_or_else(|| node_id.to_string())
+        });
+        let svg = if let Some(node_id) = &node_id {
             let node = document
                 .nodes
                 .get(node_id)
@@ -267,11 +289,11 @@ impl AppServer {
         };
         let data_url = format!(
             "data:image/svg+xml;base64,{}",
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, svg.as_bytes())
+            base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
         );
         Ok(serde_json::to_value(DesignScreenshotResult {
             path: path.display().to_string(),
-            node_id: params.node_id,
+            node_id,
             mime_type: "image/svg+xml".to_string(),
             data_url,
         })
@@ -287,6 +309,7 @@ impl AppServer {
             .await?;
         let applied = params.operations.len();
         for operation in params.operations {
+            let operation = resolve_operation_aliases(&document, operation);
             apply_operation(&mut document, operation)?;
         }
         document.updated_at = now_iso();
@@ -321,14 +344,13 @@ impl AppServer {
             .workspaces
             .resolve_root(runtime_workspace, workspace_id, root_id)
             .await?;
-        let root_path = PathBuf::from(&resolved.root.path);
-        let path = root_path.join(DESIGN_FILE_NAME);
+        let path = design_document_path(&resolved.workspace.name, workspace_id, &resolved.root.id)?;
         if path.exists() {
             let data = tokio::fs::read(&path)
                 .await
-                .map_err(|err| internal_error(format!("read .roderdesign: {err}")))?;
+                .map_err(|err| internal_error(format!("read project.roderdesign: {err}")))?;
             let document = serde_json::from_slice(&data)
-                .map_err(|err| invalid_params(format!("parse .roderdesign: {err}")))?;
+                .map_err(|err| invalid_params(format!("parse project.roderdesign: {err}")))?;
             return Ok((path, document));
         }
         let document = new_design_document(
@@ -391,19 +413,69 @@ fn new_design_document(
     }
 }
 
+fn design_document_path(
+    project_name: &str,
+    workspace_id: &str,
+    root_id: &str,
+) -> Result<PathBuf, JsonRpcError> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| internal_error("resolve home directory for design document"))?;
+    Ok(home
+        .join(".roder")
+        .join(DESIGN_DIR_NAME)
+        .join(design_document_file_name(
+            project_name,
+            workspace_id,
+            root_id,
+        )))
+}
+
+fn design_document_file_name(project_name: &str, workspace_id: &str, root_id: &str) -> String {
+    let slug = slugify_project_name(project_name);
+    let stable = stable_id("project", &format!("{workspace_id}:{root_id}"));
+    format!("{slug}-{stable}.roderdesign")
+}
+
+fn slugify_project_name(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_dash = false;
+        } else if !last_dash && !slug.is_empty() {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        "project".to_string()
+    } else {
+        slug.chars().take(48).collect()
+    }
+}
+
 async fn save_design_document(
     path: &PathBuf,
     document: &RoderDesignDocument,
 ) -> Result<(), JsonRpcError> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| internal_error(format!("create design directory: {err}")))?;
+    }
     let data = serde_json::to_vec_pretty(document)
-        .map_err(|err| internal_error(format!("serialize .roderdesign: {err}")))?;
+        .map_err(|err| internal_error(format!("serialize project.roderdesign: {err}")))?;
     let tmp_path = path.with_extension(format!("roderdesign.tmp.{}", std::process::id()));
     tokio::fs::write(&tmp_path, data)
         .await
-        .map_err(|err| internal_error(format!("write .roderdesign temp: {err}")))?;
+        .map_err(|err| internal_error(format!("write project.roderdesign temp: {err}")))?;
     tokio::fs::rename(&tmp_path, path)
         .await
-        .map_err(|err| internal_error(format!("replace .roderdesign: {err}")))?;
+        .map_err(|err| internal_error(format!("replace project.roderdesign: {err}")))?;
     Ok(())
 }
 
@@ -470,6 +542,91 @@ fn batch_get_nodes(
         }
     }
     result
+}
+
+fn design_node_aliases(document: &RoderDesignDocument) -> Vec<DesignNodeAlias> {
+    document
+        .nodes
+        .values()
+        .enumerate()
+        .map(|(index, node)| DesignNodeAlias {
+            alias: format!("n{}", index + 1),
+            node_id: node.id.clone(),
+            name: node.name.clone(),
+            node_type: node.node_type.clone(),
+        })
+        .collect()
+}
+
+fn resolve_node_alias(document: &RoderDesignDocument, id_or_alias: &str) -> Option<String> {
+    if document.nodes.contains_key(id_or_alias) {
+        return Some(id_or_alias.to_string());
+    }
+    let alias = id_or_alias.strip_prefix('n')?;
+    let index = alias.parse::<usize>().ok()?.checked_sub(1)?;
+    document
+        .nodes
+        .values()
+        .nth(index)
+        .map(|node| node.id.clone())
+}
+
+fn resolve_batch_get_aliases(document: &RoderDesignDocument, params: &mut DesignBatchGetParams) {
+    for node_id in &mut params.node_ids {
+        if let Some(resolved) = resolve_node_alias(document, node_id) {
+            *node_id = resolved;
+        }
+    }
+    if let Some(parent_id) = &mut params.parent_id {
+        if let Some(resolved) = resolve_node_alias(document, parent_id) {
+            *parent_id = resolved;
+        }
+    }
+}
+
+fn resolve_spawn_agent_aliases(
+    document: &RoderDesignDocument,
+    params: &mut DesignSpawnAgentsParams,
+) {
+    for node_id in &mut params.scope_node_ids {
+        if let Some(resolved) = resolve_node_alias(document, node_id) {
+            *node_id = resolved;
+        }
+    }
+}
+
+fn resolve_operation_aliases(
+    document: &RoderDesignDocument,
+    operation: DesignPatchOperation,
+) -> DesignPatchOperation {
+    match operation {
+        DesignPatchOperation::InsertNode {
+            parent_id,
+            index,
+            node,
+        } => DesignPatchOperation::InsertNode {
+            parent_id: parent_id.map(|id| resolve_node_alias(document, &id).unwrap_or(id)),
+            index,
+            node,
+        },
+        DesignPatchOperation::UpdateNode { node_id, patch } => DesignPatchOperation::UpdateNode {
+            node_id: resolve_node_alias(document, &node_id).unwrap_or(node_id),
+            patch,
+        },
+        DesignPatchOperation::DeleteNode { node_id, recursive } => {
+            DesignPatchOperation::DeleteNode {
+                node_id: resolve_node_alias(document, &node_id).unwrap_or(node_id),
+                recursive,
+            }
+        }
+        DesignPatchOperation::ReorderNode { node_id, index } => DesignPatchOperation::ReorderNode {
+            node_id: resolve_node_alias(document, &node_id).unwrap_or(node_id),
+            index,
+        },
+        DesignPatchOperation::SetVariables { variables, replace } => {
+            DesignPatchOperation::SetVariables { variables, replace }
+        }
+    }
 }
 
 fn push_node(
@@ -644,17 +801,26 @@ fn document_to_svg(document: &RoderDesignDocument) -> String {
 }
 
 fn document_bounds(document: &RoderDesignDocument) -> Option<(f64, f64, f64, f64)> {
-    let mut bounds = document.root_ids.iter().filter_map(|id| document.nodes.get(id)).map(|node| {
-        (
-            node.x,
-            node.y,
-            node.x + node.width.max(1.0),
-            node.y + node.height.max(1.0),
-        )
-    });
+    let mut bounds = document
+        .root_ids
+        .iter()
+        .filter_map(|id| document.nodes.get(id))
+        .map(|node| {
+            (
+                node.x,
+                node.y,
+                node.x + node.width.max(1.0),
+                node.y + node.height.max(1.0),
+            )
+        });
     let first = bounds.next()?;
     let (min_x, min_y, max_x, max_y) = bounds.fold(first, |acc, next| {
-        (acc.0.min(next.0), acc.1.min(next.1), acc.2.max(next.2), acc.3.max(next.3))
+        (
+            acc.0.min(next.0),
+            acc.1.min(next.1),
+            acc.2.max(next.2),
+            acc.3.max(next.3),
+        )
     });
     Some((min_x, min_y, max_x - min_x, max_y - min_y))
 }
@@ -1061,6 +1227,14 @@ fn spawn_agent_scopes(
             .filter(|prompt| !prompt.trim().is_empty())
             .unwrap_or("Improve this design scope while preserving its intent.");
         planned.push(DesignSpawnedAgentScope {
+            alias: resolve_node_alias(document, &node.id)
+                .and_then(|_| {
+                    design_node_aliases(document)
+                        .into_iter()
+                        .find(|alias| alias.node_id == node.id)
+                        .map(|alias| alias.alias)
+                })
+                .unwrap_or_else(|| node.id.clone()),
             scope_node_id: node.id.clone(),
             scope_name: node.name.clone(),
             node_type: node.node_type.clone(),
@@ -1091,7 +1265,7 @@ fn design_guidelines() -> DesignGuidelinesResult {
         categories: vec![
             DesignGuidelineCategory {
                 name: "workflow".to_string(),
-                description: "How Roder agents should work with .roderdesign documents.".to_string(),
+                description: "How Roder agents should work with project-specific .roderdesign documents.".to_string(),
                 guidelines: vec![
                     "Call design/get_editor_state or design_read before editing.".to_string(),
                     "Use batch reads instead of many one-node reads.".to_string(),
@@ -1222,6 +1396,32 @@ mod tests {
     }
 
     #[test]
+    fn node_aliases_resolve_for_reads_and_patches() {
+        let mut doc = new_design_document(
+            "Test".to_string(),
+            "ws".to_string(),
+            "root".to_string(),
+            "/tmp/ws".to_string(),
+        );
+        let aliases = design_node_aliases(&doc);
+        assert_eq!(aliases[0].alias, "n1");
+        assert_eq!(
+            resolve_node_alias(&doc, "n1"),
+            Some("frame-root".to_string())
+        );
+
+        let operation = resolve_operation_aliases(
+            &doc,
+            DesignPatchOperation::UpdateNode {
+                node_id: "n1".to_string(),
+                patch: serde_json::json!({ "name": "Hero" }),
+            },
+        );
+        apply_operation(&mut doc, operation).unwrap();
+        assert_eq!(doc.nodes.get("frame-root").unwrap().name, "Hero");
+    }
+
+    #[test]
     fn set_variables_patch_can_merge_and_replace_tokens() {
         let mut doc = new_design_document(
             "Test".to_string(),
@@ -1230,7 +1430,10 @@ mod tests {
             "/tmp/ws".to_string(),
         );
         let mut initial = BTreeMap::new();
-        initial.insert("color.primary".to_string(), serde_json::json!({ "kind": "color", "value": "#2563eb" }));
+        initial.insert(
+            "color.primary".to_string(),
+            serde_json::json!({ "kind": "color", "value": "#2563eb" }),
+        );
         apply_operation(
             &mut doc,
             DesignPatchOperation::SetVariables {
@@ -1242,7 +1445,10 @@ mod tests {
         assert!(doc.variables.contains_key("color.primary"));
 
         let mut replacement = BTreeMap::new();
-        replacement.insert("space.4".to_string(), serde_json::json!({ "kind": "spacing", "value": 16 }));
+        replacement.insert(
+            "space.4".to_string(),
+            serde_json::json!({ "kind": "spacing", "value": 16 }),
+        );
         apply_operation(
             &mut doc,
             DesignPatchOperation::SetVariables {
@@ -1256,6 +1462,18 @@ mod tests {
     }
 
     #[test]
+    fn design_document_path_uses_home_roder_design_project_file() {
+        let path = design_document_path("Gode Desktop", "workspace-123", "root-456").unwrap();
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap();
+        assert!(file_name.starts_with("gode-desktop-project_"));
+        assert!(file_name.ends_with(".roderdesign"));
+        assert!(
+            path.parent()
+                .is_some_and(|parent| parent.ends_with(".roder/design"))
+        );
+    }
+
+    #[test]
     fn editor_state_carries_selected_node_ids() {
         let mut doc = new_design_document(
             "Test".to_string(),
@@ -1265,15 +1483,19 @@ mod tests {
         );
         doc.metadata.selected_node_ids = vec!["frame-root".to_string()];
         let value = serde_json::to_value(DesignEditorStateResult {
-            path: "/tmp/ws/.roderdesign".to_string(),
+            path: "/tmp/home/.roder/design/test-project_123.roderdesign".to_string(),
             selected_node_ids: doc.metadata.selected_node_ids.clone(),
+            node_aliases: design_node_aliases(&doc),
             document: doc,
             schema: None,
             rules: None,
         })
         .unwrap();
         assert_eq!(
-            value.get("selectedNodeIds").and_then(serde_json::Value::as_array).map(Vec::len),
+            value
+                .get("selectedNodeIds")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len),
             Some(1)
         );
     }
@@ -1433,7 +1655,10 @@ mod tests {
             fill: Some(serde_json::json!({ "kind": "color", "value": "transparent" })),
             stroke: Some(serde_json::json!({ "kind": "color", "value": "#111827", "width": 3 })),
             extra: BTreeMap::from([
-                ("pathData".to_string(), serde_json::json!("M0 80 C40 0 120 0 160 80")),
+                (
+                    "pathData".to_string(),
+                    serde_json::json!("M0 80 C40 0 120 0 160 80"),
+                ),
                 ("viewBox".to_string(), serde_json::json!("0 0 160 80")),
             ]),
         };
@@ -1454,7 +1679,10 @@ mod tests {
             fill: Some(serde_json::json!({ "kind": "color", "value": "#f59e0b" })),
             stroke: None,
             extra: BTreeMap::from([
-                ("svg".to_string(), serde_json::json!("M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z")),
+                (
+                    "svg".to_string(),
+                    serde_json::json!("M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"),
+                ),
                 ("viewBox".to_string(), serde_json::json!("0 0 24 24")),
             ]),
         };
@@ -1571,9 +1799,18 @@ mod tests {
             fill: Some(serde_json::json!({ "kind": "color", "value": "#ffffff" })),
             stroke: None,
             extra: BTreeMap::from([
-                ("componentId".to_string(), serde_json::json!("component:card")),
-                ("sourceComponentId".to_string(), serde_json::json!("component-1")),
-                ("overrides".to_string(), serde_json::json!(["fill", "width"])),
+                (
+                    "componentId".to_string(),
+                    serde_json::json!("component:card"),
+                ),
+                (
+                    "sourceComponentId".to_string(),
+                    serde_json::json!("component-1"),
+                ),
+                (
+                    "overrides".to_string(),
+                    serde_json::json!(["fill", "width"]),
+                ),
             ]),
         };
         doc.nodes.insert(component.id.clone(), component);
@@ -1652,7 +1889,11 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(error.message.contains("frame, group, component, or instance"));
+        assert!(
+            error
+                .message
+                .contains("frame, group, component, or instance")
+        );
     }
 
     #[test]

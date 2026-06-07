@@ -8,6 +8,7 @@ mod virtualization;
 
 use std::{
     collections::HashMap,
+    hash::{Hash, Hasher},
     time::{Duration, Instant},
 };
 
@@ -235,6 +236,24 @@ pub(super) struct TimelineRender {
     pub text_scroll: u16,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct TimelineRenderCacheKey {
+    width: u16,
+    theme: Theme,
+    selected: Option<usize>,
+    show_all_tools: bool,
+    message_folding: bool,
+    fold_state_hash: u64,
+}
+
+#[derive(Debug, Clone)]
+struct TimelineRenderCache {
+    key: TimelineRenderCacheKey,
+    lines: Vec<Line<'static>>,
+    row_items: Vec<(usize, usize)>,
+    visual_height: usize,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct ToolDetail {
     pub tool_id: Option<String>,
@@ -252,6 +271,7 @@ pub(super) struct TimelineState {
     tool_indices: HashMap<String, usize>,
     subagent_trace_indices: HashMap<SubagentTraceId, usize>,
     plan_review_indices: HashMap<String, usize>,
+    render_cache: Option<TimelineRenderCache>,
     selected: Option<usize>,
     fold_state: TranscriptFoldState,
     focus: TimelineFocus,
@@ -279,6 +299,7 @@ impl TimelineState {
 
     pub fn set_settings(&mut self, settings: TimelineSettings) {
         self.settings = settings;
+        self.invalidate_render_cache();
     }
 
     pub fn focus(&self) -> TimelineFocus {
@@ -295,18 +316,71 @@ impl TimelineState {
         self.auto_follow = self
             .selected
             .is_none_or(|index| index + 1 == self.items.len());
+        self.invalidate_render_cache();
     }
 
     pub fn focus_composer(&mut self) {
         self.focus = TimelineFocus::Composer;
         self.selected = None;
         self.auto_follow = true;
+        self.invalidate_render_cache();
+    }
+
+    pub fn follow_latest(&mut self) {
+        self.auto_follow = true;
+        self.selected = None;
+        self.invalidate_render_cache();
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    pub fn prepend_system(&mut self, text: impl Into<String>) {
+        self.prepend_item(TimelineItemKind::System(text.into()));
+    }
+
+    pub fn preserve_scroll_after_prepend(&mut self, added_visual_rows: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_add(added_visual_rows);
+        self.auto_follow = false;
+    }
+
+    pub fn last_viewport_height(&self) -> u16 {
+        self.last_viewport_height
+    }
+
+    pub fn visual_height(&self) -> usize {
+        self.render_cache
+            .as_ref()
+            .map(|cache| cache.visual_height)
+            .unwrap_or_default()
     }
 
     pub fn push_user(&mut self, text: impl Into<String>) {
         self.auto_follow = true;
         self.selected = None;
         self.push_item(TimelineItemKind::User(text.into()));
+    }
+
+    pub fn prepend_user(&mut self, text: impl Into<String>) {
+        self.prepend_item(TimelineItemKind::User(text.into()));
+    }
+
+    pub fn prepend_assistant(&mut self, text: impl Into<String>, phase: Option<String>) {
+        self.prepend_item(TimelineItemKind::Assistant(AssistantMessage::complete(
+            text.into(),
+            phase,
+        )));
+    }
+
+    pub fn prepend_reasoning(&mut self, text: impl Into<String>) {
+        self.prepend_item(TimelineItemKind::Reasoning(AnimatedMessage::complete(
+            text.into(),
+        )));
+    }
+
+    pub fn prepend_error(&mut self, text: impl Into<String>) {
+        self.prepend_item(TimelineItemKind::Error(text.into()));
     }
 
     #[cfg(test)]
@@ -336,6 +410,7 @@ impl TimelineState {
         {
             existing.text.push_str(text);
             existing.sync_animation();
+            self.invalidate_render_cache();
             self.follow_live_updates_from_composer();
             return;
         }
@@ -353,6 +428,7 @@ impl TimelineState {
             && existing.phase == phase
         {
             existing.push_delta(text, now);
+            self.invalidate_render_cache();
             self.follow_live_updates_from_composer();
             return;
         }
@@ -369,6 +445,7 @@ impl TimelineState {
         {
             existing.text.push_str(text);
             existing.sync_animation();
+            self.invalidate_render_cache();
             self.follow_live_updates_from_composer();
             return;
         }
@@ -391,6 +468,7 @@ impl TimelineState {
         }) = self.items.last_mut()
         {
             existing.push_delta(text, now);
+            self.invalidate_render_cache();
             self.follow_live_updates_from_composer();
             return;
         }
@@ -436,6 +514,7 @@ impl TimelineState {
                 if !entry.arguments.trim().is_empty() {
                     tool.entry.arguments = entry.arguments;
                 }
+                self.mutate_item(index);
             }
             return;
         }
@@ -453,6 +532,7 @@ impl TimelineState {
                     .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
             }),
         });
+        self.invalidate_render_cache();
         self.tool_indices.insert(tool_id, index);
         self.follow_live_updates_from_composer();
     }
@@ -462,6 +542,7 @@ impl TimelineState {
             return false;
         };
         self.items.remove(index);
+        self.invalidate_render_cache();
         shift_indices_after_removal(&mut self.tool_indices, index);
         shift_indices_after_removal(&mut self.subagent_trace_indices, index);
         shift_indices_after_removal(&mut self.plan_review_indices, index);
@@ -490,6 +571,7 @@ impl TimelineState {
             tool.output
                 .get_or_insert_with(String::new)
                 .push_str(output_delta);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -521,6 +603,7 @@ impl TimelineState {
             {
                 append_tool_output(&mut tool.output, delta);
             }
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -538,6 +621,7 @@ impl TimelineState {
         }) = self.items.get_mut(index)
         {
             tool.entry.arguments.push_str(arguments_delta);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -560,6 +644,7 @@ impl TimelineState {
                 ToolTimelineStatus::Completed
             };
             tool.output = output.filter(|text| !text.trim().is_empty());
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -578,6 +663,9 @@ impl TimelineState {
                 _ => {}
             }
         }
+        if changed {
+            self.invalidate_render_cache();
+        }
         changed
     }
 
@@ -595,6 +683,7 @@ impl TimelineState {
             }
         }
         if changed {
+            self.invalidate_render_cache();
             self.follow_live_updates_from_composer();
         }
         changed
@@ -612,6 +701,26 @@ impl TimelineState {
         })
     }
 
+    fn has_dynamic_render(&self) -> bool {
+        self.has_streaming_animation()
+            || self.items.iter().any(|item| {
+                matches!(
+                    &item.kind,
+                    TimelineItemKind::Tool(tool) if tool.status == ToolTimelineStatus::Running
+                )
+            })
+    }
+
+    fn invalidate_render_cache(&mut self) {
+        self.render_cache = None;
+    }
+
+    fn mutate_item(&mut self, index: usize) {
+        if index < self.items.len() {
+            self.invalidate_render_cache();
+        }
+    }
+
     pub fn record_subagent_trace_created(&mut self, summary: SubagentTraceSummary) {
         if let Some(index) = self.subagent_trace_indices.get(&summary.trace_id).copied() {
             if let Some(TimelineItem {
@@ -619,6 +728,7 @@ impl TimelineState {
             }) = self.items.get_mut(index)
             {
                 trace.update_summary(summary);
+                self.mutate_item(index);
             }
             return;
         }
@@ -629,7 +739,36 @@ impl TimelineState {
         self.items.push(TimelineItem {
             kind: TimelineItemKind::SubagentTrace(Box::new(SubagentTraceRow::new(summary))),
         });
+        self.invalidate_render_cache();
         self.follow_live_updates_from_composer();
+    }
+
+    fn prepend_item(&mut self, kind: TimelineItemKind) {
+        self.items.insert(0, TimelineItem { kind });
+        self.rebuild_item_indices();
+        self.invalidate_render_cache();
+    }
+
+    fn rebuild_item_indices(&mut self) {
+        self.tool_indices.clear();
+        self.subagent_trace_indices.clear();
+        self.plan_review_indices.clear();
+        for (index, item) in self.items.iter().enumerate() {
+            match &item.kind {
+                TimelineItemKind::Tool(tool) => {
+                    self.tool_indices.insert(tool.tool_id.clone(), index);
+                }
+                TimelineItemKind::SubagentTrace(trace) => {
+                    self.subagent_trace_indices
+                        .insert(trace.trace_id().to_string(), index);
+                }
+                TimelineItemKind::PlanReview(review) => {
+                    self.plan_review_indices
+                        .insert(review.review_id().to_string(), index);
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn record_subagent_trace_delta(&mut self, delta: SubagentTraceDelta) {
@@ -639,6 +778,7 @@ impl TimelineState {
             }) = self.items.get_mut(index)
         {
             trace.push_delta(delta);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -655,6 +795,7 @@ impl TimelineState {
             }) = self.items.get_mut(index)
         {
             trace.update_status(status, detail);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -673,6 +814,7 @@ impl TimelineState {
         self.items.push(TimelineItem {
             kind: TimelineItemKind::PlanReview(Box::new(PlanReviewRow::new(review))),
         });
+        self.invalidate_render_cache();
         self.follow_live_updates_from_composer();
     }
 
@@ -687,6 +829,7 @@ impl TimelineState {
             }) = self.items.get_mut(index)
         {
             row.update_status(status);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -698,6 +841,7 @@ impl TimelineState {
             }) = self.items.get_mut(index)
         {
             row.push_comment(comment);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -709,6 +853,7 @@ impl TimelineState {
             }) = self.items.get_mut(index)
         {
             row.push_rewrite(rewrite);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
     }
@@ -729,10 +874,12 @@ impl TimelineState {
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.select_next();
+                self.invalidate_render_cache();
                 true
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.select_previous();
+                self.invalidate_render_cache();
                 true
             }
             KeyCode::PageDown => {
@@ -750,6 +897,7 @@ impl TimelineState {
             KeyCode::End => {
                 self.auto_follow = true;
                 self.selected = self.selectable_indices().last().copied();
+                self.invalidate_render_cache();
                 true
             }
             KeyCode::Enter => {
@@ -951,19 +1099,30 @@ impl TimelineState {
         area: Rect,
         animation_frame: u64,
     ) -> TimelineRender {
-        let (lines, row_items, visual_height) =
-            self.build_lines(theme, area.width, animation_frame);
+        self.prepare_render_cache(theme, area.width, animation_frame);
         self.last_viewport_height = area.height;
         self.last_area = Some(area);
-        let max_scroll = max_scroll(visual_height, area.height);
+        let cached_render = self
+            .render_cache
+            .as_ref()
+            .expect("render cache is populated before rendering");
+        let max_scroll = max_scroll(cached_render.visual_height, area.height);
         if !self.auto_follow && self.scroll_offset >= max_scroll {
             self.auto_follow = true;
         }
-        let scroll = self.scroll_for(area.height, &row_items, max_scroll);
-        self.hit_rows = visible_hit_rows(area, scroll, area.height, &row_items);
+        let scroll = scroll_for_state(
+            self.focus,
+            self.selected,
+            self.auto_follow,
+            self.scroll_offset,
+            area.height,
+            &cached_render.row_items,
+            max_scroll,
+        );
+        self.hit_rows = visible_hit_rows(area, scroll, area.height, &cached_render.row_items);
         self.scroll_offset = usize::from(scroll);
         let window = render_window_lines(
-            lines,
+            &cached_render.lines,
             usize::from(scroll),
             usize::from(area.height),
             TIMELINE_OVERSCAN_ROWS,
@@ -976,6 +1135,47 @@ impl TimelineState {
         }
     }
 
+    fn prepare_render_cache(&mut self, theme: Theme, width: u16, animation_frame: u64) {
+        if self.has_dynamic_render() {
+            let (lines, row_items, visual_height) = self.build_lines(theme, width, animation_frame);
+            self.render_cache = Some(TimelineRenderCache {
+                key: self.render_cache_key(theme, width),
+                lines,
+                row_items,
+                visual_height,
+            });
+            return;
+        }
+
+        let key = self.render_cache_key(theme, width);
+        if let Some(cache) = &self.render_cache
+            && cache.key == key
+        {
+            return;
+        }
+
+        let (lines, row_items, visual_height) = self.build_lines(theme, width, animation_frame);
+        self.render_cache = Some(TimelineRenderCache {
+            key,
+            lines,
+            row_items,
+            visual_height,
+        });
+    }
+
+    fn render_cache_key(&self, theme: Theme, width: u16) -> TimelineRenderCacheKey {
+        TimelineRenderCacheKey {
+            width,
+            theme,
+            selected: (self.focus == TimelineFocus::Timeline)
+                .then_some(self.selected)
+                .flatten(),
+            show_all_tools: self.show_all_tools,
+            message_folding: self.settings.message_folding,
+            fold_state_hash: fold_state_hash(&self.fold_state),
+        }
+    }
+
     fn push_item(&mut self, kind: TimelineItemKind) {
         if let TimelineItemKind::User(_) = &kind {
             self.turn_started_at = Some(
@@ -984,6 +1184,7 @@ impl TimelineState {
             );
         }
         self.items.push(TimelineItem { kind });
+        self.invalidate_render_cache();
         self.follow_live_updates_from_composer();
     }
 
@@ -1099,17 +1300,23 @@ impl TimelineState {
     fn toggle_expansion(&mut self, index: usize) {
         if let Some(key) = self.fold_key_for_index(index) {
             self.fold_state.toggle(key);
+            self.invalidate_render_cache();
         }
     }
 
     fn collapse_previous_shell_tools(&mut self) {
+        let mut changed = false;
         for item in &self.items {
             let TimelineItemKind::Tool(tool) = &item.kind else {
                 continue;
             };
             if is_shell_like_tool(&tool.entry.name) {
                 self.fold_state.set_expanded(tool.tool_id.clone(), false);
+                changed = true;
             }
+        }
+        if changed {
+            self.invalidate_render_cache();
         }
     }
 
@@ -1120,6 +1327,7 @@ impl TimelineState {
             }) = self.items.get_mut(index)
         {
             trace.update_summary(summary);
+            self.mutate_item(index);
             self.follow_live_updates_from_composer();
             return;
         }
@@ -1226,20 +1434,15 @@ impl TimelineState {
     }
 
     fn scroll_for(&self, height: u16, row_items: &[(usize, usize)], max_scroll: usize) -> u16 {
-        if row_items.is_empty() || height == 0 {
-            return 0;
-        }
-        if self.auto_follow {
-            return max_scroll as u16;
-        }
-        if self.focus == TimelineFocus::Timeline
-            && let Some(selected) = self.selected
-            && let Some((row, _)) = row_items.iter().find(|(_, index)| *index == selected)
-        {
-            let half = usize::from(height) / 2;
-            return row.saturating_sub(half).min(max_scroll) as u16;
-        }
-        self.scroll_offset.min(max_scroll) as u16
+        scroll_for_state(
+            self.focus,
+            self.selected,
+            self.auto_follow,
+            self.scroll_offset,
+            height,
+            row_items,
+            max_scroll,
+        )
     }
 
     fn build_lines(
@@ -1434,6 +1637,31 @@ impl TimelineState {
     }
 }
 
+fn scroll_for_state(
+    focus: TimelineFocus,
+    selected: Option<usize>,
+    auto_follow: bool,
+    scroll_offset: usize,
+    height: u16,
+    row_items: &[(usize, usize)],
+    max_scroll: usize,
+) -> u16 {
+    if row_items.is_empty() || height == 0 {
+        return 0;
+    }
+    if auto_follow {
+        return max_scroll as u16;
+    }
+    if focus == TimelineFocus::Timeline
+        && let Some(selected) = selected
+        && let Some((row, _)) = row_items.iter().find(|(_, index)| *index == selected)
+    {
+        let half = usize::from(height) / 2;
+        return row.saturating_sub(half).min(max_scroll) as u16;
+    }
+    scroll_offset.min(max_scroll) as u16
+}
+
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 struct ToolVisibility {
     visible: Vec<usize>,
@@ -1453,6 +1681,16 @@ fn push_collapsed_tool_group(visibility: &mut ToolVisibility, group: &[usize]) {
     visibility
         .visible
         .extend_from_slice(&group[visible_start..]);
+}
+
+fn fold_state_hash(fold_state: &TranscriptFoldState) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    fold_state.schema_version.hash(&mut hasher);
+    for (key, expanded) in &fold_state.expanded {
+        key.hash(&mut hasher);
+        expanded.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 impl ToolTimelineTool {
@@ -1565,7 +1803,7 @@ struct RenderWindowLines {
 }
 
 fn render_window_lines(
-    lines: Vec<Line<'static>>,
+    lines: &[Line<'static>],
     scroll: usize,
     height: usize,
     overscan_rows: usize,
@@ -1585,7 +1823,7 @@ fn render_window_lines(
     let mut window = Vec::new();
     for line in lines {
         let line_start = visual_row;
-        let line_height = line_visual_height(&line, width);
+        let line_height = line_visual_height(line, width);
         let line_end = line_start.saturating_add(line_height);
         visual_row = line_end;
         if line_end <= render_top {
@@ -1595,7 +1833,7 @@ fn render_window_lines(
         if line_start >= render_bottom {
             break;
         }
-        window.push(line);
+        window.push(line.clone());
     }
 
     RenderWindowLines {

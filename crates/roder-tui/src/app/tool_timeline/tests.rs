@@ -1826,6 +1826,43 @@ fn timeline_virtualization_interaction_auto_follow_uses_virtual_scroll() {
 }
 
 #[test]
+fn timeline_reuses_cached_static_render_while_scrolling() {
+    let mut timeline = TimelineState::default();
+    for index in 0..80 {
+        timeline.push_assistant_delta(&format!("assistant message {index}"), None);
+    }
+
+    let area = Rect::new(0, 0, 80, 8);
+    let first = timeline.render(Theme::for_dark_background(true), area);
+    assert!(first.scroll > 0);
+    assert!(timeline.render_cache.is_some());
+
+    timeline.focus_latest();
+    assert!(timeline.handle_key(key(KeyCode::PageUp)));
+    let after_scroll = timeline.render(Theme::for_dark_background(true), area);
+
+    assert!(timeline.render_cache.is_some());
+    assert!(after_scroll.scroll < first.scroll);
+}
+
+#[test]
+fn timeline_static_render_cache_invalidates_on_new_item() {
+    let mut timeline = TimelineState::default();
+    for index in 0..20 {
+        timeline.push_system(format!("event {index}"));
+    }
+
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 80, 8));
+    assert!(timeline.render_cache.is_some());
+
+    timeline.push_system("new event");
+
+    assert!(timeline.render_cache.is_none());
+    let visible = visible_lines(&mut timeline, 8);
+    assert!(visible.iter().any(|line| line.contains("new event")));
+}
+
+#[test]
 fn long_timeline_virtualization_bounds_mixed_transcript_output() {
     let mut timeline = TimelineState::default();
     for index in 0..250 {

@@ -86,8 +86,8 @@ use roder_protocol::{
     SpeechProvidersListResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadSetModeParams,
-    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, TurnInputItem,
-    TurnInterruptParams, TurnStartParams, TurnSteerParams, WorkspaceCreateParams,
+    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, Turn,
+    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WorkspaceCreateParams,
     WorkspaceCreateResult, WorkspaceRootInput,
 };
 use tokio::io::AsyncWriteExt;
@@ -160,6 +160,8 @@ const WORKING_SHEEN_WIDTH: usize = 3;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
 const MAX_VISIBLE_INLINE_COMPLETIONS: usize = 12;
 const MAX_FILE_COMPLETION_CACHE: usize = 1_000;
+const RESUME_VISIBLE_TAIL_ITEMS: usize = 160;
+const RESUME_OLDER_BATCH_ITEMS: usize = 120;
 const COPIED_HELPER_LABEL: &str = "Copied to clipboard";
 const COPIED_HELPER_DURATION: Duration = Duration::from_secs(2);
 
@@ -1076,6 +1078,7 @@ where
     reasoning_effort: String,
     composer: TextArea<'static>,
     timeline: TimelineState,
+    resume_history: ResumeHistoryState,
     team_ui: TeamUiState,
     team_timelines: HashMap<String, TimelineState>,
     plan_panel: PlanPanelState,
@@ -1180,6 +1183,19 @@ struct ThreadParts {
     reasoning: String,
     thread_title: Option<String>,
     thread_message_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ResumeHistoryState {
+    older_items: Vec<Item>,
+    loaded_items: usize,
+    total_items: usize,
+}
+
+impl ResumeHistoryState {
+    fn has_older_items(&self) -> bool {
+        !self.older_items.is_empty()
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1483,6 +1499,7 @@ where
             reasoning_effort: reasoning,
             composer: composer_textarea(theme),
             timeline: TimelineState::new(scroll_settings, timeline_settings),
+            resume_history: ResumeHistoryState::default(),
             team_ui: TeamUiState::default(),
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
@@ -1839,6 +1856,15 @@ where
                                 continue;
                             }
                             if self.timeline.is_focused() && self.timeline.handle_key(key) {
+                                if matches!(
+                                    key.code,
+                                    KeyCode::PageUp
+                                        | KeyCode::Home
+                                        | KeyCode::Up
+                                        | KeyCode::Char('k')
+                                ) {
+                                    self.load_older_resume_history_if_needed();
+                                }
                                 continue;
                             }
                             match key.code {
@@ -3354,6 +3380,9 @@ where
             return;
         }
         if self.timeline.handle_mouse(mouse) {
+            if matches!(mouse.kind, MouseEventKind::ScrollUp) {
+                self.load_older_resume_history_if_needed();
+            }
             if let Some(detail) = self.timeline.take_requested_detail() {
                 self.tool_detail_modal = Some(ToolDetailModal::new(detail, self.scroll_settings));
                 self.push_event("tool detail opened".to_string());
@@ -8529,6 +8558,7 @@ mod tests {
             reasoning_effort: "medium".to_string(),
             composer: composer_textarea(theme),
             timeline: TimelineState::default(),
+            resume_history: ResumeHistoryState::default(),
             team_ui: TeamUiState::default(),
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
@@ -8592,6 +8622,56 @@ mod tests {
             theme,
             active_theme_id: None,
             theme_preview_baseline: None,
+        }
+    }
+
+    fn test_thread_with_items(id: &str, items: Vec<Item>) -> Thread {
+        Thread {
+            id: id.to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            model: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "idle".to_string(),
+                active_turn_id: None,
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            workspace_id: None,
+            root_id: None,
+            name: None,
+            usage: None,
+            turns: Some(vec![Turn {
+                id: format!("turn-{id}"),
+                items,
+                items_view: "all".to_string(),
+                status: "completed".to_string(),
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                usage: None,
+            }]),
+        }
+    }
+
+    fn test_user_item(id: usize) -> Item {
+        Item::UserMessage {
+            id: format!("user-{id}"),
+            text: format!("prompt {id}"),
+            images: Vec::new(),
+            status: None,
+        }
+    }
+
+    fn test_agent_item(id: usize) -> Item {
+        Item::AgentMessage {
+            id: format!("agent-{id}"),
+            text: format!("reply {id}"),
+            phase: None,
+            status: None,
         }
     }
 
@@ -8670,6 +8750,222 @@ mod tests {
         assert!(app.plan_panel.is_visible());
         assert_eq!(app.plan_panel.len(), 2);
         assert_eq!(app.plan_panel.completed_count(), 1);
+    }
+
+    #[test]
+    fn apply_thread_scrolls_resumed_history_to_bottom() {
+        let mut app = test_app();
+        for index in 0..20 {
+            app.timeline.push_system(format!("stale event {index}"));
+        }
+        app.timeline.render(app.theme, Rect::new(0, 0, 80, 5));
+        app.timeline.focus_latest();
+        assert!(
+            app.timeline
+                .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        );
+
+        let thread = Thread {
+            id: "thread-resume-bottom".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            model: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "idle".to_string(),
+                active_turn_id: None,
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            workspace_id: None,
+            root_id: None,
+            name: None,
+            usage: None,
+            turns: Some(vec![Turn {
+                id: "turn-resume-bottom".to_string(),
+                items: vec![
+                    Item::UserMessage {
+                        id: "user-resume-bottom".to_string(),
+                        text: "previous prompt".to_string(),
+                        images: Vec::new(),
+                        status: None,
+                    },
+                    Item::AgentMessage {
+                        id: "agent-resume-bottom".to_string(),
+                        text: (0..16)
+                            .map(|index| format!("resumed assistant line {index}"))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        phase: None,
+                        status: None,
+                    },
+                ],
+                items_view: "all".to_string(),
+                status: "completed".to_string(),
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                usage: None,
+            }]),
+        };
+
+        app.apply_thread(thread);
+
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 80, 5));
+        assert!(render.scroll > 0);
+        let rows = rendered_text_rows(&render.text, 80, 5, render.text_scroll);
+        assert!(
+            rows.iter()
+                .any(|row| row.text.contains("resumed thread") && row.text.contains("saved item")),
+            "visible rows: {rows:?}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.text.contains("stale event")),
+            "visible rows: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn apply_thread_lazy_renders_recent_tail_for_long_resumes() {
+        let mut app = test_app();
+        let items = (0..220)
+            .flat_map(|index| [test_user_item(index), test_agent_item(index)])
+            .collect::<Vec<_>>();
+
+        app.apply_thread(test_thread_with_items("thread-lazy-tail", items));
+
+        assert!(app.resume_history.has_older_items());
+        assert_eq!(app.resume_history.loaded_items, RESUME_VISIBLE_TAIL_ITEMS);
+        assert_eq!(app.resume_history.total_items, 440);
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 8));
+        let rows = rendered_text_rows(&render.text, 100, 8, render.text_scroll);
+        assert!(rows.iter().any(|row| row.text.contains("reply 219")));
+        assert!(!rows.iter().any(|row| row.text.contains("prompt 0")));
+        assert!(
+            rows.iter()
+                .any(|row| row.text.contains("scroll up to load"))
+        );
+    }
+
+    #[test]
+    fn apply_thread_keeps_recent_conversation_after_latest_compaction() {
+        let mut app = test_app();
+        let mut items = (0..180)
+            .flat_map(|index| [test_user_item(index), test_agent_item(index)])
+            .collect::<Vec<_>>();
+        items.push(Item::Compaction {
+            id: "compact-latest".to_string(),
+            summary: "hidden compacted context".to_string(),
+            status: None,
+        });
+        items.extend((180..190).flat_map(|index| [test_user_item(index), test_agent_item(index)]));
+
+        app.apply_thread(test_thread_with_items("thread-lazy-compaction", items));
+
+        assert_eq!(app.resume_history.loaded_items, 20);
+        assert!(app.resume_history.has_older_items());
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 8));
+        let rows = rendered_text_rows(&render.text, 100, 8, render.text_scroll);
+        assert!(rows.iter().any(|row| row.text.contains("reply 189")));
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.text.contains("hidden compacted context"))
+        );
+    }
+
+    #[test]
+    fn scrolling_to_top_loads_older_resume_history_batch() {
+        let mut app = test_app();
+        let items = (0..180)
+            .flat_map(|index| [test_user_item(index), test_agent_item(index)])
+            .collect::<Vec<_>>();
+        app.apply_thread(test_thread_with_items("thread-lazy-load", items));
+        app.timeline.render(app.theme, Rect::new(0, 0, 100, 8));
+        let initial_older = app.resume_history.older_items.len();
+
+        assert!(
+            app.timeline
+                .handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+        );
+        app.timeline.render(app.theme, Rect::new(0, 0, 100, 8));
+        app.load_older_resume_history_if_needed();
+
+        assert_eq!(
+            app.resume_history.older_items.len(),
+            initial_older - RESUME_OLDER_BATCH_ITEMS
+        );
+        assert_eq!(
+            app.resume_history.loaded_items,
+            RESUME_VISIBLE_TAIL_ITEMS + RESUME_OLDER_BATCH_ITEMS
+        );
+        assert!(app.timeline.scroll_offset() > 0);
+    }
+
+    #[test]
+    fn apply_thread_omits_compaction_summaries_from_resumed_timeline() {
+        let mut app = test_app();
+        let thread = Thread {
+            id: "thread-compaction".to_string(),
+            preview: String::new(),
+            model_provider: "mock".to_string(),
+            model: "mock".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus {
+                kind: "idle".to_string(),
+                active_turn_id: None,
+                active_flags: Vec::new(),
+            },
+            cwd: "/tmp".to_string(),
+            workspace_id: None,
+            root_id: None,
+            name: None,
+            usage: None,
+            turns: Some(vec![Turn {
+                id: "turn-compaction".to_string(),
+                items: vec![
+                    Item::UserMessage {
+                        id: "user-compaction".to_string(),
+                        text: "continue".to_string(),
+                        images: Vec::new(),
+                        status: None,
+                    },
+                    Item::Compaction {
+                        id: "compaction-summary".to_string(),
+                        summary: "large hidden compaction summary".to_string(),
+                        status: None,
+                    },
+                    Item::AgentMessage {
+                        id: "agent-compaction".to_string(),
+                        text: "visible reply".to_string(),
+                        phase: None,
+                        status: None,
+                    },
+                ],
+                items_view: "all".to_string(),
+                status: "completed".to_string(),
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+                usage: None,
+            }]),
+        };
+
+        app.apply_thread(thread);
+
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 20));
+        let rows = rendered_text_rows(&render.text, 100, 20, render.text_scroll);
+        assert!(rows.iter().any(|row| row.text.contains("visible reply")));
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.text.contains("hidden compaction summary")),
+            "visible rows: {rows:?}"
+        );
     }
 
     #[test]
