@@ -48,8 +48,11 @@ impl Default for AgentBudget {
     fn default() -> Self {
         Self {
             max_subqueries: 3,
-            retrieval_limit: 8,
-            evidence_pool_cap: 24,
+            // Retrieval is the real faithfulness+coverage bottleneck: at limit 8
+            // only ~0.58-0.75 of ground-truth evidence reaches the answerer, so it
+            // must fabricate the rest. limit 16 (+ expand) lifts recall to ~0.87.
+            retrieval_limit: 16,
+            evidence_pool_cap: 40,
             max_claims: 16,
         }
     }
@@ -406,10 +409,11 @@ impl<R: Reasoner> DecisionAgent<R> {
         subqueries: &[String],
         as_of: Option<OffsetDateTime>,
     ) -> anyhow::Result<(Vec<EvidenceItem>, Vec<String>)> {
-        // Event-cluster expansion for evidence-enumeration / provenance /
-        // contradiction questions; focused retrieval for "what is X now" questions.
+        // Always expand the event cluster: it lifts ground-truth recall ~0.58->0.75
+        // at limit 8 and the grounding audit + concise prompt handle precision. The
+        // retrieval pool is the bottleneck, so favour recall.
         let contra = is_contradiction_question(question);
-        let expand = is_evidence_question(question) || contra;
+        let expand = true;
         // For a clash/dispute, add a per-named-party sub-query so EACH side is
         // surfaced even when the opposing statement lives on a different record
         // than the agreement (the C6 root cause: only one side was retrieved).
@@ -1039,32 +1043,6 @@ fn audit_edit_prompt(
     s
 }
 
-fn is_evidence_question(question: &str) -> bool {
-    let q = question.to_lowercase();
-    const MARKERS: &[&str] = &[
-        "walk me through",
-        "conversation turns",
-        "evidence",
-        "justif",
-        "supporting",
-        "supports",
-        "which document",
-        "which record",
-        "which message",
-        "step by step",
-        "enumerate",
-        "both sides",
-        "contradict",
-        "conflict",
-        "who decided",
-        "who chose",
-        "alternatives",
-        "what changed",
-        "since changed",
-        "as of",
-    ];
-    MARKERS.iter().any(|m| q.contains(m))
-}
 
 fn verify_prompt(question: &str, claims: &[Claim], evidence: &[EvidenceItem]) -> String {
     let mut s = format!("Question: {question}\n\nClaims to verify (with their cited record text):\n");
