@@ -1,5 +1,5 @@
 use roder_protocol::{
-    Item, Thread, ThreadItemStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
+    Thread, ThreadItemStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
     ThreadReadResult,
 };
 
@@ -14,17 +14,19 @@ where
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!("thread/list")),
             method: "thread/list".to_string(),
-            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+            params: Some(
+                serde_json::to_value(ThreadListParams {
+                    limit: Some(100),
+                    cursor: None,
+                })
+                .unwrap(),
+            ),
         })
         .await;
-    let mut threads = Vec::new();
-    for thread in decode_response::<ThreadListResult>(res)?.data {
-        if let Ok(Some(full_thread)) = load_thread(client, &thread.id).await
-            && thread_has_user_message(&full_thread)
-        {
-            threads.push(full_thread);
-        }
-    }
+    let mut threads = decode_response::<ThreadListResult>(res)?.data;
+    threads.retain(|thread| {
+        !thread.preview.trim().is_empty() || !thread.name.as_deref().unwrap_or("").trim().is_empty()
+    });
     threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
     Ok(threads)
 }
@@ -412,6 +414,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: Some(vec![Turn {
                 id: "turn-a".to_string(),

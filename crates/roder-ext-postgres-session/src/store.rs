@@ -6,8 +6,8 @@ use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
 use roder_api::extension::ThreadStoreId;
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
-    ThreadItemEvent, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory,
-    project_turns_from_events, validate_thread_workspace,
+    ThreadItemEvent, ThreadListOptions, ThreadListPage, ThreadMetadata, ThreadSnapshot,
+    ThreadStore, ThreadStoreFactory, project_turns_from_events, validate_thread_workspace,
 };
 use roder_api::transcript::TranscriptItem;
 use sqlx_core::pool::Pool;
@@ -180,14 +180,45 @@ impl ThreadStore for PostgresSessionStore {
     }
 
     async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
-        let rows = sqlx_core::query::query::<Postgres>("SELECT metadata FROM roder_sessions WHERE tenant_id = $1 AND archived = FALSE ORDER BY updated_at DESC")
-            .bind(&self.tenant_id).fetch_all(&self.pool).await?;
-        rows.into_iter()
+        Ok(self
+            .list_threads_page(ThreadListOptions::default())
+            .await?
+            .threads)
+    }
+
+    async fn list_threads_page(
+        &self,
+        options: ThreadListOptions,
+    ) -> anyhow::Result<ThreadListPage> {
+        let offset = options
+            .cursor
+            .as_deref()
+            .and_then(|cursor| cursor.parse::<i64>().ok())
+            .unwrap_or(0)
+            .max(0);
+        let limit = options.limit.map(|limit| limit as i64).unwrap_or(i64::MAX);
+        let rows = sqlx_core::query::query::<Postgres>("SELECT metadata FROM roder_sessions WHERE tenant_id = $1 AND archived = FALSE ORDER BY updated_at DESC LIMIT $2 OFFSET $3")
+            .bind(&self.tenant_id)
+            .bind(limit.saturating_add(1))
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
+        let mut threads = rows
+            .into_iter()
             .map(|row| {
                 let json: sqlx_core::types::Json<ThreadMetadata> = row.try_get("metadata")?;
                 Ok(json.0)
             })
-            .collect()
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let has_more = options.limit.is_some_and(|limit| threads.len() > limit);
+        if let Some(limit) = options.limit {
+            threads.truncate(limit);
+        }
+        Ok(ThreadListPage {
+            threads,
+            next_cursor: has_more.then(|| (offset + limit).to_string()),
+            backwards_cursor: (offset > 0).then(|| offset.saturating_sub(limit).to_string()),
+        })
     }
 
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {

@@ -15,6 +15,19 @@ use crate::transcript::{InputImage, TranscriptItem};
 mod projection;
 pub use projection::{project_thread_item_events, project_turns_from_events};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreadListOptions {
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ThreadListPage {
+    pub threads: Vec<ThreadMetadata>,
+    pub next_cursor: Option<String>,
+    pub backwards_cursor: Option<String>,
+}
+
 /// Thread IDs reserved for system event streams that are not user-visible conversations.
 pub const SYNTHETIC_EVENT_THREAD_IDS: &[&str] = &["app-server", "runtime", "thread-workflow"];
 
@@ -305,6 +318,34 @@ pub trait ThreadStore: Send + Sync {
         Ok(metadata)
     }
     async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>>;
+    async fn list_threads_page(
+        &self,
+        options: ThreadListOptions,
+    ) -> anyhow::Result<ThreadListPage> {
+        let mut threads = self.list_threads().await?;
+        threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
+        let offset = options
+            .cursor
+            .as_deref()
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(threads.len());
+        let limit = options
+            .limit
+            .unwrap_or(threads.len().saturating_sub(offset));
+        let next_offset = offset.saturating_add(limit).min(threads.len());
+        let total = threads.len();
+        let page_threads = threads
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        Ok(ThreadListPage {
+            threads: page_threads,
+            next_cursor: (next_offset < total).then(|| next_offset.to_string()),
+            backwards_cursor: (offset > 0).then(|| offset.saturating_sub(limit).to_string()),
+        })
+    }
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
         let _ = thread_id;

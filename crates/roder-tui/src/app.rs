@@ -8642,6 +8642,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: Some(vec![Turn {
                 id: format!("turn-{id}"),
@@ -8720,6 +8721,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: Some(vec![Turn {
                 id: "turn-ledger".to_string(),
@@ -8781,6 +8783,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: Some(vec![Turn {
                 id: "turn-resume-bottom".to_string(),
@@ -8923,6 +8926,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: Some(vec![Turn {
                 id: "turn-compaction".to_string(),
@@ -8987,6 +8991,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: None,
         };
@@ -9011,6 +9016,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: None,
         };

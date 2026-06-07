@@ -892,7 +892,13 @@ async fn test_app_server_e2e() {
     let threads: ThreadListResult = request(
         &client,
         "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: None,
+                cursor: None,
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(
@@ -901,6 +907,43 @@ async fn test_app_server_e2e() {
             .iter()
             .any(|thread| thread.id == thread_start.thread.id)
     );
+    assert!(threads.next_cursor.is_none());
+
+    let _older_thread = start_thread(&client).await;
+    let newest_thread = start_thread(&client).await;
+    let first_page: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: Some(1),
+                cursor: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(first_page.data.len(), 1);
+    assert_eq!(first_page.data[0].id, newest_thread.thread.id);
+    let cursor = first_page
+        .next_cursor
+        .as_deref()
+        .expect("limited first page should expose a next cursor");
+
+    let second_page: ThreadListResult = request(
+        &client,
+        "thread/list",
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: Some(1),
+                cursor: Some(cursor.to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(second_page.data.len(), 1);
+    assert_ne!(second_page.data[0].id, newest_thread.thread.id);
 
     let started = start_turn(&client, &thread_start.thread.id, "Hello").await;
     assert!(!started.turn_id.is_empty());
@@ -3487,7 +3530,13 @@ async fn internal_errors_include_structured_details() {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!("thread/list")),
             method: "thread/list".to_string(),
-            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+            params: Some(
+                serde_json::to_value(ThreadListParams {
+                    limit: None,
+                    cursor: None,
+                })
+                .unwrap(),
+            ),
         })
         .await;
 
@@ -3634,6 +3683,57 @@ async fn protocol_contract_methods_support_protocol_startup_contract() {
     )
     .await;
     assert_eq!(read["thread"]["id"], started["thread"]["id"]);
+}
+
+#[tokio::test]
+async fn thread_list_supports_newest_first_cursor_pages() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
+
+    for _ in 0..3 {
+        let _: serde_json::Value = request(
+            &client,
+            "thread/start",
+            Some(serde_json::json!({
+                "model": "mock",
+                "modelProvider": PROVIDER_MOCK,
+                "workspaceId": workspace.workspace_id,
+                "rootId": workspace.root_id,
+                "cwd": "/tmp",
+                "ephemeral": false,
+            })),
+        )
+        .await;
+    }
+
+    let first: serde_json::Value = request(
+        &client,
+        "thread/list",
+        Some(serde_json::json!({ "limit": 2 })),
+    )
+    .await;
+    assert_eq!(first["data"].as_array().unwrap().len(), 2);
+    let cursor = first["nextCursor"].as_str().expect("next cursor");
+    let first_ids = first["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|thread| thread["id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+
+    let second: serde_json::Value = request(
+        &client,
+        "thread/list",
+        Some(serde_json::json!({ "limit": 2, "cursor": cursor })),
+    )
+    .await;
+    assert_eq!(second["data"].as_array().unwrap().len(), 1);
+    assert!(second["nextCursor"].is_null());
+    assert!(second["backwardsCursor"].as_str().is_some());
+    let second_id = second["data"][0]["id"].as_str().unwrap();
+    assert!(!first_ids.iter().any(|id| id == second_id));
 }
 
 #[tokio::test]
@@ -4122,7 +4222,13 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!("thread/list")),
             method: "thread/list".to_string(),
-            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+            params: Some(
+                serde_json::to_value(ThreadListParams {
+                    limit: None,
+                    cursor: None,
+                })
+                .unwrap(),
+            ),
         })
         .await;
 
@@ -4171,7 +4277,13 @@ async fn thread_snapshots_overlay_runtime_active_turn_status() {
     let listed: ThreadListResult = request(
         &client,
         "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: None,
+                cursor: None,
+            })
+            .unwrap(),
+        ),
     )
     .await;
     let listed_thread = listed
@@ -4362,7 +4474,13 @@ async fn thread_archive_removes_thread_from_protocol_thread_list() {
     let threads: ThreadListResult = request(
         &client,
         "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: None,
+                cursor: None,
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(
@@ -4717,7 +4835,13 @@ async fn protocol_notifications_surface_tool_approval_requests_and_resolution() 
     let listed_waiting: ThreadListResult = request(
         &client,
         "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: None,
+                cursor: None,
+            })
+            .unwrap(),
+        ),
     )
     .await;
     let listed_thread = listed_waiting
