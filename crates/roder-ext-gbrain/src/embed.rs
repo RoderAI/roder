@@ -80,13 +80,14 @@ impl Embedder {
                 match provider.embed(request.clone()).await {
                     Ok(response) => {
                         if let Some(vector) = response.embeddings.into_iter().next()
-                            && !vector.values.is_empty() {
-                                return Embedding {
-                                    provider_id: self.provider_id.clone(),
-                                    model: self.model.clone(),
-                                    values: vector.values,
-                                };
-                            }
+                            && !vector.values.is_empty()
+                        {
+                            return Embedding {
+                                provider_id: self.provider_id.clone(),
+                                model: self.model.clone(),
+                                values: vector.values,
+                            };
+                        }
                         last_err = Some("provider returned no embedding".to_string());
                         break;
                     }

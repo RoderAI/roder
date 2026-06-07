@@ -17,6 +17,11 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+pub use crate::dream::{
+    ConfidenceLabel, DreamMode, DreamPolicy, DreamRun, DreamStatus, EvidenceCard, GraphEdge,
+    GraphHyperedge, GraphNode, TemporalEvent, normalize_graph_id, validate_graph_edge_endpoints,
+};
+
 /// One bi-temporal fact in the store. Rows are never hard-deleted; a retraction
 /// sets [`expired_at`](Self::expired_at) and a real-world change sets
 /// [`invalid_at`](Self::invalid_at) plus a supersession link.
@@ -281,6 +286,9 @@ mod tests {
             fact("2020-01-01", Some("2023-01-01"), None).status(now),
             FactStatus::Invalidated
         );
-        assert_eq!(fact("2020-01-01", None, None).status(now), FactStatus::Current);
+        assert_eq!(
+            fact("2020-01-01", None, None).status(now),
+            FactStatus::Current
+        );
     }
 }

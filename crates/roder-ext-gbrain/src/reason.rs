@@ -78,15 +78,27 @@ pub fn build_reasoner(model: Option<String>) -> anyhow::Result<Box<dyn Reasoner>
         .unwrap_or_else(|| "medium".to_string());
 
     let reasoner: Box<dyn Reasoner> = if is_openai {
-        let key = std::env::var("OPENAI_API_KEY")
-            .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set (required for the GPT answerer)"))?;
+        let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
+            anyhow::anyhow!("OPENAI_API_KEY not set (required for the GPT answerer)")
+        })?;
         let engine = Arc::new(roder_ext_openai_responses::OpenAiResponsesEngine::new(key));
-        Box::new(crate::infer::EngineReasoner::new(engine, PROVIDER_OPENAI, model, Some(effort)))
+        Box::new(crate::infer::EngineReasoner::new(
+            engine,
+            PROVIDER_OPENAI,
+            model,
+            Some(effort),
+        ))
     } else {
-        let key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set (required for agentic mode)"))?;
+        let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+            anyhow::anyhow!("ANTHROPIC_API_KEY not set (required for agentic mode)")
+        })?;
         let engine = Arc::new(roder_ext_anthropic::AnthropicEngine::new(key));
-        Box::new(crate::infer::EngineReasoner::new(engine, PROVIDER_ANTHROPIC, model, Some(effort)))
+        Box::new(crate::infer::EngineReasoner::new(
+            engine,
+            PROVIDER_ANTHROPIC,
+            model,
+            Some(effort),
+        ))
     };
     Ok(reasoner)
 }
@@ -154,7 +166,9 @@ mod tests {
         );
         // Array-of-objects must parse as the array, not the first inner object.
         assert_eq!(
-            extract_json("```json\n[{\"text\":\"a\",\"support\":[1]},{\"text\":\"b\",\"support\":[2]}]\n```"),
+            extract_json(
+                "```json\n[{\"text\":\"a\",\"support\":[1]},{\"text\":\"b\",\"support\":[2]}]\n```"
+            ),
             Some(serde_json::json!([{"text":"a","support":[1]},{"text":"b","support":[2]}]))
         );
         assert_eq!(extract_json("no json here"), None);

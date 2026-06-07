@@ -154,7 +154,11 @@ pub fn audit_grounding(
             continue;
         }
         let here = slugs_in_line(line, &real);
-        let scope: Vec<String> = if here.is_empty() { last.clone() } else { here.clone() };
+        let scope: Vec<String> = if here.is_empty() {
+            last.clone()
+        } else {
+            here.clone()
+        };
         if !here.is_empty() {
             last = here.clone();
         }
@@ -226,7 +230,10 @@ fn dedup_flags(v: Vec<GFlag>) -> Vec<GFlag> {
 }
 
 fn norm(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// Bracketed slug-shaped ids on this line that are real retrieved records.
@@ -262,8 +269,16 @@ fn iso_dates_in(s: &str) -> Vec<String> {
     let mut i = 0usize;
     while i + 10 <= b.len() {
         let d = |k: usize| b[k].is_ascii_digit();
-        if d(i) && d(i + 1) && d(i + 2) && d(i + 3) && b[i + 4] == b'-' && d(i + 5) && d(i + 6)
-            && b[i + 7] == b'-' && d(i + 8) && d(i + 9)
+        if d(i)
+            && d(i + 1)
+            && d(i + 2)
+            && d(i + 3)
+            && b[i + 4] == b'-'
+            && d(i + 5)
+            && d(i + 6)
+            && b[i + 7] == b'-'
+            && d(i + 8)
+            && d(i + 9)
         {
             let before_ok = i == 0 || !b[i - 1].is_ascii_digit();
             let after_ok = i + 10 >= b.len() || !b[i + 10].is_ascii_digit();
@@ -312,7 +327,10 @@ fn clock_times_in(s: &str) -> Vec<String> {
 
 /// Verbatim-claimed quotes: spans inside `"`/`“”` of >= 5 whitespace tokens.
 fn quotes_in(s: &str) -> Vec<String> {
-    let norm: String = s.chars().map(|c| if c == '“' || c == '”' { '"' } else { c }).collect();
+    let norm: String = s
+        .chars()
+        .map(|c| if c == '“' || c == '”' { '"' } else { c })
+        .collect();
     let mut out = Vec::new();
     let parts: Vec<&str> = norm.split('"').collect();
     // odd indices are inside quotes
@@ -344,9 +362,14 @@ fn numbers_in(s: &str) -> Vec<String> {
         if t.is_empty() {
             continue;
         }
-        let vbody = t.strip_prefix('v').or_else(|| t.strip_prefix('V')).unwrap_or(t);
+        let vbody = t
+            .strip_prefix('v')
+            .or_else(|| t.strip_prefix('V'))
+            .unwrap_or(t);
         let is_version = vbody.split('.').count() >= 2
-            && vbody.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+            && vbody
+                .split('.')
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
         if is_version {
             out.push(t.to_lowercase());
             continue;
@@ -405,12 +428,24 @@ pub fn safe_specifics(question: &str, answer: &str, idx: &GroundIndex, walk: boo
         }
     }
     let mut seen = HashSet::new();
-    out.into_iter().filter(|s| seen.insert(s.to_lowercase())).collect()
+    out.into_iter()
+        .filter(|s| seen.insert(s.to_lowercase()))
+        .collect()
 }
 
 const MONTHS: &[&str] = &[
-    "january", "february", "march", "april", "may", "june", "july", "august",
-    "september", "october", "november", "december",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 ];
 
 /// Record-side dates: ISO `YYYY-MM-DD` + "Month D, YYYY"/"Month D YYYY" (with a
@@ -420,7 +455,10 @@ fn collect_dates(text: &str, out: &mut HashSet<String>) {
         out.insert(d);
     }
     let lc = text.to_lowercase();
-    let toks: Vec<&str> = lc.split(|c: char| !c.is_ascii_alphanumeric()).filter(|t| !t.is_empty()).collect();
+    let toks: Vec<&str> = lc
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
     for w in toks.windows(3) {
         let (mon, day, year) = (w[0], w[1], w[2]);
         if let Some(mi) = MONTHS.iter().position(|m| *m == mon) {
@@ -442,28 +480,154 @@ fn normalize_iso(s: &str) -> Option<String> {
 }
 
 const LABEL_DENY: &[&str] = &[
-    "the", "this", "that", "on", "as", "first", "second", "third", "current", "prior",
-    "both", "step", "change", "note", "record", "records", "decision", "decisions",
-    "position", "positions", "direct", "inferred", "original", "facts", "status", "case",
-    "incident", "trigger", "scope", "subsequent", "previous", "next", "final", "summary",
-    "conflict", "dispute", "resolution", "rationale", "context", "evidence", "knowledge",
+    "the",
+    "this",
+    "that",
+    "on",
+    "as",
+    "first",
+    "second",
+    "third",
+    "current",
+    "prior",
+    "both",
+    "step",
+    "change",
+    "note",
+    "record",
+    "records",
+    "decision",
+    "decisions",
+    "position",
+    "positions",
+    "direct",
+    "inferred",
+    "original",
+    "facts",
+    "status",
+    "case",
+    "incident",
+    "trigger",
+    "scope",
+    "subsequent",
+    "previous",
+    "next",
+    "final",
+    "summary",
+    "conflict",
+    "dispute",
+    "resolution",
+    "rationale",
+    "context",
+    "evidence",
+    "knowledge",
 ];
 const ORG_DENY: &[&str] = &[
-    "logistics", "team", "lead", "queue", "board", "engineer", "manager", "coordinator",
-    "officer", "director", "makers", "module", "marketplace", "portal", "notes", "report",
-    "thread", "email", "slack", "confluence", "jira", "salesforce", "nielsen", "mongodb",
-    "postgresql", "api", "sla", "utc", "ui", "sev", "csat", "b2c", "b2b", "sprint",
-    "release", "freight", "forwarder", "forwarders", "marketing", "sales", "product",
-    "priority", "helix", "transition", "strategy", "initiative", "roadmap", "pilot",
+    "logistics",
+    "team",
+    "lead",
+    "queue",
+    "board",
+    "engineer",
+    "manager",
+    "coordinator",
+    "officer",
+    "director",
+    "makers",
+    "module",
+    "marketplace",
+    "portal",
+    "notes",
+    "report",
+    "thread",
+    "email",
+    "slack",
+    "confluence",
+    "jira",
+    "salesforce",
+    "nielsen",
+    "mongodb",
+    "postgresql",
+    "api",
+    "sla",
+    "utc",
+    "ui",
+    "sev",
+    "csat",
+    "b2c",
+    "b2b",
+    "sprint",
+    "release",
+    "freight",
+    "forwarder",
+    "forwarders",
+    "marketing",
+    "sales",
+    "product",
+    "priority",
+    "helix",
+    "transition",
+    "strategy",
+    "initiative",
+    "roadmap",
+    "pilot",
 ];
 const CUES: &[&str] = &[
-    "ceo", "coo", "cto", "cfo", "vp", "hr", "lead", "manager", "engineer", "coordinator",
-    "officer", "director", "head", "chief", "analyst", "rep", "commander", "attendees",
-    "participants", "said", "stated", "announced", "decided", "approved", "proposed",
-    "wrote", "confirmed", "replied", "argued", "noted", "joined", "assumed", "assume",
-    "took", "agreed", "posted", "emailed", "attended", "presented", "drafted", "flagged",
-    "raised", "pushed", "advocated", "objected", "opposed", "made", "identified",
-    "suggested", "acknowledged", "sent", "communicated", "named", "appointed", "approval",
+    "ceo",
+    "coo",
+    "cto",
+    "cfo",
+    "vp",
+    "hr",
+    "lead",
+    "manager",
+    "engineer",
+    "coordinator",
+    "officer",
+    "director",
+    "head",
+    "chief",
+    "analyst",
+    "rep",
+    "commander",
+    "attendees",
+    "participants",
+    "said",
+    "stated",
+    "announced",
+    "decided",
+    "approved",
+    "proposed",
+    "wrote",
+    "confirmed",
+    "replied",
+    "argued",
+    "noted",
+    "joined",
+    "assumed",
+    "assume",
+    "took",
+    "agreed",
+    "posted",
+    "emailed",
+    "attended",
+    "presented",
+    "drafted",
+    "flagged",
+    "raised",
+    "pushed",
+    "advocated",
+    "objected",
+    "opposed",
+    "made",
+    "identified",
+    "suggested",
+    "acknowledged",
+    "sent",
+    "communicated",
+    "named",
+    "appointed",
+    "approval",
     "by",
 ];
 
@@ -505,7 +669,12 @@ fn grounded_name_spans(line: &str) -> Vec<String> {
     while i + 1 < cleaned.len() {
         let (a, _) = &cleaned[i];
         let (b, b_poss) = &cleaned[i + 1];
-        if a.len() > 1 && b.len() > 1 && is_name_token(a) && is_name_token(b) && !denied(a) && !denied(b)
+        if a.len() > 1
+            && b.len() > 1
+            && is_name_token(a)
+            && is_name_token(b)
+            && !denied(a)
+            && !denied(b)
         {
             // cue search window [i-3, i+4]
             let lo = i.saturating_sub(3);
@@ -521,7 +690,8 @@ fn grounded_name_spans(line: &str) -> Vec<String> {
                     break;
                 }
                 // ", Capital" / "and Capital" name-list pattern
-                if (l == "and" || toks.get(k).is_some_and(|t| t.starts_with(','))) && k + 1 < cleaned.len()
+                if (l == "and" || toks.get(k).is_some_and(|t| t.starts_with(',')))
+                    && k + 1 < cleaned.len()
                     && is_name_token(&cleaned[k + 1].0)
                 {
                     cue = true;
@@ -546,10 +716,20 @@ pub fn is_walkthrough_question(question: &str) -> bool {
     if q.contains("as of") || q.contains("changed") || q.contains("since") {
         return false;
     }
-    ["walk me through", "walk through", "justif", "supporting records", "supporting evidence",
-     "which records", "which documents", "evidence", "step by step", "for each"]
-        .iter()
-        .any(|m| q.contains(m))
+    [
+        "walk me through",
+        "walk through",
+        "justif",
+        "supporting records",
+        "supporting evidence",
+        "which records",
+        "which documents",
+        "evidence",
+        "step by step",
+        "for each",
+    ]
+    .iter()
+    .any(|m| q.contains(m))
 }
 
 #[cfg(test)]
@@ -570,8 +750,14 @@ mod tests {
 
     #[test]
     fn names_flagged_only_with_a_cue_and_not_orgs_or_headings() {
-        assert_eq!(grounded_name_spans("the decision was made by Omar Khalil"), vec!["Omar Khalil"]);
-        assert_eq!(grounded_name_spans("Luis Gomez approved the change"), vec!["Luis Gomez"]);
+        assert_eq!(
+            grounded_name_spans("the decision was made by Omar Khalil"),
+            vec!["Omar Khalil"]
+        );
+        assert_eq!(
+            grounded_name_spans("Luis Gomez approved the change"),
+            vec!["Luis Gomez"]
+        );
         // orgs / role-phrases / headings must NOT be flagged
         assert!(grounded_name_spans("Helix Logistics shifted strategy").is_empty());
         assert!(grounded_name_spans("the Priority Queue tool launched").is_empty());
@@ -582,34 +768,73 @@ mod tests {
     #[test]
     fn audit_separates_fabricated_misattributed_and_ignores_month_only() {
         let pool = vec![
-            ev("ART-EV-2023-015-002", "2023-02-20", "On 2023-02-20 the SLA target rose to 99.9%."),
-            ev("ART-EV-2023-030-001", "2023-04-05", "Aisha Patel drafted the plan in May 2023."),
+            ev(
+                "ART-EV-2023-015-002",
+                "2023-02-20",
+                "On 2023-02-20 the SLA target rose to 99.9%.",
+            ),
+            ev(
+                "ART-EV-2023-030-001",
+                "2023-04-05",
+                "Aisha Patel drafted the plan in May 2023.",
+            ),
         ];
         let idx = build_ground_index(&pool);
         // date present in record 015 but cited to 030 => misattributed
-        let a1 = audit_grounding("q", "The change was on 2023-02-20 [ART-EV-2023-030-001].", &idx, false);
+        let a1 = audit_grounding(
+            "q",
+            "The change was on 2023-02-20 [ART-EV-2023-030-001].",
+            &idx,
+            false,
+        );
         assert!(a1.misattributed.iter().any(|f| f.span == "2023-02-20"));
         // date in NO record => fabricated
-        let a2 = audit_grounding("q", "A later change on 2023-08-15 [ART-EV-2023-015-002].", &idx, false);
+        let a2 = audit_grounding(
+            "q",
+            "A later change on 2023-08-15 [ART-EV-2023-015-002].",
+            &idx,
+            false,
+        );
         assert!(a2.fabricated.iter().any(|f| f.span == "2023-08-15"));
         // month-only "May 2023" is never extracted/flagged
-        let a3 = audit_grounding("q", "Aisha Patel acted in May 2023 [ART-EV-2023-030-001].", &idx, false);
+        let a3 = audit_grounding(
+            "q",
+            "Aisha Patel acted in May 2023 [ART-EV-2023-030-001].",
+            &idx,
+            false,
+        );
         assert!(a3.fabricated.is_empty() && a3.misattributed.is_empty());
     }
 
     #[test]
     fn structured_date_field_grounds_and_clusters_split() {
-        let pool = vec![ev("ART-EV-2023-015-002", "2023-02-20", "SLA target rose to 99.9%.")];
+        let pool = vec![ev(
+            "ART-EV-2023-015-002",
+            "2023-02-20",
+            "SLA target rose to 99.9%.",
+        )];
         let idx = build_ground_index(&pool);
         // 2023-02-20 only in the .date field, correctly cited => not flagged
-        let a = audit_grounding("q", "Raised on 2023-02-20 [ART-EV-2023-015-002].", &idx, false);
+        let a = audit_grounding(
+            "q",
+            "Raised on 2023-02-20 [ART-EV-2023-015-002].",
+            &idx,
+            false,
+        );
         assert!(a.fabricated.is_empty() && a.misattributed.is_empty());
-        assert_eq!(event_cluster("ART-EV-2023-015-002"), Some("ART-EV-2023-015"));
+        assert_eq!(
+            event_cluster("ART-EV-2023-015-002"),
+            Some("ART-EV-2023-015")
+        );
     }
 
     #[test]
     fn empty_audit_when_clean() {
-        let pool = vec![ev("R-1", "2023-01-01", "Maya Patel decided to launch on 2023-01-01.")];
+        let pool = vec![ev(
+            "R-1",
+            "2023-01-01",
+            "Maya Patel decided to launch on 2023-01-01.",
+        )];
         let idx = build_ground_index(&pool);
         let a = audit_grounding("who decided?", "Maya Patel decided it [R-1].", &idx, false);
         assert!(a.is_empty());

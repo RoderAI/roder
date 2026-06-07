@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use roder_api::inference::{
-    AgentInferenceRequest, InferenceEngine, InferenceEvent, InferenceTurnContext, InstructionBundle,
-    ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
+    AgentInferenceRequest, InferenceEngine, InferenceEvent, InferenceTurnContext,
+    InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
 };
 use roder_api::tools::ToolChoice;
 use roder_api::transcript::{TranscriptItem, UserMessage};

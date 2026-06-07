@@ -36,6 +36,8 @@ use crate::reason::{Reasoner, extract_json};
 use crate::store::{GbrainStore, RecallParams};
 
 pub mod claims;
+pub mod prompts;
+pub mod retriever;
 
 use self::claims::{
     ClaimConfidence, ClaimTemporalScope, ClaimType, EvidenceRecord, LedgerClaim, QuoteSpan,

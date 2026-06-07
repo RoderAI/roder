@@ -41,9 +41,10 @@ fn fact_line(fact: &TemporalFact, now: OffsetDateTime) -> String {
         fact.text.trim()
     );
     if status == FactStatus::Retracted
-        && let Some(expired) = fact.expired_at {
-            line.push_str(&format!("; record retracted {}", date_short(expired)));
-        }
+        && let Some(expired) = fact.expired_at
+    {
+        line.push_str(&format!("; record retracted {}", date_short(expired)));
+    }
     if let Some(reason) = &fact.supersession_reason {
         line.push_str(&format!("; supersedes prior because: {reason}"));
     }

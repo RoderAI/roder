@@ -46,7 +46,10 @@ pub fn lexical_score(terms: &[String], text: &str) -> f32 {
     }
     let lower = text.to_lowercase();
     let distinct: HashSet<&String> = terms.iter().collect();
-    let found = distinct.iter().filter(|t| lower.contains(t.as_str())).count();
+    let found = distinct
+        .iter()
+        .filter(|t| lower.contains(t.as_str()))
+        .count();
     found as f32 / distinct.len() as f32
 }
 
@@ -169,11 +172,15 @@ mod tests {
         let qv = crate::embed::local_embedding(q);
         let candidates = vec![
             Candidate {
-                vector: Some(crate::embed::local_embedding("the acme account owner is maya")),
+                vector: Some(crate::embed::local_embedding(
+                    "the acme account owner is maya",
+                )),
                 fact: fact("a", "the acme account owner is maya"),
             },
             Candidate {
-                vector: Some(crate::embed::local_embedding("unrelated kubernetes scaling note")),
+                vector: Some(crate::embed::local_embedding(
+                    "unrelated kubernetes scaling note",
+                )),
                 fact: fact("b", "unrelated kubernetes scaling note"),
             },
         ];

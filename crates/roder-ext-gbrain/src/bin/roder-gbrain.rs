@@ -5,7 +5,10 @@
 //!
 //! Subcommands:
 //!   capture       (reads a JSON object on stdin) -> {"id": "..."}
+//!   import --input <path|-> --format jsonl --scope S --source NAME
 //!   consolidate                                  -> {"supersession_links":N,"contradiction_links":M}
+//!   dream --mode enrich|refine|compact|full --scope S
+//!   dream-status --run-id ID
 //!   recall  --query Q [--as-of D] [--limit N] [--scope S]
 //!                                                -> {"results":[...],"contradictions":[...],"context":"..."}
 //!   version                                      -> {"version":"...","commit":"..."}
@@ -21,9 +24,11 @@ use std::sync::Arc;
 
 use roder_api::embeddings::EmbeddingProvider;
 use roder_api::memory::MemoryScope;
+use roder_ext_gbrain::dream::{DreamMode, DreamPolicy};
+use roder_ext_gbrain::import::{DedupeMode, ImportBatchInput, ImportBatchParams};
 use roder_ext_gbrain::model::{AsOf, parse_flexible};
 use roder_ext_gbrain::render::render_recall;
-use roder_ext_gbrain::store::{CaptureInput, GbrainStore, RecallParams};
+use roder_ext_gbrain::store::{CaptureInput, DreamParams, GbrainStore, RecallParams};
 use roder_ext_gbrain::tools::{fact_json, parse_scope};
 use roder_ext_gbrain::{AgentBudget, DecisionAgent, Embedder, build_reasoner};
 use roder_ext_openai_embeddings::OpenAiEmbeddingProvider;
@@ -61,11 +66,14 @@ async fn run() -> anyhow::Result<()> {
 
     match command.as_str() {
         "capture" => capture(&store).await,
+        "import" => import_cmd(&store, &flags).await,
         "consolidate" => consolidate(&store, &flags).await,
+        "dream" => dream_cmd(&store, &flags).await,
+        "dream-status" | "dream_status" => dream_status_cmd(&store, &flags).await,
         "recall" => recall(&store, &flags).await,
         "answer" => answer_cmd(Arc::new(store), &flags).await,
         other => anyhow::bail!(
-            "unknown command {other:?}; expected capture|consolidate|recall|answer|version"
+            "unknown command {other:?}; expected capture|import|consolidate|dream|dream-status|recall|answer|version"
         ),
     }
 }
@@ -193,6 +201,43 @@ async fn capture(store: &GbrainStore) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn import_cmd(store: &GbrainStore, flags: &HashMap<String, String>) -> anyhow::Result<()> {
+    let input = flags
+        .get("input")
+        .ok_or_else(|| anyhow::anyhow!("import requires --input <path|->"))?;
+    let batch_input = if input == "-" {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        ImportBatchInput::JsonlString(buf)
+    } else {
+        ImportBatchInput::Path(PathBuf::from(input))
+    };
+    let dedupe = flags
+        .get("dedupe")
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(DedupeMode::Both);
+    let result = store
+        .import_batch(ImportBatchParams {
+            input: batch_input,
+            format: flags
+                .get("format")
+                .cloned()
+                .unwrap_or_else(|| "jsonl".to_string()),
+            scope: flags
+                .get("scope")
+                .map(|scope| parse_scope(scope))
+                .unwrap_or(MemoryScope::Global),
+            source: flags.get("source").cloned(),
+            dedupe,
+            dream_after_import: flags.get("dream-after-import").cloned(),
+            metadata: json!({}),
+        })
+        .await?;
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
 async fn consolidate(store: &GbrainStore, flags: &HashMap<String, String>) -> anyhow::Result<()> {
     let scope = flags.get("scope").map(|s| parse_scope(s));
     let stats = store.consolidate(scope).await?;
@@ -203,6 +248,58 @@ async fn consolidate(store: &GbrainStore, flags: &HashMap<String, String>) -> an
             "contradiction_links": stats.contradiction_links,
         })
     );
+    Ok(())
+}
+
+async fn dream_cmd(store: &GbrainStore, flags: &HashMap<String, String>) -> anyhow::Result<()> {
+    let result = store
+        .dream(DreamParams {
+            mode: parse_dream_mode(flags.get("mode").map(String::as_str).unwrap_or("enrich"))?,
+            scope: flags
+                .get("scope")
+                .map(|scope| parse_scope(scope))
+                .unwrap_or(MemoryScope::Global),
+            since: flags
+                .get("since")
+                .map(String::as_str)
+                .map(parse_flexible)
+                .transpose()?,
+            run_policy: flags
+                .get("run-policy")
+                .or_else(|| flags.get("policy"))
+                .map(String::as_str)
+                .map(parse_dream_policy)
+                .transpose()?
+                .unwrap_or(DreamPolicy::Maintenance),
+            workers: flags
+                .get("workers")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1),
+            dry_run: flags.contains_key("dry-run"),
+            cancellation_token: flags.get("cancellation-token").cloned(),
+            reasoner_model: flags
+                .get("reasoner-model")
+                .or_else(|| flags.get("model"))
+                .cloned(),
+        })
+        .await?;
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
+async fn dream_status_cmd(
+    store: &GbrainStore,
+    flags: &HashMap<String, String>,
+) -> anyhow::Result<()> {
+    let run_id = flags
+        .get("run-id")
+        .or_else(|| flags.get("run_id"))
+        .ok_or_else(|| anyhow::anyhow!("dream-status requires --run-id <id>"))?;
+    let status = store
+        .dream_status(run_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("dream run not found: {run_id}"))?;
+    println!("{}", serde_json::to_string(&status)?);
     Ok(())
 }
 
@@ -263,6 +360,28 @@ async fn recall(store: &GbrainStore, flags: &HashMap<String, String>) -> anyhow:
 
 fn parse_opt(value: Option<&str>) -> anyhow::Result<Option<OffsetDateTime>> {
     value.map(parse_flexible).transpose()
+}
+
+fn parse_dream_mode(value: &str) -> anyhow::Result<DreamMode> {
+    match value {
+        "enrich" => Ok(DreamMode::Enrich),
+        "refine" => Ok(DreamMode::Refine),
+        "compact" => Ok(DreamMode::Compact),
+        "full" => Ok(DreamMode::Full),
+        other => anyhow::bail!("unknown dream mode {other:?}; expected enrich|refine|compact|full"),
+    }
+}
+
+fn parse_dream_policy(value: &str) -> anyhow::Result<DreamPolicy> {
+    match value {
+        "interactive" => Ok(DreamPolicy::Interactive),
+        "eval" => Ok(DreamPolicy::Eval),
+        "import" => Ok(DreamPolicy::Import),
+        "maintenance" => Ok(DreamPolicy::Maintenance),
+        other => anyhow::bail!(
+            "unknown dream policy {other:?}; expected interactive|eval|import|maintenance"
+        ),
+    }
 }
 
 /// Minimal arg parser: first non-flag token is the command; `--key value` and

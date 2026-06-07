@@ -20,8 +20,10 @@ use semver::Version;
 
 pub mod agent;
 pub mod context;
+pub mod dream;
 pub mod embed;
 pub mod ground;
+pub mod import;
 pub mod infer;
 pub mod model;
 pub mod reason;
@@ -39,14 +41,22 @@ pub use agent::claims::{
 };
 pub use agent::{AgentAnswer, AgentBudget, DecisionAgent, ProgressSink, WorkingContext};
 pub use context::GbrainContextProvider;
+pub use dream::{
+    ConfidenceLabel, DreamMode, DreamPolicy, DreamRun, DreamScheduleConfig, DreamStatus,
+    EvidenceCard, GraphEdge, GraphHyperedge, GraphIdParts, GraphNode, ScheduledDreamOutcome,
+    ScheduledDreamSkipReason, TemporalEvent, normalize_graph_id, run_scheduled_dream_once,
+    spawn_periodic_dream_scheduler, validate_graph_edge_endpoints,
+};
 pub use embed::Embedder;
+pub use import::{DedupeMode, ImportBatchInput, ImportBatchParams, ImportBatchResult};
 pub use infer::EngineReasoner;
 pub use model::{AsOf, FactStatus, TemporalFact};
 pub use reason::{Reasoner, build_reasoner};
 pub use store::{
-    CaptureInput, ConsolidateStats, GbrainStore, GbrainStoreFactory, RecallParams, RecallResult,
+    CaptureInput, ConsolidateStats, DreamParams, DreamRunReport, GbrainStore, GbrainStoreFactory,
+    RecallParams, RecallResult,
 };
-pub use tools::GbrainToolContributor;
+pub use tools::{GbrainToolContributor, is_read_only_tool, read_only_tool_names};
 
 /// The bi-temporal gbrain memory extension.
 pub struct GbrainExtension {
@@ -101,7 +111,8 @@ impl RoderExtension for GbrainExtension {
         ));
         registry.memory_store_factory(factory);
         registry.context_provider(Arc::new(GbrainContextProvider::new(store.clone())));
-        registry.tool_contributor(Arc::new(GbrainToolContributor::new(store)));
+        registry.tool_contributor(Arc::new(GbrainToolContributor::new(store.clone())));
+        let _scheduler = spawn_periodic_dream_scheduler(store, DreamScheduleConfig::from_env());
         Ok(())
     }
 }

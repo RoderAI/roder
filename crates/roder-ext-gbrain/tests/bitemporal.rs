@@ -2,10 +2,10 @@
 //! supersession, invalidate-never-delete, and contradiction detection.
 
 use roder_api::memory::{MemoryQuery, MemoryRecord, MemoryScope, MemoryStore};
-use roder_ext_gbrain::store::{CaptureInput, GbrainStore};
-use roder_ext_gbrain::{AsOf, Embedder};
 use roder_ext_gbrain::model::parse_flexible;
 use roder_ext_gbrain::store::RecallParams;
+use roder_ext_gbrain::store::{CaptureInput, GbrainStore};
+use roder_ext_gbrain::{AsOf, Embedder};
 use time::OffsetDateTime;
 
 fn store() -> GbrainStore {
@@ -53,7 +53,10 @@ async fn as_of_supersession_and_history() {
     let old = store.get_fact(&v1.id).await.unwrap().unwrap();
     assert_eq!(old.superseded_by.as_deref(), Some(v2.id.as_str()));
     assert_eq!(old.invalid_at, Some(at("2024-01-01")));
-    assert!(old.expired_at.is_none(), "supersession must not retract the record");
+    assert!(
+        old.expired_at.is_none(),
+        "supersession must not retract the record"
+    );
 
     // Current belief -> Daniel.
     let now = store
@@ -72,7 +75,12 @@ async fn as_of_supersession_and_history() {
 
     // As of 2023 -> Maya (Daniel's fact wasn't valid yet).
     let past = store
-        .as_of(at("2023-06-01"), "who owns the acme account", Some(scope.clone()), 5)
+        .as_of(
+            at("2023-06-01"),
+            "who owns the acme account",
+            Some(scope.clone()),
+            5,
+        )
         .await
         .unwrap();
     assert!(
@@ -175,7 +183,10 @@ async fn contradiction_detection_and_consolidate_idempotent() {
     let first = store.consolidate(Some(scope.clone())).await.unwrap();
     assert_eq!(first.contradiction_links, 1);
     let second = store.consolidate(Some(scope.clone())).await.unwrap();
-    assert_eq!(second.contradiction_links, 0, "consolidate must be idempotent");
+    assert_eq!(
+        second.contradiction_links, 0,
+        "consolidate must be idempotent"
+    );
 }
 
 #[tokio::test]
@@ -190,7 +201,12 @@ async fn supersede_records_transaction_time_as_now_not_backdated_valid_at() {
     let store = store();
     let scope = MemoryScope::Project("helix".into());
     let v1 = store
-        .capture(captured(scope.clone(), "owner is Maya", "owner", "2022-01-01"))
+        .capture(captured(
+            scope.clone(),
+            "owner is Maya",
+            "owner",
+            "2022-01-01",
+        ))
         .await
         .unwrap();
     // Backdated valid_at (2024) — but the correction is RECORDED now.
