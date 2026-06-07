@@ -346,6 +346,15 @@ pub trait ThreadStore: Send + Sync {
             backwards_cursor: (offset > 0).then(|| offset.saturating_sub(limit).to_string()),
         })
     }
+    async fn load_thread_metadata(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<ThreadMetadata>> {
+        Ok(self
+            .load_thread(thread_id)
+            .await?
+            .and_then(|snapshot| snapshot.metadata))
+    }
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
         let _ = thread_id;
