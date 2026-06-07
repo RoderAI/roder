@@ -2089,17 +2089,23 @@ impl AppServer {
         &self,
         params: ThreadReadParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let snapshot = self
-            .runtime
-            .load_thread(&params.thread_id)
-            .await
-            .map_err(internal_error)?;
-        let thread = snapshot.and_then(|snapshot| {
-            let turns = params
-                .include_turns
-                .then(|| protocol_turns_from_snapshot(&snapshot));
-            snapshot.metadata.map(|metadata| (metadata, turns))
-        });
+        let thread = if params.include_turns {
+            let snapshot = self
+                .runtime
+                .load_thread(&params.thread_id)
+                .await
+                .map_err(internal_error)?;
+            snapshot.and_then(|snapshot| {
+                let turns = Some(protocol_turns_from_snapshot(&snapshot));
+                snapshot.metadata.map(|metadata| (metadata, turns))
+            })
+        } else {
+            self.runtime
+                .load_thread_metadata(&params.thread_id)
+                .await
+                .map_err(internal_error)?
+                .map(|metadata| (metadata, None))
+        };
         let thread = match thread {
             Some((metadata, turns)) => Some(
                 self.protocol_thread_from_metadata_with_live_status(metadata, turns)

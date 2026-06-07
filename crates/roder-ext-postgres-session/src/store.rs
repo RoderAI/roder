@@ -262,6 +262,13 @@ impl ThreadStore for PostgresSessionStore {
         }))
     }
 
+    async fn load_thread_metadata(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<ThreadMetadata>> {
+        self.load_metadata(thread_id).await
+    }
+
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
         let result = sqlx_core::query::query::<Postgres>("UPDATE roder_sessions SET archived = TRUE, updated_at = now() WHERE tenant_id = $1 AND thread_id = $2 AND archived = FALSE")
             .bind(&self.tenant_id).bind(thread_id).execute(&self.pool).await?;

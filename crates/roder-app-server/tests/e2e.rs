@@ -214,7 +214,28 @@ impl ThreadStore for FailingThreadStore {
         &self,
         _thread_id: &roder_api::events::ThreadId,
     ) -> anyhow::Result<Option<ThreadSnapshot>> {
-        Ok(None)
+        anyhow::bail!("full thread load should not be used for metadata-only reads")
+    }
+
+    async fn load_thread_metadata(
+        &self,
+        thread_id: &roder_api::events::ThreadId,
+    ) -> anyhow::Result<Option<ThreadMetadata>> {
+        Ok(Some(ThreadMetadata {
+            thread_id: thread_id.clone(),
+            title: Some("Metadata only".to_string()),
+            workspace: std::env::current_dir()?.display().to_string(),
+            workspace_id: None,
+            root_id: None,
+            provider: Some(PROVIDER_MOCK.to_string()),
+            model: Some("mock".to_string()),
+            runner_destination: None,
+            runner_state: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+            message_count: 0,
+            usage: None,
+        }))
     }
 
     async fn append_event(
@@ -4239,6 +4260,33 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
     assert!(error.message.contains("thread metadata invalid"));
 
     let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
+async fn thread_read_without_turns_uses_metadata_only_store_path() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(Arc::new(FailingThreadStoreFactory));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: "metadata-only-thread".to_string(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let thread = read.thread.expect("thread/read returns metadata thread");
+    assert_eq!(thread.id, "metadata-only-thread");
+    assert!(thread.turns.is_none());
 }
 
 #[tokio::test]
