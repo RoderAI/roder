@@ -90,12 +90,17 @@ async fn answer_cmd(
     if let Some(n) = flags.get("limit").and_then(|v| v.parse().ok()) {
         budget.retrieval_limit = n;
     }
+    let strict_faithfulness = flags
+        .get("faithfulness")
+        .is_some_and(|value| value == "strict")
+        || flags.contains_key("strict-faithfulness");
     let agent = DecisionAgent::new(store, reasoner)
         .with_scope(scope)
-        .with_budget(budget);
+        .with_budget(budget)
+        .with_strict_faithfulness(strict_faithfulness);
     // Default: token-light concise single-call synthesis. `--thorough` runs the
     // full decompose/draft/verify/finalize loop (more tokens, opt-in).
-    let result = if flags.contains_key("thorough") {
+    let result = if flags.contains_key("thorough") || strict_faithfulness {
         agent.answer(&query, as_of).await?
     } else {
         agent.answer_concise(&query, as_of).await?
@@ -158,9 +163,10 @@ async fn capture(store: &GbrainStore) -> anyhow::Result<()> {
 
     let mut provenance = payload.provenance;
     if let Some(slug) = &payload.slug
-        && !provenance.iter().any(|p| p == slug) {
-            provenance.insert(0, slug.clone());
-        }
+        && !provenance.iter().any(|p| p == slug)
+    {
+        provenance.insert(0, slug.clone());
+    }
 
     let mut input = CaptureInput::new(
         payload
@@ -180,14 +186,14 @@ async fn capture(store: &GbrainStore) -> anyhow::Result<()> {
     input.supersession_reason = payload.reason;
 
     let fact = store.capture(input).await?;
-    println!("{}", json!({ "id": fact.id, "slug": fact.provenance.first() }));
+    println!(
+        "{}",
+        json!({ "id": fact.id, "slug": fact.provenance.first() })
+    );
     Ok(())
 }
 
-async fn consolidate(
-    store: &GbrainStore,
-    flags: &HashMap<String, String>,
-) -> anyhow::Result<()> {
+async fn consolidate(store: &GbrainStore, flags: &HashMap<String, String>) -> anyhow::Result<()> {
     let scope = flags.get("scope").map(|s| parse_scope(s));
     let stats = store.consolidate(scope).await?;
     println!(

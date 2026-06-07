@@ -32,12 +32,17 @@ pub mod schema;
 pub mod store;
 pub mod tools;
 
+pub use agent::claims::{
+    ClaimConfidence, ClaimLedger, ClaimSupport, ClaimTemporalScope, ClaimType, ClaimVerdict,
+    EvidenceRecord, FaithfulnessTrace, LedgerClaim, LedgerFailure, QuoteSpan,
+    validate_claim_ledger,
+};
 pub use agent::{AgentAnswer, AgentBudget, DecisionAgent, ProgressSink, WorkingContext};
 pub use context::GbrainContextProvider;
 pub use embed::Embedder;
 pub use infer::EngineReasoner;
-pub use reason::{Reasoner, build_reasoner};
 pub use model::{AsOf, FactStatus, TemporalFact};
+pub use reason::{Reasoner, build_reasoner};
 pub use store::{
     CaptureInput, ConsolidateStats, GbrainStore, GbrainStoreFactory, RecallParams, RecallResult,
 };

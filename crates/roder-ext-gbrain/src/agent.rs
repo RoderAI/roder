@@ -35,6 +35,13 @@ use crate::model::{AsOf, TemporalFact};
 use crate::reason::{Reasoner, extract_json};
 use crate::store::{GbrainStore, RecallParams};
 
+pub mod claims;
+
+use self::claims::{
+    ClaimConfidence, ClaimTemporalScope, ClaimType, EvidenceRecord, LedgerClaim, QuoteSpan,
+    validate_claim_ledger,
+};
+
 /// Budgets + escalation knobs (hook for configurable cost/iteration policies).
 #[derive(Debug, Clone, Copy)]
 pub struct AgentBudget {
@@ -135,6 +142,7 @@ pub struct DecisionAgent<R: Reasoner> {
     budget: AgentBudget,
     progress: Box<dyn ProgressSink>,
     scope: Option<MemoryScope>,
+    strict_faithfulness: bool,
     tokens_in: AtomicU32,
     tokens_out: AtomicU32,
 }
@@ -147,6 +155,7 @@ impl<R: Reasoner> DecisionAgent<R> {
             budget: AgentBudget::default(),
             progress: Box::new(SilentProgress),
             scope: None,
+            strict_faithfulness: false,
             tokens_in: AtomicU32::new(0),
             tokens_out: AtomicU32::new(0),
         }
@@ -167,8 +176,17 @@ impl<R: Reasoner> DecisionAgent<R> {
         self
     }
 
+    pub fn with_strict_faithfulness(mut self, strict: bool) -> Self {
+        self.strict_faithfulness = strict;
+        self
+    }
+
     /// Run the full decision loop for one question.
-    pub async fn answer(&self, question: &str, as_of: Option<OffsetDateTime>) -> anyhow::Result<AgentAnswer> {
+    pub async fn answer(
+        &self,
+        question: &str,
+        as_of: Option<OffsetDateTime>,
+    ) -> anyhow::Result<AgentAnswer> {
         self.tokens_in.store(0, Ordering::Relaxed);
         self.tokens_out.store(0, Ordering::Relaxed);
         let mut calls = 0usize;
@@ -182,11 +200,13 @@ impl<R: Reasoner> DecisionAgent<R> {
 
         // 2. Multi-pass retrieval -> deduped evidence pool (+ as-of-correct
         //    contradictions, and a current-state pass for as-of questions).
-        self.progress.step("retrieve", &format!("{} sub-queries", subqueries.len()));
+        self.progress
+            .step("retrieve", &format!("{} sub-queries", subqueries.len()));
         let (evidence, contradictions) = self.gather_evidence(question, &subqueries, as_of).await?;
 
         // 3. Draft atomic, cited claims.
-        self.progress.step("draft", &format!("{} evidence records", evidence.len()));
+        self.progress
+            .step("draft", &format!("{} evidence records", evidence.len()));
         let claims = self.draft(question, &evidence).await?;
         calls += 1;
         let drafted = claims.len();
@@ -197,7 +217,8 @@ impl<R: Reasoner> DecisionAgent<R> {
         calls += 1;
 
         // 5. Synthesize the final answer from verified claims only.
-        self.progress.step("finalize", &format!("{} verified claims", verified.len()));
+        self.progress
+            .step("finalize", &format!("{} verified claims", verified.len()));
         let answer = self
             .finalize(question, &verified, &contradictions, as_of_label.as_deref())
             .await?;
@@ -241,12 +262,14 @@ impl<R: Reasoner> DecisionAgent<R> {
         self.progress.step("retrieve", question);
         let (evidence, contradictions) = self.gather_evidence(question, &[], as_of).await?;
 
-        self.progress.step("synthesize", &format!("{} records", evidence.len()));
+        self.progress
+            .step("synthesize", &format!("{} records", evidence.len()));
         let evidence_empty = evidence.is_empty();
         let answer = if evidence_empty {
             "The available records do not contain enough evidence to answer this.".to_string()
         } else {
-            let synth_prompt = concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref());
+            let synth_prompt =
+                concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref());
             // Self-consistency (opt-in, GBRAIN_SELF_CONSISTENCY=N>=2): synthesize N
             // independent drafts and keep only facts a MAJORITY assert. Stochastic
             // fabrications vary run-to-run so they drop out; stable grounded facts
@@ -260,12 +283,18 @@ impl<R: Reasoner> DecisionAgent<R> {
             let draft = if n_self >= 2 {
                 let mut drafts = Vec::with_capacity(n_self);
                 for i in 0..n_self {
-                    self.progress.step("synthesize", &format!("sample {}/{n_self}", i + 1));
+                    self.progress
+                        .step("synthesize", &format!("sample {}/{n_self}", i + 1));
                     drafts.push(self.call("synthesize", CONCISE_SYS, &synth_prompt).await?);
                 }
-                self.progress.step("consensus", &format!("{n_self} samples"));
-                self.call("consensus", CONSENSUS_SYS, &consensus_prompt(question, &drafts))
-                    .await?
+                self.progress
+                    .step("consensus", &format!("{n_self} samples"));
+                self.call(
+                    "consensus",
+                    CONSENSUS_SYS,
+                    &consensus_prompt(question, &drafts),
+                )
+                .await?
             } else {
                 self.call("synthesize", CONCISE_SYS, &synth_prompt).await?
             };
@@ -285,7 +314,11 @@ impl<R: Reasoner> DecisionAgent<R> {
             // Pass 1: lenient, deterministic-flag-driven specific strip.
             self.progress.step("strip", "audit");
             let stripped = self
-                .call("strip", STRIP_SYS, &strip_prompt(question, &draft, &evidence, &audit(&draft)))
+                .call(
+                    "strip",
+                    STRIP_SYS,
+                    &strip_prompt(question, &draft, &evidence, &audit(&draft)),
+                )
                 .await?;
             let stripped = strip_phantom_cites(&stripped, &evidence);
 
@@ -370,8 +403,10 @@ impl<R: Reasoner> DecisionAgent<R> {
     /// One reasoner call, with optional raw-output tracing (`GBRAIN_AGENT_DEBUG`).
     async fn call(&self, stage: &str, system: &str, user: &str) -> anyhow::Result<String> {
         let completion = self.reasoner.complete(system, user).await?;
-        self.tokens_in.fetch_add(completion.input_tokens, Ordering::Relaxed);
-        self.tokens_out.fetch_add(completion.output_tokens, Ordering::Relaxed);
+        self.tokens_in
+            .fetch_add(completion.input_tokens, Ordering::Relaxed);
+        self.tokens_out
+            .fetch_add(completion.output_tokens, Ordering::Relaxed);
         if std::env::var("GBRAIN_AGENT_DEBUG").is_ok() {
             eprintln!(
                 "── agent[{stage}] ──\n{}\n",
@@ -429,15 +464,36 @@ impl<R: Reasoner> DecisionAgent<R> {
 
         // Primary pass: the as-of snapshot (or current).
         let primary = as_of.map(AsOf::at).unwrap_or_else(AsOf::now);
-        self.retrieve_into(question, &subs, primary, expand, "", &mut pool, &mut seen, &mut contradictions)
-            .await?;
+        self.retrieve_into(
+            question,
+            &subs,
+            primary,
+            expand,
+            "",
+            &mut pool,
+            &mut seen,
+            &mut contradictions,
+        )
+        .await?;
 
         // As-of questions also need the CURRENT state to answer "what has SINCE
         // changed" (C4 audit replay). Records only present now are flagged.
         if let Some(d) = as_of {
-            let note = format!("NOT on record as of {} — recorded later / current state", d.date());
-            self.retrieve_into(question, &subs, AsOf::now(), expand, &note, &mut pool, &mut seen, &mut contradictions)
-                .await?;
+            let note = format!(
+                "NOT on record as of {} — recorded later / current state",
+                d.date()
+            );
+            self.retrieve_into(
+                question,
+                &subs,
+                AsOf::now(),
+                expand,
+                &note,
+                &mut pool,
+                &mut seen,
+                &mut contradictions,
+            )
+            .await?;
         }
         Ok((pool, contradictions.into_iter().collect()))
     }
@@ -488,7 +544,12 @@ impl<R: Reasoner> DecisionAgent<R> {
                 }
                 pool.push(EvidenceItem {
                     index: pool.len() + 1,
-                    slug: hit.fact.provenance.first().cloned().unwrap_or_else(|| hit.fact.id.clone()),
+                    slug: hit
+                        .fact
+                        .provenance
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| hit.fact.id.clone()),
                     date: hit.fact.valid_at.date().to_string(),
                     source: source_label(&hit.fact),
                     status: crate::store::status_label(&hit.fact, now).to_string(),
@@ -526,17 +587,31 @@ impl<R: Reasoner> DecisionAgent<R> {
             return Ok((Vec::new(), Vec::new()));
         }
         let out = self
-            .call("verify", VERIFY_SYS, &verify_prompt(question, claims, evidence))
+            .call(
+                "verify",
+                VERIFY_SYS,
+                &verify_prompt(question, claims, evidence),
+            )
             .await?;
         let verdicts = extract_json(&out)
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
         let mut kept = Vec::new();
         let mut dropped = Vec::new();
+        let evidence_records = if self.strict_faithfulness {
+            Some(
+                evidence
+                    .iter()
+                    .map(evidence_record_from_item)
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
         for (i, claim) in claims.iter().enumerate() {
-            let verdict = verdicts.iter().find(|v| {
-                v.get("id").and_then(Value::as_u64).map(|x| x as usize) == Some(i + 1)
-            });
+            let verdict = verdicts
+                .iter()
+                .find(|v| v.get("id").and_then(Value::as_u64).map(|x| x as usize) == Some(i + 1));
             let supported = verdict
                 .and_then(|v| v.get("supported"))
                 .and_then(Value::as_bool)
@@ -563,6 +638,29 @@ impl<R: Reasoner> DecisionAgent<R> {
                     .and_then(|v| v.get("classification"))
                     .and_then(Value::as_str)
                     .map(str::to_string);
+                if let Some(records) = evidence_records.as_ref() {
+                    let ledger_claim = ledger_claim_from_verdict(
+                        i + 1,
+                        question,
+                        claim,
+                        evidence,
+                        quote.as_str(),
+                        classification.as_deref(),
+                    );
+                    let trace = validate_claim_ledger(&[ledger_claim], records);
+                    if let Some(reason) = trace
+                        .rejected
+                        .first()
+                        .and_then(|claim| claim.rejection_reason.clone())
+                    {
+                        dropped.push(format!("{} ({reason})", claim.text));
+                        continue;
+                    }
+                    if trace.verified.is_empty() {
+                        dropped.push(format!("{} (strict ledger rejected claim)", claim.text));
+                        continue;
+                    }
+                }
                 kept.push(VerifiedClaim {
                     text: claim.text.clone(),
                     provenance,
@@ -576,7 +674,6 @@ impl<R: Reasoner> DecisionAgent<R> {
         Ok((kept, dropped))
     }
 
-
     async fn finalize(
         &self,
         question: &str,
@@ -585,16 +682,156 @@ impl<R: Reasoner> DecisionAgent<R> {
         as_of: Option<&str>,
     ) -> anyhow::Result<String> {
         if verified.is_empty() {
-            return Ok("The available records do not contain enough evidence to answer this.".to_string());
+            return Ok(
+                "The available records do not contain enough evidence to answer this.".to_string(),
+            );
         }
-        self.call("finalize", FINALIZE_SYS, &finalize_prompt(question, verified, contradictions, as_of))
-            .await
+        self.call(
+            "finalize",
+            FINALIZE_SYS,
+            &finalize_prompt(question, verified, contradictions, as_of),
+        )
+        .await
     }
 }
 
 fn dedup_strings(iter: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
-    iter.into_iter().filter(|s| seen.insert(s.clone())).collect()
+    iter.into_iter()
+        .filter(|s| seen.insert(s.clone()))
+        .collect()
+}
+
+fn evidence_record_from_item(item: &EvidenceItem) -> EvidenceRecord {
+    EvidenceRecord::new(item.index, item.slug.clone(), item.text.clone())
+        .with_date(item.date.clone())
+        .with_status(item.status.clone())
+        .with_note(item.note.clone())
+}
+
+fn ledger_claim_from_verdict(
+    id: usize,
+    question: &str,
+    claim: &Claim,
+    evidence: &[EvidenceItem],
+    quote: &str,
+    classification: Option<&str>,
+) -> LedgerClaim {
+    let supporting_record_numbers: Vec<usize> = claim
+        .support
+        .iter()
+        .copied()
+        .filter(|n| evidence.get(n.saturating_sub(1)).is_some())
+        .collect();
+    let supporting_artifact_ids = dedup_strings(
+        supporting_record_numbers
+            .iter()
+            .filter_map(|n| evidence.get(n.saturating_sub(1)).map(|e| e.slug.clone())),
+    );
+    let quote_spans = quote_spans_for(quote, &supporting_record_numbers, evidence);
+    LedgerClaim {
+        claim_id: format!("claim-{id}"),
+        claim_text: claim.text.clone(),
+        claim_type: claim_type_from(question, classification, supporting_record_numbers.len()),
+        supporting_artifact_ids,
+        supporting_record_numbers,
+        quote_spans,
+        temporal_scope: temporal_scope_from_question(question),
+        confidence: ClaimConfidence::Rejected,
+        rejection_reason: None,
+    }
+}
+
+fn quote_spans_for(
+    quote: &str,
+    supporting_record_numbers: &[usize],
+    evidence: &[EvidenceItem],
+) -> Vec<QuoteSpan> {
+    let quote = quote.trim();
+    if quote.is_empty() {
+        return Vec::new();
+    }
+    supporting_record_numbers
+        .iter()
+        .filter_map(|n| evidence.get(n.saturating_sub(1)))
+        .filter(|item| normalized_contains_light(&item.text, quote))
+        .map(|item| QuoteSpan {
+            artifact_id: item.slug.clone(),
+            record_number: item.index,
+            quote: quote.to_string(),
+        })
+        .take(1)
+        .collect()
+}
+
+fn claim_type_from(
+    question: &str,
+    classification: Option<&str>,
+    support_count: usize,
+) -> ClaimType {
+    let ql = question.to_ascii_lowercase();
+    if is_contradiction_question(question) {
+        ClaimType::Contradiction
+    } else if ql.contains("as of")
+        || ql.contains("changed")
+        || ql.contains("change")
+        || ql.contains("current")
+        || ql.contains("now")
+        || ql.contains("superseded")
+        || ql.contains("replaced")
+    {
+        ClaimType::TemporalStatus
+    } else if support_count > 1 {
+        ClaimType::Derived
+    } else if classification == Some("direct") {
+        ClaimType::Direct
+    } else {
+        ClaimType::Derived
+    }
+}
+
+fn temporal_scope_from_question(question: &str) -> ClaimTemporalScope {
+    let ql = question.to_ascii_lowercase();
+    if ql.contains("as of")
+        && (ql.contains("since")
+            || ql.contains("changed")
+            || ql.contains("change")
+            || ql.contains("now")
+            || ql.contains("current")
+            || ql.contains("superseded")
+            || ql.contains("replaced"))
+    {
+        ClaimTemporalScope::SinceAsOf
+    } else if ql.contains("as of") {
+        ClaimTemporalScope::AsOf
+    } else if ql.contains("current") || ql.contains("now") {
+        ClaimTemporalScope::Current
+    } else {
+        ClaimTemporalScope::Unknown
+    }
+}
+
+fn normalized_contains_light(haystack: &str, needle: &str) -> bool {
+    let needle = normalize_light(needle);
+    !needle.is_empty() && normalize_light(haystack).contains(&needle)
+}
+
+fn normalize_light(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_space = true;
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_space = false;
+        } else if !last_space {
+            out.push(' ');
+            last_space = true;
+        }
+    }
+    if out.ends_with(' ') {
+        out.pop();
+    }
+    out
 }
 
 // --------------------------------------------------------------------------- //
@@ -765,9 +1002,13 @@ fn concise_prompt(
             "[{}] ({}, {}, status={}{note}) {}\n",
             e.slug,
             e.date,
-            if e.source.is_empty() { "source?" } else { &e.source },
+            if e.source.is_empty() {
+                "source?"
+            } else {
+                &e.source
+            },
             e.status,
-            truncate(&e.text, 1000),
+            truncate(&e.text, 6000),
         ));
     }
     if !contradictions.is_empty() {
@@ -805,9 +1046,13 @@ fn draft_prompt(question: &str, evidence: &[EvidenceItem]) -> String {
             "[{}] ({}, {}, status={}{note}) {}\n",
             e.index,
             e.date,
-            if e.source.is_empty() { "source?" } else { &e.source },
+            if e.source.is_empty() {
+                "source?"
+            } else {
+                &e.source
+            },
             e.status,
-            truncate(&e.text, 1200),
+            truncate(&e.text, 6000),
         ));
     }
     s.push_str("\nReturn the JSON array of cited claims.");
@@ -877,7 +1122,8 @@ fn proper_name_phrases(question: &str) -> Vec<String> {
             .to_string()
     };
     let cap = |w: &str| {
-        w.chars().next().is_some_and(char::is_uppercase) && w.chars().skip(1).any(|c| c.is_lowercase())
+        w.chars().next().is_some_and(char::is_uppercase)
+            && w.chars().skip(1).any(|c| c.is_lowercase())
     };
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -905,7 +1151,9 @@ fn strip_phantom_cites(answer: &str, evidence: &[EvidenceItem]) -> String {
             let inner = &rest[open + 1..open + 1 + rel];
             let slug_shaped = inner.contains('-')
                 && inner.chars().any(|c| c.is_ascii_digit())
-                && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+                && inner
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
             if slug_shaped && !real.contains(inner) {
                 if out.ends_with(' ') {
                     out.pop();
@@ -964,7 +1212,9 @@ fn accept_faithful_pass(
             return false; // dropped a correctly-attributed grounded fact
         }
     }
-    let f_before = audit_grounding(question, before, idx, walk).fabricated.len();
+    let f_before = audit_grounding(question, before, idx, walk)
+        .fabricated
+        .len();
     let f_after = audit_grounding(question, after, idx, walk).fabricated.len();
     f_after <= f_before
 }
@@ -1000,7 +1250,7 @@ fn audit_edit_prompt(
             e.slug,
             e.date,
             e.status,
-            truncate(&e.text, 1200),
+            truncate(&e.text, 6000),
         ));
     }
     s.push('\n');
@@ -1043,14 +1293,20 @@ fn audit_edit_prompt(
     s
 }
 
-
 fn verify_prompt(question: &str, claims: &[Claim], evidence: &[EvidenceItem]) -> String {
-    let mut s = format!("Question: {question}\n\nClaims to verify (with their cited record text):\n");
+    let mut s =
+        format!("Question: {question}\n\nClaims to verify (with their cited record text):\n");
     for (i, c) in claims.iter().enumerate() {
         s.push_str(&format!("\nClaim {}: {}\nCited records:\n", i + 1, c.text));
         for n in &c.support {
             if let Some(e) = evidence.get(n.saturating_sub(1)) {
-                s.push_str(&format!("  [{}] ({}, {}) {}\n", e.index, e.date, e.source, truncate(&e.text, 1200)));
+                s.push_str(&format!(
+                    "  [{}] ({}, {}) {}\n",
+                    e.index,
+                    e.date,
+                    e.source,
+                    truncate(&e.text, 6000)
+                ));
             }
         }
     }
@@ -1066,12 +1322,26 @@ fn finalize_prompt(
 ) -> String {
     let mut s = String::new();
     if let Some(d) = as_of {
-        s.push_str(&format!("This question is about the organization's knowledge AS OF {d}.\n"));
+        s.push_str(&format!(
+            "This question is about the organization's knowledge AS OF {d}.\n"
+        ));
     }
-    s.push_str(&format!("Question: {question}\n\nVerified claims (use ONLY these):\n"));
+    s.push_str(&format!(
+        "Question: {question}\n\nVerified claims (use ONLY these):\n"
+    ));
     for (i, c) in verified.iter().enumerate() {
-        let cls = c.classification.as_deref().map(|x| format!(" [{x}]")).unwrap_or_default();
-        s.push_str(&format!("{}. {}{} (sources: {})\n", i + 1, c.text, cls, c.provenance.join(", ")));
+        let cls = c
+            .classification
+            .as_deref()
+            .map(|x| format!(" [{x}]"))
+            .unwrap_or_default();
+        s.push_str(&format!(
+            "{}. {}{} (sources: {})\n",
+            i + 1,
+            c.text,
+            cls,
+            c.provenance.join(", ")
+        ));
     }
     if !contradictions.is_empty() {
         s.push_str("\nUnresolved contradictions to report:\n");
@@ -1124,7 +1394,10 @@ mod tests {
 
     async fn store_with_fact() -> Arc<GbrainStore> {
         let store = Arc::new(GbrainStore::open_in_memory(Embedder::new(None)).unwrap());
-        let mut input = CaptureInput::new(MemoryScope::Project("p".into()), "Acme account owner is Maya Patel");
+        let mut input = CaptureInput::new(
+            MemoryScope::Project("p".into()),
+            "Acme account owner is Maya Patel",
+        );
         input.provenance = vec!["ART-1".into()];
         store.capture(input).await.unwrap();
         store
@@ -1133,7 +1406,9 @@ mod tests {
     #[test]
     fn proper_names_and_contradiction_detection() {
         assert_eq!(
-            proper_name_phrases("Please provide Miguel Torres's statement and Diego Alvarez's view"),
+            proper_name_phrases(
+                "Please provide Miguel Torres's statement and Diego Alvarez's view"
+            ),
             vec!["Miguel Torres".to_string(), "Diego Alvarez".to_string()]
         );
         // clash phrasing + 2 named parties => contradiction question
@@ -1171,15 +1446,56 @@ mod tests {
     #[tokio::test]
     async fn loop_prunes_unsupported_claims_and_keeps_grounded_ones() {
         let agent = DecisionAgent::new(store_with_fact().await, MockReasoner);
-        let ans = agent.answer("Who owns the Acme account?", None).await.unwrap();
+        let ans = agent
+            .answer("Who owns the Acme account?", None)
+            .await
+            .unwrap();
         // The fabricated revenue claim is dropped; the grounded ownership claim survives.
         assert_eq!(ans.context.verified.len(), 1);
         assert_eq!(ans.context.dropped.len(), 1);
         assert!(ans.context.dropped[0].contains("70M"));
-        assert_eq!(ans.context.verified[0].provenance, vec!["ART-1".to_string()]);
+        assert_eq!(
+            ans.context.verified[0].provenance,
+            vec!["ART-1".to_string()]
+        );
         assert!(ans.answer.contains("Maya"));
         assert_eq!(ans.provenance, vec!["ART-1".to_string()]);
         assert_eq!(ans.context.llm_calls, 4);
+    }
+
+    #[tokio::test]
+    async fn strict_faithfulness_rejects_supported_claim_without_quote_span() {
+        struct NoQuoteVerifier;
+        #[async_trait::async_trait]
+        impl Reasoner for NoQuoteVerifier {
+            async fn complete(&self, system: &str, _user: &str) -> anyhow::Result<Completion> {
+                let out: &str = if system == DECOMPOSE_SYS {
+                    "[\"who owns acme\"]"
+                } else if system == DRAFT_SYS {
+                    "[{\"text\":\"Maya Patel owns Acme\",\"support\":[1]}]"
+                } else if system == VERIFY_SYS {
+                    "[{\"id\":1,\"supported\":true,\"quote\":\"\",\"classification\":\"direct\"}]"
+                } else {
+                    "Maya Patel owns Acme."
+                };
+                Ok(Completion::text(out))
+            }
+        }
+
+        let agent = DecisionAgent::new(store_with_fact().await, NoQuoteVerifier)
+            .with_strict_faithfulness(true);
+        let ans = agent
+            .answer("Who owns the Acme account?", None)
+            .await
+            .unwrap();
+        assert!(ans.context.verified.is_empty());
+        assert_eq!(ans.context.dropped.len(), 1);
+        assert!(ans.context.dropped[0].contains("no quote"));
+        assert!(
+            ans.answer
+                .to_lowercase()
+                .contains("not contain enough evidence")
+        );
     }
 
     #[tokio::test]
@@ -1188,13 +1504,17 @@ mod tests {
         struct NoClaims;
         #[async_trait::async_trait]
         impl Reasoner for NoClaims {
-            async fn complete(&self, system: &str, _u: &str) -> anyhow::Result<Completion> {
-                Ok(Completion::text(if system == DECOMPOSE_SYS { "[]" } else { "[]" }))
+            async fn complete(&self, _system: &str, _u: &str) -> anyhow::Result<Completion> {
+                Ok(Completion::text("[]"))
             }
         }
         let agent = DecisionAgent::new(store, NoClaims);
         let ans = agent.answer("anything?", None).await.unwrap();
         assert!(ans.context.verified.is_empty());
-        assert!(ans.answer.to_lowercase().contains("not contain enough evidence"));
+        assert!(
+            ans.answer
+                .to_lowercase()
+                .contains("not contain enough evidence")
+        );
     }
 }
