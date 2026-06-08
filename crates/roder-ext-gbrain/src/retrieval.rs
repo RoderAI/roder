@@ -31,6 +31,58 @@ pub struct Scored {
     pub lexical_score: f32,
 }
 
+/// Strip the meta-wrapper from a "walk me through the documents that support your
+/// conclusion about <X>" / "your claim that <X>" question and return the focal
+/// entity/conclusion <X> to retrieve on. Returns `None` when no meta-anchor is
+/// found, so ordinary factoid questions are retrieved unchanged.
+///
+/// Root cause it fixes (roadmap/91, sub-failure A): the generic meta-verbs (walk,
+/// conversation, turns, documents, support, conclusion) dominate the query
+/// embedding and pull it toward other justification-style questions / topically
+/// similar events, so retrieval surfaces the WRONG event. Re-centring on just <X>
+/// lands the vector on the real event. Deterministic, ASCII-oriented, no LLM/deps.
+pub fn focal_retrieval_query(question: &str) -> Option<String> {
+    let lower = question.to_lowercase();
+    // Anchors after which the focal conclusion/entity follows. Ordered longest-ish
+    // first only matters for overlap; we pick the earliest occurrence in the text.
+    const ANCHORS: &[&str] = &[
+        "conclusion about ",
+        "conclusion regarding ",
+        "conclusion that ",
+        "claim that ",
+        "claim about ",
+        "statement about ",
+        "statement regarding ",
+        "statement that ",
+        "decision about ",
+        "decision regarding ",
+        "belief about ",
+        "belief regarding ",
+        "regarding the ",
+    ];
+    // Earliest anchor end position (byte offset; ASCII-safe for this corpus).
+    let start = ANCHORS
+        .iter()
+        .filter_map(|a| lower.find(a).map(|pos| pos + a.len()))
+        .min()?;
+    let tail = &question[start..];
+    // Trim at the first trailing meta boundary so we keep only the focus phrase.
+    let mut cut = tail.len();
+    for pat in [",", "?", ";", " - ", " can you", " walk ", " indicating", " for each"] {
+        if let Some(p) = tail.find(pat) {
+            cut = cut.min(p);
+        }
+    }
+    let focus = tail[..cut].trim().trim_end_matches('.').trim();
+    // Guard: a real multi-word phrase that is meaningfully shorter than the question
+    // (else we gained nothing and risk dropping signal).
+    if focus.split_whitespace().count() >= 2 && focus.len() + 8 < question.len() {
+        Some(focus.to_string())
+    } else {
+        None
+    }
+}
+
 pub fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
@@ -164,6 +216,35 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn focal_query_strips_meta_wrapper() {
+        assert_eq!(
+            focal_retrieval_query(
+                "Could you detail the specific conversation turns or documents that support your conclusion about the new tiered incentive structure, indicating for each whether direct or inferred?"
+            ).as_deref(),
+            Some("the new tiered incentive structure")
+        );
+        assert_eq!(
+            focal_retrieval_query(
+                "Your claim that a load balancer misconfiguration was the root of the outage - can you walk through the supporting records?"
+            ).as_deref(),
+            Some("a load balancer misconfiguration was the root of the outage")
+        );
+        assert_eq!(
+            focal_retrieval_query(
+                "Regarding your conclusion about redesigning the shipment tracking feature, can you walk me through the documents?"
+            ).as_deref(),
+            Some("redesigning the shipment tracking feature")
+        );
+    }
+
+    #[test]
+    fn focal_query_is_noop_for_plain_questions() {
+        // No meta-anchor -> retrieve the question unchanged.
+        assert_eq!(focal_retrieval_query("Who owns the Acme account and when did that change?"), None);
+        assert_eq!(focal_retrieval_query("What was the data retention policy as of 2022-05-31?"), None);
     }
 
     #[test]

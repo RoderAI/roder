@@ -305,6 +305,17 @@ impl GbrainStore {
 
     /// Hybrid recall over the snapshot defined by `params.as_of`.
     pub async fn recall(&self, params: RecallParams) -> anyhow::Result<RecallResult> {
+        // De-meta focal query (roadmap/91, GBRAIN_FOCAL_QUERY=1): for "walk me
+        // through the evidence for <X>" meta-questions, retrieve on the extracted
+        // focus <X> so the generic meta-verbs don't pull a topically-similar WRONG
+        // event. Affects retrieval ONLY (embedding + lexical); the synthesizer still
+        // sees the original question. No-op for plain questions.
+        let mut params = params;
+        if std::env::var("GBRAIN_NO_FOCAL_QUERY").is_err()
+            && let Some(focus) = crate::retrieval::focal_retrieval_query(&params.query)
+        {
+            params.query = focus;
+        }
         let query_embedding = self.embedder.embed_query(&params.query).await;
         self.with_conn(|conn| recall_blocking(conn, &params, &query_embedding))
     }
