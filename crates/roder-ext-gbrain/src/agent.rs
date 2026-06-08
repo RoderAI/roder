@@ -908,8 +908,11 @@ place by answering part of the question. Length should match what the question n
 relevant part. 2) FAITHFUL — every specific (proper name, exact date, clock time, number, percentage, money/ \
 credit figure, version number, quoted phrase, causal link) MUST be copyable from a record; write the [SLUG] of \
 the ONE record that contains a specific immediately after THAT specific. If a sentence mixes specifics from \
-two records, split it so each specific sits beside the record that states it. If a specific is not in the \
-records, OMIT it — never guess or infer. Do NOT add clock timestamps (HH:MM), severity labels, penalty/credit/ \
+two records, split it so each specific sits beside the record that states it. State a specific ONLY if that \
+EXACT token appears verbatim in a record; never infer, round, convert, complete a partial value, or \
+reconstruct it from context or general knowledge. If a specific is not in the records, OMIT it — never guess \
+or infer. If two records give DIFFERENT values for the same specific, write 'the records disagree on this' \
+rather than choosing one. Do NOT add clock timestamps (HH:MM), severity labels, penalty/credit/ \
 revenue figures, or attendee names not written in a record, and never carry a person or date from one record \
 onto a fact stated by a different record. 3) If the records \
 genuinely do not answer, say so in one sentence. 4) 'now'/'currently' => give the most recent/current fact; \
@@ -940,7 +943,14 @@ words — never write that a policy 'remains as a fallback default', 'eliminates
 similar interpretation unless a record states exactly that. Do NOT introduce technical specifics — hostnames, \
 IP addresses, file / script / config / version names, or extra artifact [SLUG]s — unless the question \
 explicitly asks for them. If two records about the same event disagree on a specific, state only the part the \
-question asks for and do not assert the disputed specific.";
+question asks for and do not assert the disputed specific. 8) PER-FACET ABSTENTION: if the records do not \
+state the information for a facet the question asks about, write exactly 'The records do not specify this.' \
+for that facet and move on — NEVER substitute a plausible or inferred value (this is the rule that prevents \
+asserting a wrong-but-plausible date or name). 9) SELF-CHECK BEFORE FINISHING: silently re-read your draft one \
+claim at a time and DELETE any claim unless BOTH (a) you can point to the exact [SLUG] and copy the words that \
+support it, AND (b) it answers a facet the question actually asked. A claim that is supported by a record but \
+does not answer an asked facet (extra background, mechanism, adjacent detail) FAILS (b) — delete it. Do not \
+annotate removals; output only the surviving claims.";
 
 const EXTRACTIVE_SYS: &str = "You answer organizational-memory questions in the MINIMAL form that states each \
 asked fact and then STOPS. You have NO background knowledge of this company — only the records below; a fact \
@@ -1020,7 +1030,9 @@ when a record contains them — hostnames / domains (e.g. api.x.example), IP add
 provisioning / version names (e.g. infra-provision-v0.9.2), file paths, and config keys — together with any \
 clause that exists only to state them. They are real but exceed what the question asks and read as \
 unsupported elaboration. Keep the higher-level fact (e.g. 'a DNS misconfiguration') and the actors/dates the \
-question needs. 7) Keep it relevant and output ONLY the corrected answer text, no preamble or notes.";
+question needs. 7) NEVER delete the sanctioned abstention sentences 'The records do not specify this.' or \
+'the records disagree on this.' — keep them verbatim; they are faithful non-answers, not fabrications. \
+8) Keep it relevant and output ONLY the corrected answer text, no preamble or notes.";
 
 const CONSENSUS_SYS: &str = "You are given several INDEPENDENT answers to the SAME question, each written from \
 the SAME records. Produce ONE consolidated answer containing ONLY facts asserted by a MAJORITY of the inputs. \
