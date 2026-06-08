@@ -66,6 +66,9 @@ where
         self.active_turn_timer = TurnTimer::default();
         if self.active_turn_id.is_some() {
             self.active_turn_timer.start(Instant::now());
+            self.progress.set(super::TerminalProgress::Working);
+        } else {
+            self.progress.set(super::TerminalProgress::Idle);
         }
         self.current_turn_input_tokens = 0;
         self.current_turn_output_tokens = 0;
@@ -403,7 +406,6 @@ mod tests {
             preview: String::new(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
-            selection_mode: None,
             created_at: 0,
             updated_at: 0,
             status: ThreadStatus {

@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use roder_api::chrome::{ChromeCommand, ChromeController, bridge};
+
 use roder_api::extension::ToolProviderId;
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
@@ -15,6 +16,7 @@ use roder_api::tools::{
 };
 use serde_json::{Value, json};
 
+use crate::desktop_cdp;
 use crate::policy::guard;
 use crate::session::label_result;
 
@@ -283,17 +285,20 @@ impl ToolExecutor for ChromeDispatchTool {
         if !status.enabled {
             return Ok(error_result(
                 &call,
-                "Chrome is not enabled for this session. Run /chrome or start with --chrome.",
-            ));
-        }
-        if !status.connected {
-            return Ok(error_result(
-                &call,
-                "No Chrome extension is connected. Open the Roder browser extension and pair it.",
+                "Chrome tools are not enabled. Re-enable them from the /chrome panel or with roder chrome enable.",
             ));
         }
         if let Err(reason) = guard(&self.kind, status.mode) {
             return Ok(error_result(&call, reason));
+        }
+        if !status.connected {
+            if let Some(result) = desktop_cdp::execute(&self.kind, &call).await {
+                return Ok(result);
+            }
+            return Ok(error_result(
+                &call,
+                "No Chrome extension or Roder Desktop integrated browser is connected.",
+            ));
         }
 
         match self
@@ -369,8 +374,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_errors_when_chrome_disabled() {
+    async fn tool_errors_when_chrome_explicitly_disabled() {
         let bridge = Arc::new(ChromeBridge::new());
+        bridge.set_enabled(false);
         let mut registry = ToolRegistry::default();
         ChromeToolContributor::with_controller(bridge)
             .contribute(&mut registry)

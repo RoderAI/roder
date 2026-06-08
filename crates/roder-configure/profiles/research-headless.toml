@@ -9,6 +9,8 @@ include_app_server = true
 include_cli = true
 extensions = [
   "openai-responses",
+  "google-embeddings",
+  "zeroentropy-embeddings",
   "jsonl-thread-store",
   "disk-context",
   "memory",

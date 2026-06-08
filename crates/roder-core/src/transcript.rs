@@ -400,6 +400,7 @@ mod tests {
             .expect("global skill index");
 
         assert!(index.contains("review"));
+        assert!(index.contains("roder-config"));
         assert!(!index.contains("vcs-snapshot"));
         assert!(texts.iter().any(|text| {
             text.starts_with("<skill name=\"vcs-snapshot\"") && text.contains("VCS status")
@@ -409,7 +410,7 @@ mod tests {
             matches!(
                 event,
                 RoderEvent::SkillIndexRendered(rendered)
-                    if rendered.rendered_count == 1 && rendered.hidden_count >= 1
+                    if rendered.rendered_count == 2 && rendered.hidden_count >= 1
             )
         }));
         assert!(emitted.iter().any(|event| {
@@ -499,7 +500,6 @@ mod tests {
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
-                inference_router: crate::inference_routing::RuntimeInferenceRouterConfig::default(),
                 speed_policy: Default::default(),
                 dynamic_workflows: Default::default(),
                 reliability: Default::default(),
@@ -613,7 +613,6 @@ mod tests {
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
-                inference_router: crate::inference_routing::RuntimeInferenceRouterConfig::default(),
                 speed_policy: Default::default(),
                 dynamic_workflows: Default::default(),
                 reliability: Default::default(),
@@ -743,7 +742,6 @@ mod tests {
                 roadmap_data_dir: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
                 runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
-                inference_router: crate::inference_routing::RuntimeInferenceRouterConfig::default(),
                 speed_policy: Default::default(),
                 dynamic_workflows: Default::default(),
                 reliability: Default::default(),

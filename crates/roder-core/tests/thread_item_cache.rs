@@ -143,7 +143,6 @@ fn counting_thread_snapshot(thread_id: &str) -> ThreadSnapshot {
             root_id: None,
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
-            selection_mode: None,
             runner_destination: None,
             runner_state: None,
             created_at: OffsetDateTime::UNIX_EPOCH,

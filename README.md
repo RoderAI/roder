@@ -181,7 +181,9 @@ Built-in profiles:
 - `openai-only`
 - `anthropic-only`
 - `research-headless`
+- `remote-app-server`
 - `tavily`
+- `zero-coder-edits`
 - `full`
 
 ```sh
@@ -248,6 +250,20 @@ secret_env = { BLAXEL_API_KEY = "BLAXEL_API_KEY" }
 config = { region = "iad" }
 ```
 
+Fly Sprites can be selected with the first-party `sprites` runner. Put the token in `RODER_SPRITES_TOKEN` or `SPRITES_TOKEN`; generated sprites are deleted on close unless configured otherwise:
+
+```toml
+[remote_runners]
+enabled = true
+default_destination = "sprites-dev"
+
+[remote_runners.destinations.sprites-dev]
+provider = "sprites"
+config = { sprite_name_prefix = "roder", cleanup = "delete-on-close", working_dir = "/home/sprite/roder" }
+```
+
+Sprites destinations can also bootstrap a durable remote app-server service by downloading the `remote-app-server` distribution artifact from `dl.roder.sh`; see [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md).
+
 For local testing, override the selected destination without editing the file:
 
 ```sh
@@ -256,7 +272,7 @@ RODER_REMOTE_RUNNER=unix-local cargo run -p roder-cli --bin roder
 
 The app-server exposes `runners/list`, `runners/select`, `runners/session`, `runners/snapshot`, `runners/delete`, and `runners/ports`. The TUI exposes runner selection from the `Ctrl+P` menu and shows the active runner in the status surface. Runner sessions own files, commands, ports, snapshots, mounts, artifacts, and provider state; Roder orchestrates and persists the selected destination/session boundary.
 
-See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts, artifacts, snapshots, ports, and secret-handling rules.
+See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts, artifacts, snapshots, ports, and secret-handling rules. See [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md) for Sprites setup, cleanup/cost notes, network policy, troubleshooting, and live smoke commands.
 
 OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
@@ -284,7 +300,7 @@ Roder discovers models for custom providers in the background by trying `GET <ba
 
 App-server docs live under [`docs/app-server/`](./docs/app-server/): [`api.md`](./docs/app-server/api.md) is the integrator-facing JSON-RPC reference, [`protocol.md`](./docs/app-server/protocol.md) summarizes the client contract, and [`remote.md`](./docs/app-server/remote.md) covers remote WebSocket pairing, auth, and security assumptions.
 
-Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md). Transparent child trace events, app-server trace read/list methods, persistence behavior, and TUI controls are documented in [`docs/roder-subagent-traces.md`](./docs/roder-subagent-traces.md). Plan review artifacts, hunk records, app-server methods, and deferred rollback behavior are documented in [`docs/roder-plan-review-hunk-tracker.md`](./docs/roder-plan-review-hunk-tracker.md). Workflow import for AGENTS.md, skills, MCP, hooks, commands, and plugins is documented in [`docs/roder-workflow-import.md`](./docs/roder-workflow-import.md). Built-in skills, exposure rules, config, and feature bindings are documented in [`docs/roder-built-in-skills.md`](./docs/roder-built-in-skills.md). Plugin marketplace defaults, de-duplicated search, and install commands are documented in [`docs/roder-plugin-marketplaces.md`](./docs/roder-plugin-marketplaces.md). Terminal media generation, artifacts, previews, and generated-image attachments are documented in [`docs/roder-terminal-media-generation.md`](./docs/roder-terminal-media-generation.md). File-backed dynamic context, `read_artifact`/`grep_artifact`/`tail_artifact`, and artifact app-server methods are documented in [`docs/roder-file-backed-dynamic-context.md`](./docs/roder-file-backed-dynamic-context.md). SQLite vector memories, project/global scopes, embedding providers, and memory CLI/app-server controls are documented in [`docs/roder-memories.md`](./docs/roder-memories.md).
+Subagent setup for the `task` tool and disk-defined agents is documented in [`docs/roder-subagents.md`](./docs/roder-subagents.md). Transparent child trace events, app-server trace read/list methods, persistence behavior, and TUI controls are documented in [`docs/roder-subagent-traces.md`](./docs/roder-subagent-traces.md). Plan review artifacts, hunk records, app-server methods, and deferred rollback behavior are documented in [`docs/roder-plan-review-hunk-tracker.md`](./docs/roder-plan-review-hunk-tracker.md). Workflow import for AGENTS.md, skills, MCP, hooks, commands, and plugins is documented in [`docs/roder-workflow-import.md`](./docs/roder-workflow-import.md). Built-in skills, exposure rules, config, and feature bindings are documented in [`docs/roder-built-in-skills.md`](./docs/roder-built-in-skills.md). Plugin marketplace defaults, de-duplicated search, and install commands are documented in [`docs/roder-plugin-marketplaces.md`](./docs/roder-plugin-marketplaces.md). Terminal media generation, artifacts, previews, and generated-image attachments are documented in [`docs/roder-terminal-media-generation.md`](./docs/roder-terminal-media-generation.md). File-backed dynamic context, `read_artifact`/`grep_artifact`/`tail_artifact`, and artifact app-server methods are documented in [`docs/roder-file-backed-dynamic-context.md`](./docs/roder-file-backed-dynamic-context.md). SQLite vector memories, project/global scopes, OpenAI, Google Gemini, and ZeroEntropy embedding providers, and memory CLI/app-server controls are documented in [`docs/roder-memories.md`](./docs/roder-memories.md).
 
 Custom model edit-tool preferences can be set in `~/.roder/config.toml`:
 
@@ -294,7 +310,7 @@ edit_tool = "patch" # or "edit"
 parallel_tool_calls = true # set false for custom models that need serial tool calls
 ```
 
-`patch` advertises `apply_patch`; `edit` advertises `write_file`, `edit`, and `multi_edit`. Roder never advertises both edit surfaces to a single model request.
+`apply_patch` is always advertised as a built-in editing tool. `patch` model profiles advertise only `apply_patch`; `edit` model profiles advertise `apply_patch`, `write_file`, `edit`, and `multi_edit`.
 Parallel tool calls are enabled by default. For OpenAI Responses-compatible providers, Roder sends the model-specific `parallel_tool_calls` setting with each tool-capable request and executes each returned tool-call batch concurrently unless that model override is set to `false`.
 
 The app-server run-control methods are `turn/start`, `turn/steer`, and `turn/interrupt`. `turn/start` and `turn/steer` accept `input` blocks such as `{ "type": "text", "text": "..." }`. `turn/start` also accepts per-turn `modelProvider`, `model`, `reasoning`, and `policyMode` overrides. Steering accepts `{ "threadId": "...", "expectedTurnId": "...", "input": [...] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
@@ -339,9 +355,9 @@ Roder can drive a user's real, logged-in Chrome session through a Manifest V3
 browser extension: inspect live pages, read console/network activity, interact
 with the DOM, and record action traces — without copying credentials out of the
 browser. The MV3 extension pairs over the remote WebSocket app-server and is
-exposed to the model as policy-gated `chrome_*` tools, plus a `/chrome` TUI
-panel and `roder --chrome` / `roder chrome status|enable|disable|reconnect` CLI
-commands.
+exposed to the model as policy-gated `chrome_*` tools by default, plus a
+`/chrome` TUI panel and `roder chrome status|enable|disable|reconnect` CLI
+commands for status and manual control.
 
 See [`docs/roder-chrome-browser-extension.md`](docs/roder-chrome-browser-extension.md)
 for install, pairing, the parity matrix, the permission/security model, the

@@ -9,6 +9,7 @@ use roder_api::catalog::{
     PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
     PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
+use roder_api::embeddings::EmbeddingProvider;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
@@ -23,13 +24,14 @@ use roder_ext_claude_code::{ClaudeCodeConfig, ClaudeCodeExtension};
 use roder_ext_cursor::{CursorConfig, CursorExtension};
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
-use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
-use roder_ext_inference_router::{
-    LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
+use roder_ext_google_embeddings::{
+    DEFAULT_ENDPOINT as GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT, GoogleEmbeddingProvider,
+    GoogleEmbeddingsConfig, GoogleEmbeddingsExtension,
 };
+use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_memory::MemoryExtension;
-use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
+use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
@@ -45,11 +47,17 @@ use roder_ext_runner_docker::DockerRunnerExtension;
 use roder_ext_runner_e2b::E2bRunnerExtension;
 use roder_ext_runner_modal::ModalRunnerExtension;
 use roder_ext_runner_runloop::RunloopRunnerExtension;
+use roder_ext_runner_sprites::SpritesRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_webwright::WebwrightExtension;
 use roder_ext_xai::XaiExtension;
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
+use roder_ext_zeroentropy_embeddings::{
+    DEFAULT_ENDPOINT as ZEROENTROPY_EMBEDDINGS_DEFAULT_ENDPOINT, ZeroEntropyEmbeddingProvider,
+    ZeroEntropyEmbeddingsConfig, ZeroEntropyEmbeddingsExtension, ZeroEntropyEncodingFormat,
+    ZeroEntropyLatency,
+};
 use roder_ext_zerolang::{ZerolangConfig, ZerolangExtension};
 use semver::Version;
 
@@ -110,7 +118,6 @@ pub struct DefaultRegistryConfig {
     pub policy_mode: PolicyMode,
     pub notifications: DefaultNotificationsConfig,
     pub remote_runner_destination: Option<RunnerDestination>,
-    pub inference_router: Option<roder_config::InferenceRouterConfig>,
 }
 
 impl Default for DefaultRegistryConfig {
@@ -161,7 +168,6 @@ impl Default for DefaultRegistryConfig {
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
-            inference_router: None,
         }
     }
 }
@@ -220,7 +226,29 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         ..GoogleSpeechConfig::default()
     }))?;
 
-    if let Some(openai_key) = config.openai_api_key {
+    let openai_embedding_key = config
+        .openai_api_key
+        .clone()
+        .or_else(|| env_nonempty("OPENAI_API_KEY"));
+    let google_embeddings_config = google_embeddings_config(config.gemini_api_key.clone());
+    let zeroentropy_embeddings_config = zeroentropy_embeddings_config();
+    let google_embedding_provider = Arc::new(GoogleEmbeddingProvider::new(
+        google_embeddings_config.clone(),
+    )) as Arc<dyn EmbeddingProvider>;
+    let zeroentropy_embedding_provider = Arc::new(ZeroEntropyEmbeddingProvider::new(
+        zeroentropy_embeddings_config.clone(),
+    )) as Arc<dyn EmbeddingProvider>;
+    let openai_embedding_provider = openai_embedding_key
+        .clone()
+        .map(|key| Arc::new(OpenAiEmbeddingProvider::new(Some(key))) as Arc<dyn EmbeddingProvider>);
+    let memory_embedding_provider = match selected_memory_embedding_provider_id().as_deref() {
+        Some("google") => Some(google_embedding_provider.clone()),
+        Some("zeroentropy") => Some(zeroentropy_embedding_provider.clone()),
+        Some("openai") | None => openai_embedding_provider.clone(),
+        Some(_) => None,
+    };
+
+    if let Some(openai_key) = config.openai_api_key.clone() {
         builder.install(OpenAiResponsesExtension::new(openai_key))?;
     }
     if let Some(anthropic_key) = config.anthropic_api_key {
@@ -232,7 +260,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         setting_sources: config.claude_code_setting_sources,
         workspace: config.workspace.clone(),
     }))?;
-    if let Some(gemini_key) = config.gemini_api_key {
+    if let Some(gemini_key) = config.gemini_api_key.clone() {
         builder.install(GeminiExtension::new(gemini_key))?;
     }
     builder.install(XaiExtension::new(config.xai_api_key, config.xai_base_url))?;
@@ -282,9 +310,6 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             provider.base_url,
         )));
     }
-    builder.install(LocalInferenceRouterExtension::new(
-        local_inference_router_config(config.inference_router)?,
-    ))?;
 
     builder.install(roder_ext_plan_mode::PlanModeExtension::new(
         config.policy_mode,
@@ -299,6 +324,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(E2bRunnerExtension)?;
     builder.install(ModalRunnerExtension)?;
     builder.install(RunloopRunnerExtension)?;
+    builder.install(SpritesRunnerExtension)?;
     builder.install(VercelRunnerExtension)?;
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
     builder.install(WebwrightExtension)?;
@@ -354,36 +380,21 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             builder.install(PostgresSessionExtension::new(postgres))?;
         }
     }
-    builder.install(MemoryExtension::new(roder_home.join("memory")))?;
-    builder.install(OpenAiEmbeddingsExtension::from_env())?;
+    builder.install(
+        MemoryExtension::new(roder_home.join("memory"))
+            .with_embedding_provider(memory_embedding_provider.clone()),
+    )?;
+    if let Some(key) = openai_embedding_key {
+        builder.install(OpenAiEmbeddingsExtension::with_api_key(key))?;
+    } else {
+        builder.install(OpenAiEmbeddingsExtension::from_env())?;
+    }
+    builder.install(GoogleEmbeddingsExtension::new(google_embeddings_config))?;
+    builder.install(ZeroEntropyEmbeddingsExtension::new(
+        zeroentropy_embeddings_config,
+    ))?;
 
     builder.build()
-}
-
-fn local_inference_router_config(
-    config: Option<roder_config::InferenceRouterConfig>,
-) -> anyhow::Result<LocalInferenceRouterConfig> {
-    let Some(config) = config else {
-        return Ok(LocalInferenceRouterConfig::default());
-    };
-    if !config.enabled {
-        return Ok(LocalInferenceRouterConfig::default());
-    }
-    if config.router.as_deref().map(str::trim) != Some(LOCAL_INFERENCE_ROUTER_ID) {
-        return Ok(LocalInferenceRouterConfig::default());
-    }
-    LocalInferenceRouterConfig::from_router_parts(
-        config.enabled,
-        config
-            .profile
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
-        config.baseline_provider,
-        config.baseline_model,
-        config.extension,
-    )
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +423,87 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_XIAOMI_MIMO
             | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
     )
+}
+
+fn selected_memory_embedding_provider_id() -> Option<String> {
+    if let Some(provider) = env_nonempty("RODER_MEMORY_EMBEDDING_PROVIDER") {
+        return Some(provider);
+    }
+    roder_config::load_config()
+        .ok()
+        .and_then(|config| config.memories.unwrap_or_default().embedding_provider)
+        .filter(|provider| !provider.trim().is_empty())
+}
+
+fn google_embeddings_config(gemini_api_key: Option<String>) -> GoogleEmbeddingsConfig {
+    let config = roder_config::load_config().unwrap_or_default();
+    let provider_config = config.embedding_providers.get("google");
+    let api_key = env_nonempty("RODER_GOOGLE_EMBEDDINGS_API_KEY")
+        .or_else(|| {
+            provider_config
+                .and_then(|provider| provider.api_key_env.as_deref())
+                .and_then(env_nonempty)
+        })
+        .or(gemini_api_key)
+        .or_else(|| env_nonempty("GEMINI_API_TOKEN"))
+        .or_else(|| env_nonempty("GEMINI_API_KEY"))
+        .or_else(|| env_nonempty("GOOGLE_API_KEY"))
+        .or_else(|| env_nonempty("GOOGLE_GENAI_API_KEY"))
+        .or_else(|| env_nonempty("GOOGLE_AI_API_KEY"));
+    let endpoint = env_nonempty("RODER_GOOGLE_EMBEDDINGS_ENDPOINT")
+        .or_else(|| provider_config.and_then(|provider| provider.endpoint.clone()))
+        .unwrap_or_else(|| GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT.to_string());
+    GoogleEmbeddingsConfig { api_key, endpoint }
+}
+
+fn zeroentropy_embeddings_config() -> ZeroEntropyEmbeddingsConfig {
+    let config = roder_config::load_config().unwrap_or_default();
+    let provider_config = config.embedding_providers.get("zeroentropy");
+    let api_key = env_nonempty("RODER_ZEROENTROPY_API_KEY")
+        .or_else(|| {
+            provider_config
+                .and_then(|provider| provider.api_key_env.as_deref())
+                .and_then(env_nonempty)
+        })
+        .or_else(|| env_nonempty("ZEROENTROPY_API_KEY"));
+    let endpoint = env_nonempty("RODER_ZEROENTROPY_EMBEDDINGS_ENDPOINT")
+        .or_else(|| provider_config.and_then(|provider| provider.endpoint.clone()))
+        .unwrap_or_else(|| ZEROENTROPY_EMBEDDINGS_DEFAULT_ENDPOINT.to_string());
+    let encoding_format = provider_config
+        .and_then(|provider| provider.encoding_format.as_deref())
+        .and_then(parse_zeroentropy_encoding_format)
+        .unwrap_or_default();
+    let latency = provider_config
+        .and_then(|provider| provider.latency.as_deref())
+        .and_then(parse_zeroentropy_latency);
+    ZeroEntropyEmbeddingsConfig {
+        api_key,
+        endpoint,
+        encoding_format,
+        latency,
+    }
+}
+
+fn parse_zeroentropy_encoding_format(value: &str) -> Option<ZeroEntropyEncodingFormat> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "float" => Some(ZeroEntropyEncodingFormat::Float),
+        "base64" => Some(ZeroEntropyEncodingFormat::Base64),
+        _ => None,
+    }
+}
+
+fn parse_zeroentropy_latency(value: &str) -> Option<ZeroEntropyLatency> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "fast" => Some(ZeroEntropyLatency::Fast),
+        "slow" => Some(ZeroEntropyLatency::Slow),
+        _ => None,
+    }
+}
+
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn roder_home_dir() -> anyhow::Result<PathBuf> {
@@ -789,6 +881,30 @@ mod tests {
     }
 
     #[test]
+    fn default_registry_installs_google_embedding_provider_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .embedding_providers
+                .iter()
+                .any(|provider| provider.descriptor().id == "google")
+        );
+    }
+
+    #[test]
+    fn default_registry_installs_zeroentropy_embedding_provider_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .embedding_providers
+                .iter()
+                .any(|provider| provider.descriptor().id == "zeroentropy")
+        );
+    }
+
+    #[test]
     fn default_registry_installs_git_vcs_provider() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
 
@@ -815,6 +931,25 @@ mod tests {
             registry
                 .provided_services()
                 .contains(&ProvidedService::ToolProvider("webwright".to_string()))
+        );
+    }
+
+    #[test]
+    fn default_registry_installs_sprites_runner_without_credentials() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .remote_runner_providers
+                .iter()
+                .any(|provider| provider.id() == "sprites")
+        );
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::RemoteRunnerProvider(
+                    "sprites".to_string()
+                ))
         );
     }
 
@@ -848,48 +983,6 @@ mod tests {
             .replace('\\', "/");
         assert!(rendered.ends_with("/.roder"));
         assert!(!rendered.ends_with("/w/.roder"));
-    }
-
-    #[test]
-    fn local_inference_router_config_reads_generic_extension_table_only_for_local_router() {
-        let config = local_inference_router_config(Some(roder_config::InferenceRouterConfig {
-            enabled: true,
-            router: Some(LOCAL_INFERENCE_ROUTER_ID.to_string()),
-            profile: Some("coding".to_string()),
-            baseline_provider: Some("codex".to_string()),
-            baseline_model: Some("gpt-5.5".to_string()),
-            extension: serde_json::json!({
-                "tiers": {
-                    "simple": {
-                        "provider": "codex",
-                        "model": "gpt-5.4-mini",
-                        "reasoning": "low"
-                    }
-                }
-            }),
-        }))
-        .unwrap();
-
-        assert!(config.enabled);
-        assert_eq!(config.profile.as_deref(), Some("coding"));
-        assert_eq!(
-            config
-                .tiers
-                .get("simple")
-                .and_then(|tier| tier.model.as_deref()),
-            Some("gpt-5.4-mini")
-        );
-
-        let custom_config =
-            local_inference_router_config(Some(roder_config::InferenceRouterConfig {
-                enabled: true,
-                router: Some("custom".to_string()),
-                extension: serde_json::json!({ "notLocal": true }),
-                ..roder_config::InferenceRouterConfig::default()
-            }))
-            .unwrap();
-        assert!(!custom_config.enabled);
-        assert!(custom_config.tiers.is_empty());
     }
 
     #[test]
@@ -942,7 +1035,6 @@ mod tests {
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
-            inference_router: None,
         })
         .unwrap();
         for provider in [

@@ -22,16 +22,11 @@ use roder_api::context::ContextBlock;
 use roder_api::discovery::{
     DiscoveryCatalog, DiscoveryCatalogGroup, DiscoveryCatalogItem, DiscoveryPromotionRecord,
 };
-use roder_api::events::{InferenceRoutingDecisionEvent, ThreadId, TurnId};
+use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
 pub use roder_api::goals::{ThreadGoal, ThreadGoalStatus};
 use roder_api::inference::{
-    HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ModelSelection, ProviderAuthType,
-    TokenUsage,
-};
-use roder_api::inference_routing::{
-    InferenceRoutingCostDelta, InferenceRoutingOptionDescriptor, InferenceRoutingOutcome,
-    ModelSelectionMode,
+    HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType, TokenUsage,
 };
 use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
@@ -136,8 +131,6 @@ pub struct Thread {
     pub preview: String,
     pub model_provider: String,
     pub model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection_mode: Option<ModelSelectionMode>,
     pub created_at: i64,
     pub updated_at: i64,
     pub status: ThreadStatus,
@@ -453,8 +446,6 @@ impl From<roder_api::thread::ThreadItemEvent> for ThreadItemEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStartParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<ModelSelectChoice>,
     pub model: Option<String>,
     pub model_provider: Option<String>,
     pub reasoning: Option<String>,
@@ -474,8 +465,6 @@ pub struct ThreadStartResult {
     pub model: String,
     pub model_provider: String,
     pub reasoning: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection_mode: Option<ModelSelectionMode>,
     pub cwd: String,
     pub workspace_id: String,
     pub root_id: String,
@@ -2138,14 +2127,6 @@ pub struct ProvidersListResult {
     pub active_provider: String,
     pub active_model: String,
     pub active_reasoning: String,
-    #[serde(
-        default,
-        rename = "selectionMode",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub selection_mode: Option<ModelSelectionMode>,
-    #[serde(default, rename = "routingOptions")]
-    pub routing_options: Vec<InferenceRoutingOptionDescriptor>,
     pub providers: Vec<ProviderDescriptor>,
 }
 
@@ -2714,81 +2695,6 @@ pub struct RetrievalMetricsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InferenceRoutingMetricsParams {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InferenceRoutingStatusParams {
-    pub thread_id: ThreadId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn_id: Option<TurnId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InferenceRoutingStatusResult {
-    pub thread_id: ThreadId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn_id: Option<TurnId>,
-    pub active: bool,
-    pub decision_count: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub router_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_outcome: Option<InferenceRoutingOutcome>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_selection: Option<ModelSelection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selected_selection: Option<ModelSelection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_decision: Option<InferenceRoutingDecisionEvent>,
-    pub summary: RetrievalDebugSummary,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InferenceRoutingCostSummary {
-    pub selected_estimated_cost_usd: f64,
-    pub baseline_estimated_cost_usd: f64,
-    pub estimated_savings_usd: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub classifier_overhead_usd: Option<f64>,
-    pub incomplete_estimate_count: u64,
-    pub priced_decision_count: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InferenceRoutingRegretSummary {
-    pub retry_count: u64,
-    pub failure_count: u64,
-    pub turn_failed: bool,
-    pub escalation_count: u64,
-    pub fallback_count: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InferenceRoutingMetricsResult {
-    pub thread_id: ThreadId,
-    pub turn_id: TurnId,
-    pub decisions: Vec<InferenceRoutingDecisionEvent>,
-    pub decision_count: u64,
-    pub outcome_counts: BTreeMap<String, u64>,
-    pub cost: InferenceRoutingCostSummary,
-    pub regret: InferenceRoutingRegretSummary,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cost_deltas: Vec<InferenceRoutingCostDelta>,
-    pub summary: RetrievalDebugSummary,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct RetrievalPromotedCapabilityState {
     pub item_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3170,42 +3076,6 @@ pub struct ProviderSelectParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderSelectResult {
-    pub provider: String,
-    pub model: String,
-    pub reasoning: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_profile: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_switch_summary: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum ModelSelectChoice {
-    Manual {
-        provider: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reasoning: Option<String>,
-    },
-    Auto {
-        option_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelSelectParams {
-    pub selection: ModelSelectChoice,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thread_id: Option<ThreadId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelSelectResult {
-    pub selection_mode: ModelSelectionMode,
     pub provider: String,
     pub model: String,
     pub reasoning: String,

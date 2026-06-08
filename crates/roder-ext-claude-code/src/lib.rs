@@ -1,9 +1,11 @@
 //! Claude Code inference provider.
 //!
-//! This crate uses the local `claude-agent-sdk` crate from
-//! `/Users/pz/w/claude-agent-sdk-rust` to drive an authenticated local Claude
-//! Code CLI process. Tests in this crate use a fake runner and do not spawn the
-//! CLI unless the ignored live test is run explicitly.
+//! This crate uses the published [`claude-code-sdk-rust`] crate (imported as
+//! `claude_agent_sdk`) to drive an authenticated local Claude Code CLI process.
+//! Tests in this crate use a fake runner and do not spawn the CLI unless the
+//! ignored live test is run explicitly.
+//!
+//! [`claude-code-sdk-rust`]: https://crates.io/crates/claude-code-sdk-rust
 
 mod extension;
 mod options;

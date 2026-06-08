@@ -10,6 +10,7 @@ The configurator binary is `roder-configure`.
 - `openai-only`: OpenAI Responses, JSONL thread storage, plan mode, terminal notifications, CLI, TUI, and app server.
 - `anthropic-only`: Anthropic Messages, JSONL thread storage, plan mode, terminal notifications, CLI, TUI, and app server.
 - `research-headless`: no TUI; app server, OpenAI Responses, disk context, memory, subagents, process tasks, plan mode, and terminal notifications.
+- `remote-app-server`: no TUI; app server, OpenAI Responses, JSONL sessions, disk context, process tasks, plan mode, and subagents for sandbox-hosted Roder nodes.
 - `tavily`: OpenAI Responses plus the web-search router and Tavily-backed search enabled through `TAVILY_API_KEY`.
 - `zero-coder-edits`: no TUI; app server, OpenAI Responses, JSONL sessions, disk context, process tasks, plan mode, and the Zerolang checked graph-edit tool provider. Intended for Linux AMD64 RL coding environments that run Zero tasks.
 - `full`: all first-party extension metadata currently declared in the workspace, including the Webwright browser-agent extension documented in `docs/roder-webwright-browser-agent.md` and the Zerolang checked graph-edit tool provider documented in `docs/roder-zerolang-checked-graph-edits.md`.
@@ -123,6 +124,18 @@ cargo run -p roder-configure -- generate --profile profile.toml --out dist/resea
 ```
 
 The profile includes JSONL replay-oriented thread storage, disk context, memory, subagents, and process tasks.
+
+### Remote App-Server Distribution
+
+Use `remote-app-server` for sandbox-hosted Roder nodes that run unattended behind the remote WebSocket app-server.
+
+```sh
+cargo run -p roder-configure -- profile show remote-app-server > remote-app-server-profile.toml
+cargo run -p roder-configure -- validate remote-app-server-profile.toml
+cargo run -p roder-configure -- generate --profile remote-app-server-profile.toml --out dist/remote-roder --build
+```
+
+Publish the Linux build to the download bucket as `remote-roder-<target>` with a matching `.sha256`, for example `remote-roder-x86_64-unknown-linux-gnu`. The `.github/workflows/publish-latest-roder.yml` workflow builds and uploads these Linux remote distro artifacts alongside the default `roder-<target>` binaries. Locally, run `make publish` with `CLOUDFLARE_API_TOKEN` set, or `RODER_PUBLISH_DRY_RUN=1 make publish` to build the artifacts without uploading. The local publish script sets `RUSTC="$(rustup which rustc)"` for `cargo zigbuild` when rustup is available, matching CI and avoiding Homebrew rustc cross-target failures. Sprites bootstraps download the remote artifact from `https://dl.roder.sh/latest`, install it as `.roder/bin/roder`, and run `roder app-server --remote` as a managed background service.
 
 ### Zero Coder Edits RL Build
 

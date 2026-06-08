@@ -1,0 +1,236 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use roder_api::catalog::normalize_provider_id;
+use roder_app_server::{AppServer, AppServerFeatureConfig};
+use roder_core::{Runtime, RuntimeConfig};
+use roder_extension_host::{DefaultNotificationsConfig, DefaultRegistryConfig, SessionStoreConfig};
+
+#[derive(Debug)]
+struct Options {
+    listen: String,
+    auth_token: Option<String>,
+    allowed_origins: Vec<String>,
+    print_qr: bool,
+    config_dir: Option<PathBuf>,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let options = parse_options(std::env::args().skip(1).collect())?;
+    if let Some(config_dir) = &options.config_dir {
+        // The generated remote binary is single-threaded at this point.
+        unsafe {
+            std::env::set_var(roder_config::RODER_CONFIG_DIR_ENV, expand_config_dir(config_dir)?);
+        }
+    }
+
+    let runtime = Arc::new(Runtime::new(build_registry()?, build_runtime_config()?)?);
+    let app_server = Arc::new(
+        AppServer::with_feature_config(runtime, AppServerFeatureConfig::default())
+            .with_user_config_persistence(),
+    );
+    let token = match options.auth_token {
+        Some(token) => roder_app_server::remote::RemoteToken::new(token)?,
+        None => roder_app_server::remote::generate_remote_token_from_os()?,
+    };
+    let handle = roder_app_server::remote::listen_remote_websocket(
+        app_server,
+        roder_app_server::remote::RemoteServerOptions {
+            listen: options.listen,
+            token,
+            token_ttl: None,
+            allowed_origins: options.allowed_origins,
+            print_qr: options.print_qr,
+            workspace: std::env::current_dir()
+                .ok()
+                .map(|path| path.display().to_string()),
+        },
+    )
+    .await?;
+    eprintln!(
+        "Remote app-server listening at {}; token {}",
+        handle
+            .connect_urls
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("ws://{}", handle.listen_addr)),
+        handle.token_preview
+    );
+    std::future::pending::<()>().await;
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+fn parse_options(mut args: Vec<String>) -> anyhow::Result<Options> {
+    if matches!(args.first().map(String::as_str), Some("app-server")) {
+        args.remove(0);
+    }
+    let mut listen = "ws://127.0.0.1:0".to_string();
+    let mut auth_token = None;
+    let mut allowed_origins = Vec::new();
+    let mut print_qr = true;
+    let mut config_dir = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--remote" => {}
+            "--listen" => {
+                i += 1;
+                listen = args
+                    .get(i)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("--listen requires an address"))?;
+            }
+            arg if arg.starts_with("--listen=") => {
+                listen = arg["--listen=".len()..].to_string();
+            }
+            "--auth-token" => {
+                i += 1;
+                auth_token = Some(resolve_auth_token(
+                    args.get(i)
+                        .ok_or_else(|| anyhow::anyhow!("--auth-token requires a value"))?,
+                )?);
+            }
+            arg if arg.starts_with("--auth-token=") => {
+                auth_token = Some(resolve_auth_token(&arg["--auth-token=".len()..])?);
+            }
+            "--allowed-origin" => {
+                i += 1;
+                allowed_origins.push(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("--allowed-origin requires an origin"))?,
+                );
+            }
+            arg if arg.starts_with("--allowed-origin=") => {
+                allowed_origins.push(arg["--allowed-origin=".len()..].to_string());
+            }
+            "--print-qr" => {
+                print_qr = true;
+            }
+            "--print-qr=false" => {
+                print_qr = false;
+            }
+            "--print-qr=true" => {
+                print_qr = true;
+            }
+            "--config-dir" => {
+                i += 1;
+                config_dir = Some(PathBuf::from(
+                    args.get(i)
+                        .ok_or_else(|| anyhow::anyhow!("--config-dir requires a path"))?,
+                ));
+            }
+            arg if arg.starts_with("--config-dir=") => {
+                config_dir = Some(PathBuf::from(&arg["--config-dir=".len()..]));
+            }
+            other => anyhow::bail!("remote-roder only supports app-server remote options; unknown argument {other:?}"),
+        }
+        i += 1;
+    }
+    Ok(Options {
+        listen,
+        auth_token,
+        allowed_origins,
+        print_qr,
+        config_dir,
+    })
+}
+
+fn resolve_auth_token(value: &str) -> anyhow::Result<String> {
+    if let Some(env_name) = value.strip_prefix("env:") {
+        let token = std::env::var(env_name)
+            .map_err(|_| anyhow::anyhow!("{env_name} is required for --auth-token env:{env_name}"))?
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            anyhow::bail!("{env_name} is empty");
+        }
+        return Ok(token);
+    }
+    let token = value.trim();
+    if token.is_empty() {
+        anyhow::bail!("--auth-token cannot be empty");
+    }
+    Ok(token.to_string())
+}
+
+fn expand_config_dir(path: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let raw = path.to_string_lossy();
+    if raw == "~" {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow::anyhow!("could not resolve home directory"));
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(rest))
+            .ok_or_else(|| anyhow::anyhow!("could not resolve home directory"));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn build_registry() -> anyhow::Result<roder_api::extension::ExtensionRegistry> {
+    let cfg = roder_config::load_config().unwrap_or_default();
+    let roder_home = roder_config::config_dir();
+    roder_extension_host::build_default_registry(DefaultRegistryConfig {
+        openai_api_key: env_nonempty("OPENAI_API_KEY")
+            .or_else(|| provider_api_key(&cfg, "openai"))
+            .or_else(|| provider_api_key(&cfg, "openai_responses")),
+        thread_dir: Some(roder_home.join("threads")),
+        session_store: SessionStoreConfig::Jsonl,
+        workspace: std::env::current_dir().ok(),
+        notifications: DefaultNotificationsConfig {
+            enabled: false,
+            terminal: false,
+            desktop: false,
+            enabled_kinds: Vec::new(),
+        },
+        ..DefaultRegistryConfig::default()
+    })
+}
+
+fn build_runtime_config() -> anyhow::Result<RuntimeConfig> {
+    let cfg = roder_config::load_config().unwrap_or_default();
+    let provider = cfg
+        .provider
+        .as_deref()
+        .map(normalize_provider_id)
+        .or_else(|| env_nonempty("RODER_PROVIDER"))
+        .unwrap_or_else(|| "{{default_provider}}".to_string());
+    let model = cfg
+        .model
+        .clone()
+        .or_else(|| env_nonempty("RODER_MODEL"))
+        .unwrap_or_else(|| "{{default_model}}".to_string());
+    Ok(RuntimeConfig {
+        default_provider: provider,
+        default_model: model,
+        reasoning: cfg.reasoning,
+        workspace: std::env::current_dir()
+            .ok()
+            .map(|path| path.display().to_string()),
+        ..RuntimeConfig::default()
+    })
+}
+
+fn provider_api_key(cfg: &roder_config::Config, provider: &str) -> Option<String> {
+    cfg.providers
+        .get(provider)
+        .and_then(|provider| {
+            provider
+                .api_key
+                .clone()
+                .or_else(|| provider.api_key_env.as_deref().and_then(env_nonempty))
+        })
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn env_nonempty(name: impl AsRef<str>) -> Option<String> {
+    std::env::var(name.as_ref())
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
