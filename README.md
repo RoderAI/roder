@@ -181,7 +181,9 @@ Built-in profiles:
 - `openai-only`
 - `anthropic-only`
 - `research-headless`
+- `remote-app-server`
 - `tavily`
+- `zero-coder-edits`
 - `full`
 
 ```sh
@@ -248,6 +250,20 @@ secret_env = { BLAXEL_API_KEY = "BLAXEL_API_KEY" }
 config = { region = "iad" }
 ```
 
+Fly Sprites can be selected with the first-party `sprites` runner. Put the token in `RODER_SPRITES_TOKEN` or `SPRITES_TOKEN`; generated sprites are deleted on close unless configured otherwise:
+
+```toml
+[remote_runners]
+enabled = true
+default_destination = "sprites-dev"
+
+[remote_runners.destinations.sprites-dev]
+provider = "sprites"
+config = { sprite_name_prefix = "roder", cleanup = "delete-on-close", working_dir = "/home/sprite/roder" }
+```
+
+Sprites destinations can also bootstrap a durable remote app-server service by downloading the `remote-app-server` distribution artifact from `dl.roder.sh`; see [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md).
+
 For local testing, override the selected destination without editing the file:
 
 ```sh
@@ -256,7 +272,7 @@ RODER_REMOTE_RUNNER=unix-local cargo run -p roder-cli --bin roder
 
 The app-server exposes `runners/list`, `runners/select`, `runners/session`, `runners/snapshot`, `runners/delete`, and `runners/ports`. The TUI exposes runner selection from the `Ctrl+P` menu and shows the active runner in the status surface. Runner sessions own files, commands, ports, snapshots, mounts, artifacts, and provider state; Roder orchestrates and persists the selected destination/session boundary.
 
-See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts, artifacts, snapshots, ports, and secret-handling rules.
+See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts, artifacts, snapshots, ports, and secret-handling rules. See [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md) for Sprites setup, cleanup/cost notes, network policy, troubleshooting, and live smoke commands.
 
 OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 

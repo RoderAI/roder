@@ -37,6 +37,7 @@ sqlx-postgres = { version = "0.8.6", default-features = false, features = ["json
 serde_yaml = "0.9.34"
 sha2 = "0.11.0"
 similar = "3.1.0"
+tar = "0.4.44"
 time = "0.3.47"
 tokio = { version = "1.52.3", default-features = false, features = [
     "fs",
@@ -107,6 +108,7 @@ roder-ext-runner-e2b = { path = "crates/roder-ext-runner-e2b" }
 roder-ext-runner-hosted-common = { path = "crates/roder-ext-runner-hosted-common" }
 roder-ext-runner-modal = { path = "crates/roder-ext-runner-modal" }
 roder-ext-runner-runloop = { path = "crates/roder-ext-runner-runloop" }
+roder-ext-runner-sprites = { path = "crates/roder-ext-runner-sprites" }
 roder-ext-runner-unix-local = { path = "crates/roder-ext-runner-unix-local" }
 roder-ext-runner-vercel = { path = "crates/roder-ext-runner-vercel" }
 roder-ext-subagents = { path = "crates/roder-ext-subagents" }

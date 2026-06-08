@@ -129,6 +129,10 @@ pub const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
         source: include_str!("../profiles/research-headless.toml"),
     },
     BuiltInProfile {
+        id: "remote-app-server",
+        source: include_str!("../profiles/remote-app-server.toml"),
+    },
+    BuiltInProfile {
         id: "tavily",
         source: include_str!("../profiles/tavily.toml"),
     },

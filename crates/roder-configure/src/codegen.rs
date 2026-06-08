@@ -41,9 +41,24 @@ pub fn render(
     let required_env_comments = required_env_comments(&extensions);
     let chosen_extensions = chosen_extensions(&extensions);
     let provider_config = provider_config(manifest);
+    let default_provider = manifest
+        .default_provider
+        .as_deref()
+        .map(provider_runtime_id)
+        .unwrap_or("mock");
+    let default_model = if default_provider == "mock" {
+        "mock"
+    } else {
+        "gpt-5.5"
+    };
     let session_store_config = session_store_config(manifest);
     let config_overrides_toml = config_overrides_toml(manifest);
     let config_overrides_json = config_overrides_json(manifest);
+    let main_template = if is_remote_app_server_only(manifest) {
+        include_str!("../templates/remote-app-server-main.rs.hbs")
+    } else {
+        include_str!("../templates/main.rs.hbs")
+    };
 
     Ok(vec![
         GeneratedFile {
@@ -60,8 +75,12 @@ pub fn render(
         GeneratedFile {
             path: PathBuf::from("src/main.rs"),
             contents: render_template(
-                include_str!("../templates/main.rs.hbs"),
-                &[("install_extensions", install_extensions.as_str())],
+                main_template,
+                &[
+                    ("install_extensions", install_extensions.as_str()),
+                    ("default_provider", default_provider),
+                    ("default_model", default_model),
+                ],
             ),
         },
         GeneratedFile {
@@ -112,13 +131,37 @@ fn cargo_dependencies(
     extensions: &[&crate::catalog::CatalogEntry],
 ) -> String {
     let workspace = workspace_root();
-    let mut lines = vec![
-        "anyhow = \"1\"".to_string(),
-        format!(
+    let mut lines = vec!["anyhow = \"1\"".to_string()];
+    if manifest.include_cli {
+        lines.push(format!(
             "roder-cli = {{ path = {:?} }}",
             workspace.join("crates/roder-cli").display().to_string()
-        ),
-    ];
+        ));
+    }
+    if is_remote_app_server_only(manifest) {
+        lines.extend([
+            format!(
+                "roder-api = {{ path = {:?} }}",
+                workspace.join("crates/roder-api").display().to_string()
+            ),
+            format!(
+                "roder-config = {{ path = {:?} }}",
+                workspace.join("crates/roder-config").display().to_string()
+            ),
+            format!(
+                "roder-core = {{ path = {:?} }}",
+                workspace.join("crates/roder-core").display().to_string()
+            ),
+            format!(
+                "roder-extension-host = {{ path = {:?} }}",
+                workspace
+                    .join("crates/roder-extension-host")
+                    .display()
+                    .to_string()
+            ),
+            "tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }".to_string(),
+        ]);
+    }
     if manifest.include_tui {
         lines.push(format!(
             "roder-tui = {{ path = {:?} }}",
@@ -147,6 +190,10 @@ fn cargo_dependencies(
     }
     lines.sort();
     lines.join("\n")
+}
+
+fn is_remote_app_server_only(manifest: &DistributionManifest) -> bool {
+    manifest.include_app_server && !manifest.include_tui && !manifest.include_cli
 }
 
 fn workspace_root() -> PathBuf {

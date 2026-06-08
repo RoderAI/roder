@@ -3471,6 +3471,12 @@ async fn runners_methods_list_select_status_and_delete_destination() {
             .iter()
             .any(|provider| provider.provider_id == "unix-local")
     );
+    assert!(
+        listed
+            .providers
+            .iter()
+            .any(|provider| provider.provider_id == "sprites")
+    );
 
     let selected: RunnersSelectResult = request(
         &client,

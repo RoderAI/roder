@@ -1,0 +1,23 @@
+[package]
+name = "roder-ext-runner-sprites"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tar.workspace = true
+tokio = { workspace = true, features = ["fs", "time"] }
+urlencoding.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+roder-protocol.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread"] }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
