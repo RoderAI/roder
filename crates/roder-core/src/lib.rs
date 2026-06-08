@@ -5,6 +5,7 @@ mod deadline_policy;
 pub mod dynamic_workflows;
 pub mod fake_provider;
 mod goals;
+pub mod inference_routing;
 mod instructions;
 pub mod media_artifacts;
 pub mod model_profiles;

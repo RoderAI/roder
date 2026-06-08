@@ -18,6 +18,7 @@ use roder_api::inference::{
     ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
     TokenUsage, ToolCallCompleted, ToolSearchConfig, ToolSearchConfigOverlay,
 };
+use roder_api::inference_routing::{InferenceRoutingOutcome, ModelSelectionMode};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::reliability::{
     ReliabilityContext, ReliabilityDetails, ReliabilityErrorClass, ReliabilityLimitRecorded,
@@ -52,6 +53,10 @@ use crate::dynamic_workflows::{
 };
 use crate::fake_provider::FakeInferenceEngine;
 use crate::goals::RuntimeGoalController;
+use crate::inference_routing::{
+    InferenceRoutingRequest, RuntimeInferenceRouterConfig, collect_inference_routing_candidates,
+    route_inference_selection, transcript_failure_count_since,
+};
 use crate::instructions::{
     apply_model_instruction_overlay, apply_runtime_profile, apply_task_ledger_required,
 };
@@ -102,6 +107,7 @@ pub struct RuntimeConfig {
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
     pub runtime_profile: RuntimeProfile,
+    pub inference_router: RuntimeInferenceRouterConfig,
     pub speed_policy: RuntimeSpeedPolicyConfig,
     pub dynamic_workflows: RuntimeDynamicWorkflowConfig,
     pub reliability: RuntimeReliabilityConfig,
@@ -131,6 +137,7 @@ impl Default for RuntimeConfig {
             workspace: None,
             policy_mode: PolicyMode::Default,
             runtime_profile: RuntimeProfile::Interactive,
+            inference_router: RuntimeInferenceRouterConfig::default(),
             speed_policy: RuntimeSpeedPolicyConfig::default(),
             dynamic_workflows: RuntimeDynamicWorkflowConfig::default(),
             reliability: RuntimeReliabilityConfig::default(),
@@ -163,6 +170,7 @@ pub struct CreateThreadRequest {
     pub root_id: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub selection_mode: Option<ModelSelectionMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,6 +272,7 @@ impl Runtime {
             anyhow::bail!("at least one inference engine must be registered");
         }
         validate_runtime_config_reasoning(&config)?;
+        validate_runtime_inference_router_config(&registry, &config)?;
 
         let bus = EventBus::new(1024);
         let thread_store = registry
@@ -801,6 +810,7 @@ impl Runtime {
             root_id: None,
             provider: None,
             model: None,
+            selection_mode: None,
         })
         .await
     }
@@ -812,14 +822,20 @@ impl Runtime {
         let cfg = self.config.read().await.clone();
         let now = OffsetDateTime::now_utc();
         let workspace = validate_thread_workspace(&req.workspace)?;
+        let provider = req.provider.unwrap_or(cfg.default_provider);
+        let model = req.model.unwrap_or(cfg.default_model);
+        let selection_mode = req
+            .selection_mode
+            .unwrap_or_else(|| ModelSelectionMode::manual(provider.clone(), model.clone(), None));
         let metadata = ThreadMetadata {
             thread_id: uuid::Uuid::new_v4().to_string(),
             title: req.title,
             workspace,
             workspace_id: req.workspace_id,
             root_id: req.root_id,
-            provider: Some(req.provider.unwrap_or(cfg.default_provider)),
-            model: Some(req.model.unwrap_or(cfg.default_model)),
+            provider: Some(provider),
+            model: Some(model),
+            selection_mode: Some(selection_mode),
             runner_destination: cfg.remote_runner_destination.clone(),
             runner_state: None,
             created_at: now,
@@ -896,6 +912,7 @@ impl Runtime {
                     root_id: None,
                     provider: None,
                     model: None,
+                    selection_mode: None,
                 })
                 .await?
                 .thread_id
@@ -918,6 +935,7 @@ impl Runtime {
                     root_id: None,
                     provider: member.model_provider.clone(),
                     model: member.model.clone(),
+                    selection_mode: None,
                 })
                 .await?;
             let member_id = format!("member-{}", index + 1);
@@ -987,6 +1005,7 @@ impl Runtime {
                 root_id: None,
                 provider: req.model_provider.clone(),
                 model: req.model.clone(),
+                selection_mode: None,
             })
             .await?;
         let team = self
@@ -1316,6 +1335,52 @@ impl Runtime {
         Ok(self.workspace.display().to_string())
     }
 
+    async fn selection_mode_for_thread(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<ModelSelectionMode>> {
+        let Some(store) = &self.thread_store else {
+            return Ok(None);
+        };
+        Ok(store
+            .load_thread(thread_id)
+            .await?
+            .and_then(|snapshot| snapshot.metadata)
+            .and_then(|metadata| {
+                metadata
+                    .selection_mode
+                    .or_else(|| match (metadata.provider, metadata.model) {
+                        (Some(provider), Some(model)) => {
+                            Some(ModelSelectionMode::manual(provider, model, None))
+                        }
+                        _ => None,
+                    })
+            }))
+    }
+
+    pub async fn set_thread_selection_mode(
+        &self,
+        thread_id: &ThreadId,
+        selection_mode: ModelSelectionMode,
+    ) -> anyhow::Result<()> {
+        let Some(store) = &self.thread_store else {
+            return Ok(());
+        };
+        let Some(snapshot) = store.load_thread(thread_id).await? else {
+            anyhow::bail!("thread not found: {thread_id}");
+        };
+        let Some(mut metadata) = snapshot.metadata else {
+            return Ok(());
+        };
+        let concrete = selection_mode.concrete_selection();
+        metadata.provider = Some(concrete.provider);
+        metadata.model = Some(concrete.model);
+        metadata.selection_mode = Some(selection_mode);
+        metadata.updated_at = OffsetDateTime::now_utc();
+        store.update_thread_metadata(metadata).await?;
+        Ok(())
+    }
+
     async fn runner_session_for_thread(
         &self,
         thread_id: &ThreadId,
@@ -1600,65 +1665,60 @@ impl Runtime {
         .await?;
 
         let mut cfg = self.config.read().await.clone();
-        if let Some(reasoning) = &req.reasoning_override {
-            validate_reasoning_effort(
-                req.model_override
-                    .as_deref()
-                    .unwrap_or(cfg.default_model.as_str()),
-                reasoning,
-            )?;
-            cfg.reasoning = Some(reasoning.clone());
-        }
         let runtime_profile = cfg.runtime_profile;
         let turn_deadline = turn_deadline_for_config(&cfg);
         let deadline_finalization_reserve =
             crate::deadline_policy::finalization_reserve_seconds(cfg.turn_deadline_seconds);
-        let provider = req
+        let selection_mode = self.selection_mode_for_thread(&req.thread_id).await?;
+        let concrete_selection = selection_mode
+            .as_ref()
+            .map(ModelSelectionMode::concrete_selection);
+        let default_provider = req
             .provider_override
             .clone()
+            .or_else(|| {
+                concrete_selection
+                    .as_ref()
+                    .map(|selection| selection.provider.clone())
+            })
             .unwrap_or(cfg.default_provider.clone());
-        let model = req
+        let default_model = req
             .model_override
             .clone()
+            .or_else(|| {
+                concrete_selection
+                    .as_ref()
+                    .map(|selection| selection.model.clone())
+            })
             .unwrap_or(cfg.default_model.clone());
-        let engine = self.engine_for(&provider)?;
-        let capabilities = engine.capabilities();
-        let model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
-        let tools = if capabilities.tool_calls {
-            self.filtered_tool_specs(&cfg, &model, model_profile.as_ref())
-        } else {
-            Vec::new()
+        if let Some(reasoning) = req.reasoning_override.as_deref().or_else(|| {
+            selection_mode
+                .as_ref()
+                .and_then(ModelSelectionMode::reasoning)
+        }) {
+            validate_reasoning_effort(&default_model, reasoning)?;
+            cfg.reasoning = Some(reasoning.to_string());
+        }
+        let turn_has_concrete_model_override =
+            req.provider_override.is_some() || req.model_override.is_some();
+        let (turn_inference_router, turn_inference_router_profile) = match &selection_mode {
+            Some(ModelSelectionMode::Auto {
+                router_id, profile, ..
+            }) if !turn_has_concrete_model_override => (
+                RuntimeInferenceRouterConfig {
+                    enabled: true,
+                    router_id: Some(router_id.clone()),
+                },
+                profile.clone(),
+            ),
+            _ => (RuntimeInferenceRouterConfig::disabled(), None),
         };
+        let mut provider = default_provider.clone();
+        let mut model = default_model.clone();
+        let mut model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
         let workspace = req.workspace.clone();
-        let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
-        let tool_choice = if tools.is_empty() {
-            ToolChoice::None
-        } else {
-            ToolChoice::Auto
-        };
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
-        if let Some(summary) = model_switch_summary(
-            &transcript,
-            model_profile.as_ref(),
-            &provider,
-            &model,
-            &tools,
-        ) {
-            let item = TranscriptItem::UserMessage(UserMessage::text(summary));
-            self.persist_turn_item(&req.thread_id, &turn_id, &item)
-                .await?;
-            transcript.push(item);
-        }
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
-        if !capabilities.image_input && transcript_has_images(&transcript) {
-            self.fail_turn_with_error(
-                &req.thread_id,
-                &turn_id,
-                format!("provider {provider} does not support image input"),
-            )
-            .await?;
-            return Ok(TurnRunOutcome::Stopped);
-        }
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
         let mut final_reasoning_text = String::new();
@@ -1674,8 +1734,12 @@ impl Runtime {
         let mut task_ledger_completion_reminders = 0_u8;
         let mut task_ledger_scoreable_checkpoints = 0_u8;
         let mut provider_stream_retry_attempts = 0_u32;
+        let mut routing_candidates = None;
+        let routing_transcript_start = transcript.len().saturating_sub(1);
+        let mut routing_escalations = 0_u32;
+        let mut model_switch_summary_selection = None::<ModelSelection>;
 
-        'tool_rounds: for _ in 0..MAX_TOOL_ROUNDS_PER_TURN {
+        'tool_rounds: for round_index in 0..MAX_TOOL_ROUNDS_PER_TURN {
             if let Some(deadline) = turn_deadline
                 && deadline_expired(deadline)
             {
@@ -1739,6 +1803,98 @@ impl Runtime {
                 transcript.push(item);
                 continue 'tool_rounds;
             }
+            if turn_inference_router.is_active() && routing_candidates.is_none() {
+                routing_candidates =
+                    Some(collect_inference_routing_candidates(&self.registry).await);
+            }
+            let routing_tools_model = model.clone();
+            let routing_tools = self.filtered_tool_specs(&cfg, &model, model_profile.as_ref());
+            let prior_failures =
+                transcript_failure_count_since(&transcript, routing_transcript_start)
+                    .max(reliability.tool_failure_count())
+                    .saturating_add(provider_stream_retry_attempts);
+            let routing_selection = route_inference_selection(
+                &self.registry,
+                &turn_inference_router,
+                InferenceRoutingRequest {
+                    thread_id: &req.thread_id,
+                    turn_id: &turn_id,
+                    round_index: round_index as u32,
+                    runtime_profile,
+                    phase: speed_policy.phase(),
+                    profile: turn_inference_router_profile.as_deref(),
+                    default_selection: ModelSelection {
+                        provider: default_provider.clone(),
+                        model: default_model.clone(),
+                    },
+                    transcript: &transcript,
+                    tools: &routing_tools,
+                    candidates: routing_candidates.as_deref(),
+                    prior_failures,
+                    prior_escalations: routing_escalations,
+                },
+            )
+            .await;
+            if let Some(decision) = routing_selection.decision.clone() {
+                if matches!(decision.outcome, InferenceRoutingOutcome::Escalated) {
+                    routing_escalations = routing_escalations.saturating_add(1);
+                }
+                self.emit(RoderEvent::InferenceRoutingDecision(
+                    InferenceRoutingDecisionEvent {
+                        thread_id: req.thread_id.clone(),
+                        turn_id: turn_id.clone(),
+                        round_index: round_index as u32,
+                        default_selection: ModelSelection {
+                            provider: default_provider.clone(),
+                            model: default_model.clone(),
+                        },
+                        selected_selection: routing_selection.selection.clone(),
+                        decision,
+                        timestamp: OffsetDateTime::now_utc(),
+                    },
+                ))
+                .await;
+            }
+            provider = routing_selection.selection.provider.clone();
+            model = routing_selection.selection.model.clone();
+            let engine = self.engine_for(&provider)?;
+            let capabilities = engine.capabilities();
+            model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
+            let tools = if capabilities.tool_calls {
+                if model == routing_tools_model {
+                    routing_tools.clone()
+                } else {
+                    self.filtered_tool_specs(&cfg, &model, model_profile.as_ref())
+                }
+            } else {
+                Vec::new()
+            };
+            let parallel_tool_calls = parallel_tool_calls_for_model(&cfg, &model);
+            let tool_choice = if tools.is_empty() {
+                ToolChoice::None
+            } else {
+                ToolChoice::Auto
+            };
+            let summary_selection = ModelSelection {
+                provider: provider.clone(),
+                model: model.clone(),
+            };
+            if model_switch_summary_selection.as_ref() != Some(&summary_selection) {
+                if let Some(summary) = model_switch_summary(
+                    &transcript,
+                    model_profile.as_ref(),
+                    &provider,
+                    &model,
+                    &tools,
+                ) {
+                    let item = TranscriptItem::UserMessage(UserMessage::text(summary));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                        .await?;
+                    transcript.push(item);
+                }
+                model_switch_summary_selection = Some(summary_selection);
+            }
+
             if !capabilities.image_input && transcript_has_images(&transcript) {
                 self.fail_turn_with_error(
                     &req.thread_id,
@@ -1754,6 +1910,13 @@ impl Runtime {
 
             let speed_policy_decision =
                 speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);
+            let request_reasoning = reasoning_from_decision(
+                speed_policy_decision.as_ref(),
+                routing_selection
+                    .reasoning
+                    .clone()
+                    .unwrap_or_else(|| reasoning_for_model(&cfg, &model)),
+            );
             if let Some(limit) = reliability.record_model_call(
                 &cfg.reliability,
                 runtime_profile == RuntimeProfile::Interactive,
@@ -1773,6 +1936,11 @@ impl Runtime {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
                 engine_id: engine.id(),
+                model: ModelSelection {
+                    provider: provider.clone(),
+                    model: model.clone(),
+                },
+                reasoning: request_reasoning.clone(),
                 speed_policy: speed_policy_decision.clone(),
                 deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
                 timestamp: OffsetDateTime::now_utc(),
@@ -1796,6 +1964,9 @@ impl Runtime {
             let mut request_metadata = serde_json::json!({});
             if let Some(decision) = &speed_policy_decision {
                 request_metadata["speedPolicy"] = serde_json::json!(decision);
+            }
+            if let Some(decision) = routing_selection.decision.as_ref() {
+                request_metadata["inferenceRouting"] = serde_json::json!(decision);
             }
             if let Some(remaining) = deadline_remaining_seconds(turn_deadline) {
                 request_metadata["deadlineRemainingSeconds"] = serde_json::json!(remaining);
@@ -1852,10 +2023,7 @@ impl Runtime {
                 transcript: transcript.clone(),
                 tools: request_tools,
                 tool_choice: request_tool_choice,
-                reasoning: reasoning_from_decision(
-                    speed_policy_decision.as_ref(),
-                    reasoning_for_model(&cfg, &model),
-                ),
+                reasoning: request_reasoning,
                 output: OutputConfig::default(),
                 runtime: RuntimeHints {
                     auto_compact_token_limit: server_side_compaction_threshold(&cfg, &model),
@@ -3188,6 +3356,33 @@ fn validate_runtime_config_reasoning(cfg: &RuntimeConfig) -> anyhow::Result<()> 
     validate_reasoning_effort(&cfg.default_model, reasoning)
 }
 
+fn validate_runtime_inference_router_config(
+    registry: &ExtensionRegistry,
+    cfg: &RuntimeConfig,
+) -> anyhow::Result<()> {
+    if !cfg.inference_router.enabled {
+        return Ok(());
+    }
+    let Some(router_id) = cfg.inference_router.router_id.as_deref() else {
+        anyhow::bail!("inference_router.enabled requires inference_router.router");
+    };
+    if registry.inference_router(router_id).is_some() {
+        return Ok(());
+    }
+    let available = registry
+        .inference_routers
+        .iter()
+        .map(|router| router.id())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if available.is_empty() {
+        anyhow::bail!("inference router {router_id:?} is not registered");
+    }
+    anyhow::bail!(
+        "inference router {router_id:?} is not registered; available routers: {available}"
+    );
+}
+
 fn model_supports_reasoning(model: &str, effort: &str) -> bool {
     lookup_model(model)
         .map(|entry| {
@@ -3354,8 +3549,12 @@ mod tests {
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
         CompletionMetadata, InferenceCapabilities, InferenceEngine, InferenceEventStream,
-        InferenceProviderContext, InferenceTurnContext, MessageDelta, ModelInstructionOverlay,
-        ModelProfileReasoning, ModelSchemaPolicy, ProviderFamily,
+        InferenceProviderContext, InferenceTurnContext, MessageDelta, ModelDescriptor,
+        ModelInstructionOverlay, ModelProfileReasoning, ModelSchemaPolicy, ProviderFamily,
+        ReasoningEffortDescriptor,
+    };
+    use roder_api::inference_routing::{
+        InferenceRouter, InferenceRoutingContext, InferenceRoutingDecision, InferenceRoutingOutcome,
     };
     use roder_api::thread::ThreadStoreFactory;
     use roder_api::tools::{ToolContributor, ToolExecutor, ToolSpec};
@@ -3675,6 +3874,7 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
+                selection_mode: None,
             })
             .await
             .unwrap();
@@ -3884,6 +4084,87 @@ mod tests {
                     provider_response_id: None,
                 })),
             ])))
+        }
+    }
+
+    struct RoutingCaptureEngine {
+        id: &'static str,
+        models: Vec<ModelDescriptor>,
+        requests: Arc<StdMutex<Vec<AgentInferenceRequest>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for RoutingCaptureEngine {
+        fn id(&self) -> String {
+            self.id.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<ModelDescriptor>> {
+            Ok(self.models.clone())
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            self.requests.lock().unwrap().push(request);
+            Ok(Box::pin(stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "routed".to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ])))
+        }
+    }
+
+    struct StaticRouter {
+        id: &'static str,
+        decision: InferenceRoutingDecision,
+        contexts: Arc<StdMutex<Vec<InferenceRoutingContext>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceRouter for StaticRouter {
+        fn id(&self) -> String {
+            self.id.to_string()
+        }
+
+        async fn route(
+            &self,
+            context: InferenceRoutingContext,
+        ) -> anyhow::Result<InferenceRoutingDecision> {
+            self.contexts.lock().unwrap().push(context);
+            Ok(self.decision.clone())
+        }
+    }
+
+    fn routing_test_model(id: &str, supported_reasoning: &[&str]) -> ModelDescriptor {
+        ModelDescriptor {
+            id: id.to_string(),
+            name: id.to_string(),
+            context_window: Some(128_000),
+            default_reasoning: supported_reasoning
+                .first()
+                .map(|effort| (*effort).to_string()),
+            supported_reasoning: supported_reasoning
+                .iter()
+                .map(|effort| ReasoningEffortDescriptor {
+                    effort: (*effort).to_string(),
+                    description: format!("{effort} reasoning"),
+                })
+                .collect(),
         }
     }
 
@@ -4387,6 +4668,409 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inference_router_selection_changes_request_model_and_records_event() {
+        let default_requests = Arc::new(StdMutex::new(Vec::<AgentInferenceRequest>::new()));
+        let routed_requests = Arc::new(StdMutex::new(Vec::<AgentInferenceRequest>::new()));
+        let contexts = Arc::new(StdMutex::new(Vec::<InferenceRoutingContext>::new()));
+        let selected = ModelSelection {
+            provider: "routed-provider".to_string(),
+            model: "routed-model".to_string(),
+        };
+        let default = ModelSelection {
+            provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            model: "mock".to_string(),
+        };
+        let decision = InferenceRoutingDecision {
+            reasoning: Some(ReasoningConfig {
+                enabled: true,
+                level: Some(REASONING_LOW.to_string()),
+            }),
+            confidence: Some(0.91),
+            baseline: Some(default.clone()),
+            matched_signals: vec![roder_api::inference_routing::InferenceRoutingSignal::new(
+                "intent", "routine",
+            )],
+            ..InferenceRoutingDecision::selected("test-router", selected.clone(), "routine request")
+        };
+
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(RoutingCaptureEngine {
+            id: roder_api::catalog::PROVIDER_MOCK,
+            models: vec![routing_test_model("mock", &[REASONING_LOW])],
+            requests: default_requests.clone(),
+        }));
+        builder.inference_engine(Arc::new(RoutingCaptureEngine {
+            id: "routed-provider",
+            models: vec![routing_test_model(
+                "routed-model",
+                &[REASONING_LOW, REASONING_MEDIUM],
+            )],
+            requests: routed_requests.clone(),
+        }));
+        builder.inference_router(Arc::new(StaticRouter {
+            id: "test-router",
+            decision,
+            contexts: contexts.clone(),
+        }));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-routing-auto-{}", uuid::Uuid::new_v4()));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: default.provider.clone(),
+                    default_model: default.model.clone(),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime
+            .create_thread_with(CreateThreadRequest {
+                title: Some("Routing auto".to_string()),
+                workspace: test_workspace(),
+                workspace_id: None,
+                root_id: None,
+                provider: Some(default.provider.clone()),
+                model: Some(default.model.clone()),
+                selection_mode: Some(ModelSelectionMode::auto(
+                    "test-router:coding",
+                    "test-router",
+                    "Auto: Coding",
+                    default.clone(),
+                    Some("coding".to_string()),
+                    None,
+                )),
+            })
+            .await
+            .unwrap()
+            .thread_id;
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: thread_id.clone(),
+                message: "small cleanup".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        let mut routing_event = None;
+        let mut inference_started = None;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::InferenceRoutingDecision(event) => {
+                        routing_event = Some(event);
+                    }
+                    RoderEvent::InferenceStarted(event) => {
+                        inference_started = Some(event);
+                    }
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(default_requests.lock().unwrap().is_empty());
+        let routed_requests = routed_requests.lock().unwrap();
+        assert_eq!(routed_requests.len(), 1);
+        assert_eq!(routed_requests[0].model, selected);
+        assert_eq!(
+            routed_requests[0].reasoning.level.as_deref(),
+            Some(REASONING_LOW)
+        );
+        assert_eq!(
+            routed_requests[0].metadata["inferenceRouting"]["outcome"],
+            "selected"
+        );
+
+        let routing_event = routing_event.expect("routing decision event");
+        assert_eq!(routing_event.default_selection, default);
+        assert_eq!(routing_event.selected_selection, selected);
+        assert_eq!(
+            routing_event.decision.outcome,
+            InferenceRoutingOutcome::Selected
+        );
+        assert_eq!(
+            inference_started.expect("inference started event").model,
+            selected
+        );
+
+        let contexts = contexts.lock().unwrap();
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].default_selection, default);
+        assert_eq!(contexts[0].candidates.len(), 2);
+        assert!(
+            contexts[0]
+                .signals
+                .iter()
+                .any(|signal| signal.key == "profile" && signal.value == "coding")
+        );
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn inference_router_is_bypassed_for_explicit_selection() {
+        let requests = Arc::new(StdMutex::new(Vec::<AgentInferenceRequest>::new()));
+        let contexts = Arc::new(StdMutex::new(Vec::<InferenceRoutingContext>::new()));
+        let selected = ModelSelection {
+            provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            model: "mock".to_string(),
+        };
+
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(RoutingCaptureEngine {
+            id: roder_api::catalog::PROVIDER_MOCK,
+            models: vec![routing_test_model("mock", &[REASONING_LOW])],
+            requests: requests.clone(),
+        }));
+        builder.inference_router(Arc::new(StaticRouter {
+            id: "test-router",
+            decision: InferenceRoutingDecision::selected(
+                "test-router",
+                ModelSelection {
+                    provider: "missing".to_string(),
+                    model: "missing".to_string(),
+                },
+                "would route if called",
+            ),
+            contexts: contexts.clone(),
+        }));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-routing-explicit-{}", uuid::Uuid::new_v4()));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: selected.provider.clone(),
+                    default_model: selected.model.clone(),
+                    inference_router: RuntimeInferenceRouterConfig {
+                        enabled: true,
+                        router_id: Some("test-router".to_string()),
+                    },
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime
+            .create_thread_with(CreateThreadRequest {
+                title: Some("Routing explicit".to_string()),
+                workspace: test_workspace(),
+                workspace_id: None,
+                root_id: None,
+                provider: Some(selected.provider.clone()),
+                model: Some(selected.model.clone()),
+                selection_mode: Some(ModelSelectionMode::auto(
+                    "test-router:default",
+                    "test-router",
+                    "Auto",
+                    selected.clone(),
+                    None,
+                    None,
+                )),
+            })
+            .await
+            .unwrap()
+            .thread_id;
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id,
+                message: "use explicit selection".to_string(),
+                images: Vec::new(),
+                provider_override: Some(selected.provider.clone()),
+                model_override: Some(selected.model.clone()),
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        let mut saw_routing_event = false;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::InferenceRoutingDecision(_) => {
+                        saw_routing_event = true;
+                    }
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(!saw_routing_event);
+        assert!(contexts.lock().unwrap().is_empty());
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].model, selected);
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn inference_router_is_bypassed_for_manual_selection_mode() {
+        let requests = Arc::new(StdMutex::new(Vec::<AgentInferenceRequest>::new()));
+        let contexts = Arc::new(StdMutex::new(Vec::<InferenceRoutingContext>::new()));
+        let selected = ModelSelection {
+            provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            model: "mock".to_string(),
+        };
+
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(RoutingCaptureEngine {
+            id: roder_api::catalog::PROVIDER_MOCK,
+            models: vec![routing_test_model("mock", &[REASONING_LOW])],
+            requests: requests.clone(),
+        }));
+        builder.inference_router(Arc::new(StaticRouter {
+            id: "test-router",
+            decision: InferenceRoutingDecision::selected(
+                "test-router",
+                ModelSelection {
+                    provider: "missing".to_string(),
+                    model: "missing".to_string(),
+                },
+                "would route if called",
+            ),
+            contexts: contexts.clone(),
+        }));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-routing-manual-{}", uuid::Uuid::new_v4()));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: selected.provider.clone(),
+                    default_model: selected.model.clone(),
+                    inference_router: RuntimeInferenceRouterConfig {
+                        enabled: true,
+                        router_id: Some("test-router".to_string()),
+                    },
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime
+            .create_thread_with(CreateThreadRequest {
+                title: Some("Routing manual".to_string()),
+                workspace: test_workspace(),
+                workspace_id: None,
+                root_id: None,
+                provider: Some(selected.provider.clone()),
+                model: Some(selected.model.clone()),
+                selection_mode: Some(ModelSelectionMode::manual(
+                    selected.provider.clone(),
+                    selected.model.clone(),
+                    None,
+                )),
+            })
+            .await
+            .unwrap()
+            .thread_id;
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id,
+                message: "use selected manual model".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        let mut saw_routing_event = false;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::InferenceRoutingDecision(_) => {
+                        saw_routing_event = true;
+                    }
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(!saw_routing_event);
+        assert!(contexts.lock().unwrap().is_empty());
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].model, selected);
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[test]
+    fn enabled_inference_router_requires_registered_router() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+
+        let err = match Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                inference_router: RuntimeInferenceRouterConfig {
+                    enabled: true,
+                    router_id: Some("missing-router".to_string()),
+                },
+                ..RuntimeConfig::default()
+            },
+        ) {
+            Ok(_) => panic!("runtime should reject unknown inference router"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("inference router \"missing-router\" is not registered")
+        );
+    }
+
+    #[tokio::test]
     async fn model_profile_routes_request_knobs_to_next_inference() {
         let request = captured_profile_request(RuntimeConfig {
             default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
@@ -4661,6 +5345,7 @@ mod tests {
                 root_id: None,
                 provider: None,
                 model: None,
+                selection_mode: None,
             })
             .await
             .unwrap()

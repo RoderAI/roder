@@ -3571,6 +3571,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-inference-router"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-jsonl-thread-store"
 version = "0.1.0"
 dependencies = [
@@ -4104,6 +4117,7 @@ dependencies = [
  "roder-ext-gemini",
  "roder-ext-git",
  "roder-ext-google-speech",
+ "roder-ext-inference-router",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-notify-desktop",

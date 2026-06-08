@@ -24,6 +24,9 @@ use roder_ext_cursor::{CursorConfig, CursorExtension};
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
+use roder_ext_inference_router::{
+    LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
+};
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
@@ -107,6 +110,7 @@ pub struct DefaultRegistryConfig {
     pub policy_mode: PolicyMode,
     pub notifications: DefaultNotificationsConfig,
     pub remote_runner_destination: Option<RunnerDestination>,
+    pub inference_router: Option<roder_config::InferenceRouterConfig>,
 }
 
 impl Default for DefaultRegistryConfig {
@@ -157,6 +161,7 @@ impl Default for DefaultRegistryConfig {
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
+            inference_router: None,
         }
     }
 }
@@ -277,6 +282,9 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             provider.base_url,
         )));
     }
+    builder.install(LocalInferenceRouterExtension::new(
+        local_inference_router_config(config.inference_router)?,
+    ))?;
 
     builder.install(roder_ext_plan_mode::PlanModeExtension::new(
         config.policy_mode,
@@ -350,6 +358,32 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(OpenAiEmbeddingsExtension::from_env())?;
 
     builder.build()
+}
+
+fn local_inference_router_config(
+    config: Option<roder_config::InferenceRouterConfig>,
+) -> anyhow::Result<LocalInferenceRouterConfig> {
+    let Some(config) = config else {
+        return Ok(LocalInferenceRouterConfig::default());
+    };
+    if !config.enabled {
+        return Ok(LocalInferenceRouterConfig::default());
+    }
+    if config.router.as_deref().map(str::trim) != Some(LOCAL_INFERENCE_ROUTER_ID) {
+        return Ok(LocalInferenceRouterConfig::default());
+    }
+    LocalInferenceRouterConfig::from_router_parts(
+        config.enabled,
+        config
+            .profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        config.baseline_provider,
+        config.baseline_model,
+        config.extension,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -817,6 +851,48 @@ mod tests {
     }
 
     #[test]
+    fn local_inference_router_config_reads_generic_extension_table_only_for_local_router() {
+        let config = local_inference_router_config(Some(roder_config::InferenceRouterConfig {
+            enabled: true,
+            router: Some(LOCAL_INFERENCE_ROUTER_ID.to_string()),
+            profile: Some("coding".to_string()),
+            baseline_provider: Some("codex".to_string()),
+            baseline_model: Some("gpt-5.5".to_string()),
+            extension: serde_json::json!({
+                "tiers": {
+                    "simple": {
+                        "provider": "codex",
+                        "model": "gpt-5.4-mini",
+                        "reasoning": "low"
+                    }
+                }
+            }),
+        }))
+        .unwrap();
+
+        assert!(config.enabled);
+        assert_eq!(config.profile.as_deref(), Some("coding"));
+        assert_eq!(
+            config
+                .tiers
+                .get("simple")
+                .and_then(|tier| tier.model.as_deref()),
+            Some("gpt-5.4-mini")
+        );
+
+        let custom_config =
+            local_inference_router_config(Some(roder_config::InferenceRouterConfig {
+                enabled: true,
+                router: Some("custom".to_string()),
+                extension: serde_json::json!({ "notLocal": true }),
+                ..roder_config::InferenceRouterConfig::default()
+            }))
+            .unwrap();
+        assert!(!custom_config.enabled);
+        assert!(custom_config.tiers.is_empty());
+    }
+
+    #[test]
     fn default_registry_with_keys_has_gode_provider_ids() {
         let registry = build_default_registry(DefaultRegistryConfig {
             openai_api_key: Some("openai".to_string()),
@@ -866,6 +942,7 @@ mod tests {
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
+            inference_router: None,
         })
         .unwrap();
         for provider in [
