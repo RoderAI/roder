@@ -950,7 +950,13 @@ asserting a wrong-but-plausible date or name). 9) SELF-CHECK BEFORE FINISHING: s
 claim at a time and DELETE any claim unless BOTH (a) you can point to the exact [SLUG] and copy the words that \
 support it, AND (b) it answers a facet the question actually asked. A claim that is supported by a record but \
 does not answer an asked facet (extra background, mechanism, adjacent detail) FAILS (b) — delete it. Do not \
-annotate removals; output only the surviving claims.";
+annotate removals; output only the surviving claims. 10) RECONSTRUCT-AS-OF / audit questions ('facts on \
+record as of <date>', 'what was modified / superseded / replaced / changed'): state the facts known as of \
+that date, then report a change ONLY when a retrieved record's TEXT EXPLICITLY says a specific fact was \
+replaced / revised / superseded / corrected (that record's [SLUG] must carry the statement). If no retrieved \
+record states such a change, write exactly 'No facts on record were modified or superseded as of this date.' \
+NEVER write 'X superseded by [SLUG]', never invent a superseding record, ID, date, or event, and never infer \
+a supersession merely because two records were retrieved together.";
 
 const EXTRACTIVE_SYS: &str = "You answer organizational-memory questions in the MINIMAL form that states each \
 asked fact and then STOPS. You have NO background knowledge of this company — only the records below; a fact \
