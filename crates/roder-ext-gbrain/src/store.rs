@@ -1854,6 +1854,16 @@ fn recall_blocking(
             &neighbors,
         );
         scored.retain(|s| s.score > 0.0);
+        // Gated recency boost (roadmap/91 P6, GBRAIN_RECENCY=1): for "as of now /
+        // what changed / currently believe" questions, nudge the most-recent
+        // (correcting) record up BEFORE truncation so it enters top_k instead of the
+        // stale original it supersedes. Gated on intent so plain/decision questions
+        // are unaffected (a recent amendment must NOT win there).
+        if std::env::var("GBRAIN_RECENCY").is_ok()
+            && crate::retrieval::recency_intent(&params.query)
+        {
+            crate::retrieval::apply_recency_boost(&mut scored, now);
+        }
         scored.truncate(limit);
         scored
     };

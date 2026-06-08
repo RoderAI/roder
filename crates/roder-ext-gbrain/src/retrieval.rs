@@ -5,12 +5,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+use time::OffsetDateTime;
+
 use crate::model::TemporalFact;
 
 const ALPHA_VECTOR: f32 = 0.6;
 const BETA_LEXICAL: f32 = 0.4;
 const GAMMA_GRAPH: f32 = 0.15;
 const GRAPH_TOP: usize = 5;
+/// Max recency boost added to the most-recent record for recency-intent queries.
+const RECENCY_DELTA: f32 = 0.25;
+/// Recency half-life (days): a record this old keeps half the boost.
+const RECENCY_HALFLIFE_DAYS: f32 = 90.0;
 
 const STOPWORDS: &[&str] = &[
     "a", "an", "the", "of", "is", "was", "were", "what", "who", "did", "does", "and", "or", "to",
@@ -81,6 +87,51 @@ pub fn focal_retrieval_query(question: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// True for questions whose intent is the CURRENT / latest belief or what changed
+/// since a date — where the most recent (correcting) record should be favoured so a
+/// stale original does not win. Roadmap/91 P6, sub-failure B (missing-correction).
+pub fn recency_intent(query: &str) -> bool {
+    let q = query.to_lowercase();
+    const CUES: &[&str] = &[
+        "as of today",
+        "as of now",
+        "currently",
+        "present belief",
+        "present understanding",
+        "presently",
+        "what changed",
+        "no longer",
+        "most recent",
+        "latest",
+        "now believe",
+        "still current",
+        "still in effect",
+        "as of the present",
+        "currently believe",
+    ];
+    CUES.iter().any(|c| q.contains(c))
+}
+
+/// Add a bounded recency boost (newest valid_at → +RECENCY_DELTA, decaying by
+/// half-life) and re-sort, so a recent correcting record outranks the stale
+/// original it supersedes. Applied BEFORE truncation and gated on recency_intent,
+/// so a poorly-embedded correction still enters top_k; bounded so it nudges rather
+/// than overrides relevance (avoids blindly trusting a recent distractor).
+pub fn apply_recency_boost(scored: &mut [Scored], anchor: OffsetDateTime) {
+    for s in scored.iter_mut() {
+        let age_days = (anchor - s.fact.valid_at).whole_days().max(0) as f32;
+        let recency = 0.5f32.powf(age_days / RECENCY_HALFLIFE_DAYS);
+        s.score += RECENCY_DELTA * recency;
+    }
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.fact.valid_at.cmp(&a.fact.valid_at))
+            .then(a.fact.id.cmp(&b.fact.id))
+    });
 }
 
 pub fn tokenize(text: &str) -> Vec<String> {
@@ -238,6 +289,26 @@ mod tests {
             ).as_deref(),
             Some("redesigning the shipment tracking feature")
         );
+    }
+
+    #[test]
+    fn recency_boost_lifts_the_recent_correction_for_asof_now_intent() {
+        assert!(recency_intent("As of today, what does the system currently believe about the outage?"));
+        assert!(!recency_intent("Who approved the 2021 budget and what alternatives were weighed?"));
+        // older "load balancer" record scores higher on relevance, but the recent
+        // "DNS correction" record should win once the recency boost is applied.
+        let now = OffsetDateTime::UNIX_EPOCH + time::Duration::days(1000);
+        let old = fact("old", "the outage root cause was a load balancer misconfiguration");
+        let mut newer = fact("new", "the outage root cause was a DNS record misconfiguration");
+        newer.valid_at = now - time::Duration::days(10);
+        let mut older = old;
+        older.valid_at = now - time::Duration::days(800);
+        let mut scored = vec![
+            Scored { score: 0.80, vector_score: 0.8, lexical_score: 0.8, fact: older },
+            Scored { score: 0.70, vector_score: 0.7, lexical_score: 0.7, fact: newer },
+        ];
+        apply_recency_boost(&mut scored, now);
+        assert_eq!(scored[0].fact.id, "new", "recent correction should rank first");
     }
 
     #[test]
