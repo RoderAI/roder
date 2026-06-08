@@ -50,7 +50,11 @@ for target in targets:
 
     for suffix in ("", ".sha256"):
         url = f"{base_url}/latest/{name}{suffix}"
-        request = urllib.request.Request(url, method="HEAD")
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "roder-publish-verify/1.0"},
+            method="HEAD",
+        )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 if response.status != 200:
