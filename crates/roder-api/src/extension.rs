@@ -9,6 +9,7 @@ use crate::capabilities::{CapabilityDenial, CapabilityGrant, CapabilityRequest, 
 pub type ExtensionId = String;
 pub type ApiVersion = String;
 pub type InferenceEngineId = String;
+pub type InferenceRouterId = String;
 pub type ContextProviderId = String;
 pub type ContextPlannerId = String;
 pub type ThreadStoreId = String;
@@ -31,6 +32,7 @@ pub const SUPPORTED_EXTENSION_API_VERSION: &str = "0.1.0";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ProvidedService {
     InferenceEngine(InferenceEngineId),
+    InferenceRouter(InferenceRouterId),
     ContextProvider(ContextProviderId),
     ContextPlanner(ContextPlannerId),
     ThreadStore(ThreadStoreId),
@@ -75,6 +77,7 @@ pub struct ExtensionRegistry {
     pub manifests: Vec<ExtensionManifest>,
     pub capability_statuses: BTreeMap<ExtensionId, Vec<CapabilityStatus>>,
     pub inference_engines: Vec<Arc<dyn crate::inference::InferenceEngine>>,
+    pub inference_routers: Vec<Arc<dyn crate::inference_routing::InferenceRouter>>,
     pub context_providers: Vec<Arc<dyn crate::context::ContextProvider>>,
     pub context_planners: Vec<Arc<dyn crate::context::ContextPlanner>>,
     pub thread_stores: Vec<Arc<dyn crate::thread::ThreadStoreFactory>>,
@@ -107,6 +110,16 @@ impl ExtensionRegistry {
 
     pub fn default_inference_engine(&self) -> Option<Arc<dyn crate::inference::InferenceEngine>> {
         self.inference_engines.first().cloned()
+    }
+
+    pub fn inference_router(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn crate::inference_routing::InferenceRouter>> {
+        self.inference_routers
+            .iter()
+            .find(|router| router.id() == id)
+            .cloned()
     }
 
     pub fn speech_transcriber(
@@ -175,6 +188,7 @@ pub struct ExtensionRegistryBuilder {
     granted_capabilities: BTreeMap<ExtensionId, BTreeSet<String>>,
     denied_capabilities: BTreeMap<ExtensionId, BTreeMap<String, String>>,
     pub inference_engines: Vec<Arc<dyn crate::inference::InferenceEngine>>,
+    pub inference_routers: Vec<Arc<dyn crate::inference_routing::InferenceRouter>>,
     pub context_providers: Vec<Arc<dyn crate::context::ContextProvider>>,
     pub context_planners: Vec<Arc<dyn crate::context::ContextPlanner>>,
     pub thread_stores: Vec<Arc<dyn crate::thread::ThreadStoreFactory>>,
@@ -210,6 +224,7 @@ impl ExtensionRegistryBuilder {
             granted_capabilities: BTreeMap::new(),
             denied_capabilities: BTreeMap::new(),
             inference_engines: Vec::new(),
+            inference_routers: Vec::new(),
             context_providers: Vec::new(),
             context_planners: Vec::new(),
             thread_stores: Vec::new(),
@@ -253,6 +268,7 @@ impl ExtensionRegistryBuilder {
             manifests: self.manifests,
             capability_statuses: validation.capability_statuses,
             inference_engines: self.inference_engines,
+            inference_routers: self.inference_routers,
             context_providers: self.context_providers,
             context_planners: self.context_planners,
             thread_stores: self.thread_stores,
@@ -296,6 +312,10 @@ impl ExtensionRegistryBuilder {
 
     pub fn inference_engine(&mut self, engine: Arc<dyn crate::inference::InferenceEngine>) {
         self.inference_engines.push(engine);
+    }
+
+    pub fn inference_router(&mut self, router: Arc<dyn crate::inference_routing::InferenceRouter>) {
+        self.inference_routers.push(router);
     }
 
     pub fn context_provider(&mut self, provider: Arc<dyn crate::context::ContextProvider>) {
@@ -507,6 +527,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     );
     services.extend(
         builder
+            .inference_routers
+            .iter()
+            .map(|service| ProvidedService::InferenceRouter(service.id())),
+    );
+    services.extend(
+        builder
             .context_providers
             .iter()
             .map(|service| ProvidedService::ContextProvider(service.id())),
@@ -688,6 +714,7 @@ fn validate_capabilities(
 fn service_label(service: &ProvidedService) -> String {
     match service {
         ProvidedService::InferenceEngine(id) => format!("InferenceEngine({id})"),
+        ProvidedService::InferenceRouter(id) => format!("InferenceRouter({id})"),
         ProvidedService::ContextProvider(id) => format!("ContextProvider({id})"),
         ProvidedService::ContextPlanner(id) => format!("ContextPlanner({id})"),
         ProvidedService::ThreadStore(id) => format!("ThreadStore({id})"),
@@ -737,6 +764,20 @@ mod tests {
 
         let decoded = serde_json::from_value::<ProvidedService>(encoded)
             .expect("deserialize status segment service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn provided_service_inference_router_round_trips_json() {
+        let service = ProvidedService::InferenceRouter("adaptive".to_string());
+        let encoded = serde_json::to_value(&service).expect("serialize inference router service");
+        assert_eq!(
+            encoded,
+            serde_json::json!({ "InferenceRouter": "adaptive" })
+        );
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize inference router service");
         assert_eq!(decoded, service);
     }
 

@@ -10,6 +10,7 @@ use roder_api::inference::{
     InstructionBundle, ModelSelection, OutputConfig, ProviderAuthType, ReasoningConfig,
     RuntimeHints, RuntimeProfile,
 };
+use roder_api::inference_routing::ModelSelectionMode;
 use roder_api::media::{MediaArtifact, MediaAttachment, data_url};
 use roder_api::memory::{MemoryProviderSelection, MemoryQuery, MemoryRecord};
 use roder_api::plan_review::{HunkRecord, PlanComment, PlanReview, PlanReviewStatus, PlanRewrite};
@@ -99,6 +100,7 @@ pub struct AppServer {
     pub(crate) features: AppServerFeatureConfig,
     pub(crate) automation_supervisor: Option<roder_automations::AutomationSupervisorHandle>,
     pub(crate) protocol_threads: RwLock<std::collections::HashMap<String, Thread>>,
+    pub(crate) protocol_default_model: RwLock<Option<ProtocolThreadModelSelection>>,
     pub(crate) protocol_thread_models:
         RwLock<std::collections::HashMap<String, ProtocolThreadModelSelection>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
@@ -112,6 +114,32 @@ pub(crate) struct ProtocolThreadModelSelection {
     pub provider: String,
     pub model: String,
     pub reasoning: Option<String>,
+    pub selection_mode: ModelSelectionMode,
+}
+
+impl ProtocolThreadModelSelection {
+    fn manual(provider: String, model: String, reasoning: Option<String>) -> Self {
+        Self {
+            selection_mode: ModelSelectionMode::manual(
+                provider.clone(),
+                model.clone(),
+                reasoning.clone(),
+            ),
+            provider,
+            model,
+            reasoning,
+        }
+    }
+
+    fn from_selection_mode(selection_mode: ModelSelectionMode) -> Self {
+        let concrete = selection_mode.concrete_selection();
+        Self {
+            provider: concrete.provider,
+            model: concrete.model,
+            reasoning: selection_mode.reasoning().map(str::to_string),
+            selection_mode,
+        }
+    }
 }
 
 impl AppServer {
@@ -164,6 +192,25 @@ impl AppServer {
             "providers/select" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_provider_select(p).await
+                })
+                .await
+            }
+            "model/select" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_model_select(p).await },
+                )
+                .await
+            }
+            "inference/routing/metrics" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_inference_routing_metrics(p).await
+                })
+                .await
+            }
+            "inference/routing/status" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_inference_routing_status(p).await
                 })
                 .await
             }
@@ -1541,8 +1588,7 @@ impl AppServer {
         .unwrap())
     }
 
-    async fn handle_providers_list(&self) -> Result<serde_json::Value, JsonRpcError> {
-        let cfg = self.runtime.status().await;
+    async fn provider_descriptors(&self) -> Vec<ProviderDescriptor> {
         let mut providers = Vec::new();
         for engine in &self.runtime.registry().inference_engines {
             let id = engine.id();
@@ -1571,13 +1617,157 @@ impl AppServer {
                 .cmp(&b.sort_order)
                 .then_with(|| a.name.cmp(&b.name))
         });
+        providers
+    }
+
+    async fn default_protocol_model_selection(&self) -> ProtocolThreadModelSelection {
+        if let Some(selection) = self.protocol_default_model.read().await.clone() {
+            return selection;
+        }
+        let cfg = self.runtime.status().await;
+        let reasoning = Runtime::effective_reasoning_for_config(&cfg);
+        ProtocolThreadModelSelection::manual(
+            cfg.default_provider,
+            cfg.default_model,
+            Some(reasoning),
+        )
+    }
+
+    async fn handle_providers_list(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let providers = self.provider_descriptors().await;
+        let cfg = self.runtime.status().await;
+        let routing_options = self.selectable_routing_options(&cfg.inference_router).await;
+        let selection = self.default_protocol_model_selection().await;
+        let active_reasoning = match selection.reasoning.clone() {
+            Some(reasoning) => reasoning,
+            None => self.runtime.effective_reasoning().await,
+        };
         Ok(serde_json::to_value(ProvidersListResult {
-            active_provider: cfg.default_provider,
-            active_model: cfg.default_model,
-            active_reasoning: self.runtime.effective_reasoning().await,
+            active_provider: selection.provider,
+            active_model: selection.model,
+            active_reasoning,
+            selection_mode: Some(selection.selection_mode),
+            routing_options,
             providers,
         })
         .unwrap())
+    }
+
+    async fn resolve_manual_model_selection(
+        &self,
+        provider: String,
+        model: Option<String>,
+        reasoning: Option<String>,
+        update_default: bool,
+    ) -> Result<(ProtocolThreadModelSelection, String), JsonRpcError> {
+        let cfg = if update_default {
+            self.runtime
+                .select_provider(provider, model, reasoning)
+                .await
+                .map_err(internal_error)?
+        } else {
+            self.runtime
+                .preview_provider_selection(provider, model, reasoning)
+                .await
+                .map_err(internal_error)?
+        };
+        let model_profile = active_model_profile_label(&cfg);
+        let reasoning = Runtime::effective_reasoning_for_config(&cfg);
+        Ok((
+            ProtocolThreadModelSelection::manual(
+                cfg.default_provider,
+                cfg.default_model,
+                Some(reasoning),
+            ),
+            model_profile,
+        ))
+    }
+
+    async fn resolve_auto_model_selection(
+        &self,
+        option_id: &str,
+    ) -> Result<(ProtocolThreadModelSelection, String), JsonRpcError> {
+        let cfg = self.runtime.status().await;
+        let option = self
+            .selectable_routing_options(&cfg.inference_router)
+            .await
+            .into_iter()
+            .find(|option| option.id == option_id)
+            .ok_or_else(|| {
+                invalid_params(format!(
+                    "unknown or unavailable routing option {option_id:?}"
+                ))
+            })?;
+        let cfg = self
+            .runtime
+            .preview_provider_selection(
+                option.baseline.provider.clone(),
+                Some(option.baseline.model.clone()),
+                option.reasoning.clone(),
+            )
+            .await
+            .map_err(internal_error)?;
+        let model_profile = active_model_profile_label(&cfg);
+        let reasoning = Runtime::effective_reasoning_for_config(&cfg);
+        let mut selection_mode = option.selection_mode();
+        if let ModelSelectionMode::Auto {
+            reasoning: mode_reasoning,
+            ..
+        } = &mut selection_mode
+            && mode_reasoning.is_none()
+        {
+            *mode_reasoning = Some(reasoning);
+        }
+        Ok((
+            ProtocolThreadModelSelection::from_selection_mode(selection_mode),
+            model_profile,
+        ))
+    }
+
+    async fn resolve_model_select_choice(
+        &self,
+        selection: ModelSelectChoice,
+        update_default: bool,
+    ) -> Result<(ProtocolThreadModelSelection, String), JsonRpcError> {
+        match selection {
+            ModelSelectChoice::Manual {
+                provider,
+                model,
+                reasoning,
+            } => {
+                self.resolve_manual_model_selection(provider, model, reasoning, update_default)
+                    .await
+            }
+            ModelSelectChoice::Auto { option_id } => {
+                self.resolve_auto_model_selection(&option_id).await
+            }
+        }
+    }
+
+    async fn set_thread_model_selection(
+        &self,
+        thread_id: &str,
+        selection: ProtocolThreadModelSelection,
+    ) -> Result<(), JsonRpcError> {
+        self.runtime
+            .set_thread_selection_mode(&thread_id.to_string(), selection.selection_mode.clone())
+            .await
+            .map_err(internal_error)?;
+        self.protocol_thread_models
+            .write()
+            .await
+            .insert(thread_id.to_string(), selection.clone());
+        if let Some(thread) = self.protocol_threads.write().await.get_mut(thread_id) {
+            thread.model_provider = selection.provider;
+            thread.model = selection.model;
+            thread.selection_mode = Some(selection.selection_mode);
+            thread.updated_at = OffsetDateTime::now_utc().unix_timestamp();
+        }
+        Ok(())
+    }
+
+    async fn set_default_model_selection(&self, selection: ProtocolThreadModelSelection) {
+        *self.protocol_default_model.write().await = Some(selection);
     }
 
     async fn handle_model_list(&self) -> Result<serde_json::Value, JsonRpcError> {
@@ -1621,55 +1811,98 @@ impl AppServer {
         } else {
             None
         };
-        let cfg = if thread_id.is_some() {
-            self.runtime
-                .preview_provider_selection(params.provider, params.model, params.reasoning)
-                .await
-                .map_err(internal_error)?
-        } else {
-            self.runtime
-                .select_provider(params.provider, params.model, params.reasoning)
-                .await
-                .map_err(internal_error)?
-        };
-        let model_profile = active_model_profile_label(&cfg);
+        let (selection, model_profile) = self
+            .resolve_manual_model_selection(
+                params.provider,
+                params.model,
+                params.reasoning,
+                thread_id.is_none(),
+            )
+            .await?;
         let model_switch_summary = previous_model
-            .filter(|selection| {
-                selection.provider != cfg.default_provider || selection.model != cfg.default_model
+            .filter(|previous| {
+                previous.provider != selection.provider || previous.model != selection.model
             })
-            .map(|selection| {
+            .map(|previous| {
                 format!(
                     "Model switch summary: previous profile {}/{}. Current profile {}/{}.",
-                    selection.provider, selection.model, cfg.default_provider, model_profile
+                    previous.provider, previous.model, selection.provider, model_profile
                 )
             });
-        let reasoning = Runtime::effective_reasoning_for_config(&cfg);
+        let reasoning = match selection.reasoning.clone() {
+            Some(reasoning) => reasoning,
+            None => self.runtime.effective_reasoning().await,
+        };
         if let Some(thread_id) = thread_id.as_ref() {
-            self.protocol_thread_models.write().await.insert(
-                thread_id.clone(),
-                ProtocolThreadModelSelection {
-                    provider: cfg.default_provider.clone(),
-                    model: cfg.default_model.clone(),
-                    reasoning: Some(reasoning.clone()),
-                },
-            );
-            if let Some(thread) = self.protocol_threads.write().await.get_mut(thread_id) {
-                thread.model_provider = cfg.default_provider.clone();
-                thread.model = cfg.default_model.clone();
-                thread.updated_at = OffsetDateTime::now_utc().unix_timestamp();
-            }
+            self.set_thread_model_selection(thread_id, selection.clone())
+                .await?;
+        } else {
+            self.set_default_model_selection(selection.clone()).await;
         }
         if thread_id.is_none() && self.persist_user_config {
             roder_config::save_default_provider_model_reasoning(
-                &cfg.default_provider,
-                &cfg.default_model,
+                &selection.provider,
+                &selection.model,
                 Some(reasoning.as_str()),
             )
             .map_err(internal_error)?;
         }
         Ok(serde_json::to_value(ProviderSelectResult {
-            provider: cfg.default_provider,
-            model: cfg.default_model,
+            provider: selection.provider,
+            model: selection.model,
+            reasoning,
+            model_profile: Some(model_profile),
+            model_switch_summary,
+        })
+        .unwrap())
+    }
+
+    async fn handle_model_select(
+        &self,
+        params: ModelSelectParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let thread_id = params.thread_id.clone();
+        let previous_model = if let Some(thread_id) = thread_id.as_deref() {
+            self.protocol_thread_model(thread_id).await
+        } else {
+            Some(self.default_protocol_model_selection().await)
+        };
+        let is_manual = matches!(&params.selection, ModelSelectChoice::Manual { .. });
+        let (selection, model_profile) = self
+            .resolve_model_select_choice(params.selection, thread_id.is_none() && is_manual)
+            .await?;
+        let model_switch_summary = previous_model
+            .filter(|previous| {
+                previous.provider != selection.provider || previous.model != selection.model
+            })
+            .map(|previous| {
+                format!(
+                    "Model switch summary: previous profile {}/{}. Current profile {}/{}.",
+                    previous.provider, previous.model, selection.provider, model_profile
+                )
+            });
+        let reasoning = match selection.reasoning.clone() {
+            Some(reasoning) => reasoning,
+            None => self.runtime.effective_reasoning().await,
+        };
+        if let Some(thread_id) = thread_id.as_ref() {
+            self.set_thread_model_selection(thread_id, selection.clone())
+                .await?;
+        } else {
+            self.set_default_model_selection(selection.clone()).await;
+        }
+        if thread_id.is_none() && is_manual && self.persist_user_config {
+            roder_config::save_default_provider_model_reasoning(
+                &selection.provider,
+                &selection.model,
+                Some(reasoning.as_str()),
+            )
+            .map_err(internal_error)?;
+        }
+        Ok(serde_json::to_value(ModelSelectResult {
+            selection_mode: selection.selection_mode,
+            provider: selection.provider,
+            model: selection.model,
             reasoning,
             model_profile: Some(model_profile),
             model_switch_summary,
@@ -2023,24 +2256,40 @@ impl AppServer {
         &self,
         params: ThreadStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let ThreadStartParams {
+            selection,
+            model,
+            model_provider,
+            reasoning,
+            workspace_id,
+            root_id,
+            cwd,
+            ephemeral: _,
+        } = params;
         let cfg = self.runtime.status().await;
-        let model = params
-            .model
-            .clone()
-            .unwrap_or_else(|| cfg.default_model.clone());
-        let model_provider = params
-            .model_provider
-            .clone()
-            .unwrap_or_else(|| cfg.default_provider.clone());
+        let requested_selection = if let Some(selection) = selection {
+            self.resolve_model_select_choice(selection, false).await?.0
+        } else if model_provider.is_some() || model.is_some() || reasoning.is_some() {
+            let provider = model_provider
+                .clone()
+                .unwrap_or_else(|| cfg.default_provider.clone());
+            self.resolve_manual_model_selection(provider, model.clone(), reasoning.clone(), false)
+                .await?
+                .0
+        } else {
+            self.default_protocol_model_selection().await
+        };
+        let model = requested_selection.model.clone();
+        let model_provider = requested_selection.provider.clone();
+        let reasoning = match requested_selection.reasoning.clone() {
+            Some(reasoning) => reasoning,
+            None => Runtime::effective_reasoning_for_config(&cfg),
+        };
         let resolved = self
             .workspaces
-            .resolve_root(
-                cfg.workspace.clone(),
-                &params.workspace_id,
-                params.root_id.as_deref(),
-            )
+            .resolve_root(cfg.workspace.clone(), &workspace_id, root_id.as_deref())
             .await?;
-        let cwd = crate::workspaces::validate_cwd(&resolved.root, params.cwd.clone())?;
+        let cwd = crate::workspaces::validate_cwd(&resolved.root, cwd)?;
         let metadata = self
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
@@ -2048,28 +2297,19 @@ impl AppServer {
                 workspace: cwd.clone(),
                 workspace_id: Some(resolved.workspace.id.clone()),
                 root_id: Some(resolved.root.id.clone()),
-                provider: params.model_provider.clone(),
-                model: params.model.clone(),
+                provider: Some(model_provider.clone()),
+                model: Some(model.clone()),
+                selection_mode: Some(requested_selection.selection_mode.clone()),
             })
             .await
             .map_err(internal_error)?;
-        let reasoning = params
-            .reasoning
-            .clone()
-            .unwrap_or_else(|| Runtime::effective_reasoning_for_config(&cfg));
         let thread = protocol_thread_from_metadata(metadata, None, idle_thread_status());
         self.protocol_threads
             .write()
             .await
             .insert(thread.id.clone(), thread.clone());
-        self.protocol_thread_models.write().await.insert(
-            thread.id.clone(),
-            ProtocolThreadModelSelection {
-                provider: model_provider.clone(),
-                model: model.clone(),
-                reasoning: Some(reasoning.clone()),
-            },
-        );
+        self.set_thread_model_selection(&thread.id, requested_selection.clone())
+            .await?;
         let _ = self
             .protocol_notifications
             .send(notifications::thread_started_notification(thread.clone()));
@@ -2078,6 +2318,7 @@ impl AppServer {
             model,
             model_provider,
             reasoning,
+            selection_mode: Some(requested_selection.selection_mode),
             cwd,
             workspace_id: resolved.workspace.id,
             root_id: resolved.root.id,
@@ -2305,6 +2546,7 @@ impl AppServer {
                 root_id: None,
                 provider: Some(cfg.default_provider.clone()),
                 model: Some(cfg.default_model.clone()),
+                selection_mode: None,
             })
             .await
             .map_err(internal_error)?;
@@ -2316,11 +2558,11 @@ impl AppServer {
         let reasoning = Runtime::effective_reasoning_for_config(&cfg);
         self.protocol_thread_models.write().await.insert(
             protocol_thread.id.clone(),
-            ProtocolThreadModelSelection {
-                provider: cfg.default_provider,
-                model: cfg.default_model,
-                reasoning: Some(reasoning),
-            },
+            ProtocolThreadModelSelection::manual(
+                cfg.default_provider,
+                cfg.default_model,
+                Some(reasoning),
+            ),
         );
         let _ = self
             .protocol_notifications
@@ -2482,20 +2724,27 @@ impl AppServer {
             return Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap());
         }
 
-        let (thread_provider, thread_model, thread_reasoning) = self
-            .protocol_thread_model(&params.thread_id)
-            .await
-            .map(|selection| {
-                (
-                    Some(selection.provider),
-                    Some(selection.model),
-                    selection.reasoning,
-                )
-            })
-            .unwrap_or((None, None, None));
-        let provider_override = params.model_provider.or(thread_provider);
-        let model_override = params.model.or(thread_model);
-        let reasoning_override = params.reasoning.or(thread_reasoning);
+        let thread_selection = self.protocol_thread_model(&params.thread_id).await;
+        let thread_manual_selection = thread_selection
+            .as_ref()
+            .filter(|selection| !selection.selection_mode.is_auto());
+        let explicit_turn_model_selection =
+            params.model_provider.is_some() || params.model.is_some();
+        let provider_override = params.model_provider.or_else(|| {
+            (!explicit_turn_model_selection)
+                .then(|| thread_manual_selection.map(|selection| selection.provider.clone()))
+                .flatten()
+        });
+        let model_override = params.model.or_else(|| {
+            (!explicit_turn_model_selection)
+                .then(|| thread_manual_selection.map(|selection| selection.model.clone()))
+                .flatten()
+        });
+        let reasoning_override = params.reasoning.or_else(|| {
+            (!explicit_turn_model_selection)
+                .then(|| thread_manual_selection.and_then(|selection| selection.reasoning.clone()))
+                .flatten()
+        });
         let protocol_thread_workspace = self
             .protocol_threads
             .read()
@@ -2747,29 +2996,34 @@ impl AppServer {
     }
 
     async fn protocol_thread_model(&self, thread_id: &str) -> Option<ProtocolThreadModelSelection> {
-        if let Some(model) = self
-            .protocol_thread_models
+        if let Some(selection) = self
+            .runtime
+            .load_thread(&thread_id.to_string())
+            .await
+            .ok()
+            .flatten()
+            .and_then(|snapshot| snapshot.metadata)
+            .and_then(|metadata| {
+                if let Some(selection_mode) = metadata.selection_mode {
+                    return Some(ProtocolThreadModelSelection::from_selection_mode(
+                        selection_mode,
+                    ));
+                }
+                match (metadata.provider, metadata.model) {
+                    (Some(provider), Some(model)) => {
+                        Some(ProtocolThreadModelSelection::manual(provider, model, None))
+                    }
+                    _ => None,
+                }
+            })
+        {
+            return Some(selection);
+        }
+        self.protocol_thread_models
             .read()
             .await
             .get(thread_id)
             .cloned()
-        {
-            return Some(model);
-        }
-        self.runtime
-            .list_threads()
-            .await
-            .ok()?
-            .into_iter()
-            .find(|metadata| metadata.thread_id == thread_id)
-            .and_then(|metadata| match (metadata.provider, metadata.model) {
-                (Some(provider), Some(model)) => Some(ProtocolThreadModelSelection {
-                    provider,
-                    model,
-                    reasoning: None,
-                }),
-                _ => None,
-            })
     }
 
     async fn handle_tools_list(&self) -> Result<serde_json::Value, JsonRpcError> {
