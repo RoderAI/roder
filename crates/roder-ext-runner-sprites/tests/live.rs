@@ -10,7 +10,9 @@ use roder_ext_runner_sprites::{
     DEFAULT_APP_SERVER_TOKEN_ENV, LIVE_ENV, PROVIDER_ID, RODER_TOKEN_ENV, SpritesRunnerProvider,
     TOKEN_ENV,
 };
-use roder_protocol::{InitializeResult, JsonRpcRequest, JsonRpcResponse, ToolsListResult};
+use roder_protocol::{
+    InitializeResult, JsonRpcRequest, JsonRpcResponse, ToolCallResult, ToolsListResult,
+};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
@@ -161,6 +163,77 @@ async fn live_sprites_repo_app_server_accepts_remote_control() -> anyhow::Result
         has_sprites_provider,
         "remote app-server should expose Sprites runner provider: {runners}"
     );
+
+    let workspace: serde_json::Value = remote_request(
+        &mut websocket,
+        "workspace",
+        "workspace/create",
+        Some(serde_json::json!({
+            "roots": [{ "path": initialize.cwd.as_deref().unwrap_or("/home/sprite/roder-live-app/repo") }]
+        })),
+    )
+    .await?;
+    let workspace = workspace
+        .get("workspace")
+        .ok_or_else(|| anyhow::anyhow!("workspace/create returned no workspace: {workspace}"))?;
+    let workspace_id = metadata_string(workspace, "id")?;
+    let root_id = metadata_string(workspace, "defaultRootId")?;
+
+    let thread: serde_json::Value = remote_request(
+        &mut websocket,
+        "thread",
+        "thread/start",
+        Some(serde_json::json!({
+            "model": null,
+            "modelProvider": null,
+            "reasoning": null,
+            "workspaceId": workspace_id,
+            "rootId": root_id,
+            "cwd": initialize.cwd,
+            "ephemeral": true,
+        })),
+    )
+    .await?;
+    let thread_id = metadata_string(
+        thread
+            .get("thread")
+            .ok_or_else(|| anyhow::anyhow!("thread/start returned no thread: {thread}"))?,
+        "id",
+    )?;
+
+    let created_goal: ToolCallResult = remote_request(
+        &mut websocket,
+        "create-goal",
+        "tools/call",
+        Some(serde_json::json!({
+            "thread_id": thread_id,
+            "tool_name": "create_goal",
+            "arguments": { "objective": "prove remote sprite tool execution" },
+        })),
+    )
+    .await?;
+    assert!(
+        !created_goal.is_error,
+        "remote create_goal failed: {created_goal:?}"
+    );
+    assert!(created_goal.text.contains("remote sprite tool execution"));
+
+    let current_goal: ToolCallResult = remote_request(
+        &mut websocket,
+        "get-goal",
+        "tools/call",
+        Some(serde_json::json!({
+            "thread_id": thread_id,
+            "tool_name": "get_goal",
+            "arguments": {},
+        })),
+    )
+    .await?;
+    assert!(
+        !current_goal.is_error,
+        "remote get_goal failed: {current_goal:?}"
+    );
+    assert!(current_goal.text.contains("remote sprite tool execution"));
 
     session.close().await?;
     let _ = repo_source;
