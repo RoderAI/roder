@@ -1,0 +1,54 @@
+{
+  "version": "0.1",
+  "documentId": "design_e76c56bef188c3d9",
+  "title": "gode",
+  "createdAt": "2026-06-06T21:36:17.917403Z",
+  "updatedAt": "2026-06-06T22:26:21.613524Z",
+  "nodes": {
+    "20630f83-4a09-49f1-a285-70a203a7c8dd": {
+      "id": "20630f83-4a09-49f1-a285-70a203a7c8dd",
+      "type": "rectangle",
+      "name": "Rectangle 1",
+      "x": 240.0,
+      "y": 312.0,
+      "width": 192.0,
+      "height": 120.0,
+      "visible": true,
+      "fill": {
+        "kind": "color",
+        "value": "#f4f4f5"
+      },
+      "stroke": {
+        "kind": "color",
+        "value": "#d4d4d8",
+        "width": 1
+      },
+      "cornerRadius": 8
+    },
+    "frame-root": {
+      "id": "frame-root",
+      "type": "frame",
+      "name": "Frame",
+      "x": 0.0,
+      "y": 0.0,
+      "width": 800.0,
+      "height": 600.0,
+      "visible": true,
+      "fill": {
+        "kind": "color",
+        "value": "#ffffff"
+      }
+    }
+  },
+  "rootIds": [
+    "frame-root",
+    "20630f83-4a09-49f1-a285-70a203a7c8dd"
+  ],
+  "variables": {},
+  "assets": {},
+  "metadata": {
+    "workspaceId": "ws_e76c56bef188c3d9",
+    "rootId": "root_e76c56bef188c3d9",
+    "workspaceRoot": "/Users/pz/w/gode"
+  }
+}

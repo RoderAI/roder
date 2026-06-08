@@ -15,6 +15,7 @@ use roder_api::media::{MediaArtifact, MediaAttachment, data_url};
 use roder_api::memory::{MemoryProviderSelection, MemoryQuery, MemoryRecord};
 use roder_api::plan_review::{HunkRecord, PlanComment, PlanReview, PlanReviewStatus, PlanRewrite};
 use roder_api::policy_mode::PolicyDecision;
+use roder_api::thread::ThreadListOptions;
 use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext};
 use roder_api::transcript::{InputImage, TranscriptItem, UserMessage};
 use roder_api::workflow::{
@@ -555,6 +556,18 @@ impl AppServer {
                 })
                 .await
             }
+            "design/set_variables" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_set_variables(p).await
+                })
+                .await
+            }
+            "design/set_selection" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_set_selection(p).await
+                })
+                .await
+            }
             "design/snapshot_layout" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_design_snapshot_layout(p).await
@@ -567,9 +580,21 @@ impl AppServer {
                 })
                 .await
             }
+            "design/spawn_agents" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_spawn_agents(p).await
+                })
+                .await
+            }
             "design/export_nodes" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_design_export_nodes(p).await
+                })
+                .await
+            }
+            "design/get_screenshot" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_design_get_screenshot(p).await
                 })
                 .await
             }
@@ -2153,34 +2178,76 @@ impl AppServer {
         &self,
         params: ThreadListParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let mut thread_metadata = self.runtime.list_threads().await.map_err(internal_error)?;
-        thread_metadata.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
-        if let Some(limit) = params.limit {
-            thread_metadata.truncate(limit);
-        }
+        let requested_limit = params.limit;
+        let requested_cursor = params.cursor.clone();
+        let include_unpaged_protocol_threads =
+            requested_limit.is_none() && requested_cursor.is_none();
+        let page = self
+            .runtime
+            .list_threads_page(ThreadListOptions {
+                limit: params.limit,
+                cursor: params.cursor,
+            })
+            .await
+            .map_err(internal_error)?;
         let mut threads = Vec::new();
-        for metadata in thread_metadata {
+        for metadata in page.threads {
             threads.push(
                 self.protocol_thread_from_metadata_with_live_status(metadata, None)
                     .await,
             );
         }
-        let protocol_threads = self
-            .protocol_threads
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for thread in protocol_threads {
-            if !threads.iter().any(|candidate| candidate.id == thread.id) {
+        if threads.is_empty() && (requested_limit.is_some() || requested_cursor.is_some()) {
+            let mut protocol_threads = self
+                .protocol_threads
+                .read()
+                .await
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            protocol_threads.sort_by(|left, right| {
+                right
+                    .updated_at
+                    .cmp(&left.updated_at)
+                    .then_with(|| right.id.cmp(&left.id))
+            });
+            let start = requested_cursor
+                .as_deref()
+                .and_then(|cursor| cursor.parse::<usize>().ok())
+                .unwrap_or(0)
+                .min(protocol_threads.len());
+            let limit = requested_limit.unwrap_or(protocol_threads.len());
+            let end = start.saturating_add(limit).min(protocol_threads.len());
+            let next_cursor = (end < protocol_threads.len()).then(|| end.to_string());
+            let backwards_cursor = (start > 0).then(|| start.saturating_sub(limit).to_string());
+            for thread in protocol_threads.into_iter().skip(start).take(end - start) {
                 threads.push(self.thread_with_live_status(thread).await);
+            }
+            return Ok(serde_json::to_value(ThreadListResult {
+                data: threads,
+                next_cursor,
+                backwards_cursor,
+            })
+            .unwrap());
+        }
+        if include_unpaged_protocol_threads {
+            let protocol_threads = self
+                .protocol_threads
+                .read()
+                .await
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            for thread in protocol_threads {
+                if !threads.iter().any(|candidate| candidate.id == thread.id) {
+                    threads.push(self.thread_with_live_status(thread).await);
+                }
             }
         }
         Ok(serde_json::to_value(ThreadListResult {
             data: threads,
-            next_cursor: None,
-            backwards_cursor: None,
+            next_cursor: page.next_cursor,
+            backwards_cursor: page.backwards_cursor,
         })
         .unwrap())
     }
@@ -2263,17 +2330,23 @@ impl AppServer {
         &self,
         params: ThreadReadParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let snapshot = self
-            .runtime
-            .load_thread(&params.thread_id)
-            .await
-            .map_err(internal_error)?;
-        let thread = snapshot.and_then(|snapshot| {
-            let turns = params
-                .include_turns
-                .then(|| protocol_turns_from_snapshot(&snapshot));
-            snapshot.metadata.map(|metadata| (metadata, turns))
-        });
+        let thread = if params.include_turns {
+            let snapshot = self
+                .runtime
+                .load_thread(&params.thread_id)
+                .await
+                .map_err(internal_error)?;
+            snapshot.and_then(|snapshot| {
+                let turns = Some(protocol_turns_from_snapshot(&snapshot));
+                snapshot.metadata.map(|metadata| (metadata, turns))
+            })
+        } else {
+            self.runtime
+                .load_thread_metadata(&params.thread_id)
+                .await
+                .map_err(internal_error)?
+                .map(|metadata| (metadata, None))
+        };
         let thread = match thread {
             Some((metadata, turns)) => Some(
                 self.protocol_thread_from_metadata_with_live_status(metadata, turns)

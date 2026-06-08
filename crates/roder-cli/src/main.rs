@@ -58,16 +58,15 @@ use roder_extension_host::{
     SessionStoreConfig, build_default_registry,
 };
 use roder_protocol::{
-    Item, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
     MemoryListParams, MemoryListResult, MemoryProviderListResult, MemoryProviderSetParams,
     MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemorySaveParams,
     MemorySaveResult, MemoryUpdateParams, ProcessesGetParams, ProcessesGetResult,
     ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
     ProcessesStopParams, ProcessesStopResult, TasksCancelParams, TasksCancelResult, TasksGetParams,
     TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult, Thread,
-    ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult, WorkflowEnableParams,
-    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
-    WorkflowScanResult,
+    ThreadListParams, ThreadListResult, WorkflowEnableParams, WorkflowEnableResult,
+    WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
 };
 use roder_tui::{TuiApp, TuiRunOptions, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
@@ -497,44 +496,18 @@ async fn list_threads(client: &LocalAppClient) -> anyhow::Result<Vec<Thread>> {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!("thread/list")),
             method: "thread/list".to_string(),
-            params: Some(serde_json::to_value(ThreadListParams { limit: None })?),
-        })
-        .await;
-    let mut threads = Vec::new();
-    for thread in decode_response::<ThreadListResult>(res)?.data {
-        if let Ok(Some(full_thread)) = read_thread(client, &thread.id).await
-            && thread_has_user_message(&full_thread)
-        {
-            threads.push(full_thread);
-        }
-    }
-    threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
-    Ok(threads)
-}
-
-async fn read_thread(client: &LocalAppClient, thread_id: &str) -> anyhow::Result<Option<Thread>> {
-    let res = client
-        .send_request(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("thread/read")),
-            method: "thread/read".to_string(),
-            params: Some(serde_json::to_value(ThreadReadParams {
-                thread_id: thread_id.to_string(),
-                include_turns: true,
+            params: Some(serde_json::to_value(ThreadListParams {
+                limit: Some(100),
+                cursor: None,
             })?),
         })
         .await;
-    Ok(decode_response::<ThreadReadResult>(res)?.thread)
-}
-
-fn thread_has_user_message(thread: &Thread) -> bool {
-    thread
-        .turns
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .flat_map(|turn| turn.items.iter())
-        .any(|item| matches!(item, Item::UserMessage { text, .. } if !text.trim().is_empty()))
+    let mut threads = decode_response::<ThreadListResult>(res)?.data;
+    threads.retain(|thread| {
+        !thread.preview.trim().is_empty() || !thread.name.as_deref().unwrap_or("").trim().is_empty()
+    });
+    threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
+    Ok(threads)
 }
 
 async fn run_tasks_cli(args: &[String]) -> anyhow::Result<()> {

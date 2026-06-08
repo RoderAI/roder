@@ -1,5 +1,5 @@
 use roder_protocol::{
-    Item, Thread, ThreadItemStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
+    Thread, ThreadItemStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
     ThreadReadResult,
 };
 
@@ -14,17 +14,19 @@ where
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!("thread/list")),
             method: "thread/list".to_string(),
-            params: Some(serde_json::to_value(ThreadListParams { limit: None }).unwrap()),
+            params: Some(
+                serde_json::to_value(ThreadListParams {
+                    limit: Some(100),
+                    cursor: None,
+                })
+                .unwrap(),
+            ),
         })
         .await;
-    let mut threads = Vec::new();
-    for thread in decode_response::<ThreadListResult>(res)?.data {
-        if let Ok(Some(full_thread)) = load_thread(client, &thread.id).await
-            && thread_has_user_message(&full_thread)
-        {
-            threads.push(full_thread);
-        }
-    }
+    let mut threads = decode_response::<ThreadListResult>(res)?.data;
+    threads.retain(|thread| {
+        !thread.preview.trim().is_empty() || !thread.name.as_deref().unwrap_or("").trim().is_empty()
+    });
     threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
     Ok(threads)
 }
@@ -78,6 +80,7 @@ where
         self.last_user_prompt = None;
         self.image_attachments.clear();
         self.timeline = TimelineState::default();
+        self.resume_history = ResumeHistoryState::default();
 
         if !thread.model_provider.trim().is_empty() {
             self.provider = thread.model_provider.clone();
@@ -92,13 +95,15 @@ where
             .or_else(|| (!thread.preview.trim().is_empty()).then(|| thread.preview.clone()));
         self.thread_message_count = message_count_from_thread(&thread);
 
-        let mut item_count = 0usize;
-        for turn in thread.turns.as_deref().unwrap_or_default() {
-            for item in &turn.items {
-                item_count += 1;
-                self.push_item(item);
-            }
-        }
+        let items = resume_items(thread.turns.as_deref().unwrap_or_default());
+        let item_count = items.len();
+        let (older_items, visible_items) = split_resume_items(items);
+        self.resume_history = ResumeHistoryState {
+            older_items,
+            loaded_items: visible_items.len(),
+            total_items: item_count,
+        };
+        self.replay_resume_items(&visible_items);
 
         if self.thread_title.is_none() {
             self.thread_title = title_from_thread(&thread);
@@ -110,7 +115,80 @@ where
             item_count,
             if item_count == 1 { "" } else { "s" }
         ));
+        if self.resume_history.has_older_items() {
+            self.timeline.push_system(format!(
+                "showing latest {} saved item{}; scroll up to load {} older item{}.",
+                self.resume_history.loaded_items,
+                if self.resume_history.loaded_items == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                self.resume_history.older_items.len(),
+                if self.resume_history.older_items.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        self.timeline.follow_latest();
         self.push_event(format!("resumed thread {}", short_id(&thread_id)));
+    }
+
+    pub(super) fn load_older_resume_history_if_needed(&mut self) {
+        if self.timeline.scroll_offset() > 0 || !self.resume_history.has_older_items() {
+            return;
+        }
+
+        let before_height = self.timeline_rendered_height();
+        let batch_start = self
+            .resume_history
+            .older_items
+            .len()
+            .saturating_sub(RESUME_OLDER_BATCH_ITEMS);
+        let batch = self.resume_history.older_items.split_off(batch_start);
+        let batch_len = batch.len();
+        self.replay_older_resume_items(&batch);
+        self.resume_history.loaded_items =
+            self.resume_history.loaded_items.saturating_add(batch_len);
+        let remaining = self.resume_history.older_items.len();
+        self.timeline.prepend_system(format!(
+            "loaded {batch_len} older saved item{} ({} remaining).",
+            if batch_len == 1 { "" } else { "s" },
+            remaining
+        ));
+        if remaining > 0 {
+            self.timeline.prepend_system(format!(
+                "scroll up to load {} more older saved item{}.",
+                remaining,
+                if remaining == 1 { "" } else { "s" }
+            ));
+        }
+        let after_height = self.timeline_rendered_height();
+        self.timeline
+            .preserve_scroll_after_prepend(after_height.saturating_sub(before_height));
+    }
+
+    fn replay_resume_items(&mut self, items: &[Item]) {
+        for item in items {
+            self.push_item(item);
+        }
+    }
+
+    fn replay_older_resume_items(&mut self, items: &[Item]) {
+        for item in items.iter().rev() {
+            self.prepend_item(item);
+        }
+    }
+
+    fn timeline_rendered_height(&mut self) -> usize {
+        let width = self.last_frame_width.max(1);
+        let height = self.timeline.last_viewport_height().max(1);
+        let _ = self
+            .timeline
+            .render_with_frame(self.theme, Rect::new(0, 0, width, height), 0);
+        self.timeline.visual_height()
     }
 
     fn push_item(&mut self, item: &Item) {
@@ -165,17 +243,46 @@ where
                     );
                 }
             }
-            Item::Compaction { summary, .. } => {
-                if !summary.trim().is_empty() {
-                    self.timeline.push_system(summary.clone());
-                }
-            }
+            Item::Compaction { .. } => {}
             Item::Error { message, .. } => {
                 self.timeline.push_error(message.clone());
             }
             Item::Raw { payload, .. } => {
                 if let Some(text) = payload.as_str().filter(|text| !text.trim().is_empty()) {
                     self.timeline.push_system(text.to_string());
+                }
+            }
+        }
+    }
+
+    fn prepend_item(&mut self, item: &Item) {
+        match item {
+            Item::UserMessage { text, .. } => {
+                self.timeline.prepend_user(text.clone());
+            }
+            Item::AgentMessage { text, phase, .. } => {
+                self.timeline.prepend_assistant(text.clone(), phase.clone());
+            }
+            Item::Reasoning {
+                content, summary, ..
+            } => {
+                let text = if content.is_empty() {
+                    reasoning_blocks_text(summary)
+                } else {
+                    reasoning_blocks_text(content)
+                };
+                if !text.trim().is_empty() {
+                    self.timeline.prepend_reasoning(text);
+                }
+            }
+            Item::ToolExecution { .. } => {}
+            Item::Compaction { .. } => {}
+            Item::Error { message, .. } => {
+                self.timeline.prepend_error(message.clone());
+            }
+            Item::Raw { payload, .. } => {
+                if let Some(text) = payload.as_str().filter(|text| !text.trim().is_empty()) {
+                    self.timeline.prepend_system(text.to_string());
                 }
             }
         }
@@ -195,6 +302,30 @@ where
             resume_command: format!("roder resume {}", self.thread_id),
         }
     }
+}
+
+fn resume_items(turns: &[Turn]) -> Vec<Item> {
+    turns
+        .iter()
+        .flat_map(|turn| turn.items.iter().cloned())
+        .collect()
+}
+
+fn split_resume_items(items: Vec<Item>) -> (Vec<Item>, Vec<Item>) {
+    if items.len() <= RESUME_VISIBLE_TAIL_ITEMS {
+        return (Vec::new(), items);
+    }
+    let latest_compaction_tail_start = items
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, item)| matches!(item, Item::Compaction { .. }).then_some(index + 1))
+        .filter(|start| items.len().saturating_sub(*start) <= RESUME_VISIBLE_TAIL_ITEMS);
+    let start = latest_compaction_tail_start
+        .unwrap_or_else(|| items.len().saturating_sub(RESUME_VISIBLE_TAIL_ITEMS));
+    let mut older = items;
+    let visible = older.split_off(start);
+    (older, visible)
 }
 
 fn reasoning_blocks_text(blocks: &[String]) -> String {
@@ -284,6 +415,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: None,
+            message_count: None,
             usage: None,
             turns: Some(vec![Turn {
                 id: "turn-a".to_string(),

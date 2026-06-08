@@ -27,6 +27,7 @@ pub(crate) fn protocol_thread_from_metadata(
         workspace_id: metadata.workspace_id,
         root_id: metadata.root_id,
         name: metadata.title,
+        message_count: Some(metadata.message_count),
         turns,
         usage: metadata.usage,
     }

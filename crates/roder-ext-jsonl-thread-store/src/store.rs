@@ -5,16 +5,32 @@ use anyhow::Context;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
-    ThreadItemEvent, ThreadMetadata, ThreadSnapshot, ThreadStore, ThreadStoreFactory,
-    project_turns_from_events, validate_thread_workspace,
+    ThreadItemEvent, ThreadListOptions, ThreadListPage, ThreadMetadata, ThreadSnapshot,
+    ThreadStore, ThreadStoreFactory, project_turns_from_events, validate_thread_workspace,
 };
 use roder_api::transcript::TranscriptItem;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 pub struct JsonlThreadStore {
     pub base_path: PathBuf,
+}
+
+const THREAD_INDEX_FILE: &str = "thread-index.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadIndexEntry {
+    thread_id: ThreadId,
+    updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadIndex {
+    threads: Vec<ThreadIndexEntry>,
 }
 
 impl JsonlThreadStore {
@@ -24,6 +40,99 @@ impl JsonlThreadStore {
 
     fn archived_thread_dir(&self, thread_id: &ThreadId) -> PathBuf {
         archived_threads_root(&self.base_path).join(thread_id)
+    }
+
+    fn thread_index_path(&self) -> PathBuf {
+        self.base_path.join(THREAD_INDEX_FILE)
+    }
+
+    async fn load_thread_index(&self) -> anyhow::Result<Option<ThreadIndex>> {
+        let path = self.thread_index_path();
+        let data = match fs::read(&path).await {
+            Ok(data) => data,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => {
+                return Err(err).with_context(|| format!("read thread index {}", path.display()));
+            }
+        };
+        serde_json::from_slice(&data)
+            .map(Some)
+            .with_context(|| format!("parse thread index {}", path.display()))
+    }
+
+    async fn write_thread_index(&self, index: &ThreadIndex) -> anyhow::Result<()> {
+        let path = self.thread_index_path();
+        let serialized = serde_json::to_vec_pretty(index).context("serialize thread index")?;
+        fs::create_dir_all(&self.base_path)
+            .await
+            .with_context(|| format!("create thread root {}", self.base_path.display()))?;
+        let tmp_path = path.with_file_name(format!(
+            ".{}.{}.tmp",
+            THREAD_INDEX_FILE,
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(&tmp_path, serialized)
+            .await
+            .with_context(|| format!("write thread index temp {}", tmp_path.display()))?;
+        if let Err(err) = fs::rename(&tmp_path, &path).await {
+            let _ = fs::remove_file(&tmp_path).await;
+            return Err(err).with_context(|| format!("replace thread index {}", path.display()));
+        }
+        Ok(())
+    }
+
+    async fn upsert_thread_index(&self, metadata: &ThreadMetadata) -> anyhow::Result<()> {
+        let mut index = self.load_thread_index().await?.unwrap_or_default();
+        upsert_thread_index_entry(&mut index, metadata);
+        self.write_thread_index(&index).await
+    }
+
+    async fn remove_thread_index_entry(&self, thread_id: &ThreadId) -> anyhow::Result<()> {
+        let Some(mut index) = self.load_thread_index().await? else {
+            return Ok(());
+        };
+        index.threads.retain(|entry| entry.thread_id != *thread_id);
+        self.write_thread_index(&index).await
+    }
+
+    async fn rebuild_thread_index(&self) -> anyhow::Result<ThreadIndex> {
+        let mut threads = self.scan_thread_index_entries().await?;
+        sort_thread_index_entries(&mut threads);
+        let index = ThreadIndex { threads };
+        self.write_thread_index(&index).await?;
+        Ok(index)
+    }
+
+    async fn scan_thread_index_entries(&self) -> anyhow::Result<Vec<ThreadIndexEntry>> {
+        let mut entries = fs::read_dir(&self.base_path)
+            .await
+            .with_context(|| format!("read thread directory {}", self.base_path.display()))?;
+        let mut threads = Vec::new();
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .with_context(|| format!("read thread entry under {}", self.base_path.display()))?
+        {
+            let file_type = entry.file_type().await.with_context(|| {
+                format!("read thread entry type under {}", self.base_path.display())
+            })?;
+            if !file_type.is_dir() {
+                continue;
+            }
+            let thread_id = entry.file_name().to_string_lossy().to_string();
+            if thread_id == "discovery-state" || is_thread_directory_without_metadata(&entry.path())
+            {
+                continue;
+            }
+            let metadata = self
+                .load_or_infer_metadata(&entry.path(), &thread_id)
+                .await?;
+            threads.push(ThreadIndexEntry {
+                thread_id,
+                updated_at: metadata.updated_at,
+            });
+        }
+        Ok(threads)
     }
 
     async fn load_item_events(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<ThreadItemEvent>> {
@@ -104,6 +213,7 @@ impl ThreadStore for JsonlThreadStore {
             .with_context(|| format!("create thread directory {}", dir.display()))?;
         let metadata_path = dir.join("metadata.json");
         write_metadata_file(&metadata_path, &metadata).await?;
+        self.upsert_thread_index(&metadata).await?;
         Ok(metadata)
     }
 
@@ -118,41 +228,63 @@ impl ThreadStore for JsonlThreadStore {
             .with_context(|| format!("create thread directory {}", dir.display()))?;
         let metadata_path = dir.join("metadata.json");
         write_metadata_file(&metadata_path, &metadata).await?;
+        self.upsert_thread_index(&metadata).await?;
         Ok(metadata)
     }
 
     async fn list_threads(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
+        Ok(self
+            .list_threads_page(ThreadListOptions::default())
+            .await?
+            .threads)
+    }
+
+    async fn list_threads_page(
+        &self,
+        options: ThreadListOptions,
+    ) -> anyhow::Result<ThreadListPage> {
         if !self.base_path.exists() {
-            return Ok(Vec::new());
+            return Ok(ThreadListPage::default());
         }
-        let mut entries = fs::read_dir(&self.base_path)
-            .await
-            .with_context(|| format!("read thread directory {}", self.base_path.display()))?;
+        let mut index = match self.load_thread_index().await {
+            Ok(Some(index)) => index,
+            Ok(None) | Err(_) => self.rebuild_thread_index().await?,
+        };
+        sort_thread_index_entries(&mut index.threads);
+
+        let offset = options
+            .cursor
+            .as_deref()
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(index.threads.len());
+        let limit = options
+            .limit
+            .unwrap_or(index.threads.len().saturating_sub(offset));
+        let next_offset = offset.saturating_add(limit).min(index.threads.len());
         let mut threads = Vec::new();
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .with_context(|| format!("read thread entry under {}", self.base_path.display()))?
-        {
-            let file_type = entry.file_type().await.with_context(|| {
-                format!("read thread entry type under {}", self.base_path.display())
-            })?;
-            if file_type.is_dir() {
-                let thread_id = entry.file_name().to_string_lossy().to_string();
-                if thread_id == "discovery-state" {
-                    continue;
+        let mut stale = false;
+        for entry in index.threads.iter().skip(offset).take(limit) {
+            match self.load_thread_metadata(&entry.thread_id).await? {
+                Some(metadata) => threads.push(metadata),
+                None => stale = true,
+            }
+        }
+        if stale || threads.len() < limit.min(index.threads.len().saturating_sub(offset)) {
+            index = self.rebuild_thread_index().await?;
+            threads.clear();
+            for entry in index.threads.iter().skip(offset).take(limit) {
+                if let Some(metadata) = self.load_thread_metadata(&entry.thread_id).await? {
+                    threads.push(metadata);
                 }
-                if is_thread_directory_without_metadata(&entry.path()) {
-                    continue;
-                }
-                let metadata = self
-                    .load_or_infer_metadata(&entry.path(), &thread_id)
-                    .await?;
-                threads.push(metadata);
             }
         }
         threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at));
-        Ok(threads)
+        Ok(ThreadListPage {
+            threads,
+            next_cursor: (next_offset < index.threads.len()).then(|| next_offset.to_string()),
+            backwards_cursor: (offset > 0).then(|| offset.saturating_sub(limit).to_string()),
+        })
     }
 
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
@@ -175,6 +307,17 @@ impl ThreadStore for JsonlThreadStore {
             item_events,
             extension_states,
         }))
+    }
+
+    async fn load_thread_metadata(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<ThreadMetadata>> {
+        let dir = self.thread_dir(thread_id);
+        if !dir.exists() || is_thread_directory_without_metadata(&dir) {
+            return Ok(None);
+        }
+        Ok(Some(self.load_or_infer_metadata(&dir, thread_id).await?))
     }
 
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
@@ -201,6 +344,7 @@ impl ThreadStore for JsonlThreadStore {
                 destination.display()
             )
         })?;
+        self.remove_thread_index_entry(thread_id).await?;
         Ok(true)
     }
 
@@ -392,6 +536,7 @@ impl JsonlThreadStore {
             metadata.title = title_from_user_text(&message.text);
         }
         write_metadata_file(&metadata_path, &metadata).await?;
+        self.upsert_thread_index(&metadata).await?;
         Ok(())
     }
 
@@ -607,6 +752,31 @@ fn archived_threads_root(active_threads_root: &Path) -> PathBuf {
         .parent()
         .map(|parent| parent.join("archived_threads"))
         .unwrap_or_else(|| active_threads_root.with_file_name("archived_threads"))
+}
+
+fn sort_thread_index_entries(entries: &mut [ThreadIndexEntry]) {
+    entries.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| right.thread_id.cmp(&left.thread_id))
+    });
+}
+
+fn upsert_thread_index_entry(index: &mut ThreadIndex, metadata: &ThreadMetadata) {
+    if let Some(entry) = index
+        .threads
+        .iter_mut()
+        .find(|entry| entry.thread_id == metadata.thread_id)
+    {
+        entry.updated_at = metadata.updated_at;
+    } else {
+        index.threads.push(ThreadIndexEntry {
+            thread_id: metadata.thread_id.clone(),
+            updated_at: metadata.updated_at,
+        });
+    }
+    sort_thread_index_entries(&mut index.threads);
 }
 
 fn is_thread_directory_without_metadata(dir: &Path) -> bool {
@@ -1488,6 +1658,115 @@ mod tests {
 
         assert_eq!(threads[0].message_count, 2);
         assert!(threads[0].updated_at > now);
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn list_threads_page_returns_newest_metadata_page() {
+        let base_path =
+            std::env::temp_dir().join(format!("roder-jsonl-page-test-{}", uuid::Uuid::new_v4()));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+
+        for index in 0..3 {
+            let timestamp = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(index);
+            store
+                .create_thread(ThreadMetadata {
+                    thread_id: format!("thread-{index}"),
+                    title: Some(format!("Thread {index}")),
+                    workspace: test_workspace("workspace"),
+                    workspace_id: None,
+                    root_id: None,
+                    provider: Some("mock".to_string()),
+                    model: Some("mock".to_string()),
+                    runner_destination: None,
+                    runner_state: None,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    message_count: index as u32,
+                    usage: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        let first_page = store
+            .list_threads_page(ThreadListOptions {
+                limit: Some(2),
+                cursor: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(first_page.threads.len(), 2);
+        assert_eq!(first_page.threads[0].thread_id, "thread-2");
+        assert_eq!(first_page.threads[1].thread_id, "thread-1");
+        assert_eq!(first_page.next_cursor.as_deref(), Some("2"));
+        assert!(base_path.join(THREAD_INDEX_FILE).exists());
+
+        let second_page = store
+            .list_threads_page(ThreadListOptions {
+                limit: Some(2),
+                cursor: first_page.next_cursor,
+            })
+            .await
+            .unwrap();
+        assert_eq!(second_page.threads.len(), 1);
+        assert_eq!(second_page.threads[0].thread_id, "thread-0");
+        assert!(second_page.next_cursor.is_none());
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn list_threads_page_rebuilds_stale_thread_index() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-stale-page-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+
+        for index in 0..2 {
+            let timestamp = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(index);
+            store
+                .create_thread(ThreadMetadata {
+                    thread_id: format!("thread-{index}"),
+                    title: Some(format!("Thread {index}")),
+                    workspace: test_workspace("workspace"),
+                    workspace_id: None,
+                    root_id: None,
+                    provider: Some("mock".to_string()),
+                    model: Some("mock".to_string()),
+                    runner_destination: None,
+                    runner_state: None,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    message_count: index as u32,
+                    usage: None,
+                })
+                .await
+                .unwrap();
+        }
+        fs::remove_dir_all(base_path.join("thread-1"))
+            .await
+            .unwrap();
+
+        let page = store
+            .list_threads_page(ThreadListOptions {
+                limit: Some(2),
+                cursor: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(page.threads.len(), 1);
+        assert_eq!(page.threads[0].thread_id, "thread-0");
+        let index = store.load_thread_index().await.unwrap().unwrap();
+        assert_eq!(index.threads.len(), 1);
+        assert_eq!(index.threads[0].thread_id, "thread-0");
 
         let _ = fs::remove_dir_all(base_path).await;
     }

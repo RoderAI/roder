@@ -233,9 +233,16 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("commands/list", "commands", ReadOnly, Idempotent),
     method_spec!("commands/run", "commands", LocalState, NonIdempotent),
     method_spec!("design/batch_get", "design", ReadOnly, Idempotent),
-    method_spec!("design/export_nodes", "design", LocalState, NonIdempotent),
+    method_spec!(
+        "design/export_nodes",
+        "design",
+        LocalState,
+        NonIdempotent,
+        ["design/exportCompleted"]
+    ),
     method_spec!("design/get_editor_state", "design", ReadOnly, Idempotent),
     method_spec!("design/get_guidelines", "design", ReadOnly, Idempotent),
+    method_spec!("design/get_screenshot", "design", ReadOnly, Idempotent),
     method_spec!("design/get_variables", "design", ReadOnly, Idempotent),
     method_spec!(
         "design/patch",
@@ -245,7 +252,22 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ["design/documentChanged"]
     ),
     method_spec!("design/read", "design", ReadOnly, Idempotent),
+    method_spec!(
+        "design/set_selection",
+        "design",
+        LocalState,
+        NonIdempotent,
+        ["design/selectionChanged"]
+    ),
+    method_spec!(
+        "design/set_variables",
+        "design",
+        LocalState,
+        NonIdempotent,
+        ["design/documentChanged"]
+    ),
     method_spec!("design/snapshot_layout", "design", ReadOnly, Idempotent),
+    method_spec!("design/spawn_agents", "design", ReadOnly, NonIdempotent),
     method_spec!("discovery/groups", "discovery", ReadOnly, Idempotent),
     method_spec!("discovery/promote", "discovery", LocalState, NonIdempotent),
     method_spec!(

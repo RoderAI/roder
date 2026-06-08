@@ -499,6 +499,9 @@ fn thread_model_label(thread: &Thread) -> String {
 }
 
 fn thread_message_count(thread: &Thread) -> usize {
+    if let Some(message_count) = thread.message_count {
+        return message_count as usize;
+    }
     thread
         .turns
         .as_deref()
@@ -715,6 +718,7 @@ mod tests {
             workspace_id: None,
             root_id: None,
             name: title.map(str::to_string),
+            message_count: None,
             turns: Some(vec![Turn {
                 id: "turn-a".to_string(),
                 items: vec![user_message("hi"), agent_message("hello")],
