@@ -1061,14 +1061,16 @@ fn concise_prompt(
     // superseded / recorded-later records as historical rather than current.
     let authority_on = std::env::var("GBRAIN_AUTHORITY").is_ok();
     let order: Vec<(usize, Option<&'static str>)> = if authority_on {
+        use crate::authority::AuthorityTag;
         let scored = crate::authority::resolve(evidence, as_of, question_wants_change(question));
-        let mut idx: Vec<usize> = (0..evidence.len()).collect();
-        idx.sort_by(|&a, &b| {
-            scored[b]
-                .score
-                .partial_cmp(&scored[a].score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Preserve the retrieval (relevance) order — authority score is NOT relevance,
+        // so sorting by it surfaces authoritative-but-off-question records (it made the
+        // model answer the wrong event on Q-0002). Only DEMOTE superseded / recorded-
+        // later records to the tail (still annotated as historical); never promote.
+        let demoted =
+            |i: usize| matches!(scored[i].tag, AuthorityTag::Superseded | AuthorityTag::RecordedLater);
+        let mut idx: Vec<usize> = (0..evidence.len()).filter(|&i| !demoted(i)).collect();
+        idx.extend((0..evidence.len()).filter(|&i| demoted(i)));
         idx.into_iter()
             .map(|i| (i, Some(scored[i].tag.label())))
             .collect()
