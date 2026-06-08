@@ -28,8 +28,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::ground::{
-    GroundIndex, GroundingAudit, audit_grounding, build_ground_index, is_walkthrough_question,
-    safe_specifics,
+    GroundIndex, GroundingAudit, audit_grounding, build_ground_index, event_cluster,
+    is_walkthrough_question, safe_specifics,
 };
 use crate::model::{AsOf, TemporalFact};
 use crate::reason::{Reasoner, extract_json};
@@ -272,6 +272,16 @@ impl<R: Reasoner> DecisionAgent<R> {
         } else {
             let synth_prompt =
                 concise_prompt(question, &evidence, &contradictions, as_of_label.as_deref());
+            // Extractive mode (GBRAIN_EXTRACTIVE=1): state each asked facet's
+            // conclusion and stop — no elaboration, mechanism, or narrative. Trades
+            // a little coverage for far less over-production (the faithfulness
+            // failure mode). Conclusion-per-facet, NOT raw record dumps (those score
+            // zero on the rubric, which only credits synthesized conclusions).
+            let synth_sys = if std::env::var("GBRAIN_EXTRACTIVE").is_ok() {
+                EXTRACTIVE_SYS
+            } else {
+                CONCISE_SYS
+            };
             // Self-consistency (opt-in, GBRAIN_SELF_CONSISTENCY=N>=2): synthesize N
             // independent drafts and keep only facts a MAJORITY assert. Stochastic
             // fabrications vary run-to-run so they drop out; stable grounded facts
@@ -287,7 +297,7 @@ impl<R: Reasoner> DecisionAgent<R> {
                 for i in 0..n_self {
                     self.progress
                         .step("synthesize", &format!("sample {}/{n_self}", i + 1));
-                    drafts.push(self.call("synthesize", CONCISE_SYS, &synth_prompt).await?);
+                    drafts.push(self.call("synthesize", synth_sys, &synth_prompt).await?);
                 }
                 self.progress
                     .step("consensus", &format!("{n_self} samples"));
@@ -298,7 +308,7 @@ impl<R: Reasoner> DecisionAgent<R> {
                 )
                 .await?
             } else {
-                self.call("synthesize", CONCISE_SYS, &synth_prompt).await?
+                self.call("synthesize", synth_sys, &synth_prompt).await?
             };
             // Free deterministic guard: drop slug-shaped cites not in the pool.
             let draft = strip_phantom_cites(&draft, &evidence);
@@ -351,6 +361,20 @@ impl<R: Reasoner> DecisionAgent<R> {
                 }
             }
         };
+
+        // Drop an unsolicited trailing "Note:" amendment/correction aside on
+        // questions that did not ask about changes/contradictions. Opus volunteers
+        // these from distractor records (e.g. a later "the decision was actually X"
+        // amendment) and they read as confident unsupported claims — the persistent
+        // Q-0002 faithfulness failure that prompt rules alone do not suppress.
+        let answer = strip_unrequested_note(question, as_of, answer);
+
+        // For walk-through / justify-with-evidence questions, drop bullets that cite
+        // ONLY records from a non-modal event cluster. The rubric credits exactly the
+        // ONE event's artifacts; the model over-includes topically-similar records
+        // from other events (the Q-0008 over-inclusion failure), each an extra
+        // unsupported assertion the faithfulness judge punishes.
+        let answer = strip_off_cluster_bullets(question, answer, &evidence);
 
         // Provenance = the cited records that actually appear in the answer.
         let provenance: Vec<String> = evidence
@@ -897,7 +921,9 @@ superseded' are FORBIDDEN unless a single record's text literally states the ear
 that record's [SLUG] must carry the statement). If no record explicitly states a change to a fact, say it is \
 unchanged / still in effect. 5) ONLY when explicitly \
 asked to 'walk through' or 'justify with evidence', list each supporting record with its [SLUG], labeled \
-direct (a first-hand message/email by the actor) or inferred (meeting notes, report, summary, third-party). \
+direct (a VERBATIM first-hand record: a chat/Slack message, an email by the actor, or a meeting/call \
+TRANSCRIPT of the actors' own words) or inferred (a summary, report, post-mortem, meeting NOTES, CRM entry, \
+or third-party document). A transcript is DIRECT; only summarized/secondary records are inferred. \
 The records belong to several distinct events (event id = the slug without its final -NNN segment); ONE \
 conclusion is established by ONE event's artifacts — list only those, never add records from other events even \
 if topically similar, and never invent an extra case/incident. Otherwise do NOT enumerate records. 6) CONFLICT/DISPUTE questions: report EACH named party's own position \
@@ -906,7 +932,37 @@ resolution status as exactly one of resolved / superseded / still unresolved wit
 [SLUG], or 'no retrieved record resolves it'. NEVER conclude 'no contradiction exists' merely because the \
 records you read first agree. If a named party's position is genuinely absent from the records, SAY it is not \
 in the retrieved records — do NOT invent it, and do NOT assume the parties agreed unless a record explicitly \
-shows agreement.";
+shows agreement. 7) ANSWER ONLY WHAT IS ASKED — a volunteered extra is a faithfulness FAILURE, not \
+thoroughness. Do NOT append a 'Note', correction, caveat, or 'actually it was X' remark the question did not \
+request, even when one record appears to contradict another (the ONLY exception is an explicit conflict/ \
+dispute question). Do NOT explain a mechanism, motive, or how/why something works beyond a record's literal \
+words — never write that a policy 'remains as a fallback default', 'eliminates the shared environment', or any \
+similar interpretation unless a record states exactly that. Do NOT introduce technical specifics — hostnames, \
+IP addresses, file / script / config / version names, or extra artifact [SLUG]s — unless the question \
+explicitly asks for them. If two records about the same event disagree on a specific, state only the part the \
+question asks for and do not assert the disputed specific.";
+
+const EXTRACTIVE_SYS: &str = "You answer organizational-memory questions in the MINIMAL form that states each \
+asked fact and then STOPS. You have NO background knowledge of this company — only the records below; a fact \
+not in a record does not exist. METHOD: 1) List exactly the facets the question asks for (only among: who, \
+when, what was decided, what alternatives, why, current/resolution status) and output ONE short clause per \
+facet, each ending with the [SLUG] of the ONE record that states it. State the CONCLUSION for that facet, not \
+the raw record text. 2) ADD NOTHING ELSE. No mechanism or 'how/why it works', no background or framing, no \
+narrative connective prose, no technical identifiers (hostnames, file / script / config / version names, IP \
+addresses), no date/name/number a facet does not require, and NO volunteered notes, corrections, caveats, or \
+'actually it was X' asides. Every extra clause is a FAITHFULNESS FAILURE, not thoroughness. 3) Copy each \
+specific VERBATIM from its record; if a specific — or a whole asked facet — is not in the records, write 'not \
+in the records' for it and move on. NEVER guess, infer, paraphrase a value, or fill a gap. 4) Be as terse as \
+possible while still covering every asked facet: short clauses, no preamble, no summary, no closing sentence. \
+5) 'now'/'currently' => the most recent record's value; 'as of <date>' => state what was known THEN, then name \
+ONLY a change a record EXPLICITLY states was superseded/replaced (with that record's [SLUG]); never infer a \
+change or invent a sequence. 6) ONLY when asked to 'walk through' or 'justify with evidence', list ONLY the \
+records whose own text DIRECTLY establishes the asked conclusion — one event's artifacts, never another \
+event's even if topically similar — each [SLUG] labeled direct (a verbatim first-hand record: chat/Slack \
+message, email, or meeting/call TRANSCRIPT) or inferred (summary, report, post-mortem, meeting NOTES, CRM). \
+7) Conflict/dispute question => state each named party's own position (its date + [SLUG]) and the resolution \
+status as exactly resolved / superseded / still unresolved (with the resolving [SLUG]) or 'no retrieved record \
+resolves it' — and nothing more.";
 
 const VERIFY_FAITHFUL_SYS: &str = "You are an ADVERSARIAL FAITHFULNESS VERIFIER running a final DELETE-ONLY \
 pass. You receive numbered RECORDS (the ONLY source of truth) and a DRAFT whose specific values were already \
@@ -958,8 +1014,13 @@ never re-add or relabel it. EXCEPTION: keep a span only if it is plainly the SAM
 different surface form already present in a record. For the 'MISATTRIBUTED' list, re-read the EXACT [SLUG] \
 beside the span; if that record does not contain the value, delete the value (it belongs to a different \
 record) — do not move the [SLUG]. For 'OFF-CLUSTER records' in a walk-through answer, drop those records' \
-bullets unless their own text directly states the conclusion being justified. 6) Keep it relevant and output \
-ONLY the corrected answer text, no preamble or notes.";
+bullets unless their own text directly states the conclusion being justified. 6) OVER-SPECIFICATION: unless \
+the question explicitly asks for implementation/technical detail, DELETE implementation-level specifics even \
+when a record contains them — hostnames / domains (e.g. api.x.example), IP addresses, internal script / tool / \
+provisioning / version names (e.g. infra-provision-v0.9.2), file paths, and config keys — together with any \
+clause that exists only to state them. They are real but exceed what the question asks and read as \
+unsupported elaboration. Keep the higher-level fact (e.g. 'a DNS misconfiguration') and the actors/dates the \
+question needs. 7) Keep it relevant and output ONLY the corrected answer text, no preamble or notes.";
 
 const CONSENSUS_SYS: &str = "You are given several INDEPENDENT answers to the SAME question, each written from \
 the SAME records. Produce ONE consolidated answer containing ONLY facts asserted by a MAJORITY of the inputs. \
@@ -1013,13 +1074,20 @@ fn concise_prompt(
             truncate(&e.text, 6000),
         ));
     }
-    if !contradictions.is_empty() {
-        s.push_str("\nConflicting records to report if relevant:\n");
-        for c in contradictions {
-            s.push_str(&format!("  - {c}\n"));
-        }
-    }
+    // Only surface store-detected contradictions for questions that actually ask
+    // about a conflict. Injecting them unconditionally invited the model to append
+    // unsolicited "dispute" notes on non-contradiction questions (e.g. a C2 decision
+    // question), citing distractor records — a confident unsupported assertion the
+    // judge marks unfaithful even when the core answer is perfect. The rubric gives
+    // non-contradiction questions zero credit for volunteered contradictions, so
+    // suppressing them is faithfulness-positive and accuracy-neutral.
     if is_contradiction_question(question) {
+        if !contradictions.is_empty() {
+            s.push_str("\nConflicting records to report if relevant:\n");
+            for c in contradictions {
+                s.push_str(&format!("  - {c}\n"));
+            }
+        }
         let parties = contradiction_parties(question);
         if !parties.is_empty() {
             s.push_str(
@@ -1031,9 +1099,141 @@ fn concise_prompt(
                 s.push_str(&format!("  - {p}\n"));
             }
         }
+    } else {
+        // Non-contradiction question: do not volunteer disputes, alternative
+        // interpretations, or "notes" the question did not ask for.
+        s.push_str(
+            "\nAnswer ONLY the facets the question asks for. Do NOT append notes about \
+             disputes, conflicts, alternative interpretations, or how something works that \
+             the question did not ask for, even if some records appear to conflict.\n",
+        );
     }
     s.push_str("\nWrite the relevant, faithful, directly-responsive answer.");
     s
+}
+
+/// Remove a trailing volunteered "Note:" / correction aside the question did not
+/// request. Gated to non-change, non-contradiction, non-walkthrough questions
+/// (those legitimately discuss amendments/conflicts). Narrow by design: only a
+/// final paragraph that BOTH opens with a note marker AND carries correction/
+/// amendment/contradiction language is dropped — a confident unsupported aside,
+/// never requested content. Disable with `GBRAIN_NO_NOTE_STRIP=1`.
+fn strip_unrequested_note(question: &str, as_of: Option<OffsetDateTime>, answer: String) -> String {
+    if std::env::var("GBRAIN_NO_NOTE_STRIP").is_ok()
+        || as_of.is_some()
+        || is_contradiction_question(question)
+        || is_walkthrough_question(question)
+    {
+        return answer;
+    }
+    let ql = question.to_lowercase();
+    const CHANGE_CUES: &[&str] = &[
+        "chang", "since", "replac", "supersed", "updat", "amend", "revis", "no longer",
+        "current", "as of", "what now", "still in effect",
+    ];
+    if CHANGE_CUES.iter().any(|c| ql.contains(c)) {
+        return answer;
+    }
+    let trimmed = answer.trim_end();
+    // Need at least two paragraphs; only the trailing one is a candidate.
+    let Some(split_at) = trimmed.rfind("\n\n") else {
+        return answer;
+    };
+    let last_lc = trimmed[split_at..].trim().to_lowercase();
+    const NOTE_OPENERS: &[&str] = &[
+        "note:",
+        "note —",
+        "note that",
+        "note,",
+        "however",
+        "correction",
+        "of note",
+        "it is worth noting",
+        "important:",
+        "caveat",
+    ];
+    const CORRECTION_CUES: &[&str] = &[
+        "amend",
+        "revis",
+        "correct",
+        "inaccurate",
+        "actually",
+        "supersed",
+        "contradic",
+        "dispute",
+        "later determined",
+        "was wrong",
+        "should be",
+    ];
+    let opens_note = NOTE_OPENERS.iter().any(|m| last_lc.starts_with(m));
+    let is_correction = CORRECTION_CUES.iter().any(|c| last_lc.contains(c));
+    if opens_note && is_correction {
+        trimmed[..split_at].trim_end().to_string()
+    } else {
+        answer
+    }
+}
+
+/// For walk-through / justify-with-evidence questions, drop answer lines that cite
+/// ONLY records from a non-modal event cluster. OrgMemBench C5 credits exactly the
+/// one event's artifacts, and the model over-includes topically-similar records from
+/// other events (the Q-0008 failure: 6+ extra artifact IDs). Each extra cited record
+/// is an unsupported assertion the faithfulness judge punishes. Narrow by design:
+/// only fires on walk-through questions, only drops a line whose every cited slug is
+/// off the modal cluster, and never touches uncited prose. Disable with
+/// `GBRAIN_NO_OFFCLUSTER_STRIP=1`.
+fn strip_off_cluster_bullets(question: &str, answer: String, evidence: &[EvidenceItem]) -> String {
+    if std::env::var("GBRAIN_NO_OFFCLUSTER_STRIP").is_ok() || !is_walkthrough_question(question) {
+        return answer;
+    }
+    let real: std::collections::HashSet<&str> = evidence.iter().map(|e| e.slug.as_str()).collect();
+    let cited_clusters = |line: &str| -> Vec<String> {
+        cited_slugs_in_line(line, &real)
+            .iter()
+            .filter_map(|s| event_cluster(s).map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    // Modal event cluster across every cited slug in the answer.
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for line in answer.lines() {
+        for c in cited_clusters(line) {
+            *counts.entry(c).or_default() += 1;
+        }
+    }
+    let Some(modal) = counts
+        .iter()
+        .max_by_key(|(cluster, n)| (**n, (*cluster).clone()))
+        .map(|(cluster, _)| cluster.clone())
+    else {
+        return answer; // nothing cited — leave it alone
+    };
+    let mut kept: Vec<&str> = Vec::new();
+    for line in answer.lines() {
+        let clusters = cited_clusters(line);
+        // Drop only when the line cites at least one record and ALL are off-modal.
+        if !clusters.is_empty() && clusters.iter().all(|c| *c != modal) {
+            continue;
+        }
+        kept.push(line);
+    }
+    kept.join("\n").trim().to_string()
+}
+
+/// Bracketed `[SLUG]` ids on a line that are real retrieved records.
+fn cited_slugs_in_line(line: &str, real: &std::collections::HashSet<&str>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        let Some(rel) = rest[open + 1..].find(']') else {
+            break;
+        };
+        let inner = &rest[open + 1..open + 1 + rel];
+        if real.contains(inner) {
+            out.push(inner.to_string());
+        }
+        rest = &rest[open + 1 + rel + 1..];
+    }
+    out
 }
 
 fn draft_prompt(question: &str, evidence: &[EvidenceItem]) -> String {
