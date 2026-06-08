@@ -183,6 +183,8 @@ pub struct PolicyExitPlanRequested {
     pub request_id: String,
     pub target_mode: PolicyMode,
     pub plan_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -256,6 +258,7 @@ mod tests {
             request_id: "exit-1".to_string(),
             target_mode: PolicyMode::Default,
             plan_summary: Some("Implement the approved edits.".to_string()),
+            next_steps: vec!["edit files".to_string(), "run tests".to_string()],
             timestamp: OffsetDateTime::UNIX_EPOCH,
         };
 
@@ -268,6 +271,7 @@ mod tests {
             round_trip.plan_summary.as_deref(),
             Some("Implement the approved edits.")
         );
+        assert_eq!(round_trip.next_steps, ["edit files", "run tests"]);
     }
 
     #[test]

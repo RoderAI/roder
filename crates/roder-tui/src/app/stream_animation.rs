@@ -23,6 +23,7 @@ const STREAM_MIN_LINE_ANIMATION_TIME: Duration = Duration::from_millis(380);
 const STREAM_CATCH_UP_BUFFER_CHARS: usize = 240;
 const STREAM_BURST_BUFFER_CHARS: usize = 960;
 const STREAM_GRADIENT_TRAIL_CHARS: usize = 14;
+const STREAM_SHEEN_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct AnimatedText {
@@ -62,6 +63,7 @@ pub(super) struct StreamAnimator {
     last_delta_at: Option<Instant>,
     char_credit: f32,
     gradient_remaining: usize,
+    next_sheen_at: Option<Instant>,
 }
 
 impl Default for StreamAnimator {
@@ -74,6 +76,7 @@ impl Default for StreamAnimator {
             last_delta_at: None,
             char_credit: 0.0,
             gradient_remaining: 0,
+            next_sheen_at: None,
         }
     }
 }
@@ -99,6 +102,7 @@ impl StreamAnimator {
         self.last_delta_at = None;
         self.char_credit = 0.0;
         self.gradient_remaining = 0;
+        self.next_sheen_at = None;
     }
 
     pub(super) fn sync_to_text(&mut self, text: &str) {
@@ -114,12 +118,14 @@ impl StreamAnimator {
         self.char_credit = 0.0;
         self.gradient_remaining = 0;
         self.last_tick = None;
+        self.next_sheen_at = None;
         was_animating
     }
 
     pub(super) fn tick(&mut self, now: Instant, width: u16) -> bool {
         let previous_visible = self.rendered_visible_chars;
         let previous_gradient = self.gradient_remaining;
+        self.gradient_remaining = self.gradient_remaining.saturating_sub(1);
 
         if self.rendered_visible_chars < self.target_visible_chars {
             let elapsed = self
@@ -143,12 +149,11 @@ impl StreamAnimator {
             if reveal > 0 {
                 self.rendered_visible_chars += reveal;
                 self.char_credit -= reveal as f32;
-                self.gradient_remaining = STREAM_GRADIENT_TRAIL_CHARS;
+                self.maybe_start_sheen(now);
             }
         } else {
             self.last_tick = Some(now);
             self.char_credit = 0.0;
-            self.gradient_remaining = self.gradient_remaining.saturating_sub(1);
         }
 
         previous_visible != self.rendered_visible_chars
@@ -172,6 +177,14 @@ impl StreamAnimator {
     fn buffered_chars(&self) -> usize {
         self.target_visible_chars
             .saturating_sub(self.rendered_visible_chars)
+    }
+
+    fn maybe_start_sheen(&mut self, now: Instant) {
+        if self.next_sheen_at.is_some_and(|next| now < next) {
+            return;
+        }
+        self.gradient_remaining = STREAM_GRADIENT_TRAIL_CHARS;
+        self.next_sheen_at = Some(now + STREAM_SHEEN_INTERVAL);
     }
 }
 
@@ -339,6 +352,43 @@ mod tests {
         assert_eq!(animator.rendered_text().as_str(), "");
         assert!(animator.tick(start + STREAM_ANIMATION_TIME, 80));
         assert_eq!(animator.rendered_text().as_str(), "hello");
+    }
+
+    #[test]
+    fn stream_sheen_waits_between_passes() {
+        let start = Instant::now();
+        let mut animator = StreamAnimator::default();
+        animator.push_delta(&"x".repeat(STREAM_GRADIENT_TRAIL_CHARS * 2), start);
+
+        assert!(animator.tick(start + STREAM_ANIMATION_TIME, 80));
+        let first_sheen = animator.rendered_text().gradient_len;
+        assert!(first_sheen > 0);
+
+        assert!(animator.tick(
+            start + STREAM_ANIMATION_TIME + STREAM_ANIMATION_FRAME_TIME,
+            80
+        ));
+        assert_eq!(animator.rendered_text().gradient_len, first_sheen - 1);
+
+        animator.push_delta(
+            &"y".repeat(STREAM_GRADIENT_TRAIL_CHARS),
+            start + STREAM_ANIMATION_TIME + STREAM_ANIMATION_FRAME_TIME,
+        );
+        assert!(animator.tick(start + STREAM_ANIMATION_TIME * 2, 80));
+        assert!(animator.rendered_text().gradient_len < STREAM_GRADIENT_TRAIL_CHARS);
+
+        let after_cooldown = start + STREAM_SHEEN_INTERVAL + STREAM_ANIMATION_TIME * 2;
+        animator.push_delta(&"z".repeat(STREAM_GRADIENT_TRAIL_CHARS), after_cooldown);
+        assert!(animator.tick(after_cooldown + STREAM_ANIMATION_FRAME_TIME, 80));
+        assert_eq!(
+            animator.rendered_text().gradient_len,
+            STREAM_GRADIENT_TRAIL_CHARS
+        );
+    }
+
+    #[test]
+    fn stream_sheen_ticks_at_thirty_fps() {
+        assert_eq!(STREAM_ANIMATION_FRAME_TIME, Duration::from_millis(33));
     }
 
     #[test]

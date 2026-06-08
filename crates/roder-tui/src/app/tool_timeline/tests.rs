@@ -85,7 +85,18 @@ fn timeline_updates_tool_rows_in_place() {
     );
     timeline.record_tool_completed("call_1", false, Some("contents".to_string()));
 
-    let lines = rendered_lines(&mut timeline);
+    let lines = timeline
+        .render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 120))
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
     assert!(
         lines
             .iter()
@@ -119,30 +130,46 @@ fn tool_rows_do_not_render_a_left_gutter() {
 }
 
 #[test]
-fn user_prompts_render_without_background() {
+fn user_prompts_render_as_full_width_widget() {
     let mut timeline = TimelineState::default();
     timeline.push_user("what does this repo do?");
 
-    let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 64, 10));
-    let row = render
+    let theme = Theme::for_dark_background(true);
+    let render = timeline.render(theme, Rect::new(0, 0, 64, 10));
+    let rows = render
         .text
         .lines
         .iter()
-        .find(|line| {
+        .filter(|line| {
             line.spans
                 .iter()
-                .any(|span| span.content.contains("what does this repo do?"))
+                .any(|span| span.style.bg == Some(theme.user_message_bg))
         })
-        .expect("user prompt should be rendered");
-    let text = row
+        .collect::<Vec<_>>();
+
+    assert_eq!(rows.len(), 3, "top padding, content row, bottom padding");
+    for row in &rows {
+        let text = row
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(text.chars().count(), 64);
+        assert!(text.starts_with("▌"));
+        assert!(row.spans.iter().all(|span| {
+            span.style.bg == Some(theme.user_message_bg)
+                || span.style.bg == Some(theme.selection_bg)
+        }));
+        assert_eq!(row.spans[0].style.fg, Some(theme.accent));
+    }
+
+    let text = rows[1]
         .spans
         .iter()
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(text.starts_with("  ❯ what does this repo do?"));
-    assert_eq!(text.chars().count(), 64);
-    assert!(row.spans.iter().all(|span| span.style.bg.is_none()));
+    assert!(text.starts_with("▌ ❯ what does this repo do?"));
 }
 
 #[test]
@@ -647,6 +674,45 @@ fn write_file_tool_renders_inline_diff() {
 }
 
 #[test]
+fn large_write_file_preview_clips_above_and_keeps_newest_lines_visible() {
+    let content = (1..=120)
+        .map(|line| format!("line {line:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new(
+            "write_file",
+            serde_json::json!({
+                "path": "src/large.rs",
+                "content": content,
+            })
+            .to_string(),
+        ),
+    );
+
+    let lines = timeline
+        .render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 120))
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(lines.iter().any(|line| line.contains("src/large.rs")));
+    assert!(lines.iter().any(|line| line.contains("clipped above")));
+    assert!(!lines.iter().any(|line| line.contains("+line 001")));
+    assert!(!lines.iter().any(|line| line.contains("+line 020")));
+    assert!(lines.iter().any(|line| line.contains("+line 120")));
+}
+
+#[test]
 fn commentary_phase_deltas_render_as_plain_assistant_text() {
     let mut timeline = TimelineState::default();
     timeline.push_assistant_delta("I will inspect first.", Some("commentary".to_string()));
@@ -977,7 +1043,28 @@ fn reasoning_deltas_render_live_as_thinking() {
         .find(|span| span.content.as_ref() == "The user is asking for visible thinking tokens.")
         .expect("reasoning span should render");
     assert_eq!(reasoning_span.style.fg, Some(theme.thinking));
+    assert_eq!(reasoning_span.style.bg, Some(theme.user_message_bg));
     assert!(reasoning_span.style.add_modifier.contains(Modifier::ITALIC));
+
+    let reasoning_row = render
+        .text
+        .lines
+        .iter()
+        .find(|line| {
+            line.spans.iter().any(|span| {
+                span.content.as_ref() == "The user is asking for visible thinking tokens."
+            })
+        })
+        .expect("reasoning row should render");
+    let row_text = reasoning_row
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert_eq!(row_text.chars().count(), 100);
+    assert!(row_text.starts_with("▌   The user is asking"));
+    assert_eq!(reasoning_row.spans[0].style.fg, Some(theme.thinking));
+    assert_eq!(reasoning_row.spans[0].style.bg, Some(theme.user_message_bg));
 }
 
 #[test]
@@ -997,8 +1084,7 @@ fn reasoning_blocks_are_separated_by_blank_line_when_resumed() {
 
     assert!(
         lines[first_index + 1]
-            .trim()
-            .trim_start_matches('┃')
+            .trim_start_matches('▌')
             .trim()
             .is_empty()
     );
@@ -1017,11 +1103,11 @@ fn reasoning_deltas_within_same_block_remain_adjacent() {
         .position(|line| line.contains("First chunk. Continued chunk."))
         .expect("single reasoning block should render on one line");
     assert!(
-        !lines.iter().take(thought_index + 1).any(|line| line
-            .trim()
-            .trim_start_matches('┃')
-            .trim()
-            .is_empty())
+        !lines
+            .iter()
+            .skip(1)
+            .take(thought_index)
+            .any(|line| line.trim_start_matches('▌').trim().is_empty())
     );
 }
 
@@ -1349,7 +1435,7 @@ fn tool_row_relative_times_are_human_readable_without_plus_or_leading_zeroes() {
 }
 
 #[test]
-fn running_shell_tool_renders_live_last_twelve_output_rows() {
+fn running_shell_tool_renders_live_tail_as_raw_terminal_rows() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(
         "call_shell".to_string(),
@@ -1365,15 +1451,92 @@ fn running_shell_tool_renders_live_last_twelve_output_rows() {
 
     let output_rows = lines
         .iter()
-        .filter(|line| line.trim_start().starts_with("↳ line"))
+        .filter(|line| line.starts_with("line "))
         .cloned()
         .collect::<Vec<_>>();
-    assert_eq!(output_rows.len(), 12);
-    assert!(!output_rows.iter().any(|line| line.ends_with("line 1")));
-    assert!(!output_rows.iter().any(|line| line.ends_with("line 2")));
-    assert!(!output_rows.iter().any(|line| line.ends_with("line 3")));
-    assert!(output_rows.iter().any(|line| line.contains("line 4")));
+    assert_eq!(output_rows.len(), 15);
+    assert!(!output_rows.iter().any(|line| line.contains('↳')));
+    assert!(output_rows.iter().any(|line| line.contains("line 1")));
     assert!(output_rows.iter().any(|line| line.contains("line 15")));
+}
+
+#[test]
+fn expanded_shell_tool_scrolls_completed_output_to_bottom() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_shell".to_string(),
+        ToolTimelineEntry::new("exec_command", r#"{"cmd":"npm test"}"#),
+    );
+    let output = (1..=40)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    timeline.record_tool_completed("call_shell", false, Some(output));
+    timeline.fold_state.set_expanded("call_shell", true);
+
+    let lines = timeline
+        .render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 80))
+        .text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    let output_rows = lines
+        .iter()
+        .filter(|line| line.starts_with("line "))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(output_rows.len(), 24);
+    assert!(!output_rows.iter().any(|line| line.ends_with("line 1")));
+    assert!(!output_rows.iter().any(|line| line.ends_with("line 16")));
+    assert!(output_rows.iter().any(|line| line.ends_with("line 17")));
+    assert!(output_rows.iter().any(|line| line.ends_with("line 40")));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("output scrolled") && line.contains("16 earlier lines"))
+    );
+}
+
+#[test]
+fn shell_output_renders_truecolor_ansi_without_gutter() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_shell".to_string(),
+        ToolTimelineEntry::new("shell", r#"{"command":"printf"}"#),
+    );
+    timeline.record_tool_output_delta("call_shell", "plain \u{1b}[38;2;12;34;56mrgb\u{1b}[0m tail");
+
+    let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 100, 20));
+    let line = render
+        .text
+        .lines
+        .iter()
+        .find(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .contains("plain rgb tail")
+        })
+        .expect("terminal output should render");
+
+    let rendered = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert_eq!(rendered, "plain rgb tail");
+    assert!(!rendered.contains('↳'));
+    assert!(line.spans.iter().any(|span| {
+        span.content.as_ref() == "rgb" && span.style.fg == Some(Color::Rgb(12, 34, 56))
+    }));
 }
 
 #[test]

@@ -19,6 +19,7 @@
     --subtle: ansi(245);
     --accent: ansi(212);
     --accent-soft: ansi(183);
+    --user-message-bg: #2c2c2c;
     --tool: ansi(244);
     --working: ansi(15);
     --working-sheen: ansi(231);

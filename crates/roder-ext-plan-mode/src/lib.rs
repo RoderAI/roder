@@ -31,13 +31,17 @@ impl RoderExtension for PlanModeExtension {
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
             description: Some("Policy contributor for plan mode".to_string()),
-            provides: vec![ProvidedService::PolicyContributor("plan-mode".to_string())],
+            provides: vec![
+                ProvidedService::PolicyContributor("plan-mode".to_string()),
+                ProvidedService::ToolProvider("plan-mode-tools".to_string()),
+            ],
             required_capabilities: vec![],
         }
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.policy_contributor(Arc::new(PlanModePolicyContributor));
+        registry.tool_contributor(Arc::new(ExitPlanModeToolContributor));
         Ok(())
     }
 }

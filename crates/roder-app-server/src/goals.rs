@@ -23,6 +23,11 @@ impl AppServer {
         &self,
         params: ThreadGoalSetParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let previous_goal = self
+            .runtime
+            .thread_goal_get(&params.thread_id)
+            .await
+            .map_err(internal_error)?;
         let goal = self
             .runtime
             .thread_goal_set(
@@ -33,6 +38,10 @@ impl AppServer {
                     token_budget: params.token_budget,
                 },
             )
+            .await
+            .map_err(internal_error)?;
+        self.runtime
+            .apply_external_goal_set_effects(previous_goal, goal.clone())
             .await
             .map_err(internal_error)?;
         Ok(serde_json::to_value(ThreadGoalSetResult { goal }).unwrap())

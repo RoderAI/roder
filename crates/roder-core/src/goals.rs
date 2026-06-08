@@ -284,7 +284,39 @@ impl Runtime {
         self.goals.clear_thread_goal(thread_id).await
     }
 
-    pub(crate) async fn continue_active_goal_after_turn(
+    pub async fn apply_external_goal_set_effects(
+        self: &Arc<Self>,
+        previous_goal: Option<ThreadGoal>,
+        goal: Option<ThreadGoal>,
+    ) -> anyhow::Result<Option<ThreadId>> {
+        let Some(goal) = goal else {
+            return Ok(None);
+        };
+        if goal.status != ThreadGoalStatus::Active {
+            return Ok(None);
+        }
+
+        let objective_changed = previous_goal
+            .as_ref()
+            .is_none_or(|previous| previous.objective != goal.objective);
+        if objective_changed
+            && let Some(turn_id) = self.active_turn_for_thread(&goal.thread_id).await
+        {
+            self.steer_turn(
+                goal.thread_id.clone(),
+                turn_id.clone(),
+                objective_updated_prompt(&goal),
+                Vec::new(),
+            )
+            .await?;
+            return Ok(Some(turn_id));
+        }
+
+        self.continue_active_goal_if_idle(goal.thread_id.clone())
+            .await
+    }
+
+    pub async fn continue_active_goal_if_idle(
         self: &Arc<Self>,
         thread_id: ThreadId,
     ) -> anyhow::Result<Option<ThreadId>> {
@@ -309,6 +341,13 @@ impl Runtime {
             })
             .await?;
         Ok(Some(turn_id))
+    }
+
+    pub(crate) async fn continue_active_goal_after_turn(
+        self: &Arc<Self>,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<ThreadId>> {
+        self.continue_active_goal_if_idle(thread_id).await
     }
 }
 
@@ -337,6 +376,13 @@ Use `get_goal` to inspect current goal state. Use `update_goal` with `status=com
 fn continuation_prompt(goal: &ThreadGoal) -> String {
     format!(
         "Continue working autonomously toward the active goal. Inspect current state, keep making concrete progress, and call update_goal when the goal is complete or genuinely blocked.\n\nGoal: {}",
+        goal.objective
+    )
+}
+
+fn objective_updated_prompt(goal: &ThreadGoal) -> String {
+    format!(
+        "The active goal objective was updated. Continue the current turn toward the revised goal and call update_goal only when it is complete or genuinely blocked.\n\nUpdated goal: {}",
         goal.objective
     )
 }

@@ -101,10 +101,34 @@ where
             }
             return;
         }
-        self.set_goal_objective(objective).await;
+        self.update_goal_objective(objective).await;
     }
 
     async fn set_goal_objective(&mut self, objective: &str) {
+        match thread_goal_get(&self.client, &self.thread_id).await {
+            Ok(result) => {
+                self.current_goal = result.goal;
+                if self.current_goal.is_some() {
+                    match thread_goal_clear(&self.client, &self.thread_id).await {
+                        Ok(_) => {
+                            self.current_goal = None;
+                        }
+                        Err(err) => {
+                            self.record_error(format!("thread/goal/replace failed: {err}"));
+                            return;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                self.record_error(format!("thread/goal/get failed: {err}"));
+                return;
+            }
+        }
+        self.update_goal_objective(objective).await;
+    }
+
+    async fn update_goal_objective(&mut self, objective: &str) {
         match thread_goal_set(
             &self.client,
             ThreadGoalSetParams {

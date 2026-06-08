@@ -178,21 +178,29 @@ fn write_file_preview(arguments: &str) -> Option<ToolDiffPreview> {
 
 fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let mut rendered = 0usize;
     for file in &preview.files {
-        if rendered >= MAX_PATCH_PREVIEW_LINES {
-            break;
-        }
         lines.push(file_header_line(file, theme, width));
-        rendered += 1;
         let language = language_for_path(std::path::Path::new(&file.path));
 
-        let mut before_line = 1usize;
-        let mut after_line = 1usize;
-        for diff_line in &file.lines {
-            if rendered >= MAX_PATCH_PREVIEW_LINES {
-                break;
-            }
+        let clipped_above = file.lines.len() + 1 > MAX_PATCH_PREVIEW_LINES;
+        if clipped_above {
+            lines.push(Line::from(vec![
+                Span::styled("  ".to_string(), theme.diff_line_number()),
+                Span::styled(
+                    "diff preview clipped above; showing newest changes",
+                    theme.muted().add_modifier(Modifier::ITALIC),
+                ),
+            ]));
+        }
+
+        let visible_body_lines = MAX_PATCH_PREVIEW_LINES
+            .saturating_sub(if clipped_above { 2 } else { 1 })
+            .min(file.lines.len());
+        let first_visible_line = file.lines.len().saturating_sub(visible_body_lines);
+        let (mut before_line, mut after_line) =
+            line_numbers_before(&file.lines, first_visible_line);
+
+        for diff_line in file.lines.iter().skip(first_visible_line) {
             lines.push(diff_line_row(
                 diff_line,
                 &mut before_line,
@@ -200,29 +208,27 @@ fn render_diff_lines(preview: &ToolDiffPreview, theme: Theme, width: u16) -> Vec
                 theme,
                 language,
             ));
-            rendered += 1;
-        }
-        if rendered >= MAX_PATCH_PREVIEW_LINES {
-            break;
         }
     }
 
-    if preview
-        .files
-        .iter()
-        .map(|file| file.lines.len() + 1)
-        .sum::<usize>()
-        > MAX_PATCH_PREVIEW_LINES
-    {
-        lines.push(Line::from(vec![
-            Span::styled("  ".to_string(), theme.diff_line_number()),
-            Span::styled(
-                "diff preview truncated in timeline",
-                theme.muted().add_modifier(Modifier::ITALIC),
-            ),
-        ]));
-    }
     lines
+}
+
+fn line_numbers_before(lines: &[DiffPreviewLine], visible_start: usize) -> (usize, usize) {
+    let mut before_line = 1usize;
+    let mut after_line = 1usize;
+    for line in lines.iter().take(visible_start) {
+        match line.kind {
+            DiffPreviewLineKind::Context => {
+                before_line += 1;
+                after_line += 1;
+            }
+            DiffPreviewLineKind::Added => after_line += 1,
+            DiffPreviewLineKind::Removed => before_line += 1,
+            DiffPreviewLineKind::Hunk => {}
+        }
+    }
+    (before_line, after_line)
 }
 
 fn file_header_line(file: &FileDiffPreview, theme: Theme, width: u16) -> Line<'static> {

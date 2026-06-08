@@ -31,6 +31,10 @@ impl PromptQueue {
         self.items.push(prompt);
     }
 
+    pub fn insert(&mut self, index: usize, prompt: PendingPrompt) {
+        self.items.insert(index.min(self.items.len()), prompt);
+    }
+
     pub fn pop_front(&mut self) -> Option<PendingPrompt> {
         if self.items.is_empty() {
             return None;
@@ -40,6 +44,13 @@ impl PromptQueue {
 
     pub fn pop_back(&mut self) -> Option<PendingPrompt> {
         self.items.pop()
+    }
+
+    pub fn remove(&mut self, index: usize) -> Option<PendingPrompt> {
+        if index >= self.items.len() {
+            return None;
+        }
+        Some(self.items.remove(index))
     }
 
     pub fn clear(&mut self) -> usize {
@@ -56,8 +67,8 @@ impl PromptQueue {
         self.items.len()
     }
 
-    pub fn displays(&self) -> impl Iterator<Item = &str> {
-        self.items.iter().map(|prompt| prompt.display.as_str())
+    pub fn iter(&self) -> impl Iterator<Item = &PendingPrompt> {
+        self.items.iter()
     }
 }
 
@@ -110,6 +121,25 @@ mod tests {
 
         assert_eq!(queue.pop_back().unwrap().message, "second message");
         assert_eq!(queue.pop_front().unwrap().message, "first message");
+    }
+
+    #[test]
+    fn queue_removes_prompt_by_index() {
+        let mut queue = PromptQueue::default();
+        queue.push(PendingPrompt::with_images(
+            "first",
+            "first message",
+            Vec::new(),
+        ));
+        queue.push(PendingPrompt::with_images(
+            "second",
+            "second message",
+            Vec::new(),
+        ));
+
+        assert_eq!(queue.remove(0).unwrap().message, "first message");
+        assert_eq!(queue.pop_front().unwrap().message, "second message");
+        assert!(queue.remove(7).is_none());
     }
 
     #[test]
