@@ -21,6 +21,9 @@ use roder_api::tools::{
 };
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
 use roder_ext_jsonl_thread_store::store::{JsonlThreadStore, JsonlThreadStoreFactory};
+use roder_ext_runner_sprites::{
+    LIVE_ENV as SPRITES_LIVE_ENV, PROVIDER_ID as SPRITES_PROVIDER_ID, SpritesRunnerProvider,
+};
 use roder_ext_runner_unix_local::UnixLocalRunnerProvider;
 use time::OffsetDateTime;
 
@@ -581,6 +584,121 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
         *provider.state.resumed.lock().unwrap() >= 2,
         "runtime and explicit resume should reuse the mock runner session"
     );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_sprites_runner_runtime_creates_session_and_offloads_operations() {
+    if std::env::var(SPRITES_LIVE_ENV).ok().as_deref() != Some("1") {
+        eprintln!("set {SPRITES_LIVE_ENV}=1 to run the live Sprites runtime smoke");
+        return;
+    }
+
+    let session_dir = temp_dir("remote-runner-sprites-live-sessions");
+    let workspace = temp_dir("remote-runner-sprites-live-workspace");
+    let provider = Arc::new(SpritesRunnerProvider::default());
+    let engine = Arc::new(FinalEngine {
+        requests: Mutex::new(0),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: session_dir.clone(),
+    }));
+    builder.remote_runner_provider(provider.clone());
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: None,
+                file_backed_dynamic_context: true,
+                hosted_web_search: HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
+                model_profiles: std::collections::HashMap::new(),
+                tool_allowlist: Vec::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
+                workspace: Some(workspace.display().to_string()),
+                policy_mode: roder_api::policy_mode::PolicyMode::AcceptAll,
+                runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
+                speed_policy: Default::default(),
+                dynamic_workflows: Default::default(),
+                reliability: Default::default(),
+                turn_deadline_seconds: None,
+                remote_runner_destination: Some(RunnerDestination {
+                    id: "sprites-live-runtime".to_string(),
+                    provider_id: SPRITES_PROVIDER_ID.to_string(),
+                    config: serde_json::json!({
+                        "sprite_name_prefix": "roder-core-live",
+                        "cleanup": "delete-on-close",
+                        "working_dir": "/home/sprite/roder-core-live"
+                    }),
+                    default_manifest: RunnerManifest::default(),
+                }),
+                team_data_dir: None,
+                roadmap_data_dir: None,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+    let metadata = runtime.create_thread(None).await.unwrap();
+
+    start_and_wait(
+        &runtime,
+        &mut events,
+        &metadata.thread_id,
+        "create live sprites runner session",
+    )
+    .await;
+    let runner_state = runtime
+        .load_thread(&metadata.thread_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .metadata
+        .unwrap()
+        .runner_state
+        .unwrap();
+    assert_eq!(runner_state.provider_id, SPRITES_PROVIDER_ID);
+    assert_eq!(runner_state.destination_id, "sprites-live-runtime");
+
+    let session = provider.resume_session(runner_state).await.unwrap();
+    let command = session
+        .run_command(RunnerCommandRequest {
+            command_id: "live-runtime-python".to_string(),
+            program: "python3".to_string(),
+            args: vec!["-c".to_string(), "print(2+2)".to_string()],
+            cwd: None,
+            env: Vec::new(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(command.exit_code, Some(0));
+    assert_eq!(command.stdout.trim(), "4");
+    session
+        .write_file(RunnerFileWriteRequest {
+            path: "runtime-proof.txt".into(),
+            contents: b"hello from roder runtime\n".to_vec(),
+        })
+        .await
+        .unwrap();
+    let read = session
+        .read_file(RunnerFileReadRequest {
+            path: "runtime-proof.txt".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(read.contents, b"hello from roder runtime\n");
+    assert!(session.snapshot().await.unwrap().is_some());
+    session.close().await.unwrap();
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(workspace);

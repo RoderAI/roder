@@ -48,6 +48,7 @@ use roder_ext_runner_docker::DockerRunnerExtension;
 use roder_ext_runner_e2b::E2bRunnerExtension;
 use roder_ext_runner_modal::ModalRunnerExtension;
 use roder_ext_runner_runloop::RunloopRunnerExtension;
+use roder_ext_runner_sprites::SpritesRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_webwright::WebwrightExtension;
@@ -324,6 +325,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(E2bRunnerExtension)?;
     builder.install(ModalRunnerExtension)?;
     builder.install(RunloopRunnerExtension)?;
+    builder.install(SpritesRunnerExtension)?;
     builder.install(VercelRunnerExtension)?;
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
     builder.install(WebwrightExtension)?;
@@ -937,6 +939,25 @@ mod tests {
             registry
                 .provided_services()
                 .contains(&ProvidedService::ToolProvider("webwright".to_string()))
+        );
+    }
+
+    #[test]
+    fn default_registry_installs_sprites_runner_without_credentials() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(
+            registry
+                .remote_runner_providers
+                .iter()
+                .any(|provider| provider.id() == "sprites")
+        );
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::RemoteRunnerProvider(
+                    "sprites".to_string()
+                ))
         );
     }
 
