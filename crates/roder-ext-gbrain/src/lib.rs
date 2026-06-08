@@ -19,6 +19,7 @@ use roder_api::extension::{
 use semver::Version;
 
 pub mod agent;
+pub mod authority;
 pub mod context;
 pub mod dream;
 pub mod embed;

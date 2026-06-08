@@ -1055,14 +1055,38 @@ fn concise_prompt(
         s.push_str(&format!("This question is about knowledge AS OF {d}.\n"));
     }
     s.push_str(&format!("Question: {question}\n\nRecords:\n"));
-    for e in evidence {
+    // Multi-signal authority resolution (roadmap/90 Phase 1, GBRAIN_AUTHORITY=1):
+    // order authoritative / as-of-valid records first (high-attention positions) and
+    // annotate each, so the synthesizer asserts from the resolved record and treats
+    // superseded / recorded-later records as historical rather than current.
+    let authority_on = std::env::var("GBRAIN_AUTHORITY").is_ok();
+    let order: Vec<(usize, Option<&'static str>)> = if authority_on {
+        let scored = crate::authority::resolve(evidence, as_of, question_wants_change(question));
+        let mut idx: Vec<usize> = (0..evidence.len()).collect();
+        idx.sort_by(|&a, &b| {
+            scored[b]
+                .score
+                .partial_cmp(&scored[a].score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        idx.into_iter()
+            .map(|i| (i, Some(scored[i].tag.label())))
+            .collect()
+    } else {
+        (0..evidence.len()).map(|i| (i, None)).collect()
+    };
+    for (i, authority_tag) in &order {
+        let e = &evidence[*i];
         let note = if e.note.is_empty() {
             String::new()
         } else {
             format!(", {}", e.note)
         };
+        let authority = authority_tag
+            .map(|t| format!(", authority={t}"))
+            .unwrap_or_default();
         s.push_str(&format!(
-            "[{}] ({}, {}, status={}{note}) {}\n",
+            "[{}] ({}, {}, status={}{note}{authority}) {}\n",
             e.slug,
             e.date,
             if e.source.is_empty() {
@@ -1073,6 +1097,15 @@ fn concise_prompt(
             e.status,
             truncate(&e.text, 6000),
         ));
+    }
+    if authority_on {
+        s.push_str(
+            "\nRecords are ordered by authority. Assert facts from records marked \
+             authority=authoritative or 'known as of the asked date'. Treat records marked \
+             'superseded/corrected' or 'recorded after the as-of date' as historical context \
+             only — do NOT state them as the current or as-of-then answer unless the question \
+             explicitly asks what changed.\n",
+        );
     }
     // Only surface store-detected contradictions for questions that actually ask
     // about a conflict. Injecting them unconditionally invited the model to append
@@ -1110,6 +1143,18 @@ fn concise_prompt(
     }
     s.push_str("\nWrite the relevant, faithful, directly-responsive answer.");
     s
+}
+
+/// Does the question ask what changed / what is current "now" (vs purely "as of
+/// D")? When true, records recorded after the as-of date stay relevant (the question
+/// wants the delta), so authority resolution must not demote them.
+fn question_wants_change(question: &str) -> bool {
+    let q = question.to_lowercase();
+    const CUES: &[&str] = &[
+        "chang", "since", "replac", "supersed", "updat", "amend", "revis", "no longer",
+        "current", "presently", "now ", "what now", "still in effect", "today",
+    ];
+    CUES.iter().any(|c| q.contains(c))
 }
 
 /// Remove a trailing volunteered "Note:" / correction aside the question did not
