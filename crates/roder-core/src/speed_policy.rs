@@ -79,7 +79,7 @@ impl SpeedPolicyState {
         })
     }
 
-    pub(crate) fn phase(&self) -> SpeedPolicyPhase {
+    fn phase(&self) -> SpeedPolicyPhase {
         if self.failure_seen {
             SpeedPolicyPhase::Recovery
         } else if self.verification_required {

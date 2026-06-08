@@ -16,10 +16,6 @@ use roder_api::discovery::DiscoverySourceKind;
 use roder_api::dynamic_workflows::WorkflowApprovalDecision;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId};
 use roder_api::inference::*;
-use roder_api::inference_routing::{
-    InferenceRouter, InferenceRoutingContext, InferenceRoutingDecision,
-    InferenceRoutingOptionDescriptor, ModelSelectionMode,
-};
 use roder_api::marketplace::MarketplaceInstallState;
 use roder_api::media::{MediaDimensions, MediaGenerationRequest, MediaKind};
 use roder_api::memory::MemoryScope;
@@ -45,17 +41,18 @@ use roder_app_server::remote::{
     RemoteServerOptions, RemoteToken, listen_remote_websocket, listen_remote_websocket_controller,
 };
 use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
-use roder_core::inference_routing::RuntimeInferenceRouterConfig;
 use roder_core::{
     CreateThreadRequest, PendingPlanExit, Runtime, RuntimeConfig, StartTurnRequest,
     default_instructions, fake_provider::FakeInferenceEngine, media_artifacts::MediaArtifactStore,
 };
+use roder_ext_google_embeddings::GoogleEmbeddingsExtension;
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_subagents::{
     InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
 };
+use roder_ext_zeroentropy_embeddings::ZeroEntropyEmbeddingsExtension;
 use roder_extension_host::{
     DefaultRegistryConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
     build_default_registry,
@@ -84,21 +81,21 @@ use roder_protocol::{
     MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
     MemoryListResult, MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult,
     MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult,
-    MemorySaveParams, MemorySaveResult, MemoryUpdateParams, ModelSelectChoice, ModelSelectParams,
-    ModelSelectResult, PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
-    PlanReviewReadParams, PlanReviewReadResult, PluginDisableParams, PluginDisableResult,
-    PluginInstallAllVariantsParams, PluginInstallAllVariantsResult, PluginInstallParams,
-    PluginInstallResult, PluginListInstalledResult, PluginPreviewInstallParams,
-    PluginPreviewInstallResult, PluginUninstallParams, PluginUninstallResult, ProcessesGetParams,
-    ProcessesGetResult, ProcessesListParams, ProcessesListResult, ProcessesStopAllParams,
-    ProcessesStopAllResult, ProcessesStopParams, ProcessesStopResult, ProviderAuthResult,
-    ProviderClearParams, ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult,
-    ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult,
-    RetrievalPromotedResult, RetrievalRecommendationsResult, RetrievalTurnParams,
-    RunnersDeleteResult, RunnersListResult, RunnersSelectParams, RunnersSelectResult,
-    RunnersSessionResult, SearchIndexClearParams, SearchIndexClearResult, SearchIndexRebuildParams,
-    SearchIndexRebuildResult, SearchIndexStatusParams, SearchIndexStatusResult,
-    SearchIndexStatusState, SearchIndexWarmupParams, SearchIndexWarmupResult, SettingsGetResult,
+    MemorySaveParams, MemorySaveResult, MemoryUpdateParams, PlanReviewApproveParams,
+    PlanReviewCommentParams, PlanReviewCommentResult, PlanReviewReadParams, PlanReviewReadResult,
+    PluginDisableParams, PluginDisableResult, PluginInstallAllVariantsParams,
+    PluginInstallAllVariantsResult, PluginInstallParams, PluginInstallResult,
+    PluginListInstalledResult, PluginPreviewInstallParams, PluginPreviewInstallResult,
+    PluginUninstallParams, PluginUninstallResult, ProcessesGetParams, ProcessesGetResult,
+    ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
+    ProcessesStopParams, ProcessesStopResult, ProviderAuthResult, ProviderClearParams,
+    ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult, ProviderSelectParams,
+    ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult, RetrievalPromotedResult,
+    RetrievalRecommendationsResult, RetrievalTurnParams, RunnersDeleteResult, RunnersListResult,
+    RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, SearchIndexClearParams,
+    SearchIndexClearResult, SearchIndexRebuildParams, SearchIndexRebuildResult,
+    SearchIndexStatusParams, SearchIndexStatusResult, SearchIndexStatusState,
+    SearchIndexWarmupParams, SearchIndexWarmupResult, SettingsGetResult,
     SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
     SettingsSetFileBackedDynamicContextParams, SettingsSetFileBackedDynamicContextResult,
     SettingsSetSearchIndexParams, SettingsSetSearchIndexResult, SettingsSetShellParams,
@@ -134,7 +131,7 @@ use roder_protocol::{
 };
 use std::collections::HashMap;
 use std::process::Command;
-use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -156,50 +153,6 @@ static MARKETPLACE_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(
 static PROVIDER_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static SKILLS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static RODER_CONFIG_DIR_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-struct TestRoutingOptionRouter {
-    contexts: Arc<StdMutex<Vec<InferenceRoutingContext>>>,
-}
-
-impl TestRoutingOptionRouter {
-    fn new(contexts: Arc<StdMutex<Vec<InferenceRoutingContext>>>) -> Self {
-        Self { contexts }
-    }
-}
-
-#[async_trait::async_trait]
-impl InferenceRouter for TestRoutingOptionRouter {
-    fn id(&self) -> String {
-        "test-router".to_string()
-    }
-
-    fn routing_options(&self) -> Vec<InferenceRoutingOptionDescriptor> {
-        let mut option = InferenceRoutingOptionDescriptor::selectable(
-            "test-router:coding",
-            "Auto: Coding",
-            "test-router",
-            ModelSelection {
-                provider: PROVIDER_MOCK.to_string(),
-                model: "mock".to_string(),
-            },
-        );
-        option.profile = Some("coding".to_string());
-        option.objective = Some("route coding turns".to_string());
-        vec![option]
-    }
-
-    async fn route(
-        &self,
-        context: InferenceRoutingContext,
-    ) -> anyhow::Result<InferenceRoutingDecision> {
-        self.contexts.lock().unwrap().push(context.clone());
-        Ok(InferenceRoutingDecision::selected(
-            self.id(),
-            context.default_selection,
-            "test auto route",
-        ))
-    }
-}
 
 struct PendingEngine;
 
@@ -278,7 +231,6 @@ impl ThreadStore for FailingThreadStore {
             root_id: None,
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
-            selection_mode: None,
             runner_destination: None,
             runner_state: None,
             created_at: time::OffsetDateTime::UNIX_EPOCH,
@@ -1049,180 +1001,6 @@ async fn test_app_server_e2e() {
         kinds.iter().any(|kind| kind == "turn.completed"),
         "missing turn.completed: {kinds:?}"
     );
-}
-
-#[tokio::test]
-async fn providers_list_exposes_auto_options_separately_from_real_providers() {
-    let contexts = Arc::new(StdMutex::new(Vec::new()));
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.inference_router(Arc::new(TestRoutingOptionRouter::new(contexts)));
-    let runtime = Arc::new(
-        Runtime::new(
-            builder.build().unwrap(),
-            RuntimeConfig {
-                inference_router: RuntimeInferenceRouterConfig {
-                    enabled: true,
-                    router_id: Some("test-router".to_string()),
-                },
-                ..RuntimeConfig::default()
-            },
-        )
-        .unwrap(),
-    );
-    let server = Arc::new(app_server(runtime));
-    let client = LocalAppClient::new(server);
-
-    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
-
-    assert_eq!(providers.routing_options.len(), 1);
-    assert_eq!(providers.routing_options[0].id, "test-router:coding");
-    assert_eq!(providers.routing_options[0].label, "Auto: Coding");
-    assert_eq!(
-        providers.routing_options[0].baseline.provider,
-        PROVIDER_MOCK
-    );
-    assert_eq!(providers.routing_options[0].baseline.model, "mock");
-    assert!(matches!(
-        providers.selection_mode,
-        Some(ModelSelectionMode::Manual { .. })
-    ));
-    assert!(
-        providers
-            .providers
-            .iter()
-            .all(|provider| provider.id != "auto")
-    );
-    assert!(providers.providers.iter().all(|provider| {
-        provider
-            .models
-            .iter()
-            .all(|model| !model.id.eq_ignore_ascii_case("auto"))
-    }));
-}
-
-#[tokio::test]
-async fn providers_list_hides_auto_options_when_routing_is_disabled() {
-    let contexts = Arc::new(StdMutex::new(Vec::new()));
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.inference_router(Arc::new(TestRoutingOptionRouter::new(contexts)));
-    let runtime =
-        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
-    let server = Arc::new(app_server(runtime));
-    let client = LocalAppClient::new(server);
-
-    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
-
-    assert!(providers.routing_options.is_empty());
-}
-
-#[tokio::test]
-async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
-    let contexts = Arc::new(StdMutex::new(Vec::new()));
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.inference_router(Arc::new(TestRoutingOptionRouter::new(contexts.clone())));
-    let thread_root = std::env::temp_dir().join(format!(
-        "roder-app-server-auto-selection-{}",
-        uuid::Uuid::new_v4()
-    ));
-    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
-        base_path: thread_root.clone(),
-    }));
-    let runtime = Arc::new(
-        Runtime::new(
-            builder.build().unwrap(),
-            RuntimeConfig {
-                inference_router: RuntimeInferenceRouterConfig {
-                    enabled: true,
-                    router_id: Some("test-router".to_string()),
-                },
-                ..RuntimeConfig::default()
-            },
-        )
-        .unwrap(),
-    );
-    let server = Arc::new(app_server(runtime));
-    let client = LocalAppClient::new(server);
-    let mut events = client.subscribe_events();
-    let thread_start = start_thread(&client).await;
-
-    let selected: ModelSelectResult = request(
-        &client,
-        "model/select",
-        Some(
-            serde_json::to_value(ModelSelectParams {
-                selection: ModelSelectChoice::Auto {
-                    option_id: "test-router:coding".to_string(),
-                },
-                thread_id: Some(thread_start.thread.id.clone()),
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-
-    assert_eq!(selected.provider, PROVIDER_MOCK);
-    assert_eq!(selected.model, "mock");
-    assert!(matches!(
-        selected.selection_mode,
-        ModelSelectionMode::Auto { ref option_id, .. } if option_id == "test-router:coding"
-    ));
-
-    let turn: TurnStartResult = request(
-        &client,
-        "turn/start",
-        Some(
-            serde_json::to_value(TurnStartParams {
-                thread_id: thread_start.thread.id.clone(),
-                input: text_input("find refactor opportunities"),
-                prompt: None,
-                model_provider: None,
-                model: None,
-                reasoning: None,
-                policy_mode: None,
-                task_ledger_required: false,
-            })
-            .unwrap(),
-        ),
-    )
-    .await;
-
-    let mut saw_routing_decision = false;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let envelope = events.recv().await.unwrap();
-            if envelope.turn_id.as_deref() != Some(turn.turn_id.as_str()) {
-                continue;
-            }
-            match envelope.event {
-                roder_api::events::RoderEvent::InferenceRoutingDecision(event) => {
-                    saw_routing_decision = true;
-                    assert_eq!(event.default_selection.provider, PROVIDER_MOCK);
-                    assert_eq!(event.default_selection.model, "mock");
-                }
-                roder_api::events::RoderEvent::TurnCompleted(_) => break,
-                roder_api::events::RoderEvent::TurnFailed(event) => {
-                    panic!("turn failed: {}", event.error)
-                }
-                _ => {}
-            }
-        }
-    })
-    .await
-    .unwrap();
-
-    assert!(saw_routing_decision);
-    let contexts = contexts.lock().unwrap();
-    assert_eq!(contexts.len(), 1);
-    assert!(
-        contexts[0]
-            .signals
-            .iter()
-            .any(|signal| signal.key == "profile" && signal.value == "coding")
-    );
-    let _ = std::fs::remove_dir_all(thread_root);
 }
 
 #[tokio::test]
@@ -2906,6 +2684,12 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
     builder
         .install(OpenAiEmbeddingsExtension::with_api_key("test-key"))
         .unwrap();
+    builder
+        .install(GoogleEmbeddingsExtension::with_api_key("test-key"))
+        .unwrap();
+    builder
+        .install(ZeroEntropyEmbeddingsExtension::with_api_key("test-key"))
+        .unwrap();
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     let client = LocalAppClient::new(Arc::new(app_server(runtime)));
 
@@ -2991,6 +2775,19 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
             .providers
             .iter()
             .any(|provider| provider.id == "openai")
+    );
+    assert!(
+        providers
+            .providers
+            .iter()
+            .any(|provider| provider.id == "google"
+                && provider.default_model == "gemini-embedding-2")
+    );
+    assert!(
+        providers
+            .providers
+            .iter()
+            .any(|provider| provider.id == "zeroentropy" && provider.default_model == "zembed-1")
     );
 
     let preview: MemoryRecallPreviewResult = request(
@@ -3673,6 +3470,12 @@ async fn runners_methods_list_select_status_and_delete_destination() {
             .providers
             .iter()
             .any(|provider| provider.provider_id == "unix-local")
+    );
+    assert!(
+        listed
+            .providers
+            .iter()
+            .any(|provider| provider.provider_id == "sprites")
     );
 
     let selected: RunnersSelectResult = request(
@@ -4890,7 +4693,6 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             root_id: None,
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
-            selection_mode: None,
         })
         .await
         .unwrap();
@@ -6120,6 +5922,7 @@ async fn tools_list_exposes_default_coding_tools() {
         "write_file",
         "edit",
         "multi_edit",
+        "apply_patch",
         "spawn_agent",
         "send_message",
         "followup_task",
@@ -9398,7 +9201,6 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
         "thread/start",
         Some(
             serde_json::to_value(ThreadStartParams {
-                selection: None,
                 model: None,
                 model_provider: None,
                 reasoning: None,

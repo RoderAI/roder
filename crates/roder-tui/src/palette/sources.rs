@@ -1268,8 +1268,6 @@ mod tests {
             active_provider: "mock".to_string(),
             active_model: "mock-small".to_string(),
             active_reasoning: "medium".to_string(),
-            selection_mode: None,
-            routing_options: Vec::new(),
             providers: vec![
                 ProviderDescriptor {
                     id: "mock".to_string(),

@@ -60,7 +60,6 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                     id: Some(serde_json::json!("exec-thread-start")),
                     method: "thread/start".to_string(),
                     params: Some(serde_json::to_value(ThreadStartParams {
-                        selection: None,
                         workspace_id: workspace.0,
                         root_id: Some(workspace.1),
                         model: Some(default_model),

@@ -159,7 +159,7 @@ fn plan_list(state: &RoadmapModeState, theme: Theme) -> List<'static> {
             })
             .collect()
     };
-    List::new(items).block(panel(
+    List::new(items).style(theme.dialog_surface()).block(panel(
         "Plans",
         theme,
         state.focused_pane == RoadmapPaneFocus::Plans,
@@ -199,7 +199,7 @@ fn task_queue(state: &RoadmapModeState, theme: Theme) -> List<'static> {
                 theme.muted(),
             )))]
         });
-    List::new(items).block(panel(
+    List::new(items).style(theme.dialog_surface()).block(panel(
         "Task Queue",
         theme,
         state.focused_pane == RoadmapPaneFocus::Tasks,
@@ -208,22 +208,26 @@ fn task_queue(state: &RoadmapModeState, theme: Theme) -> List<'static> {
 
 fn selected_task(state: &RoadmapModeState, theme: Theme) -> Paragraph<'static> {
     let Some(document) = state.selected_document.as_ref() else {
-        return Paragraph::new("No roadmap selected").block(panel(
-            "Selected Task",
-            theme,
-            state.focused_pane == RoadmapPaneFocus::TaskDetail,
-        ));
+        return Paragraph::new("No roadmap selected")
+            .style(theme.dialog_surface())
+            .block(panel(
+                "Selected Task",
+                theme,
+                state.focused_pane == RoadmapPaneFocus::TaskDetail,
+            ));
     };
     let Some(task) = state
         .focused_task_id
         .as_deref()
         .and_then(|id| document.tasks.iter().find(|task| task.id == id))
     else {
-        return Paragraph::new("No task selected").block(panel(
-            "Selected Task",
-            theme,
-            state.focused_pane == RoadmapPaneFocus::TaskDetail,
-        ));
+        return Paragraph::new("No task selected")
+            .style(theme.dialog_surface())
+            .block(panel(
+                "Selected Task",
+                theme,
+                state.focused_pane == RoadmapPaneFocus::TaskDetail,
+            ));
     };
     let workers = state
         .attached_threads
@@ -261,6 +265,7 @@ fn selected_task(state: &RoadmapModeState, theme: Theme) -> Paragraph<'static> {
         Span::styled(" to execute through the focused thread.", theme.muted()),
     ]));
     Paragraph::new(Text::from(lines))
+        .style(theme.dialog_surface())
         .block(panel(
             "Selected Task",
             theme,
@@ -300,7 +305,7 @@ fn agent_lanes(state: &RoadmapModeState, theme: Theme) -> List<'static> {
             })
             .collect()
     };
-    List::new(items).block(panel(
+    List::new(items).style(theme.dialog_surface()).block(panel(
         "Agent Lanes",
         theme,
         state.focused_pane == RoadmapPaneFocus::Agents,
@@ -324,6 +329,7 @@ fn validation_gate(state: &RoadmapModeState, theme: Theme) -> Paragraph<'static>
             .collect()
     };
     Paragraph::new(Text::from(lines))
+        .style(theme.dialog_surface())
         .block(panel(
             "Validation",
             theme,
@@ -351,7 +357,7 @@ fn activity_pane(
         )));
     }
     Paragraph::new(activity)
-        .style(theme.text())
+        .style(theme.dialog_surface())
         .block(panel("Worker Activity", theme, focused))
         .scroll((scroll, 0))
         .wrap(Wrap { trim: false })
@@ -370,7 +376,7 @@ fn panel(title: &'static str, theme: Theme, focused: bool) -> Block<'static> {
     };
     let block = Block::default()
         .title(Span::styled(format!(" {title} "), title_style))
-        .style(theme.text())
+        .style(theme.dialog_surface())
         .border_style(border_style)
         .border_type(theme.border_type);
     if theme.borders_visible {
@@ -407,4 +413,51 @@ fn status_style(theme: Theme, status: &str) -> Style {
 
 fn one_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{Terminal, backend::TestBackend, style::Color, text::Text};
+
+    use super::*;
+
+    #[test]
+    fn roadmap_side_panels_paint_the_themed_surface() {
+        let mut theme = Theme::for_dark_background(true);
+        theme.body_background = Some(Color::Rgb(0x12, 0x34, 0x56));
+        theme.dialog_bg = Color::Rgb(0x12, 0x34, 0x56);
+
+        let state = RoadmapModeState::new(None);
+        let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_roadmap_workspace(
+                    frame,
+                    frame.area(),
+                    &state,
+                    theme,
+                    RoadmapWorkspaceMeta {
+                        model: "test-model".to_string(),
+                        status: "ready".to_string(),
+                        active_turn: false,
+                    },
+                    Text::default(),
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(1, 3)].style().bg,
+            Some(Color::Rgb(0x12, 0x34, 0x56))
+        );
+        assert_eq!(
+            buffer[(30, 3)].style().bg,
+            Some(Color::Rgb(0x12, 0x34, 0x56))
+        );
+        assert_eq!(
+            buffer[(65, 3)].style().bg,
+            Some(Color::Rgb(0x12, 0x34, 0x56))
+        );
+    }
 }

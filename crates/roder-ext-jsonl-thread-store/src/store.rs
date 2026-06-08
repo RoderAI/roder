@@ -292,11 +292,19 @@ impl ThreadStore for JsonlThreadStore {
         if !dir.exists() {
             return Ok(None);
         }
-        if is_thread_directory_without_metadata(&dir) {
-            return Ok(None);
-        }
+        let events = if dir.join("metadata.json").exists() {
+            None
+        } else {
+            match self.load_events(thread_id).await {
+                Ok(events) => Some(events),
+                Err(_) => return Ok(None),
+            }
+        };
         let metadata = Some(self.load_or_infer_metadata(&dir, thread_id).await?);
-        let events = self.load_events(thread_id).await?;
+        let events = match events {
+            Some(events) => events,
+            None => self.load_events(thread_id).await?,
+        };
         let turns = project_turns_from_events(thread_id, &events);
         let item_events = self.load_item_events(thread_id).await?;
         let extension_states = self.load_extension_states(thread_id).await?;
@@ -314,7 +322,10 @@ impl ThreadStore for JsonlThreadStore {
         thread_id: &ThreadId,
     ) -> anyhow::Result<Option<ThreadMetadata>> {
         let dir = self.thread_dir(thread_id);
-        if !dir.exists() || is_thread_directory_without_metadata(&dir) {
+        if !dir.exists() {
+            return Ok(None);
+        }
+        if !dir.join("metadata.json").exists() && self.load_events(thread_id).await.is_err() {
             return Ok(None);
         }
         Ok(Some(self.load_or_infer_metadata(&dir, thread_id).await?))
@@ -637,7 +648,6 @@ impl JsonlThreadStore {
             root_id: None,
             provider: None,
             model: None,
-            selection_mode: None,
             runner_destination: None,
             runner_state: None,
             created_at: first_timestamp,
@@ -917,7 +927,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1098,7 +1107,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1200,7 +1208,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1351,7 +1358,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1395,7 +1401,6 @@ mod tests {
                 root_id: None,
                 provider: None,
                 model: None,
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1452,7 +1457,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1561,7 +1565,6 @@ mod tests {
                 root_id: None,
                 provider: Some("openai".to_string()),
                 model: Some("gpt-5.5".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1613,7 +1616,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1791,7 +1793,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1850,7 +1851,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1917,7 +1917,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -1970,7 +1969,6 @@ mod tests {
             root_id: None,
             provider: Some("codex".to_string()),
             model: Some("gpt-5.5".to_string()),
-            selection_mode: None,
             runner_destination: None,
             runner_state: None,
             created_at: now,
@@ -2023,7 +2021,6 @@ mod tests {
                 root_id: None,
                 provider: None,
                 model: None,
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -2079,7 +2076,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,
@@ -2146,7 +2142,6 @@ mod tests {
                 root_id: None,
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
-                selection_mode: None,
                 runner_destination: None,
                 runner_state: None,
                 created_at: now,

@@ -118,6 +118,8 @@ struct OpenAiEmbeddingItem {
 
 #[cfg(test)]
 mod tests {
+    use roder_api::embeddings::EmbeddingInputType;
+
     use super::*;
 
     #[test]
@@ -135,6 +137,7 @@ mod tests {
             .embed(EmbeddingRequest {
                 model: DEFAULT_MODEL.to_string(),
                 inputs: vec!["hello".to_string()],
+                input_type: EmbeddingInputType::Document,
                 dimensions: None,
             })
             .await

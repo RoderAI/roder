@@ -98,6 +98,22 @@ impl DiffViewerState {
             .unwrap_or_default()
     }
 
+    pub fn file_count(&self) -> usize {
+        self.pending.files.len()
+    }
+
+    pub fn next_file(&mut self) {
+        if self.file_count() > 0 {
+            self.file_index = (self.file_index + 1).min(self.file_count() - 1);
+            self.hunk_index = 0;
+        }
+    }
+
+    pub fn previous_file(&mut self) {
+        self.file_index = self.file_index.saturating_sub(1);
+        self.hunk_index = 0;
+    }
+
     pub fn supports_partial(&self) -> bool {
         self.current_file()
             .map(|file| file.supports_partial)

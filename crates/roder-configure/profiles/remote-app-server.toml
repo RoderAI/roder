@@ -1,0 +1,25 @@
+id = "remote-app-server"
+description = "Small remote-only Roder distribution for sandbox-hosted app-server nodes."
+
+[distribution]
+name = "remote-roder"
+version = "0.1.0"
+include_tui = false
+include_app_server = true
+include_cli = false
+extensions = [
+  "openai-responses",
+  "jsonl-thread-store",
+  "disk-context",
+  "plan-mode",
+  "task-process",
+  "subagents",
+]
+default_provider = "openai-responses"
+default_thread_store = "jsonl-thread-store"
+
+[distribution.config_overrides.context]
+file_backed_dynamic_context = true
+
+[distribution.config_overrides.subagents]
+max_depth = 1

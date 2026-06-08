@@ -11,7 +11,6 @@ mod discovery;
 mod evals;
 mod fs;
 mod goals;
-mod inference_routing;
 mod item_stream;
 mod marketplaces;
 #[cfg(test)]
