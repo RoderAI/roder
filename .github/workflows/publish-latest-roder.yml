@@ -30,13 +30,10 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            use_zigbuild: true
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            use_zigbuild: true
           - runner: macos-14
             target: aarch64-apple-darwin
-            use_zigbuild: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -57,25 +54,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake lld pkg-config
 
-      - name: Install cargo-zigbuild
-        if: matrix.use_zigbuild
-        shell: bash
-        run: |
-          cargo install cargo-zigbuild --locked
-
-      - name: Install Zig
-        if: matrix.use_zigbuild
-        uses: mlugg/setup-zig@v2
-
-      - name: Build Roder CLI with Zig
-        if: matrix.use_zigbuild
-        shell: bash
-        run: |
-          rustc_path="$(rustup which rustc)"
-          RUSTC="$rustc_path" cargo zigbuild --release -p roder-cli --bin roder --target "${{ matrix.target }}"
-
       - name: Build Roder CLI
-        if: ${{ !matrix.use_zigbuild }}
         shell: bash
         run: |
           cargo build --release -p roder-cli --bin roder --target "${{ matrix.target }}"
@@ -91,16 +70,8 @@ jobs:
             --profile dist/remote-app-server-profile.toml \
             --out dist/remote-roder
 
-      - name: Build remote app-server distribution with Zig
-        if: runner.os == 'Linux' && matrix.use_zigbuild
-        shell: bash
-        working-directory: dist/remote-roder
-        run: |
-          rustc_path="$(rustup which rustc)"
-          RUSTC="$rustc_path" cargo zigbuild --release --target "${{ matrix.target }}"
-
       - name: Build remote app-server distribution
-        if: runner.os == 'Linux' && !matrix.use_zigbuild
+        if: runner.os == 'Linux'
         shell: bash
         working-directory: dist/remote-roder
         run: |
