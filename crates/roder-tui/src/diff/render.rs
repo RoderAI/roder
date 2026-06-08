@@ -25,6 +25,25 @@ pub struct DiffTheme {
 pub fn diff_viewer_widget(state: &DiffViewerState, theme: DiffTheme) -> Paragraph<'static> {
     let borders = if theme.borders_visible {
         Borders::ALL
+    }
+
+    #[test]
+    fn diff_view_multi_file_render_shows_position_and_selected_file() {
+        let mut state = state(true);
+        state.pending.files.push(FileDiff {
+            path: "src/other.rs".into(),
+            change_type: "modify".to_string(),
+            before: Some("alpha\nbeta\n".to_string()),
+            after: "alpha\nBETA\n".to_string(),
+            supports_partial: true,
+            hunks: compute_diff(Some("alpha\nbeta\n"), "alpha\nBETA\n"),
+        });
+        state.next_file();
+
+        let text = render_text(&state);
+        assert!(text.contains("src/other.rs"));
+        assert!(text.contains("file 2/2"));
+        assert!(!text.contains("src/lib.rs  file"));
     } else {
         Borders::NONE
     };
@@ -62,7 +81,9 @@ pub fn render_lines(state: &DiffViewerState, theme: DiffTheme) -> Vec<Line<'stat
             ),
             Span::styled(
                 format!(
-                    "  {}  {}  {}",
+                    "  file {}/{}  {}  {}  {}",
+                    state.file_index + 1,
+                    state.file_count(),
                     file.change_type,
                     mode_label(state.mode),
                     if file.supports_partial {
@@ -75,7 +96,7 @@ pub fn render_lines(state: &DiffViewerState, theme: DiffTheme) -> Vec<Line<'stat
             ),
         ]),
         Line::from(Span::styled(
-            "j/k hunks  y accept  n reject  a accept all  r reject all  s view  Esc close",
+            "J/K files  j/k hunks  y accept  n reject  a accept all  r reject all  s view  Esc close",
             Style::default().fg(theme.muted),
         )),
     ];
@@ -249,6 +270,7 @@ mod tests {
         let state = state(false);
         let text = render_text(&state);
         assert!(text.contains("src/lib.rs"));
+        assert!(text.contains("file 1/1"));
         assert!(text.contains("whole-file fallback"));
         assert!(text.contains("hunk 1"));
         assert!(text.contains("-two"));
