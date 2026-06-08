@@ -179,6 +179,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                     request_id: event.request_id.clone(),
                     target_mode: event.target_mode,
                     plan_summary: event.plan_summary.clone(),
+                    next_steps: event.next_steps.clone(),
                 },
             ),
             thread_status_notification_with_flags(

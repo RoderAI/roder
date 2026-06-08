@@ -80,6 +80,17 @@ const TASK_LEDGER_REQUIRED_INSTRUCTIONS: &str = r#"## Task Ledger Required
 
 This eval task is decomposed work. The first tool call must be `task_ledger.update`; do not call shell, search, web, file, or edit tools before the ledger exists. Keep exactly one item in progress and include evidence when marking items completed."#;
 
+const PLAN_MODE_INSTRUCTIONS: &str = r#"## Plan Mode
+
+You are in plan mode. Do not make file changes or run implementation commands yet. Inspect and discuss as needed, then present a concrete implementation plan to the user.
+
+When the plan is ready for approval, call `exit_plan_mode` with:
+- `summary`: the user-visible plan, in Markdown.
+- `next_steps`: concise implementation steps.
+- `target_mode`: `default` unless the user explicitly asked for a more permissive mode.
+
+After the user approves, the harness exits plan mode and the turn may continue with implementation. If the user rejects, keep discussing and revise the plan."#;
+
 const LITERAL_TOOL_OUTPUTS_OVERLAY: &str = r#"## Model Harness Profile
 
 Tool outputs are literal evidence from the harness. Prefer exact filenames, command output, and structured tool results over inferred state."#;
@@ -110,6 +121,16 @@ pub fn apply_task_ledger_required(mut instructions: InstructionBundle) -> Instru
             format!("{existing}\n\n{TASK_LEDGER_REQUIRED_INSTRUCTIONS}")
         }
         _ => TASK_LEDGER_REQUIRED_INSTRUCTIONS.to_string(),
+    });
+    instructions
+}
+
+pub fn apply_plan_mode(mut instructions: InstructionBundle) -> InstructionBundle {
+    instructions.developer = Some(match instructions.developer {
+        Some(existing) if !existing.trim().is_empty() => {
+            format!("{existing}\n\n{PLAN_MODE_INSTRUCTIONS}")
+        }
+        _ => PLAN_MODE_INSTRUCTIONS.to_string(),
     });
     instructions
 }
@@ -170,6 +191,15 @@ mod tests {
         let system = instructions.system.expect("system instructions");
         assert!(system.contains("Prefer dedicated file-editing tools"));
         assert!(system.contains("apply_patch"));
+    }
+
+    #[test]
+    fn plan_mode_instructions_tell_model_to_request_approval() {
+        let instructions = apply_plan_mode(InstructionBundle::default());
+        let developer = instructions.developer.expect("developer instructions");
+        assert!(developer.contains("You are in plan mode"));
+        assert!(developer.contains("exit_plan_mode"));
+        assert!(developer.contains("After the user approves"));
     }
 
     #[test]

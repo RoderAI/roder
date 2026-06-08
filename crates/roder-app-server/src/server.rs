@@ -2401,6 +2401,7 @@ impl AppServer {
                     request_id: pending.request_id,
                     target_mode: pending.target_mode,
                     plan_summary: pending.plan_summary,
+                    next_steps: pending.next_steps,
                     requested_at: pending.requested_at,
                     expires_at: pending.expires_at,
                 });

@@ -1009,6 +1009,8 @@ pub struct PlanExitRequestedNotification {
     pub target_mode: roder_api::policy_mode::PolicyMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3168,6 +3170,8 @@ pub struct PendingPlanExitDescriptor {
     pub request_id: String,
     pub target_mode: PolicyMode,
     pub plan_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
     pub requested_at: OffsetDateTime,
     pub expires_at: Option<OffsetDateTime>,
 }

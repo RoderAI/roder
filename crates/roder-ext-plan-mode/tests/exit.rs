@@ -13,18 +13,18 @@ fn extension_advertises_policy_contributor() {
             .provides
             .contains(&ProvidedService::PolicyContributor("plan-mode".to_string()))
     );
-    assert!(!manifest.provides.contains(&ProvidedService::ToolProvider(
+    assert!(manifest.provides.contains(&ProvidedService::ToolProvider(
         "plan-mode-tools".to_string()
     )));
 }
 
 #[test]
-fn exit_plan_tool_is_not_contributed_by_plan_mode_extension() {
+fn exit_plan_tool_is_contributed_by_plan_mode_extension() {
     let default_registry = registry_for_mode(PolicyMode::Default);
-    assert!(!tool_names(&default_registry.tools).contains(&"exit_plan_mode".to_string()));
+    assert!(tool_names(&default_registry.tools).contains(&"exit_plan_mode".to_string()));
 
     let plan_registry = registry_for_mode(PolicyMode::Plan);
-    assert!(!tool_names(&plan_registry.tools).contains(&"exit_plan_mode".to_string()));
+    assert!(tool_names(&plan_registry.tools).contains(&"exit_plan_mode".to_string()));
 }
 
 #[tokio::test]

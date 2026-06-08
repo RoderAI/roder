@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 use time::OffsetDateTime;
@@ -88,7 +88,7 @@ impl TimelineItem {
                 let body = reasoning_visible_body(text);
                 if !body.trim().is_empty() {
                     let folded = fold_message_body(&body, expanded || !message_folding);
-                    let max_text_width = (width as usize).saturating_sub(4);
+                    let max_text_width = timeline_block_content_width(width).saturating_sub(3);
                     let wrapped_body = wrap_text(&folded.body, max_text_width).join("\n");
                     let body_style = item_style(
                         theme.thinking().add_modifier(Modifier::ITALIC),
@@ -127,14 +127,18 @@ impl TimelineItem {
                                 theme,
                                 StreamFadePalette::Neutral,
                             ),
-                            theme.thinking(),
+                            selected,
+                            theme,
+                            width,
                         );
                     } else {
                         push_reasoning_body_lines(
                             lines,
                             &wrapped_body,
-                            theme.thinking(),
                             body_style,
+                            selected,
+                            theme,
+                            width,
                         );
                     }
                     push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
@@ -434,40 +438,136 @@ impl ToolTimelineTool {
             lines.extend(tool_diff_preview_lines(preview, theme, width));
         }
 
-        let live_tail =
-            self.status == ToolTimelineStatus::Running && is_shell_like_tool(&self.entry.name);
+        let shell_like = is_shell_like_tool(&self.entry.name);
+        let live_tail = self.status == ToolTimelineStatus::Running && shell_like;
         if (expanded || live_tail)
             && let Some(output) = self.output.as_deref()
         {
-            let output_lines = if live_tail {
-                tail_lines(output, RUNNING_SHELL_TAIL_ROWS)
+            let output_lines = if shell_like {
+                tail_lines(output, RUNNING_SHELL_TAIL_ROWS.max(24))
             } else {
                 output.lines().take(24).collect::<Vec<_>>()
             };
-            for line in output_lines {
-                lines.push(Line::from(vec![
-                    Span::styled("  ↳ ", theme.subtle()),
-                    Span::styled(
-                        line.to_string(),
-                        if self.status == ToolTimelineStatus::Failed {
-                            theme.error()
-                        } else {
-                            theme.muted()
-                        },
-                    ),
-                ]));
+            for line in &output_lines {
+                let base_style = if self.status == ToolTimelineStatus::Failed {
+                    theme.error()
+                } else {
+                    theme.muted()
+                };
+                if shell_like {
+                    lines.push(terminal_output_line(line, base_style));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ↳ ", theme.subtle()),
+                        Span::styled(line.to_string(), base_style),
+                    ]));
+                }
             }
-            if output.lines().count() > 24 {
-                lines.push(Line::from(vec![
-                    Span::styled("  ↳ ", theme.subtle()),
-                    Span::styled(
-                        "output preview truncated in timeline",
-                        theme.muted().add_modifier(Modifier::ITALIC),
-                    ),
-                ]));
+            let output_line_count = output.lines().count();
+            if output_line_count > 24 {
+                let hidden = output_line_count.saturating_sub(output_lines.len());
+                let label = if shell_like {
+                    format!("… output scrolled, {hidden} earlier lines hidden")
+                } else {
+                    "output preview truncated in timeline".to_string()
+                };
+                let notice = Span::styled(label, theme.muted().add_modifier(Modifier::ITALIC));
+                if shell_like {
+                    lines.push(Line::from(notice));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ↳ ", theme.subtle()),
+                        notice,
+                    ]));
+                }
             }
         }
     }
+}
+
+fn terminal_output_line(line: &str, base_style: Style) -> Line<'static> {
+    Line::from(terminal_output_spans(line, base_style))
+}
+
+fn terminal_output_spans(line: &str, base_style: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut current = String::new();
+    let mut style = base_style;
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            let mut sequence = String::new();
+            for next in chars.by_ref() {
+                if next == 'm' {
+                    break;
+                }
+                sequence.push(next);
+            }
+            if !current.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut current), style));
+            }
+            apply_sgr_sequence(&sequence, base_style, &mut style);
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() || spans.is_empty() {
+        spans.push(Span::styled(current, style));
+    }
+    spans
+}
+
+fn apply_sgr_sequence(sequence: &str, base_style: Style, style: &mut Style) {
+    let values = sequence
+        .split(';')
+        .map(|part| part.parse::<u16>().unwrap_or(0))
+        .collect::<Vec<_>>();
+    let values = if values.is_empty() { vec![0] } else { values };
+    let mut index = 0;
+    while index < values.len() {
+        match values[index] {
+            0 => *style = base_style,
+            1 => style.add_modifier.insert(Modifier::BOLD),
+            3 => style.add_modifier.insert(Modifier::ITALIC),
+            22 => style.add_modifier.remove(Modifier::BOLD),
+            23 => style.add_modifier.remove(Modifier::ITALIC),
+            30..=37 => style.fg = Some(ansi_color(values[index] - 30, false)),
+            40..=47 => style.bg = Some(ansi_color(values[index] - 40, false)),
+            90..=97 => style.fg = Some(ansi_color(values[index] - 90, true)),
+            100..=107 => style.bg = Some(ansi_color(values[index] - 100, true)),
+            39 => style.fg = base_style.fg,
+            49 => style.bg = base_style.bg,
+            38 | 48 => {
+                let foreground = values[index] == 38;
+                if let Some((color, consumed)) = parse_sgr_extended_color(&values[index + 1..]) {
+                    if foreground {
+                        style.fg = Some(color);
+                    } else {
+                        style.bg = Some(color);
+                    }
+                    index += consumed;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+fn parse_sgr_extended_color(values: &[u16]) -> Option<(Color, usize)> {
+    match values.first().copied()? {
+        2 if values.len() >= 4 => Some((
+            Color::Rgb(values[1] as u8, values[2] as u8, values[3] as u8),
+            4,
+        )),
+        5 if values.len() >= 2 => Some((Color::Indexed(values[1] as u8), 2)),
+        _ => None,
+    }
+}
+
+fn ansi_color(index: u16, bright: bool) -> Color {
+    Color::Indexed((if bright { 8 } else { 0 } + index) as u8)
 }
 
 fn format_relative_seconds(total_seconds: u64) -> String {
@@ -546,11 +646,65 @@ fn push_user_block_lines(
     }
 
     let style = item_style(theme.user_surface(), selected, theme);
+    let rail_style = item_style(theme.user_rail(), selected, theme);
+    push_timeline_block_row(lines, Vec::new(), style, rail_style, width);
     for (line_index, line) in body.split('\n').enumerate() {
-        let prefix = if line_index == 0 { "  ❯ " } else { "    " };
-        let text = format!("{prefix}{line}");
-        lines.push(Line::from(Span::styled(pad_to_width(&text, width), style)));
+        let prefix = if line_index == 0 { " ❯ " } else { "   " };
+        push_timeline_block_text_row(lines, &format!("{prefix}{line}"), style, rail_style, width);
     }
+    push_timeline_block_row(lines, Vec::new(), style, rail_style, width);
+}
+
+fn push_timeline_block_text_row(
+    lines: &mut Vec<Line<'static>>,
+    content: &str,
+    style: Style,
+    rail_style: Style,
+    width: u16,
+) {
+    let content_width = timeline_block_content_width(width);
+    let content = truncate_end(content, content_width);
+    push_timeline_block_row(
+        lines,
+        vec![Span::styled(content, style)],
+        style,
+        rail_style,
+        width,
+    );
+}
+
+fn push_timeline_block_row(
+    lines: &mut Vec<Line<'static>>,
+    mut content_spans: Vec<Span<'static>>,
+    style: Style,
+    rail_style: Style,
+    width: u16,
+) {
+    let width = usize::from(width);
+    if width == 0 {
+        lines.push(Line::from(Span::styled(String::new(), style)));
+        return;
+    }
+
+    let body_width = width.saturating_sub(1);
+    let used = spans_width(&content_spans).min(body_width);
+    content_spans.push(Span::styled(
+        " ".repeat(body_width.saturating_sub(used)),
+        style,
+    ));
+
+    let mut spans = Vec::with_capacity(content_spans.len() + 1);
+    spans.push(Span::styled("▌", rail_style));
+    spans.extend(content_spans);
+    lines.push(Line::from(spans));
+}
+
+fn timeline_block_content_width(width: u16) -> usize {
+    usize::from(width).saturating_sub(1)
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|span| span.content.chars().count()).sum()
 }
 
 fn push_body_lines(
@@ -755,31 +909,51 @@ fn push_rendered_body_lines(
 fn push_reasoning_body_lines(
     lines: &mut Vec<Line<'static>>,
     body: &str,
-    marker_style: Style,
     body_style: Style,
+    selected: bool,
+    theme: Theme,
+    width: u16,
 ) {
+    let surface_style = item_style(theme.user_surface(), selected, theme);
+    let rail_style = item_style(theme.thinking().bg(theme.user_message_bg), selected, theme);
+    push_timeline_block_row(lines, Vec::new(), surface_style, rail_style, width);
     for line in body.split('\n') {
-        lines.push(Line::from(vec![
-            Span::styled("  ┃ ", marker_style),
-            Span::styled(line.to_string(), body_style),
-        ]));
+        push_timeline_block_row(
+            lines,
+            vec![
+                Span::styled("   ", surface_style),
+                Span::styled(line.to_string(), body_style.bg(theme.user_message_bg)),
+            ],
+            surface_style,
+            rail_style,
+            width,
+        );
     }
+    push_timeline_block_row(lines, Vec::new(), surface_style, rail_style, width);
 }
 
 fn push_reasoning_rendered_lines(
     lines: &mut Vec<Line<'static>>,
     body_lines: Vec<Line<'static>>,
-    marker_style: Style,
+    selected: bool,
+    theme: Theme,
+    width: u16,
 ) {
+    let surface_style = item_style(theme.user_surface(), selected, theme);
+    let rail_style = item_style(theme.thinking().bg(theme.user_message_bg), selected, theme);
+    push_timeline_block_row(lines, Vec::new(), surface_style, rail_style, width);
     for body_line in body_lines {
         let mut spans = Vec::with_capacity(body_line.spans.len() + 1);
-        spans.push(Span::styled("  ┃ ", marker_style));
-        spans.extend(body_line.spans);
-        let mut line = Line::from(spans);
-        line.style = body_line.style;
-        line.alignment = body_line.alignment;
-        lines.push(line);
+        spans.push(Span::styled("   ", surface_style));
+        spans.extend(body_line.spans.into_iter().map(|span| {
+            Span::styled(
+                span.content.into_owned(),
+                span.style.bg(theme.user_message_bg),
+            )
+        }));
+        push_timeline_block_row(lines, spans, surface_style, rail_style, width);
     }
+    push_timeline_block_row(lines, Vec::new(), surface_style, rail_style, width);
 }
 
 fn pad_to_width(text: &str, width: u16) -> String {

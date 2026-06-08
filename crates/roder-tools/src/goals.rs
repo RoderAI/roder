@@ -57,13 +57,15 @@ impl ToolExecutor for CreateGoalTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "create_goal".to_string(),
-            description: "Create or replace the current active goal for this thread.".to_string(),
+            description:
+                "Create a new active goal for this thread. Fails if a goal already exists."
+                    .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "objective": {
                         "type": "string",
-                        "description": "The concrete objective to start pursuing. Replaces any existing goal."
+                        "description": "The concrete objective to start pursuing. Fails if a goal already exists."
                     },
                     "token_budget": {
                         "type": "integer",
@@ -85,6 +87,12 @@ impl ToolExecutor for CreateGoalTool {
         let args = parse::<CreateGoalArgs>(&call)?;
         validate_thread_goal_objective(&args.objective)?;
         let controller = ctx.require_goal_controller()?;
+        if let Some(_existing) = controller.get_thread_goal(&ctx.thread_id).await? {
+            return Ok(error_result(
+                call,
+                "cannot create a new goal because this thread already has a goal".to_string(),
+            ));
+        }
         let goal = match controller
             .create_thread_goal(&ctx.thread_id, args.objective, args.token_budget)
             .await
@@ -340,7 +348,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_goal_replaces_existing_goal() {
+    async fn create_goal_fails_when_goal_exists() {
         let controller = Arc::new(FakeGoalController::default());
         let create = CreateGoalTool;
 
@@ -356,7 +364,7 @@ mod tests {
             .unwrap();
         assert!(!original.is_error);
 
-        let replacement = create
+        let duplicate = create
             .execute(
                 context(controller),
                 call(
@@ -367,13 +375,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!replacement.is_error, "{replacement:?}");
-        assert_eq!(replacement.data["hasActiveGoal"], true);
-        assert_eq!(replacement.data["goal"]["objective"], "Replacement goal");
-        assert_eq!(replacement.data["goal"]["status"], "active");
-        assert_eq!(replacement.data["goal"]["tokenBudget"], 200);
-        assert_eq!(replacement.data["goal"]["tokensUsed"], 0);
-        assert_eq!(replacement.data["goal"]["timeUsedSeconds"], 0);
+        assert!(duplicate.is_error, "{duplicate:?}");
+        assert!(
+            duplicate
+                .text
+                .contains("cannot create a new goal because this thread already has a goal")
+        );
     }
 
     fn call(name: &str, arguments: Value) -> ToolCall {

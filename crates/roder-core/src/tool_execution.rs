@@ -793,12 +793,14 @@ impl Runtime {
             .get("summary")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let next_steps = json_string_array(request.get("next_steps"));
         self.record_pending_plan_exit(PendingPlanExit::new(
             thread_id.clone(),
             turn_id.clone(),
             request_id.to_string(),
             target_mode,
             plan_summary,
+            next_steps,
         ))
         .await;
     }

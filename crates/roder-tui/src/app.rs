@@ -248,6 +248,7 @@ struct Theme {
     selection_fg: Color,
     selection_bg: Color,
     thinking: Color,
+    user_message_bg: Color,
     /// If true, renderers skip nodes whose CSS class would resolve to
     /// `display: none`. The CSS engine populates this from the active
     /// stylesheet — see `crate::theme::overrides::ThemeOverrides::hides`.
@@ -268,12 +269,26 @@ struct Theme {
     pub borders_visible: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalColorDepth {
+    Ansi256,
+    TrueColor,
+}
+
 impl Theme {
     fn for_terminal() -> Self {
-        Self::for_dark_background(detect_dark_background())
+        Self::for_terminal_capabilities(detect_dark_background(), detect_terminal_color_depth())
+    }
+
+    fn for_terminal_capabilities(dark: bool, color_depth: TerminalColorDepth) -> Self {
+        Self::for_dark_background_with_color_depth(dark, color_depth)
     }
 
     fn for_dark_background(dark: bool) -> Self {
+        Self::for_dark_background_with_color_depth(dark, TerminalColorDepth::Ansi256)
+    }
+
+    fn for_dark_background_with_color_depth(dark: bool, color_depth: TerminalColorDepth) -> Self {
         if dark {
             return Self {
                 text: Color::Reset,
@@ -306,6 +321,7 @@ impl Theme {
                 selection_fg: Color::Reset,
                 selection_bg: Color::Indexed(212),
                 thinking: Color::Indexed(220),
+                user_message_bg: user_message_bg_for(dark, color_depth),
                 hide_thinking: false,
                 body_background: None,
                 border_type: BorderType::Rounded,
@@ -344,6 +360,7 @@ impl Theme {
             selection_fg: Color::Reset,
             selection_bg: Color::Indexed(198),
             thinking: Color::Indexed(130),
+            user_message_bg: user_message_bg_for(dark, color_depth),
             hide_thinking: false,
             body_background: None,
             border_type: BorderType::Rounded,
@@ -388,6 +405,7 @@ impl Theme {
         set!(mode_bypass, "mode-bypass");
         set!(selection_bg, "selection-bg");
         set!(selection_fg, "selection-fg");
+        set!(user_message_bg, "user-message-bg");
         set!(dialog, "dialog");
         // NB: `dialog-bg` / `dialog-shadow` are deliberately *not* honored
         // here even when set by the theme — see the auto-sync block below.
@@ -486,7 +504,16 @@ impl Theme {
     }
 
     fn user_surface(self) -> Style {
-        Style::default().fg(self.text_strong)
+        Style::default()
+            .fg(self.text_strong)
+            .bg(self.user_message_bg)
+    }
+
+    fn user_rail(self) -> Style {
+        Style::default()
+            .fg(self.accent)
+            .bg(self.user_message_bg)
+            .add_modifier(Modifier::BOLD)
     }
 
     fn accent(self) -> Style {
@@ -605,6 +632,9 @@ impl Theme {
 #[derive(Debug, Clone)]
 struct ProviderOption {
     provider_id: String,
+    provider_name: String,
+    provider_auth_type: ProviderAuthType,
+    provider_authenticated: bool,
     model_id: String,
     label: String,
     context_window: Option<u32>,
@@ -675,6 +705,20 @@ struct ImageAttachment {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct ImageAttachmentRemoveButton {
     index: usize,
+    area: Rect,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum QueuedPromptAction {
+    Edit,
+    Steer,
+    Delete,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct QueuedPromptButton {
+    index: usize,
+    action: QueuedPromptAction,
     area: Rect,
 }
 
@@ -844,8 +888,9 @@ fn confirm_action_for_key(key: KeyCode, selected: ConfirmChoice) -> ConfirmKeyAc
     }
 }
 
-fn is_policy_mode_switch_key(key: KeyEvent) -> bool {
+fn is_plan_mode_shortcut_key(key: KeyEvent) -> bool {
     key.code == KeyCode::BackTab
+        || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
 }
 
 fn is_plan_panel_toggle_key(key: KeyEvent) -> bool {
@@ -886,6 +931,7 @@ fn is_dialog_menu_next_key(key: KeyEvent) -> bool {
 #[derive(Debug, Clone)]
 enum ProviderMenuItem {
     Section(String),
+    PlanModeToggle(bool),
     Models,
     Providers,
     Settings,
@@ -932,7 +978,6 @@ enum ProviderMenuItem {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ActiveTurnPromptShortcut {
     Queue,
-    Steer,
 }
 
 fn active_turn_prompt_shortcut(
@@ -943,9 +988,8 @@ fn active_turn_prompt_shortcut(
         return None;
     }
     match key.code {
-        KeyCode::Tab => Some(ActiveTurnPromptShortcut::Queue),
-        KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
-            Some(ActiveTurnPromptShortcut::Steer)
+        KeyCode::Tab | KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
+            Some(ActiveTurnPromptShortcut::Queue)
         }
         _ => None,
     }
@@ -959,6 +1003,9 @@ impl ProviderMenuItem {
     fn label(&self) -> String {
         match self {
             Self::Section(label) => label.clone(),
+            Self::PlanModeToggle(enabled) => {
+                format!("Plan mode: {}", if *enabled { "on" } else { "off" })
+            }
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
             Self::Settings => "Settings".to_string(),
@@ -1023,9 +1070,33 @@ impl ProviderMenuItem {
     fn is_selectable(&self) -> bool {
         !matches!(self, Self::Section(_))
     }
+
+    fn is_disabled(&self) -> bool {
+        match self {
+            Self::Provider(provider) => provider.requires_authentication(),
+            Self::Model(option) => option.requires_provider_authentication(),
+            _ => false,
+        }
+    }
+}
+
+impl ProviderOption {
+    fn requires_provider_authentication(&self) -> bool {
+        matches!(
+            self.provider_auth_type,
+            ProviderAuthType::ApiKey | ProviderAuthType::OAuth
+        ) && !self.provider_authenticated
+    }
 }
 
 impl ProviderChoice {
+    fn requires_authentication(&self) -> bool {
+        matches!(
+            self.auth_type,
+            ProviderAuthType::ApiKey | ProviderAuthType::OAuth
+        ) && !self.authenticated
+    }
+
     fn label(&self) -> String {
         let mut label = self.name.clone();
         if self.recommended {
@@ -1132,6 +1203,7 @@ where
     roadmap_mode: Option<RoadmapModeState>,
     image_attachments: Vec<ImageAttachment>,
     last_image_attachment_remove_buttons: Vec<ImageAttachmentRemoveButton>,
+    last_queued_prompt_buttons: Vec<QueuedPromptButton>,
     queued_prompts: PromptQueue,
     last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
@@ -1569,6 +1641,7 @@ where
             roadmap_mode: None,
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
+            last_queued_prompt_buttons: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
             command_catalog,
@@ -1660,9 +1733,13 @@ where
                                 ToolDetailAction::Handled => {}
                             }
                         } else if self.confirm_dialog_allows_policy_switch()
-                            && is_policy_mode_switch_key(key)
+                            && is_plan_mode_shortcut_key(key)
                         {
-                            self.cycle_policy_mode().await;
+                            self.toggle_plan_mode(
+                                self.policy_mode != PolicyMode::Plan,
+                                "shift-tab plan mode toggle",
+                            )
+                            .await;
                         } else if self.confirm_dialog.is_some() {
                             if self.handle_confirm_key(key).await {
                                 break;
@@ -1733,8 +1810,12 @@ where
                         {
                             self.confirm_dialog =
                                 Some(ConfirmDialogState::new(ConfirmDialog::Exit));
-                        } else if is_policy_mode_switch_key(key) {
-                            self.cycle_policy_mode().await;
+                        } else if is_plan_mode_shortcut_key(key) {
+                            self.toggle_plan_mode(
+                                self.policy_mode != PolicyMode::Plan,
+                                "shift-tab plan mode toggle",
+                            )
+                            .await;
                         } else if self.pending_plan_exit.is_some()
                             && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
                         {
@@ -1810,6 +1891,7 @@ where
                                 KeyCode::Enter => self.select_current_provider_menu_item().await,
                                 KeyCode::Backspace => {
                                     self.provider_menu_filter.pop();
+                                    self.provider_state = ListState::default();
                                     self.clamp_provider_menu_selection();
                                     self.preview_highlighted_theme();
                                 }
@@ -1817,6 +1899,7 @@ where
                                     if !key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
                                     self.provider_menu_filter.push(c);
+                                    self.provider_state = ListState::default();
                                     self.clamp_provider_menu_selection();
                                     self.preview_highlighted_theme();
                                 }
@@ -1837,17 +1920,17 @@ where
                             if self.handle_workflow_trigger_key(key).await {
                                 continue;
                             }
-                            if self.handle_inline_completion_key(key).await {
+                            if self.handle_mention_key(key).await {
                                 continue;
                             }
-                            if self.handle_mention_key(key).await {
+                            if self.handle_inline_completion_key(key).await {
                                 continue;
                             }
                             if self.handle_slash_command_key(key).await {
                                 continue;
                             }
                             if composer_queue_key(key, self.has_prepared_prompt()) {
-                                self.queue_current_prompt();
+                                self.queue_or_start_current_prompt().await;
                                 continue;
                             }
                             if shortcuts::should_open_shortcuts_dialog(
@@ -1864,10 +1947,7 @@ where
                             {
                                 match shortcut {
                                     ActiveTurnPromptShortcut::Queue => {
-                                        self.queue_current_prompt();
-                                    }
-                                    ActiveTurnPromptShortcut::Steer => {
-                                        self.submit_prompt().await;
+                                        self.queue_or_start_current_prompt().await;
                                     }
                                 }
                                 continue;
@@ -1912,6 +1992,9 @@ where
                                     }
                                 }
                                 _ => match handle_composer_key(&mut self.composer, key) {
+                                    ComposerKeyAction::Submit if self.active_turn_id.is_some() => {
+                                        self.queue_or_start_current_prompt().await;
+                                    }
                                     ComposerKeyAction::Submit => self.submit_prompt().await,
                                     ComposerKeyAction::Edited => {
                                         self.slash_command_selection = 0;
@@ -2216,7 +2299,12 @@ where
                             policy_mode_label(ev.new_mode)
                         ));
                     }
-                    RoderEvent::PolicyExitPlanRequested(_) => {
+                    RoderEvent::PolicyExitPlanRequested(ev) => {
+                        self.timeline.push_system(plan_exit_request_text(
+                            ev.plan_summary.as_deref(),
+                            &ev.next_steps,
+                            ev.target_mode,
+                        ));
                         self.refresh_thread_state().await;
                     }
                     RoderEvent::PolicyExitPlanResolved(_) => {
@@ -2445,6 +2533,31 @@ where
         self.set_policy_mode(next, "tui mode switcher").await;
     }
 
+    async fn toggle_plan_mode(&mut self, enabled: bool, reason: &str) {
+        let mode = if enabled {
+            PolicyMode::Plan
+        } else {
+            PolicyMode::Default
+        };
+        if self.policy_mode == mode {
+            return;
+        }
+        self.set_policy_mode(mode, reason).await;
+        self.refresh_main_provider_menu_plan_toggle();
+    }
+
+    fn refresh_main_provider_menu_plan_toggle(&mut self) {
+        if self.provider_popup_screen != ProviderPopupScreen::Main {
+            return;
+        }
+        for item in &mut self.provider_menu_items {
+            if matches!(item, ProviderMenuItem::PlanModeToggle(_)) {
+                *item = ProviderMenuItem::PlanModeToggle(self.policy_mode == PolicyMode::Plan);
+                break;
+            }
+        }
+    }
+
     async fn set_policy_mode(&mut self, mode: PolicyMode, reason: &str) {
         let params = ThreadSetModeParams {
             mode,
@@ -2526,7 +2639,7 @@ where
         };
 
         if self.active_turn_id.is_some() {
-            self.steer_prepared_prompt(pending).await;
+            self.steer_prepared_prompt(pending);
         } else {
             self.start_prepared_prompt(pending).await;
         }
@@ -2737,7 +2850,7 @@ where
                     Vec::new(),
                 );
                 if self.active_turn_id.is_some() {
-                    self.steer_prepared_prompt(pending).await;
+                    self.steer_prepared_prompt(pending);
                 } else {
                     self.start_prepared_prompt(pending).await;
                 }
@@ -3106,7 +3219,7 @@ where
         );
         let pending = PendingPrompt::with_images(display, message, Vec::new());
         if self.active_turn_id.is_some() {
-            self.steer_prepared_prompt(pending).await;
+            self.steer_prepared_prompt(pending);
         } else {
             self.start_prepared_prompt(pending).await;
         }
@@ -3286,7 +3399,7 @@ where
         });
     }
 
-    async fn steer_prepared_prompt(&mut self, pending: PendingPrompt) {
+    fn steer_prepared_prompt(&mut self, pending: PendingPrompt) {
         let Some(turn_id) = self.active_turn_id.clone() else {
             self.queue_prepared_prompt(pending);
             return;
@@ -3322,6 +3435,22 @@ where
         true
     }
 
+    async fn queue_or_start_current_prompt(&mut self) -> bool {
+        let Some(pending) = self.take_prepared_prompt() else {
+            return false;
+        };
+        if self.should_queue_prepared_prompt() {
+            self.queue_prepared_prompt(pending);
+        } else {
+            self.start_prepared_prompt(pending).await;
+        }
+        true
+    }
+
+    fn should_queue_prepared_prompt(&self) -> bool {
+        self.active_turn_id.is_some()
+    }
+
     fn queue_prepared_prompt(&mut self, pending: PendingPrompt) {
         self.queued_prompts.push(pending);
         self.push_event(queue_status(self.queued_prompts.len()));
@@ -3337,8 +3466,23 @@ where
         let Some(pending) = self.queued_prompts.pop_back() else {
             return false;
         };
+        self.edit_queued_prompt(pending, None)
+    }
+
+    fn edit_queued_prompt_by_index(&mut self, index: usize) -> bool {
+        let Some(pending) = self.queued_prompts.remove(index) else {
+            return false;
+        };
+        self.edit_queued_prompt(pending, Some(index))
+    }
+
+    fn edit_queued_prompt(&mut self, pending: PendingPrompt, restore_index: Option<usize>) -> bool {
         if !pending.images.is_empty() {
-            self.queued_prompts.push(pending);
+            if let Some(index) = restore_index {
+                self.queued_prompts.insert(index, pending);
+            } else {
+                self.queued_prompts.push(pending);
+            }
             self.record_error("queued image prompts cannot be edited in place yet.".to_string());
             return false;
         }
@@ -3346,6 +3490,26 @@ where
         self.composer.insert_str(pending.message);
         self.slash_command_selection = 0;
         self.timeline.focus_composer();
+        self.push_event(queue_status(self.queued_prompts.len()));
+        true
+    }
+
+    fn delete_queued_prompt(&mut self, index: usize) -> bool {
+        if self.queued_prompts.remove(index).is_none() {
+            return false;
+        }
+        self.push_event(queue_status(self.queued_prompts.len()));
+        true
+    }
+
+    fn steer_queued_prompt(&mut self, index: usize) -> bool {
+        if self.active_turn_id.is_none() {
+            return false;
+        }
+        let Some(pending) = self.queued_prompts.remove(index) else {
+            return false;
+        };
+        self.steer_prepared_prompt(pending);
         self.push_event(queue_status(self.queued_prompts.len()));
         true
     }
@@ -3405,6 +3569,9 @@ where
         if self.handle_image_attachment_mouse(mouse) {
             return;
         }
+        if self.handle_queued_prompt_mouse(mouse) {
+            return;
+        }
         if self.handle_plan_counter_mouse(mouse) {
             return;
         }
@@ -3449,6 +3616,32 @@ where
         let attachment = self.image_attachments.remove(button.index);
         self.last_image_attachment_remove_buttons.clear();
         self.push_event(format!("detached image {}", attachment.label()));
+        true
+    }
+
+    fn handle_queued_prompt_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return false;
+        }
+        let Some(button) = self
+            .last_queued_prompt_buttons
+            .iter()
+            .find(|button| rect_contains(button.area, mouse.column, mouse.row))
+            .copied()
+        else {
+            return false;
+        };
+        match button.action {
+            QueuedPromptAction::Edit => {
+                self.edit_queued_prompt_by_index(button.index);
+            }
+            QueuedPromptAction::Delete => {
+                self.delete_queued_prompt(button.index);
+            }
+            QueuedPromptAction::Steer => {
+                self.steer_queued_prompt(button.index);
+            }
+        }
         true
     }
 
@@ -3600,14 +3793,17 @@ where
         let workflow_trigger_height = self
             .workflows
             .trigger_height(&composer_text(&self.composer));
-        let inline_matches = self.inline_completion_matches();
-        let inline_height = inline_completion_menu_height(inline_matches.as_deref());
         let slash_matches = self
             .slash_command_matches()
             .map(|matches| matches.into_iter().cloned().collect::<Vec<_>>());
         let slash_height = slash_command_menu_height(slash_matches.as_deref());
         let slash_preview_height = slash_command_preview_height(slash_matches.as_deref());
         let mention_render = self.mention_matches();
+        let inline_matches = self.inline_completion_matches();
+        let inline_height = inline_completion_height_when_mentions_hidden(
+            inline_matches.as_deref(),
+            mention_render.is_some(),
+        );
         let mention_height = mention_render
             .as_ref()
             .map(|(_, matches, _)| mention::mention_menu_height(Some(matches)))
@@ -3682,8 +3878,10 @@ where
             self.last_image_attachment_remove_buttons.clear();
         }
         if queue_height > 0 {
-            f.render_widget(self.queued_prompt_bar(), chunks[composer_index]);
+            self.render_queued_prompt_bar(f, chunks[composer_index]);
             composer_index += 1;
+        } else {
+            self.last_queued_prompt_buttons.clear();
         }
         if self.active_turn_id.is_some() {
             f.render_widget(self.working_line(), chunks[composer_index]);
@@ -4005,19 +4203,33 @@ where
             .wrap(Wrap { trim: false })
     }
 
+    fn render_queued_prompt_bar(&mut self, f: &mut Frame<'_>, area: Rect) {
+        f.render_widget(self.queued_prompt_bar(), area);
+        self.last_queued_prompt_buttons = queued_prompt_buttons(area, self.queued_prompts.len());
+        for button in &self.last_queued_prompt_buttons {
+            f.render_widget(Clear, button.area);
+            f.render_widget(
+                Paragraph::new(queued_prompt_action_label(button.action))
+                    .style(queued_prompt_action_style(button.action, self.theme)),
+                button.area,
+            );
+        }
+    }
+
     fn queued_prompt_bar(&self) -> Paragraph<'static> {
         let hidden = self.queued_prompts.len().saturating_sub(3);
         let mut lines = Vec::new();
-        lines.push(Line::from(Span::styled(
-            "Queued follow-up inputs",
-            self.theme.strong(),
-        )));
-        lines.extend(self.queued_prompts.displays().take(3).map(|display| {
-            Line::from(vec![
-                Span::styled("↳ ", self.theme.subtle()),
-                Span::styled(truncate(display, 96), self.theme.muted()),
-            ])
-        }));
+        lines.push(Line::from(vec![
+            Span::styled("Queued follow-up inputs", self.theme.strong()),
+            Span::styled("  enter queues while running", self.theme.subtle()),
+        ]));
+        lines.extend(
+            self.queued_prompts
+                .iter()
+                .take(3)
+                .enumerate()
+                .map(|(index, prompt)| queued_prompt_line(index, &prompt.display, self.theme)),
+        );
         if hidden > 0 {
             lines.push(Line::from(Span::styled(
                 format!("↳ ... {hidden} more queued input{}", plural_s(hidden)),
@@ -4181,7 +4393,11 @@ where
             .pending_plan_exit
             .as_ref()
             .map(|pending| {
-                let summary = pending.plan_summary.as_deref().unwrap_or("plan exit");
+                let summary = pending
+                    .plan_summary
+                    .as_deref()
+                    .or_else(|| pending.next_steps.first().map(String::as_str))
+                    .unwrap_or("plan exit");
                 format!(
                     "  exit plan? y approve / n reject: {}",
                     truncate(summary, 36)
@@ -4325,6 +4541,7 @@ where
                 .map(|item| {
                     let marker = match item {
                         ProviderMenuItem::Section(_) => "  ",
+                        ProviderMenuItem::PlanModeToggle(true) => "✓ ",
                         ProviderMenuItem::Provider(provider) if provider.authenticated => "✓ ",
                         ProviderMenuItem::DefaultMode(mode) if *mode == self.policy_mode => "✓ ",
                         ProviderMenuItem::Spinner(spinner) if *spinner == self.working_spinner => {
@@ -4366,14 +4583,10 @@ where
                         ProviderMenuItem::Back => "‹ ",
                         _ => "• ",
                     };
-                    let label_style = if matches!(item, ProviderMenuItem::Section(_)) {
-                        self.theme.accent()
-                    } else {
-                        self.theme.text()
-                    };
+                    let label_style = provider_menu_item_label_style(item, self.theme);
                     ListItem::new(Line::from(vec![
-                        Span::styled(marker, self.theme.subtle()),
-                        Span::styled(item.label(), label_style),
+                        Span::styled(marker, provider_menu_item_marker_style(item, self.theme)),
+                        Span::styled(provider_menu_item_render_label(item), label_style),
                     ]))
                 })
                 .collect()
@@ -4432,13 +4645,16 @@ where
                         .or_else(|| context_window_for_provider_model(&self.provider, &self.model));
                 self.pending_reasoning_model = None;
                 self.pending_api_key_provider = None;
-                self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
+                self.provider_menu_items = main_provider_menu_items(
+                    &self.provider_choices,
+                    self.policy_mode == PolicyMode::Plan,
+                );
                 self.provider_popup_screen = ProviderPopupScreen::Main;
                 self.provider_menu_filter.clear();
                 if self.provider_menu_items.is_empty() {
                     self.provider_state.select(None);
                 } else {
-                    self.provider_state.select(Some(0));
+                    self.select_provider_menu_index(Some(0));
                 }
                 self.show_provider_popup = true;
             }
@@ -4837,27 +5053,19 @@ where
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Settings {
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Runners {
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Spinner {
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::WebSearch {
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::VoiceModels {
@@ -4875,33 +5083,32 @@ where
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Resume {
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Themes {
             // Leaving the themes screen without committing — revert any live
             // preview before returning to the main menu.
             self.cancel_theme_preview();
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
             return;
         }
         if self.provider_popup_screen == ProviderPopupScreen::Marketplaces {
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
             return;
         }
         if self.provider_popup_screen != ProviderPopupScreen::Main {
-            self.provider_popup_screen = ProviderPopupScreen::Main;
-            self.provider_menu_items = main_provider_menu_items(&self.provider_choices);
-            self.provider_state.select(Some(0));
+            self.open_main_provider_menu();
         } else {
             self.show_provider_popup = false;
         }
+    }
+
+    fn open_main_provider_menu(&mut self) {
+        self.provider_popup_screen = ProviderPopupScreen::Main;
+        self.provider_menu_items =
+            main_provider_menu_items(&self.provider_choices, self.policy_mode == PolicyMode::Plan);
+        self.select_provider_menu_index(Some(0));
     }
 
     fn select_previous_provider_menu_item(&mut self) {
@@ -4957,6 +5164,15 @@ where
         };
 
         match item {
+            ProviderMenuItem::PlanModeToggle(enabled) => {
+                self.toggle_plan_mode(!enabled, "provider menu plan toggle")
+                    .await;
+                self.provider_menu_items = main_provider_menu_items(
+                    &self.provider_choices,
+                    self.policy_mode == PolicyMode::Plan,
+                );
+                self.clamp_provider_menu_selection();
+            }
             ProviderMenuItem::Models => {
                 self.open_models_submenu();
             }
@@ -5086,7 +5302,7 @@ where
                 )
             })
             .or_else(|| first_selectable_provider_menu_index(&self.provider_menu_items));
-        self.provider_state.select(selected);
+        self.select_provider_menu_index(selected);
     }
 
     fn open_providers_submenu(&mut self) {
@@ -5099,9 +5315,9 @@ where
             .position(|provider| provider.provider_id == self.provider)
             .unwrap_or(0);
         if self.provider_menu_items.is_empty() {
-            self.provider_state.select(None);
+            self.select_provider_menu_index(None);
         } else {
-            self.provider_state.select(Some(selected));
+            self.select_provider_menu_index(Some(selected));
         }
     }
 
@@ -5119,7 +5335,7 @@ where
             .iter()
             .position(|item| matches!(item, ProviderMenuItem::DefaultMode(mode) if *mode == self.policy_mode))
             .unwrap_or(0);
-        self.provider_state.select(Some(selected));
+        self.select_provider_menu_index(Some(selected));
     }
 
     async fn open_runners_submenu(&mut self) {
@@ -5128,7 +5344,7 @@ where
         match self.runners_list().await {
             Ok(runners) => {
                 self.provider_menu_items = runner_menu_items(&runners);
-                self.provider_state.select(Some(0));
+                self.select_provider_menu_index(Some(0));
             }
             Err(err) => {
                 self.provider_menu_items = vec![ProviderMenuItem::Back];
@@ -5152,7 +5368,7 @@ where
             .iter()
             .position(|spinner| *spinner == self.working_spinner)
             .unwrap_or(0);
-        self.provider_state.select(Some(selected));
+        self.select_provider_menu_index(Some(selected));
     }
 
     fn open_web_search_submenu(&mut self) {
@@ -5172,7 +5388,7 @@ where
             .iter()
             .position(|item| matches!(item, ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode))
             .unwrap_or(0);
-        self.provider_state.select(Some(selected));
+        self.select_provider_menu_index(Some(selected));
     }
 
     async fn open_voice_models_submenu(&mut self) {
@@ -5515,7 +5731,12 @@ where
                 })
             })
             .unwrap_or(0);
-        self.provider_state.select(Some(selected));
+        self.select_provider_menu_index(Some(selected));
+    }
+
+    fn select_provider_menu_index(&mut self, selected: Option<usize>) {
+        self.provider_state = ListState::default();
+        self.provider_state.select(selected);
     }
 
     async fn select_provider(&mut self, provider: ProviderChoice) {
@@ -6501,14 +6722,6 @@ fn image_attachment_remove_buttons(area: Rect, count: usize) -> Vec<ImageAttachm
         .collect()
 }
 
-fn queued_prompt_height(count: usize) -> u16 {
-    if count == 0 {
-        0
-    } else {
-        count.min(3) as u16 + 1 + u16::from(count > 3)
-    }
-}
-
 fn slash_command_suffix(args: &str) -> String {
     if args.trim().is_empty() {
         String::new()
@@ -6571,6 +6784,73 @@ fn voice_helper_area(composer_area: Rect) -> Option<Rect> {
 
 fn voice_helper_width() -> u16 {
     20
+}
+
+fn queued_prompt_height(count: usize) -> u16 {
+    if count == 0 {
+        0
+    } else {
+        (count.min(3) + 1 + usize::from(count > 3)) as u16
+    }
+}
+
+fn queued_prompt_line(index: usize, display: &str, theme: Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("↳ ", theme.subtle()),
+        Span::styled(truncate(display, 72), theme.muted()),
+        Span::styled(format!("  #{}", index + 1), theme.subtle()),
+    ])
+}
+
+fn queued_prompt_action_label(action: QueuedPromptAction) -> &'static str {
+    match action {
+        QueuedPromptAction::Edit => "edit",
+        QueuedPromptAction::Steer => "steer",
+        QueuedPromptAction::Delete => "del",
+    }
+}
+
+fn queued_prompt_action_style(action: QueuedPromptAction, theme: Theme) -> Style {
+    match action {
+        QueuedPromptAction::Edit => theme.subtle(),
+        QueuedPromptAction::Steer => theme.accent_soft(),
+        QueuedPromptAction::Delete => theme.error(),
+    }
+}
+
+fn queued_prompt_buttons(area: Rect, count: usize) -> Vec<QueuedPromptButton> {
+    let mut buttons = Vec::new();
+    let visible = count.min(3);
+    for index in 0..visible {
+        let row = area.y.saturating_add(1 + index as u16);
+        if row >= area.y.saturating_add(area.height) {
+            break;
+        }
+        let delete_width = 4;
+        let steer_width = 6;
+        let edit_width = 5;
+        let delete_x = area
+            .x
+            .saturating_add(area.width.saturating_sub(delete_width));
+        let steer_x = delete_x.saturating_sub(steer_width + 1);
+        let edit_x = steer_x.saturating_sub(edit_width + 1);
+        buttons.push(QueuedPromptButton {
+            index,
+            action: QueuedPromptAction::Edit,
+            area: Rect::new(edit_x, row, edit_width, 1),
+        });
+        buttons.push(QueuedPromptButton {
+            index,
+            action: QueuedPromptAction::Steer,
+            area: Rect::new(steer_x, row, steer_width, 1),
+        });
+        buttons.push(QueuedPromptButton {
+            index,
+            action: QueuedPromptAction::Delete,
+            area: Rect::new(delete_x, row, delete_width, 1),
+        });
+    }
+    buttons
 }
 
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
@@ -6788,6 +7068,17 @@ fn inline_completion_menu_height<T>(matches: Option<&[T]>) -> u16 {
         0
     } else {
         1 + matches.len().min(MAX_VISIBLE_INLINE_COMPLETIONS) as u16
+    }
+}
+
+fn inline_completion_height_when_mentions_hidden<T>(
+    matches: Option<&[T]>,
+    mention_open: bool,
+) -> u16 {
+    if mention_open {
+        0
+    } else {
+        inline_completion_menu_height(matches)
     }
 }
 
@@ -7413,6 +7704,9 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
         if provider.models.is_empty() {
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
+                provider_name: provider.name.clone(),
+                provider_auth_type: provider.auth_type.clone(),
+                provider_authenticated: provider.authenticated,
                 model_id: list.active_model.clone(),
                 label: provider_model_label(&provider.id, &list.active_model),
                 context_window: context_window_for_provider_model(&provider.id, &list.active_model),
@@ -7429,6 +7723,9 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
             };
             options.push(ProviderOption {
                 provider_id: provider.id.clone(),
+                provider_name: provider.name.clone(),
+                provider_auth_type: provider.auth_type.clone(),
+                provider_authenticated: provider.authenticated,
                 model_id: model.id.clone(),
                 label: provider_model_label(&provider.id, &model_name),
                 context_window: model
@@ -7470,9 +7767,13 @@ fn provider_choice_from_descriptor(provider: &ProviderDescriptor) -> ProviderCho
     }
 }
 
-fn main_provider_menu_items(providers: &[ProviderChoice]) -> Vec<ProviderMenuItem> {
+fn main_provider_menu_items(
+    providers: &[ProviderChoice],
+    plan_mode_enabled: bool,
+) -> Vec<ProviderMenuItem> {
     let _provider_count = providers.len();
     vec![
+        ProviderMenuItem::PlanModeToggle(plan_mode_enabled),
         ProviderMenuItem::Models,
         ProviderMenuItem::Providers,
         ProviderMenuItem::Settings,
@@ -7644,15 +7945,175 @@ fn voice_model_menu_items(providers: &SpeechProvidersListResult) -> Vec<Provider
 }
 
 fn filter_provider_menu_items(items: &[ProviderMenuItem], query: &str) -> Vec<ProviderMenuItem> {
-    let query = query.trim().to_lowercase();
+    let query = normalize_provider_search_text(query);
     if query.is_empty() {
         return items.to_vec();
     }
-    items
-        .iter()
-        .filter(|item| item.is_selectable() && item.label().to_lowercase().contains(&query))
-        .cloned()
-        .collect()
+
+    let mut groups: Vec<(
+        i32,
+        usize,
+        Option<ProviderMenuItem>,
+        Vec<(i32, usize, ProviderMenuItem)>,
+    )> = Vec::new();
+    let mut ungrouped: Vec<(i32, usize, ProviderMenuItem)> = Vec::new();
+    let mut current_section: Option<ProviderMenuItem> = None;
+    let mut current_section_matches: Vec<(i32, usize, ProviderMenuItem)> = Vec::new();
+
+    fn flush_section(
+        groups: &mut Vec<(
+            i32,
+            usize,
+            Option<ProviderMenuItem>,
+            Vec<(i32, usize, ProviderMenuItem)>,
+        )>,
+        current_section: &Option<ProviderMenuItem>,
+        matches: &mut Vec<(i32, usize, ProviderMenuItem)>,
+    ) {
+        if matches.is_empty() {
+            return;
+        }
+        matches.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let group_score = matches
+            .first()
+            .map(|(score, _, _)| *score)
+            .unwrap_or_default();
+        let group_index = matches
+            .first()
+            .map(|(_, index, _)| *index)
+            .unwrap_or_default();
+        groups.push((
+            group_score,
+            group_index,
+            current_section.clone(),
+            std::mem::take(matches),
+        ));
+    }
+
+    for (index, item) in items.iter().enumerate() {
+        if matches!(item, ProviderMenuItem::Section(_)) {
+            flush_section(&mut groups, &current_section, &mut current_section_matches);
+            current_section = Some(item.clone());
+            continue;
+        }
+
+        if let Some(score) = provider_menu_match_score(item, &query) {
+            if current_section.is_some() {
+                current_section_matches.push((score, index, item.clone()));
+            } else {
+                ungrouped.push((score, index, item.clone()));
+            }
+        }
+    }
+
+    flush_section(&mut groups, &current_section, &mut current_section_matches);
+
+    ungrouped.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    groups.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut filtered = ungrouped
+        .into_iter()
+        .map(|(_, _, item)| item)
+        .collect::<Vec<_>>();
+    for (_, _, section, matches) in groups {
+        if let Some(section) = section {
+            filtered.push(section);
+        }
+        filtered.extend(matches.into_iter().map(|(_, _, item)| item));
+    }
+    filtered
+}
+
+fn normalize_provider_search_text(text: &str) -> String {
+    text.trim().to_lowercase()
+}
+
+fn provider_menu_match_score(item: &ProviderMenuItem, query: &str) -> Option<i32> {
+    if !item.is_selectable() {
+        return None;
+    }
+
+    match item {
+        ProviderMenuItem::Model(option) => model_match_score(option, query),
+        ProviderMenuItem::Provider(provider) => provider_choice_match_score(provider, query),
+        _ => text_match_score(&item.label(), query),
+    }
+}
+
+fn provider_choice_match_score(provider: &ProviderChoice, query: &str) -> Option<i32> {
+    text_match_score(&provider.provider_id, query)
+        .map(|score| score + 20)
+        .or_else(|| text_match_score(&provider.name, query))
+        .or_else(|| text_match_score(&provider.label(), query))
+}
+
+fn model_match_score(option: &ProviderOption, query: &str) -> Option<i32> {
+    let model_id_score = text_match_score(&option.model_id, query).map(|score| score + 80);
+    let provider_id_score = text_match_score(&option.provider_id, query).map(|score| score + 45);
+    let provider_name_score =
+        text_match_score(&option.provider_name, query).map(|score| score + 35);
+    let label_score = text_match_score(&option.label, query);
+
+    [
+        model_id_score,
+        provider_id_score,
+        provider_name_score,
+        label_score,
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+}
+
+fn text_match_score(text: &str, query: &str) -> Option<i32> {
+    let text = text.to_lowercase();
+    if text == query {
+        return Some(400);
+    }
+    if text.starts_with(query) {
+        return Some(320 - text.len().min(120) as i32);
+    }
+    if let Some(index) = text.find(query) {
+        return Some(220 - index.min(120) as i32);
+    }
+    fuzzy_word_match_score(&text, query)
+}
+
+fn fuzzy_word_match_score(text: &str, query: &str) -> Option<i32> {
+    let mut score = 120;
+    let mut search_from = 0;
+    for token in query.split_whitespace().filter(|token| !token.is_empty()) {
+        let haystack = &text[search_from..];
+        let index = haystack.find(token)?;
+        score -= index.min(40) as i32;
+        search_from += index + token.len();
+    }
+    Some(score)
+}
+
+fn provider_menu_item_label_style(item: &ProviderMenuItem, theme: Theme) -> Style {
+    if matches!(item, ProviderMenuItem::Section(_)) {
+        theme.accent().add_modifier(Modifier::BOLD)
+    } else if item.is_disabled() {
+        theme.subtle()
+    } else {
+        theme.text()
+    }
+}
+
+fn provider_menu_item_marker_style(item: &ProviderMenuItem, theme: Theme) -> Style {
+    if item.is_disabled() {
+        theme.subtle()
+    } else {
+        theme.muted()
+    }
+}
+
+fn provider_menu_item_render_label(item: &ProviderMenuItem) -> String {
+    match item {
+        ProviderMenuItem::Section(label) => format!("─ {label} ─"),
+        _ => item.label(),
+    }
 }
 
 fn first_selectable_provider_menu_index(items: &[ProviderMenuItem]) -> Option<usize> {
@@ -7887,6 +8348,32 @@ fn policy_mode_label(mode: PolicyMode) -> &'static str {
         PolicyMode::Plan => "plan",
         PolicyMode::Bypass => "bypass",
     }
+}
+
+fn plan_exit_request_text(
+    summary: Option<&str>,
+    next_steps: &[String],
+    target_mode: PolicyMode,
+) -> String {
+    let mut text = format!(
+        "Plan ready for approval. Approve with y to enter {} mode; reject with n.",
+        policy_mode_label(target_mode)
+    );
+    if let Some(summary) = summary.map(str::trim).filter(|summary| !summary.is_empty()) {
+        text.push_str("\n\n");
+        text.push_str(summary);
+    }
+    if !next_steps.is_empty() {
+        text.push_str("\n\nNext steps:");
+        for step in next_steps {
+            let step = step.trim();
+            if !step.is_empty() {
+                text.push_str("\n- ");
+                text.push_str(step);
+            }
+        }
+    }
+    text
 }
 
 fn web_search_mode_label(mode: HostedWebSearchMode) -> &'static str {
@@ -8553,6 +9040,78 @@ fn detect_dark_background() -> bool {
         .unwrap_or(true)
 }
 
+fn detect_terminal_color_depth() -> TerminalColorDepth {
+    let colorterm = std::env::var("COLORTERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if colorterm.contains("truecolor") || colorterm.contains("24bit") {
+        return TerminalColorDepth::TrueColor;
+    }
+
+    if tmux_advertises_truecolor() {
+        return TerminalColorDepth::TrueColor;
+    }
+
+    let term = std::env::var("TERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if term.contains("truecolor") || term.contains("24bit") {
+        TerminalColorDepth::TrueColor
+    } else {
+        TerminalColorDepth::Ansi256
+    }
+}
+
+fn tmux_advertises_truecolor() -> bool {
+    if std::env::var_os("TMUX").is_none() {
+        return false;
+    }
+
+    std::process::Command::new("tmux")
+        .arg("info")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .is_some_and(|info| tmux_info_has_truecolor(&info))
+}
+
+fn tmux_info_has_truecolor(info: &str) -> bool {
+    info.lines().any(|line| {
+        let line = line.trim();
+        let capability = line
+            .split_once(':')
+            .map(|(prefix, rest)| {
+                if prefix.trim().chars().all(|ch| ch.is_ascii_digit()) {
+                    rest.trim()
+                } else {
+                    line
+                }
+            })
+            .unwrap_or(line);
+
+        let Some((name, value)) = capability.split_once(':') else {
+            return false;
+        };
+        let name = name.trim();
+        if name != "RGB" && name != "Tc" {
+            return false;
+        }
+
+        let value = value.trim().to_ascii_lowercase();
+        value.contains("true") || value.contains("enabled")
+    })
+}
+
+fn user_message_bg_for(dark: bool, color_depth: TerminalColorDepth) -> Color {
+    match (dark, color_depth) {
+        (true, TerminalColorDepth::TrueColor) => Color::Rgb(0x2c, 0x2c, 0x2c),
+        (true, TerminalColorDepth::Ansi256) => Color::Indexed(236),
+        (false, TerminalColorDepth::TrueColor) => Color::Rgb(0xef, 0xef, 0xef),
+        (false, TerminalColorDepth::Ansi256) => Color::Indexed(254),
+    }
+}
+
 fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
@@ -8663,6 +9222,7 @@ mod tests {
             roadmap_mode: None,
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
+            last_queued_prompt_buttons: Vec::new(),
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
@@ -8680,6 +9240,24 @@ mod tests {
             theme,
             active_theme_id: None,
             theme_preview_baseline: None,
+        }
+    }
+
+    fn test_provider_option(
+        provider_id: &str,
+        provider_name: &str,
+        model_id: &str,
+    ) -> ProviderOption {
+        ProviderOption {
+            provider_id: provider_id.to_string(),
+            provider_name: provider_name.to_string(),
+            provider_auth_type: ProviderAuthType::ApiKey,
+            provider_authenticated: true,
+            model_id: model_id.to_string(),
+            label: format!("{provider_id}/{model_id}"),
+            context_window: None,
+            default_reasoning: None,
+            reasoning_options: Vec::new(),
         }
     }
 
@@ -9206,7 +9784,7 @@ mod tests {
     async fn provider_menu_roadmap_entry_enters_mode() {
         let mut app = test_app();
         app.show_provider_popup = true;
-        app.provider_menu_items = main_provider_menu_items(&[]);
+        app.provider_menu_items = main_provider_menu_items(&[], false);
         app.provider_state.select(Some(3));
 
         app.select_current_provider_menu_item().await;
@@ -9625,6 +10203,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn user_message_background_has_ansi_fallback_and_truecolor_upgrade() {
+        assert_eq!(
+            Theme::for_terminal_capabilities(true, TerminalColorDepth::Ansi256).user_message_bg,
+            Color::Indexed(236)
+        );
+        assert_eq!(
+            Theme::for_terminal_capabilities(true, TerminalColorDepth::TrueColor).user_message_bg,
+            Color::Rgb(0x2c, 0x2c, 0x2c)
+        );
+        assert_eq!(
+            Theme::for_terminal_capabilities(false, TerminalColorDepth::Ansi256).user_message_bg,
+            Color::Indexed(254)
+        );
+        assert_eq!(
+            Theme::for_terminal_capabilities(false, TerminalColorDepth::TrueColor).user_message_bg,
+            Color::Rgb(0xef, 0xef, 0xef)
+        );
+    }
+
+    #[test]
+    fn tmux_truecolor_detection_accepts_rgb_or_tc_capabilities() {
+        assert!(tmux_info_has_truecolor(" 199: RGB: (flag) true\n"));
+        assert!(tmux_info_has_truecolor(" 227: Tc: (flag) true\n"));
+        assert!(!tmux_info_has_truecolor(" 199: RGB: [missing]\n"));
+        assert!(!tmux_info_has_truecolor(" 227: Tc: [missing]\n"));
+    }
+
     fn test_members() -> Vec<TeamMemberDescriptor> {
         vec![
             test_member("lead", TeamMemberRole::Lead, "Lead", "thread-lead"),
@@ -9799,7 +10405,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_confirm_dialog_allows_policy_mode_switch_key() {
+    fn approval_confirm_dialog_allows_plan_mode_shortcut() {
         let approval = ConfirmDialogState::new(ConfirmDialog::ToolApproval {
             approval_id: "approval-1".to_string(),
             tool_name: "write_file".to_string(),
@@ -9809,7 +10415,7 @@ mod tests {
 
         assert!(confirm_dialog_allows_policy_switch(&approval));
         assert!(!confirm_dialog_allows_policy_switch(&exit));
-        assert!(is_policy_mode_switch_key(KeyEvent::new(
+        assert!(is_plan_mode_shortcut_key(KeyEvent::new(
             KeyCode::BackTab,
             KeyModifiers::SHIFT
         )));
@@ -10603,11 +11209,42 @@ mod tests {
     }
 
     #[test]
+    fn shift_tab_is_plan_mode_shortcut() {
+        assert!(is_plan_mode_shortcut_key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::NONE
+        )));
+        assert!(is_plan_mode_shortcut_key(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::SHIFT
+        )));
+        assert!(!is_plan_mode_shortcut_key(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::NONE
+        )));
+    }
+
+    #[test]
     fn policy_mode_labels_match_protocol_values() {
         assert_eq!(policy_mode_label(PolicyMode::Default), "default");
         assert_eq!(policy_mode_label(PolicyMode::AcceptAll), "accept_all");
         assert_eq!(policy_mode_label(PolicyMode::Plan), "plan");
         assert_eq!(policy_mode_label(PolicyMode::Bypass), "bypass");
+    }
+
+    #[test]
+    fn plan_exit_request_text_includes_plan_and_approval_keys() {
+        let text = plan_exit_request_text(
+            Some("## Plan\nImplement the feature."),
+            &["edit files".to_string(), "run tests".to_string()],
+            PolicyMode::Default,
+        );
+
+        assert!(text.contains("Approve with y"));
+        assert!(text.contains("reject with n"));
+        assert!(text.contains("## Plan"));
+        assert!(text.contains("- edit files"));
+        assert!(text.contains("- run tests"));
     }
 
     #[test]
@@ -10880,6 +11517,22 @@ mod tests {
     }
 
     #[test]
+    fn open_mention_popup_suppresses_legacy_inline_completion_height() {
+        let matches = [FileCompletionItem {
+            path: "src/lib.rs".to_string(),
+        }];
+
+        assert_eq!(
+            inline_completion_height_when_mentions_hidden(Some(&matches), false),
+            2
+        );
+        assert_eq!(
+            inline_completion_height_when_mentions_hidden(Some(&matches), true),
+            0
+        );
+    }
+
+    #[test]
     fn inline_file_completion_matches_and_inserts_mentions() {
         let mut app = test_app();
         app.file_completion_cache = vec![
@@ -11084,35 +11737,45 @@ mod tests {
     }
 
     #[test]
-    fn provider_menu_starts_with_providers_submenu() {
-        let items = main_provider_menu_items(&[]);
-        assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
-        assert!(matches!(items.get(1), Some(ProviderMenuItem::Providers)));
-        assert!(matches!(items.get(2), Some(ProviderMenuItem::Settings)));
-        assert!(matches!(items.get(3), Some(ProviderMenuItem::RoadmapMode)));
+    fn provider_menu_starts_with_plan_toggle_and_submenus() {
+        let items = main_provider_menu_items(&[], false);
         assert!(matches!(
-            items.get(4),
+            items.first(),
+            Some(ProviderMenuItem::PlanModeToggle(false))
+        ));
+        assert!(matches!(items.get(1), Some(ProviderMenuItem::Models)));
+        assert!(matches!(items.get(2), Some(ProviderMenuItem::Providers)));
+        assert!(matches!(items.get(3), Some(ProviderMenuItem::Settings)));
+        assert!(matches!(items.get(4), Some(ProviderMenuItem::RoadmapMode)));
+        assert!(matches!(
+            items.get(5),
             Some(ProviderMenuItem::RunnerSettings)
         ));
         assert!(matches!(
-            items.get(5),
+            items.get(6),
             Some(ProviderMenuItem::ResumeThreads)
         ));
         assert!(matches!(
-            items.get(6),
+            items.get(7),
             Some(ProviderMenuItem::WebSearchSettings)
         ));
         assert!(matches!(
-            items.get(7),
+            items.get(8),
             Some(ProviderMenuItem::SpinnerSettings)
         ));
         assert!(matches!(
-            items.get(8),
+            items.get(9),
             Some(ProviderMenuItem::ThemesSettings)
         ));
         assert!(matches!(
-            items.get(9),
+            items.get(10),
             Some(ProviderMenuItem::MarketplacesSettings)
+        ));
+
+        let enabled_items = main_provider_menu_items(&[], true);
+        assert!(matches!(
+            enabled_items.first(),
+            Some(ProviderMenuItem::PlanModeToggle(true))
         ));
     }
 
@@ -11355,7 +12018,7 @@ mod tests {
             recommended: true,
         };
 
-        let main = main_provider_menu_items(std::slice::from_ref(&provider));
+        let main = main_provider_menu_items(std::slice::from_ref(&provider), false);
         assert!(
             !main
                 .iter()
@@ -11405,30 +12068,9 @@ mod tests {
             },
         ];
         let models = vec![
-            ProviderOption {
-                provider_id: "opencode".to_string(),
-                model_id: "big-pickle".to_string(),
-                label: "opencode/big-pickle (Big Pickle)".to_string(),
-                context_window: None,
-                default_reasoning: None,
-                reasoning_options: Vec::new(),
-            },
-            ProviderOption {
-                provider_id: "opencode-go".to_string(),
-                model_id: "qwen3.6-plus".to_string(),
-                label: "opencode-go/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
-                context_window: None,
-                default_reasoning: None,
-                reasoning_options: Vec::new(),
-            },
-            ProviderOption {
-                provider_id: "anthropic".to_string(),
-                model_id: "claude-opus-4.1".to_string(),
-                label: "anthropic/claude-opus-4.1 (Claude Opus 4.1)".to_string(),
-                context_window: None,
-                default_reasoning: None,
-                reasoning_options: Vec::new(),
-            },
+            test_provider_option("opencode", "OpenCode Zen", "big-pickle"),
+            test_provider_option("opencode-go", "OpenCode Go", "qwen3.6-plus"),
+            test_provider_option("anthropic", "Anthropic", "claude-opus-4.1"),
         ];
 
         let items = models_menu_items(&models, &providers);
@@ -11492,18 +12134,12 @@ mod tests {
         let items = vec![
             ProviderMenuItem::Models,
             ProviderMenuItem::Section("Codex".to_string()),
-            ProviderMenuItem::Model(ProviderOption {
-                provider_id: "codex".to_string(),
-                model_id: "gpt-5.5".to_string(),
-                label: "codex/gpt-5.5 (GPT-5.5)".to_string(),
-                context_window: Some(1_000_000),
-                default_reasoning: Some("medium".to_string()),
-                reasoning_options: Vec::new(),
-            }),
+            ProviderMenuItem::Model(test_provider_option("codex", "Codex", "gpt-5.5")),
         ];
         let filtered = filter_provider_menu_items(&items, "5.5");
-        assert_eq!(filtered.len(), 1);
-        assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+        assert_eq!(filtered.len(), 2);
+        assert!(matches!(filtered[0], ProviderMenuItem::Section(_)));
+        assert!(matches!(filtered[1], ProviderMenuItem::Model(_)));
     }
 
     #[test]
@@ -11518,14 +12154,9 @@ mod tests {
             default_model: Some("composer-2.5".to_string()),
             recommended: true,
         }];
-        let models = vec![ProviderOption {
-            provider_id: "cursor".to_string(),
-            model_id: "composer-2.5".to_string(),
-            label: "cursor/composer-2.5 (Composer 2.5)".to_string(),
-            context_window: Some(200_000),
-            default_reasoning: None,
-            reasoning_options: Vec::new(),
-        }];
+        let mut model = test_provider_option("cursor", "Cursor", "composer-2.5");
+        model.context_window = Some(200_000);
+        let models = vec![model];
 
         let items = models_menu_items(&models, &providers);
 
@@ -11545,20 +12176,134 @@ mod tests {
     fn provider_menu_filter_does_not_return_section_headers() {
         let items = vec![
             ProviderMenuItem::Section("OpenCode".to_string()),
-            ProviderMenuItem::Model(ProviderOption {
-                provider_id: "opencode-go".to_string(),
-                model_id: "qwen3.6-plus".to_string(),
-                label: "opencode-go/qwen3.6-plus (Qwen3.6 Plus)".to_string(),
-                context_window: None,
-                default_reasoning: None,
-                reasoning_options: Vec::new(),
-            }),
+            ProviderMenuItem::Model(test_provider_option(
+                "opencode-go",
+                "OpenCode",
+                "qwen3.6-plus",
+            )),
         ];
 
         let filtered = filter_provider_menu_items(&items, "opencode");
 
-        assert_eq!(filtered.len(), 1);
-        assert!(matches!(filtered[0], ProviderMenuItem::Model(_)));
+        assert_eq!(filtered.len(), 2);
+        assert!(matches!(filtered[0], ProviderMenuItem::Section(_)));
+        assert!(matches!(filtered[1], ProviderMenuItem::Model(_)));
+    }
+
+    #[test]
+    fn provider_menu_filter_ranks_model_id_matches_above_provider_matches() {
+        let items = vec![
+            ProviderMenuItem::Section("OpenAI".to_string()),
+            ProviderMenuItem::Model(test_provider_option("openai", "OpenAI", "gpt-5.5")),
+            ProviderMenuItem::Model(test_provider_option("openai", "OpenAI", "codex-mini")),
+        ];
+
+        let filtered = filter_provider_menu_items(&items, "codex");
+
+        assert_eq!(filtered.len(), 2);
+        assert!(matches!(filtered[0], ProviderMenuItem::Section(_)));
+        assert!(matches!(
+            &filtered[1],
+            ProviderMenuItem::Model(option) if option.model_id == "codex-mini"
+        ));
+    }
+
+    #[test]
+    fn provider_menu_filter_keeps_provider_grouping_for_matching_models() {
+        let items = vec![
+            ProviderMenuItem::Section("OpenAI".to_string()),
+            ProviderMenuItem::Model(test_provider_option("openai", "OpenAI", "gpt-5.5")),
+            ProviderMenuItem::Section("Anthropic".to_string()),
+            ProviderMenuItem::Model(test_provider_option(
+                "anthropic",
+                "Anthropic",
+                "claude-opus-4.1",
+            )),
+        ];
+
+        let filtered = filter_provider_menu_items(&items, "opus");
+
+        assert_eq!(filtered.len(), 2);
+        assert!(matches!(
+            &filtered[0],
+            ProviderMenuItem::Section(label) if label == "Anthropic"
+        ));
+        assert!(matches!(
+            &filtered[1],
+            ProviderMenuItem::Model(option) if option.provider_id == "anthropic"
+        ));
+    }
+
+    #[test]
+    fn provider_menu_filter_moves_best_matching_provider_group_to_top() {
+        let items = vec![
+            ProviderMenuItem::Section("OpenAI".to_string()),
+            ProviderMenuItem::Model(test_provider_option("openai", "OpenAI", "gpt-5.5")),
+            ProviderMenuItem::Section("Codex".to_string()),
+            ProviderMenuItem::Model(test_provider_option("codex", "Codex", "codex-pro")),
+        ];
+
+        let filtered = filter_provider_menu_items(&items, "codex");
+
+        assert!(matches!(
+            &filtered[0],
+            ProviderMenuItem::Section(label) if label == "Codex"
+        ));
+        assert!(matches!(
+            &filtered[1],
+            ProviderMenuItem::Model(option) if option.provider_id == "codex"
+        ));
+    }
+
+    #[test]
+    fn provider_menu_styles_unconfigured_providers_as_disabled() {
+        let theme = Theme::for_dark_background(true);
+        let provider = ProviderMenuItem::Provider(ProviderChoice {
+            provider_id: "opencode".to_string(),
+            name: "OpenCode".to_string(),
+            description: None,
+            auth_type: ProviderAuthType::ApiKey,
+            authenticated: false,
+            auth_detail: None,
+            default_model: Some("gpt-5.5".to_string()),
+            recommended: false,
+        });
+        let mut model = test_provider_option("opencode", "OpenCode", "gpt-5.5");
+        model.provider_authenticated = false;
+        let model = ProviderMenuItem::Model(model);
+
+        assert_eq!(
+            provider_menu_item_label_style(&provider, theme),
+            theme.subtle()
+        );
+        assert_eq!(
+            provider_menu_item_label_style(&model, theme),
+            theme.subtle()
+        );
+    }
+
+    #[test]
+    fn opening_reasoning_submenu_resets_list_scroll_offset() {
+        let mut app = test_app();
+        let mut option = test_provider_option("openai", "OpenAI", "gpt-5.5");
+        option.default_reasoning = Some("high".to_string());
+        option.reasoning_options = vec![
+            ReasoningEffortDescriptor {
+                effort: "low".to_string(),
+                description: "low".to_string(),
+            },
+            ReasoningEffortDescriptor {
+                effort: "high".to_string(),
+                description: "high".to_string(),
+            },
+        ];
+        app.provider_state.select(Some(12));
+        *app.provider_state.offset_mut() = 10;
+
+        app.open_reasoning_submenu(option);
+
+        assert_eq!(app.provider_state.selected(), Some(1));
+        assert_eq!(app.provider_state.offset(), 0);
     }
 
     #[test]
@@ -11600,14 +12345,7 @@ mod tests {
         let mut app = test_app();
         app.provider_menu_items = vec![
             ProviderMenuItem::Section("Codex".to_string()),
-            ProviderMenuItem::Model(ProviderOption {
-                provider_id: "codex".to_string(),
-                model_id: "gpt-5.5".to_string(),
-                label: "codex/gpt-5.5 (GPT-5.5)".to_string(),
-                context_window: Some(1_000_000),
-                default_reasoning: Some("medium".to_string()),
-                reasoning_options: Vec::new(),
-            }),
+            ProviderMenuItem::Model(test_provider_option("codex", "Codex", "gpt-5.5")),
             ProviderMenuItem::Back,
         ];
         app.provider_state.select(Some(1));
@@ -11669,14 +12407,14 @@ mod tests {
     }
 
     #[test]
-    fn active_turn_prompt_shortcuts_prioritize_queue_and_steer() {
+    fn active_turn_prompt_shortcuts_queue_tab_and_enter() {
         assert_eq!(
             active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), true),
             Some(ActiveTurnPromptShortcut::Queue)
         );
         assert_eq!(
             active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true),
-            Some(ActiveTurnPromptShortcut::Steer)
+            Some(ActiveTurnPromptShortcut::Queue)
         );
     }
 
@@ -11710,6 +12448,28 @@ mod tests {
             KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT),
             true
         ));
+    }
+
+    #[test]
+    fn queued_prompt_shortcut_starts_when_idle_and_queues_when_busy() {
+        let mut app = test_app();
+        assert!(!app.should_queue_prepared_prompt());
+
+        app.active_turn_id = Some("turn-test".to_string());
+        assert!(app.should_queue_prepared_prompt());
+    }
+
+    #[test]
+    fn queued_prompt_buttons_create_actions_for_visible_rows() {
+        let buttons = queued_prompt_buttons(Rect::new(10, 20, 100, 5), 2);
+
+        assert_eq!(buttons.len(), 6);
+        assert_eq!(buttons[0].index, 0);
+        assert_eq!(buttons[0].action, QueuedPromptAction::Edit);
+        assert_eq!(buttons[1].action, QueuedPromptAction::Steer);
+        assert_eq!(buttons[2].action, QueuedPromptAction::Delete);
+        assert_eq!(buttons[3].index, 1);
+        assert_eq!(buttons[3].area.y, 22);
     }
 
     #[test]

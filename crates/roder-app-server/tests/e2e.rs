@@ -1135,6 +1135,85 @@ async fn thread_goal_methods_share_state_with_goal_tools() {
 }
 
 #[tokio::test]
+async fn thread_goal_set_active_starts_idle_goal_turn() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(test_cwd()).unwrap());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+    let thread = start_thread(&client).await.thread;
+
+    let set: ThreadGoalSetResult = request(
+        &client,
+        "thread/goal/set",
+        Some(
+            serde_json::to_value(ThreadGoalSetParams {
+                thread_id: thread.id.clone(),
+                objective: Some("Start the idle goal immediately".to_string()),
+                status: Some(ThreadGoalStatus::Active),
+                token_budget: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        set.goal.expect("goal should be active").status,
+        ThreadGoalStatus::Active
+    );
+    wait_for_event(&mut events, &thread.id, "turn.started").await;
+}
+
+#[tokio::test]
+async fn thread_goal_set_objective_steers_active_goal_turn() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(test_cwd()).unwrap());
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+    let thread = start_thread(&client).await.thread;
+
+    let _: TurnStartResult = start_turn(&client, &thread.id, "start a long turn").await;
+    wait_for_event(&mut events, &thread.id, "turn.started").await;
+
+    let set: ThreadGoalSetResult = request(
+        &client,
+        "thread/goal/set",
+        Some(
+            serde_json::to_value(ThreadGoalSetParams {
+                thread_id: thread.id.clone(),
+                objective: Some("Aim the active turn at the new goal".to_string()),
+                status: Some(ThreadGoalStatus::Active),
+                token_budget: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        set.goal.expect("goal should be active").status,
+        ThreadGoalStatus::Active
+    );
+    let steered = wait_for_event(&mut events, &thread.id, "turn.steered").await;
+    match steered.event {
+        roder_api::events::RoderEvent::TurnSteered(event) => assert!(
+            event
+                .message
+                .contains("Aim the active turn at the new goal"),
+            "unexpected steering message: {}",
+            event.message
+        ),
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn model_switch_providers_select_updates_protocol_thread_model_for_next_turn() {
     let engine = Arc::new(TaskCallingEngine {
         hang_child: false,
@@ -7261,7 +7340,7 @@ async fn tools_call_can_create_and_get_goal() {
     assert!(!created.is_error, "create_goal failed: {created:?}");
     assert!(created.text.contains("Ship slash goal"));
 
-    let replaced: ToolCallResult = request(
+    let duplicate: ToolCallResult = request(
         &client,
         "tools/call",
         Some(
@@ -7279,16 +7358,14 @@ async fn tools_call_can_create_and_get_goal() {
     .await;
 
     assert!(
-        !replaced.is_error,
-        "create_goal replacement failed: {replaced:?}"
+        duplicate.is_error,
+        "duplicate create_goal succeeded: {duplicate:?}"
     );
-    assert!(replaced.text.contains("Ship replacement goal"));
-    assert_eq!(replaced.data["hasActiveGoal"], true);
-    assert_eq!(replaced.data["goal"]["objective"], "Ship replacement goal");
-    assert_eq!(replaced.data["goal"]["status"], "active");
-    assert_eq!(replaced.data["goal"]["tokenBudget"], 200);
-    assert_eq!(replaced.data["goal"]["tokensUsed"], 0);
-    assert_eq!(replaced.data["goal"]["timeUsedSeconds"], 0);
+    assert!(
+        duplicate
+            .text
+            .contains("cannot create a new goal because this thread already has a goal")
+    );
 
     let current: ToolCallResult = request(
         &client,
@@ -7305,7 +7382,7 @@ async fn tools_call_can_create_and_get_goal() {
     .await;
 
     assert!(!current.is_error, "get_goal failed: {current:?}");
-    assert!(current.text.contains("Ship replacement goal"));
+    assert!(current.text.contains("Ship slash goal"));
 }
 
 #[tokio::test]
@@ -7902,6 +7979,7 @@ async fn thread_exit_plan_resolves_pending_request() {
             "exit-plan-1".to_string(),
             PolicyMode::Default,
             Some("Implement approved edits".to_string()),
+            vec!["edit files".to_string(), "run tests".to_string()],
         ))
         .await;
 
@@ -7917,6 +7995,7 @@ async fn thread_exit_plan_resolves_pending_request() {
         requested_notification.params["planSummary"],
         "Implement approved edits"
     );
+    assert_eq!(requested_notification.params["nextSteps"][0], "edit files");
 
     let state: ThreadStateResult = request(&client, "thread/state", None).await;
     assert_eq!(
@@ -7925,6 +8004,14 @@ async fn thread_exit_plan_resolves_pending_request() {
             .as_ref()
             .map(|pending| pending.request_id.as_str()),
         Some("exit-plan-1")
+    );
+    assert_eq!(
+        state
+            .pending_plan_exit
+            .as_ref()
+            .and_then(|pending| pending.next_steps.first())
+            .map(String::as_str),
+        Some("edit files")
     );
 
     let resolved: ThreadExitPlanResult = request(
@@ -7984,6 +8071,7 @@ async fn thread_exit_plan_timeout_rejects_late_approval() {
             request_id: "exit-plan-expired".to_string(),
             target_mode: PolicyMode::Default,
             plan_summary: Some("Expired plan".to_string()),
+            next_steps: Vec::new(),
             requested_at: OffsetDateTime::now_utc() - time::Duration::minutes(20),
             expires_at: Some(OffsetDateTime::now_utc() - time::Duration::seconds(1)),
         })

@@ -53,7 +53,8 @@ use crate::dynamic_workflows::{
 use crate::fake_provider::FakeInferenceEngine;
 use crate::goals::RuntimeGoalController;
 use crate::instructions::{
-    apply_model_instruction_overlay, apply_runtime_profile, apply_task_ledger_required,
+    apply_model_instruction_overlay, apply_plan_mode, apply_runtime_profile,
+    apply_task_ledger_required,
 };
 use crate::policy_gate::DefaultPolicyGate;
 use crate::reliability::{
@@ -172,6 +173,7 @@ pub struct PendingPlanExit {
     pub request_id: String,
     pub target_mode: PolicyMode,
     pub plan_summary: Option<String>,
+    pub next_steps: Vec<String>,
     pub requested_at: OffsetDateTime,
     pub expires_at: Option<OffsetDateTime>,
 }
@@ -217,6 +219,7 @@ impl PendingPlanExit {
         request_id: String,
         target_mode: PolicyMode,
         plan_summary: Option<String>,
+        next_steps: Vec<String>,
     ) -> Self {
         let requested_at = OffsetDateTime::now_utc();
         Self {
@@ -225,6 +228,7 @@ impl PendingPlanExit {
             request_id,
             target_mode,
             plan_summary,
+            next_steps,
             requested_at,
             expires_at: Some(requested_at + default_plan_exit_timeout()),
         }
@@ -591,6 +595,7 @@ impl Runtime {
                 request_id: pending.request_id,
                 target_mode: pending.target_mode,
                 plan_summary: pending.plan_summary,
+                next_steps: pending.next_steps,
                 timestamp: OffsetDateTime::now_utc(),
             },
         ))
@@ -627,6 +632,8 @@ impl Runtime {
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
+            self.auto_resolve_pending_tool_approvals_for_mode(current.target_mode)
+                .await;
             current.target_mode
         } else {
             self.status().await.policy_mode
@@ -1659,6 +1666,7 @@ impl Runtime {
             .await?;
             return Ok(TurnRunOutcome::Stopped);
         }
+        let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
         let mut final_reasoning_text = String::new();
@@ -1788,6 +1796,9 @@ impl Runtime {
                 && !transcript_has_task_ledger(&transcript)
             {
                 instructions = apply_task_ledger_required(instructions);
+            }
+            if effective_policy_mode == PolicyMode::Plan {
+                instructions = apply_plan_mode(instructions);
             }
             instructions = self
                 .goals
