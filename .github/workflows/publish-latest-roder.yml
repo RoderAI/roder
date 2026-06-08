@@ -30,13 +30,10 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            use_zigbuild: true
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            use_zigbuild: true
           - runner: macos-14
             target: aarch64-apple-darwin
-            use_zigbuild: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -57,28 +54,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake lld pkg-config
 
-      - name: Install cargo-zigbuild
-        if: matrix.use_zigbuild
-        shell: bash
-        run: |
-          cargo install cargo-zigbuild --locked
-
-      - name: Install Zig
-        if: matrix.use_zigbuild
-        uses: mlugg/setup-zig@v2
-
-      - name: Build Roder CLI with Zig
-        if: matrix.use_zigbuild
-        shell: bash
-        run: |
-          rustc_path="$(rustup which rustc)"
-          RUSTC="$rustc_path" cargo zigbuild --release -p roder-cli --bin roder --target "${{ matrix.target }}"
-
       - name: Build Roder CLI
-        if: ${{ !matrix.use_zigbuild }}
         shell: bash
         run: |
           cargo build --release -p roder-cli --bin roder --target "${{ matrix.target }}"
+
+      - name: Generate remote app-server distribution
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cargo run -p roder-configure -- profile show remote-app-server > dist/remote-app-server-profile.toml
+          cargo run -p roder-configure -- generate \
+            --profile dist/remote-app-server-profile.toml \
+            --out dist/remote-roder
+
+      - name: Build remote app-server distribution
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: dist/remote-roder
+        run: |
+          cargo build --release --target "${{ matrix.target }}"
 
       - name: Package binary
         shell: bash
@@ -93,6 +90,16 @@ jobs:
             (cd dist/latest && sha256sum "roder-${{ matrix.target }}" > "roder-${{ matrix.target }}.sha256")
           else
             (cd dist/latest && shasum -a 256 "roder-${{ matrix.target }}" > "roder-${{ matrix.target }}.sha256")
+          fi
+          if [[ -f "dist/remote-roder/target/${{ matrix.target }}/release/remote-roder" ]]; then
+            remote_dest="dist/latest/remote-roder-${{ matrix.target }}"
+            cp "dist/remote-roder/target/${{ matrix.target }}/release/remote-roder" "$remote_dest"
+            strip "$remote_dest" 2>/dev/null || true
+            if command -v sha256sum >/dev/null 2>&1; then
+              (cd dist/latest && sha256sum "remote-roder-${{ matrix.target }}" > "remote-roder-${{ matrix.target }}.sha256")
+            else
+              (cd dist/latest && shasum -a 256 "remote-roder-${{ matrix.target }}" > "remote-roder-${{ matrix.target }}.sha256")
+            fi
           fi
 
       - name: Upload build artifact
@@ -128,10 +135,11 @@ jobs:
           (
             cd dist/latest
             : > SHA256SUMS
-            for binary in roder-*; do
+            for binary in roder-* remote-roder-*; do
               case "$binary" in
                 *.sha256) continue ;;
               esac
+              [[ -e "$binary" ]] || continue
               sha256sum "$binary" >> SHA256SUMS
             done
           )
@@ -142,13 +150,15 @@ jobs:
 
           root = Path("dist/latest")
           artifacts = []
-          for path in sorted(root.glob("roder-*")):
+          for path in sorted([*root.glob("roder-*"), *root.glob("remote-roder-*")]):
               if path.name.endswith(".sha256"):
                   continue
               digest = (root / f"{path.name}.sha256").read_text().split()[0]
+              prefix = "remote-roder-" if path.name.startswith("remote-roder-") else "roder-"
               artifacts.append({
                   "name": path.name,
-                  "target": path.name.removeprefix("roder-"),
+                  "target": path.name.removeprefix(prefix),
+                  "distribution": "remote-app-server" if prefix == "remote-roder-" else "default",
                   "url": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/{path.name}",
                   "sha256": digest,
                   "bytes": path.stat().st_size,
@@ -221,3 +231,11 @@ jobs:
         run: |
           echo "Install: ${R2_PUBLIC_BASE_URL}/latest/install.sh"
           echo "Manifest: ${R2_PUBLIC_BASE_URL}/latest/manifest.json"
+
+      - name: Verify public remote distro artifacts
+        shell: bash
+        run: |
+          RODER_PUBLISH_TARGETS="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu" \
+          RODER_PUBLISH_VERIFY_ATTEMPTS=30 \
+          RODER_PUBLISH_VERIFY_DELAY_SECONDS=10 \
+            make publish-verify

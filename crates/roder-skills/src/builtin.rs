@@ -5,12 +5,14 @@ use crate::metadata::skill_from_markdown;
 const VCS_SNAPSHOT_SKILL: &str = include_str!("../builtin/vcs-snapshot/SKILL.md");
 const WEBWRIGHT_SKILL: &str = include_str!("../builtin/webwright/SKILL.md");
 const CHROME_SKILL: &str = include_str!("../builtin/chrome/SKILL.md");
+const RODER_CONFIG_SKILL: &str = include_str!("../builtin/roder-config/SKILL.md");
 
 pub fn builtin_skills() -> Vec<Skill> {
     [
         ("vcs-snapshot", VCS_SNAPSHOT_SKILL),
         ("webwright", WEBWRIGHT_SKILL),
         ("chrome", CHROME_SKILL),
+        ("roder-config", RODER_CONFIG_SKILL),
     ]
     .into_iter()
     .filter_map(|(name, text)| {
@@ -35,7 +37,7 @@ mod tests {
     fn builtin_registry_loads_vcs_snapshot_skill_asset() {
         let skills = builtin_skills();
 
-        assert_eq!(skills.len(), 3);
+        assert_eq!(skills.len(), 4);
         assert_eq!(skills[0].descriptor.name, "vcs-snapshot");
         assert_eq!(skills[0].descriptor.source, SkillSource::BuiltIn);
         assert_eq!(skills[0].descriptor.exposure, SkillExposure::DirectOnly);
@@ -60,5 +62,15 @@ mod tests {
             "roder-builtin://chrome/SKILL.md"
         );
         assert!(skills[2].body.contains("untrusted"));
+        assert_eq!(skills[3].descriptor.name, "roder-config");
+        assert_eq!(skills[3].descriptor.source, SkillSource::BuiltIn);
+        assert_eq!(skills[3].descriptor.exposure, SkillExposure::Global);
+        assert_eq!(
+            skills[3].descriptor.canonical_path,
+            "roder-builtin://roder-config/SKILL.md"
+        );
+        assert!(skills[3].body.contains("mcpServers"));
+        assert!(skills[3].body.contains("discovery/refresh"));
+        assert!(skills[3].body.contains("window.roderDesktop.request"));
     }
 }

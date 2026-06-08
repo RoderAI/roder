@@ -97,19 +97,24 @@ roder.remote.v1, bearer.<token>
 Prefer `ws://127.0.0.1` or a trusted private network / Tailscale endpoint. Do
 not expose Roder remote mode to the public internet.
 
-## Enabling for a session
+## Availability for a session
 
-Pairing connects the extension; enabling turns the `chrome_*` tools on for the
-agent. They are **off by default**.
+The `chrome_*` tools are available to the agent by default. Pairing connects a
+real Chrome extension client; without a paired extension the tools return a
+clear "No Chrome extension is connected" error instead of prompting for a
+separate enable step.
 
 - In the TUI: run `/chrome` to open the control panel (also reachable via the
-  ctrl+p command palette as "Chrome browser plugin"). Enable from there.
-- From the CLI: `roder --chrome`, or `roder chrome enable`.
+  ctrl+p command palette as "Chrome browser plugin") for pairing status and
+  mode controls.
+- From the CLI: `roder chrome status`; `roder chrome enable|disable` remain
+  available for manual override.
 - Check state: `roder chrome status` (or the `/chrome` panel) shows whether an
   extension is connected, the active tab, and the current mode.
 
-If a `chrome_*` tool reports "Chrome is not enabled" or "No Chrome extension is
-connected", that is the bridge telling you pairing/enabling is incomplete.
+If a `chrome_*` tool reports "Chrome tools are not enabled", they were disabled
+manually with `roder chrome disable` or the equivalent app-server call. If it
+reports "No Chrome extension is connected", pairing is incomplete.
 
 ## Parity matrix vs Claude-in-Chrome
 

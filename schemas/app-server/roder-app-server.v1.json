@@ -654,24 +654,6 @@
       "sideEffect": "readOnly"
     },
     {
-      "method": "inference/routing/metrics",
-      "paramsType": "InferenceRoutingMetricsParams",
-      "resultType": "InferenceRoutingMetricsResult",
-      "stability": "stable",
-      "featureGroup": "inference",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
-      "method": "inference/routing/status",
-      "paramsType": "InferenceRoutingStatusParams",
-      "resultType": "InferenceRoutingStatusResult",
-      "stability": "stable",
-      "featureGroup": "inference",
-      "idempotency": "idempotent",
-      "sideEffect": "readOnly"
-    },
-    {
       "method": "initialize",
       "paramsType": "InitializeParams",
       "resultType": "InitializeResult",
@@ -877,15 +859,6 @@
       "featureGroup": "models",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
-    },
-    {
-      "method": "model/select",
-      "paramsType": "ModelSelectParams",
-      "resultType": "ModelSelectResult",
-      "stability": "stable",
-      "featureGroup": "models",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
     },
     {
       "method": "plan/review/approve",

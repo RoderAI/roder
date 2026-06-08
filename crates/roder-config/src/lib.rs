@@ -24,7 +24,6 @@ pub struct Config {
     pub auto_compact_token_limit: Option<u32>,
     pub reliability: Option<ReliabilityConfig>,
     pub speed_policy: Option<SpeedPolicyConfig>,
-    pub inference_router: Option<InferenceRouterConfig>,
     pub web_search: Option<WebSearchConfig>,
     pub tool_search: Option<ToolSearchConfig>,
     pub dynamic_workflows: Option<DynamicWorkflowsConfig>,
@@ -89,18 +88,6 @@ impl Default for SpeedPolicyConfig {
             eval_deadline_seconds: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct InferenceRouterConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    pub router: Option<String>,
-    pub profile: Option<String>,
-    pub baseline_provider: Option<String>,
-    pub baseline_model: Option<String>,
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    pub extension: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -557,8 +544,11 @@ pub struct EmbeddingProviderConfig {
     pub enabled: bool,
     pub model: Option<String>,
     pub api_key_env: Option<String>,
+    pub endpoint: Option<String>,
     pub command: Option<Vec<String>>,
     pub dimensions: Option<usize>,
+    pub encoding_format: Option<String>,
+    pub latency: Option<String>,
 }
 
 impl Default for EmbeddingProviderConfig {
@@ -567,8 +557,11 @@ impl Default for EmbeddingProviderConfig {
             enabled: true,
             model: None,
             api_key_env: None,
+            endpoint: None,
             command: None,
             dimensions: None,
+            encoding_format: None,
+            latency: None,
         }
     }
 }
@@ -1361,7 +1354,6 @@ mod tests {
             auto_compact_token_limit: None,
             reliability: None,
             speed_policy: None,
-            inference_router: None,
             web_search: None,
             tool_search: None,
             dynamic_workflows: None,
@@ -1549,6 +1541,22 @@ mod tests {
             enabled = true
             command = ["embedder", "--json"]
             dimensions = 384
+
+            [embedding_providers.google]
+            enabled = true
+            api_key_env = "GEMINI_API_KEY"
+            endpoint = "https://generativelanguage.googleapis.com/v1beta"
+            model = "gemini-embedding-2"
+            dimensions = 3072
+
+            [embedding_providers.zeroentropy]
+            enabled = true
+            api_key_env = "ZEROENTROPY_API_KEY"
+            endpoint = "https://api.zeroentropy.dev/v1"
+            model = "zembed-1"
+            dimensions = 2560
+            encoding_format = "base64"
+            latency = "fast"
             "#,
         )
         .unwrap();
@@ -1567,6 +1575,27 @@ mod tests {
                 .unwrap()[0],
             "embedder"
         );
+        let google = &config.embedding_providers["google"];
+        assert_eq!(google.api_key_env.as_deref(), Some("GEMINI_API_KEY"));
+        assert_eq!(
+            google.endpoint.as_deref(),
+            Some("https://generativelanguage.googleapis.com/v1beta")
+        );
+        assert_eq!(google.model.as_deref(), Some("gemini-embedding-2"));
+        assert_eq!(google.dimensions, Some(3072));
+        let zeroentropy = &config.embedding_providers["zeroentropy"];
+        assert_eq!(
+            zeroentropy.api_key_env.as_deref(),
+            Some("ZEROENTROPY_API_KEY")
+        );
+        assert_eq!(
+            zeroentropy.endpoint.as_deref(),
+            Some("https://api.zeroentropy.dev/v1")
+        );
+        assert_eq!(zeroentropy.model.as_deref(), Some("zembed-1"));
+        assert_eq!(zeroentropy.dimensions, Some(2560));
+        assert_eq!(zeroentropy.encoding_format.as_deref(), Some("base64"));
+        assert_eq!(zeroentropy.latency.as_deref(), Some("fast"));
     }
 
     #[test]
@@ -2299,148 +2328,6 @@ mod tests {
                 .as_ref()
                 .and_then(|reasoning| reasoning.execution.as_deref()),
             Some("low")
-        );
-    }
-
-    #[test]
-    fn deserializes_inference_router_config() {
-        let config: Config = toml::from_str(
-            r#"
-            [inference_router]
-            enabled = true
-            router = "local-adaptive"
-            profile = "coding"
-            baseline_provider = "codex"
-            baseline_model = "gpt-5.5"
-
-            [inference_router.extension]
-            objective = "balanced"
-
-            [inference_router.extension.tiers.simple]
-            provider = "codex"
-            model = "gpt-5.4-mini"
-            reasoning = "low"
-
-            [inference_router.extension.tiers.strong]
-            provider = "codex"
-            model = "gpt-5.5"
-            reasoning = "high"
-
-            [inference_router.extension.profiles.coding]
-            objective = "cost"
-            default_tier = "simple"
-            risk_floor_tier = "strong"
-            classifier_prompt = "Classify this coding-agent turn."
-
-            [inference_router.extension.profiles.coding.risk_floors]
-            security = "strong"
-            sandbox = "strong"
-
-            [inference_router.extension.prices."codex/gpt-5.4-mini"]
-            input_per_million = 0.25
-            output_per_million = 2.0
-            cached_input_per_million = 0.025
-
-            [inference_router.extension.classifier_comparison]
-            enabled = true
-            prompt = "Future classifier comparison prompt"
-            label = "classifier-v2"
-            "#,
-        )
-        .unwrap();
-
-        let router = config.inference_router.as_ref().unwrap();
-        assert!(router.enabled);
-        assert_eq!(router.router.as_deref(), Some("local-adaptive"));
-        assert_eq!(router.profile.as_deref(), Some("coding"));
-        assert_eq!(router.baseline_provider.as_deref(), Some("codex"));
-        assert_eq!(router.baseline_model.as_deref(), Some("gpt-5.5"));
-        assert_eq!(
-            router
-                .extension
-                .get("tiers")
-                .and_then(|tiers| tiers.get("simple"))
-                .and_then(|tier| tier.get("reasoning"))
-                .and_then(serde_json::Value::as_str),
-            Some("low")
-        );
-        assert_eq!(
-            router
-                .extension
-                .get("profiles")
-                .and_then(|profiles| profiles.get("coding"))
-                .and_then(|profile| profile.get("risk_floors"))
-                .and_then(|floors| floors.get("security"))
-                .and_then(serde_json::Value::as_str),
-            Some("strong")
-        );
-        assert_eq!(
-            router
-                .extension
-                .get("prices")
-                .and_then(|prices| prices.get("codex/gpt-5.4-mini"))
-                .and_then(|price| price.get("cached_input_per_million"))
-                .and_then(serde_json::Value::as_f64),
-            Some(0.025)
-        );
-        assert_eq!(
-            router
-                .extension
-                .get("classifier_comparison")
-                .and_then(|comparison| comparison.get("label"))
-                .and_then(serde_json::Value::as_str),
-            Some("classifier-v2")
-        );
-    }
-
-    #[test]
-    fn inference_router_config_round_trips_defined_comparison_fields() {
-        let mut config = Config::default();
-        config.inference_router = Some(InferenceRouterConfig {
-            enabled: true,
-            router: Some("local-adaptive".to_string()),
-            profile: Some("coding".to_string()),
-            baseline_provider: Some("codex".to_string()),
-            baseline_model: Some("gpt-5.5".to_string()),
-            extension: serde_json::json!({
-                "objective": "balanced",
-                "tiers": {
-                    "simple": {
-                        "provider": "codex",
-                        "model": "gpt-5.4-mini",
-                        "reasoning": "low"
-                    }
-                },
-                "classifier_comparison": {
-                    "enabled": true,
-                    "prompt": "compare later",
-                    "label": "future-classifier"
-                }
-            }),
-        });
-
-        let encoded = toml::to_string_pretty(&config).unwrap();
-        let decoded: Config = toml::from_str(&encoded).unwrap();
-        let router = decoded.inference_router.unwrap();
-
-        assert!(router.enabled);
-        assert_eq!(router.router.as_deref(), Some("local-adaptive"));
-        assert_eq!(
-            router
-                .extension
-                .get("tiers")
-                .and_then(|tiers| tiers.get("simple"))
-                .and_then(|tier| tier.get("model"))
-                .and_then(serde_json::Value::as_str),
-            Some("gpt-5.4-mini")
-        );
-        assert_eq!(
-            router
-                .extension
-                .get("classifier_comparison")
-                .and_then(|comparison| comparison.get("prompt"))
-                .and_then(serde_json::Value::as_str),
-            Some("compare later")
         );
     }
 

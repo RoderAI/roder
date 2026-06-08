@@ -167,10 +167,11 @@ pub(crate) struct TextFile {
 }
 
 pub(crate) fn scoped_path(root: &Path, subpath: &Path) -> Result<PathBuf, SearchError> {
+    // Absolute paths address the filesystem directly. Access is gated upstream by
+    // the workspace's path scope (`resolve_existing`), so here we just normalize
+    // away any `.`/`..` noise and let full paths through.
     if subpath.is_absolute() {
-        return Err(SearchError::InvalidPath(
-            "search path must be relative to the workspace".to_string(),
-        ));
+        return normalize_absolute(subpath);
     }
 
     let mut normalized = root.to_path_buf();
@@ -196,19 +197,48 @@ pub(crate) fn scoped_path(root: &Path, subpath: &Path) -> Result<PathBuf, Search
     Ok(normalized)
 }
 
+fn normalize_absolute(path: &Path) -> Result<PathBuf, SearchError> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(SearchError::InvalidPath(
+                        "search path escapes the filesystem root".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(normalized)
+}
+
+/// The base directory used to compute workspace-relative document paths. For
+/// scopes inside the workspace this is the workspace `root`, so matches display
+/// as workspace-relative. For absolute scopes outside the workspace, the scope
+/// itself is the base so paths display relative to the directory being searched.
+pub(crate) fn search_base<'a>(root: &'a Path, scope: &'a Path) -> &'a Path {
+    if scope.starts_with(root) { root } else { scope }
+}
+
 pub(crate) fn collect_text_files(
     root: &Path,
     scope: &Path,
     max_file_size: u64,
 ) -> Result<Vec<TextFile>, SearchError> {
+    let base = search_base(root, scope).to_path_buf();
     let mut files = Vec::new();
     let mut walk = WalkBuilder::new(scope);
     walk.standard_filters(true)
         .hidden(false)
         .require_git(false)
         .filter_entry({
-            let root = root.to_path_buf();
-            move |entry| !ignored_path(&root, entry.path())
+            let base = base.clone();
+            move |entry| !ignored_path(&base, entry.path())
         })
         .sort_by_file_path(|left, right| left.cmp(right));
 
@@ -224,7 +254,7 @@ pub(crate) fn collect_text_files(
             continue;
         }
         if metadata.is_file()
-            && let Some(file) = read_text_file(root, path, &metadata, max_file_size)?
+            && let Some(file) = read_text_file(&base, path, &metadata, max_file_size)?
         {
             files.push(file);
         }

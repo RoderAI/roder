@@ -217,7 +217,6 @@ async fn turn_start_uses_protocol_thread_workspace_when_snapshot_metadata_missin
         "thread/start",
         Some(
             serde_json::to_value(ThreadStartParams {
-                selection: None,
                 workspace_id: workspace_ref.workspace_id,
                 root_id: Some(workspace_ref.root_id),
                 model: Some("mock".to_string()),
@@ -276,7 +275,6 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
         "thread/start",
         Some(
             serde_json::to_value(ThreadStartParams {
-                selection: None,
                 workspace_id: workspace_ref.workspace_id,
                 root_id: Some(workspace_ref.root_id),
                 model: None,

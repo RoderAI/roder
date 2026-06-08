@@ -42,6 +42,24 @@ fn codegen_respects_headless_profile_dependencies() {
 }
 
 #[test]
+fn codegen_renders_remote_app_server_without_cli_or_tui() {
+    let catalog = Catalog::from_workspace(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let profile = built_in_profile("remote-app-server").unwrap().unwrap();
+
+    let files = render(&profile.manifest, &catalog).unwrap();
+    let cargo_toml = file(&files, "Cargo.toml");
+    assert!(cargo_toml.contains("roder-app-server"));
+    assert!(cargo_toml.contains("roder-core"));
+    assert!(cargo_toml.contains("roder-extension-host"));
+    assert!(!cargo_toml.contains("roder-cli"));
+    assert!(!cargo_toml.contains("roder-tui"));
+
+    let main_rs = file(&files, "src/main.rs");
+    assert!(main_rs.contains("listen_remote_websocket"));
+    assert!(!main_rs.contains("roder_cli::run"));
+}
+
+#[test]
 fn codegen_renders_tavily_enabled_distribution() {
     let catalog = Catalog::from_workspace(env!("CARGO_MANIFEST_DIR")).unwrap();
     let profile = built_in_profile("tavily").unwrap().unwrap();

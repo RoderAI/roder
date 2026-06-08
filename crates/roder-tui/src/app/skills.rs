@@ -1,7 +1,7 @@
 use roder_api::skills::{SkillExposure, SkillSelector};
 use roder_protocol::{
-    JsonRpcRequest, SkillsListResult, SkillsSetEnabledParams, SkillsSetExposureParams,
-    SkillsUpdateResult,
+    JsonRpcRequest, SkillsListParams, SkillsListResult, SkillsSetEnabledParams,
+    SkillsSetExposureParams, SkillsUpdateResult,
 };
 
 use super::{AppClient, TuiApp, decode_response};
@@ -11,13 +11,27 @@ where
     C: AppClient,
 {
     pub(super) async fn skills_list(&self) -> anyhow::Result<SkillsListResult> {
+        // `skills/list` requires a params object (a bare `null` is rejected as
+        // "Missing params"). When the workspace is known, pass it and the cwd so
+        // the server resolves the full workspace registry; otherwise an empty
+        // object falls back to the global snapshot (built-ins).
+        let params = SkillsListParams {
+            workspace_id: self.workspace_id.clone(),
+            root_id: self.root_id.clone(),
+            cwd: self
+                .workspace_id
+                .is_some()
+                .then(|| std::env::current_dir().ok())
+                .flatten()
+                .map(|path| path.display().to_string()),
+        };
         let res = self
             .client
             .send_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("skills/list")),
                 method: "skills/list".to_string(),
-                params: None,
+                params: Some(serde_json::to_value(params).unwrap()),
             })
             .await;
         decode_response(res)

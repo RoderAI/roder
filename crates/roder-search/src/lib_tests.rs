@@ -276,3 +276,38 @@ fn scoped_indexed_search_warms_only_requested_file() {
     assert_eq!(index.scope(), workspace.root.join("src/types/roder.ts"));
     assert_eq!(index.stats().document_count, 1);
 }
+
+#[test]
+fn absolute_path_inside_workspace_resolves_like_relative() {
+    let workspace = TempWorkspace::new();
+    workspace.write("src/a.txt", "needle\n");
+    workspace.write("tests/a.txt", "needle\n");
+
+    let absolute = workspace.root.join("src");
+    let results = search_workspace(
+        &workspace.root,
+        &SearchOptions::new("needle").with_path(absolute),
+    )
+    .unwrap();
+
+    assert_eq!(results.lines, vec!["src/a.txt:1:needle"]);
+}
+
+#[test]
+fn absolute_path_outside_workspace_is_searched_directly() {
+    let workspace = TempWorkspace::new();
+    workspace.write("src/a.txt", "ignored\n");
+
+    // A sibling directory that lives outside the workspace root.
+    let external = TempWorkspace::new();
+    external.write("dep/lib.rs", "let needle = 1;\n");
+
+    let results = search_workspace(
+        &workspace.root,
+        &SearchOptions::new("needle").with_path(external.root.clone()),
+    )
+    .unwrap();
+
+    assert_eq!(results.lines, vec!["dep/lib.rs:1:let needle = 1;"]);
+    assert_eq!(results.metadata.engine, SearchEngine::Scan);
+}

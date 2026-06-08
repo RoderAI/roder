@@ -257,6 +257,18 @@ struct BridgeState {
     last_error: Option<String>,
 }
 
+impl BridgeState {
+    fn new() -> Self {
+        Self {
+            clients: HashMap::new(),
+            pending: HashMap::new(),
+            enabled: true,
+            mode: ChromePermissionMode::default(),
+            last_error: None,
+        }
+    }
+}
+
 /// The live connection registry. One instance per process (see [`bridge`]).
 ///
 /// Transport integration (in `roder-app-server::remote`), on each connection:
@@ -277,7 +289,7 @@ pub struct ChromeBridge {
 impl Default for ChromeBridge {
     fn default() -> Self {
         Self {
-            state: Mutex::new(BridgeState::default()),
+            state: Mutex::new(BridgeState::new()),
             next_client_id: AtomicU64::new(1),
             next_corr_id: AtomicU64::new(1),
             dispatch_timeout: CHROME_DISPATCH_TIMEOUT,
@@ -514,12 +526,14 @@ mod tests {
         let status = bridge.status();
         assert!(!status.connected);
         assert_eq!(status.client_count, 0);
+        assert!(status.enabled);
         assert_eq!(status.mode, ChromePermissionMode::Assist);
     }
 
     #[tokio::test]
-    async fn dispatch_requires_enabled() {
+    async fn dispatch_respects_explicit_disable() {
         let bridge = ChromeBridge::new();
+        bridge.set_enabled(false);
         let reg = bridge.register_client(None, &json!({ "capabilities": ["chat"] }));
         drop(reg.commands);
         let err = bridge

@@ -581,8 +581,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-agent-sdk"
-version = "0.1.0"
+name = "claude-code-sdk-rust"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb70efad3cd1e6500dfd904593bea28841b4dee24314131690103034e96d59f0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1259,6 +1261,16 @@ dependencies = [
  "libc",
  "thiserror 1.0.69",
  "winapi",
+]
+
+[[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -3192,11 +3204,13 @@ dependencies = [
  "roder-core",
  "roder-dynamic-workflows",
  "roder-evals",
+ "roder-ext-google-embeddings",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-openai-embeddings",
  "roder-ext-subagents",
  "roder-ext-webwright",
+ "roder-ext-zeroentropy-embeddings",
  "roder-extension-host",
  "roder-protocol",
  "roder-roadmap",
@@ -3370,6 +3384,7 @@ dependencies = [
  "roder-context",
  "roder-dynamic-workflows",
  "roder-ext-jsonl-thread-store",
+ "roder-ext-runner-sprites",
  "roder-ext-runner-unix-local",
  "roder-ext-task-ledger",
  "roder-ext-verification",
@@ -3459,12 +3474,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures",
+ "reqwest",
  "roder-api",
  "semver",
  "serde",
  "serde_json",
  "time",
  "tokio",
+ "tokio-tungstenite",
  "uuid",
 ]
 
@@ -3475,7 +3493,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
- "claude-agent-sdk",
+ "claude-code-sdk-rust",
  "futures",
  "roder-api",
  "semver",
@@ -3556,12 +3574,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "roder-ext-google-speech"
+name = "roder-ext-google-embeddings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64",
  "reqwest",
  "roder-api",
  "semver",
@@ -3571,11 +3588,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "roder-ext-inference-router"
+name = "roder-ext-google-speech"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
+ "reqwest",
  "roder-api",
  "semver",
  "serde",
@@ -3907,6 +3926,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-runner-sprites"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-protocol",
+ "semver",
+ "serde",
+ "serde_json",
+ "tar",
+ "tokio",
+ "tokio-tungstenite",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-runner-unix-local"
 version = "0.1.0"
 dependencies = [
@@ -4081,6 +4120,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-zeroentropy-embeddings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-zerolang"
 version = "0.1.0"
 dependencies = [
@@ -4116,8 +4170,8 @@ dependencies = [
  "roder-ext-firecrawl-search",
  "roder-ext-gemini",
  "roder-ext-git",
+ "roder-ext-google-embeddings",
  "roder-ext-google-speech",
- "roder-ext-inference-router",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-notify-desktop",
@@ -4139,6 +4193,7 @@ dependencies = [
  "roder-ext-runner-e2b",
  "roder-ext-runner-modal",
  "roder-ext-runner-runloop",
+ "roder-ext-runner-sprites",
  "roder-ext-runner-unix-local",
  "roder-ext-runner-vercel",
  "roder-ext-subagents",
@@ -4150,6 +4205,7 @@ dependencies = [
  "roder-ext-webwright",
  "roder-ext-xai",
  "roder-ext-xiaomi-mimo",
+ "roder-ext-zeroentropy-embeddings",
  "roder-ext-zerolang",
  "roder-tools",
  "roder-web-search",
@@ -4319,6 +4375,7 @@ dependencies = [
  "crossterm",
  "dirs 6.0.0",
  "futures",
+ "ignore",
  "ratatui",
  "roder-api",
  "roder-api-transcript",
@@ -5004,6 +5061,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tauri-winrt-notification"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5241,8 +5309,12 @@ checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5418,6 +5490,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.4",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
  "utf-8",
@@ -5772,6 +5846,24 @@ name = "webpki-root-certs"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31141ce3fc3e300ae89b78c0dd67f9708061d1d2eda54b8209346fd6be9a92c"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.7",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -6324,6 +6416,16 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix 1.1.4",
+]
 
 [[package]]
 name = "yoke"

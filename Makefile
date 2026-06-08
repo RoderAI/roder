@@ -10,7 +10,7 @@ REASONING ?=
 LISTEN ?= stdio://
 VERSION ?=
 
-.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke release-brew clean clean-target cargo-unlock
+.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke publish publish-verify release-brew clean clean-target cargo-unlock
 
 # Wipe the cargo target dir. Incremental builds accumulate session artifacts
 # unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
@@ -97,6 +97,12 @@ test:
 	$(CARGO_TEST) $(TEST_ARGS)
 
 smoke: test
+
+publish:
+	./scripts/publish-latest-roder.sh
+
+publish-verify:
+	./scripts/verify-latest-roder.sh
 
 release-brew:
 	./scripts/release-brew.sh $(VERSION)

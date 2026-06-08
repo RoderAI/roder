@@ -1,0 +1,29 @@
+[package]
+name = "roder-ext-google-embeddings"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "google-embeddings"
+category = "embedding-provider"
+display_name = "Google Gemini Embeddings"
+description = "Google Gemini embedding provider for Roder memories."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = ["RODER_GOOGLE_EMBEDDINGS_API_KEY", "GEMINI_API_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_AI_API_KEY", "RODER_GOOGLE_EMBEDDINGS_ENDPOINT"]
+conflicts_with = []
+required_capabilities = ["network.generativelanguage.googleapis.com", "secret.read.google_api_key"]
+extension_path = "::extension"
+docs_url = "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/embedding-2"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

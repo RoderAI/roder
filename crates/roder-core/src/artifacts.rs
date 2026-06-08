@@ -342,7 +342,10 @@ fn collect_metadata_paths(dir: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<
         if path.is_dir() {
             collect_metadata_paths(&path, out)?;
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("json")
-            && path.file_name().and_then(|name| name.to_str()) != Some("metadata.json")
+            && path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("artifact-"))
         {
             out.push(path);
         }
