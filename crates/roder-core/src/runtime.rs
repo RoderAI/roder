@@ -864,6 +864,26 @@ impl Runtime {
         Ok(Vec::new())
     }
 
+    pub async fn list_threads_page(
+        &self,
+        options: roder_api::thread::ThreadListOptions,
+    ) -> anyhow::Result<roder_api::thread::ThreadListPage> {
+        if let Some(store) = &self.thread_store {
+            return store.list_threads_page(options).await;
+        }
+        Ok(roder_api::thread::ThreadListPage::default())
+    }
+
+    pub async fn load_thread_metadata(
+        &self,
+        thread_id: &str,
+    ) -> anyhow::Result<Option<roder_api::thread::ThreadMetadata>> {
+        if let Some(store) = &self.thread_store {
+            return store.load_thread_metadata(&thread_id.to_string()).await;
+        }
+        Ok(None)
+    }
+
     pub async fn archive_thread(&self, thread_id: &str) -> anyhow::Result<bool> {
         let archived = if let Some(store) = &self.thread_store {
             store.archive_thread(&thread_id.to_string()).await?

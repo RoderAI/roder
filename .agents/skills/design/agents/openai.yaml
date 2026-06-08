@@ -1,0 +1,15 @@
+interface: responses/v1
+dependencies:
+  - design_read
+  - design_get_variables
+  - design_set_variables
+  - design_batch_get
+  - design_patch
+  - design_snapshot_layout
+  - design_export_nodes
+  - design_get_screenshot
+  - design_get_guidelines
+  - design_spawn_agents
+policies:
+  - Prefer design_* tools over source-code inspection for Design Canvas work.
+  - Always use design_patch with a top-level operations array; never use a top-level patch argument.

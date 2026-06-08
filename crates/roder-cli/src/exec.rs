@@ -313,7 +313,10 @@ async fn last_thread_id(client: &LocalAppClient) -> anyhow::Result<String> {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!("exec-thread-list")),
             method: "thread/list".to_string(),
-            params: Some(serde_json::to_value(ThreadListParams { limit: Some(1) })?),
+            params: Some(serde_json::to_value(ThreadListParams {
+                limit: Some(1),
+                cursor: None,
+            })?),
         })
         .await;
     let result = decode_response::<ThreadListResult>(res)?;

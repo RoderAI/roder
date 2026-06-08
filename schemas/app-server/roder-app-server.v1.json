@@ -369,7 +369,10 @@
       "stability": "stable",
       "featureGroup": "design",
       "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
+      "sideEffect": "localState",
+      "notifications": [
+        "design/exportCompleted"
+      ]
     },
     {
       "method": "design/get_editor_state",
@@ -384,6 +387,15 @@
       "method": "design/get_guidelines",
       "paramsType": "DesignGetGuidelinesParams",
       "resultType": "DesignGetGuidelinesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_screenshot",
+      "paramsType": "DesignGetScreenshotParams",
+      "resultType": "DesignGetScreenshotResult",
       "stability": "stable",
       "featureGroup": "design",
       "idempotency": "idempotent",
@@ -420,12 +432,45 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "design/set_selection",
+      "paramsType": "DesignSetSelectionParams",
+      "resultType": "DesignSetSelectionResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/selectionChanged"
+      ]
+    },
+    {
+      "method": "design/set_variables",
+      "paramsType": "DesignSetVariablesParams",
+      "resultType": "DesignSetVariablesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/documentChanged"
+      ]
+    },
+    {
       "method": "design/snapshot_layout",
       "paramsType": "DesignSnapshotLayoutParams",
       "resultType": "DesignSnapshotLayoutResult",
       "stability": "stable",
       "featureGroup": "design",
       "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/spawn_agents",
+      "paramsType": "DesignSpawnAgentsParams",
+      "resultType": "DesignSpawnAgentsResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
       "sideEffect": "readOnly"
     },
     {
