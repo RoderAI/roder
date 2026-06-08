@@ -669,7 +669,7 @@ mod tests {
                 context(&root).with_command_shell(shell.display().to_string()),
                 call(
                     "exec_command",
-                    json!({ "cmd": "printf hi", "yield_time_ms": 500 }),
+                    json!({ "cmd": "printf hi", "yield_time_ms": 1500 }),
                 ),
             )
             .await

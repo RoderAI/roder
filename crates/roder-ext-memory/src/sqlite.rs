@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
+use roder_api::embeddings::EmbeddingProvider;
 use roder_api::extension::MemoryStoreId;
 use roder_api::memory::{
     MemoryCitation, MemoryId, MemoryQuery, MemoryRecord, MemoryScope, MemorySearchResult,
@@ -12,20 +13,30 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
+use crate::embed::{FALLBACK_PROVIDER, MemoryEmbedder, MemoryEmbedding};
 use crate::schema;
 use crate::scopes;
 use crate::vector;
 
-const DEFAULT_PROVIDER: &str = "fake";
-const DEFAULT_MODEL: &str = "fake-vector-32";
-
 pub struct SqliteMemoryStoreFactory {
     base_path: PathBuf,
+    embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
 impl SqliteMemoryStoreFactory {
     pub fn new(base_path: PathBuf) -> Self {
-        Self { base_path }
+        Self {
+            base_path,
+            embedding_provider: None,
+        }
+    }
+
+    pub fn with_embedding_provider(
+        mut self,
+        embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    ) -> Self {
+        self.embedding_provider = embedding_provider;
+        self
     }
 }
 
@@ -35,17 +46,31 @@ impl MemoryStoreFactory for SqliteMemoryStoreFactory {
     }
 
     fn create(&self) -> Arc<dyn MemoryStore> {
-        Arc::new(SqliteMemoryStore::open(self.base_path.join("memories.sqlite3")).unwrap())
+        Arc::new(
+            SqliteMemoryStore::open_with_embedding_provider(
+                self.base_path.join("memories.sqlite3"),
+                self.embedding_provider.clone(),
+            )
+            .unwrap(),
+        )
     }
 }
 
 pub struct SqliteMemoryStore {
     path: PathBuf,
     conn: Mutex<Connection>,
+    embedder: MemoryEmbedder,
 }
 
 impl SqliteMemoryStore {
     pub fn open(path: PathBuf) -> anyhow::Result<Self> {
+        Self::open_with_embedding_provider(path, None)
+    }
+
+    pub fn open_with_embedding_provider(
+        path: PathBuf,
+        embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    ) -> anyhow::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -54,6 +79,7 @@ impl SqliteMemoryStore {
         let store = Self {
             path,
             conn: Mutex::new(conn),
+            embedder: MemoryEmbedder::new(embedding_provider),
         };
         store.import_jsonl_once()?;
         Ok(store)
@@ -83,13 +109,18 @@ impl SqliteMemoryStore {
         let contents = std::fs::read_to_string(&jsonl)?;
         for line in contents.lines().filter(|line| !line.trim().is_empty()) {
             let record: MemoryRecord = serde_json::from_str(line)?;
-            self.put_blocking(record)?;
+            let embedding = MemoryEmbedder::fallback_embedding(&record.text);
+            self.put_blocking(record, embedding)?;
         }
         std::fs::write(marker, b"imported\n")?;
         Ok(())
     }
 
-    fn put_blocking(&self, mut record: MemoryRecord) -> anyhow::Result<MemoryId> {
+    fn put_blocking(
+        &self,
+        mut record: MemoryRecord,
+        embedding: MemoryEmbedding,
+    ) -> anyhow::Result<MemoryId> {
         self.with_conn(|conn| {
             let now = OffsetDateTime::now_utc();
             let id = record
@@ -117,22 +148,40 @@ impl SqliteMemoryStore {
                     format_time(now),
                 ],
             )?;
-            let embedding = vector::fake_embedding(&record.text);
             conn.execute(
                 "INSERT OR REPLACE INTO memory_embeddings(memory_id, provider_id, model, dimensions, embedding, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     id,
-                    DEFAULT_PROVIDER,
-                    DEFAULT_MODEL,
-                    embedding.len() as i64,
-                    vector::encode(&embedding),
+                    embedding.provider_id,
+                    embedding.model,
+                    embedding.values.len() as i64,
+                    vector::encode(&embedding.values),
                     format_time(now),
                 ],
             )?;
             record.id = Some(id.clone());
             Ok(id)
         })
+    }
+
+    async fn query_embedding(&self, query: &MemoryQuery) -> Option<MemoryEmbedding> {
+        if query.text.trim().is_empty() {
+            return None;
+        }
+        if let Some(provider_id) = query.provider_id.as_deref() {
+            if provider_id == FALLBACK_PROVIDER {
+                return Some(MemoryEmbedder::fallback_embedding(&query.text));
+            }
+            if !self.embedder.can_embed_provider(provider_id) {
+                return None;
+            }
+        }
+        Some(
+            self.embedder
+                .embed_query(&query.text, query.model.as_deref())
+                .await,
+        )
     }
 }
 
@@ -143,7 +192,8 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn put(&self, record: MemoryRecord) -> anyhow::Result<MemoryId> {
-        self.put_blocking(record)
+        let embedding = self.embedder.embed_document(&record.text, None).await;
+        self.put_blocking(record, embedding)
     }
 
     async fn get(&self, id: &MemoryId) -> anyhow::Result<Option<MemoryRecord>> {
@@ -151,7 +201,8 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn search(&self, query: MemoryQuery) -> anyhow::Result<Vec<MemorySearchResult>> {
-        self.with_conn(|conn| search_records(conn, query))
+        let query_embedding = self.query_embedding(&query).await;
+        self.with_conn(|conn| search_records(conn, query, query_embedding.as_ref()))
     }
 
     async fn delete(&self, id: &MemoryId) -> anyhow::Result<()> {
@@ -254,6 +305,7 @@ fn load_record(conn: &Connection, id: &str) -> anyhow::Result<Option<MemoryRecor
 fn search_records(
     conn: &Connection,
     query: MemoryQuery,
+    query_embedding: Option<&MemoryEmbedding>,
 ) -> anyhow::Result<Vec<MemorySearchResult>> {
     let mut records = list_records(conn, None, 1000)?;
     if let Some(scope) = &query.scope {
@@ -263,16 +315,22 @@ fn search_records(
                 || (query.include_global && record.scope == MemoryScope::Global)
         });
     }
-    let query_vector = vector::fake_embedding(&query.text);
     let mut results = records
         .into_iter()
         .filter_map(|record| {
             let score = if query.text.trim().is_empty() {
                 1.0
+            } else if let Some(query_embedding) = query_embedding {
+                load_embedding(
+                    conn,
+                    record.id.as_deref()?,
+                    &query_embedding.provider_id,
+                    &query_embedding.model,
+                )
+                .map(|embedding| vector::cosine(&query_embedding.values, &embedding))
+                .unwrap_or_else(|_| lexical_score(&query.text, &record.text))
             } else {
-                load_embedding(conn, record.id.as_deref()?)
-                    .map(|embedding| vector::cosine(&query_vector, &embedding))
-                    .unwrap_or_else(|_| lexical_score(&query.text, &record.text))
+                lexical_score(&query.text, &record.text)
             };
             (score > 0.0 || query.text.trim().is_empty()).then(|| {
                 let memory_id = record.id.clone().unwrap_or_default();
@@ -303,10 +361,15 @@ fn search_records(
     Ok(results)
 }
 
-fn load_embedding(conn: &Connection, id: &str) -> anyhow::Result<Vec<f32>> {
+fn load_embedding(
+    conn: &Connection,
+    id: &str,
+    provider_id: &str,
+    model: &str,
+) -> anyhow::Result<Vec<f32>> {
     let bytes: Vec<u8> = conn.query_row(
         "SELECT embedding FROM memory_embeddings WHERE memory_id = ?1 AND provider_id = ?2 AND model = ?3",
-        params![id, DEFAULT_PROVIDER, DEFAULT_MODEL],
+        params![id, provider_id, model],
         |row| row.get(0),
     )?;
     Ok(vector::decode(&bytes))
@@ -407,6 +470,10 @@ fn parse_time(input: &str) -> anyhow::Result<OffsetDateTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::embeddings::{
+        EmbeddingModelDescriptor, EmbeddingProvider, EmbeddingProviderDescriptor, EmbeddingRequest,
+        EmbeddingResponse, EmbeddingVector,
+    };
 
     fn record(text: &str, scope: MemoryScope) -> MemoryRecord {
         MemoryRecord {
@@ -419,6 +486,46 @@ mod tests {
             deleted: false,
             created_at: OffsetDateTime::now_utc(),
             updated_at: OffsetDateTime::now_utc(),
+        }
+    }
+
+    #[derive(Clone)]
+    struct TestEmbeddingProvider;
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for TestEmbeddingProvider {
+        fn descriptor(&self) -> EmbeddingProviderDescriptor {
+            EmbeddingProviderDescriptor {
+                id: "test".to_string(),
+                name: "Test Embeddings".to_string(),
+                default_model: "test-model".to_string(),
+                models: vec![EmbeddingModelDescriptor {
+                    id: "test-model".to_string(),
+                    dimensions: 3,
+                    default: true,
+                }],
+            }
+        }
+
+        async fn embed(&self, request: EmbeddingRequest) -> anyhow::Result<EmbeddingResponse> {
+            let embeddings = request
+                .inputs
+                .into_iter()
+                .enumerate()
+                .map(|(index, input)| EmbeddingVector {
+                    index,
+                    values: if input.contains("needle") {
+                        vec![1.0, 0.0, 0.0]
+                    } else {
+                        vec![0.0, 1.0, 0.0]
+                    },
+                })
+                .collect();
+            Ok(EmbeddingResponse {
+                provider_id: "test".to_string(),
+                model: request.model,
+                embeddings,
+            })
         }
     }
 
@@ -447,5 +554,63 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results[0].record.id.as_deref(), Some(id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn sqlite_store_uses_configured_embedding_provider() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-memory-provider-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let store = SqliteMemoryStore::open_with_embedding_provider(
+            path,
+            Some(Arc::new(TestEmbeddingProvider)),
+        )
+        .unwrap();
+        let wanted = store
+            .put(record(
+                "needle vector memory",
+                MemoryScope::Project("p".to_string()),
+            ))
+            .await
+            .unwrap();
+        store
+            .put(record(
+                "billing policy",
+                MemoryScope::Project("p".to_string()),
+            ))
+            .await
+            .unwrap();
+
+        let row = store
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT provider_id, model, dimensions FROM memory_embeddings WHERE memory_id = ?1",
+                    params![&wanted],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!(row, ("test".to_string(), "test-model".to_string(), 3));
+
+        let results = store
+            .search(MemoryQuery {
+                scope: Some(MemoryScope::Project("p".to_string())),
+                text: "needle".to_string(),
+                limit: 5,
+                include_global: false,
+                provider_id: None,
+                model: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(results[0].record.id.as_deref(), Some(wanted.as_str()));
     }
 }

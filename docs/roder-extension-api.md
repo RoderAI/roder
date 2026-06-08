@@ -4,29 +4,6 @@ Roder's public extension API is the `roder-api` crate. Extensions register throu
 
 App clients inspect the installed surface with `extensions/list`. The response includes manifests and `capability_statuses`, keyed by extension id, so clients can show requested, granted, and denied capabilities without reading runtime internals.
 
-## Service Categories
-
-Extensions advertise installed services through `ProvidedService` and install
-the matching runtime objects through `ExtensionRegistryBuilder`.
-
-- `InferenceEngine` owns transport to a model provider and streams real model
-  responses.
-- `InferenceRouter` inspects bounded runtime context and recommends a
-  provider/model/reasoning selection before an inference request. Routers do not
-  proxy provider traffic and should return `abstain` when they cannot make a
-  safe local decision.
-- `ToolProvider` contributes model-visible tools.
-- Other provider categories cover thread stores, notifications, runners,
-  context providers, retrieval, speech, TUI surfaces, version control, and
-  extension-owned state.
-
-The canonical routing trait is `roder_api::InferenceRouter`. Its context
-includes default selection, runtime profile, phase, bounded transcript/tool
-summaries, candidate model descriptors, prior failure/escalation counters, and
-local signals. Core validates router selections against registered providers,
-auth availability, model descriptors, image support, tool-call support, context
-window, and reasoning support before applying them.
-
 ## Capability Boundaries
 
 Extensions must declare sensitive access in `required_capabilities`. Registry construction records each request and rejects incompatible manifests before runtime starts. Capability ids should be stable and action-oriented, for example:

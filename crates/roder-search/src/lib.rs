@@ -230,6 +230,18 @@ impl WorkspaceSearcher {
             }
             SearchMode::Auto | SearchMode::Indexed => {
                 let requested_scope = scoped_path(&self.root, &options.path)?;
+                // The persistent index is rooted at the workspace; absolute paths
+                // that point outside it can't be served from the index, so scan.
+                if !requested_scope.starts_with(&self.root) {
+                    return scan_search(
+                        &self.root,
+                        options,
+                        &query,
+                        start,
+                        SearchEngine::Scan,
+                        None,
+                    );
+                }
                 let should_warm = match self.index.as_ref() {
                     Some(index) => !requested_scope.starts_with(index.scope()),
                     None => true,

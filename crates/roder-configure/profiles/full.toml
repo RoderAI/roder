@@ -12,6 +12,7 @@ extensions = [
   "disk-context",
   "firecrawl-search",
   "gemini",
+  "google-embeddings",
   "jsonl-thread-store",
   "memory",
   "notify-desktop",
@@ -27,6 +28,7 @@ extensions = [
   "tavily-search",
   "webwright",
   "web-search",
+  "zeroentropy-embeddings",
   "zerolang",
 ]
 default_provider = "openai-responses"

@@ -267,7 +267,6 @@ async fn spawn_remote_websocket(
         options.token_ttl.map(|ttl| OffsetDateTime::now_utc() + ttl),
     ));
     let auth_backoff = Arc::new(RemoteAuthBackoff::default());
-    let allowed_origins = Arc::new(options.allowed_origins);
     let stop_events = app_server.clone();
     let task = tokio::spawn(async move {
         loop {
@@ -286,7 +285,6 @@ async fn spawn_remote_websocket(
             let app_server = app_server.clone();
             let remote_initialize_metadata = remote_initialize_metadata.clone();
             let auth_backoff = auth_backoff.clone();
-            let allowed_origins = allowed_origins.clone();
             tokio::spawn(async move {
                 let mut stream = stream;
                 if respond_to_health_probe(&mut stream).await {
@@ -299,12 +297,6 @@ async fn spawn_remote_websocket(
                 let callback = move |request: &Request,
                                      mut response: Response|
                       -> Result<Response, ErrorResponse> {
-                    if !origin_allowed(request, &allowed_origins) {
-                        let mut response =
-                            ErrorResponse::new(Some("origin not allowed".to_string()));
-                        *response.status_mut() = StatusCode::FORBIDDEN;
-                        return Err(response);
-                    }
                     if auth.verify_request(request) {
                         auth_backoff.reset(&auth_remote_addr);
                         if request_supports_remote_protocol(request) {
@@ -602,24 +594,6 @@ fn request_supports_remote_protocol(request: &Request) -> bool {
         })
 }
 
-fn origin_allowed(request: &Request, allowed_origins: &[String]) -> bool {
-    let Some(origin) = request
-        .headers()
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return true;
-    };
-    // Browser-extension clients (the Roder Chrome/Edge bridge) send an
-    // `Origin: chrome-extension://<id>` / `moz-extension://<id>` header. They are
-    // the intended remote clients and are authenticated by the bearer token, so
-    // accept extension origins without requiring an explicit allowlist entry.
-    if origin.starts_with("chrome-extension://") || origin.starts_with("moz-extension://") {
-        return true;
-    }
-    allowed_origins.iter().any(|allowed| allowed == origin)
-}
-
 fn token_preview(token: &str) -> String {
     let prefix = token.chars().take(4).collect::<String>();
     let suffix = token
@@ -712,6 +686,24 @@ mod tests {
     }
 
     #[test]
+    fn remote_auth_accepts_valid_bearer_from_any_origin() {
+        let token = RemoteToken::new("secret-token".to_string()).unwrap();
+        let auth = RemoteAuth::enabled(&token);
+        let request = Request::builder()
+            .uri("ws://127.0.0.1")
+            .header("Origin", "app://obsidian.md")
+            .header(
+                "Sec-WebSocket-Protocol",
+                "roder.remote.v1, bearer.secret-token",
+            )
+            .body(())
+            .unwrap();
+
+        assert!(auth.verify_request(&request));
+        assert!(request_supports_remote_protocol(&request));
+    }
+
+    #[test]
     fn remote_auth_rejects_expired_token_with_fake_clock() {
         let token = RemoteToken::new("secret-token".to_string()).unwrap();
         let expires_at = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(60);
@@ -744,38 +736,6 @@ mod tests {
 
         backoff.reset("127.0.0.1:1234");
         assert_eq!(backoff.record_failure("127.0.0.1:1234"), None);
-    }
-
-    #[test]
-    fn remote_origin_rejection_is_default_with_explicit_allowlist() {
-        let request = Request::builder()
-            .uri("ws://127.0.0.1")
-            .header("Origin", "https://client.example")
-            .body(())
-            .unwrap();
-        assert!(!origin_allowed(&request, &[]));
-        assert!(origin_allowed(
-            &request,
-            &["https://client.example".to_string()]
-        ));
-    }
-
-    #[test]
-    fn remote_origin_allows_browser_extension_without_allowlist() {
-        for origin in [
-            "chrome-extension://pnmbiignpnagfaihmkaclkpddlbejapo",
-            "moz-extension://1b2c3d4e-5f60-7081-9a0b-c1d2e3f40516",
-        ] {
-            let request = Request::builder()
-                .uri("ws://127.0.0.1")
-                .header("Origin", origin)
-                .body(())
-                .unwrap();
-            assert!(
-                origin_allowed(&request, &[]),
-                "extension origin {origin} should be allowed without an allowlist entry"
-            );
-        }
     }
 
     #[test]

@@ -3,6 +3,8 @@ use crate::diff::{DiffResolution, DiffViewMode, DiffViewerState};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum DiffKey {
+    NextFile,
+    PreviousFile,
     NextHunk,
     PreviousHunk,
     AcceptHunk,
@@ -23,6 +25,14 @@ pub enum DiffKeyOutcome {
 
 pub fn apply_key(state: &mut DiffViewerState, key: DiffKey) -> DiffKeyOutcome {
     match key {
+        DiffKey::NextFile => {
+            state.next_file();
+            DiffKeyOutcome::Consumed
+        }
+        DiffKey::PreviousFile => {
+            state.previous_file();
+            DiffKeyOutcome::Consumed
+        }
         DiffKey::NextHunk => {
             let count = state.hunk_count();
             if count > 0 {
@@ -95,6 +105,30 @@ mod tests {
         apply_key(&mut state, DiffKey::PreviousHunk);
         assert_eq!(state.hunk_index, 0);
         apply_key(&mut state, DiffKey::PreviousHunk);
+        assert_eq!(state.hunk_index, 0);
+    }
+
+    #[test]
+    fn diff_view_file_navigation_resets_hunk_cursor_and_clamps() {
+        let mut state = state(true);
+        let second = FileDiff {
+            path: "src/other.rs".into(),
+            change_type: "modify".to_string(),
+            before: Some("alpha\nbeta\n".to_string()),
+            after: "alpha\nBETA\n".to_string(),
+            supports_partial: true,
+            hunks: compute_diff(Some("alpha\nbeta\n"), "alpha\nBETA\n"),
+        };
+        state.pending.files.push(second);
+        apply_key(&mut state, DiffKey::NextHunk);
+        apply_key(&mut state, DiffKey::NextFile);
+        assert_eq!(state.file_index, 1);
+        assert_eq!(state.hunk_index, 0);
+
+        apply_key(&mut state, DiffKey::NextFile);
+        assert_eq!(state.file_index, 1);
+        apply_key(&mut state, DiffKey::PreviousFile);
+        assert_eq!(state.file_index, 0);
         assert_eq!(state.hunk_index, 0);
     }
 

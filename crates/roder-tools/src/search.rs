@@ -40,13 +40,17 @@ impl ToolExecutor for GrepTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "grep".to_string(),
-            description: "Search text files for a literal or regex query with paginated output. Relative paths resolve from the workspace root."
+            description: "Search text files for a literal or regex query with paginated output. Relative paths resolve from the workspace root; absolute paths are searched directly."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
-                    "path": { "type": "string", "default": "." },
+                    "path": {
+                        "type": "string",
+                        "default": ".",
+                        "description": "Directory or file to search. Relative paths resolve from the workspace root; an absolute path is searched directly."
+                    },
                     "regex": {
                         "type": "boolean",
                         "default": false,

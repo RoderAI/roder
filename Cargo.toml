@@ -31,11 +31,13 @@ rusqlite = { version = "0.38.0", features = ["bundled"] }
 semver = "1.0.28"
 serde = "1.0.228"
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
+sqlite-vec = "0.1.9"
 sqlx-core = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid"] }
 sqlx-postgres = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid"] }
 serde_yaml = "0.9.34"
 sha2 = "0.11.0"
 similar = "3.1.0"
+tar = "0.4.44"
 time = "0.3.47"
 tokio = { version = "1.52.3", default-features = false, features = [
     "fs",
@@ -52,6 +54,7 @@ tokio = { version = "1.52.3", default-features = false, features = [
 tokio-tungstenite = "0.28.0"
 toml = "1.1.2"
 urlencoding = "2.1.3"
+unicode-normalization = "0.1.25"
 uuid = "1.23.1"
 wasm-bindgen = "0.2.106"
 which = "6"
@@ -78,7 +81,7 @@ roder-ext-disk-context = { path = "crates/roder-ext-disk-context" }
 roder-ext-gemini = { path = "crates/roder-ext-gemini" }
 roder-ext-firecrawl-search = { path = "crates/roder-ext-firecrawl-search" }
 roder-ext-git = { path = "crates/roder-ext-git" }
-roder-ext-inference-router = { path = "crates/roder-ext-inference-router" }
+roder-ext-google-embeddings = { path = "crates/roder-ext-google-embeddings" }
 roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store" }
 roder-ext-memory = { path = "crates/roder-ext-memory" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop" }
@@ -88,6 +91,7 @@ roder-ext-openai-chat-completions = { path = "crates/roder-ext-openai-chat-compl
 roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings" }
 roder-ext-openai-speech = { path = "crates/roder-ext-openai-speech" }
 roder-ext-openrouter = { path = "crates/roder-ext-openrouter" }
+roder-ext-zeroentropy-embeddings = { path = "crates/roder-ext-zeroentropy-embeddings" }
 roder-ext-google-speech = { path = "crates/roder-ext-google-speech" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode" }
 roder-ext-postgres-session = { path = "crates/roder-ext-postgres-session" }
@@ -103,6 +107,7 @@ roder-ext-runner-e2b = { path = "crates/roder-ext-runner-e2b" }
 roder-ext-runner-hosted-common = { path = "crates/roder-ext-runner-hosted-common" }
 roder-ext-runner-modal = { path = "crates/roder-ext-runner-modal" }
 roder-ext-runner-runloop = { path = "crates/roder-ext-runner-runloop" }
+roder-ext-runner-sprites = { path = "crates/roder-ext-runner-sprites" }
 roder-ext-runner-unix-local = { path = "crates/roder-ext-runner-unix-local" }
 roder-ext-runner-vercel = { path = "crates/roder-ext-runner-vercel" }
 roder-ext-subagents = { path = "crates/roder-ext-subagents" }
