@@ -98,8 +98,21 @@ pub fn recency_intent(query: &str) -> bool {
         "as of today",
         "as of now",
         "currently",
+        "currently believe",
+        "current status",
+        "current state",
+        "current understanding",
+        "current role",
+        "current position",
+        "current outcome",
+        "current value",
+        "current owner",
+        "what is the current",
+        "what's the current",
         "present belief",
         "present understanding",
+        "present state",
+        "present status",
         "presently",
         "what changed",
         "no longer",
@@ -109,8 +122,13 @@ pub fn recency_intent(query: &str) -> bool {
         "still current",
         "still in effect",
         "as of the present",
-        "currently believe",
     ];
+    // "as of <past date>" snapshot questions must NOT trigger recency-to-now: they
+    // want the belief as-of-D (handled by the as-of visibility filter), not the
+    // latest record. Suppress when an explicit past as-of date is present.
+    if q.contains("as of 20") || q.contains("perspective of 20") || q.contains("standpoint of 20") {
+        return false;
+    }
     CUES.iter().any(|c| q.contains(c))
 }
 
