@@ -1243,6 +1243,13 @@ Request:
   "reasoning": "high",
   "toolAllowlist": ["edit", "read_file"],
   "developerInstructions": "You are embedded in HostApp.",
+  "externalTools": [
+    {
+      "name": "sauna_lookup",
+      "description": "Look up Sauna workspace state.",
+      "parameters": { "type": "object", "properties": { "query": { "type": "string" } } }
+    }
+  ],
   "ephemeral": false
 }
 ```
@@ -1267,7 +1274,14 @@ Response:
     "rootId": "root_abc123",
     "cwd": "/Users/pz/w/gode",
     "toolAllowlist": ["edit", "read_file"],
-    "developerInstructions": "You are embedded in HostApp."
+    "developerInstructions": "You are embedded in HostApp.",
+    "externalTools": [
+      {
+        "name": "sauna_lookup",
+        "description": "Look up Sauna workspace state.",
+        "parameters": { "type": "object", "properties": { "query": { "type": "string" } } }
+      }
+    ]
   },
   "model": "gpt-5.5",
   "modelProvider": "openai",
@@ -1294,7 +1308,12 @@ Behavior:
 - `developerInstructions` is optional. When present, the text is added to the
   developer slot of every turn's inference request, layered under the harness
   system prompt and ahead of harness addenda such as plan mode.
-- Both values persist in thread metadata and are surfaced on the `thread`
+- `externalTools` is optional. Each entry is a JSON-schema tool spec executed
+  by the client, not the server. The tools are advertised to the model on every
+  turn of the thread as given (allowlists do not filter them); an external tool
+  shadows a built-in tool with the same name. When the model calls one, the
+  server emits `thread/toolExecutionRequested` and waits for `tools/resolve`.
+- All three values persist in thread metadata and are surfaced on the `thread`
   object returned by `thread/start` and `thread/read`.
 - Emits `thread/started`.
 - `ephemeral` is accepted by the DTO but is not currently used by the handler.
@@ -1585,8 +1604,9 @@ Notifications:
 - zero or more typed item-event notifications such as `item/started`,
   `item/agentMessage/delta`, `item/reasoning/textDelta`, and `item/completed`
 - optional wait-state notifications: `thread/approvalRequested`,
-  `thread/userInputRequested`, or `thread/planExitRequested`, paired with
-  their corresponding resolved notifications when the client answers
+  `thread/userInputRequested`, `thread/planExitRequested`, or
+  `thread/toolExecutionRequested`, paired with their corresponding resolved
+  notifications when the client answers
 - terminal `turn/completed`
 - `thread/status/changed` with status `idle`
 
@@ -2204,6 +2224,46 @@ Behavior:
 
 - Only `get_goal`, `create_goal`, and `update_goal` can be called directly.
 - Other tool names return code `-32602`.
+
+### `tools/resolve`
+
+Purpose: Complete a pending host-executed external tool call published via
+`thread/toolExecutionRequested`.
+
+Request:
+
+```json
+{
+  "requestId": "exttool-9b6d6c2e",
+  "output": "2 open threads",
+  "isError": false
+}
+```
+
+Response:
+
+```json
+{
+  "resolved": true
+}
+```
+
+Behavior:
+
+- External tools are declared per thread via the `externalTools` param on
+  `thread/start`. When the model calls one, the server emits
+  `thread/toolExecutionRequested` with `requestId`, `threadId`, `turnId`, and
+  `call` (`{ "id", "name", "arguments" }`), then pauses that tool call.
+- `tools/resolve` feeds `output` back to the model as the tool result
+  (`isError` marks it as a failed call) and the turn continues. The server then
+  emits `thread/toolExecutionResolved` with `outcome: "resolved"`.
+- A call left unresolved past the server timeout (default 300s) fails with a
+  timeout error tool result, emits `thread/toolExecutionResolved` with
+  `outcome: "timedOut"`, and the turn continues.
+- `turn/interrupt` cancels pending calls for that turn and emits
+  `thread/toolExecutionResolved` with `outcome: "cancelled"`.
+- `resolved` is `false` when `requestId` is unknown, already resolved, timed
+  out, or cancelled.
 
 ### Discovery methods
 

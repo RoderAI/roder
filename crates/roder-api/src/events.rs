@@ -313,6 +313,39 @@ pub struct ApprovalResolved {
     pub timestamp: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalToolCallOutcome {
+    Resolved,
+    TimedOut,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalToolCallRequested {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalToolCallResolved {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub outcome: ExternalToolCallOutcome,
+    pub is_error: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInputRequested {
     pub thread_id: ThreadId,
@@ -1108,6 +1141,8 @@ pub enum RoderEvent {
     CodeIndexProofFilteredResultDropped(CodeIndexProofFilteredResultDropped),
     ApprovalRequested(ApprovalRequested),
     ApprovalResolved(ApprovalResolved),
+    ExternalToolCallRequested(ExternalToolCallRequested),
+    ExternalToolCallResolved(ExternalToolCallResolved),
     UserInputRequested(UserInputRequested),
     UserInputResolved(UserInputResolved),
     TaskLedgerUpdated(TaskLedgerUpdated),
@@ -1292,6 +1327,8 @@ impl RoderEvent {
             }
             RoderEvent::ApprovalRequested(_) => "approval.requested",
             RoderEvent::ApprovalResolved(_) => "approval.resolved",
+            RoderEvent::ExternalToolCallRequested(_) => "external_tool.requested",
+            RoderEvent::ExternalToolCallResolved(_) => "external_tool.resolved",
             RoderEvent::UserInputRequested(_) => "user_input.requested",
             RoderEvent::UserInputResolved(_) => "user_input.resolved",
             RoderEvent::TaskLedgerUpdated(_) => "task_ledger.updated",
@@ -1602,6 +1639,8 @@ impl RoderEvent {
             RoderEvent::CodeIndexProofFilteredResultDropped(e) => e.context.thread_id.as_ref(),
             RoderEvent::ApprovalRequested(e) => Some(&e.thread_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.thread_id),
+            RoderEvent::ExternalToolCallRequested(e) => Some(&e.thread_id),
+            RoderEvent::ExternalToolCallResolved(e) => Some(&e.thread_id),
             RoderEvent::UserInputRequested(e) => Some(&e.thread_id),
             RoderEvent::UserInputResolved(e) => Some(&e.thread_id),
             RoderEvent::TaskLedgerUpdated(e) => Some(&e.thread_id),
@@ -1780,6 +1819,8 @@ impl RoderEvent {
             RoderEvent::CodeIndexProofFilteredResultDropped(e) => e.context.turn_id.as_ref(),
             RoderEvent::ApprovalRequested(e) => Some(&e.turn_id),
             RoderEvent::ApprovalResolved(e) => Some(&e.turn_id),
+            RoderEvent::ExternalToolCallRequested(e) => Some(&e.turn_id),
+            RoderEvent::ExternalToolCallResolved(e) => Some(&e.turn_id),
             RoderEvent::UserInputRequested(e) => Some(&e.turn_id),
             RoderEvent::UserInputResolved(e) => Some(&e.turn_id),
             RoderEvent::TaskLedgerUpdated(e) => Some(&e.turn_id),

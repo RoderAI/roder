@@ -160,6 +160,12 @@ pub struct Thread {
     /// Host-supplied instructions added to the developer slot of every turn's inference request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub developer_instructions: Option<String>,
+    /**
+     * Host-executed tool specs advertised to the model on every turn of this thread. Calls pause
+     * on `thread/toolExecutionRequested` until the client answers with `tools/resolve`.
+     */
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_tools: Vec<ToolSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -482,6 +488,12 @@ pub struct ThreadStartParams {
     /// Host-supplied instructions added to the developer slot of every turn's inference request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub developer_instructions: Option<String>,
+    /**
+     * Host-executed tool specs advertised to the model on every turn of this thread. Calls pause
+     * on `thread/toolExecutionRequested` until the client answers with `tools/resolve`.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_tools: Option<Vec<ToolSpec>>,
     #[serde(default)]
     pub ephemeral: bool,
 }
@@ -958,6 +970,37 @@ pub struct ApprovalResolvedNotification {
     pub tool_id: String,
     pub tool_name: String,
     pub approved: bool,
+}
+
+/// Model-issued call to a host-executed external tool, embedded in `thread/toolExecutionRequested`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolExecutionRequestedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub call: ExternalToolCall,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolExecutionResolvedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub request_id: String,
+    pub tool_id: String,
+    pub tool_name: String,
+    /// "resolved", "timedOut", or "cancelled".
+    pub outcome: roder_api::events::ExternalToolCallOutcome,
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3362,6 +3405,22 @@ pub struct ThreadResolveApprovalParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadResolveApprovalResult {
+    pub resolved: bool,
+}
+
+/// Completes a pending host-executed tool call published via `thread/toolExecutionRequested`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsResolveParams {
+    pub request_id: String,
+    pub output: String,
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsResolveResult {
     pub resolved: bool,
 }
 

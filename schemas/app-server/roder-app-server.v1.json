@@ -1687,6 +1687,15 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "tools/resolve",
+      "paramsType": "ToolsResolveParams",
+      "resultType": "ToolsResolveResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "turn/interrupt",
       "paramsType": "TurnInterruptParams",
       "resultType": "TurnInterruptResult",

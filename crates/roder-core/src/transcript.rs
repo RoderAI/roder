@@ -355,7 +355,7 @@ mod tests {
     use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions, SkillRoot};
 
     use crate::fake_provider::FakeInferenceEngine;
-    use crate::runtime::{Runtime, RuntimeConfig, StartTurnRequest};
+    use crate::runtime::{DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS, Runtime, RuntimeConfig, StartTurnRequest};
 
     use super::*;
 
@@ -496,6 +496,7 @@ mod tests {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
                 tool_allowlist: Vec::new(),
+                external_tool_timeout_seconds: DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS,
                 command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
@@ -610,6 +611,7 @@ mod tests {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
                 tool_allowlist: Vec::new(),
+                external_tool_timeout_seconds: DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS,
                 command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 policy_mode: roder_api::policy_mode::PolicyMode::Default,
@@ -739,6 +741,7 @@ mod tests {
                 model_parallel_tool_calls: std::collections::HashMap::new(),
                 model_profiles: std::collections::HashMap::new(),
                 tool_allowlist: Vec::new(),
+                external_tool_timeout_seconds: DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS,
                 command_shell: roder_api::command_shell::default_command_shell(),
                 workspace: None,
                 roadmap_data_dir: None,

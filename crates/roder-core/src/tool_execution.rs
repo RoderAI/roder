@@ -94,6 +94,23 @@ impl Runtime {
             &parsed_args,
         ))
         .await;
+        /*
+         * External tools are checked before the registry so a host-declared tool shadows a
+         * built-in of the same name, matching the advertised toolset (`filtered_tool_specs`).
+         * They skip schema validation and the policy gate: the host supplied the schema and
+         * executes the call itself.
+         */
+        if self
+            .thread_turn_overrides(thread_id)
+            .await?
+            .external_tools
+            .iter()
+            .any(|spec| spec.name == call.name)
+        {
+            return self
+                .execute_external_tool_call(thread_id, turn_id, &call, parsed_args)
+                .await;
+        }
         let Some(executor) = self.tool_registry.get(&call.name) else {
             emit_tool_validation_recorded(
                 self,
@@ -647,6 +664,118 @@ impl Runtime {
             }
             _ => {}
         }
+    }
+
+    /**
+     * Publishes the call to the host client and pauses the turn on a oneshot until
+     * `tools/resolve` answers, the configured timeout expires, or the turn is interrupted
+     * (which cancels the pending entry). Timeout and cancellation surface as error tool
+     * results so the turn continues instead of hanging.
+     */
+    async fn execute_external_tool_call(
+        self: &Arc<Self>,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        call: &roder_api::inference::ToolCallCompleted,
+        parsed_args: Value,
+    ) -> anyhow::Result<ToolResultRecord> {
+        self.emit(RoderEvent::ToolCallStarted(ToolCallStarted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            tool_id: call.id.clone(),
+            tool_name: Some(call.name.clone()),
+            display_payload: tool_display_payload(Some(&call.name), Some(&parsed_args), None),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        let request_id = format!("exttool-{}", uuid::Uuid::new_v4());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending_external_tool_calls.lock().await.insert(
+            request_id.clone(),
+            crate::runtime::PendingExternalToolCall {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                tx,
+            },
+        );
+        self.emit(RoderEvent::ExternalToolCallRequested(
+            ExternalToolCallRequested {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                request_id: request_id.clone(),
+                tool_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                arguments: parsed_args.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        let timeout_seconds = self.status().await.external_tool_timeout_seconds;
+        let timeout = std::time::Duration::from_secs(timeout_seconds);
+        let resolution = match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(resolution)) => resolution,
+            // Sender dropped: the pending entry was cancelled by a turn interrupt.
+            Ok(Err(_)) => crate::runtime::ExternalToolResolution {
+                output: format!("external tool call {} was cancelled", call.name),
+                is_error: true,
+            },
+            Err(_) => {
+                let removed = self
+                    .pending_external_tool_calls
+                    .lock()
+                    .await
+                    .remove(&request_id);
+                if removed.is_some() {
+                    self.emit(RoderEvent::ExternalToolCallResolved(
+                        ExternalToolCallResolved {
+                            thread_id: thread_id.clone(),
+                            turn_id: turn_id.clone(),
+                            request_id: request_id.clone(),
+                            tool_id: call.id.clone(),
+                            tool_name: call.name.clone(),
+                            outcome: ExternalToolCallOutcome::TimedOut,
+                            is_error: true,
+                            timestamp: OffsetDateTime::now_utc(),
+                        },
+                    ))
+                    .await;
+                }
+                crate::runtime::ExternalToolResolution {
+                    output: format!(
+                        "external tool call {} timed out after {timeout_seconds}s waiting for tools/resolve",
+                        call.name
+                    ),
+                    is_error: true,
+                }
+            }
+        };
+        let item = ToolResultRecord {
+            id: call.id.clone(),
+            name: Some(call.name.clone()),
+            result: cap_tool_output_lines(resolution.output),
+            display_payload: tool_display_payload(Some(&call.name), Some(&parsed_args), None),
+            is_error: resolution.is_error,
+        };
+        self.persist_turn_item(
+            thread_id,
+            turn_id,
+            &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
+        )
+        .await?;
+        self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            tool_id: item.id.clone(),
+            tool_name: item.name.clone(),
+            display_payload: item.display_payload.clone(),
+            is_error: item.is_error,
+            output: Some(item.result.clone()),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
+        .await;
+        Ok(item)
     }
 
     async fn request_tool_approval(
