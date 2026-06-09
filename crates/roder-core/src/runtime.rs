@@ -76,7 +76,7 @@ use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
-const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
+pub(crate) const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
 const TASK_LEDGER_COMPLETION_REMINDER_LIMIT: u8 = 2;
 const TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS: u64 = 180;
 const TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT: u8 = 1;
@@ -1648,6 +1648,16 @@ impl Runtime {
                     abort_registration,
                 )
                 .await;
+                /*
+                 * A failed sibling in a parallel tool batch drops in-flight external tool
+                 * futures (`try_join_all` in `route_tool_calls`), stranding their
+                 * `pending_external_tool_calls` entries. Sweep before reporting the turn
+                 * outcome so every `thread/toolExecutionRequested` gets a terminal
+                 * resolution; on clean completion the map holds nothing for this turn.
+                 */
+                runtime
+                    .cancel_pending_external_tool_calls_for_turn(&turn_id_for_task)
+                    .await;
                 let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
                 if let Ok(Err(err)) = &result {
                     // run_turn emits failures after the stream starts; this covers setup/startup errors.
@@ -3610,7 +3620,7 @@ fn model_profile_for_model(cfg: &RuntimeConfig, model: &str) -> Option<ModelHarn
         .or_else(|| built_in_model_profile(model))
 }
 
-fn allowlist_permits(allowlist: &[String], tool_name: &str) -> bool {
+pub(crate) fn allowlist_permits(allowlist: &[String], tool_name: &str) -> bool {
     allowlist.is_empty() || allowlist.iter().any(|allowed| allowed == tool_name)
 }
 
@@ -5747,6 +5757,223 @@ mod tests {
         assert!(unrestricted_names.len() > 1);
 
         let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    /// Builds a store-backed runtime whose `RuntimeConfig.tool_allowlist` is `["edit"]`.
+    fn runtime_with_edit_allowlist(
+        requests: &Arc<StdMutex<Vec<AgentInferenceRequest>>>,
+        thread_root: &std::path::Path,
+    ) -> Arc<Runtime> {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SwitchCaptureEngine {
+            requests: requests.clone(),
+        }));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.to_path_buf(),
+        }));
+        builder.tool_contributor(Arc::new(ProfileToolContributor));
+        Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    tool_allowlist: vec!["edit".to_string()],
+                    model_profiles: std::collections::HashMap::from([(
+                        "gpt-5.5".to_string(),
+                        test_model_profile("gpt-5.5"),
+                    )]),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn runtime_and_thread_allowlists_intersect() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-allowlist-intersect-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let runtime = runtime_with_edit_allowlist(&requests, &thread_root);
+
+        let request = captured_thread_override_request(
+            &runtime,
+            &requests,
+            vec!["edit".to_string(), "write_file".to_string()],
+            None,
+            Vec::new(),
+        )
+        .await;
+
+        // The thread allowlist must not re-enable tools the runtime allowlist bans.
+        let names = request
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["edit"]);
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn route_tool_call_denies_tools_outside_allowlists() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-allowlist-dispatch-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let runtime = runtime_with_edit_allowlist(&requests, &thread_root);
+        let thread_id = runtime
+            .create_thread_with(CreateThreadRequest {
+                title: Some("Dispatch allowlist".to_string()),
+                workspace: test_workspace(),
+                workspace_id: None,
+                root_id: None,
+                provider: None,
+                model: None,
+                selection_mode: None,
+                tool_allowlist: vec!["edit".to_string(), "write_file".to_string()],
+                developer_instructions: None,
+                external_tools: Vec::new(),
+            })
+            .await
+            .unwrap()
+            .thread_id;
+
+        // write_file is registered and on the thread allowlist but banned by the runtime allowlist.
+        let result = runtime
+            .route_tool_call(
+                &thread_id,
+                &"turn-allowlist-dispatch".to_string(),
+                roder_api::inference::ToolCallCompleted {
+                    id: "call-1".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: r#"{"path":"a.txt","content":"hi"}"#.to_string(),
+                },
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(
+            result.result.contains("not permitted by the tool allowlist"),
+            "unexpected result: {}",
+            result.result
+        );
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    /// Signals when inference starts, then waits for `proceed` and fails the stream.
+    struct SignalledFailureEngine {
+        started: tokio::sync::mpsc::UnboundedSender<()>,
+        proceed: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for SignalledFailureEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            _request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            let _ = self.started.send(());
+            self.proceed.notified().await;
+            anyhow::bail!("engine failed mid-turn")
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_turn_sweeps_pending_external_tool_calls() {
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+        let proceed = Arc::new(tokio::sync::Notify::new());
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SignalledFailureEngine {
+            started: started_tx,
+            proceed: proceed.clone(),
+        }));
+        let runtime =
+            Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-sweep".to_string(),
+                message: "go".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle {
+                    system: None,
+                    developer: None,
+                },
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), started_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let (tx, _pending_rx) = oneshot::channel();
+        runtime.pending_external_tool_calls.lock().await.insert(
+            "exttool-sweep-test".to_string(),
+            PendingExternalToolCall {
+                thread_id: "thread-sweep".to_string(),
+                turn_id: turn_id.clone(),
+                tool_id: "call-1".to_string(),
+                tool_name: "sauna_lookup".to_string(),
+                tx,
+            },
+        );
+        proceed.notify_one();
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if let RoderEvent::ExternalToolCallResolved(event) = envelope.event
+                    && event.request_id == "exttool-sweep-test"
+                {
+                    break event.outcome;
+                }
+            }
+        })
+        .await
+        .expect("turn failure must resolve pending external tool calls");
+        assert_eq!(outcome, ExternalToolCallOutcome::Cancelled);
+        assert!(
+            runtime
+                .pending_external_tool_calls
+                .lock()
+                .await
+                .is_empty()
+        );
     }
 
     #[tokio::test]
