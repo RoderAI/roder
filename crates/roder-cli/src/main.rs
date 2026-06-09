@@ -1183,7 +1183,7 @@ pub(crate) async fn build_runtime_from_config(
             model_parallel_tool_calls,
             model_profiles,
             tool_allowlist,
-            external_tool_timeout_seconds: external_tool_timeout_seconds(),
+            external_tool_timeout_seconds: external_tool_timeout_seconds()?,
             command_shell,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
@@ -2743,11 +2743,20 @@ fn resolve_web_search_provider_config(
     }
 }
 
-/** Host override for how long external tool calls wait on `tools/resolve`. */
-fn external_tool_timeout_seconds() -> u64 {
-    env_nonempty("RODER_EXTERNAL_TOOL_TIMEOUT_SECONDS")
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(roder_core::DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS)
+/**
+ * Host override for how long external tool calls wait on `tools/resolve`.
+ * Unparseable values fail startup instead of silently running with the
+ * 300s default the host believed it had overridden.
+ */
+fn external_tool_timeout_seconds() -> anyhow::Result<u64> {
+    let Some(value) = env_nonempty("RODER_EXTERNAL_TOOL_TIMEOUT_SECONDS") else {
+        return Ok(roder_core::DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS);
+    };
+    value.parse().map_err(|err| {
+        anyhow::anyhow!(
+            "RODER_EXTERNAL_TOOL_TIMEOUT_SECONDS must be a whole number of seconds, got {value:?}: {err}"
+        )
+    })
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
