@@ -100,9 +100,8 @@ impl Runtime {
          * They skip schema validation and the policy gate: the host supplied the schema and
          * executes the call itself.
          */
-        if self
-            .thread_turn_overrides(thread_id)
-            .await?
+        let overrides = self.thread_turn_overrides(thread_id).await?;
+        if overrides
             .external_tools
             .iter()
             .any(|spec| spec.name == call.name)
@@ -110,6 +109,48 @@ impl Runtime {
             return self
                 .execute_external_tool_call(thread_id, turn_id, &call, parsed_args)
                 .await;
+        }
+        /*
+         * Allowlists gate dispatch, not just advertisement: models call unadvertised
+         * tools by name from training priors, and in bypass/auto-approve configs the
+         * policy gate would otherwise execute them. The task ledger tool is exempt
+         * because eval turns advertise it outside `filtered_tool_specs`.
+         */
+        if call.name != crate::runtime::TASK_LEDGER_TOOL_NAME {
+            let runtime_allowlist = self.status().await.tool_allowlist;
+            if !crate::runtime::allowlist_permits(&runtime_allowlist, &call.name)
+                || !crate::runtime::allowlist_permits(&overrides.tool_allowlist, &call.name)
+            {
+                let item = ToolResultRecord {
+                    id: call.id.clone(),
+                    name: Some(call.name.clone()),
+                    result: format!("tool {} is not permitted by the tool allowlist", call.name),
+                    display_payload: tool_display_payload(
+                        Some(&call.name),
+                        Some(&parsed_args),
+                        None,
+                    ),
+                    is_error: true,
+                };
+                self.persist_turn_item(
+                    thread_id,
+                    turn_id,
+                    &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
+                )
+                .await?;
+                self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: call.id,
+                    tool_name: item.name.clone(),
+                    display_payload: item.display_payload.clone(),
+                    is_error: true,
+                    output: Some(item.result.clone()),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                return Ok(item);
+            }
         }
         let Some(executor) = self.tool_registry.get(&call.name) else {
             emit_tool_validation_recorded(
@@ -714,7 +755,9 @@ impl Runtime {
         .await;
         let timeout_seconds = self.status().await.external_tool_timeout_seconds;
         let timeout = std::time::Duration::from_secs(timeout_seconds);
-        let resolution = match tokio::time::timeout(timeout, rx).await {
+        let mut rx = rx;
+        let wait_result = tokio::time::timeout(timeout, &mut rx).await;
+        let resolution = match wait_result {
             Ok(Ok(resolution)) => resolution,
             // Sender dropped: the pending entry was cancelled by a turn interrupt.
             Ok(Err(_)) => crate::runtime::ExternalToolResolution {
@@ -722,6 +765,13 @@ impl Runtime {
                 is_error: true,
             },
             Err(_) => {
+                /*
+                 * Whoever removes the map entry owns the outcome. When the timer fires
+                 * but `remove` returns `None`, `resolve_external_tool_call` won the race:
+                 * it already acked the host (`resolved: true`, outcome=resolved), so the
+                 * delivered resolution must be honored instead of fabricating a timeout
+                 * the host never saw.
+                 */
                 let removed = self
                     .pending_external_tool_calls
                     .lock()
@@ -741,13 +791,22 @@ impl Runtime {
                         },
                     ))
                     .await;
-                }
-                crate::runtime::ExternalToolResolution {
-                    output: format!(
-                        "external tool call {} timed out after {timeout_seconds}s waiting for tools/resolve",
-                        call.name
-                    ),
-                    is_error: true,
+                    crate::runtime::ExternalToolResolution {
+                        output: format!(
+                            "external tool call {} timed out after {timeout_seconds}s waiting for tools/resolve",
+                            call.name
+                        ),
+                        is_error: true,
+                    }
+                } else {
+                    match rx.await {
+                        Ok(resolution) => resolution,
+                        // Entry was removed by the interrupt sweep, which drops the sender.
+                        Err(_) => crate::runtime::ExternalToolResolution {
+                            output: format!("external tool call {} was cancelled", call.name),
+                            is_error: true,
+                        },
+                    }
                 }
             }
         };
