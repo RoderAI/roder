@@ -173,6 +173,13 @@ pub struct Turn {
     pub duration_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+    /**
+     * Normalized stop reason of the turn's terminal inference step ("stop",
+     * "length", "toolUse", "contentFilter", "refusal", or a provider-native
+     * value passed through). Present on `turn/completed` for completed turns.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

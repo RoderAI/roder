@@ -4868,8 +4868,12 @@ targets the same stable item id that later appears in `thread/read`.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
 `completed`, `failed`, or `interrupted`. Completed and failed turns include
-`turn.usage` when provider usage was reported, including `cached_prompt_tokens`
-and `cache_hit_rate`.
+`turn.usage` when provider usage was reported, including `cached_prompt_tokens`,
+`cache_creation_prompt_tokens` (both subsets of `prompt_tokens`), and
+`cache_hit_rate`. Completed turns include `turn.finishReason`: the terminal
+inference step's stop reason normalized to `stop`, `length`, `toolUse`,
+`contentFilter`, or `refusal`; unknown provider stop reasons pass through
+unchanged.
 
 `thread/status/changed`:
 

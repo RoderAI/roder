@@ -820,6 +820,12 @@ pub struct TurnCompleted {
     pub turn_id: TurnId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+    /**
+     * Normalized stop reason of the turn's terminal inference step; see
+     * `crate::inference::finish_reason_from_stop_reason` for the vocabulary.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }

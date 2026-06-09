@@ -77,6 +77,7 @@ fn extension_authors_can_project_turns_from_raw_events() {
                 thread_id: thread_id.clone(),
                 turn_id: first_turn.clone(),
                 usage: Some(usage.clone()),
+                finish_reason: Some("stop".to_string()),
                 timestamp: completed_at,
             }),
         ),

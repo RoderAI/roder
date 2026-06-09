@@ -586,10 +586,12 @@ impl InferenceEngine for UsageReportingEngine {
                 phase: None,
             })),
             Ok(InferenceEvent::Usage(
-                TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92),
+                TokenUsage::new(100, 10, 110)
+                    .with_cached_prompt_tokens(92)
+                    .with_cache_creation_prompt_tokens(5),
             )),
             Ok(InferenceEvent::Completed(CompletionMetadata {
-                stop_reason: Some("stop".to_string()),
+                stop_reason: Some("end_turn".to_string()),
                 provider_response_id: None,
             })),
         ])))
@@ -5048,10 +5050,15 @@ async fn turn_usage_cache_metrics_are_exposed_on_notifications_and_thread_metada
         wait_for_notification(&mut notifications, "turn/completed", Some(&thread_id)).await;
 
     assert_eq!(completed.params["turn"]["id"], turn.turn_id);
+    assert_eq!(completed.params["turn"]["finishReason"], "stop");
     assert_eq!(completed.params["turn"]["usage"]["prompt_tokens"], 100);
     assert_eq!(
         completed.params["turn"]["usage"]["cached_prompt_tokens"],
         92
+    );
+    assert_eq!(
+        completed.params["turn"]["usage"]["cache_creation_prompt_tokens"],
+        5
     );
     assert!(
         (completed.params["turn"]["usage"]["cache_hit_rate"]
@@ -5078,6 +5085,7 @@ async fn turn_usage_cache_metrics_are_exposed_on_notifications_and_thread_metada
     let usage = thread.usage.expect("thread metadata includes usage");
     assert_eq!(usage.prompt_tokens, 100);
     assert_eq!(usage.cached_prompt_tokens, 92);
+    assert_eq!(usage.cache_creation_prompt_tokens, 5);
     assert!((usage.cache_hit_rate.unwrap() - 0.92).abs() < f64::EPSILON);
     assert_eq!(
         thread.turns.unwrap()[0]

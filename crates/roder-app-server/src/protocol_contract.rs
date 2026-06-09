@@ -178,6 +178,7 @@ fn protocol_turn_from_item_turn(record: &ThreadItemTurnRecord) -> Turn {
         completed_at: None,
         duration_ms: None,
         usage: None,
+        finish_reason: None,
     }
 }
 
@@ -204,6 +205,7 @@ fn protocol_turn_from_items(
         completed_at: record.completed_at.map(|time| time.unix_timestamp()),
         duration_ms,
         usage: record.usage.clone(),
+        finish_reason: None,
     }
 }
 

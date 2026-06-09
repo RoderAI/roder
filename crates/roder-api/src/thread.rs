@@ -47,6 +47,9 @@ pub struct ThreadUsageMetadata {
     pub total_tokens: u64,
     #[serde(default)]
     pub cached_prompt_tokens: u64,
+    /// Subset of `prompt_tokens` written to the provider prompt cache.
+    #[serde(default)]
+    pub cache_creation_prompt_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_hit_rate: Option<f64>,
 }
@@ -65,6 +68,9 @@ impl ThreadUsageMetadata {
         self.cached_prompt_tokens = self
             .cached_prompt_tokens
             .saturating_add(u64::from(usage.cached_prompt_tokens));
+        self.cache_creation_prompt_tokens = self
+            .cache_creation_prompt_tokens
+            .saturating_add(u64::from(usage.cache_creation_prompt_tokens));
         self.cache_hit_rate = if self.prompt_tokens == 0 {
             None
         } else if self.prompt_tokens > u64::from(u32::MAX) {
@@ -82,6 +88,7 @@ impl ThreadUsageMetadata {
             && self.completion_tokens == 0
             && self.total_tokens == 0
             && self.cached_prompt_tokens == 0
+            && self.cache_creation_prompt_tokens == 0
     }
 }
 
@@ -544,11 +551,20 @@ mod tests {
     fn thread_usage_metadata_accumulates_cache_hit_rate() {
         let mut usage = ThreadUsageMetadata::default();
 
-        usage.add_token_usage(&TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92));
-        usage.add_token_usage(&TokenUsage::new(50, 5, 55).with_cached_prompt_tokens(43));
+        usage.add_token_usage(
+            &TokenUsage::new(100, 10, 110)
+                .with_cached_prompt_tokens(92)
+                .with_cache_creation_prompt_tokens(5),
+        );
+        usage.add_token_usage(
+            &TokenUsage::new(50, 5, 55)
+                .with_cached_prompt_tokens(43)
+                .with_cache_creation_prompt_tokens(3),
+        );
 
         assert_eq!(usage.prompt_tokens, 150);
         assert_eq!(usage.cached_prompt_tokens, 135);
+        assert_eq!(usage.cache_creation_prompt_tokens, 8);
         assert!((usage.cache_hit_rate.unwrap() - 0.9).abs() < f64::EPSILON);
     }
 

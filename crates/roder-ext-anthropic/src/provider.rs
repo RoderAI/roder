@@ -420,7 +420,8 @@ fn extract_usage(value: &Value) -> Option<TokenUsage> {
             completion_tokens,
             prompt_tokens.saturating_add(completion_tokens),
         )
-        .with_cached_prompt_tokens(cache_read_tokens),
+        .with_cached_prompt_tokens(cache_read_tokens)
+        .with_cache_creation_prompt_tokens(cache_creation_tokens),
     )
 }
 
@@ -680,7 +681,11 @@ mod tests {
         );
         assert_eq!(
             extract_usage(&value),
-            Some(TokenUsage::new(11, 7, 18).with_cached_prompt_tokens(8))
+            Some(
+                TokenUsage::new(11, 7, 18)
+                    .with_cached_prompt_tokens(8)
+                    .with_cache_creation_prompt_tokens(1)
+            )
         );
     }
 

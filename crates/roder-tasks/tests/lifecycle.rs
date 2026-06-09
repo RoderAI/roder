@@ -280,6 +280,7 @@ async fn auto_cancel_on_session_end_cancels_running_thread_tasks() {
                 thread_id: "thread-a".to_string(),
                 turn_id: "turn-a".to_string(),
                 usage: None,
+                finish_reason: None,
                 timestamp: OffsetDateTime::now_utc(),
             }),
         })

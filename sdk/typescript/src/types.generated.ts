@@ -185,6 +185,141 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "chrome/browsers/list",
+      "paramsType": "ChromeBrowsersListParams",
+      "resultType": "ChromeBrowsersListResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/debug/console",
+      "paramsType": "ChromeDebugConsoleParams",
+      "resultType": "ChromeDebugConsoleResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/debug/network",
+      "paramsType": "ChromeDebugNetworkParams",
+      "resultType": "ChromeDebugNetworkResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/disable",
+      "paramsType": "ChromeDisableParams",
+      "resultType": "ChromeDisableResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/enable",
+      "paramsType": "ChromeEnableParams",
+      "resultType": "ChromeEnableResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/page/action",
+      "paramsType": "ChromePageActionParams",
+      "resultType": "ChromePageActionResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/page/snapshot",
+      "paramsType": "ChromePageSnapshotParams",
+      "resultType": "ChromePageSnapshotResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/permissions/list",
+      "paramsType": "ChromePermissionsListParams",
+      "resultType": "ChromePermissionsListResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/permissions/update",
+      "paramsType": "ChromePermissionsUpdateParams",
+      "resultType": "ChromePermissionsUpdateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/reconnect",
+      "paramsType": "ChromeReconnectParams",
+      "resultType": "ChromeReconnectResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/setMode",
+      "paramsType": "ChromeSetModeParams",
+      "resultType": "ChromeSetModeResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "chrome/status",
+      "paramsType": "ChromeStatusParams",
+      "resultType": "ChromeStatusResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/tabs/activate",
+      "paramsType": "ChromeTabsActivateParams",
+      "resultType": "ChromeTabsActivateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/tabs/list",
+      "paramsType": "ChromeTabsListParams",
+      "resultType": "ChromeTabsListResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/tabs/navigate",
+      "paramsType": "ChromeTabsNavigateParams",
+      "resultType": "ChromeTabsNavigateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "command/exec",
       "paramsType": "CommandExecParams",
       "resultType": "CommandExecResult",
@@ -219,6 +354,126 @@ export const appServerManifest = {
       "featureGroup": "commands",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "design/batch_get",
+      "paramsType": "DesignBatchGetParams",
+      "resultType": "DesignBatchGetResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/export_nodes",
+      "paramsType": "DesignExportNodesParams",
+      "resultType": "DesignExportNodesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/exportCompleted"
+      ]
+    },
+    {
+      "method": "design/get_editor_state",
+      "paramsType": "DesignGetEditorStateParams",
+      "resultType": "DesignGetEditorStateResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_guidelines",
+      "paramsType": "DesignGetGuidelinesParams",
+      "resultType": "DesignGetGuidelinesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_screenshot",
+      "paramsType": "DesignGetScreenshotParams",
+      "resultType": "DesignGetScreenshotResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/get_variables",
+      "paramsType": "DesignGetVariablesParams",
+      "resultType": "DesignGetVariablesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/patch",
+      "paramsType": "DesignPatchParams",
+      "resultType": "DesignPatchResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/documentChanged"
+      ]
+    },
+    {
+      "method": "design/read",
+      "paramsType": "DesignReadParams",
+      "resultType": "DesignReadResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/set_selection",
+      "paramsType": "DesignSetSelectionParams",
+      "resultType": "DesignSetSelectionResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/selectionChanged"
+      ]
+    },
+    {
+      "method": "design/set_variables",
+      "paramsType": "DesignSetVariablesParams",
+      "resultType": "DesignSetVariablesResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "design/documentChanged"
+      ]
+    },
+    {
+      "method": "design/snapshot_layout",
+      "paramsType": "DesignSnapshotLayoutParams",
+      "resultType": "DesignSnapshotLayoutResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "design/spawn_agents",
+      "paramsType": "DesignSpawnAgentsParams",
+      "resultType": "DesignSpawnAgentsResult",
+      "stability": "stable",
+      "featureGroup": "design",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "discovery/groups",
@@ -397,6 +652,24 @@ export const appServerManifest = {
       "resultType": "IndexStatusResult",
       "stability": "stable",
       "featureGroup": "code-index",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "inference/routing/metrics",
+      "paramsType": "InferenceRoutingMetricsParams",
+      "resultType": "InferenceRoutingMetricsResult",
+      "stability": "stable",
+      "featureGroup": "inference",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "inference/routing/status",
+      "paramsType": "InferenceRoutingStatusParams",
+      "resultType": "InferenceRoutingStatusResult",
+      "stability": "stable",
+      "featureGroup": "inference",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -606,6 +879,15 @@ export const appServerManifest = {
       "featureGroup": "models",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "model/select",
+      "paramsType": "ModelSelectParams",
+      "resultType": "ModelSelectResult",
+      "stability": "stable",
+      "featureGroup": "models",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "plan/review/approve",
@@ -1931,10 +2213,37 @@ export const appServerMethods = [
   "automations/runs",
   "automations/status",
   "automations/update",
+  "chrome/browsers/list",
+  "chrome/debug/console",
+  "chrome/debug/network",
+  "chrome/disable",
+  "chrome/enable",
+  "chrome/page/action",
+  "chrome/page/snapshot",
+  "chrome/permissions/list",
+  "chrome/permissions/update",
+  "chrome/reconnect",
+  "chrome/setMode",
+  "chrome/status",
+  "chrome/tabs/activate",
+  "chrome/tabs/list",
+  "chrome/tabs/navigate",
   "command/exec",
   "commands/expand",
   "commands/list",
   "commands/run",
+  "design/batch_get",
+  "design/export_nodes",
+  "design/get_editor_state",
+  "design/get_guidelines",
+  "design/get_screenshot",
+  "design/get_variables",
+  "design/patch",
+  "design/read",
+  "design/set_selection",
+  "design/set_variables",
+  "design/snapshot_layout",
+  "design/spawn_agents",
   "discovery/groups",
   "discovery/promote",
   "discovery/promoted/clear",
@@ -1955,6 +2264,8 @@ export const appServerMethods = [
   "index/rebuild",
   "index/search",
   "index/status",
+  "inference/routing/metrics",
+  "inference/routing/status",
   "initialize",
   "marketplaces/add",
   "marketplaces/install_default",
@@ -1978,6 +2289,7 @@ export const appServerMethods = [
   "memory/save",
   "memory/update",
   "model/list",
+  "model/select",
   "plan/review/approve",
   "plan/review/comment",
   "plan/review/read",
