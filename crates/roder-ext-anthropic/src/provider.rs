@@ -41,11 +41,13 @@ impl AnthropicEngine {
         if !system.is_empty() {
             body["system"] = json!(system);
         }
-        if let Some(temperature) = request.output.temperature {
-            body["temperature"] = json!(temperature);
-        }
-        if let Some(top_p) = request.output.top_p {
-            body["top_p"] = json!(top_p);
+        if anthropic_model_accepts_sampling_params(&request.model.model) {
+            if let Some(temperature) = request.output.temperature {
+                body["temperature"] = json!(temperature);
+            }
+            if let Some(top_p) = request.output.top_p {
+                body["top_p"] = json!(top_p);
+            }
         }
         if request.reasoning.enabled
             && let Some(level) = request.reasoning.level.as_deref()
@@ -120,7 +122,7 @@ impl InferenceEngine for AnthropicEngine {
                 phase: None,
             })));
         }
-        for call in extract_tool_calls(&value) {
+        for call in extract_tool_calls(&value, &request.tools) {
             events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
         }
         if let Some(usage) = extract_usage(&value) {
@@ -236,7 +238,7 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
                 "content": [{
                     "type": "tool_use",
                     "id": call.id,
-                    "name": call.name,
+                    "name": anthropic_tool_name(&call.name),
                     "input": parse_json_object(&call.arguments)
                 }]
             })),
@@ -260,9 +262,27 @@ fn anthropic_tool_choice(choice: &roder_api::tools::ToolChoice) -> Value {
         roder_api::tools::ToolChoice::Any => json!({ "type": "any" }),
         roder_api::tools::ToolChoice::None => json!({ "type": "none" }),
         roder_api::tools::ToolChoice::Specific(name) => {
-            json!({ "type": "tool", "name": name })
+            json!({ "type": "tool", "name": anthropic_tool_name(name) })
         }
     }
+}
+
+/// Anthropic rejects tool names outside ^[a-zA-Z0-9_-]{1,128}$, but roder tool
+/// names may contain dots (discovery.read, webwright.run_script). Dots become
+/// "__" on the wire; canonical_tool_name reverses the mapping on response parse.
+fn anthropic_tool_name(name: &str) -> String {
+    name.replace('.', "__")
+}
+
+fn canonical_tool_name(wire_name: &str, tools: &[roder_api::tools::ToolSpec]) -> String {
+    if tools.iter().any(|tool| tool.name == wire_name) {
+        return wire_name.to_string();
+    }
+    tools
+        .iter()
+        .find(|tool| anthropic_tool_name(&tool.name) == wire_name)
+        .map(|tool| tool.name.clone())
+        .unwrap_or_else(|| wire_name.to_string())
 }
 
 fn anthropic_tools(request: &AgentInferenceRequest) -> Vec<Value> {
@@ -276,7 +296,7 @@ fn anthropic_tools(request: &AgentInferenceRequest) -> Vec<Value> {
     tools.extend(request.tools.iter().map(|tool| {
         let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
         let mut value = json!({
-            "name": tool.name,
+            "name": anthropic_tool_name(&tool.name),
             "description": tool.description,
             "input_schema": tool.parameters,
         });
@@ -297,8 +317,17 @@ fn anthropic_provider_native_tool_search(request: &AgentInferenceRequest) -> boo
 fn anthropic_model_supports_tool_search(model: &str) -> bool {
     model.starts_with("claude-sonnet-4-6")
         || model.starts_with("claude-opus-4-8")
+        || model.starts_with("claude-fable")
         || model.starts_with("claude-4")
         || model.starts_with("claude-5")
+}
+
+// Fable 5 and Opus 4.7/4.8 reject sampling parameters (`temperature`,
+// `top_p`, `top_k`) with a 400 — they must be omitted from the request body.
+fn anthropic_model_accepts_sampling_params(model: &str) -> bool {
+    !(model.starts_with("claude-fable")
+        || model.starts_with("claude-opus-4-7")
+        || model.starts_with("claude-opus-4-8"))
 }
 
 fn anthropic_tool_search_type(variant: ToolSearchProviderVariant) -> &'static str {
@@ -342,7 +371,7 @@ fn extract_message_text(value: &Value) -> String {
         .unwrap_or_default()
 }
 
-fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
+fn extract_tool_calls(value: &Value, tools: &[roder_api::tools::ToolSpec]) -> Vec<ToolCallCompleted> {
     value
         .get("content")
         .and_then(|v| v.as_array())
@@ -352,14 +381,14 @@ fn extract_tool_calls(value: &Value) -> Vec<ToolCallCompleted> {
                 .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("tool_use"))
                 .filter_map(|item| {
                     let id = item.get("id").and_then(|v| v.as_str())?.to_string();
-                    let name = item.get("name").and_then(|v| v.as_str())?.to_string();
+                    let name = item.get("name").and_then(|v| v.as_str())?;
                     let arguments = item
                         .get("input")
                         .map(|input| input.to_string())
                         .unwrap_or_else(|| "{}".to_string());
                     Some(ToolCallCompleted {
                         id,
-                        name,
+                        name: canonical_tool_name(name, tools),
                         arguments,
                     })
                 })
@@ -484,6 +513,25 @@ mod tests {
     }
 
     #[test]
+    fn maps_fable_5_request_without_sampling_params() {
+        let mut request = request();
+        request.model.model = "claude-fable-5".to_string();
+
+        let body = AnthropicEngine::map_request(&request);
+
+        assert_eq!(body["model"], "claude-fable-5");
+        // Fable 5 rejects sampling params with a 400 — they must be omitted.
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+        assert_eq!(body["output_config"]["effort"], "medium");
+    }
+
+    #[test]
+    fn fable_5_supports_provider_native_tool_search() {
+        assert!(anthropic_model_supports_tool_search("claude-fable-5"));
+    }
+
+    #[test]
     fn maps_anthropic_provider_native_tool_search_body() {
         let mut request = request();
         request.runtime.tool_search = roder_api::inference::ToolSearchConfig::provider_native();
@@ -603,7 +651,7 @@ mod tests {
         });
         assert_eq!(extract_message_text(&value), "hello world");
         assert_eq!(
-            extract_tool_calls(&value),
+            extract_tool_calls(&value, &[]),
             vec![ToolCallCompleted {
                 id: "toolu_2".to_string(),
                 name: "shell".to_string(),
@@ -613,6 +661,40 @@ mod tests {
         assert_eq!(
             extract_usage(&value),
             Some(TokenUsage::new(11, 7, 18).with_cached_prompt_tokens(8))
+        );
+    }
+
+    #[test]
+    fn sanitizes_dotted_tool_names_for_anthropic_and_maps_them_back() {
+        let tools = vec![ToolSpec {
+            name: "webwright.run_script".to_string(),
+            description: "Run a webwright script".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "script": { "type": "string" } },
+                "required": ["script"]
+            }),
+        }];
+        let mut request = request();
+        request.tools = tools.clone();
+        request.tool_choice = ToolChoice::Specific("webwright.run_script".to_string());
+
+        let body = AnthropicEngine::map_request(&request);
+        assert_eq!(body["tools"][0]["name"], "webwright__run_script");
+        assert_eq!(body["tool_choice"]["name"], "webwright__run_script");
+
+        let value = json!({
+            "content": [
+                { "type": "tool_use", "id": "toolu_1", "name": "webwright__run_script", "input": { "script": "x" } }
+            ]
+        });
+        assert_eq!(
+            extract_tool_calls(&value, &tools),
+            vec![ToolCallCompleted {
+                id: "toolu_1".to_string(),
+                name: "webwright.run_script".to_string(),
+                arguments: r#"{"script":"x"}"#.to_string(),
+            }]
         );
     }
 
