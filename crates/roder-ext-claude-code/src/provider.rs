@@ -168,6 +168,8 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
         // the end of the message.
         let mut echo_match_pos = 0usize;
         let mut completed = false;
+        let mut last_session_id: Option<String> = None;
+        let mut last_stop_reason: Option<String> = None;
         // Tool-use ids for `mcp__roder__*` tools. Those tools are executed
         // in-process by the SDK MCP handler, which routes through Roder's
         // TurnToolExecutor and emits the canonical tool-call lifecycle events.
@@ -236,28 +238,57 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
                     }));
                 }
                 StreamEvent::Complete(response) => {
+                    // One assistant message (or a usage-bearing message delta)
+                    // finished. A turn with tool calls produces several of
+                    // these — the turn only ends at TurnComplete below.
                     if completed {
                         continue;
                     }
                     if let Some(usage) = usage_from_response(&response) {
                         yield InferenceEvent::Usage(usage);
                     }
-                    if response.content.is_empty() && !response.session_id.trim().is_empty() {
+                    if response.content.is_empty() {
                         continue;
                     }
-                    if !saw_partial_text && !response.content.is_empty() {
+                    if !saw_partial_text {
                         yield InferenceEvent::MessageDelta(MessageDelta { text: response.content.clone(), phase: None });
                     }
+                    last_session_id = Some(response.session_id);
+                    last_stop_reason = response.stop_reason;
+                    // Assistant-message boundary: the next message streams its
+                    // own deltas and echoes, so reset the echo-dedup state.
+                    accumulated_text.clear();
+                    echo_match_pos = 0;
+                }
+                StreamEvent::TurnComplete(response) => {
+                    if completed {
+                        continue;
+                    }
+                    if let Some(usage) = usage_from_response(&response) {
+                        yield InferenceEvent::Usage(usage);
+                    }
                     completed = true;
+                    let session_id = (!response.session_id.trim().is_empty())
+                        .then_some(response.session_id)
+                        .or(last_session_id.take());
                     yield InferenceEvent::Completed(CompletionMetadata {
-                        stop_reason: response.stop_reason,
-                        provider_response_id: (!response.session_id.trim().is_empty()).then_some(response.session_id),
+                        stop_reason: response.stop_reason.or(last_stop_reason.take()),
+                        provider_response_id: session_id,
                     });
                 }
                 StreamEvent::Error(message) => {
                     yield InferenceEvent::Failed(InferenceFailure { message: redact_error(&message) });
                 }
             }
+        }
+        // The CLI stream ended without a result message (e.g. the process
+        // died after its last assistant message). Close the turn with what
+        // we saw so the runtime never hangs waiting for completion.
+        if !completed && (last_session_id.is_some() || last_stop_reason.is_some()) {
+            yield InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: last_stop_reason,
+                provider_response_id: last_session_id,
+            });
         }
     })
 }
@@ -423,6 +454,14 @@ mod tests {
                         session_id: "session-1".to_string(),
                         usage: Some(usage),
                     }),
+                    StreamEvent::TurnComplete(MessageResponse {
+                        content: String::new(),
+                        blocks: Vec::new(),
+                        model: String::new(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-1".to_string(),
+                        usage: None,
+                    }),
                 ],
             }),
         );
@@ -480,6 +519,14 @@ mod tests {
                         content: "one two".to_string(),
                         blocks: Vec::new(),
                         model: "sonnet".to_string(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-final".to_string(),
+                        usage: None,
+                    }),
+                    StreamEvent::TurnComplete(MessageResponse {
+                        content: String::new(),
+                        blocks: Vec::new(),
+                        model: String::new(),
                         stop_reason: Some("end_turn".to_string()),
                         session_id: "session-final".to_string(),
                         usage: None,
@@ -546,6 +593,14 @@ mod tests {
                         session_id: "session-final".to_string(),
                         usage: None,
                     }),
+                    StreamEvent::TurnComplete(MessageResponse {
+                        content: String::new(),
+                        blocks: Vec::new(),
+                        model: String::new(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-final".to_string(),
+                        usage: None,
+                    }),
                 ],
             }),
         );
@@ -573,6 +628,135 @@ mod tests {
             })
             .collect::<String>();
         assert_eq!(rendered, "First block.Second block.");
+    }
+
+    /// Fable 5 (and Opus 4.8) narrate before tool calls. A turn then contains
+    /// MULTIPLE assistant messages: "I'll read the file." -> tool_use ->
+    /// "The answer is X." Each assistant message emits its own Complete; the
+    /// turn must only end at TurnComplete, and the post-tool text must not be
+    /// dropped.
+    #[tokio::test]
+    async fn provider_streams_text_after_tool_use_until_turn_complete() {
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(FakeRunner {
+                events: vec![
+                    // First assistant message: pre-tool narration.
+                    StreamEvent::ContentChunk("I'll read the file.".to_string()),
+                    // Echo of the full block from the final AssistantMsg.
+                    StreamEvent::ContentChunk("I'll read the file.".to_string()),
+                    StreamEvent::Complete(MessageResponse {
+                        content: "I'll read the file.".to_string(),
+                        blocks: Vec::new(),
+                        model: "claude-fable-5".to_string(),
+                        stop_reason: None,
+                        session_id: "session-1".to_string(),
+                        usage: None,
+                    }),
+                    // Tool runs (mcp tool -- suppressed lifecycle).
+                    StreamEvent::ToolUseStart {
+                        id: "toolu_1".to_string(),
+                        name: "mcp__roder__read_file".to_string(),
+                        input: serde_json::Map::new(),
+                    },
+                    // Second assistant message: the actual answer.
+                    StreamEvent::ContentChunk("The magic word is pomegranate.".to_string()),
+                    StreamEvent::ContentChunk("The magic word is pomegranate.".to_string()),
+                    StreamEvent::Complete(MessageResponse {
+                        content: "The magic word is pomegranate.".to_string(),
+                        blocks: Vec::new(),
+                        model: "claude-fable-5".to_string(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-1".to_string(),
+                        usage: None,
+                    }),
+                    StreamEvent::TurnComplete(MessageResponse {
+                        content: String::new(),
+                        blocks: Vec::new(),
+                        model: String::new(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-1".to_string(),
+                        usage: None,
+                    }),
+                ],
+            }),
+        );
+        let events = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let rendered = events
+            .iter()
+            .filter_map(|event| match event {
+                InferenceEvent::MessageDelta(delta) => Some(delta.text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(
+            rendered,
+            "I'll read the file.The magic word is pomegranate.",
+            "post-tool assistant text must stream and echoes must dedupe"
+        );
+        let completions = events
+            .iter()
+            .filter(|event| matches!(event, InferenceEvent::Completed(_)))
+            .count();
+        assert_eq!(completions, 1, "turn must complete exactly once");
+    }
+
+    #[tokio::test]
+    async fn provider_completes_turn_when_stream_ends_without_result() {
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(FakeRunner {
+                events: vec![
+                    StreamEvent::ContentChunk("partial".to_string()),
+                    StreamEvent::Complete(MessageResponse {
+                        content: "partial".to_string(),
+                        blocks: Vec::new(),
+                        model: "claude-fable-5".to_string(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-dead".to_string(),
+                        usage: None,
+                    }),
+                    // CLI dies here -- no TurnComplete.
+                ],
+            }),
+        );
+        let events = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, InferenceEvent::Completed(_))),
+            "stream end without a result message must still complete the turn"
+        );
     }
 
     #[tokio::test]
