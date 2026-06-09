@@ -13,6 +13,10 @@ async def test_agent_send_starts_thread_and_turn() -> None:
 
     async def handler(request: dict[str, Any]) -> dict[str, Any]:
         requests.append(request)
+        if request["method"] == "workspace/list":
+            return {"jsonrpc": "2.0", "id": request["id"], "result": {"workspaces": []}}
+        if request["method"] == "workspace/create":
+            return {"jsonrpc": "2.0", "id": request["id"], "result": {"workspace": {"id": "ws-1"}}}
         if request["method"] == "thread/start":
             return {"jsonrpc": "2.0", "id": request["id"], "result": {"thread": {"id": "thread-1"}}}
         if request["method"] == "turn/start":
@@ -29,14 +33,18 @@ async def test_agent_send_starts_thread_and_turn() -> None:
 
     assert run.thread_id == "thread-1"
     assert run.turn_id == "turn-1"
-    assert requests[0]["method"] == "thread/start"
-    assert requests[0]["params"] == {
+    assert requests[0]["method"] == "workspace/list"
+    assert requests[1]["method"] == "workspace/create"
+    assert requests[1]["params"] == {"roots": [{"path": "/workspace"}]}
+    assert requests[2]["method"] == "thread/start"
+    assert requests[2]["params"] == {
         "cwd": "/workspace",
         "model": "gpt-5.5",
         "modelProvider": "openai",
+        "workspaceId": "ws-1",
     }
-    assert requests[1]["method"] == "turn/start"
-    assert requests[1]["params"] == {
+    assert requests[3]["method"] == "turn/start"
+    assert requests[3]["params"] == {
         "threadId": "thread-1",
         "input": [{"type": "text", "text": "hello"}],
     }

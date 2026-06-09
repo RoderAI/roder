@@ -26,6 +26,8 @@ async def test_python_sdk_replays_basic_thread_fixture() -> None:
         transport=transport,
         cwd="/workspace",
         model={"provider": "mock", "id": "mock"},
+        tool_allowlist=["edit", "read_file"],
+        instructions="You are embedded in Sauna.",
     )
     run = await agent.send("hello")
     events: list[str] = []
