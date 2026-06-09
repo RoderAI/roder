@@ -3460,6 +3460,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "bytes",
  "futures",
  "reqwest",
  "roder-api",
