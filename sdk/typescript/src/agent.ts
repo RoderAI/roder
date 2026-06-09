@@ -27,6 +27,7 @@ export interface RoderAgentOptions {
     id?: string;
   };
   threadId?: string;
+  workspaceId?: string;
   approvals?: RoderApprovals;
   eventMode?: EventMode;
 }
@@ -117,16 +118,45 @@ export class RoderAgent {
   }
 
   private async startThread(): Promise<string> {
+    const cwd = this.options.cwd ?? this.options.local?.cwd;
+    const workspaceId = this.options.workspaceId ?? (await this.resolveWorkspaceId(cwd));
     const result = (await this.client.call("thread/start", {
-      cwd: this.options.cwd ?? this.options.local?.cwd,
+      cwd,
       model: this.options.model?.id,
       modelProvider: this.options.model?.provider,
+      workspaceId,
     })) as Record<string, unknown>;
     const threadId = extractId(result, "thread") ?? extractString(result, "threadId") ?? extractString(result, "id");
     if (!threadId) {
       throw new Error("thread/start response did not include a thread id");
     }
     return threadId;
+  }
+
+  private async resolveWorkspaceId(cwd: string | undefined): Promise<string> {
+    if (!cwd) {
+      throw new Error("starting a thread requires a workspaceId or a cwd to resolve one from");
+    }
+    const listed = (await this.client.call("workspace/list", {})) as Record<string, unknown>;
+    const workspaces = Array.isArray(listed.workspaces) ? listed.workspaces : [];
+    for (const workspace of workspaces) {
+      if (!workspace || typeof workspace !== "object") {
+        continue;
+      }
+      const roots = (workspace as Record<string, unknown>).roots;
+      const id = extractString(workspace, "id");
+      if (id && Array.isArray(roots) && roots.some((root) => extractString(root, "path") === cwd)) {
+        return id;
+      }
+    }
+    const created = (await this.client.call("workspace/create", {
+      roots: [{ path: cwd }],
+    })) as Record<string, unknown>;
+    const workspaceId = extractId(created, "workspace");
+    if (!workspaceId) {
+      throw new Error("workspace/create response did not include a workspace id");
+    }
+    return workspaceId;
   }
 
   private startCallbackLoop(): void {
