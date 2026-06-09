@@ -9,7 +9,7 @@ for app, TUI, CLI, SDK, and sibling clients.
 | Method | Client caller | Roder backing behavior | Notes |
 | --- | --- | --- | --- |
 | `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
-| `thread/start` | new chat | Create a Roder thread with `model`, optional `modelProvider`, optional `reasoning`, required absolute `cwd`, and `ephemeral`. | Returns a protocol `Thread`; missing, empty, or relative cwd is rejected. |
+| `thread/start` | new chat | Create a Roder thread with typed `selection` or legacy `model`, optional `modelProvider`, optional `reasoning`, required absolute `cwd`, and `ephemeral`. | Returns a protocol `Thread` with `selectionMode`; missing, empty, or relative cwd is rejected. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder threads as stable protocol `Thread` objects. | Pagination cursors are reserved. |
 | `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
 | `thread/archive` | archive/delete thread action | Archive a persisted thread and remove in-memory protocol state for that thread. | `thread/list` no longer returns archived threads. |
@@ -17,6 +17,7 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |
 | `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Uses the runtime interrupt path. |
 | `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Protocol model-picker data. |
+| `model/select` | model picker | Select Manual provider/model/reasoning or a configured Auto routing option. | Manual bypasses routing; Auto routes normal turns through the selected router option. |
 | `workspace/files/status` | file tree/search bootstrap | Read app-server-owned file-index state for a workspace and optional root. | Returns `missing`, `building`, `ready`, `stale`, or `failed`. |
 | `workspace/files/rebuild` | file tree/search refresh | Build or refresh the cached workspace file index. | Emits `workspace/files/statusChanged`; cache is keyed by canonical root, not selected root order. |
 | `workspace/files/children` | file tree expansion | List registered workspace roots or direct children under a root-relative directory. | Canonical file-tree method; paths are relative and scoped to registered roots. |
@@ -29,6 +30,7 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `skills/list`, `skills/read`, `skills/setEnabled`, `skills/setExposure` | skills manager | List/read skill descriptors and persist canonical enablement/exposure rules. | Mutating by ambiguous skill name returns an invalid-params error; select by canonical path. |
 | `search_index/status`, `search_index/warmup`, `search_index/rebuild`, `search_index/clear` | search-index dashboard | Manage the persistent regex index for a workspace. | Controlled by `settings/set_search_index`; emits `search_index/statusChanged`. |
 | `index/status`, `index/rebuild`, `index/search`, `index/readChunk`, `index/proofs/list` | semantic code-index inspector | Build/query proof-verified code chunks and read chunk source only with `includeSource: true`. | Emits `index/statusChanged` after rebuild. |
+| `inference/routing/status`, `inference/routing/metrics` | inference routing diagnostics | Inspect latest adaptive routing status, selected-versus-baseline estimates, and regret counters. | Read-only event-derived diagnostics; estimates are not exact provider billing. |
 | `retrieval/recommendations`, `retrieval/metrics`, `retrieval/promoted` | retrieval diagnostics | Inspect route recommendations, outcomes, and promoted capability state for a turn. | Diagnostic surface derived from runtime retrieval events. |
 | `eval/reports/list`, `eval/report/read` | eval report viewer | List and read bounded markdown reports from `<workspace>/evals/reports`. | Report ids must come from the list response. |
 | `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use singular protocol method names. |
@@ -138,3 +140,8 @@ accepting a no-op.
 Clients should send `input` blocks for new code. `prompt` remains an accepted
 field on the canonical method while richer input blocks are rolled through the
 clients.
+
+Model picker clients should call `providers/list` for real providers plus the
+`routingOptions` sibling list. Auto options are selected with `model/select`
+using `{ "type": "auto", "optionId": "..." }`; they are not fake provider or
+model ids.

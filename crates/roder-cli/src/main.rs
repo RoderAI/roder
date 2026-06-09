@@ -42,6 +42,7 @@ use roder_app_server::{
     AppServer, AppServerFeatureConfig, LocalAppClient,
     transcript::{RecordingAppClient, TranscriptRecorder},
 };
+use roder_core::inference_routing::RuntimeInferenceRouterConfig;
 use roder_core::model_profiles::{
     ModelHarnessProfileOverride, ModelProfileOverrides, ModelProfileReasoningOverride,
     resolve_model_profiles,
@@ -1043,6 +1044,7 @@ pub(crate) async fn build_runtime_from_config(
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let runtime_profile = resolve_runtime_profile(&options, &cfg)?;
     let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
+    let inference_router = resolve_inference_router_config(cfg.inference_router.as_ref())?;
     let dynamic_workflows = resolve_dynamic_workflows_config(cfg.dynamic_workflows.as_ref());
     let reliability = resolve_reliability_config(cfg.reliability.as_ref());
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
@@ -1158,6 +1160,7 @@ pub(crate) async fn build_runtime_from_config(
         policy_mode,
         notifications,
         remote_runner_destination: remote_runner_destination.clone(),
+        inference_router: cfg.inference_router.clone(),
     })?;
 
     let runtime = Arc::new(Runtime::new(
@@ -1184,6 +1187,7 @@ pub(crate) async fn build_runtime_from_config(
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
             runtime_profile,
+            inference_router,
             speed_policy,
             dynamic_workflows,
             reliability,
@@ -2039,6 +2043,39 @@ fn resolve_speed_policy_config(
         }
     }
     speed_policy
+}
+
+fn resolve_inference_router_config(
+    cfg: Option<&roder_config::InferenceRouterConfig>,
+) -> anyhow::Result<RuntimeInferenceRouterConfig> {
+    let Some(cfg) = cfg else {
+        return Ok(RuntimeInferenceRouterConfig::disabled());
+    };
+    if !cfg.enabled {
+        return Ok(RuntimeInferenceRouterConfig::disabled());
+    }
+    let router_id = cfg
+        .router
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if router_id.is_none() {
+        anyhow::bail!("inference_router.enabled requires inference_router.router");
+    }
+    match (&cfg.baseline_provider, &cfg.baseline_model) {
+        (Some(provider), Some(model))
+            if !provider.trim().is_empty() && !model.trim().is_empty() => {}
+        (None, None) => {}
+        _ => anyhow::bail!(
+            "inference_router baseline requires both baseline_provider and baseline_model"
+        ),
+    };
+
+    Ok(RuntimeInferenceRouterConfig {
+        enabled: true,
+        router_id,
+    })
 }
 
 fn resolve_reliability_config(
@@ -3334,6 +3371,65 @@ mod tests {
         assert_eq!(resolved.execution_reasoning, "minimal");
         assert_eq!(resolved.verification_reasoning, "xhigh");
         assert_eq!(resolved.recovery_reasoning, "medium");
+    }
+
+    #[test]
+    fn inference_router_config_defaults_to_disabled() {
+        let resolved = resolve_inference_router_config(None).unwrap();
+
+        assert!(!resolved.enabled);
+        assert!(!resolved.is_active());
+    }
+
+    #[test]
+    fn inference_router_config_resolves_active_router() {
+        let cfg = roder_config::InferenceRouterConfig {
+            enabled: true,
+            router: Some("local-adaptive".to_string()),
+            profile: Some("coding".to_string()),
+            baseline_provider: Some("codex".to_string()),
+            baseline_model: Some("gpt-5.5".to_string()),
+            ..roder_config::InferenceRouterConfig::default()
+        };
+
+        let resolved = resolve_inference_router_config(Some(&cfg)).unwrap();
+
+        assert!(resolved.enabled);
+        assert!(resolved.is_active());
+        assert_eq!(resolved.router_id.as_deref(), Some("local-adaptive"));
+    }
+
+    #[test]
+    fn inference_router_enabled_requires_router_id() {
+        let cfg = roder_config::InferenceRouterConfig {
+            enabled: true,
+            ..roder_config::InferenceRouterConfig::default()
+        };
+
+        let err = resolve_inference_router_config(Some(&cfg)).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("inference_router.enabled requires inference_router.router")
+        );
+    }
+
+    #[test]
+    fn inference_router_baseline_requires_provider_and_model() {
+        let cfg = roder_config::InferenceRouterConfig {
+            enabled: true,
+            router: Some("local-adaptive".to_string()),
+            baseline_provider: Some("codex".to_string()),
+            baseline_model: None,
+            ..roder_config::InferenceRouterConfig::default()
+        };
+
+        let err = resolve_inference_router_config(Some(&cfg)).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("baseline requires both baseline_provider and baseline_model")
+        );
     }
 
     #[test]

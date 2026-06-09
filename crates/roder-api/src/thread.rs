@@ -9,6 +9,7 @@ use crate::events::{EventEnvelope, ThreadId, TurnId};
 pub use crate::extension::{CheckpointStoreId, ThreadStoreId};
 use crate::extension_state::ExtensionStateRecord;
 use crate::inference::{TokenUsage, cache_hit_rate};
+use crate::inference_routing::ModelSelectionMode;
 use crate::remote_runner::{RunnerDestination, RunnerSessionState};
 use crate::transcript::{InputImage, TranscriptItem};
 
@@ -96,6 +97,8 @@ pub struct ThreadMetadata {
     pub root_id: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_mode: Option<ModelSelectionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner_destination: Option<RunnerDestination>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -406,6 +409,7 @@ pub trait CheckpointStoreFactory: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inference::ModelSelection;
 
     #[test]
     fn synthetic_event_thread_ids_are_reserved_production_ids() {
@@ -429,6 +433,7 @@ mod tests {
             root_id: None,
             provider: None,
             model: None,
+            selection_mode: None,
             runner_destination: None,
             runner_state: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
@@ -441,6 +446,61 @@ mod tests {
         assert_eq!(value["created_at"], "1970-01-01T00:00:00Z");
         assert_eq!(value["updated_at"], "1970-01-01T00:00:00Z");
         assert_eq!(value["workspace"], "/workspace");
+    }
+
+    #[test]
+    fn thread_metadata_deserializes_without_selection_mode() {
+        let value = serde_json::json!({
+            "thread_id": "thread-a",
+            "title": null,
+            "workspace": "/workspace",
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "created_at": "1970-01-01T00:00:00Z",
+            "updated_at": "1970-01-01T00:00:00Z",
+            "message_count": 0
+        });
+
+        let metadata = serde_json::from_value::<ThreadMetadata>(value).unwrap();
+
+        assert_eq!(metadata.provider.as_deref(), Some("codex"));
+        assert_eq!(metadata.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(metadata.selection_mode, None);
+    }
+
+    #[test]
+    fn thread_metadata_round_trips_auto_selection_mode() {
+        let metadata = ThreadMetadata {
+            thread_id: "thread-a".to_string(),
+            title: None,
+            workspace: "/workspace".to_string(),
+            workspace_id: None,
+            root_id: None,
+            provider: Some("codex".to_string()),
+            model: Some("gpt-5.5".to_string()),
+            selection_mode: Some(ModelSelectionMode::auto(
+                "local-router:coding",
+                "local-router",
+                "Auto: Coding",
+                ModelSelection {
+                    provider: "codex".to_string(),
+                    model: "gpt-5.5".to_string(),
+                },
+                Some("coding".to_string()),
+                Some("low".to_string()),
+            )),
+            runner_destination: None,
+            runner_state: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            message_count: 0,
+            usage: None,
+        };
+
+        let value = serde_json::to_value(&metadata).unwrap();
+        let round_trip = serde_json::from_value::<ThreadMetadata>(value).unwrap();
+
+        assert_eq!(round_trip, metadata);
     }
 
     #[test]
