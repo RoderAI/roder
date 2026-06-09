@@ -7,6 +7,8 @@ use serde::Serialize;
 pub(crate) struct ExecUsage {
     pub input_tokens: u64,
     pub cached_input_tokens: u64,
+    /// Subset of `input_tokens` written to the provider prompt cache.
+    pub cache_creation_input_tokens: u64,
     pub output_tokens: u64,
     pub reasoning_output_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -18,6 +20,7 @@ impl Default for ExecUsage {
         Self {
             input_tokens: 0,
             cached_input_tokens: 0,
+            cache_creation_input_tokens: 0,
             output_tokens: 0,
             reasoning_output_tokens: 0,
             cache_hit_rate: None,
@@ -33,6 +36,7 @@ impl From<Option<TokenUsage>> for ExecUsage {
         Self {
             input_tokens: u64::from(usage.prompt_tokens),
             cached_input_tokens: u64::from(usage.cached_prompt_tokens),
+            cache_creation_input_tokens: u64::from(usage.cache_creation_prompt_tokens),
             output_tokens: u64::from(usage.completion_tokens),
             reasoning_output_tokens: 0,
             cache_hit_rate: usage.cache_hit_rate,
@@ -227,12 +231,15 @@ mod tests {
     #[test]
     fn exec_usage_preserves_cache_metrics() {
         let usage = ExecUsage::from(Some(
-            TokenUsage::new(100, 10, 110).with_cached_prompt_tokens(92),
+            TokenUsage::new(100, 10, 110)
+                .with_cached_prompt_tokens(92)
+                .with_cache_creation_prompt_tokens(5),
         ));
 
         let value = serde_json::to_value(usage).unwrap();
         assert_eq!(value["input_tokens"], 100);
         assert_eq!(value["cached_input_tokens"], 92);
+        assert_eq!(value["cache_creation_input_tokens"], 5);
         assert!((value["cache_hit_rate"].as_f64().unwrap() - 0.92).abs() < f64::EPSILON);
     }
 }

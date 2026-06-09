@@ -457,6 +457,14 @@ pub struct TokenUsage {
     pub total_tokens: u32,
     #[serde(default)]
     pub cached_prompt_tokens: u32,
+    /**
+     * Prompt tokens written to the provider's prompt cache this step. Like
+     * `cached_prompt_tokens`, this is a subset of `prompt_tokens`, not an
+     * additional count; hosts use it to bill cache writes at the provider's
+     * cache-write rate.
+     */
+    #[serde(default)]
+    pub cache_creation_prompt_tokens: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_hit_rate: Option<f64>,
 }
@@ -468,6 +476,7 @@ impl TokenUsage {
             completion_tokens,
             total_tokens,
             cached_prompt_tokens: 0,
+            cache_creation_prompt_tokens: 0,
             cache_hit_rate: cache_hit_rate(prompt_tokens, 0),
         }
     }
@@ -475,6 +484,11 @@ impl TokenUsage {
     pub fn with_cached_prompt_tokens(mut self, cached_prompt_tokens: u32) -> Self {
         self.cached_prompt_tokens = cached_prompt_tokens.min(self.prompt_tokens);
         self.cache_hit_rate = cache_hit_rate(self.prompt_tokens, self.cached_prompt_tokens);
+        self
+    }
+
+    pub fn with_cache_creation_prompt_tokens(mut self, cache_creation_prompt_tokens: u32) -> Self {
+        self.cache_creation_prompt_tokens = cache_creation_prompt_tokens.min(self.prompt_tokens);
         self
     }
 
@@ -487,6 +501,9 @@ impl TokenUsage {
         self.cached_prompt_tokens = self
             .cached_prompt_tokens
             .saturating_add(usage.cached_prompt_tokens);
+        self.cache_creation_prompt_tokens = self
+            .cache_creation_prompt_tokens
+            .saturating_add(usage.cache_creation_prompt_tokens);
         self.cache_hit_rate = cache_hit_rate(self.prompt_tokens, self.cached_prompt_tokens);
     }
 
@@ -495,6 +512,7 @@ impl TokenUsage {
             && self.completion_tokens == 0
             && self.total_tokens == 0
             && self.cached_prompt_tokens == 0
+            && self.cache_creation_prompt_tokens == 0
     }
 }
 
@@ -510,6 +528,25 @@ pub fn cache_hit_rate(prompt_tokens: u32, cached_prompt_tokens: u32) -> Option<f
 pub struct CompletionMetadata {
     pub stop_reason: Option<String>,
     pub provider_response_id: Option<String>,
+}
+
+/**
+ * Canonical mapping from provider-native stop reasons to the finish reason
+ * surfaced as `finishReason` on `turn/completed`. Only the terminal inference
+ * step's stop reason reaches the turn surface, so `toolUse` appears only when
+ * a turn genuinely ends on a tool-use step (e.g. tool rounds exhausted).
+ * Unknown stop reasons pass through unchanged.
+ */
+pub fn finish_reason_from_stop_reason(stop_reason: &str) -> String {
+    match stop_reason {
+        "end_turn" | "stop" | "stop_sequence" => "stop",
+        "max_tokens" | "length" => "length",
+        "tool_use" | "tool_calls" => "toolUse",
+        "content_filter" => "contentFilter",
+        "refusal" => "refusal",
+        other => other,
+    }
+    .to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -658,6 +695,46 @@ pub trait InferenceEngine: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finish_reason_mapping_normalizes_known_stop_reasons() {
+        assert_eq!(finish_reason_from_stop_reason("end_turn"), "stop");
+        assert_eq!(finish_reason_from_stop_reason("stop"), "stop");
+        assert_eq!(finish_reason_from_stop_reason("stop_sequence"), "stop");
+        assert_eq!(finish_reason_from_stop_reason("max_tokens"), "length");
+        assert_eq!(finish_reason_from_stop_reason("length"), "length");
+        assert_eq!(finish_reason_from_stop_reason("tool_use"), "toolUse");
+        assert_eq!(finish_reason_from_stop_reason("tool_calls"), "toolUse");
+        assert_eq!(
+            finish_reason_from_stop_reason("content_filter"),
+            "contentFilter"
+        );
+        assert_eq!(finish_reason_from_stop_reason("refusal"), "refusal");
+        assert_eq!(finish_reason_from_stop_reason("pause_turn"), "pause_turn");
+    }
+
+    #[test]
+    fn token_usage_accumulates_cache_creation_prompt_tokens() {
+        let mut usage = TokenUsage::new(100, 10, 110)
+            .with_cached_prompt_tokens(80)
+            .with_cache_creation_prompt_tokens(15);
+        usage.add_assign(
+            &TokenUsage::new(50, 5, 55)
+                .with_cached_prompt_tokens(40)
+                .with_cache_creation_prompt_tokens(10),
+        );
+
+        assert_eq!(usage.prompt_tokens, 150);
+        assert_eq!(usage.cached_prompt_tokens, 120);
+        assert_eq!(usage.cache_creation_prompt_tokens, 25);
+        assert!(!usage.is_empty());
+
+        let creation_only = TokenUsage {
+            cache_creation_prompt_tokens: 1,
+            ..TokenUsage::default()
+        };
+        assert!(!creation_only.is_empty());
+    }
 
     #[test]
     fn inference_speed_policy_decision_serializes_runtime_metadata() {

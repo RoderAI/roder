@@ -22,10 +22,20 @@ test("typescript sdk replays basic thread fixture", async () => {
     model: { provider: "mock", id: "mock" },
   });
   const run = await agent.send("hello");
-  const events = collectTypes(run.stream());
+  const events = collectEvents(run.stream());
   emitNotifications(transport, fixture);
 
-  assert.deepEqual(await events, ["turn.delta", "turn.completed"]);
+  const collected = await events;
+  assert.deepEqual(
+    collected.map((event) => event.type),
+    ["turn.delta", "turn.completed"],
+  );
+  const completed = collected.at(-1)?.raw.params as {
+    finishReason?: string;
+    usage?: { cache_creation_prompt_tokens?: number };
+  };
+  assert.equal(completed.finishReason, "stop");
+  assert.equal(completed.usage?.cache_creation_prompt_tokens, 5);
 });
 
 test("typescript sdk replays approval fixture", async () => {
@@ -191,6 +201,16 @@ async function collectTypes(events: AsyncIterable<{ type: string }>): Promise<st
     types.push(event.type);
   }
   return types;
+}
+
+type CollectedEvent = { type: string; raw: { params?: unknown } };
+
+async function collectEvents(events: AsyncIterable<CollectedEvent>): Promise<CollectedEvent[]> {
+  const collected: CollectedEvent[] = [];
+  for await (const event of events) {
+    collected.push(event);
+  }
+  return collected;
 }
 
 async function eventually(assertion: () => boolean): Promise<void> {

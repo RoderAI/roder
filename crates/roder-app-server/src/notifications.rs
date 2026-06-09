@@ -79,6 +79,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 completed_at: None,
                 duration_ms: None,
                 usage: None,
+                finish_reason: None,
             };
             vec![
                 protocol_notification(
@@ -214,6 +215,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 completed_at: Some(event.timestamp.unix_timestamp()),
                 duration_ms: None,
                 usage: event.usage.clone(),
+                finish_reason: event.finish_reason.clone(),
             };
             vec![
                 protocol_notification(
@@ -311,6 +313,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 completed_at: Some(event.timestamp.unix_timestamp()),
                 duration_ms: None,
                 usage: event.usage.clone(),
+                finish_reason: None,
             };
             vec![
                 protocol_notification(
@@ -334,6 +337,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 completed_at: Some(event.timestamp.unix_timestamp()),
                 duration_ms: None,
                 usage: None,
+                finish_reason: None,
             };
             vec![
                 protocol_notification(

@@ -12,4 +12,4 @@
 {"kind":"api.request","seq":11,"atMs":10,"client":"sdk","request":{"jsonrpc":"2.0","id":6,"method":"turn/start","params":{"threadId":"thread-basic","input":[{"type":"text","text":"hello"}]}}}
 {"kind":"api.response","seq":12,"atMs":11,"requestSeq":11,"response":{"jsonrpc":"2.0","id":6,"result":{"turn":{"id":"turn-basic"}}}}
 {"kind":"api.notification","seq":13,"atMs":12,"notification":{"jsonrpc":"2.0","method":"turn/delta","params":{"threadId":"thread-basic","turnId":"turn-basic","delta":"hello"}}}
-{"kind":"api.notification","seq":14,"atMs":13,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-basic","turnId":"turn-basic","status":"completed"}}}
+{"kind":"api.notification","seq":14,"atMs":13,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-basic","turnId":"turn-basic","status":"completed","finishReason":"stop","usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"cached_prompt_tokens":92,"cache_creation_prompt_tokens":5,"cache_hit_rate":0.92}}}}

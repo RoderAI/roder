@@ -430,6 +430,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 usage: None,
+                finish_reason: None,
             }]),
         }
     }

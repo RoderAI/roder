@@ -56,6 +56,8 @@ pub struct EvalTokenUsage {
     pub completion_tokens: u32,
     pub total_tokens: u32,
     pub cached_prompt_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_prompt_tokens: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_hit_rate: Option<f64>,
 }
@@ -255,6 +257,7 @@ impl EvalTrajectoryEvent {
                         completion_tokens: usage.completion_tokens,
                         total_tokens: usage.total_tokens,
                         cached_prompt_tokens: usage.cached_prompt_tokens,
+                        cache_creation_prompt_tokens: usage.cache_creation_prompt_tokens,
                         cache_hit_rate: usage.cache_hit_rate,
                     });
                 }
@@ -430,6 +433,7 @@ mod tests {
                     completion_tokens: 5,
                     total_tokens: 15,
                     cached_prompt_tokens: 9,
+                    cache_creation_prompt_tokens: 1,
                     cache_hit_rate: Some(0.9),
                 }),
                 timestamp: OffsetDateTime::UNIX_EPOCH,

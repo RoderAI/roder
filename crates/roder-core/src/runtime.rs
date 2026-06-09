@@ -17,6 +17,7 @@ use roder_api::inference::{
     InferenceEvent, InferenceTurnContext, InstructionBundle, ModelHarnessProfile,
     ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
     TokenUsage, ToolCallCompleted, ToolSearchConfig, ToolSearchConfigOverlay,
+    finish_reason_from_stop_reason,
 };
 use roder_api::inference_routing::{InferenceRoutingOutcome, ModelSelectionMode};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
@@ -1737,6 +1738,10 @@ impl Runtime {
         let mut speed_policy = SpeedPolicyState::default();
         let mut reliability = TurnReliabilityState::default();
         let mut turn_usage = TokenUsage::default();
+        // Overwritten on every inference step's Completed event so only the
+        // terminal step's stop reason survives (mid-turn tool_use steps must
+        // not leak onto turn/completed).
+        let mut turn_finish_reason: Option<String> = None;
         let mut deadline_finalization_requested = false;
         let mut deadline_scoreable_completion_requested = false;
         let mut task_ledger_completion_reminders = 0_u8;
@@ -2310,8 +2315,13 @@ impl Runtime {
                     InferenceEvent::Usage(usage) => {
                         turn_usage.add_assign(&usage);
                     }
-                    InferenceEvent::Completed(_)
-                    | InferenceEvent::Compaction(_)
+                    InferenceEvent::Completed(metadata) => {
+                        turn_finish_reason = metadata
+                            .stop_reason
+                            .as_deref()
+                            .map(finish_reason_from_stop_reason);
+                    }
+                    InferenceEvent::Compaction(_)
                     | InferenceEvent::HostedToolCallStarted(_)
                     | InferenceEvent::HostedToolCallCompleted(_)
                     | InferenceEvent::ToolCallStarted(_)
@@ -2626,6 +2636,7 @@ impl Runtime {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
             usage: completed_usage,
+            finish_reason: turn_finish_reason,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -4676,6 +4687,125 @@ mod tests {
         .unwrap();
 
         captured.lock().unwrap().clone().unwrap()
+    }
+
+    struct ToolThenStopEngine {
+        calls: StdMutex<u32>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for ToolThenStopEngine {
+        fn id(&self) -> String {
+            roder_api::catalog::PROVIDER_MOCK.to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<roder_api::inference::ModelDescriptor>> {
+            Ok(roder_api::catalog::models_for_provider(
+                roder_api::catalog::PROVIDER_MOCK,
+                true,
+            ))
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            _request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            let events = match *calls {
+                1 => vec![
+                    Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                        id: "write-1".to_string(),
+                        name: "write_file".to_string(),
+                        arguments: serde_json::json!({
+                            "path": "src/lib.rs",
+                            "content": "pub fn answer() -> u8 { 42 }\n"
+                        })
+                        .to_string(),
+                    })),
+                    Ok(InferenceEvent::Completed(CompletionMetadata {
+                        stop_reason: Some("tool_use".to_string()),
+                        provider_response_id: None,
+                    })),
+                ],
+                _ => vec![
+                    Ok(InferenceEvent::MessageDelta(MessageDelta {
+                        text: "final".to_string(),
+                        phase: None,
+                    })),
+                    Ok(InferenceEvent::Completed(CompletionMetadata {
+                        stop_reason: Some("end_turn".to_string()),
+                        provider_response_id: None,
+                    })),
+                ],
+            };
+            Ok(Box::pin(stream::iter(events)))
+        }
+    }
+
+    #[tokio::test]
+    async fn turn_completed_reports_terminal_step_finish_reason() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(ToolThenStopEngine {
+            calls: StdMutex::new(0),
+        }));
+        builder.tool_contributor(Arc::new(WriteFileContributor));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    policy_mode: PolicyMode::Bypass,
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id: "thread-finish-reason".to_string(),
+                message: "write then finish".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle {
+                    system: None,
+                    developer: None,
+                },
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+
+        let completed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(event) => break event,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        // The mid-turn tool_use stop reason must not leak; the terminal
+        // end_turn step decides the turn's finish reason.
+        assert_eq!(completed.finish_reason.as_deref(), Some("stop"));
     }
 
     #[tokio::test]

@@ -311,6 +311,10 @@ fn usage_from_response(response: &MessageResponse) -> Option<TokenUsage> {
     .unwrap_or(0);
     let cached_prompt_tokens =
         number_from_usage(usage, &["cache_read_input_tokens", "cacheReadInputTokens"]);
+    let cache_creation_prompt_tokens = number_from_usage(
+        usage,
+        &["cache_creation_input_tokens", "cacheCreationInputTokens"],
+    );
     let completion_tokens = number_from_usage(
         usage,
         &[
@@ -328,7 +332,8 @@ fn usage_from_response(response: &MessageResponse) -> Option<TokenUsage> {
     }
     Some(
         TokenUsage::new(prompt_tokens, completion_tokens, total_tokens)
-            .with_cached_prompt_tokens(cached_prompt_tokens.unwrap_or(0)),
+            .with_cached_prompt_tokens(cached_prompt_tokens.unwrap_or(0))
+            .with_cache_creation_prompt_tokens(cache_creation_prompt_tokens.unwrap_or(0)),
     )
 }
 
@@ -881,6 +886,7 @@ mod tests {
         let usage = usage_from_response(&response).unwrap();
         assert_eq!(usage.prompt_tokens, 141);
         assert_eq!(usage.cached_prompt_tokens, 11);
+        assert_eq!(usage.cache_creation_prompt_tokens, 7);
         assert_eq!(usage.completion_tokens, 13);
         assert_eq!(usage.total_tokens, 154);
     }
@@ -904,6 +910,7 @@ mod tests {
         let usage = usage_from_response(&response).unwrap();
         assert_eq!(usage.prompt_tokens, 18);
         assert_eq!(usage.cached_prompt_tokens, 11);
+        assert_eq!(usage.cache_creation_prompt_tokens, 7);
         assert_eq!(usage.completion_tokens, 13);
         assert_eq!(usage.total_tokens, 31);
     }
