@@ -1302,9 +1302,11 @@ Behavior:
   supplied, it must be the selected root or a child path of that root.
 - Stores the selected provider/model/reasoning for later `turn/start` overrides.
 - If `reasoning` is omitted, returns and stores the effective reasoning effort for the selected model.
-- `toolAllowlist` is optional. When present and non-empty, every turn on the
-  thread advertises only the listed tools, intersected with the runtime-level
-  allowlist. Other threads are unaffected.
+- `toolAllowlist` is optional. When present, it must be non-empty; an explicit
+  empty array is rejected with invalid params. Every turn on the thread
+  advertises only the listed tools, intersected with the runtime-level
+  allowlist, and tool calls outside that intersection are refused at dispatch
+  with an error tool result. Other threads are unaffected.
 - `developerInstructions` is optional. When present, the text is added to the
   developer slot of every turn's inference request, layered under the harness
   system prompt and ahead of harness addenda such as plan mode.
