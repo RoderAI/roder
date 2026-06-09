@@ -33,6 +33,7 @@ pub fn project_turns_from_events(
                     ensure_turn_record(&mut turns, thread_id, &event.turn_id, event.timestamp);
                 turn.completed_at = Some(event.timestamp);
                 turn.usage = event.usage.clone();
+                turn.finish_reason = event.finish_reason.clone();
             }
             RoderEvent::TurnFailed(event) => {
                 let turn =
@@ -67,6 +68,7 @@ fn ensure_turn_record<'a>(
         created_at,
         completed_at: None,
         usage: None,
+        finish_reason: None,
     });
     turns.last_mut().expect("turn was just pushed")
 }
