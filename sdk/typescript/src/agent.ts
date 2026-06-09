@@ -25,6 +25,7 @@ export interface RoderAgentOptions {
   model?: {
     provider?: string;
     id?: string;
+    reasoning?: string;
   };
   threadId?: string;
   workspaceId?: string;
@@ -120,10 +121,12 @@ export class RoderAgent {
   private async startThread(): Promise<string> {
     const cwd = this.options.cwd ?? this.options.local?.cwd;
     const workspaceId = this.options.workspaceId ?? (await this.resolveWorkspaceId(cwd));
+    const reasoning = this.options.model?.reasoning;
     const result = (await this.client.call("thread/start", {
       cwd,
       model: this.options.model?.id,
       modelProvider: this.options.model?.provider,
+      ...(reasoning === undefined ? {} : { reasoning }),
       workspaceId,
     })) as Record<string, unknown>;
     const threadId = extractId(result, "thread") ?? extractString(result, "threadId") ?? extractString(result, "id");
