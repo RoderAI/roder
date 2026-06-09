@@ -67,6 +67,9 @@ pub(crate) fn provider_stream_retry_cause(message: &str) -> Option<&'static str>
     if lower.contains("stream closed before response.completed") {
         return Some("stream_closed_before_completed");
     }
+    if lower.contains("stream closed before message_stop") {
+        return Some("stream_closed_before_message_stop");
+    }
     None
 }
 
@@ -219,6 +222,10 @@ mod tests {
         assert_eq!(
             provider_stream_retry_cause("stream closed before response.completed"),
             Some("stream_closed_before_completed")
+        );
+        assert_eq!(
+            provider_stream_retry_cause("Anthropic stream closed before message_stop"),
+            Some("stream_closed_before_message_stop")
         );
         assert_eq!(provider_stream_retry_cause("invalid request body"), None);
     }

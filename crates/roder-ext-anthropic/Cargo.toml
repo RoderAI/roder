@@ -20,6 +20,7 @@ docs_url = "https://docs.anthropic.com/en/api/messages"
 anyhow.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
+bytes.workspace = true
 futures.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }
 roder-api.workspace = true

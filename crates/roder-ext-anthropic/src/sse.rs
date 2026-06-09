@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
-use futures::StreamExt;
 use roder_api::inference::{
-    CompletionMetadata, InferenceEvent, InferenceEventStream, MessageDelta, ReasoningDelta,
+    CompletionMetadata, InferenceEvent, InferenceFailure, MessageDelta, ReasoningDelta,
     ToolCallCompleted, ToolCallDelta, ToolCallStarted,
 };
 use roder_api::tools::ToolSpec;
@@ -10,43 +9,9 @@ use serde_json::{Value, json};
 
 use crate::provider::{canonical_tool_name, extract_usage, parse_json_object};
 
-/**
- * Streams Anthropic Messages SSE frames as inference events. Pre-stream retry
- * metadata is emitted first; mid-stream failures end the stream with an error
- * instead of retrying, because partial deltas have already been emitted to the
- * host and replaying the request would duplicate them in the transcript.
- */
-pub(crate) fn stream_anthropic_sse(
-    response: reqwest::Response,
-    tools: Vec<ToolSpec>,
-    retry_events: Vec<Value>,
-) -> InferenceEventStream {
-    Box::pin(async_stream::try_stream! {
-        for retry_event in retry_events {
-            yield InferenceEvent::ProviderMetadata(retry_event);
-        }
-        let mut chunks = response.bytes_stream();
-        let mut buffer = SseFrameBuffer::default();
-        let mut state = AnthropicStreamState::new(tools);
-        while let Some(chunk) = chunks.next().await {
-            let chunk = chunk?;
-            buffer.push(&chunk);
-            while let Some(frame) = buffer.take_frame() {
-                for event in state.push_frame(&frame)? {
-                    yield event;
-                }
-            }
-        }
-        if let Some(frame) = buffer.take_trailing() {
-            for event in state.push_frame(&frame)? {
-                yield event;
-            }
-        }
-        if !state.terminal {
-            Err(anyhow::anyhow!("Anthropic stream closed before message_stop"))?;
-        }
-    })
-}
+/// Caps a single buffered frame so a stream that never sends a frame
+/// delimiter cannot grow the buffer without bound.
+pub(crate) const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
 /**
  * Buffers raw bytes so frames split at arbitrary chunk boundaries — including
@@ -57,6 +22,11 @@ pub(crate) fn stream_anthropic_sse(
 #[derive(Default)]
 pub(crate) struct SseFrameBuffer {
     bytes: Vec<u8>,
+    /**
+     * Length of the prefix already scanned without finding a delimiter; the
+     * next scan resumes just before it instead of rescanning from the start.
+     */
+    scanned: usize,
 }
 
 impl SseFrameBuffer {
@@ -64,14 +34,26 @@ impl SseFrameBuffer {
         self.bytes.extend_from_slice(chunk);
     }
 
+    /// False once the unterminated frame exceeds `MAX_FRAME_BYTES`.
+    pub(crate) fn within_frame_cap(&self) -> bool {
+        self.bytes.len() <= MAX_FRAME_BYTES
+    }
+
     pub(crate) fn take_frame(&mut self) -> Option<String> {
-        let (idx, delimiter_len) = frame_boundary(&self.bytes)?;
+        // A delimiter (at most 4 bytes) may span the scanned boundary.
+        let start = self.scanned.saturating_sub(3);
+        let Some((idx, delimiter_len)) = frame_boundary(&self.bytes, start) else {
+            self.scanned = self.bytes.len();
+            return None;
+        };
         let frame = String::from_utf8_lossy(&self.bytes[..idx]).into_owned();
         self.bytes.drain(..idx + delimiter_len);
+        self.scanned = 0;
         Some(frame)
     }
 
     pub(crate) fn take_trailing(&mut self) -> Option<String> {
+        self.scanned = 0;
         if self.bytes.iter().all(u8::is_ascii_whitespace) {
             self.bytes.clear();
             return None;
@@ -82,9 +64,10 @@ impl SseFrameBuffer {
     }
 }
 
-fn frame_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
-    let lf = find_subsequence(bytes, b"\n\n").map(|idx| (idx, 2));
-    let crlf = find_subsequence(bytes, b"\r\n\r\n").map(|idx| (idx, 4));
+fn frame_boundary(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
+    let haystack = bytes.get(start..)?;
+    let lf = find_subsequence(haystack, b"\n\n").map(|idx| (start + idx, 2));
+    let crlf = find_subsequence(haystack, b"\r\n\r\n").map(|idx| (start + idx, 4));
     match (lf, crlf) {
         (Some(lf), Some(crlf)) => Some(lf.min(crlf)),
         (lf, crlf) => lf.or(crlf),
@@ -100,6 +83,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 enum ContentBlock {
     Text {
         text: String,
+        citations: Vec<Value>,
     },
     Thinking {
         thinking: String,
@@ -110,7 +94,15 @@ enum ContentBlock {
         wire_name: String,
         partial_json: String,
     },
-    Other(Value),
+    /**
+     * Provider-native blocks (e.g. server_tool_use from tool_search) emit no
+     * inference events, but their streamed input is still accumulated so the
+     * reconstructed ProviderMetadata matches the non-streaming response.
+     */
+    Other {
+        value: Value,
+        partial_json: String,
+    },
 }
 
 /**
@@ -161,10 +153,10 @@ impl AnthropicStreamState {
             .map(str::to_string)
             .or(event_name)
             .unwrap_or_default();
-        self.apply(&kind, &data)
+        Ok(self.apply(&kind, &data))
     }
 
-    fn apply(&mut self, kind: &str, data: &Value) -> anyhow::Result<Vec<InferenceEvent>> {
+    fn apply(&mut self, kind: &str, data: &Value) -> Vec<InferenceEvent> {
         match kind {
             "message_start" => {
                 if let Some(message) = data.get("message").filter(|value| value.is_object()) {
@@ -174,11 +166,11 @@ impl AnthropicStreamState {
                     merge_usage(&mut self.usage, usage);
                 }
                 self.message["content"] = json!([]);
-                Ok(Vec::new())
+                Vec::new()
             }
-            "content_block_start" => Ok(self.start_block(data)),
-            "content_block_delta" => Ok(self.apply_delta(data)),
-            "content_block_stop" => Ok(self.stop_block(data)),
+            "content_block_start" => self.start_block(data),
+            "content_block_delta" => self.apply_delta(data),
+            "content_block_stop" => self.stop_block(data),
             "message_delta" => {
                 if let Some(delta) = data.get("delta").and_then(Value::as_object) {
                     for (key, value) in delta {
@@ -191,9 +183,13 @@ impl AnthropicStreamState {
                 if let Some(usage) = data.get("usage") {
                     merge_usage(&mut self.usage, usage);
                 }
-                Ok(Vec::new())
+                Vec::new()
             }
-            "message_stop" => Ok(self.finish()),
+            "message_stop" => self.finish(),
+            // Provider-signaled errors (e.g. overloaded_error on an HTTP 200
+            // connection) end the turn as a terminal Failed event, mirroring
+            // the openai-responses provider; the stream itself stays Ok so
+            // the host records exactly one turn failure.
             "error" => {
                 let error_type = data
                     .pointer("/error/type")
@@ -203,12 +199,13 @@ impl AnthropicStreamState {
                     .pointer("/error/message")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown error");
-                Err(anyhow::anyhow!(
-                    "Anthropic stream error ({error_type}): {message}"
-                ))
+                self.terminal = true;
+                vec![InferenceEvent::Failed(InferenceFailure {
+                    message: format!("Anthropic stream error ({error_type}): {message}"),
+                })]
             }
             // ping and unknown event types are skipped.
-            _ => Ok(Vec::new()),
+            _ => Vec::new(),
         }
     }
 
@@ -237,7 +234,13 @@ impl AnthropicStreamState {
                         phase: None,
                     })]
                 };
-                self.blocks.insert(index, ContentBlock::Text { text });
+                self.blocks.insert(
+                    index,
+                    ContentBlock::Text {
+                        text,
+                        citations: Vec::new(),
+                    },
+                );
                 events
             }
             "thinking" => {
@@ -288,7 +291,13 @@ impl AnthropicStreamState {
                 })]
             }
             _ => {
-                self.blocks.insert(index, ContentBlock::Other(block));
+                self.blocks.insert(
+                    index,
+                    ContentBlock::Other {
+                        value: block,
+                        partial_json: String::new(),
+                    },
+                );
                 Vec::new()
             }
         }
@@ -307,7 +316,7 @@ impl AnthropicStreamState {
             return Vec::new();
         };
         match (delta_type, block) {
-            ("text_delta", ContentBlock::Text { text }) => {
+            ("text_delta", ContentBlock::Text { text, .. }) => {
                 let Some(chunk) = delta.get("text").and_then(Value::as_str) else {
                     return Vec::new();
                 };
@@ -356,17 +365,39 @@ impl AnthropicStreamState {
                     arguments_delta: chunk.to_string(),
                 })]
             }
+            ("input_json_delta", ContentBlock::Other { partial_json, .. }) => {
+                if let Some(chunk) = delta.get("partial_json").and_then(Value::as_str) {
+                    partial_json.push_str(chunk);
+                }
+                Vec::new()
+            }
+            ("citations_delta", ContentBlock::Text { citations, .. }) => {
+                if let Some(citation) = delta.get("citation") {
+                    citations.push(citation.clone());
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
 
     fn stop_block(&mut self, data: &Value) -> Vec<InferenceEvent> {
         let index = data.get("index").and_then(Value::as_u64).unwrap_or(0);
+        self.close_block(index)
+    }
+
+    fn close_block(&mut self, index: u64) -> Vec<InferenceEvent> {
         let Some(block) = self.blocks.remove(&index) else {
             return Vec::new();
         };
         let (value, events) = match block {
-            ContentBlock::Text { text } => (json!({ "type": "text", "text": text }), Vec::new()),
+            ContentBlock::Text { text, citations } => {
+                let mut value = json!({ "type": "text", "text": text });
+                if !citations.is_empty() {
+                    value["citations"] = json!(citations);
+                }
+                (value, Vec::new())
+            }
             ContentBlock::Thinking {
                 thinking,
                 signature,
@@ -390,7 +421,15 @@ impl AnthropicStreamState {
                     vec![InferenceEvent::ToolCallCompleted(call)],
                 )
             }
-            ContentBlock::Other(block) => (block, Vec::new()),
+            ContentBlock::Other {
+                mut value,
+                partial_json,
+            } => {
+                if !partial_json.is_empty() {
+                    value["input"] = parse_json_object(&partial_json);
+                }
+                (value, Vec::new())
+            }
         };
         match self
             .message
@@ -409,6 +448,13 @@ impl AnthropicStreamState {
         }
         self.terminal = true;
         let mut events = Vec::new();
+        // message_stop with still-open blocks is a protocol violation; flush
+        // them (in index order) so accumulated text is not silently dropped
+        // and started tool calls still complete.
+        let open_blocks: Vec<u64> = self.blocks.keys().copied().collect();
+        for index in open_blocks {
+            events.extend(self.close_block(index));
+        }
         if let Some(usage_value) = &self.usage {
             self.message["usage"] = usage_value.clone();
             if let Some(usage) = extract_usage(&self.message) {
@@ -483,6 +529,26 @@ mod tests {
         );
         assert_eq!(buffer.take_frame(), None);
         assert_eq!(buffer.take_trailing(), Some("data: tail".to_string()));
+    }
+
+    #[test]
+    fn frame_buffer_finds_delimiter_spanning_scanned_boundary() {
+        let mut buffer = SseFrameBuffer::default();
+        buffer.push(b"data: x\r\n");
+        assert_eq!(buffer.take_frame(), None);
+        buffer.push(b"\r\ndata: y\n");
+        assert_eq!(buffer.take_frame(), Some("data: x".to_string()));
+        assert_eq!(buffer.take_frame(), None);
+        buffer.push(b"\n");
+        assert_eq!(buffer.take_frame(), Some("data: y".to_string()));
+    }
+
+    #[test]
+    fn frame_buffer_reports_frame_cap_overflow() {
+        let mut buffer = SseFrameBuffer::default();
+        buffer.push(&vec![b'a'; MAX_FRAME_BYTES + 1]);
+        assert_eq!(buffer.take_frame(), None);
+        assert!(!buffer.within_frame_cap());
     }
 
     #[test]
@@ -718,18 +784,98 @@ data: {"type":"fancy_new_event","payload":1}"#,
     }
 
     #[test]
-    fn error_frame_surfaces_as_stream_error() {
+    fn error_frame_maps_to_terminal_failed_event() {
         let mut state = AnthropicStreamState::new(Vec::new());
-        let error = state
+        let events = state
             .push_frame(
                 r#"event: error
 data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
             )
-            .unwrap_err();
+            .unwrap();
 
         assert_eq!(
-            error.to_string(),
-            "Anthropic stream error (overloaded_error): Overloaded"
+            events,
+            vec![InferenceEvent::Failed(InferenceFailure {
+                message: "Anthropic stream error (overloaded_error): Overloaded".to_string(),
+            })]
+        );
+        assert!(state.terminal);
+    }
+
+    #[test]
+    fn message_stop_flushes_still_open_blocks() {
+        let mut state = AnthropicStreamState::new(Vec::new());
+        let events = frames(
+            &mut state,
+            &[
+                r#"data: {"type":"message_start","message":{"id":"msg_1","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+                r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+                r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}"#,
+                r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"noop"}}"#,
+                // message_stop without content_block_stop for either block.
+                r#"data: {"type":"message_stop"}"#,
+            ],
+        );
+
+        assert!(
+            events.contains(&InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id: "toolu_1".to_string(),
+                name: "noop".to_string(),
+                arguments: "{}".to_string(),
+            }))
+        );
+        assert_eq!(
+            state.message["content"],
+            json!([
+                { "type": "text", "text": "hello" },
+                { "type": "tool_use", "id": "toolu_1", "name": "noop", "input": {} }
+            ])
+        );
+        assert!(matches!(events.last(), Some(InferenceEvent::Completed(_))));
+    }
+
+    #[test]
+    fn accumulates_server_tool_use_input_and_text_citations() {
+        let mut state = AnthropicStreamState::new(Vec::new());
+        let events = frames(
+            &mut state,
+            &[
+                r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"tool_search","input":{}}}"#,
+                r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":"}}"#,
+                r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"shell\"}"}}"#,
+                r#"data: {"type":"content_block_stop","index":0}"#,
+                r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+                r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"cited"}}"#,
+                r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://example.com"}}}"#,
+                r#"data: {"type":"content_block_stop","index":1}"#,
+            ],
+        );
+
+        // server_tool_use blocks emit no inference events.
+        assert_eq!(
+            events,
+            vec![InferenceEvent::MessageDelta(MessageDelta {
+                text: "cited".to_string(),
+                phase: None,
+            })]
+        );
+        assert_eq!(
+            state.message["content"],
+            json!([
+                {
+                    "type": "server_tool_use",
+                    "id": "srv_1",
+                    "name": "tool_search",
+                    "input": { "query": "shell" }
+                },
+                {
+                    "type": "text",
+                    "text": "cited",
+                    "citations": [
+                        { "type": "web_search_result_location", "url": "https://example.com" }
+                    ]
+                }
+            ])
         );
     }
 
