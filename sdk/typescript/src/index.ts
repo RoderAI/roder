@@ -10,7 +10,41 @@ export {
   type UserInputDecision,
 } from "./agent.js";
 export { RoderRpcClient, type MethodHelpers } from "./client.js";
-export { normalizeNotification, type EventMode, type RoderSdkEvent } from "./events.js";
+export {
+  normalizeNotification,
+  type EventMode,
+  type ItemCompletedEvent,
+  type ItemDeltaEvent,
+  type ItemStartedEvent,
+  type RawEventType,
+  type RawNotificationEvent,
+  type RoderSdkEvent,
+  type ThreadStartedEvent,
+  type ThreadStatusChangedEvent,
+  type ToolExecutionRequestedEvent,
+  type ToolExecutionResolvedEvent,
+  type TurnCompletedEvent,
+  type TurnStartedEvent,
+} from "./events.js";
+export {
+  type AgentMessageItem,
+  type CompactionItem,
+  type ErrorItem,
+  type ExternalToolCall,
+  type RawItem,
+  type ReasoningItem,
+  type Thread,
+  type ThreadItem,
+  type ThreadItemDelta,
+  type ThreadItemStatus,
+  type ThreadStatus,
+  type TokenUsage,
+  type ToolExecutionItem,
+  type ToolSpec,
+  type Turn,
+  type TurnError,
+  type UserMessageItem,
+} from "./protocol.js";
 export {
   categorizeRoderError,
   categorizeRpcError,

@@ -144,9 +144,9 @@ test("websocket transport streams notifications", async () => {
   });
   socket.open();
   const iterator = transport.notifications()[Symbol.asyncIterator]();
-  socket.message({ jsonrpc: "2.0", method: "thread/statusChanged", params: { status: "idle" } });
+  socket.message({ jsonrpc: "2.0", method: "thread/status/changed", params: { status: "idle" } });
 
-  assert.equal((await iterator.next()).value.method, "thread/statusChanged");
+  assert.equal((await iterator.next()).value.method, "thread/status/changed");
   transport.close();
 });
 

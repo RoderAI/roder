@@ -1,5 +1,5 @@
 import type { RoderRpcClient } from "./client.js";
-import type { EventMode, RoderSdkEvent } from "./events.js";
+import type { EventMode, RoderSdkEvent, TurnCompletedEvent } from "./events.js";
 import { normalizeNotification } from "./events.js";
 
 export interface RoderRunOptions {
@@ -20,7 +20,7 @@ export class RoderRun {
       if (event) {
         yield event;
       }
-      if (event?.type === "turn.completed" && notificationMatchesTurn(notification.params, this.turnId)) {
+      if (event?.type === "turn.completed" && event.turn.id === this.turnId) {
         return;
       }
     }
@@ -30,7 +30,7 @@ export class RoderRun {
     return this.client.notifications();
   }
 
-  async wait(): Promise<RoderSdkEvent | undefined> {
+  async wait(): Promise<TurnCompletedEvent | undefined> {
     for await (const event of this.stream()) {
       if (event.type === "turn.completed") {
         return event;
@@ -50,14 +50,4 @@ export class RoderRun {
   async result(): Promise<unknown> {
     return this.client.call("thread/read", { threadId: this.threadId });
   }
-}
-
-function notificationMatchesTurn(params: unknown, turnId: string): boolean {
-  if (!params || typeof params !== "object") {
-    return true;
-  }
-  const value = params as { turnId?: unknown; turn?: { id?: unknown } };
-  return value.turnId === undefined && value.turn?.id === undefined
-    ? true
-    : value.turnId === turnId || value.turn?.id === turnId;
 }
