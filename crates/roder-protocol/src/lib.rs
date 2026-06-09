@@ -482,7 +482,10 @@ pub struct ThreadStartParams {
     pub root_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    /// Per-thread tool filter applied on top of the runtime allowlist. Empty/absent = no filtering.
+    /**
+     * Per-thread tool filter applied on top of the runtime allowlist. Absent = no
+     * filtering; an explicit empty array is rejected with invalid params.
+     */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_allowlist: Option<Vec<String>>,
     /// Host-supplied instructions added to the developer slot of every turn's inference request.

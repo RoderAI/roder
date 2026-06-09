@@ -2276,6 +2276,17 @@ impl AppServer {
             external_tools,
             ephemeral: _,
         } = params;
+        /*
+         * An empty allowlist means "no filtering" internally (`allowlist_permits`), the
+         * inverse of the deny-all a host computing the list dynamically expects, and
+         * `thread/read` cannot distinguish `[]` from absent (the field skips
+         * serialization when empty). Reject it instead of failing open.
+         */
+        if tool_allowlist.as_ref().is_some_and(Vec::is_empty) {
+            return Err(invalid_params(
+                "toolAllowlist must be omitted or non-empty; an empty array would advertise every tool",
+            ));
+        }
         let cfg = self.runtime.status().await;
         let requested_selection = if let Some(selection) = selection {
             self.resolve_model_select_choice(selection, false).await?.0
