@@ -1,10 +1,9 @@
 use roder_api::catalog::{PROVIDER_ANTHROPIC, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
-    AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
-    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceProviderMetadata,
-    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, TokenUsage,
-    ToolCallCompleted, ToolSearchProviderVariant,
+    AgentInferenceRequest, InferenceCapabilities, InferenceEngine, InferenceEventStream,
+    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, ModelDescriptor,
+    ProviderAuthType, TokenUsage, ToolSearchProviderVariant,
 };
 use roder_api::reliability::{
     ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
@@ -12,6 +11,8 @@ use roder_api::reliability::{
 };
 use serde_json::{Value, json};
 use std::time::Duration;
+
+use crate::sse::stream_anthropic_sse;
 
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
@@ -29,6 +30,7 @@ impl AnthropicEngine {
             "model": request.model.model,
             "max_tokens": request.output.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             "cache_control": { "type": "ephemeral" },
+            "stream": true,
             "messages": anthropic_messages(request),
         });
         let mut system = Vec::new();
@@ -71,7 +73,7 @@ impl InferenceEngine for AnthropicEngine {
 
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
-            streaming: false,
+            streaming: true,
             tool_calls: true,
             parallel_tool_calls: false,
             reasoning_summaries: false,
@@ -108,48 +110,30 @@ impl InferenceEngine for AnthropicEngine {
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         let body = Self::map_request(&request);
-        let (value, retry_events) = send_anthropic_request(
+        let (response, retry_events) = send_anthropic_request(
             "https://api.anthropic.com/v1/messages",
             &self.api_key,
             &body,
             request.runtime.reliability.as_ref(),
         )
         .await?;
-        let text = extract_message_text(&value);
-        let mut events = Vec::new();
-        if !text.is_empty() {
-            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta {
-                text,
-                phase: None,
-            })));
-        }
-        for call in extract_tool_calls(&value, &request.tools) {
-            events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
-        }
-        if let Some(usage) = extract_usage(&value) {
-            events.push(Ok(InferenceEvent::Usage(usage)));
-        }
-        for retry_event in retry_events {
-            events.push(Ok(InferenceEvent::ProviderMetadata(retry_event)));
-        }
-        events.push(Ok(InferenceEvent::ProviderMetadata(value.clone())));
-        events.push(Ok(InferenceEvent::Completed(CompletionMetadata {
-            stop_reason: value
-                .get("stop_reason")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-            provider_response_id: value.get("id").and_then(|v| v.as_str()).map(str::to_string),
-        })));
-        Ok(Box::pin(futures::stream::iter(events)))
+        Ok(stream_anthropic_sse(response, request.tools, retry_events))
     }
 }
 
+/**
+ * Sends the streaming request, retrying failures that occur before any bytes
+ * of the event stream are consumed (HTTP error status, transport errors).
+ * Mid-stream failures are not retried here: partial deltas have already been
+ * emitted to the host, so replaying the request would duplicate them. They
+ * surface as stream errors from `stream_anthropic_sse` instead.
+ */
 async fn send_anthropic_request(
     url: &str,
     api_key: &str,
     body: &Value,
     policy: Option<&ReliabilityRequestPolicy>,
-) -> anyhow::Result<(Value, Vec<Value>)> {
+) -> anyhow::Result<(reqwest::Response, Vec<Value>)> {
     let policy = policy.cloned().unwrap_or_default();
     let attempts = policy.provider_retry_max_attempts.max(1);
     let client = reqwest::Client::new();
@@ -165,13 +149,7 @@ async fn send_anthropic_request(
             .await;
         match response {
             Ok(response) if response.status().is_success() => {
-                let bytes = response.bytes().await?;
-                if bytes.is_empty() && policy.retry_empty_provider_body && attempt < attempts {
-                    push_retry_event(&mut retry_events, attempt, "empty_provider_body", &policy);
-                    retry_sleep(&policy, attempt).await;
-                    continue;
-                }
-                return Ok((serde_json::from_slice(&bytes)?, retry_events));
+                return Ok((response, retry_events));
             }
             Ok(response) => {
                 let status = response.status();
@@ -275,7 +253,7 @@ fn anthropic_tool_name(name: &str) -> String {
     name.replace('.', "__")
 }
 
-fn canonical_tool_name(wire_name: &str, tools: &[roder_api::tools::ToolSpec]) -> String {
+pub(crate) fn canonical_tool_name(wire_name: &str, tools: &[roder_api::tools::ToolSpec]) -> String {
     if tools.iter().any(|tool| tool.name == wire_name) {
         return wire_name.to_string();
     }
@@ -354,57 +332,16 @@ fn anthropic_effort(level: &str) -> &str {
     }
 }
 
-fn parse_json_object(raw: &str) -> Value {
+pub(crate) fn parse_json_object(raw: &str) -> Value {
     serde_json::from_str::<Value>(raw)
         .ok()
         .filter(|value| value.is_object())
         .unwrap_or_else(|| json!({}))
 }
 
-fn extract_message_text(value: &Value) -> String {
-    value
-        .get("content")
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| match item.get("type").and_then(|v| v.as_str()) {
-                    Some("text") | None => item.get("text").and_then(|v| v.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .unwrap_or_default()
-}
-
-fn extract_tool_calls(value: &Value, tools: &[roder_api::tools::ToolSpec]) -> Vec<ToolCallCompleted> {
-    value
-        .get("content")
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("tool_use"))
-                .filter_map(|item| {
-                    let id = item.get("id").and_then(|v| v.as_str())?.to_string();
-                    let name = item.get("name").and_then(|v| v.as_str())?;
-                    let arguments = item
-                        .get("input")
-                        .map(|input| input.to_string())
-                        .unwrap_or_else(|| "{}".to_string());
-                    Some(ToolCallCompleted {
-                        id,
-                        name: canonical_tool_name(name, tools),
-                        arguments,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn extract_usage(value: &Value) -> Option<TokenUsage> {
+/// `prompt_tokens` counts the full prompt: uncached input plus cache writes
+/// plus cache reads, with the cache components also reported separately.
+pub(crate) fn extract_usage(value: &Value) -> Option<TokenUsage> {
     let usage = value.get("usage")?;
     let uncached_prompt_tokens = number_to_u32(usage.get("input_tokens")).unwrap_or_default();
     let cache_creation_tokens =
@@ -432,8 +369,11 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use roder_api::inference::{
-        InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
+        CompletionMetadata, InferenceEvent, InstructionBundle, MessageDelta, ModelSelection,
+        OutputConfig, ReasoningConfig, RuntimeHints, ToolCallCompleted, ToolCallDelta,
+        ToolCallStarted,
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
@@ -504,6 +444,7 @@ mod tests {
         let body = AnthropicEngine::map_request(&request());
         assert_eq!(body["model"], "claude-sonnet-4-6");
         assert_eq!(body["max_tokens"], 100);
+        assert_eq!(body["stream"], true);
         assert_eq!(body["cache_control"], json!({ "type": "ephemeral" }));
         assert!((body["temperature"].as_f64().unwrap() - 0.3).abs() < 1e-6);
         assert!((body["top_p"].as_f64().unwrap() - 0.8).abs() < 1e-6);
@@ -649,20 +590,15 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_capabilities_advertise_prompt_cache() {
+    fn anthropic_capabilities_advertise_streaming_and_prompt_cache() {
         let engine = AnthropicEngine::new("test-key".to_string());
+        assert!(engine.capabilities().streaming);
         assert!(engine.capabilities().prompt_cache);
     }
 
     #[test]
-    fn extracts_anthropic_text_tool_calls_and_usage() {
+    fn extracts_anthropic_usage_with_cache_components() {
         let value = json!({
-            "id": "msg_123",
-            "content": [
-                { "type": "text", "text": "hello" },
-                { "type": "tool_use", "id": "toolu_2", "name": "shell", "input": { "cmd": "ls" } },
-                { "type": "text", "text": " world" }
-            ],
             "usage": {
                 "input_tokens": 2,
                 "cache_creation_input_tokens": 1,
@@ -670,15 +606,6 @@ mod tests {
                 "output_tokens": 7
             }
         });
-        assert_eq!(extract_message_text(&value), "hello world");
-        assert_eq!(
-            extract_tool_calls(&value, &[]),
-            vec![ToolCallCompleted {
-                id: "toolu_2".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"cmd":"ls"}"#.to_string(),
-            }]
-        );
         assert_eq!(
             extract_usage(&value),
             Some(
@@ -690,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitizes_dotted_tool_names_for_anthropic_and_maps_them_back() {
+    fn sanitizes_dotted_tool_names_for_anthropic() {
         let tools = vec![ToolSpec {
             name: "webwright.run_script".to_string(),
             description: "Run a webwright script".to_string(),
@@ -707,32 +634,247 @@ mod tests {
         let body = AnthropicEngine::map_request(&request);
         assert_eq!(body["tools"][0]["name"], "webwright__run_script");
         assert_eq!(body["tool_choice"]["name"], "webwright__run_script");
+    }
 
-        let value = json!({
-            "content": [
-                { "type": "tool_use", "id": "toolu_1", "name": "webwright__run_script", "input": { "script": "x" } }
-            ]
-        });
-        assert_eq!(
-            extract_tool_calls(&value, &tools),
-            vec![ToolCallCompleted {
+    fn shell_tool() -> ToolSpec {
+        ToolSpec {
+            name: "shell".to_string(),
+            description: "Run a shell command".to_string(),
+            parameters: json!({ "type": "object", "properties": {} }),
+        }
+    }
+
+    fn happy_path_sse_body() -> String {
+        [
+            r#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-6","stop_reason":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1,"cache_read_input_tokens":8,"output_tokens":1}}}"#,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"ping"}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo "}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}"#,
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"shell","input":{}}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":"}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"ls\"}"}}"#,
+            r#"data: {"type":"content_block_stop","index":1}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":7}}"#,
+            r#"data: {"type":"message_stop"}"#,
+        ]
+        .map(|frame| format!("{frame}\n\n"))
+        .join("")
+    }
+
+    fn happy_path_expected_events() -> Vec<InferenceEvent> {
+        vec![
+            InferenceEvent::MessageDelta(MessageDelta {
+                text: "Hel".to_string(),
+                phase: None,
+            }),
+            InferenceEvent::MessageDelta(MessageDelta {
+                text: "lo ".to_string(),
+                phase: None,
+            }),
+            InferenceEvent::MessageDelta(MessageDelta {
+                text: "world".to_string(),
+                phase: None,
+            }),
+            InferenceEvent::ToolCallStarted(ToolCallStarted {
                 id: "toolu_1".to_string(),
-                name: "webwright.run_script".to_string(),
-                arguments: r#"{"script":"x"}"#.to_string(),
-            }]
+                name: "shell".to_string(),
+            }),
+            InferenceEvent::ToolCallDelta(ToolCallDelta {
+                id: "toolu_1".to_string(),
+                arguments_delta: r#"{"cmd":"#.to_string(),
+            }),
+            InferenceEvent::ToolCallDelta(ToolCallDelta {
+                id: "toolu_1".to_string(),
+                arguments_delta: r#""ls"}"#.to_string(),
+            }),
+            InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id: "toolu_1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"cmd":"ls"}"#.to_string(),
+            }),
+            InferenceEvent::Usage(
+                TokenUsage::new(11, 7, 18)
+                    .with_cached_prompt_tokens(8)
+                    .with_cache_creation_prompt_tokens(1),
+            ),
+            InferenceEvent::ProviderMetadata(json!({
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "tool_use",
+                "stop_sequence": null,
+                "content": [
+                    { "type": "text", "text": "Hello world" },
+                    { "type": "tool_use", "id": "toolu_1", "name": "shell", "input": { "cmd": "ls" } }
+                ],
+                "usage": {
+                    "input_tokens": 2,
+                    "cache_creation_input_tokens": 1,
+                    "cache_read_input_tokens": 8,
+                    "output_tokens": 7
+                }
+            })),
+            InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("tool_use".to_string()),
+                provider_response_id: Some("msg_1".to_string()),
+            }),
+        ]
+    }
+
+    #[tokio::test]
+    async fn streams_multi_frame_happy_path_incrementally() {
+        let body = happy_path_sse_body();
+        // Hold back everything after the first text delta until the test has
+        // observed that delta, proving events flow before the response ends.
+        let gate_at = body.find(r#""Hel"}}"#).unwrap() + r#""Hel"}}"#.len() + 2;
+        let (gate_tx, gate_rx) = tokio::sync::oneshot::channel::<()>();
+        let url = spawn_gated_sse_server(
+            body.as_bytes()[..gate_at].to_vec(),
+            body.as_bytes()[gate_at..].to_vec(),
+            gate_rx,
+        )
+        .await;
+
+        let (response, retry_events) = send_anthropic_request(&url, "secret", &json!({}), None)
+            .await
+            .unwrap();
+        let mut stream = stream_anthropic_sse(response, vec![shell_tool()], retry_events);
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(
+            first,
+            InferenceEvent::MessageDelta(MessageDelta {
+                text: "Hel".to_string(),
+                phase: None,
+            })
+        );
+        gate_tx.send(()).unwrap();
+
+        let mut events = vec![first];
+        while let Some(event) = stream.next().await {
+            events.push(event.unwrap());
+        }
+        assert_eq!(events, happy_path_expected_events());
+        let text_deltas = events
+            .iter()
+            .filter(|event| matches!(event, InferenceEvent::MessageDelta(_)))
+            .count();
+        assert!(
+            text_deltas >= 3,
+            "expected >=3 text deltas, got {text_deltas}"
         );
     }
 
     #[tokio::test]
-    async fn retry_recovers_after_retryable_status() {
-        let url = spawn_retry_server(vec![
-            (429, r#"{"error":"busy"}"#),
-            (
-                200,
-                r#"{"id":"msg_1","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}"#,
-            ),
+    async fn reassembles_frames_and_multibyte_utf8_split_across_tcp_writes() {
+        let body = [
+            r#"data: {"type":"message_start","message":{"id":"msg_2","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"héllo "}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"🦀 wörld"}}"#,
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}"#,
+            r#"data: {"type":"message_stop"}"#,
+        ]
+        .map(|frame| format!("{frame}\r\n\r\n"))
+        .join("");
+        // Split mid-frame AND mid-crab (4-byte scalar) across TCP writes.
+        let split = body.find("🦀").unwrap() + 2;
+        let url = spawn_sse_server(vec![
+            body.as_bytes()[..split].to_vec(),
+            body.as_bytes()[split..].to_vec(),
         ])
         .await;
+
+        let (response, retry_events) = send_anthropic_request(&url, "secret", &json!({}), None)
+            .await
+            .unwrap();
+        let events = stream_anthropic_sse(response, Vec::new(), retry_events)
+            .collect::<Vec<_>>()
+            .await;
+
+        let text = events
+            .iter()
+            .filter_map(|event| match event {
+                Ok(InferenceEvent::MessageDelta(delta)) => Some(delta.text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(text, "héllo 🦀 wörld");
+        assert!(matches!(
+            events.last(),
+            Some(Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some(reason),
+                ..
+            }))) if reason == "end_turn"
+        ));
+    }
+
+    #[tokio::test]
+    async fn mid_stream_error_frame_ends_stream_with_error() {
+        let body = [
+            r#"data: {"type":"message_start","message":{"id":"msg_3","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}"#,
+            r#"event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        ]
+        .map(|frame| format!("{frame}\n\n"))
+        .join("");
+        let url = spawn_sse_server(vec![body.into_bytes()]).await;
+
+        let (response, retry_events) = send_anthropic_request(&url, "secret", &json!({}), None)
+            .await
+            .unwrap();
+        let events = stream_anthropic_sse(response, Vec::new(), retry_events)
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0].as_ref().unwrap(),
+            &InferenceEvent::MessageDelta(MessageDelta {
+                text: "partial".to_string(),
+                phase: None,
+            })
+        );
+        let error = events[1].as_ref().unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "Anthropic stream error (overloaded_error): Overloaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_closing_before_message_stop_ends_with_error() {
+        let body = [
+            r#"data: {"type":"message_start","message":{"id":"msg_4","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cut"}}"#,
+        ]
+        .map(|frame| format!("{frame}\n\n"))
+        .join("");
+        let url = spawn_sse_server(vec![body.into_bytes()]).await;
+
+        let (response, retry_events) = send_anthropic_request(&url, "secret", &json!({}), None)
+            .await
+            .unwrap();
+        let events = stream_anthropic_sse(response, Vec::new(), retry_events)
+            .collect::<Vec<_>>()
+            .await;
+
+        let error = events.last().unwrap().as_ref().unwrap_err().to_string();
+        assert_eq!(error, "Anthropic stream closed before message_stop");
+    }
+
+    #[tokio::test]
+    async fn retry_recovers_after_retryable_status_then_streams() {
+        let url = spawn_sse_retry_server(429, r#"{"error":"busy"}"#, happy_path_sse_body()).await;
         let policy = ReliabilityRequestPolicy {
             provider_retry_max_attempts: 2,
             provider_retry_initial_backoff_ms: 0,
@@ -740,16 +882,26 @@ mod tests {
             ..ReliabilityRequestPolicy::default()
         };
 
-        let (value, retry_events) =
+        let (response, retry_events) =
             send_anthropic_request(&url, "secret", &json!({}), Some(&policy))
                 .await
                 .unwrap();
-
-        assert_eq!(extract_message_text(&value), "ok");
+        assert_eq!(retry_events.len(), 1);
         assert_eq!(retry_events[0]["kind"], "reliability_retry_attempt");
         assert_eq!(retry_events[0]["errorClass"], "provider_error");
         assert_eq!(retry_events[0]["decision"], "retry");
         assert_eq!(retry_events[0]["cause"], "status_429");
+
+        let events = stream_anthropic_sse(response, vec![shell_tool()], retry_events.clone())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        let mut expected = vec![InferenceEvent::ProviderMetadata(retry_events[0].clone())];
+        expected.extend(happy_path_expected_events());
+        assert_eq!(events, expected);
     }
 
     #[tokio::test]
@@ -777,21 +929,75 @@ mod tests {
         assert_eq!(request_count.load(Ordering::SeqCst), 1);
     }
 
-    async fn spawn_retry_server(responses: Vec<(u16, &'static str)>) -> String {
+    const SSE_RESPONSE_HEAD: &[u8] =
+        b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+
+    /// Serves one SSE response, writing the body in the given raw byte chunks
+    /// (which may split frames and multi-byte characters) with a flush between
+    /// each.
+    async fn spawn_sse_server(chunks: Vec<Vec<u8>>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            for (status, body) in responses {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut buf = [0_u8; 4096];
-                let _ = stream.read(&mut buf).await.unwrap();
-                let reason = if status == 200 { "OK" } else { "Retry" };
-                let response = format!(
-                    "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}",
-                    body.len()
-                );
-                stream.write_all(response.as_bytes()).await.unwrap();
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 16384];
+            let _ = stream.read(&mut buf).await.unwrap();
+            stream.write_all(SSE_RESPONSE_HEAD).await.unwrap();
+            for chunk in chunks {
+                stream.write_all(&chunk).await.unwrap();
+                stream.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
+        });
+        format!("http://{addr}/v1/messages")
+    }
+
+    /// Serves one SSE response in two parts, holding the second part until the
+    /// gate fires.
+    async fn spawn_gated_sse_server(
+        first: Vec<u8>,
+        rest: Vec<u8>,
+        gate: tokio::sync::oneshot::Receiver<()>,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 16384];
+            let _ = stream.read(&mut buf).await.unwrap();
+            stream.write_all(SSE_RESPONSE_HEAD).await.unwrap();
+            stream.write_all(&first).await.unwrap();
+            stream.flush().await.unwrap();
+            gate.await.unwrap();
+            stream.write_all(&rest).await.unwrap();
+        });
+        format!("http://{addr}/v1/messages")
+    }
+
+    /// Responds to the first request with an HTTP error status and to the
+    /// second with an SSE stream.
+    async fn spawn_sse_retry_server(
+        status: u16,
+        error_body: &'static str,
+        sse_body: String,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 16384];
+            let _ = stream.read(&mut buf).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 {status} Error\r\ncontent-type: application/json\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{error_body}",
+                error_body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            drop(stream);
+
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = stream.read(&mut buf).await.unwrap();
+            stream.write_all(SSE_RESPONSE_HEAD).await.unwrap();
+            stream.write_all(sse_body.as_bytes()).await.unwrap();
         });
         format!("http://{addr}/v1/messages")
     }
