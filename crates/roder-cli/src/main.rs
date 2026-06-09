@@ -1183,7 +1183,7 @@ pub(crate) async fn build_runtime_from_config(
             model_parallel_tool_calls,
             model_profiles,
             tool_allowlist,
-            external_tool_timeout_seconds: roder_core::DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS,
+            external_tool_timeout_seconds: external_tool_timeout_seconds(),
             command_shell,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
@@ -2741,6 +2741,13 @@ fn resolve_web_search_provider_config(
         mode: trim_nonempty(cfg.mode.clone()),
         debug_raw_response: cfg.debug_raw_response,
     }
+}
+
+/** Host override for how long external tool calls wait on `tools/resolve`. */
+fn external_tool_timeout_seconds() -> u64 {
+    env_nonempty("RODER_EXTERNAL_TOOL_TIMEOUT_SECONDS")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(roder_core::DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS)
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
