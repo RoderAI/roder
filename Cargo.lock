@@ -583,7 +583,8 @@ dependencies = [
 [[package]]
 name = "claude-code-sdk-rust"
 version = "0.2.0"
-source = "git+https://github.com/PandelisZ/claude-agent-sdk-rust?rev=2a728994ad08d01516e8373eda23f42c8424f5cc#2a728994ad08d01516e8373eda23f42c8424f5cc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64974a4de9403b4cae1eb3e236735a8c5576253a3c079a6f626157a816320dbc"
 dependencies = [
  "async-trait",
  "bytes",
