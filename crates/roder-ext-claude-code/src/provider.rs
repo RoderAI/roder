@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_stream::try_stream;
-use claude_agent_sdk::{ClaudeAgentClient, ClaudeAgentOptions, MessageResponse, StreamEvent};
+use claude_code_sdk_rust::{ClaudeAgentClient, ClaudeAgentOptions, MessageResponse, StreamEvent};
 use roder_api::catalog::{PROVIDER_CLAUDE_CODE, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
@@ -386,7 +386,7 @@ fn redact_error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use claude_agent_sdk::types::ContentBlock;
+    use claude_code_sdk_rust::types::ContentBlock;
     use futures::StreamExt;
     use roder_api::inference::{
         HostedWebSearchConfig, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,

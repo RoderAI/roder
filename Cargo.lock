@@ -581,9 +581,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-agent-sdk"
+name = "claude-code-sdk-rust"
 version = "0.2.0"
-source = "git+https://github.com/PandelisZ/claude-agent-sdk-rust?rev=58d5e8b4eccd8b957403a4deff53ebdf54e535af#58d5e8b4eccd8b957403a4deff53ebdf54e535af"
+source = "git+https://github.com/PandelisZ/claude-agent-sdk-rust?rev=2a728994ad08d01516e8373eda23f42c8424f5cc#2a728994ad08d01516e8373eda23f42c8424f5cc"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3492,7 +3492,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
- "claude-agent-sdk",
+ "claude-code-sdk-rust",
  "futures",
  "roder-api",
  "semver",
