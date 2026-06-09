@@ -51,6 +51,16 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_call_external_tool(&request) {
+            let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
+                ToolCallCompleted {
+                    id: "fake-external-tool".to_string(),
+                    name: "sauna_lookup".to_string(),
+                    arguments: serde_json::json!({ "query": "thread status" }).to_string(),
+                },
+            ))]);
+            return Ok(Box::pin(stream));
+        }
         if should_update_task_ledger(&request) {
             let complete = prompt_contains(&request, "FAKE_TASK_LEDGER_COMPLETE");
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -292,6 +302,10 @@ fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
                     && result.result.contains("User input is unavailable")
         )
     })
+}
+
+fn should_call_external_tool(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_EXTERNAL_TOOL") && !has_tool_result(request, "sauna_lookup")
 }
 
 fn should_update_task_ledger(request: &AgentInferenceRequest) -> bool {

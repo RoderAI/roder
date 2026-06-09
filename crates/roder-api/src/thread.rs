@@ -112,6 +112,13 @@ pub struct ThreadMetadata {
     /// Host-supplied instructions added to the developer slot of every turn's inference request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub developer_instructions: Option<String>,
+    /**
+     * Host-executed tool specs advertised to the model on every turn of this thread. Calls to
+     * these tools pause on a `thread/toolExecutionRequested` notification until the host client
+     * answers with `tools/resolve`.
+     */
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_tools: Vec<crate::tools::ToolSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner_destination: Option<RunnerDestination>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -449,6 +456,7 @@ mod tests {
             selection_mode: None,
             tool_allowlist: Vec::new(),
             developer_instructions: None,
+            external_tools: Vec::new(),
             runner_destination: None,
             runner_state: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
@@ -506,6 +514,7 @@ mod tests {
             )),
             tool_allowlist: Vec::new(),
             developer_instructions: None,
+            external_tools: Vec::new(),
             runner_destination: None,
             runner_state: None,
             created_at: OffsetDateTime::UNIX_EPOCH,

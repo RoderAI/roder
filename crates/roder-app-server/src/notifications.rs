@@ -6,13 +6,15 @@ use roder_api::thread::{ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind};
 use roder_core::Runtime;
 use roder_protocol::{
     ApprovalRequestedNotification, ApprovalResolvedNotification, AutomationRunFailedNotification,
-    AutomationRunNotification, AutomationRunSkippedNotification, JsonRpcNotification,
-    PlanExitRequestedNotification, PlanExitResolvedNotification, TeamCleanupCompletedNotification,
-    TeamMemberCompletedNotification, TeamMemberMessageDeltaNotification,
-    TeamMemberStartedNotification, TeamMemberStatusChangedNotification, Thread,
-    ThreadGoalClearedNotification, ThreadGoalUpdatedNotification, ThreadStartedNotification,
-    ThreadStatus, ThreadStatusChangedNotification, Turn, TurnCompletedNotification,
-    TurnStartedNotification, UserInputRequestedNotification, UserInputResolvedNotification,
+    AutomationRunNotification, AutomationRunSkippedNotification, ExternalToolCall,
+    JsonRpcNotification, PlanExitRequestedNotification, PlanExitResolvedNotification,
+    TeamCleanupCompletedNotification, TeamMemberCompletedNotification,
+    TeamMemberMessageDeltaNotification, TeamMemberStartedNotification,
+    TeamMemberStatusChangedNotification, Thread, ThreadGoalClearedNotification,
+    ThreadGoalUpdatedNotification, ThreadStartedNotification, ThreadStatus,
+    ThreadStatusChangedNotification, ToolExecutionRequestedNotification,
+    ToolExecutionResolvedNotification, Turn, TurnCompletedNotification, TurnStartedNotification,
+    UserInputRequestedNotification, UserInputResolvedNotification,
     VerificationCompletedNotification, VerificationRequiredNotification,
     VerificationSkippedNotification,
 };
@@ -138,6 +140,42 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                     tool_id: event.tool_id.clone(),
                     tool_name: event.tool_name.clone(),
                     approved: event.approved,
+                },
+            ),
+            thread_status_notification(&event.thread_id, "running", Some(event.turn_id.clone())),
+        ],
+        RoderEvent::ExternalToolCallRequested(event) => vec![
+            protocol_notification(
+                "thread/toolExecutionRequested",
+                ToolExecutionRequestedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    request_id: event.request_id.clone(),
+                    call: ExternalToolCall {
+                        id: event.tool_id.clone(),
+                        name: event.tool_name.clone(),
+                        arguments: event.arguments.clone(),
+                    },
+                },
+            ),
+            thread_status_notification_with_flags(
+                &event.thread_id,
+                "running",
+                Some(event.turn_id.clone()),
+                vec!["externalToolPending".to_string()],
+            ),
+        ],
+        RoderEvent::ExternalToolCallResolved(event) => vec![
+            protocol_notification(
+                "thread/toolExecutionResolved",
+                ToolExecutionResolvedNotification {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    request_id: event.request_id.clone(),
+                    tool_id: event.tool_id.clone(),
+                    tool_name: event.tool_name.clone(),
+                    outcome: event.outcome,
+                    is_error: event.is_error,
                 },
             ),
             thread_status_notification(&event.thread_id, "running", Some(event.turn_id.clone())),

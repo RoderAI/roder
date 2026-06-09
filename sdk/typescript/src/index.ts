@@ -1,4 +1,14 @@
-export { RoderAgent, type ApprovalDecision, type PlanExitDecision, type RoderAgentOptions, type RoderApprovals, type UserInputDecision } from "./agent.js";
+export {
+  RoderAgent,
+  type ApprovalDecision,
+  type ExternalToolResult,
+  type PlanExitDecision,
+  type RoderAgentOptions,
+  type RoderApprovals,
+  type RoderExternalTool,
+  type RoderExternalToolCall,
+  type UserInputDecision,
+} from "./agent.js";
 export { RoderRpcClient, type MethodHelpers } from "./client.js";
 export { normalizeNotification, type EventMode, type RoderSdkEvent } from "./events.js";
 export {

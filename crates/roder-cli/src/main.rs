@@ -1183,6 +1183,7 @@ pub(crate) async fn build_runtime_from_config(
             model_parallel_tool_calls,
             model_profiles,
             tool_allowlist,
+            external_tool_timeout_seconds: roder_core::DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS,
             command_shell,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,

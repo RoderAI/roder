@@ -105,6 +105,8 @@ pub struct RuntimeConfig {
     pub model_parallel_tool_calls: HashMap<String, bool>,
     pub model_profiles: HashMap<String, ModelHarnessProfile>,
     pub tool_allowlist: Vec<String>,
+    /// Seconds a host-executed external tool call may stay unresolved before it fails with a timeout error.
+    pub external_tool_timeout_seconds: u64,
     pub command_shell: String,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
@@ -135,6 +137,7 @@ impl Default for RuntimeConfig {
             model_parallel_tool_calls: HashMap::new(),
             model_profiles: HashMap::new(),
             tool_allowlist: Vec::new(),
+            external_tool_timeout_seconds: DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS,
             command_shell: roder_api::command_shell::default_command_shell(),
             workspace: None,
             policy_mode: PolicyMode::Default,
@@ -177,6 +180,8 @@ pub struct CreateThreadRequest {
     pub tool_allowlist: Vec<String>,
     /// Host-supplied instructions added to the developer slot of every turn's inference request.
     pub developer_instructions: Option<String>,
+    /// Host-executed tool specs advertised to the model on every turn of this thread.
+    pub external_tools: Vec<roder_api::tools::ToolSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +211,21 @@ pub(crate) struct PendingUserInput {
     pub(crate) tx: oneshot::Sender<serde_json::Value>,
 }
 
+/// Host answer to an external tool call delivered via `tools/resolve`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalToolResolution {
+    pub output: String,
+    pub is_error: bool,
+}
+
+pub(crate) struct PendingExternalToolCall {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) turn_id: TurnId,
+    pub(crate) tool_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) tx: oneshot::Sender<ExternalToolResolution>,
+}
+
 #[derive(Clone)]
 struct ActiveTurnHandle {
     thread_id: ThreadId,
@@ -217,6 +237,14 @@ struct ActiveTurnHandle {
 pub struct ThreadActivity {
     pub active_turn_id: Option<TurnId>,
     pub active_flags: Vec<String>,
+}
+
+/// Per-thread settings persisted at thread creation and applied to every turn.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ThreadTurnOverrides {
+    pub(crate) tool_allowlist: Vec<String>,
+    pub(crate) developer_instructions: Option<String>,
+    pub(crate) external_tools: Vec<roder_api::tools::ToolSpec>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +284,8 @@ pub fn default_plan_exit_timeout() -> Duration {
     Duration::minutes(10)
 }
 
+pub const DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS: u64 = 300;
+
 pub struct Runtime {
     pub bus: EventBus,
     pub registry: ExtensionRegistry,
@@ -263,6 +293,7 @@ pub struct Runtime {
     pending_plan_exit: RwLock<Option<PendingPlanExit>>,
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
+    pub(crate) pending_external_tool_calls: Mutex<HashMap<String, PendingExternalToolCall>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
     workspace: PathBuf,
     teams: TeamManager,
@@ -329,6 +360,7 @@ impl Runtime {
             pending_plan_exit: RwLock::new(None),
             pending_tool_approvals: Mutex::new(HashMap::new()),
             pending_user_inputs: Mutex::new(HashMap::new()),
+            pending_external_tool_calls: Mutex::new(HashMap::new()),
             active_turns: RwLock::new(HashMap::new()),
             workspace: workspace.clone(),
             teams: TeamManager::new(
@@ -711,6 +743,70 @@ impl Runtime {
         Ok(rx.await.unwrap_or(false))
     }
 
+    /// Completes a pending host-executed tool call (`tools/resolve`). Returns false when the
+    /// request id is unknown, already resolved, timed out, or cancelled by a turn interrupt.
+    pub async fn resolve_external_tool_call(
+        &self,
+        request_id: &str,
+        resolution: ExternalToolResolution,
+    ) -> anyhow::Result<bool> {
+        let pending = self
+            .pending_external_tool_calls
+            .lock()
+            .await
+            .remove(request_id);
+        let Some(pending) = pending else {
+            return Ok(false);
+        };
+        self.emit(RoderEvent::ExternalToolCallResolved(
+            ExternalToolCallResolved {
+                thread_id: pending.thread_id,
+                turn_id: pending.turn_id,
+                request_id: request_id.to_string(),
+                tool_id: pending.tool_id,
+                tool_name: pending.tool_name,
+                outcome: ExternalToolCallOutcome::Resolved,
+                is_error: resolution.is_error,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        let _ = pending.tx.send(resolution);
+        Ok(true)
+    }
+
+    /// Drops every pending external tool call for the turn and reports them as cancelled so an
+    /// interrupt does not leak requests waiting on `tools/resolve`.
+    async fn cancel_pending_external_tool_calls_for_turn(&self, turn_id: &TurnId) {
+        let cancelled = {
+            let mut pending = self.pending_external_tool_calls.lock().await;
+            let request_ids = pending
+                .iter()
+                .filter(|(_, call)| &call.turn_id == turn_id)
+                .map(|(request_id, _)| request_id.clone())
+                .collect::<Vec<_>>();
+            request_ids
+                .into_iter()
+                .filter_map(|request_id| pending.remove(&request_id).map(|call| (request_id, call)))
+                .collect::<Vec<_>>()
+        };
+        for (request_id, call) in cancelled {
+            self.emit(RoderEvent::ExternalToolCallResolved(
+                ExternalToolCallResolved {
+                    thread_id: call.thread_id,
+                    turn_id: call.turn_id,
+                    request_id,
+                    tool_id: call.tool_id,
+                    tool_name: call.tool_name,
+                    outcome: ExternalToolCallOutcome::Cancelled,
+                    is_error: true,
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
+        }
+    }
+
     pub async fn resolve_user_input(
         &self,
         request_id: &str,
@@ -825,6 +921,7 @@ impl Runtime {
             selection_mode: None,
             tool_allowlist: Vec::new(),
             developer_instructions: None,
+            external_tools: Vec::new(),
         })
         .await
     }
@@ -852,6 +949,7 @@ impl Runtime {
             selection_mode: Some(selection_mode),
             tool_allowlist: req.tool_allowlist,
             developer_instructions: req.developer_instructions,
+            external_tools: req.external_tools,
             runner_destination: cfg.remote_runner_destination.clone(),
             runner_state: None,
             created_at: now,
@@ -931,6 +1029,7 @@ impl Runtime {
                     selection_mode: None,
                     tool_allowlist: Vec::new(),
                     developer_instructions: None,
+                    external_tools: Vec::new(),
                 })
                 .await?
                 .thread_id
@@ -956,6 +1055,7 @@ impl Runtime {
                     selection_mode: None,
                     tool_allowlist: Vec::new(),
                     developer_instructions: None,
+                    external_tools: Vec::new(),
                 })
                 .await?;
             let member_id = format!("member-{}", index + 1);
@@ -1028,6 +1128,7 @@ impl Runtime {
                 selection_mode: None,
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
+                external_tools: Vec::new(),
             })
             .await?;
         let team = self
@@ -1380,18 +1481,22 @@ impl Runtime {
             }))
     }
 
-    /// Per-thread tool allowlist and developer instructions persisted at thread creation.
-    async fn thread_turn_overrides(
+    /// Per-thread tool allowlist, developer instructions, and external tools persisted at thread creation.
+    pub(crate) async fn thread_turn_overrides(
         &self,
         thread_id: &ThreadId,
-    ) -> anyhow::Result<(Vec<String>, Option<String>)> {
+    ) -> anyhow::Result<ThreadTurnOverrides> {
         let Some(store) = &self.thread_store else {
-            return Ok((Vec::new(), None));
+            return Ok(ThreadTurnOverrides::default());
         };
         Ok(store
             .load_thread_metadata(thread_id)
             .await?
-            .map(|metadata| (metadata.tool_allowlist, metadata.developer_instructions))
+            .map(|metadata| ThreadTurnOverrides {
+                tool_allowlist: metadata.tool_allowlist,
+                developer_instructions: metadata.developer_instructions,
+                external_tools: metadata.external_tools,
+            })
             .unwrap_or_default())
     }
 
@@ -1608,6 +1713,15 @@ impl Runtime {
                 active_flags.push("userInputRequired".to_string());
             }
         }
+        {
+            let pending_external = self.pending_external_tool_calls.lock().await;
+            if pending_external
+                .values()
+                .any(|pending| &pending.thread_id == thread_id && pending.turn_id == active_turn_id)
+            {
+                active_flags.push("externalToolPending".to_string());
+            }
+        }
         if self.pending_plan_exit().await.is_some_and(|pending| {
             &pending.thread_id == thread_id && pending.turn_id == active_turn_id
         }) {
@@ -1624,6 +1738,8 @@ impl Runtime {
         if let Some(handle) = self.active_turns.write().await.remove(&turn_id) {
             handle.abort.abort();
         }
+        self.cancel_pending_external_tool_calls_for_turn(&turn_id)
+            .await;
         self.emit(RoderEvent::TurnInterrupted(TurnInterrupted {
             thread_id,
             turn_id,
@@ -1667,7 +1783,7 @@ impl Runtime {
         let cfg = self.config.read().await;
         let model_profile =
             model_profile_for_provider_model(&cfg, &cfg.default_provider, &cfg.default_model);
-        self.filtered_tool_specs(&cfg, &cfg.default_model, model_profile.as_ref(), &[])
+        self.filtered_tool_specs(&cfg, &cfg.default_model, model_profile.as_ref(), &[], &[])
     }
 
     pub fn subagent_definitions(&self) -> Vec<SubagentDefinition> {
@@ -1757,8 +1873,7 @@ impl Runtime {
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
-        let (thread_tool_allowlist, thread_developer_instructions) =
-            self.thread_turn_overrides(&req.thread_id).await?;
+        let thread_overrides = self.thread_turn_overrides(&req.thread_id).await?;
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
         let mut final_reasoning_text = String::new();
@@ -1856,7 +1971,8 @@ impl Runtime {
                 &cfg,
                 &model,
                 model_profile.as_ref(),
-                &thread_tool_allowlist,
+                &thread_overrides.tool_allowlist,
+                &thread_overrides.external_tools,
             );
             let prior_failures =
                 transcript_failure_count_since(&transcript, routing_transcript_start)
@@ -1917,7 +2033,8 @@ impl Runtime {
                         &cfg,
                         &model,
                         model_profile.as_ref(),
-                        &thread_tool_allowlist,
+                        &thread_overrides.tool_allowlist,
+                        &thread_overrides.external_tools,
                     )
                 }
             } else {
@@ -2002,7 +2119,7 @@ impl Runtime {
             .await;
 
             let mut instructions = req.instructions.clone();
-            if let Some(extra) = &thread_developer_instructions {
+            if let Some(extra) = &thread_overrides.developer_instructions {
                 instructions = apply_thread_developer_instructions(instructions, extra);
             }
             let mut instructions = apply_runtime_profile(instructions, runtime_profile);
@@ -2922,14 +3039,21 @@ impl Runtime {
         self.persist_turn_item(thread_id, turn_id, &item).await
     }
 
+    /**
+     * Allowlists apply to built-in tools only; external tools are advertised with their
+     * host-supplied schemas as given. An external tool shadows a built-in with the same name in
+     * both advertisement and dispatch (see `route_tool_call`).
+     */
     fn filtered_tool_specs(
         &self,
         cfg: &RuntimeConfig,
         model: &str,
         profile: Option<&ModelHarnessProfile>,
         thread_allowlist: &[String],
+        external_tools: &[roder_api::tools::ToolSpec],
     ) -> Vec<roder_api::tools::ToolSpec> {
-        self.tool_registry
+        let mut specs = self
+            .tool_registry
             .specs_for_edit_tool_with_schema_policy(
                 edit_tool_for_model(cfg, model),
                 schema_policy_for_model(profile),
@@ -2938,8 +3062,11 @@ impl Runtime {
             .filter(|spec| {
                 allowlist_permits(&cfg.tool_allowlist, &spec.name)
                     && allowlist_permits(thread_allowlist, &spec.name)
+                    && !external_tools.iter().any(|tool| tool.name == spec.name)
             })
-            .collect()
+            .collect::<Vec<_>>();
+        specs.extend(external_tools.iter().cloned());
+        specs
     }
 
     fn task_ledger_tool_specs(
@@ -3946,6 +4073,7 @@ mod tests {
                 selection_mode: None,
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
+                external_tools: Vec::new(),
             })
             .await
             .unwrap();
@@ -4928,6 +5056,7 @@ mod tests {
                 model: Some(default.model.clone()),
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
+                external_tools: Vec::new(),
                 selection_mode: Some(ModelSelectionMode::auto(
                     "test-router:coding",
                     "test-router",
@@ -5075,6 +5204,7 @@ mod tests {
                 model: Some(selected.model.clone()),
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
+                external_tools: Vec::new(),
                 selection_mode: Some(ModelSelectionMode::auto(
                     "test-router:default",
                     "test-router",
@@ -5188,6 +5318,7 @@ mod tests {
                 model: Some(selected.model.clone()),
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
+                external_tools: Vec::new(),
                 selection_mode: Some(ModelSelectionMode::manual(
                     selected.provider.clone(),
                     selected.model.clone(),
@@ -5507,6 +5638,7 @@ mod tests {
         requests: &Arc<StdMutex<Vec<AgentInferenceRequest>>>,
         tool_allowlist: Vec<String>,
         developer_instructions: Option<String>,
+        external_tools: Vec<ToolSpec>,
     ) -> AgentInferenceRequest {
         let thread_id = runtime
             .create_thread_with(CreateThreadRequest {
@@ -5519,6 +5651,7 @@ mod tests {
                 selection_mode: None,
                 tool_allowlist,
                 developer_instructions,
+                external_tools,
             })
             .await
             .unwrap()
@@ -5592,10 +5725,12 @@ mod tests {
             &requests,
             vec!["edit".to_string()],
             None,
+            Vec::new(),
         )
         .await;
         let unrestricted =
-            captured_thread_override_request(&runtime, &requests, Vec::new(), None).await;
+            captured_thread_override_request(&runtime, &requests, Vec::new(), None, Vec::new())
+                .await;
 
         let allowlisted_names = allowlisted
             .tools
@@ -5637,6 +5772,7 @@ mod tests {
             &requests,
             Vec::new(),
             Some("You are embedded in Sauna.".to_string()),
+            Vec::new(),
         )
         .await;
 
@@ -5648,8 +5784,82 @@ mod tests {
             .expect("developer instructions");
         assert!(developer.starts_with("You are embedded in Sauna."));
 
-        let plain = captured_thread_override_request(&runtime, &requests, Vec::new(), None).await;
+        let plain =
+            captured_thread_override_request(&runtime, &requests, Vec::new(), None, Vec::new())
+                .await;
         assert_eq!(plain.instructions.developer, None);
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn thread_external_tools_are_advertised_and_shadow_builtins() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-thread-external-tools-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SwitchCaptureEngine {
+            requests: requests.clone(),
+        }));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        builder.tool_contributor(Arc::new(ProfileToolContributor));
+        let runtime =
+            Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+
+        let external_tools = vec![
+            ToolSpec {
+                name: "sauna_lookup".to_string(),
+                description: "Look up Sauna workspace state.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": { "query": { "type": "string" } },
+                    "required": ["query"]
+                }),
+            },
+            ToolSpec {
+                name: "edit".to_string(),
+                description: "Host-managed edit.".to_string(),
+                parameters: serde_json::json!({ "type": "object" }),
+            },
+        ];
+        let request = captured_thread_override_request(
+            &runtime,
+            &requests,
+            Vec::new(),
+            None,
+            external_tools,
+        )
+        .await;
+
+        let sauna = request
+            .tools
+            .iter()
+            .find(|tool| tool.name == "sauna_lookup")
+            .expect("external tool advertised");
+        assert_eq!(sauna.description, "Look up Sauna workspace state.");
+        assert_eq!(sauna.parameters["required"][0], "query");
+        let edits = request
+            .tools
+            .iter()
+            .filter(|tool| tool.name == "edit")
+            .collect::<Vec<_>>();
+        assert_eq!(edits.len(), 1, "external edit shadows the builtin");
+        assert_eq!(edits[0].description, "Host-managed edit.");
+
+        let plain =
+            captured_thread_override_request(&runtime, &requests, Vec::new(), None, Vec::new())
+                .await;
+        assert!(plain.tools.iter().all(|tool| tool.name != "sauna_lookup"));
+        let plain_edit = plain
+            .tools
+            .iter()
+            .find(|tool| tool.name == "edit")
+            .expect("builtin edit advertised on plain thread");
+        assert_eq!(plain_edit.description, "edit test tool");
 
         let _ = std::fs::remove_dir_all(thread_root);
     }
@@ -5698,6 +5908,7 @@ mod tests {
                 selection_mode: None,
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
+                external_tools: Vec::new(),
             })
             .await
             .unwrap()

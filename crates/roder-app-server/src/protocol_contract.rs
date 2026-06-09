@@ -32,6 +32,7 @@ pub(crate) fn protocol_thread_from_metadata(
         usage: metadata.usage,
         tool_allowlist: metadata.tool_allowlist,
         developer_instructions: metadata.developer_instructions,
+        external_tools: metadata.external_tools,
     }
 }
 

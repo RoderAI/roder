@@ -69,6 +69,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                         cwd: None,
                         tool_allowlist: None,
                         developer_instructions: None,
+                        external_tools: None,
                         ephemeral: options.ephemeral,
                     })?),
                 })

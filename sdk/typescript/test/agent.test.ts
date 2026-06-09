@@ -83,6 +83,80 @@ test("agent send passes tool allowlist and instructions on thread/start", async 
   });
 });
 
+test("agent registers external tools and resolves calls, including thrown errors", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: { resolved: true } };
+  });
+  const externalTools = [
+    { name: "sauna_lookup", description: "Look up Sauna state.", parameters: { type: "object" } },
+  ];
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-1",
+    externalTools,
+    onToolExecute(call) {
+      if (call.name === "sauna_lookup") {
+        return { output: "2 open threads" };
+      }
+      throw new Error("unknown external tool");
+    },
+  });
+
+  await agent.send("hello");
+
+  const threadStart = requests.find((request) => request.method === "thread/start");
+  assert.deepEqual(threadStart?.params, {
+    cwd: "/workspace",
+    model: undefined,
+    modelProvider: undefined,
+    externalTools,
+    workspaceId: "ws-1",
+  });
+
+  transport.emit({
+    jsonrpc: "2.0",
+    method: "thread/toolExecutionRequested",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      requestId: "exttool-1",
+      call: { id: "call-1", name: "sauna_lookup", arguments: { query: "threads" } },
+    },
+  });
+  transport.emit({
+    jsonrpc: "2.0",
+    method: "thread/toolExecutionRequested",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      requestId: "exttool-2",
+      call: { id: "call-2", name: "other_tool", arguments: {} },
+    },
+  });
+
+  await eventually(
+    () => requests.filter((request) => request.method === "tools/resolve").length === 2,
+  );
+  assert.deepEqual(
+    requests
+      .filter((request) => request.method === "tools/resolve")
+      .map((request) => request.params),
+    [
+      { requestId: "exttool-1", output: "2 open threads", isError: false },
+      { requestId: "exttool-2", output: "Error: unknown external tool", isError: true },
+    ],
+  );
+});
+
 test("agent read-only helpers call safe app-server methods", async () => {
   const methods: string[] = [];
   const agent = await RoderAgent.create({

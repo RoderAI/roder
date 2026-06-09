@@ -118,7 +118,8 @@ use roder_protocol::{
     ThreadReadParams, ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
-    ToolCallResult, ToolsListResult, TurnInputItem, TurnInterruptParams, TurnInterruptResult,
+    ToolCallResult, ToolsListResult, ToolsResolveParams, ToolsResolveResult, TurnInputItem,
+    TurnInterruptParams, TurnInterruptResult,
     TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WebwrightArtifactsResult,
     WebwrightExportParams, WebwrightExportResult, WebwrightLatestRunResult, WebwrightPrepareParams,
     WebwrightPrepareResult, WebwrightReportResult, WebwrightRerunParams, WebwrightRerunResult,
@@ -283,6 +284,7 @@ impl ThreadStore for FailingThreadStore {
             selection_mode: None,
             tool_allowlist: Vec::new(),
             developer_instructions: None,
+            external_tools: Vec::new(),
             runner_destination: None,
             runner_state: None,
             created_at: time::OffsetDateTime::UNIX_EPOCH,
@@ -4648,6 +4650,7 @@ async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
                 cwd: Some(cwd),
                 tool_allowlist: Some(vec!["edit".to_string(), "read_file".to_string()]),
                 developer_instructions: Some("You are embedded in Sauna.".to_string()),
+                external_tools: None,
                 ephemeral: false,
             })
             .unwrap(),
@@ -5061,6 +5064,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             selection_mode: None,
             tool_allowlist: Vec::new(),
             developer_instructions: None,
+            external_tools: Vec::new(),
         })
         .await
         .unwrap();
@@ -7832,6 +7836,265 @@ async fn search_index_setting_can_be_set_and_observed() {
     roder_search::set_search_index_enabled(true);
 }
 
+fn sauna_lookup_external_tool() -> roder_api::tools::ToolSpec {
+    roder_api::tools::ToolSpec {
+        name: "sauna_lookup".to_string(),
+        description: "Look up Sauna workspace state.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": { "query": { "type": "string" } },
+            "required": ["query"]
+        }),
+    }
+}
+
+async fn start_external_tool_thread(client: &LocalAppClient) -> ThreadStartResult {
+    let cwd = test_cwd();
+    let workspace = create_workspace_for_path(client, std::path::Path::new(&cwd)).await;
+    request(
+        client,
+        "thread/start",
+        Some(
+            serde_json::to_value(ThreadStartParams {
+                selection: None,
+                model: None,
+                model_provider: None,
+                reasoning: None,
+                workspace_id: workspace.workspace_id,
+                root_id: Some(workspace.root_id),
+                cwd: Some(cwd),
+                tool_allowlist: None,
+                developer_instructions: None,
+                external_tools: Some(vec![sauna_lookup_external_tool()]),
+                ephemeral: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await
+}
+
+fn external_tool_runtime(config: RuntimeConfig) -> Arc<Runtime> {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
+    Arc::new(Runtime::new(builder.build().unwrap(), config).unwrap())
+}
+
+#[tokio::test]
+async fn external_tool_call_round_trips_through_tools_resolve() {
+    let runtime = external_tool_runtime(RuntimeConfig::default());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+    let mut notifications = client.subscribe_notifications();
+
+    let started = start_external_tool_thread(&client).await;
+    assert_eq!(started.thread.external_tools.len(), 1);
+    assert_eq!(started.thread.external_tools[0].name, "sauna_lookup");
+    let _turn = start_turn(&client, &started.thread.id, "FAKE_EXTERNAL_TOOL lookup").await;
+
+    let requested = wait_for_notification(
+        &mut notifications,
+        "thread/toolExecutionRequested",
+        Some(&started.thread.id),
+    )
+    .await;
+    let request_id = requested.params["requestId"]
+        .as_str()
+        .expect("requestId")
+        .to_string();
+    assert_eq!(requested.params["call"]["id"], "fake-external-tool");
+    assert_eq!(requested.params["call"]["name"], "sauna_lookup");
+    assert_eq!(requested.params["call"]["arguments"]["query"], "thread status");
+
+    let resolved: ToolsResolveResult = request(
+        &client,
+        "tools/resolve",
+        Some(
+            serde_json::to_value(ToolsResolveParams {
+                request_id: request_id.clone(),
+                output: "2 open threads".to_string(),
+                is_error: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(resolved.resolved);
+
+    let resolved_notification = wait_for_notification(
+        &mut notifications,
+        "thread/toolExecutionResolved",
+        Some(&started.thread.id),
+    )
+    .await;
+    assert_eq!(resolved_notification.params["requestId"], request_id);
+    assert_eq!(resolved_notification.params["outcome"], "resolved");
+    assert_eq!(resolved_notification.params["isError"], false);
+
+    let mut saw_tool_result = false;
+    let mut saw_turn_completed = false;
+    for _ in 0..40 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match envelope.event {
+            roder_api::events::RoderEvent::ToolCallCompleted(event)
+                if event.tool_name.as_deref() == Some("sauna_lookup") =>
+            {
+                assert_eq!(event.output.as_deref(), Some("2 open threads"));
+                assert!(!event.is_error);
+                saw_tool_result = true;
+            }
+            roder_api::events::RoderEvent::TurnCompleted(_) => {
+                saw_turn_completed = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_tool_result, "tool result did not reach the transcript");
+    assert!(saw_turn_completed, "turn did not continue after resolve");
+}
+
+#[tokio::test]
+async fn external_tool_call_times_out_into_error_result() {
+    let runtime = external_tool_runtime(RuntimeConfig {
+        external_tool_timeout_seconds: 0,
+        ..RuntimeConfig::default()
+    });
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+    let mut notifications = client.subscribe_notifications();
+
+    let started = start_external_tool_thread(&client).await;
+    let _turn = start_turn(&client, &started.thread.id, "FAKE_EXTERNAL_TOOL lookup").await;
+
+    let requested = wait_for_notification(
+        &mut notifications,
+        "thread/toolExecutionRequested",
+        Some(&started.thread.id),
+    )
+    .await;
+    let request_id = requested.params["requestId"]
+        .as_str()
+        .expect("requestId")
+        .to_string();
+
+    let resolved_notification = wait_for_notification(
+        &mut notifications,
+        "thread/toolExecutionResolved",
+        Some(&started.thread.id),
+    )
+    .await;
+    assert_eq!(resolved_notification.params["requestId"], request_id);
+    assert_eq!(resolved_notification.params["outcome"], "timedOut");
+    assert_eq!(resolved_notification.params["isError"], true);
+
+    let mut saw_timeout_result = false;
+    let mut saw_turn_completed = false;
+    for _ in 0..40 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match envelope.event {
+            roder_api::events::RoderEvent::ToolCallCompleted(event)
+                if event.tool_name.as_deref() == Some("sauna_lookup") =>
+            {
+                assert!(event.is_error);
+                assert!(event.output.unwrap_or_default().contains("timed out"));
+                saw_timeout_result = true;
+            }
+            roder_api::events::RoderEvent::TurnCompleted(_) => {
+                saw_turn_completed = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_timeout_result, "timeout did not produce an error result");
+    assert!(saw_turn_completed, "turn did not continue after timeout");
+
+    let late: ToolsResolveResult = request(
+        &client,
+        "tools/resolve",
+        Some(
+            serde_json::to_value(ToolsResolveParams {
+                request_id,
+                output: "too late".to_string(),
+                is_error: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!late.resolved);
+}
+
+#[tokio::test]
+async fn turn_interrupt_cancels_pending_external_tool_call() {
+    let runtime = external_tool_runtime(RuntimeConfig::default());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+
+    let started = start_external_tool_thread(&client).await;
+    let turn = start_turn(&client, &started.thread.id, "FAKE_EXTERNAL_TOOL lookup").await;
+
+    let requested = wait_for_notification(
+        &mut notifications,
+        "thread/toolExecutionRequested",
+        Some(&started.thread.id),
+    )
+    .await;
+    let request_id = requested.params["requestId"]
+        .as_str()
+        .expect("requestId")
+        .to_string();
+
+    let _interrupted: TurnInterruptResult = request(
+        &client,
+        "turn/interrupt",
+        Some(
+            serde_json::to_value(TurnInterruptParams {
+                thread_id: started.thread.id.clone(),
+                turn_id: Some(turn.turn_id.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let resolved_notification = wait_for_notification(
+        &mut notifications,
+        "thread/toolExecutionResolved",
+        Some(&started.thread.id),
+    )
+    .await;
+    assert_eq!(resolved_notification.params["requestId"], request_id);
+    assert_eq!(resolved_notification.params["outcome"], "cancelled");
+    assert_eq!(resolved_notification.params["isError"], true);
+
+    let late: ToolsResolveResult = request(
+        &client,
+        "tools/resolve",
+        Some(
+            serde_json::to_value(ToolsResolveParams {
+                request_id,
+                output: "too late".to_string(),
+                is_error: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!late.resolved, "cancelled request must not stay pending");
+}
+
 #[tokio::test]
 async fn shell_setting_can_be_set_and_observed() {
     let runtime = Arc::new(Runtime::fake().unwrap());
@@ -9593,6 +9856,7 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
                 cwd: Some(cwd),
                 tool_allowlist: None,
                 developer_instructions: None,
+                external_tools: None,
                 ephemeral: false,
             })
             .unwrap(),

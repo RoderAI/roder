@@ -31,10 +31,35 @@ export interface RoderAgentOptions {
   toolAllowlist?: string[];
   /** Host instructions layered under the harness system prompt on every turn. */
   instructions?: string;
+  /** Host-executed tools advertised to the model; calls arrive via onToolExecute. */
+  externalTools?: RoderExternalTool[];
+  /**
+   * Executes a host tool call published by thread/toolExecutionRequested and replies via
+   * tools/resolve. A thrown error resolves the call as an error result.
+   */
+  onToolExecute?(call: RoderExternalToolCall): Promise<ExternalToolResult> | ExternalToolResult;
   threadId?: string;
   workspaceId?: string;
   approvals?: RoderApprovals;
   eventMode?: EventMode;
+}
+
+export interface RoderExternalTool {
+  name: string;
+  description: string;
+  /** JSON-schema for the tool arguments. */
+  parameters: Record<string, unknown>;
+}
+
+export interface RoderExternalToolCall {
+  id: string;
+  name: string;
+  arguments: unknown;
+}
+
+export interface ExternalToolResult {
+  output: string;
+  isError?: boolean;
 }
 
 export interface RoderApprovals {
@@ -128,6 +153,7 @@ export class RoderAgent {
     const reasoning = this.options.model?.reasoning;
     const toolAllowlist = this.options.toolAllowlist;
     const instructions = this.options.instructions;
+    const externalTools = this.options.externalTools;
     const result = (await this.client.call("thread/start", {
       cwd,
       model: this.options.model?.id,
@@ -135,6 +161,7 @@ export class RoderAgent {
       ...(reasoning === undefined ? {} : { reasoning }),
       ...(toolAllowlist === undefined ? {} : { toolAllowlist }),
       ...(instructions === undefined ? {} : { developerInstructions: instructions }),
+      ...(externalTools === undefined ? {} : { externalTools }),
       workspaceId,
     })) as Record<string, unknown>;
     const threadId = extractId(result, "thread") ?? extractString(result, "threadId") ?? extractString(result, "id");
@@ -171,7 +198,7 @@ export class RoderAgent {
   }
 
   private startCallbackLoop(): void {
-    if (this.callbackLoopStarted || !this.options.approvals) {
+    if (this.callbackLoopStarted || (!this.options.approvals && !this.options.onToolExecute)) {
       return;
     }
     this.callbackLoopStarted = true;
@@ -183,6 +210,21 @@ export class RoderAgent {
   }
 
   private async handleCallbackNotification(method: string, params: unknown): Promise<void> {
+    if (method === "thread/toolExecutionRequested" && this.options.onToolExecute) {
+      const call = extractExternalToolCall(params);
+      let result: ExternalToolResult;
+      try {
+        result = await this.options.onToolExecute(call);
+      } catch (error) {
+        result = { output: String(error), isError: true };
+      }
+      await this.client.call("tools/resolve", {
+        requestId: extractString(params, "requestId"),
+        output: result.output,
+        isError: result.isError ?? false,
+      });
+      return;
+    }
     const approvals = this.options.approvals;
     if (!approvals) {
       return;
@@ -233,6 +275,16 @@ function resolveTransport(options: RoderAgentOptions): RoderTransport {
 
 function normalizeInput(input: string | Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   return typeof input === "string" ? [{ type: "text", text: input }] : input;
+}
+
+function extractExternalToolCall(params: unknown): RoderExternalToolCall {
+  const call =
+    params && typeof params === "object" ? (params as Record<string, unknown>).call : undefined;
+  return {
+    id: extractString(call, "id") ?? "",
+    name: extractString(call, "name") ?? "",
+    arguments: call && typeof call === "object" ? (call as Record<string, unknown>).arguments : undefined,
+  };
 }
 
 function extractId(value: Record<string, unknown>, key: string): string | undefined {

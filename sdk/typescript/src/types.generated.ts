@@ -1689,6 +1689,15 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "tools/resolve",
+      "paramsType": "ToolsResolveParams",
+      "resultType": "ToolsResolveResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "turn/interrupt",
       "paramsType": "TurnInterruptParams",
       "resultType": "TurnInterruptResult",
@@ -2377,6 +2386,7 @@ export const appServerMethods = [
   "thread/state",
   "tools/call",
   "tools/list",
+  "tools/resolve",
   "turn/interrupt",
   "turn/start",
   "turn/steer",

@@ -406,6 +406,7 @@ mod tests {
             preview: String::new(),
             tool_allowlist: Vec::new(),
             developer_instructions: None,
+            external_tools: Vec::new(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,

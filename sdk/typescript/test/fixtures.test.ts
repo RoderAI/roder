@@ -62,6 +62,40 @@ test("typescript sdk replays approval fixture", async () => {
   await eventually(() => seen.includes("approval-1") && transport.seenMethods.includes("thread/resolve_approval"));
 });
 
+test("typescript sdk replays external tool fixture", async () => {
+  const fixture = loadFixture("external-tool-flow.jsonl");
+  const transport = fixtureTransport(fixture);
+  const calls: Array<{ id: string; name: string; arguments: unknown }> = [];
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    model: { provider: "mock", id: "mock" },
+    externalTools: [
+      {
+        name: "sauna_lookup",
+        description: "Look up Sauna workspace state.",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        },
+      },
+    ],
+    onToolExecute(call) {
+      calls.push(call);
+      return { output: "2 open threads" };
+    },
+  });
+
+  await agent.send("look up threads");
+  emitNotifications(transport, fixture);
+
+  await eventually(() => transport.seenMethods.includes("tools/resolve"));
+  assert.deepEqual(calls, [
+    { id: "call-1", name: "sauna_lookup", arguments: { query: "thread status" } },
+  ]);
+});
+
 test("typescript sdk replays user input and plan exit fixture", async () => {
   const fixture = loadFixture("user-input-flow.jsonl");
   const transport = fixtureTransport(fixture);

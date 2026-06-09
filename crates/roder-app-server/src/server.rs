@@ -444,6 +444,13 @@ impl AppServer {
                 })
                 .await
             }
+            "tools/resolve" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_tools_resolve(p).await },
+                )
+                .await
+            }
             "turn/start" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_protocol_turn_start(p).await
@@ -2266,6 +2273,7 @@ impl AppServer {
             cwd,
             tool_allowlist,
             developer_instructions,
+            external_tools,
             ephemeral: _,
         } = params;
         let cfg = self.runtime.status().await;
@@ -2304,6 +2312,7 @@ impl AppServer {
                 selection_mode: Some(requested_selection.selection_mode.clone()),
                 tool_allowlist: tool_allowlist.unwrap_or_default(),
                 developer_instructions,
+                external_tools: external_tools.unwrap_or_default(),
             })
             .await
             .map_err(internal_error)?;
@@ -2553,6 +2562,7 @@ impl AppServer {
                 selection_mode: None,
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
+                external_tools: Vec::new(),
             })
             .await
             .map_err(internal_error)?;
@@ -2715,6 +2725,24 @@ impl AppServer {
             .await
             .map_err(internal_error)?;
         Ok(serde_json::to_value(ThreadResolveUserInputResult { resolved }).unwrap())
+    }
+
+    async fn handle_tools_resolve(
+        &self,
+        params: ToolsResolveParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let resolved = self
+            .runtime
+            .resolve_external_tool_call(
+                &params.request_id,
+                roder_core::ExternalToolResolution {
+                    output: params.output,
+                    is_error: params.is_error,
+                },
+            )
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ToolsResolveResult { resolved }).unwrap())
     }
 
     async fn handle_protocol_turn_start(

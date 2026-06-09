@@ -216,6 +216,7 @@
               "thread/state",
               "tools/call",
               "tools/list",
+              "tools/resolve",
               "turn/interrupt",
               "turn/start",
               "turn/steer",
