@@ -42,6 +42,35 @@ test("run streams normalized events until its turn completes", async () => {
   );
 });
 
+test("run wait ignores other threads' and turns' completions", async () => {
+  const transport = new InMemoryTransport((request) => ({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: {},
+  }));
+  const run = new RoderRun(new RoderRpcClient(transport), "thread-1", "turn-2");
+  const waiting = run.wait();
+
+  for (const [threadId, turnId] of [
+    ["thread-9", "turn-9"],
+    ["thread-1", "turn-1"],
+    ["thread-1", "turn-2"],
+  ]) {
+    transport.emit({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: {
+        threadId,
+        turn: { id: turnId, items: [], itemsView: "default", status: "completed" },
+      },
+    });
+  }
+
+  const completed = await waiting;
+  assert.equal(completed?.threadId, "thread-1");
+  assert.equal(completed?.turn.id, "turn-2");
+});
+
 test("run cancel maps to turn interrupt", async () => {
   let interruptParams: unknown;
   const run = new RoderRun(
