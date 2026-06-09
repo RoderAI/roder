@@ -404,6 +404,8 @@ mod tests {
         Thread {
             id: "thread-a".to_string(),
             preview: String::new(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,

@@ -2264,6 +2264,8 @@ impl AppServer {
             workspace_id,
             root_id,
             cwd,
+            tool_allowlist,
+            developer_instructions,
             ephemeral: _,
         } = params;
         let cfg = self.runtime.status().await;
@@ -2300,6 +2302,8 @@ impl AppServer {
                 provider: Some(model_provider.clone()),
                 model: Some(model.clone()),
                 selection_mode: Some(requested_selection.selection_mode.clone()),
+                tool_allowlist: tool_allowlist.unwrap_or_default(),
+                developer_instructions,
             })
             .await
             .map_err(internal_error)?;
@@ -2547,6 +2551,8 @@ impl AppServer {
                 provider: Some(cfg.default_provider.clone()),
                 model: Some(cfg.default_model.clone()),
                 selection_mode: None,
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
             })
             .await
             .map_err(internal_error)?;

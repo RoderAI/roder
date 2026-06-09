@@ -1241,6 +1241,8 @@ Request:
   "model": "gpt-5.5",
   "modelProvider": "openai",
   "reasoning": "high",
+  "toolAllowlist": ["edit", "read_file"],
+  "developerInstructions": "You are embedded in HostApp.",
   "ephemeral": false
 }
 ```
@@ -1263,7 +1265,9 @@ Response:
     },
     "workspaceId": "ws_abc123",
     "rootId": "root_abc123",
-    "cwd": "/Users/pz/w/gode"
+    "cwd": "/Users/pz/w/gode",
+    "toolAllowlist": ["edit", "read_file"],
+    "developerInstructions": "You are embedded in HostApp."
   },
   "model": "gpt-5.5",
   "modelProvider": "openai",
@@ -1284,6 +1288,14 @@ Behavior:
   supplied, it must be the selected root or a child path of that root.
 - Stores the selected provider/model/reasoning for later `turn/start` overrides.
 - If `reasoning` is omitted, returns and stores the effective reasoning effort for the selected model.
+- `toolAllowlist` is optional. When present and non-empty, every turn on the
+  thread advertises only the listed tools, intersected with the runtime-level
+  allowlist. Other threads are unaffected.
+- `developerInstructions` is optional. When present, the text is added to the
+  developer slot of every turn's inference request, layered under the harness
+  system prompt and ahead of harness addenda such as plan mode.
+- Both values persist in thread metadata and are surfaced on the `thread`
+  object returned by `thread/start` and `thread/read`.
 - Emits `thread/started`.
 - `ephemeral` is accepted by the DTO but is not currently used by the handler.
 

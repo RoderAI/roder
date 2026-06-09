@@ -50,6 +50,39 @@ test("agent send starts a thread and turn", async () => {
   });
 });
 
+test("agent send passes tool allowlist and instructions on thread/start", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  });
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-1",
+    toolAllowlist: ["edit", "read_file"],
+    instructions: "You are embedded in Sauna.",
+  });
+
+  await agent.send("hello");
+
+  const threadStart = requests.find((request) => request.method === "thread/start");
+  assert.deepEqual(threadStart?.params, {
+    cwd: "/workspace",
+    model: undefined,
+    modelProvider: undefined,
+    toolAllowlist: ["edit", "read_file"],
+    developerInstructions: "You are embedded in Sauna.",
+    workspaceId: "ws-1",
+  });
+});
+
 test("agent read-only helpers call safe app-server methods", async () => {
   const methods: string[] = [];
   const agent = await RoderAgent.create({

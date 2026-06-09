@@ -281,6 +281,8 @@ impl ThreadStore for FailingThreadStore {
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
             selection_mode: None,
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             runner_destination: None,
             runner_state: None,
             created_at: time::OffsetDateTime::UNIX_EPOCH,
@@ -4622,6 +4624,64 @@ async fn thread_read_without_turns_uses_metadata_only_store_path() {
 }
 
 #[tokio::test]
+async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let cwd = test_cwd();
+    let workspace = create_workspace_for_path(&client, std::path::Path::new(&cwd)).await;
+    let started: ThreadStartResult = request(
+        &client,
+        "thread/start",
+        Some(
+            serde_json::to_value(ThreadStartParams {
+                selection: None,
+                model: None,
+                model_provider: None,
+                reasoning: None,
+                workspace_id: workspace.workspace_id,
+                root_id: Some(workspace.root_id),
+                cwd: Some(cwd),
+                tool_allowlist: Some(vec!["edit".to_string(), "read_file".to_string()]),
+                developer_instructions: Some("You are embedded in Sauna.".to_string()),
+                ephemeral: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(started.thread.tool_allowlist, vec!["edit", "read_file"]);
+    assert_eq!(
+        started.thread.developer_instructions.as_deref(),
+        Some("You are embedded in Sauna.")
+    );
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: started.thread.id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let thread = read.thread.expect("thread/read returns thread");
+    assert_eq!(thread.tool_allowlist, vec!["edit", "read_file"]);
+    assert_eq!(
+        thread.developer_instructions.as_deref(),
+        Some("You are embedded in Sauna.")
+    );
+}
+
+#[tokio::test]
 async fn thread_snapshots_overlay_runtime_active_turn_status() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(PendingEngine));
@@ -4999,6 +5059,8 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             provider: Some(PROVIDER_MOCK.to_string()),
             model: Some("mock".to_string()),
             selection_mode: None,
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
         })
         .await
         .unwrap();
@@ -9529,6 +9591,8 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
                 workspace_id: workspace.workspace_id,
                 root_id: Some(workspace.root_id),
                 cwd: Some(cwd),
+                tool_allowlist: None,
+                developer_instructions: None,
                 ephemeral: false,
             })
             .unwrap(),

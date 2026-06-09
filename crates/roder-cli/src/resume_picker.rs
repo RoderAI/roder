@@ -704,6 +704,8 @@ mod tests {
         Thread {
             id: id.to_string(),
             preview: title.unwrap_or("Untitled thread").to_string(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,

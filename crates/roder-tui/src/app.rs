@@ -1442,6 +1442,8 @@ where
                     model_provider: None,
                     reasoning: None,
                     cwd: None,
+                    tool_allowlist: None,
+                    developer_instructions: None,
                     ephemeral: false,
                 })
                 .unwrap(),
@@ -9338,6 +9340,8 @@ mod tests {
         Thread {
             id: id.to_string(),
             preview: String::new(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9535,6 +9539,8 @@ mod tests {
         let thread = Thread {
             id: "thread-ledger".to_string(),
             preview: String::new(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9599,6 +9605,8 @@ mod tests {
         let thread = Thread {
             id: "thread-resume-bottom".to_string(),
             preview: String::new(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9744,6 +9752,8 @@ mod tests {
         let thread = Thread {
             id: "thread-compaction".to_string(),
             preview: String::new(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9811,6 +9821,8 @@ mod tests {
         let running = Thread {
             id: "thread-running".to_string(),
             preview: String::new(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9837,6 +9849,8 @@ mod tests {
         let idle = Thread {
             id: "thread-idle".to_string(),
             preview: String::new(),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -10319,6 +10333,8 @@ mod tests {
                         model_provider: Some("mock".to_string()),
                         reasoning: None,
                         cwd: None,
+                        tool_allowlist: None,
+                        developer_instructions: None,
                         ephemeral: false,
                     })
                     .unwrap(),
@@ -12017,6 +12033,8 @@ mod tests {
                             workspace_id: workspace_id.clone(),
                             root_id: Some(root_id.clone()),
                             cwd: None,
+                            tool_allowlist: None,
+                            developer_instructions: None,
                             ephemeral: false,
                         })
                         .unwrap(),
@@ -12066,6 +12084,8 @@ mod tests {
                             workspace_id,
                             root_id: Some(root_id),
                             cwd: None,
+                            tool_allowlist: None,
+                            developer_instructions: None,
                             ephemeral: false,
                         })
                         .unwrap(),

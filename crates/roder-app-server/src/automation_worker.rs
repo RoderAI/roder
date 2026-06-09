@@ -113,6 +113,8 @@ pub async fn execute_automation_task(
             provider: input.definition.model_provider.clone(),
             model: input.definition.model.clone(),
             selection_mode: None,
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
         })
         .await?;
     let mut events = runtime.subscribe_events();

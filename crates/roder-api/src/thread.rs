@@ -106,6 +106,12 @@ pub struct ThreadMetadata {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection_mode: Option<ModelSelectionMode>,
+    /// Per-thread tool filter applied on top of the runtime allowlist. Empty = no filtering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_allowlist: Vec<String>,
+    /// Host-supplied instructions added to the developer slot of every turn's inference request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner_destination: Option<RunnerDestination>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -441,6 +447,8 @@ mod tests {
             provider: None,
             model: None,
             selection_mode: None,
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             runner_destination: None,
             runner_state: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
@@ -496,6 +504,8 @@ mod tests {
                 Some("coding".to_string()),
                 Some("low".to_string()),
             )),
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
             runner_destination: None,
             runner_state: None,
             created_at: OffsetDateTime::UNIX_EPOCH,

@@ -60,7 +60,7 @@ use crate::inference_routing::{
 };
 use crate::instructions::{
     apply_model_instruction_overlay, apply_plan_mode, apply_runtime_profile,
-    apply_task_ledger_required,
+    apply_task_ledger_required, apply_thread_developer_instructions,
 };
 use crate::policy_gate::DefaultPolicyGate;
 use crate::reliability::{
@@ -173,6 +173,10 @@ pub struct CreateThreadRequest {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub selection_mode: Option<ModelSelectionMode>,
+    /// Per-thread tool filter applied on top of the runtime allowlist. Empty = no filtering.
+    pub tool_allowlist: Vec<String>,
+    /// Host-supplied instructions added to the developer slot of every turn's inference request.
+    pub developer_instructions: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -819,6 +823,8 @@ impl Runtime {
             provider: None,
             model: None,
             selection_mode: None,
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
         })
         .await
     }
@@ -844,6 +850,8 @@ impl Runtime {
             provider: Some(provider),
             model: Some(model),
             selection_mode: Some(selection_mode),
+            tool_allowlist: req.tool_allowlist,
+            developer_instructions: req.developer_instructions,
             runner_destination: cfg.remote_runner_destination.clone(),
             runner_state: None,
             created_at: now,
@@ -921,6 +929,8 @@ impl Runtime {
                     provider: None,
                     model: None,
                     selection_mode: None,
+                    tool_allowlist: Vec::new(),
+                    developer_instructions: None,
                 })
                 .await?
                 .thread_id
@@ -944,6 +954,8 @@ impl Runtime {
                     provider: member.model_provider.clone(),
                     model: member.model.clone(),
                     selection_mode: None,
+                    tool_allowlist: Vec::new(),
+                    developer_instructions: None,
                 })
                 .await?;
             let member_id = format!("member-{}", index + 1);
@@ -1014,6 +1026,8 @@ impl Runtime {
                 provider: req.model_provider.clone(),
                 model: req.model.clone(),
                 selection_mode: None,
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
             })
             .await?;
         let team = self
@@ -1366,6 +1380,21 @@ impl Runtime {
             }))
     }
 
+    /// Per-thread tool allowlist and developer instructions persisted at thread creation.
+    async fn thread_turn_overrides(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<(Vec<String>, Option<String>)> {
+        let Some(store) = &self.thread_store else {
+            return Ok((Vec::new(), None));
+        };
+        Ok(store
+            .load_thread_metadata(thread_id)
+            .await?
+            .map(|metadata| (metadata.tool_allowlist, metadata.developer_instructions))
+            .unwrap_or_default())
+    }
+
     pub async fn set_thread_selection_mode(
         &self,
         thread_id: &ThreadId,
@@ -1638,7 +1667,7 @@ impl Runtime {
         let cfg = self.config.read().await;
         let model_profile =
             model_profile_for_provider_model(&cfg, &cfg.default_provider, &cfg.default_model);
-        self.filtered_tool_specs(&cfg, &cfg.default_model, model_profile.as_ref())
+        self.filtered_tool_specs(&cfg, &cfg.default_model, model_profile.as_ref(), &[])
     }
 
     pub fn subagent_definitions(&self) -> Vec<SubagentDefinition> {
@@ -1728,6 +1757,8 @@ impl Runtime {
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
+        let (thread_tool_allowlist, thread_developer_instructions) =
+            self.thread_turn_overrides(&req.thread_id).await?;
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
         let mut final_reasoning_text = String::new();
@@ -1821,7 +1852,12 @@ impl Runtime {
                     Some(collect_inference_routing_candidates(&self.registry).await);
             }
             let routing_tools_model = model.clone();
-            let routing_tools = self.filtered_tool_specs(&cfg, &model, model_profile.as_ref());
+            let routing_tools = self.filtered_tool_specs(
+                &cfg,
+                &model,
+                model_profile.as_ref(),
+                &thread_tool_allowlist,
+            );
             let prior_failures =
                 transcript_failure_count_since(&transcript, routing_transcript_start)
                     .max(reliability.tool_failure_count())
@@ -1877,7 +1913,12 @@ impl Runtime {
                 if model == routing_tools_model {
                     routing_tools.clone()
                 } else {
-                    self.filtered_tool_specs(&cfg, &model, model_profile.as_ref())
+                    self.filtered_tool_specs(
+                        &cfg,
+                        &model,
+                        model_profile.as_ref(),
+                        &thread_tool_allowlist,
+                    )
                 }
             } else {
                 Vec::new()
@@ -1960,7 +2001,11 @@ impl Runtime {
             }))
             .await;
 
-            let mut instructions = apply_runtime_profile(req.instructions.clone(), runtime_profile);
+            let mut instructions = req.instructions.clone();
+            if let Some(extra) = &thread_developer_instructions {
+                instructions = apply_thread_developer_instructions(instructions, extra);
+            }
+            let mut instructions = apply_runtime_profile(instructions, runtime_profile);
             if let Some(profile) = &model_profile {
                 instructions = apply_model_instruction_overlay(instructions, profile);
             }
@@ -2882,6 +2927,7 @@ impl Runtime {
         cfg: &RuntimeConfig,
         model: &str,
         profile: Option<&ModelHarnessProfile>,
+        thread_allowlist: &[String],
     ) -> Vec<roder_api::tools::ToolSpec> {
         self.tool_registry
             .specs_for_edit_tool_with_schema_policy(
@@ -2890,11 +2936,8 @@ impl Runtime {
             )
             .into_iter()
             .filter(|spec| {
-                cfg.tool_allowlist.is_empty()
-                    || cfg
-                        .tool_allowlist
-                        .iter()
-                        .any(|allowed| allowed.as_str() == spec.name)
+                allowlist_permits(&cfg.tool_allowlist, &spec.name)
+                    && allowlist_permits(thread_allowlist, &spec.name)
             })
             .collect()
     }
@@ -3440,6 +3483,10 @@ fn model_profile_for_model(cfg: &RuntimeConfig, model: &str) -> Option<ModelHarn
         .or_else(|| built_in_model_profile(model))
 }
 
+fn allowlist_permits(allowlist: &[String], tool_name: &str) -> bool {
+    allowlist.is_empty() || allowlist.iter().any(|allowed| allowed == tool_name)
+}
+
 /// Provider-aware profile resolution for the active turn.
 ///
 /// Many model ids are shared across providers (for example Cursor proxies
@@ -3897,6 +3944,8 @@ mod tests {
                 provider: Some("mock".to_string()),
                 model: Some("mock".to_string()),
                 selection_mode: None,
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
             })
             .await
             .unwrap();
@@ -4877,6 +4926,8 @@ mod tests {
                 root_id: None,
                 provider: Some(default.provider.clone()),
                 model: Some(default.model.clone()),
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
                 selection_mode: Some(ModelSelectionMode::auto(
                     "test-router:coding",
                     "test-router",
@@ -5022,6 +5073,8 @@ mod tests {
                 root_id: None,
                 provider: Some(selected.provider.clone()),
                 model: Some(selected.model.clone()),
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
                 selection_mode: Some(ModelSelectionMode::auto(
                     "test-router:default",
                     "test-router",
@@ -5133,6 +5186,8 @@ mod tests {
                 root_id: None,
                 provider: Some(selected.provider.clone()),
                 model: Some(selected.model.clone()),
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
                 selection_mode: Some(ModelSelectionMode::manual(
                     selected.provider.clone(),
                     selected.model.clone(),
@@ -5445,6 +5500,160 @@ mod tests {
         assert_eq!(tool_names, vec!["edit"]);
     }
 
+    /// Builds a store-backed runtime turn for a thread created with the given per-thread
+    /// overrides and returns the captured inference request.
+    async fn captured_thread_override_request(
+        runtime: &Arc<Runtime>,
+        requests: &Arc<StdMutex<Vec<AgentInferenceRequest>>>,
+        tool_allowlist: Vec<String>,
+        developer_instructions: Option<String>,
+    ) -> AgentInferenceRequest {
+        let thread_id = runtime
+            .create_thread_with(CreateThreadRequest {
+                title: Some("Thread overrides".to_string()),
+                workspace: test_workspace(),
+                workspace_id: None,
+                root_id: None,
+                provider: None,
+                model: None,
+                selection_mode: None,
+                tool_allowlist,
+                developer_instructions,
+            })
+            .await
+            .unwrap()
+            .thread_id;
+        let mut rx = runtime.subscribe_events();
+        let turn_id = runtime
+            .start_turn(StartTurnRequest {
+                thread_id,
+                message: "hello".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: crate::default_instructions(),
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = rx.recv().await.unwrap();
+                if envelope.turn_id.as_deref() != Some(&turn_id) {
+                    continue;
+                }
+                match envelope.event {
+                    RoderEvent::TurnCompleted(_) => break,
+                    RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+        requests.lock().unwrap().pop().expect("captured request")
+    }
+
+    #[tokio::test]
+    async fn thread_tool_allowlist_filters_only_that_thread() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-thread-allowlist-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SwitchCaptureEngine {
+            requests: requests.clone(),
+        }));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        builder.tool_contributor(Arc::new(ProfileToolContributor));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    model_profiles: std::collections::HashMap::from([(
+                        "gpt-5.5".to_string(),
+                        test_model_profile("gpt-5.5"),
+                    )]),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        let allowlisted = captured_thread_override_request(
+            &runtime,
+            &requests,
+            vec!["edit".to_string()],
+            None,
+        )
+        .await;
+        let unrestricted =
+            captured_thread_override_request(&runtime, &requests, Vec::new(), None).await;
+
+        let allowlisted_names = allowlisted
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(allowlisted_names, vec!["edit"]);
+        let unrestricted_names = unrestricted
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(unrestricted_names.contains(&"edit"));
+        assert!(unrestricted_names.len() > 1);
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn thread_developer_instructions_layer_under_harness_prompt() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-thread-instructions-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SwitchCaptureEngine {
+            requests: requests.clone(),
+        }));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        builder.tool_contributor(Arc::new(ProfileToolContributor));
+        let runtime =
+            Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+
+        let request = captured_thread_override_request(
+            &runtime,
+            &requests,
+            Vec::new(),
+            Some("You are embedded in Sauna.".to_string()),
+        )
+        .await;
+
+        let system = request.instructions.system.expect("system instructions");
+        assert!(system.starts_with("You are Roder"));
+        let developer = request
+            .instructions
+            .developer
+            .expect("developer instructions");
+        assert!(developer.starts_with("You are embedded in Sauna."));
+
+        let plain = captured_thread_override_request(&runtime, &requests, Vec::new(), None).await;
+        assert_eq!(plain.instructions.developer, None);
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
     #[tokio::test]
     async fn model_switch_injects_summary_and_records_profile_segments() {
         let requests = Arc::new(StdMutex::new(Vec::new()));
@@ -5487,6 +5696,8 @@ mod tests {
                 provider: None,
                 model: None,
                 selection_mode: None,
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
             })
             .await
             .unwrap()
