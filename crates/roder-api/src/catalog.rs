@@ -534,6 +534,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         &[],
     ),
     claude_code_model(
+        "fable",
+        "Claude Code Fable",
+        "Claude Code harness Fable alias for the most powerful frontier model.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    claude_code_model(
         "sonnet",
         "Claude Code Sonnet",
         "Claude Code harness Sonnet alias for coding and tool workflows.",
@@ -573,6 +582,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "claude-opus-4-8",
         "Claude Code Opus 4.8",
         "Claude Opus 4.8 through the local Claude Code harness.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    claude_code_model(
+        "claude-fable-5",
+        "Claude Code Fable 5",
+        "Claude Fable 5 through the local Claude Code harness.",
         1_000_000,
         900_000,
         REASONING_HIGH,
@@ -1425,11 +1443,13 @@ mod tests {
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
+                "fable",
                 "sonnet",
                 "opus",
                 "haiku",
                 "claude-sonnet-4-6",
                 "claude-opus-4-8",
+                "claude-fable-5",
                 "gemini-3.5-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3.1-pro-preview-customtools",
@@ -1481,7 +1501,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
         assert_eq!(models_for_codex(false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 5);
-        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 5);
+        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
