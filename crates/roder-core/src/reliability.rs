@@ -126,6 +126,10 @@ impl TurnReliabilityState {
         }
         None
     }
+
+    pub(crate) fn tool_failure_count(&self) -> u32 {
+        self.tool_failures
+    }
 }
 
 fn limit_hit(

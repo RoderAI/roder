@@ -20,8 +20,8 @@ use it to:
 - start, steer, interrupt, and observe turns.
 - list/select providers, models, runners, tools, agents, commands, skills,
   memories, media artifacts, workflow imports, plan reviews, hunks,
-  automations, eval reports, retrieval diagnostics, search indexes, code
-  indexes, and background tasks.
+  automations, eval reports, inference routing diagnostics, retrieval
+  diagnostics, search indexes, code indexes, and background tasks.
 - receive notifications for turn lifecycle, streamed assistant output, tool
   lifecycle, teams, workflow imports, media, memory, plan review, hunk,
   discovery, retrieval, skill, search-index, code-index, and automation events.
@@ -99,10 +99,11 @@ Provider auth is provider-specific:
   surface.
 
 Config persistence is opt-in on the `AppServer` instance. When enabled,
-`providers/select`, `settings/set_web_search`, `settings/set_shell`,
-`settings/set_default_mode`, and `settings/set_file_backed_dynamic_context`
-write the selected defaults to
-`~/.roder/config.toml`.
+`providers/select`, Manual `model/select`, `settings/set_web_search`,
+`settings/set_shell`, `settings/set_default_mode`, and
+`settings/set_file_backed_dynamic_context` write the selected defaults to
+`~/.roder/config.toml`. Auto `model/select` is process-local selection state
+backed by configured routing; it does not persist a fake provider or model id.
 
 ## Core Concepts
 
@@ -182,8 +183,11 @@ Core:
 | `extensions/list` | List extension manifests and capability status. |
 | `providers/list` | List providers, auth status, capabilities, and models. |
 | `providers/configure` | Persist an API key for an API-key provider. |
-| `providers/select` | Select active default provider/model/reasoning. |
+| `providers/select` | Select active default provider/model/reasoning; Manual-only legacy path. |
 | `model/list` | List protocol model descriptors. |
+| `model/select` | Select Manual provider/model or Auto routing mode. |
+| `inference/routing/metrics` | Read adaptive inference routing decisions, estimated savings, and regret counters for a turn. |
+| `inference/routing/status` | Read the latest adaptive inference routing decision status for a thread or turn. |
 | `settings/get` | Read hosted web search mode, search-index status, shell command shell, default policy mode, and file-backed context status. |
 | `settings/set_web_search` | Set hosted web search mode. |
 | `settings/set_search_index` | Enable or disable the persistent regex search index. |
@@ -668,6 +672,27 @@ Response:
   "active_provider": "openai",
   "active_model": "gpt-5.5",
   "active_reasoning": "high",
+  "selectionMode": {
+    "type": "manual",
+    "provider": "openai",
+    "model": "gpt-5.5",
+    "reasoning": "high"
+  },
+  "routingOptions": [
+    {
+      "id": "local:coding",
+      "label": "Auto: Coding",
+      "routerId": "local",
+      "baseline": {
+        "provider": "openai",
+        "model": "gpt-5.5"
+      },
+      "profile": "coding",
+      "objective": "cost",
+      "available": true,
+      "metadata": {}
+    }
+  ],
   "providers": [
     {
       "id": "openai",
@@ -694,6 +719,14 @@ Response:
 Behavior:
 
 - Providers are sorted by `sortOrder`, then name.
+- `routingOptions` is a sibling list of selectable Auto modes contributed by
+  registered inference routers. These are not inserted into provider `models`
+  and are only present when routing is enabled, the configured router is
+  registered, and the option resolves to a real baseline provider/model.
+- `selectionMode` describes the current picker selection. Manual mode carries
+  a concrete provider/model/reasoning. Auto mode carries a router option id,
+  router id, display label, optional profile, optional reasoning, and a real
+  concrete baseline.
 - OAuth providers report `authenticated` by checking the relevant token store.
 - `capabilities.tool_search` means the provider can map Roder's canonical
   provider-native tool-search hint into its native request body. It does not
@@ -743,6 +776,8 @@ Errors:
 ### `providers/select`
 
 Purpose: Select the active provider, model, and optional reasoning effort.
+This is the legacy Manual-only selection method; new clients should use
+`model/select`.
 
 Request:
 
@@ -774,6 +809,76 @@ Errors:
 
 - Runtime provider/model validation errors return code `-32000` with
   `data.details`.
+
+### `model/select`
+
+Purpose: Select either a concrete Manual model or a configured Auto routing
+option.
+
+Manual request:
+
+```json
+{
+  "selection": {
+    "type": "manual",
+    "provider": "openai",
+    "model": "gpt-5.5",
+    "reasoning": "high"
+  },
+  "threadId": "thread-123"
+}
+```
+
+Auto request:
+
+```json
+{
+  "selection": {
+    "type": "auto",
+    "optionId": "local:coding"
+  },
+  "threadId": "thread-123"
+}
+```
+
+Response:
+
+```json
+{
+  "selectionMode": {
+    "type": "auto",
+    "optionId": "local:coding",
+    "routerId": "local",
+    "label": "Auto: Coding",
+    "baseline": {
+      "provider": "openai",
+      "model": "gpt-5.5"
+    },
+    "profile": "coding",
+    "reasoning": "high"
+  },
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "reasoning": "high",
+  "modelProfile": "OpenAI GPT-5.5"
+}
+```
+
+Behavior:
+
+- Manual selection validates a real provider/model/reasoning and bypasses
+  routing on normal turns.
+- Auto selection validates a configured routing option from `routingOptions`.
+  Normal turns use the option baseline as the default provider/model and invoke
+  the selected router before inference.
+- Passing `threadId` updates that thread's selection mode. Omitting `threadId`
+  updates process-local default picker state; Manual defaults can also be
+  persisted when user-config persistence is enabled.
+
+Errors:
+
+- Unknown Manual providers/models return code `-32000` with `data.details`.
+- Unknown or unavailable Auto option ids return code `-32602`.
 
 ### `speech/synthesis/providers/list`
 
@@ -4201,6 +4306,202 @@ Notifications:
 
 - `index/statusChanged` is emitted with payload
   `{ "status": CodeIndexStatusView }` after rebuilds.
+
+### `inference/routing/status`
+
+Purpose: Inspect the latest adaptive inference routing decision known for a
+thread or a specific turn.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123"
+}
+```
+
+Response:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "active": true,
+  "decisionCount": 1,
+  "routerId": "local",
+  "latestOutcome": "selected",
+  "defaultSelection": { "provider": "codex", "model": "gpt-5.5" },
+  "selectedSelection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+  "latestDecision": {
+    "threadId": "thread-123",
+    "turnId": "turn-123",
+    "roundIndex": 0,
+    "defaultSelection": { "provider": "codex", "model": "gpt-5.5" },
+    "selectedSelection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+    "decision": {
+      "routerId": "local",
+      "outcome": "selected",
+      "selected": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+      "reason": "routine local-profiler signal",
+      "metadata": {
+        "tier": "simple",
+        "profile": "coding"
+      }
+    },
+    "timestamp": "2026-06-06T12:00:00Z"
+  },
+  "summary": {
+    "text": "1 routing decision(s); latest selected via router local selected codex/gpt-5.3-codex-spark.",
+    "notes": [],
+    "truncated": false
+  }
+}
+```
+
+Behavior:
+
+- The method reads persisted `inference.routing_decision` events. When
+  `turnId` is omitted, it reports the latest routing decision across the
+  thread.
+- `active` means at least one matching routing decision exists. A thread or
+  turn with no routing events returns `active: false`, zero counts, and an
+  explanatory summary note.
+- `latestDecision` is the raw persisted event for the latest matching routing
+  decision.
+
+Errors:
+
+- Unknown `threadId` returns code `-32602`.
+- Malformed params return code `-32602`.
+
+### `inference/routing/metrics`
+
+Purpose: Inspect adaptive inference routing decisions, selected-versus-baseline
+cost estimates, and regret signals for one turn.
+
+Request:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "limit": 10
+}
+```
+
+Response:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "decisions": [
+    {
+      "threadId": "thread-123",
+      "turnId": "turn-123",
+      "roundIndex": 0,
+      "defaultSelection": { "provider": "codex", "model": "gpt-5.5" },
+      "selectedSelection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+      "decision": {
+        "routerId": "local",
+        "outcome": "selected",
+        "selected": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+        "reasoning": { "enabled": true, "level": "low" },
+        "reason": "routine local-profiler signal",
+        "confidence": 0.76,
+        "matchedSignals": [
+          { "key": "intent", "value": "small_edit", "source": "local_profiler", "weight": 0.6 }
+        ],
+        "baseline": { "provider": "codex", "model": "gpt-5.5" },
+        "costDelta": {
+          "selectedEstimate": {
+            "selection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+            "promptCostUsd": 0.00004,
+            "completionCostUsd": 0.0,
+            "totalCostUsd": 0.00004,
+            "priceSource": "inference_router.extension.prices",
+            "usageSource": "estimated_input_tokens",
+            "incomplete": true
+          },
+          "baselineEstimate": {
+            "selection": { "provider": "codex", "model": "gpt-5.5" },
+            "promptCostUsd": 0.0004,
+            "completionCostUsd": 0.0,
+            "totalCostUsd": 0.0004,
+            "priceSource": "inference_router.extension.prices",
+            "usageSource": "estimated_input_tokens",
+            "incomplete": true
+          },
+          "estimatedSavingsUsd": 0.00036
+        },
+        "metadata": {
+          "tier": "simple",
+          "profile": "coding",
+          "objective": "cost",
+          "routine": true,
+          "highRisk": false,
+          "recovery": false,
+          "risks": [],
+          "intents": ["small_edit"],
+          "classifierComparison": {
+            "enabled": false,
+            "label": null,
+            "reserved": true
+          }
+        }
+      },
+      "timestamp": "2026-06-06T12:00:00Z"
+    }
+  ],
+  "decisionCount": 1,
+  "outcomeCounts": { "selected": 1 },
+  "cost": {
+    "selectedEstimatedCostUsd": 0.00004,
+    "baselineEstimatedCostUsd": 0.0004,
+    "estimatedSavingsUsd": 0.00036,
+    "incompleteEstimateCount": 1,
+    "pricedDecisionCount": 1
+  },
+  "regret": {
+    "retryCount": 0,
+    "failureCount": 0,
+    "turnFailed": false,
+    "escalationCount": 0,
+    "fallbackCount": 0
+  },
+  "costDeltas": [],
+  "summary": {
+    "text": "1 routing decision(s), 1 priced, estimated savings $0.000360.",
+    "notes": [
+      "1 cost estimate(s) are incomplete because they use estimated input tokens only."
+    ],
+    "truncated": false
+  }
+}
+```
+
+Behavior:
+
+- The method reads persisted `inference.routing_decision` events for the
+  requested thread/turn. A turn with no routing events returns zero counts and
+  an explanatory summary note.
+- `decisions` is bounded by optional `limit` and includes the raw persisted
+  routing decision event. Counts and cost totals are calculated across all
+  routing decisions for the turn.
+- Cost values are estimates. Version one uses configured
+  `inference_router.extension.prices` and estimated input tokens recorded at
+  routing time; completion-token, cache, subscription, and provider-billing
+  reconciliation are not exact billing.
+- `classifierOverheadUsd` is absent unless a future classifier or comparison
+  path records overhead.
+- Regret counters are derived from persisted reliability retry/failure events,
+  turn failure, escalation outcomes, and fallback outcomes.
+
+Errors:
+
+- Unknown `threadId` returns code `-32602`.
+- Malformed params return code `-32602`.
 
 ### Retrieval router methods
 

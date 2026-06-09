@@ -129,6 +129,7 @@ impl AppServer {
             features: feature_config,
             automation_supervisor,
             protocol_threads: RwLock::new(std::collections::HashMap::new()),
+            protocol_default_model: RwLock::new(None),
             protocol_thread_models: RwLock::new(std::collections::HashMap::new()),
             protocol_notifications,
             workspaces: crate::workspaces::WorkspaceRegistry::new(workspace_registry_path),

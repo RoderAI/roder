@@ -293,6 +293,18 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("index/rebuild", "code-index", LocalState, NonIdempotent),
     method_spec!("index/search", "code-index", ReadOnly, Idempotent),
     method_spec!("index/status", "code-index", ReadOnly, Idempotent),
+    method_spec!(
+        "inference/routing/metrics",
+        "inference",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "inference/routing/status",
+        "inference",
+        ReadOnly,
+        Idempotent
+    ),
     method_spec!("initialize", "app", ReadOnly, Idempotent),
     method_spec!(
         "marketplaces/add",
@@ -336,6 +348,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("memory/save", "memory", LocalState, NonIdempotent),
     method_spec!("memory/update", "memory", LocalState, NonIdempotent),
     method_spec!("model/list", "models", ReadOnly, Idempotent),
+    method_spec!("model/select", "models", LocalState, NonIdempotent),
     method_spec!(
         "plan/review/approve",
         "plan-review",

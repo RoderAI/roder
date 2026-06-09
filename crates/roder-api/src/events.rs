@@ -25,7 +25,11 @@ use crate::dynamic_workflows::{
 };
 use crate::extension::{ExtensionId, InferenceEngineId};
 use crate::goals::{ThreadGoalCleared, ThreadGoalUpdated};
-use crate::inference::{InferenceEvent, RuntimeProfile, SpeedPolicyDecision, TokenUsage};
+use crate::inference::{
+    InferenceEvent, ModelSelection, ReasoningConfig, RuntimeProfile, SpeedPolicyDecision,
+    TokenUsage,
+};
+use crate::inference_routing::InferenceRoutingDecision;
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
 use crate::plan_review::{
@@ -198,10 +202,34 @@ pub struct InferenceStarted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
     pub engine_id: InferenceEngineId,
+    #[serde(default = "default_model_selection")]
+    pub model: ModelSelection,
+    #[serde(default)]
+    pub reasoning: ReasoningConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_policy: Option<SpeedPolicyDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_remaining_seconds: Option<u64>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+fn default_model_selection() -> ModelSelection {
+    ModelSelection {
+        provider: String::new(),
+        model: String::new(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceRoutingDecisionEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(default)]
+    pub round_index: u32,
+    pub default_selection: ModelSelection,
+    pub selected_selection: ModelSelection,
+    pub decision: InferenceRoutingDecision,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1056,6 +1084,7 @@ pub enum RoderEvent {
     ContextEntrypointCandidatesInjected(ContextEntrypointCandidatesInjected),
     ContextCompactionStarted(ContextCompactionStarted),
     ContextCompactionRecorded(ContextCompactionRecorded),
+    InferenceRoutingDecision(InferenceRoutingDecisionEvent),
     InferenceStarted(InferenceStarted),
     InferenceEventReceived(InferenceEventReceived),
     ToolCallRequested(ToolCallRequested),
@@ -1237,6 +1266,7 @@ impl RoderEvent {
             }
             RoderEvent::ContextCompactionStarted(_) => "context.compaction_started",
             RoderEvent::ContextCompactionRecorded(_) => "context.compaction_recorded",
+            RoderEvent::InferenceRoutingDecision(_) => "inference.routing_decision",
             RoderEvent::InferenceStarted(_) => "inference.started",
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
@@ -1410,6 +1440,7 @@ impl RoderEvent {
             RoderEvent::InferenceEventReceived(_) | RoderEvent::InferenceStarted(_) => {
                 EventSource::Provider
             }
+            RoderEvent::InferenceRoutingDecision(_) => EventSource::Core,
             RoderEvent::ReliabilityRetryRecorded(_) => EventSource::Provider,
             RoderEvent::ReliabilityFailureRecorded(_)
             | RoderEvent::ReliabilityLimitRecorded(_)
@@ -1547,6 +1578,7 @@ impl RoderEvent {
             RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.thread_id),
             RoderEvent::ContextCompactionStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.thread_id),
+            RoderEvent::InferenceRoutingDecision(e) => Some(&e.thread_id),
             RoderEvent::InferenceStarted(e) => Some(&e.thread_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
@@ -1724,6 +1756,7 @@ impl RoderEvent {
             RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.turn_id),
             RoderEvent::ContextCompactionStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.turn_id),
+            RoderEvent::InferenceRoutingDecision(e) => Some(&e.turn_id),
             RoderEvent::InferenceStarted(e) => Some(&e.turn_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
@@ -2338,6 +2371,29 @@ mod tests {
                 assert!(!preview.supports_partial);
             }
             other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inference_started_deserializes_older_records_without_model_fields() {
+        let value = serde_json::json!({
+            "InferenceStarted": {
+                "thread_id": "thread-a",
+                "turn_id": "turn-a",
+                "engine_id": "mock",
+                "timestamp": "1970-01-01T00:00:00Z"
+            }
+        });
+
+        let event: RoderEvent = serde_json::from_value(value).unwrap();
+
+        match event {
+            RoderEvent::InferenceStarted(started) => {
+                assert_eq!(started.model.provider, "");
+                assert_eq!(started.model.model, "");
+                assert_eq!(started.reasoning, ReasoningConfig::default());
+            }
+            other => panic!("expected inference started, got {other:?}"),
         }
     }
 

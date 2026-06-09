@@ -706,6 +706,7 @@ mod tests {
             preview: title.unwrap_or("Untitled thread").to_string(),
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
+            selection_mode: None,
             created_at: OffsetDateTime::UNIX_EPOCH.unix_timestamp(),
             updated_at: updated_at.unix_timestamp(),
             status: ThreadStatus {
