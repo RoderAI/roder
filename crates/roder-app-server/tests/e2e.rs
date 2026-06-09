@@ -471,6 +471,7 @@ impl ThreadStore for RecordingThreadStore {
                                 created_at: event.timestamp,
                                 completed_at: None,
                                 usage: None,
+                                finish_reason: None,
                             });
                         }
                     }
@@ -4113,12 +4114,24 @@ async fn thread_start_rejects_missing_workspace_or_escaping_cwd() {
             serde_json::json!({
                 "model": "mock",
                 "modelProvider": PROVIDER_MOCK,
-                "workspaceId": workspace.workspace_id,
-                "rootId": workspace.root_id,
+                "workspaceId": workspace.workspace_id.clone(),
+                "rootId": workspace.root_id.clone(),
                 "cwd": "/",
                 "ephemeral": false,
             }),
             "cwd",
+        ),
+        // An explicit empty allowlist would silently fail open to the full toolset.
+        (
+            serde_json::json!({
+                "model": "mock",
+                "modelProvider": PROVIDER_MOCK,
+                "workspaceId": workspace.workspace_id.clone(),
+                "rootId": workspace.root_id.clone(),
+                "toolAllowlist": [],
+                "ephemeral": false,
+            }),
+            "toolAllowlist",
         ),
     ] {
         let response = client

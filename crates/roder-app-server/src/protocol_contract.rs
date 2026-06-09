@@ -208,7 +208,7 @@ fn protocol_turn_from_items(
         completed_at: record.completed_at.map(|time| time.unix_timestamp()),
         duration_ms,
         usage: record.usage.clone(),
-        finish_reason: None,
+        finish_reason: record.finish_reason.clone(),
     }
 }
 
@@ -317,6 +317,7 @@ mod tests {
                 created_at: timestamp,
                 completed_at: Some(timestamp),
                 usage: None,
+                finish_reason: Some("stop".to_string()),
             }],
             item_events: vec![
                 ThreadItemEvent {
@@ -352,6 +353,7 @@ mod tests {
         });
 
         assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].finish_reason.as_deref(), Some("stop"));
         let commentary = turns[0]
             .items
             .iter()

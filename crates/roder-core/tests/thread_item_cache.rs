@@ -161,6 +161,7 @@ fn counting_thread_snapshot(thread_id: &str) -> ThreadSnapshot {
             created_at: OffsetDateTime::UNIX_EPOCH,
             completed_at: None,
             usage: None,
+            finish_reason: None,
             items: vec![
                 TranscriptItem::UserMessage(UserMessage::text("one")),
                 TranscriptItem::UserMessage(UserMessage::text("two")),
