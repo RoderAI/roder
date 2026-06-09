@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { InMemoryTransport, RoderAgent, RoderRpcClient } from "../src/index.js";
-import type { JsonRpcRequest, JsonRpcResponse } from "../src/index.js";
+import type { JsonRpcRequest, JsonRpcResponse, RoderSdkEvent } from "../src/index.js";
 
 const fixtureRoot = resolve(process.cwd(), "../fixtures/fake-app-server");
 
@@ -30,14 +30,16 @@ test("typescript sdk replays basic thread fixture", async () => {
   const collected = await events;
   assert.deepEqual(
     collected.map((event) => event.type),
-    ["turn.delta", "turn.completed"],
+    ["item.started", "item.delta", "item.completed", "turn.completed"],
   );
-  const completed = collected.at(-1)?.raw.params as {
-    finishReason?: string;
-    usage?: { cache_creation_prompt_tokens?: number };
-  };
-  assert.equal(completed.finishReason, "stop");
-  assert.equal(completed.usage?.cache_creation_prompt_tokens, 5);
+  const delta = collected[1];
+  assert.ok(delta?.type === "item.delta");
+  assert.deepEqual(delta.delta, { type: "agentMessageText", delta: "hello" });
+  const completed = collected.at(-1);
+  assert.ok(completed?.type === "turn.completed");
+  assert.equal(completed.turn.finishReason, "stop");
+  assert.equal(completed.turn.usage?.cache_creation_prompt_tokens, 5);
+  assert.equal(completed.turn.usage?.cached_prompt_tokens, 92);
 });
 
 test("typescript sdk replays approval fixture", async () => {
@@ -239,10 +241,8 @@ async function collectTypes(events: AsyncIterable<{ type: string }>): Promise<st
   return types;
 }
 
-type CollectedEvent = { type: string; raw: { params?: unknown } };
-
-async function collectEvents(events: AsyncIterable<CollectedEvent>): Promise<CollectedEvent[]> {
-  const collected: CollectedEvent[] = [];
+async function collectEvents(events: AsyncIterable<RoderSdkEvent>): Promise<RoderSdkEvent[]> {
+  const collected: RoderSdkEvent[] = [];
   for await (const event of events) {
     collected.push(event);
   }

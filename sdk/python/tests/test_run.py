@@ -20,11 +20,37 @@ async def test_run_streams_until_turn_completed() -> None:
     import asyncio
 
     task = asyncio.create_task(collect())
-    await transport.emit({"jsonrpc": "2.0", "method": "turn/delta", "params": {"turnId": "turn-1"}})
-    await transport.emit({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turnId": "turn-1"}})
+    await transport.emit(
+        {
+            "jsonrpc": "2.0",
+            "method": "item/agentMessage/delta",
+            "params": {
+                "seq": 1,
+                "eventId": "turn-1-item-event-1",
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "timestamp": "1970-01-01T00:00:00Z",
+                "event": {
+                    "type": "itemDelta",
+                    "itemId": "turn-1-agent-final_answer",
+                    "delta": {"type": "agentMessageText", "delta": "hello"},
+                },
+            },
+        }
+    )
+    await transport.emit(
+        {
+            "jsonrpc": "2.0",
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {"id": "turn-1", "items": [], "itemsView": "default", "status": "completed"},
+            },
+        }
+    )
     await task
 
-    assert events == ["turn.delta", "turn.completed"]
+    assert events == ["item.delta", "turn.completed"]
 
 
 @pytest.mark.anyio

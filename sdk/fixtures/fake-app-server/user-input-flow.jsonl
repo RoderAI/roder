@@ -11,4 +11,4 @@
 {"kind":"api.notification","seq":10,"atMs":9,"notification":{"jsonrpc":"2.0","method":"thread/planExitRequested","params":{"threadId":"thread-input","turnId":"turn-input","requestId":"plan-1"}}}
 {"kind":"api.request","seq":11,"atMs":10,"client":"sdk","request":{"jsonrpc":"2.0","id":5,"method":"thread/exit_plan","params":{"requestId":"plan-1","approved":true}}}
 {"kind":"api.response","seq":12,"atMs":11,"requestSeq":11,"response":{"jsonrpc":"2.0","id":5,"result":{"resolved":true,"mode":"default"}}}
-{"kind":"api.notification","seq":13,"atMs":12,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-input","turnId":"turn-input","status":"completed"}}}
+{"kind":"api.notification","seq":13,"atMs":12,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-input","turn":{"id":"turn-input","items":[],"itemsView":"default","status":"completed","completedAt":12}}}}

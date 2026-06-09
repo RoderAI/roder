@@ -9,4 +9,4 @@
 {"kind":"api.request","seq":8,"atMs":7,"client":"sdk","request":{"jsonrpc":"2.0","id":4,"method":"tools/resolve","params":{"requestId":"exttool-1","output":"2 open threads","isError":false}}}
 {"kind":"api.response","seq":9,"atMs":8,"requestSeq":8,"response":{"jsonrpc":"2.0","id":4,"result":{"resolved":true}}}
 {"kind":"api.notification","seq":10,"atMs":9,"notification":{"jsonrpc":"2.0","method":"thread/toolExecutionResolved","params":{"threadId":"thread-external","turnId":"turn-external","requestId":"exttool-1","toolId":"call-1","toolName":"sauna_lookup","outcome":"resolved","isError":false}}}
-{"kind":"api.notification","seq":11,"atMs":10,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-external","turnId":"turn-external","status":"completed"}}}
+{"kind":"api.notification","seq":11,"atMs":10,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-external","turn":{"id":"turn-external","items":[],"itemsView":"default","status":"completed","completedAt":10}}}}

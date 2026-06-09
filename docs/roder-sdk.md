@@ -79,19 +79,25 @@ Known notification methods are normalized to SDK event names:
 | SDK event | App-server notification |
 | --- | --- |
 | `thread.started` | `thread/started` |
-| `thread.status.changed` | `thread/statusChanged` |
+| `thread.status.changed` | `thread/status/changed` |
 | `turn.started` | `turn/started` |
-| `turn.delta` | `turn/delta` |
 | `turn.completed` | `turn/completed` |
+| `item.started` | `item/started` |
+| `item.completed` | `item/completed` |
+| `item.delta` | `item/agentMessage/delta`, `item/reasoning/textDelta`, `item/reasoning/summaryPartAdded`, `item/reasoning/summaryTextDelta` |
+| `tool_execution.requested` | `thread/toolExecutionRequested` |
+| `tool_execution.resolved` | `thread/toolExecutionResolved` |
 | `approval.requested` | `thread/approvalRequested` |
 | `approval.resolved` | `thread/approvalResolved` |
 | `user_input.requested` | `thread/userInputRequested` |
 | `user_input.resolved` | `thread/userInputResolved` |
 | `plan_exit.requested` | `thread/planExitRequested` |
 | `plan_exit.resolved` | `thread/planExitResolved` |
-| `command.output_delta` | `command/outputDelta` |
+| `command.output_delta` | `command/exec/outputDelta` |
 
-Permissive mode yields unknown notifications as `raw.notification`. Strict mode drops unknown notifications.
+In the TypeScript SDK the thread, turn, item, delta, and tool-execution events carry typed payloads (`Thread`, `Turn`, `ThreadItem`, `ThreadItemDelta`, `ExternalToolCall`, `TokenUsage`) alongside `raw`; the interfaces in `sdk/typescript/src/events.ts` mirror the Rust wire structs in `crates/roder-protocol/src/lib.rs` and `crates/roder-api/src/inference.rs`. The Python SDK keeps the untyped `{type, raw}` shape.
+
+Permissive mode yields unknown notifications as `raw.notification`; a known method whose payload fails parsing degrades the same way. Strict mode drops both.
 
 ## Method Groups
 

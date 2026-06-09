@@ -11,12 +11,34 @@ test("run streams normalized events until its turn completes", async () => {
   const run = new RoderRun(new RoderRpcClient(transport), "thread-1", "turn-1");
   const events = collect(run.stream());
 
-  transport.emit({ jsonrpc: "2.0", method: "turn/delta", params: { turnId: "turn-1" } });
-  transport.emit({ jsonrpc: "2.0", method: "turn/completed", params: { turnId: "turn-1" } });
+  transport.emit({
+    jsonrpc: "2.0",
+    method: "item/agentMessage/delta",
+    params: {
+      seq: 1,
+      eventId: "turn-1-item-event-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      timestamp: "1970-01-01T00:00:00Z",
+      event: {
+        type: "itemDelta",
+        itemId: "turn-1-agent-final_answer",
+        delta: { type: "agentMessageText", delta: "hello" },
+      },
+    },
+  });
+  transport.emit({
+    jsonrpc: "2.0",
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "turn-1", items: [], itemsView: "default", status: "completed" },
+    },
+  });
 
   assert.deepEqual(
     (await events).map((event) => event.type),
-    ["turn.delta", "turn.completed"],
+    ["item.delta", "turn.completed"],
   );
 });
 

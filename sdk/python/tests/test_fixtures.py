@@ -38,7 +38,7 @@ async def test_python_sdk_replays_basic_thread_fixture() -> None:
         task_group.start_soon(collect)
         await emit_notifications(transport, fixture)
 
-    assert events == ["turn.delta", "turn.completed"]
+    assert events == ["item.started", "item.delta", "item.completed", "turn.completed"]
 
 
 @pytest.mark.anyio

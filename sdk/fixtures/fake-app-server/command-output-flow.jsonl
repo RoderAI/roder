@@ -5,7 +5,7 @@
 {"kind":"api.response","seq":4,"atMs":3,"requestSeq":3,"response":{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thread-command"}}}}
 {"kind":"api.request","seq":5,"atMs":4,"client":"sdk","request":{"jsonrpc":"2.0","id":3,"method":"turn/start","params":{"threadId":"thread-command","input":[{"type":"text","text":"run command"}]}}}
 {"kind":"api.response","seq":6,"atMs":5,"requestSeq":5,"response":{"jsonrpc":"2.0","id":3,"result":{"turn":{"id":"turn-command"}}}}
-{"kind":"api.notification","seq":7,"atMs":6,"notification":{"jsonrpc":"2.0","method":"command/outputDelta","params":{"threadId":"thread-command","turnId":"turn-command","stream":"stdout","delta":"line 1\n"}}}
+{"kind":"api.notification","seq":7,"atMs":6,"notification":{"jsonrpc":"2.0","method":"command/exec/outputDelta","params":{"threadId":"thread-command","turnId":"turn-command","stream":"stdout","delta":"line 1\n"}}}
 {"kind":"api.request","seq":8,"atMs":7,"client":"sdk","request":{"jsonrpc":"2.0","id":4,"method":"turn/interrupt","params":{"threadId":"thread-command","turnId":"turn-command","reason":"fixture stop"}}}
 {"kind":"api.response","seq":9,"atMs":8,"requestSeq":8,"response":{"jsonrpc":"2.0","id":4,"result":{"interrupted":true}}}
-{"kind":"api.notification","seq":10,"atMs":9,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-command","turnId":"turn-command","status":"interrupted"}}}
+{"kind":"api.notification","seq":10,"atMs":9,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-command","turn":{"id":"turn-command","items":[],"itemsView":"default","status":"interrupted","completedAt":9}}}}
