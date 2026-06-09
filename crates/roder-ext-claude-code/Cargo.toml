@@ -20,7 +20,7 @@ docs_url = "docs/roder-claude-code-provider.md"
 anyhow.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
-claude-code-sdk-rust = { git = "https://github.com/PandelisZ/claude-agent-sdk-rust", rev = "2a728994ad08d01516e8373eda23f42c8424f5cc" }
+claude-code-sdk-rust = "0.2"
 futures.workspace = true
 roder-api.workspace = true
 semver.workspace = true
