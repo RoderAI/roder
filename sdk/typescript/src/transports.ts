@@ -66,9 +66,14 @@ export interface LocalProcessTransportOptions {
   startupTimeoutMs?: number;
 }
 
+/** Number of recent stderr lines retained for error reporting. */
+const STDERR_TAIL_LINES = 50;
+
 export class LocalProcessTransport implements RoderTransport {
   private readonly process: ChildProcessWithoutNullStreams;
   private readonly lines: Interface;
+  private readonly stderrLines: Interface;
+  private readonly stderrTail: string[] = [];
   private readonly pending = new Map<string, PendingResponse>();
   private readonly notificationQueue = new AsyncQueue<JsonRpcNotification>();
   private closed = false;
@@ -83,12 +88,32 @@ export class LocalProcessTransport implements RoderTransport {
     });
     this.lines = createInterface({ input: this.process.stdout });
     this.lines.on("line", (line: string) => this.handleLine(line));
-    this.process.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
-      this.rejectAll(new RoderTransportError(`app-server exited code=${code} signal=${signal}`));
+    /**
+     * stderr must be drained continuously: a chatty server fills the pipe
+     * buffer and blocks, deadlocking the turn. Keep a bounded tail for error
+     * reporting instead of logging.
+     */
+    this.stderrLines = createInterface({ input: this.process.stderr });
+    this.stderrLines.on("line", (line: string) => {
+      this.stderrTail.push(line);
+      if (this.stderrTail.length > STDERR_TAIL_LINES) {
+        this.stderrTail.shift();
+      }
+    });
+    /**
+     * "close" (not "exit") so the stdio pipes are fully drained and the
+     * stderr tail is complete before pending requests are rejected.
+     */
+    this.process.once("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      this.rejectAll(
+        new RoderTransportError(this.withStderrTail(`app-server exited code=${code} signal=${signal}`)),
+      );
       this.notificationQueue.close();
     });
     this.process.once("error", (error: Error) => {
-      this.rejectAll(new RoderTransportError("failed to start app-server", { cause: error }));
+      this.rejectAll(
+        new RoderTransportError(this.withStderrTail("failed to start app-server"), { cause: error }),
+      );
       this.notificationQueue.close();
     });
   }
@@ -131,10 +156,18 @@ export class LocalProcessTransport implements RoderTransport {
   async close(): Promise<void> {
     this.closed = true;
     this.lines.close();
+    this.stderrLines.close();
     this.notificationQueue.close();
     this.process.stdin.end();
     this.process.kill();
     this.rejectAll(new RoderTransportError("transport is closed"));
+  }
+
+  private withStderrTail(message: string): string {
+    if (this.stderrTail.length === 0) {
+      return message;
+    }
+    return `${message}\nrecent stderr (last ${this.stderrTail.length} lines):\n${this.stderrTail.join("\n")}`;
   }
 
   private handleLine(line: string): void {
