@@ -60,19 +60,42 @@ function makeAgent(
   });
 }
 
+/**
+ * Hard deadline per turn: the regressions this smoke exists to catch (e.g. the
+ * external-tool timeout path breaking) manifest as a hang, which would
+ * otherwise block forever with an exit code that is neither pass nor fail.
+ */
+const TURN_DEADLINE_MS = 120_000;
+
 async function runTurn(agent: RoderAgent, prompt: string): Promise<TurnOutcome> {
   const run = await agent.send(prompt);
   const events: RoderSdkEvent[] = [];
   let completed: TurnCompletedEvent | undefined;
   let agentText = "";
-  for await (const event of run.stream()) {
-    events.push(event);
-    if (event.type === "item.completed" && event.item.type === "agentMessage") {
-      agentText += event.item.text;
+  const consume = (async () => {
+    for await (const event of run.stream()) {
+      events.push(event);
+      if (event.type === "item.completed" && event.item.type === "agentMessage") {
+        agentText += event.item.text;
+      }
+      if (event.type === "turn.completed") {
+        completed = event;
+      }
     }
-    if (event.type === "turn.completed") {
-      completed = event;
-    }
+  })();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      consume,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`turn did not complete within ${TURN_DEADLINE_MS}ms`)),
+          TURN_DEADLINE_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
   return { completed, agentText, events, threadId: run.threadId };
 }
@@ -127,10 +150,18 @@ function check(scenario: string, condition: boolean, detail: string): void {
   );
 }
 
+/**
+ * Inert filler pushing the cacheable prefix past the model's minimum cacheable
+ * size (4096 tokens for Haiku-class models; below it cache writes are silently
+ * 0 and the scenario-d assertion would be vacuous). ~30k chars ≈ 7.5k tokens.
+ */
+const CACHE_PRIMER = `Background reference material (ignore unless asked): ${"the sauna workspace indexes threads, files, schedules, and artifacts for retrieval. ".repeat(350)}`;
+
 // --- c. external tool round-trip ---
 {
   const calls: Array<{ name: string; arguments: unknown }> = [];
   const agent = await makeAgent({
+    instructions: CACHE_PRIMER,
     externalTools: [
       {
         name: "get_weather",
@@ -206,9 +237,15 @@ function check(scenario: string, condition: boolean, detail: string): void {
     outcome.completed?.turn.finishReason === "stop",
     `finishReason=${JSON.stringify(outcome.completed?.turn.finishReason)}`,
   );
+  /**
+   * Key presence alone is vacuous (the field serializes unconditionally,
+   * defaulting to 0). The CACHE_PRIMER instructions exceed the model's
+   * minimum cacheable prefix, so this multi-step turn must record an actual
+   * cache write.
+   */
   check(
     "d.cache_write_usage",
-    usage !== undefined && "cache_creation_prompt_tokens" in usage,
+    (usage?.cache_creation_prompt_tokens ?? 0) > 0,
     `usage=${JSON.stringify(usage)}`,
   );
 }
