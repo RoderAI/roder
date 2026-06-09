@@ -1145,6 +1145,11 @@ mod tests {
                 thread_id: "thread-a".to_string(),
                 turn_id: "turn-a".to_string(),
                 engine_id: "mock".to_string(),
+                model: roder_api::inference::ModelSelection {
+                    provider: "mock".to_string(),
+                    model: "mock".to_string(),
+                },
+                reasoning: roder_api::inference::ReasoningConfig::default(),
                 speed_policy: None,
                 deadline_remaining_seconds: Some(27),
                 timestamp: OffsetDateTime::UNIX_EPOCH,
