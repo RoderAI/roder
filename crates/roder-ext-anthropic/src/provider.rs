@@ -51,6 +51,7 @@ impl AnthropicEngine {
         }
         if request.reasoning.enabled
             && let Some(level) = request.reasoning.level.as_deref()
+            && anthropic_model_supports_effort(&request.model.model)
         {
             body["output_config"] = json!({ "effort": anthropic_effort(level) });
         }
@@ -330,6 +331,12 @@ fn anthropic_model_accepts_sampling_params(model: &str) -> bool {
         || model.starts_with("claude-opus-4-8"))
 }
 
+// Haiku-tier models reject output_config.effort with a 400; the catalog
+// declares them REASONING_NONE (roder-api catalog.rs).
+fn anthropic_model_supports_effort(model: &str) -> bool {
+    !model.contains("haiku")
+}
+
 fn anthropic_tool_search_type(variant: ToolSearchProviderVariant) -> &'static str {
     match variant {
         ToolSearchProviderVariant::Default | ToolSearchProviderVariant::Regex => {
@@ -529,6 +536,19 @@ mod tests {
     #[test]
     fn fable_5_supports_provider_native_tool_search() {
         assert!(anthropic_model_supports_tool_search("claude-fable-5"));
+    }
+
+    #[test]
+    fn omits_effort_for_haiku_models() {
+        let mut request = request();
+        request.model.model = "claude-haiku-4-5-20251001".to_string();
+        request.reasoning.enabled = true;
+        request.reasoning.level = Some("high".to_string());
+
+        let body = AnthropicEngine::map_request(&request);
+
+        // Haiku rejects output_config.effort with a 400 — it must be omitted.
+        assert!(body.get("output_config").is_none());
     }
 
     #[test]
