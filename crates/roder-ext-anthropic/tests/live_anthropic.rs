@@ -24,7 +24,7 @@ async fn live_anthropic_streaming_emits_incremental_message_deltas() {
         },
         instructions: InstructionBundle::default(),
         transcript: vec![TranscriptItem::UserMessage(UserMessage::text(
-            "Count from 1 to 20 as words, one per line.",
+            "Write five numbered one-sentence facts about the ocean.",
         ))],
         tools: Vec::new(),
         tool_choice: ToolChoice::Auto,
@@ -50,27 +50,41 @@ async fn live_anthropic_streaming_emits_incremental_message_deltas() {
         .unwrap();
 
     let mut message_deltas = 0;
+    let mut deltas_before_completed = 0;
     let mut saw_usage = false;
+    let mut completed = false;
     let mut stop_reason = None;
     while let Some(event) = stream.next().await {
         match event.unwrap() {
-            InferenceEvent::MessageDelta(_) => message_deltas += 1,
+            InferenceEvent::MessageDelta(_) => {
+                message_deltas += 1;
+                if !completed {
+                    deltas_before_completed += 1;
+                }
+            }
             InferenceEvent::Usage(usage) => {
                 saw_usage = true;
                 assert!(usage.prompt_tokens > 0);
                 assert!(usage.completion_tokens > 0);
             }
-            InferenceEvent::Completed(metadata) => stop_reason = metadata.stop_reason,
+            InferenceEvent::Completed(metadata) => {
+                completed = true;
+                stop_reason = metadata.stop_reason;
+            }
             _ => {}
         }
     }
+    eprintln!(
+        "live streaming: {message_deltas} MessageDelta events ({deltas_before_completed} before Completed)"
+    );
 
     // The API coalesces deltas; more than one proves the reply streamed
     // incrementally instead of arriving as a single blob.
     assert!(
-        message_deltas >= 2,
-        "expected incremental text deltas, got {message_deltas}"
+        deltas_before_completed > 1,
+        "expected >1 incremental text deltas before Completed, got {deltas_before_completed}"
     );
+    assert!(completed, "stream ended without a Completed event");
     assert!(saw_usage);
     assert_eq!(stop_reason.as_deref(), Some("end_turn"));
 }
