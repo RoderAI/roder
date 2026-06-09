@@ -51,6 +51,61 @@ test("local process transport exchanges json lines without a roder binary", asyn
   await transport.close();
 });
 
+test("local process transport drains chatty stderr and reports a bounded tail on exit", async () => {
+  /**
+   * The child floods stderr (~200KB, well past the 64KB pipe buffer) before
+   * reading stdin. Without a continuous stderr drain it would block on the
+   * full pipe and never answer the request.
+   */
+  const script = `
+    for (let i = 0; i < 2000; i++) {
+      process.stderr.write("stderr noise line " + i + " " + "x".repeat(80) + "\\n");
+    }
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    rl.on("line", line => {
+      const request = JSON.parse(line);
+      if (request.method === "process/crash") {
+        process.stderr.write("fatal: boom before exit\\n");
+        process.exit(3);
+        return;
+      }
+      console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { ok: true } }));
+    });
+  `;
+  const transport = new LocalProcessTransport({
+    command: process.execPath,
+    args: ["-e", script],
+  });
+
+  const response = await transport.request({
+    jsonrpc: "2.0",
+    id: "req-1",
+    method: "providers/list",
+  });
+  assert.deepEqual(response.result, { ok: true });
+
+  const failed = transport.request({
+    jsonrpc: "2.0",
+    id: "req-2",
+    method: "process/crash" as never,
+  });
+  const error = await failed.then(
+    () => assert.fail("expected the crashed request to reject"),
+    (caught: unknown) => caught as Error,
+  );
+
+  assert.equal(error.name, "RoderTransportError");
+  assert.match(error.message, /app-server exited code=3 signal=null/);
+  assert.match(error.message, /recent stderr \(last 50 lines\):/);
+  assert.match(error.message, /fatal: boom before exit/);
+  assert.match(error.message, /stderr noise line 1999 /);
+  assert.doesNotMatch(error.message, /stderr noise line 1000 /);
+  const tailNoiseLines = error.message.match(/stderr noise line /g) ?? [];
+  assert.equal(tailNoiseLines.length, 49);
+  await transport.close();
+});
+
 test("websocket transport sends bearer headers and resolves responses", async () => {
   let socket!: FakeWebSocket;
   const transport = new WebSocketTransport({
