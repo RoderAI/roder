@@ -103,17 +103,30 @@ export class RoderAgent {
   async send(input: string | Array<Record<string, unknown>>, options: { eventMode?: EventMode } = {}): Promise<RoderRun> {
     const threadId = this.threadId ?? (await this.startThread());
     this.threadId = threadId;
-    const result = (await this.client.call("turn/start", {
-      threadId,
-      input: normalizeInput(input),
-    })) as Record<string, unknown>;
-    const turnId = extractId(result, "turn") ?? extractString(result, "turnId") ?? extractString(result, "id");
-    if (!turnId) {
-      throw new Error("turn/start response did not include a turn id");
+    /**
+     * Subscribe before turn/start: while the callback loop is active the hub
+     * buffers nothing, so a turn/completed delivered in the same I/O chunk as
+     * the turn/start response would be lost to a lazily subscribing run and
+     * wait()/stream() would never terminate.
+     */
+    const notifications = this.client.notifications();
+    try {
+      const result = (await this.client.call("turn/start", {
+        threadId,
+        input: normalizeInput(input),
+      })) as Record<string, unknown>;
+      const turnId = extractId(result, "turn") ?? extractString(result, "turnId") ?? extractString(result, "id");
+      if (!turnId) {
+        throw new Error("turn/start response did not include a turn id");
+      }
+      return new RoderRun(this.client, threadId, turnId, {
+        eventMode: options.eventMode ?? this.options.eventMode,
+        notifications,
+      });
+    } catch (error) {
+      void notifications[Symbol.asyncIterator]().return?.();
+      throw error;
     }
-    return new RoderRun(this.client, threadId, turnId, {
-      eventMode: options.eventMode ?? this.options.eventMode,
-    });
   }
 
   async listModels(): Promise<unknown> {
@@ -204,12 +217,31 @@ export class RoderAgent {
     this.callbackLoopStarted = true;
     void (async () => {
       for await (const notification of this.transport.notifications()) {
-        await this.handleCallbackNotification(notification.method, notification.params);
+        try {
+          await this.handleCallbackNotification(notification.method, notification.params);
+        } catch {
+          /**
+           * Resolution calls reject when the transport drops mid-callback or
+           * the server refuses a stale request id; the server already times
+           * the pending call out. Swallow so the loop keeps serving later
+           * notifications instead of dying as an unhandled rejection that
+           * crashes the host process.
+           */
+        }
       }
     })();
   }
 
   private async handleCallbackNotification(method: string, params: unknown): Promise<void> {
+    /**
+     * The server broadcasts every thread's notifications to every client on
+     * the connection; only this agent's thread is ours to answer. Racing
+     * another host's tools/resolve would silently feed it the wrong result
+     * (first writer wins, the loser just sees resolved:false).
+     */
+    if (extractString(params, "threadId") !== this.threadId) {
+      return;
+    }
     if (method === "thread/toolExecutionRequested" && this.options.onToolExecute) {
       const call = extractExternalToolCall(params);
       let result: ExternalToolResult;

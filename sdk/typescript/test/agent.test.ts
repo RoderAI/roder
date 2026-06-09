@@ -157,6 +157,147 @@ test("agent registers external tools and resolves calls, including thrown errors
   );
 });
 
+test("run wait sees a turn/completed emitted with the turn/start response", async () => {
+  const transport: InMemoryTransport = new InMemoryTransport((request) => {
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      /**
+       * Emit before the response settles: readline delivers both lines of a
+       * same-chunk response synchronously, before the awaiting microtask in
+       * client.call resumes.
+       */
+      transport.emit({
+        jsonrpc: "2.0",
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turn: { id: "turn-1", items: [], itemsView: "default", status: "completed" },
+        },
+      });
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: { resolved: true } };
+  });
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-1",
+    // Keeps the callback loop subscribed so the hub never buffers a backlog.
+    onToolExecute() {
+      return { output: "unused" };
+    },
+  });
+
+  const run = await agent.send("hello");
+  const completed = await run.wait();
+
+  assert.equal(completed?.turn.id, "turn-1");
+  assert.equal(completed?.threadId, "thread-1");
+});
+
+test("agent ignores tool execution requests for other threads", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const calls: string[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: { resolved: true } };
+  });
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-1",
+    onToolExecute(call) {
+      calls.push(call.id);
+      return { output: "ok" };
+    },
+  });
+  await agent.send("hello");
+
+  transport.emit({
+    jsonrpc: "2.0",
+    method: "thread/toolExecutionRequested",
+    params: {
+      threadId: "thread-other",
+      turnId: "turn-9",
+      requestId: "exttool-other",
+      call: { id: "call-other", name: "sauna_lookup", arguments: {} },
+    },
+  });
+  transport.emit({
+    jsonrpc: "2.0",
+    method: "thread/toolExecutionRequested",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      requestId: "exttool-own",
+      call: { id: "call-own", name: "sauna_lookup", arguments: {} },
+    },
+  });
+
+  await eventually(() => requests.some((request) => request.method === "tools/resolve"));
+  assert.deepEqual(calls, ["call-own"]);
+  assert.deepEqual(
+    requests
+      .filter((request) => request.method === "tools/resolve")
+      .map((request) => (request.params as { requestId?: string }).requestId),
+    ["exttool-own"],
+  );
+});
+
+test("agent callback loop survives tools/resolve failures", async () => {
+  const resolveAttempts: unknown[] = [];
+  const transport = new InMemoryTransport((request) => {
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    if (request.method === "tools/resolve") {
+      resolveAttempts.push(request.params);
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32602, message: "unknown requestId" },
+      };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  });
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-1",
+    onToolExecute() {
+      return { output: "ok" };
+    },
+  });
+  await agent.send("hello");
+
+  for (const requestId of ["exttool-1", "exttool-2"]) {
+    transport.emit({
+      jsonrpc: "2.0",
+      method: "thread/toolExecutionRequested",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        requestId,
+        call: { id: requestId, name: "sauna_lookup", arguments: {} },
+      },
+    });
+  }
+
+  // The first rejection must not crash the process or kill the loop.
+  await eventually(() => resolveAttempts.length === 2);
+});
+
 test("agent read-only helpers call safe app-server methods", async () => {
   const methods: string[] = [];
   const agent = await RoderAgent.create({
