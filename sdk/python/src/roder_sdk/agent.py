@@ -21,6 +21,9 @@ class RoderAgent:
         cwd: str | None = None,
         model: dict[str, str] | None = None,
         thread_id: str | None = None,
+        workspace_id: str | None = None,
+        tool_allowlist: list[str] | None = None,
+        instructions: str | None = None,
         approvals: dict[str, ApprovalCallback] | None = None,
         event_mode: EventMode = "permissive",
     ) -> None:
@@ -29,6 +32,9 @@ class RoderAgent:
         self.cwd = cwd
         self.model = model or {}
         self.thread_id = thread_id
+        self.workspace_id = workspace_id
+        self.tool_allowlist = tool_allowlist
+        self.instructions = instructions
         self.approvals = approvals or {}
         self.event_mode: EventMode = event_mode
         self._callback_task: asyncio.Task[None] | None = None
@@ -43,6 +49,9 @@ class RoderAgent:
         cwd: str | None = None,
         model: dict[str, str] | None = None,
         thread_id: str | None = None,
+        workspace_id: str | None = None,
+        tool_allowlist: list[str] | None = None,
+        instructions: str | None = None,
         approvals: dict[str, ApprovalCallback] | None = None,
         event_mode: EventMode = "permissive",
     ) -> "RoderAgent":
@@ -52,6 +61,9 @@ class RoderAgent:
             cwd=cwd,
             model=model,
             thread_id=thread_id,
+            workspace_id=workspace_id,
+            tool_allowlist=tool_allowlist,
+            instructions=instructions,
             approvals=approvals,
             event_mode=event_mode,
         )
@@ -103,18 +115,44 @@ class RoderAgent:
         await self.client.close()
 
     async def _start_thread(self) -> str:
-        result = await self.client.call(
-            "thread/start",
-            {
-                "cwd": self.cwd,
-                "model": self.model.get("id"),
-                "modelProvider": self.model.get("provider"),
-            },
-        )
+        workspace_id = self.workspace_id or await self._resolve_workspace_id(self.cwd)
+        params: dict[str, Any] = {
+            "cwd": self.cwd,
+            "model": self.model.get("id"),
+            "modelProvider": self.model.get("provider"),
+        }
+        if self.tool_allowlist is not None:
+            params["toolAllowlist"] = self.tool_allowlist
+        if self.instructions is not None:
+            params["developerInstructions"] = self.instructions
+        params["workspaceId"] = workspace_id
+        result = await self.client.call("thread/start", params)
         thread_id = _extract_id(result, "thread") or _extract_string(result, "threadId") or _extract_string(result, "id")
         if not thread_id:
             raise RuntimeError("thread/start response did not include a thread id")
         return thread_id
+
+    async def _resolve_workspace_id(self, cwd: str | None) -> str:
+        if not cwd:
+            raise RuntimeError("starting a thread requires a workspace_id or a cwd to resolve one from")
+        listed = await self.client.call("workspace/list", {})
+        workspaces = listed.get("workspaces") if isinstance(listed, dict) else None
+        for workspace in workspaces if isinstance(workspaces, list) else []:
+            if not isinstance(workspace, dict):
+                continue
+            roots = workspace.get("roots")
+            workspace_id = _extract_string(workspace, "id")
+            if (
+                workspace_id
+                and isinstance(roots, list)
+                and any(_extract_string(root, "path") == cwd for root in roots)
+            ):
+                return workspace_id
+        created = await self.client.call("workspace/create", {"roots": [{"path": cwd}]})
+        workspace_id = _extract_id(created, "workspace")
+        if not workspace_id:
+            raise RuntimeError("workspace/create response did not include a workspace id")
+        return workspace_id
 
     def _start_callback_loop(self) -> None:
         if not self.approvals:
