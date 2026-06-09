@@ -99,6 +99,24 @@ const INTUITIVE_CONTEXT_OVERLAY: &str = r#"## Model Harness Profile
 
 Use the provided context as the current working set. Ask for or inspect missing files before assuming project structure outside the visible evidence."#;
 
+/// Prepends host-supplied thread instructions to the developer slot so they layer directly under
+/// the harness system prompt while harness addenda (runtime profile, plan mode, overlays) append
+/// after them.
+pub fn apply_thread_developer_instructions(
+    mut instructions: InstructionBundle,
+    addition: &str,
+) -> InstructionBundle {
+    let addition = addition.trim();
+    if addition.is_empty() {
+        return instructions;
+    }
+    instructions.developer = Some(match instructions.developer {
+        Some(existing) if !existing.trim().is_empty() => format!("{addition}\n\n{existing}"),
+        _ => addition.to_string(),
+    });
+    instructions
+}
+
 pub fn apply_runtime_profile(
     mut instructions: InstructionBundle,
     profile: RuntimeProfile,
@@ -200,6 +218,24 @@ mod tests {
         assert!(developer.contains("You are in plan mode"));
         assert!(developer.contains("exit_plan_mode"));
         assert!(developer.contains("After the user approves"));
+    }
+
+    #[test]
+    fn thread_developer_instructions_prepend_to_developer_slot() {
+        let instructions = apply_runtime_profile(
+            apply_thread_developer_instructions(
+                default_instructions(),
+                "You are embedded in Sauna.",
+            ),
+            RuntimeProfile::NonInteractive,
+        );
+        let developer = instructions.developer.expect("developer instructions");
+        assert!(developer.starts_with("You are embedded in Sauna."));
+        assert!(developer.contains("non-interactive profile"));
+        assert!(instructions.system.expect("system").starts_with("You are Roder"));
+
+        let unchanged = apply_thread_developer_instructions(default_instructions(), "   ");
+        assert_eq!(unchanged.developer, None);
     }
 
     #[test]

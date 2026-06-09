@@ -154,6 +154,12 @@ pub struct Thread {
     pub turns: Option<Vec<Turn>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<ThreadUsageMetadata>,
+    /// Per-thread tool filter applied on top of the runtime allowlist. Empty = no filtering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_allowlist: Vec<String>,
+    /// Host-supplied instructions added to the developer slot of every turn's inference request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -470,6 +476,12 @@ pub struct ThreadStartParams {
     pub root_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Per-thread tool filter applied on top of the runtime allowlist. Empty/absent = no filtering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_allowlist: Option<Vec<String>>,
+    /// Host-supplied instructions added to the developer slot of every turn's inference request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<String>,
     #[serde(default)]
     pub ephemeral: bool,
 }

@@ -27,6 +27,10 @@ export interface RoderAgentOptions {
     id?: string;
     reasoning?: string;
   };
+  /** Per-thread tool filter applied on top of the server's runtime allowlist. */
+  toolAllowlist?: string[];
+  /** Host instructions layered under the harness system prompt on every turn. */
+  instructions?: string;
   threadId?: string;
   workspaceId?: string;
   approvals?: RoderApprovals;
@@ -122,11 +126,15 @@ export class RoderAgent {
     const cwd = this.options.cwd ?? this.options.local?.cwd;
     const workspaceId = this.options.workspaceId ?? (await this.resolveWorkspaceId(cwd));
     const reasoning = this.options.model?.reasoning;
+    const toolAllowlist = this.options.toolAllowlist;
+    const instructions = this.options.instructions;
     const result = (await this.client.call("thread/start", {
       cwd,
       model: this.options.model?.id,
       modelProvider: this.options.model?.provider,
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(toolAllowlist === undefined ? {} : { toolAllowlist }),
+      ...(instructions === undefined ? {} : { developerInstructions: instructions }),
       workspaceId,
     })) as Record<string, unknown>;
     const threadId = extractId(result, "thread") ?? extractString(result, "threadId") ?? extractString(result, "id");

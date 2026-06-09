@@ -20,6 +20,8 @@ test("typescript sdk replays basic thread fixture", async () => {
     transport,
     cwd: "/workspace",
     model: { provider: "mock", id: "mock" },
+    toolAllowlist: ["edit", "read_file"],
+    instructions: "You are embedded in Sauna.",
   });
   const run = await agent.send("hello");
   const events = collectEvents(run.stream());
