@@ -109,8 +109,9 @@ pub const STANDARD_REASONING: &[ReasoningOption] = &[
     },
 ];
 
-// Claude Opus 4.7/4.8 support the full effort range, including `xhigh` for
-// long-horizon agentic work and `max` for genuinely frontier problems.
+// Claude Fable 5 and Opus 4.7/4.8 support the full effort range, including
+// `xhigh` for long-horizon agentic work and `max` for genuinely frontier
+// problems.
 pub const OPUS_REASONING: &[ReasoningOption] = &[
     ReasoningOption {
         effort: REASONING_LOW,
@@ -488,9 +489,18 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         hidden: true,
     },
     anthropic_model(
+        "claude-fable-5",
+        "Claude Fable 5",
+        "Anthropic's most powerful, most intelligent model; a new tier above Opus for frontier reasoning and agentic work.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    anthropic_model(
         "claude-opus-4-8",
         "Claude Opus 4.8",
-        "Anthropic's most capable model for complex reasoning, long-horizon agentic coding, and high-autonomy work.",
+        "Anthropic's most capable Opus-tier model for complex reasoning, long-horizon agentic coding, and high-autonomy work.",
         1_000_000,
         900_000,
         REASONING_HIGH,
@@ -1410,6 +1420,7 @@ mod tests {
                 "gpt-5.5",
                 "gpt-5.4-mini",
                 "gpt-5.3-codex-spark",
+                "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
@@ -1469,7 +1480,7 @@ mod tests {
     fn provider_model_lists_match_gode_catalog() {
         assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
         assert_eq!(models_for_codex(false).len(), 3);
-        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
