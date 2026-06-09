@@ -23,6 +23,35 @@ test("in-memory transport preserves notification order", async () => {
   transport.close();
 });
 
+test("notifications fan out to every concurrent subscriber", async () => {
+  const transport = new InMemoryTransport((request) => ({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { ok: true },
+  }));
+  const first = transport.notifications()[Symbol.asyncIterator]();
+  const second = transport.notifications()[Symbol.asyncIterator]();
+
+  transport.emit({ jsonrpc: "2.0", method: "shared", params: { n: 1 } });
+
+  assert.equal((await first.next()).value.method, "shared");
+  assert.equal((await second.next()).value.method, "shared");
+  transport.close();
+});
+
+test("notifications emitted before any subscriber replay to the first subscriber", async () => {
+  const transport = new InMemoryTransport((request) => ({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { ok: true },
+  }));
+  transport.emit({ jsonrpc: "2.0", method: "early", params: { n: 1 } });
+
+  const iterator = transport.notifications()[Symbol.asyncIterator]();
+  assert.equal((await iterator.next()).value.method, "early");
+  transport.close();
+});
+
 test("local process transport exchanges json lines without a roder binary", async () => {
   const script = `
     const readline = require("node:readline");

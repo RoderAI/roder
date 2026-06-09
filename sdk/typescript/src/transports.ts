@@ -27,7 +27,7 @@ export type InMemoryHandler = (
 ) => JsonRpcResponse | Promise<JsonRpcResponse>;
 
 export class InMemoryTransport implements RoderTransport {
-  private readonly notificationQueue = new AsyncQueue<JsonRpcNotification>();
+  private readonly notificationHub = new NotificationHub();
   private closed = false;
 
   constructor(private readonly handler: InMemoryHandler) {}
@@ -45,16 +45,16 @@ export class InMemoryTransport implements RoderTransport {
   }
 
   emit(notification: JsonRpcNotification): void {
-    this.notificationQueue.push(notification);
+    this.notificationHub.push(notification);
   }
 
   notifications(): AsyncIterable<JsonRpcNotification> {
-    return this.notificationQueue;
+    return this.notificationHub.subscribe();
   }
 
   close(): void {
     this.closed = true;
-    this.notificationQueue.close();
+    this.notificationHub.close();
   }
 }
 
@@ -75,7 +75,7 @@ export class LocalProcessTransport implements RoderTransport {
   private readonly stderrLines: Interface;
   private readonly stderrTail: string[] = [];
   private readonly pending = new Map<string, PendingResponse>();
-  private readonly notificationQueue = new AsyncQueue<JsonRpcNotification>();
+  private readonly notificationHub = new NotificationHub();
   private closed = false;
 
   constructor(options: LocalProcessTransportOptions = {}) {
@@ -108,13 +108,13 @@ export class LocalProcessTransport implements RoderTransport {
       this.rejectAll(
         new RoderTransportError(this.withStderrTail(`app-server exited code=${code} signal=${signal}`)),
       );
-      this.notificationQueue.close();
+      this.notificationHub.close();
     });
     this.process.once("error", (error: Error) => {
       this.rejectAll(
         new RoderTransportError(this.withStderrTail("failed to start app-server"), { cause: error }),
       );
-      this.notificationQueue.close();
+      this.notificationHub.close();
     });
   }
 
@@ -150,14 +150,14 @@ export class LocalProcessTransport implements RoderTransport {
   }
 
   notifications(): AsyncIterable<JsonRpcNotification> {
-    return this.notificationQueue;
+    return this.notificationHub.subscribe();
   }
 
   async close(): Promise<void> {
     this.closed = true;
     this.lines.close();
     this.stderrLines.close();
-    this.notificationQueue.close();
+    this.notificationHub.close();
     this.process.stdin.end();
     this.process.kill();
     this.rejectAll(new RoderTransportError("transport is closed"));
@@ -183,7 +183,7 @@ export class LocalProcessTransport implements RoderTransport {
       return;
     }
     if (isNotification(message)) {
-      this.notificationQueue.push(message);
+      this.notificationHub.push(message);
     }
   }
 
@@ -220,7 +220,7 @@ export class WebSocketTransport implements RoderTransport {
   private readonly socket: WebSocketLike;
   private readonly opened: Promise<void>;
   private readonly pending = new Map<string, PendingResponse>();
-  private readonly notificationQueue = new AsyncQueue<JsonRpcNotification>();
+  private readonly notificationHub = new NotificationHub();
 
   constructor(options: WebSocketTransportOptions) {
     const protocols = options.protocols ?? [];
@@ -236,7 +236,7 @@ export class WebSocketTransport implements RoderTransport {
     this.socket.addEventListener("message", (event) => this.handleMessage(String(event.data)));
     this.socket.addEventListener("close", () => {
       this.rejectAll(new RoderTransportError("websocket closed"));
-      this.notificationQueue.close();
+      this.notificationHub.close();
     });
   }
 
@@ -268,12 +268,12 @@ export class WebSocketTransport implements RoderTransport {
   }
 
   notifications(): AsyncIterable<JsonRpcNotification> {
-    return this.notificationQueue;
+    return this.notificationHub.subscribe();
   }
 
   close(): void {
     this.socket.close();
-    this.notificationQueue.close();
+    this.notificationHub.close();
   }
 
   private handleMessage(data: string): void {
@@ -289,7 +289,7 @@ export class WebSocketTransport implements RoderTransport {
       return;
     }
     if (isNotification(message)) {
-      this.notificationQueue.push(message);
+      this.notificationHub.push(message);
     }
   }
 
@@ -307,6 +307,68 @@ type PendingResponse = {
   reject: (error: Error) => void;
   cleanup: () => void;
 };
+
+/**
+ * Fans notifications out to every active subscriber. The agent's callback loop
+ * and each RoderRun stream subscribe independently; a single shared queue
+ * would deliver each notification to only one of them. Notifications pushed
+ * while no subscriber exists are buffered and replayed to the next subscriber.
+ */
+class NotificationHub {
+  private readonly subscribers = new Set<AsyncQueue<JsonRpcNotification>>();
+  private backlog: JsonRpcNotification[] = [];
+  private closed = false;
+
+  push(notification: JsonRpcNotification): void {
+    if (this.closed) {
+      return;
+    }
+    if (this.subscribers.size === 0) {
+      this.backlog.push(notification);
+      return;
+    }
+    for (const queue of this.subscribers) {
+      queue.push(notification);
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+    this.backlog = [];
+    for (const queue of this.subscribers) {
+      queue.close();
+    }
+    this.subscribers.clear();
+  }
+
+  subscribe(): AsyncIterable<JsonRpcNotification> {
+    const queue = new AsyncQueue<JsonRpcNotification>();
+    if (this.closed) {
+      queue.close();
+      return queue;
+    }
+    for (const notification of this.backlog.splice(0)) {
+      queue.push(notification);
+    }
+    this.subscribers.add(queue);
+    const unsubscribe = () => {
+      this.subscribers.delete(queue);
+      queue.close();
+    };
+    return {
+      [Symbol.asyncIterator]: () => {
+        const inner = queue[Symbol.asyncIterator]();
+        return {
+          next: () => inner.next(),
+          return: async (): Promise<IteratorResult<JsonRpcNotification>> => {
+            unsubscribe();
+            return { value: undefined, done: true };
+          },
+        };
+      },
+    };
+  }
+}
 
 class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly values: T[] = [];

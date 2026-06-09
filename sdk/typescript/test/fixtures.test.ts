@@ -89,13 +89,21 @@ test("typescript sdk replays external tool fixture", async () => {
     },
   });
 
-  await agent.send("look up threads");
+  const run = await agent.send("look up threads");
+  /**
+   * Consume the run stream concurrently with the agent's callback loop: both
+   * must observe the full notification feed (callback loop resolves the tool,
+   * the stream sees turn/completed).
+   */
+  const completion = run.wait();
   emitNotifications(transport, fixture);
 
   await eventually(() => transport.seenMethods.includes("tools/resolve"));
   assert.deepEqual(calls, [
     { id: "call-1", name: "sauna_lookup", arguments: { query: "thread status" } },
   ]);
+  const completed = await completion;
+  assert.equal(completed?.turn.id, "turn-external");
 });
 
 test("typescript sdk replays user input and plan exit fixture", async () => {
