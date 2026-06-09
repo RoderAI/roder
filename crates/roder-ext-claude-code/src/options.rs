@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use claude_agent_sdk::mcp::{MCPContent, SdkMcpTool, SimpleMCPServer};
-use claude_agent_sdk::{ClaudeAgentOptions, PermissionMode, PermissionResult, SettingSource};
+use claude_code_sdk_rust::mcp::{MCPContent, SdkMcpTool, SimpleMCPServer};
+use claude_code_sdk_rust::{ClaudeAgentOptions, PermissionMode, PermissionResult, SettingSource};
 use roder_api::inference::{AgentInferenceRequest, ToolCallCompleted, TurnToolExecutor};
 use roder_api::tools::ToolChoice;
 
@@ -122,7 +122,7 @@ fn roder_sdk_mcp_server(
             })
         })
         .collect();
-    claude_agent_sdk::mcp::create_sdk_mcp_server("roder", tools)
+    claude_code_sdk_rust::mcp::create_sdk_mcp_server("roder", tools)
 }
 
 fn sdk_tool_for_spec(
