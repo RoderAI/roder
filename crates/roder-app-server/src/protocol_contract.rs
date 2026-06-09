@@ -19,6 +19,7 @@ pub(crate) fn protocol_thread_from_metadata(
         preview,
         model_provider: metadata.provider.unwrap_or_else(|| "mock".to_string()),
         model: metadata.model.unwrap_or_else(|| "mock".to_string()),
+        selection_mode: metadata.selection_mode,
         created_at: metadata.created_at.unix_timestamp(),
         updated_at: metadata.updated_at.unix_timestamp(),
         status,

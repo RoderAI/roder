@@ -1,0 +1,28 @@
+[package]
+name = "roder-ext-inference-router"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "inference-router"
+category = "inference-router"
+display_name = "Local Inference Router"
+description = "Local policy router for adaptive model and reasoning selection."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = []
+extension_path = "::LocalInferenceRouterExtension"
+docs_url = ""
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
