@@ -4793,7 +4793,7 @@ async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
                 root_id: Some(workspace.root_id),
                 cwd: Some(cwd),
                 tool_allowlist: Some(vec!["edit".to_string(), "read_file".to_string()]),
-                developer_instructions: Some("You are embedded in Sauna.".to_string()),
+                developer_instructions: Some("You are embedded in a host app.".to_string()),
                 external_tools: None,
                 runner: None,
                 ephemeral: false,
@@ -4806,7 +4806,7 @@ async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
     assert_eq!(started.thread.tool_allowlist, vec!["edit", "read_file"]);
     assert_eq!(
         started.thread.developer_instructions.as_deref(),
-        Some("You are embedded in Sauna.")
+        Some("You are embedded in a host app.")
     );
 
     let read: ThreadReadResult = request(
@@ -4825,7 +4825,7 @@ async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
     assert_eq!(thread.tool_allowlist, vec!["edit", "read_file"]);
     assert_eq!(
         thread.developer_instructions.as_deref(),
-        Some("You are embedded in Sauna.")
+        Some("You are embedded in a host app.")
     );
 }
 
@@ -7982,10 +7982,10 @@ async fn search_index_setting_can_be_set_and_observed() {
     roder_search::set_search_index_enabled(true);
 }
 
-fn sauna_lookup_external_tool() -> roder_api::tools::ToolSpec {
+fn acme_lookup_external_tool() -> roder_api::tools::ToolSpec {
     roder_api::tools::ToolSpec {
-        name: "sauna_lookup".to_string(),
-        description: "Look up Sauna workspace state.".to_string(),
+        name: "acme_lookup".to_string(),
+        description: "Look up Acme workspace state.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": { "query": { "type": "string" } },
@@ -8011,7 +8011,7 @@ async fn start_external_tool_thread(client: &LocalAppClient) -> ThreadStartResul
                 cwd: Some(cwd),
                 tool_allowlist: None,
                 developer_instructions: None,
-                external_tools: Some(vec![sauna_lookup_external_tool()]),
+                external_tools: Some(vec![acme_lookup_external_tool()]),
                 runner: None,
                 ephemeral: false,
             })
@@ -8038,7 +8038,7 @@ async fn external_tool_call_round_trips_through_tools_resolve() {
 
     let started = start_external_tool_thread(&client).await;
     assert_eq!(started.thread.external_tools.len(), 1);
-    assert_eq!(started.thread.external_tools[0].name, "sauna_lookup");
+    assert_eq!(started.thread.external_tools[0].name, "acme_lookup");
     let _turn = start_turn(&client, &started.thread.id, "FAKE_EXTERNAL_TOOL lookup").await;
 
     let requested = wait_for_notification(
@@ -8052,7 +8052,7 @@ async fn external_tool_call_round_trips_through_tools_resolve() {
         .expect("requestId")
         .to_string();
     assert_eq!(requested.params["call"]["id"], "fake-external-tool");
-    assert_eq!(requested.params["call"]["name"], "sauna_lookup");
+    assert_eq!(requested.params["call"]["name"], "acme_lookup");
     assert_eq!(requested.params["call"]["arguments"]["query"], "thread status");
 
     let resolved: ToolsResolveResult = request(
@@ -8089,7 +8089,7 @@ async fn external_tool_call_round_trips_through_tools_resolve() {
             .unwrap();
         match envelope.event {
             roder_api::events::RoderEvent::ToolCallCompleted(event)
-                if event.tool_name.as_deref() == Some("sauna_lookup") =>
+                if event.tool_name.as_deref() == Some("acme_lookup") =>
             {
                 assert_eq!(event.output.as_deref(), Some("2 open threads"));
                 assert!(!event.is_error);
@@ -8150,7 +8150,7 @@ async fn external_tool_call_times_out_into_error_result() {
             .unwrap();
         match envelope.event {
             roder_api::events::RoderEvent::ToolCallCompleted(event)
-                if event.tool_name.as_deref() == Some("sauna_lookup") =>
+                if event.tool_name.as_deref() == Some("acme_lookup") =>
             {
                 assert!(event.is_error);
                 assert!(event.output.unwrap_or_default().contains("timed out"));

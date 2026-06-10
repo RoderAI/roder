@@ -55,7 +55,7 @@ impl InferenceEngine for FakeInferenceEngine {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
                 ToolCallCompleted {
                     id: "fake-external-tool".to_string(),
-                    name: "sauna_lookup".to_string(),
+                    name: "acme_lookup".to_string(),
                     arguments: serde_json::json!({ "query": "thread status" }).to_string(),
                 },
             ))]);
@@ -305,7 +305,7 @@ fn user_input_unavailable(request: &AgentInferenceRequest) -> bool {
 }
 
 fn should_call_external_tool(request: &AgentInferenceRequest) -> bool {
-    prompt_contains(request, "FAKE_EXTERNAL_TOOL") && !has_tool_result(request, "sauna_lookup")
+    prompt_contains(request, "FAKE_EXTERNAL_TOOL") && !has_tool_result(request, "acme_lookup")
 }
 
 fn should_update_task_ledger(request: &AgentInferenceRequest) -> bool {
