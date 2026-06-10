@@ -57,11 +57,16 @@ impl CursorAuthConfig {
     }
 
     fn api_key(&self) -> Option<String> {
-        self.api_key
-            .clone()
-            .and_then(nonempty)
-            .or_else(|| env_nonempty("CURSOR_API_KEY"))
-            .or_else(|| env_nonempty("RODER_CURSOR_API_KEY"))
+        if let Some(key) = self.api_key.clone().and_then(nonempty) {
+            return Some(key);
+        }
+        if let Some(key) = env_nonempty("CURSOR_API_KEY") {
+            return Some(key);
+        }
+        if let Some(key) = env_nonempty("RODER_CURSOR_API_KEY") {
+            return Some(key);
+        }
+        None
     }
 
     fn access_token(&self) -> Option<String> {

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -6,9 +7,10 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::proto::{
-    ConnectFrame, CursorHistoryMessage, CursorToolCall, decode_agent_server_message,
+    ConnectFrame, CursorExecRequest, CursorHistoryMessage, CursorToolCall,
+    decode_agent_server_message, decode_server_frame,
     encode_agent_client_message_with_history, encode_cli_stream_control_frames,
-    encode_connect_frame, take_connect_frame,
+    encode_connect_frame, encode_exec_request_context_result, take_connect_frame,
 };
 
 pub const DEFAULT_AGENT_SERVICE_URL: &str = "https://agentn.global.api5.cursor.sh";
@@ -43,6 +45,9 @@ pub struct AgentServiceRequest {
     pub model: String,
     pub context_frames: Vec<Vec<u8>>,
     pub history: Vec<CursorHistoryMessage>,
+    /// Workspace root used to respond to `request_context_args` so the model
+    /// knows where to look for files before generating text.
+    pub workspace: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -85,12 +90,20 @@ pub async fn stream_agent_service(
     for (index, frame) in frames.iter().enumerate() {
         capture_cursor_frame("send", index, frame);
     }
-    let request_body = reqwest::Body::wrap_stream(async_stream::stream! {
-        for frame in frames {
-            yield Ok::<Bytes, std::io::Error>(Bytes::from(frame));
+    // Channel-fed request body so the response handler can send exec results
+    // back to the server (e.g. the workspace context the model needs before it
+    // will start generating text).
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    for frame in &frames {
+        tx.send(Bytes::from(frame.clone())).ok();
+    }
+    let body_stream = async_stream::stream! {
+        let mut rx = rx;
+        while let Some(chunk) = rx.recv().await {
+            yield Ok::<Bytes, std::io::Error>(chunk);
         }
-        std::future::pending::<()>().await;
-    });
+    };
+    let request_body = reqwest::Body::wrap_stream(body_stream);
 
     let client = reqwest::Client::builder()
         .http2_adaptive_window(true)
@@ -123,7 +136,14 @@ pub async fn stream_agent_service(
     let timeout = config.timeout;
     let idle_duration = config.idle_timeout;
     let mut stream = response.bytes_stream();
+    // Clone handles needed inside the async_stream closure.
+    let tx_ctx = tx.clone();
+    let workspace_ctx = request.workspace.clone();
+    // Drop the original tx so the body stream ends when tx_ctx is dropped.
+    drop(tx);
     let events = Box::pin(async_stream::stream! {
+        let tx = tx_ctx;
+        let workspace = workspace_ctx;
         let mut buffer = Vec::new();
         let hard_timeout = tokio::time::sleep(timeout);
         let idle_timeout = tokio::time::sleep(timeout);
@@ -170,6 +190,16 @@ pub async fn stream_agent_service(
                         match frame {
                             ConnectFrame::Payload(payload) => {
                                 capture_cursor_frame("recv", 0, &payload);
+                                // Respond to request_context_args (field 10 of
+                                // ExecServerMessage) — the server sends this
+                                // before generating any text and will loop on
+                                // keepalives until we answer.
+                                let server_frame = decode_server_frame(&payload);
+                                if let Some(CursorExecRequest::RequestContext { id }) = server_frame.exec {
+                                    let ws = workspace.to_string_lossy().to_string();
+                                    let ctx_response = encode_exec_request_context_result(id, &ws);
+                                    let _ = tx.send(Bytes::from(encode_connect_frame(&ctx_response)));
+                                }
                                 let decoded = decode_agent_server_message(&payload);
                                 if !decoded.text.is_empty() {
                                     idle_armed = true;

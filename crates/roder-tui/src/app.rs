@@ -2920,7 +2920,10 @@ where
                     provider
                         .models
                         .iter()
-                        .find(|candidate| candidate.id == model)
+                        .find(|candidate| {
+                            candidate.id == model
+                                || format!("{}/{}", provider.id, candidate.id) == model
+                        })
                         .map(|candidate| (provider.id.clone(), candidate.id.clone()))
                 });
                 if let Some((provider, model)) = selected {

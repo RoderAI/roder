@@ -511,7 +511,11 @@ pub(crate) enum CursorExecRequest {
         mode: String,
         tool_call_id: String,
     },
-    Init,
+    /// The server requests workspace context (`request_context_args`, field 10
+    /// of ExecServerMessage) before it will start generating text. The client
+    /// must respond with `encode_exec_request_context_result` to unblock the
+    /// model.  `id` mirrors ExecServerMessage.f1 and must be echoed back.
+    RequestContext { id: u64 },
 }
 
 /// One grep match: a relative file path, a 1-based line number, and the line.
@@ -614,7 +618,7 @@ fn decode_exec_server(bytes: &[u8]) -> Option<CursorExecRequest> {
         });
     }
     if submessage(bytes, 10).is_some() {
-        return Some(CursorExecRequest::Init);
+        return Some(CursorExecRequest::RequestContext { id: seq });
     }
     None
 }
@@ -767,6 +771,35 @@ pub(crate) fn encode_exec_grep_result(
     wrap_exec_client(proto_message(vec![
         proto_field_varint(1, seq),
         proto_field_bytes(5, search),
+    ]))
+}
+
+/// REQUEST-CONTEXT result: responds to `request_context_args` (field 10 of
+/// `ExecServerMessage`).  The server requires this before it will start
+/// generating model output.
+///
+/// Protobuf:
+///   `AgentClientMessage{ 2: ExecClientMessage{
+///       1: id,
+///       10: RequestContextResult{
+///           1: RequestContextSuccess{
+///               1: RequestContext{
+///                   4: RequestContextEnv{
+///                       1: os_version,
+///                       2: workspace_paths (repeated),
+///                       11: project_folder } } } } } }`
+pub(crate) fn encode_exec_request_context_result(id: u64, workspace_path: &str) -> Vec<u8> {
+    let env = proto_message(vec![
+        proto_field_string(1, "macOS"),
+        proto_field_string(2, workspace_path),   // workspace_paths[]
+        proto_field_string(11, workspace_path),  // project_folder
+    ]);
+    let context = proto_message(vec![proto_field_bytes(4, env)]);
+    let success = proto_message(vec![proto_field_bytes(1, context)]);
+    let result = proto_message(vec![proto_field_bytes(1, success)]);
+    wrap_exec_client(proto_message(vec![
+        proto_field_varint(1, id),
+        proto_field_bytes(10, result),
     ]))
 }
 

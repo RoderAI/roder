@@ -25,9 +25,9 @@ use crate::agentservice::AgentServiceConfig;
 use crate::proto::{
     ConnectFrame, CursorExecRequest, CursorGrepMatch, decode_server_frame,
     encode_cli_stream_control_frames, encode_connect_frame, encode_exec_control,
-    encode_exec_glob_result, encode_exec_grep_result, encode_exec_init, encode_exec_read_result,
-    encode_exec_shell_results, encode_exec_write_result, encode_heartbeat, encode_kv_ack,
-    take_connect_frame,
+    encode_exec_glob_result, encode_exec_grep_result, encode_exec_read_result,
+    encode_exec_request_context_result, encode_exec_shell_results, encode_exec_write_result,
+    encode_heartbeat, encode_kv_ack, take_connect_frame,
 };
 
 pub struct BidiRequest {
@@ -52,10 +52,6 @@ pub async fn run_bidi_turn(
     for frame in &request.context_frames {
         tx.send(Bytes::from(frame.clone())).ok();
     }
-    // exec channel INIT handshake (context push); empty file list establishes
-    // the channel and lets the model read files on demand.
-    tx.send(Bytes::from(encode_connect_frame(&encode_exec_init(&[]))))
-        .ok();
     for frame in encode_cli_stream_control_frames() {
         tx.send(Bytes::from(frame)).ok();
     }
@@ -177,14 +173,16 @@ pub async fn run_bidi_turn(
                         }
                         if let Some(exec) = frame.exec {
                             last_progress = tokio::time::Instant::now();
-                            if let Some(result_frames) =
+                            if let Some((result_frames, send_ctrl)) =
                                 service_exec(exec, &workspace, executor.as_deref()).await
                             {
                                 for result_frame in &result_frames {
                                     crate::agentservice::capture_cursor_frame("send-result", 0, result_frame);
                                     let _ = outbound.send(Bytes::from(encode_connect_frame(result_frame)));
                                 }
-                                let _ = outbound.send(Bytes::from(encode_connect_frame(&encode_exec_control())));
+                                if send_ctrl {
+                                    let _ = outbound.send(Bytes::from(encode_connect_frame(&encode_exec_control())));
+                                }
                             }
                         }
                         if frame.turn_ended {
@@ -206,15 +204,24 @@ pub async fn run_bidi_turn(
     Ok(Box::pin(events))
 }
 
-/// Execute one exec request and return the encoded `ExecClientMessage` result
-/// frame(s) to send back (shell streams three).
+/// Execute one exec request and return `(frames_to_send, send_exec_control)`.
+/// Returns `None` to send nothing.  `send_exec_control` should be `true` only
+/// for exec types that follow the normal request/result/ack cycle.
 async fn service_exec(
     exec: CursorExecRequest,
     workspace: &Path,
     executor: Option<&dyn TurnToolExecutor>,
-) -> Option<Vec<Vec<u8>>> {
+) -> Option<(Vec<Vec<u8>>, bool)> {
     match exec {
-        CursorExecRequest::Init => None,
+        // Server requests workspace context (field 10 = request_context_args)
+        // before it starts generating model output.  Respond with the workspace
+        // path so the model knows where to look for files.  No exec_control ack
+        // is sent for this type — the model continues streaming after it gets
+        // the context.
+        CursorExecRequest::RequestContext { id } => {
+            let ws = workspace.to_string_lossy().to_string();
+            Some((vec![encode_exec_request_context_result(id, &ws)], false))
+        }
         CursorExecRequest::Read {
             seq,
             path,
@@ -234,12 +241,12 @@ async fn service_exec(
             }
             let content = tokio::fs::read(&path).await.unwrap_or_default();
             let total_lines = content.iter().filter(|&&b| b == b'\n').count() as u64 + 1;
-            Some(vec![encode_exec_read_result(
+            Some((vec![encode_exec_read_result(
                 seq,
                 &path,
                 &content,
                 total_lines,
-            )])
+            )], true))
         }
         CursorExecRequest::Write {
             seq,
@@ -266,7 +273,7 @@ async fn service_exec(
             if !applied {
                 let _ = tokio::fs::write(&path, &content).await;
             }
-            Some(vec![encode_exec_write_result(seq, &path, lines, size)])
+            Some((vec![encode_exec_write_result(seq, &path, lines, size)], true))
         }
         CursorExecRequest::Shell {
             seq,
@@ -289,7 +296,7 @@ async fn service_exec(
             } else {
                 run_shell(&command, &cwd, workspace).await
             };
-            Some(encode_exec_shell_results(seq, &cwd, &stdout))
+            Some((encode_exec_shell_results(seq, &cwd, &stdout), true))
         }
         CursorExecRequest::Search {
             seq,
@@ -345,7 +352,7 @@ async fn service_exec(
                 .await
                 .unwrap_or_default();
                 let root2 = workspace.to_string_lossy().to_string();
-                Some(vec![encode_exec_glob_result(seq, &path, &root2, &rel)])
+                Some((vec![encode_exec_glob_result(seq, &path, &root2, &rel)], true))
             } else {
                 // content (grep): search files under search_dir for the pattern.
                 let needle = pattern.clone().unwrap_or_default();
@@ -356,13 +363,13 @@ async fn service_exec(
                 })
                 .await
                 .unwrap_or_default();
-                Some(vec![encode_exec_grep_result(
+                Some((vec![encode_exec_grep_result(
                     seq,
                     &pattern.unwrap_or_default(),
                     &path,
                     &root,
                     &matches,
-                )])
+                )], true))
             }
         }
     }
