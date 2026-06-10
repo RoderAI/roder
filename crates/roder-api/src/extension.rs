@@ -72,6 +72,19 @@ pub trait RoderExtension: Send + Sync + 'static {
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()>;
 }
 
+/// Lets shared extension handles (e.g. distribution-supplied extension lists)
+/// be installed through the same `ExtensionRegistryBuilder::install` path as
+/// concrete extension values.
+impl<E: RoderExtension + ?Sized> RoderExtension for Arc<E> {
+    fn manifest(&self) -> ExtensionManifest {
+        (**self).manifest()
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        (**self).install(registry)
+    }
+}
+
 #[derive(Clone)]
 pub struct ExtensionRegistry {
     pub manifests: Vec<ExtensionManifest>,

@@ -55,7 +55,7 @@ use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
     CustomInferenceProviderConfig, DefaultNotificationsConfig, DefaultRegistryConfig,
     DefaultSubagentsConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
-    SessionStoreConfig, build_default_registry,
+    SessionStoreConfig, build_default_registry, distribution_extensions,
 };
 use roder_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
@@ -1161,6 +1161,7 @@ pub(crate) async fn build_runtime_from_config(
         notifications,
         remote_runner_destination: remote_runner_destination.clone(),
         inference_router: cfg.inference_router.clone(),
+        extra_extensions: distribution_extensions(),
     })?;
 
     let runtime = Arc::new(Runtime::new(
