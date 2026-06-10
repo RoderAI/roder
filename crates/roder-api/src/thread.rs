@@ -10,7 +10,7 @@ pub use crate::extension::{CheckpointStoreId, ThreadStoreId};
 use crate::extension_state::ExtensionStateRecord;
 use crate::inference::{TokenUsage, cache_hit_rate};
 use crate::inference_routing::ModelSelectionMode;
-use crate::remote_runner::{RunnerDestination, RunnerSessionState};
+use crate::remote_runner::{RunnerDestination, RunnerSessionState, ThreadRunnerBinding};
 use crate::transcript::{InputImage, TranscriptItem};
 
 mod projection;
@@ -123,6 +123,14 @@ pub struct ThreadMetadata {
     pub runner_destination: Option<RunnerDestination>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner_state: Option<RunnerSessionState>,
+    /**
+     * Set when the thread explicitly selected a remote runner at creation.
+     * Native coding tools for the thread route through this runner workspace;
+     * absent = local tool execution even when a runtime-level runner
+     * destination is configured.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_binding: Option<ThreadRunnerBinding>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -462,6 +470,7 @@ mod tests {
             external_tools: Vec::new(),
             runner_destination: None,
             runner_state: None,
+            runner_binding: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,
@@ -520,6 +529,7 @@ mod tests {
             external_tools: Vec::new(),
             runner_destination: None,
             runner_state: None,
+            runner_binding: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,

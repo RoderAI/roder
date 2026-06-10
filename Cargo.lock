@@ -3391,6 +3391,7 @@ dependencies = [
  "roder-roadmap",
  "roder-sandbox",
  "roder-skills",
+ "roder-tools",
  "serde",
  "serde_json",
  "time",

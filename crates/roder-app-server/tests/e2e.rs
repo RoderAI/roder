@@ -287,6 +287,7 @@ impl ThreadStore for FailingThreadStore {
             external_tools: Vec::new(),
             runner_destination: None,
             runner_state: None,
+            runner_binding: None,
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             updated_at: time::OffsetDateTime::UNIX_EPOCH,
             message_count: 0,
@@ -4153,6 +4154,136 @@ async fn thread_start_rejects_missing_workspace_or_escaping_cwd() {
     }
 }
 
+/// Validation-only runner provider for thread/start binding tests; sessions are never created here.
+#[derive(Debug, Default)]
+struct StubRunnerProvider;
+
+#[async_trait::async_trait]
+impl roder_api::remote_runner::RemoteRunnerProvider for StubRunnerProvider {
+    fn id(&self) -> roder_api::remote_runner::RemoteRunnerProviderId {
+        "stub-runner".to_string()
+    }
+
+    fn capabilities(&self) -> roder_api::remote_runner::RunnerCapabilities {
+        roder_api::remote_runner::RunnerCapabilities {
+            command_exec: true,
+            file_read: true,
+            file_write: true,
+            port_preview: false,
+            snapshots: false,
+            cancellation: false,
+            artifact_export: false,
+            mounts: Default::default(),
+        }
+    }
+
+    async fn create_session(
+        &self,
+        _destination: roder_api::remote_runner::RunnerDestination,
+    ) -> anyhow::Result<Arc<dyn roder_api::remote_runner::RemoteRunnerSession>> {
+        anyhow::bail!("stub runner provider does not create sessions")
+    }
+
+    async fn resume_session(
+        &self,
+        _state: roder_api::remote_runner::RunnerSessionState,
+    ) -> anyhow::Result<Arc<dyn roder_api::remote_runner::RemoteRunnerSession>> {
+        anyhow::bail!("stub runner provider does not resume sessions")
+    }
+}
+
+#[tokio::test]
+async fn thread_start_binds_an_explicit_runner_and_rejects_invalid_selections() {
+    let session_dir =
+        std::env::temp_dir().join(format!("roder-thread-runner-{}", uuid::Uuid::new_v4()));
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: session_dir.clone(),
+    }));
+    builder.remote_runner_provider(Arc::new(StubRunnerProvider));
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    let server = Arc::new(app_server(runtime.clone()));
+    let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
+
+    let started: serde_json::Value = request(
+        &client,
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
+            "runner": {
+                "providerId": "stub-runner",
+                "config": { "space_id": "space-1", "mode": "readwrite" },
+                "workspace": "/sandbox/workspace"
+            },
+            "ephemeral": false
+        })),
+    )
+    .await;
+    let thread_id = started["thread"]["id"].as_str().expect("thread id");
+    let binding = runtime
+        .load_thread_metadata(thread_id)
+        .await
+        .unwrap()
+        .expect("thread metadata")
+        .runner_binding
+        .expect("runner binding persisted on the thread");
+    assert_eq!(binding.destination.provider_id, "stub-runner");
+    assert_eq!(binding.destination.config["space_id"], "space-1");
+    assert_eq!(
+        binding.workspace,
+        std::path::PathBuf::from("/sandbox/workspace")
+    );
+
+    for (params, expected) in [
+        (
+            serde_json::json!({
+                "model": "mock",
+                "modelProvider": PROVIDER_MOCK,
+                "workspaceId": workspace.workspace_id.clone(),
+                "rootId": workspace.root_id.clone(),
+                "runner": { "providerId": "missing-runner", "workspace": "/sandbox/workspace" },
+                "ephemeral": false
+            }),
+            "not installed",
+        ),
+        (
+            serde_json::json!({
+                "model": "mock",
+                "modelProvider": PROVIDER_MOCK,
+                "workspaceId": workspace.workspace_id.clone(),
+                "rootId": workspace.root_id.clone(),
+                "runner": { "providerId": "stub-runner", "workspace": "sandbox/workspace" },
+                "ephemeral": false
+            }),
+            "absolute",
+        ),
+    ] {
+        let response = client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/start-runner")),
+                method: "thread/start".to_string(),
+                params: Some(params),
+            })
+            .await;
+        let error = response.error.expect("thread/start should reject runner");
+        assert_eq!(error.code, -32602);
+        assert!(
+            error.message.contains(expected),
+            "unexpected error message: {}",
+            error.message
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(session_dir);
+}
+
 #[tokio::test]
 async fn workspace_create_list_and_thread_start_defaults_cwd_to_root() {
     let root = std::env::temp_dir().join(format!("roder-workspace-one-{}", uuid::Uuid::new_v4()));
@@ -4664,6 +4795,7 @@ async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
                 tool_allowlist: Some(vec!["edit".to_string(), "read_file".to_string()]),
                 developer_instructions: Some("You are embedded in Sauna.".to_string()),
                 external_tools: None,
+                runner: None,
                 ephemeral: false,
             })
             .unwrap(),
@@ -5078,6 +5210,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             tool_allowlist: Vec::new(),
             developer_instructions: None,
             external_tools: Vec::new(),
+            runner: None,
         })
         .await
         .unwrap();
@@ -7879,6 +8012,7 @@ async fn start_external_tool_thread(client: &LocalAppClient) -> ThreadStartResul
                 tool_allowlist: None,
                 developer_instructions: None,
                 external_tools: Some(vec![sauna_lookup_external_tool()]),
+                runner: None,
                 ephemeral: false,
             })
             .unwrap(),
@@ -9870,6 +10004,7 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
                 tool_allowlist: None,
                 developer_instructions: None,
                 external_tools: None,
+                runner: None,
                 ephemeral: false,
             })
             .unwrap(),

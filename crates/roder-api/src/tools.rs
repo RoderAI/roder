@@ -17,6 +17,7 @@ use crate::goals::ThreadGoalController;
 use crate::inference::ModelSchemaPolicy;
 use crate::media::{MediaGenerationRequest, MediaGenerationResponse};
 use crate::policy_mode::PolicyMode;
+use crate::remote_runner::RemoteWorkspace;
 use crate::trace::SubagentTraceSink;
 use crate::{ToolSchemaPolicy, normalize_tool_schema};
 
@@ -114,6 +115,12 @@ pub struct ToolResult {
 #[derive(Clone, Default)]
 pub struct ToolExecutionHandles {
     pub workspace: Option<Arc<dyn ScopedWorkspaceHandle>>,
+    /**
+     * Remote-runner workspace for the thread. When present it takes
+     * precedence over `workspace`: coding tools must route file and shell
+     * operations through the runner session instead of the local filesystem.
+     */
+    pub remote_workspace: Option<Arc<RemoteWorkspace>>,
     pub process_runner: Option<Arc<dyn ScopedProcessRunner>>,
     pub subagent_trace_sink: Option<Arc<dyn SubagentTraceSink>>,
     pub context_artifacts: Option<Arc<dyn ContextArtifactAccess>>,
@@ -124,6 +131,7 @@ impl fmt::Debug for ToolExecutionHandles {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ToolExecutionHandles")
             .field("workspace", &self.workspace.is_some())
+            .field("remote_workspace", &self.remote_workspace.is_some())
             .field("process_runner", &self.process_runner.is_some())
             .field("subagent_trace_sink", &self.subagent_trace_sink.is_some())
             .field("context_artifacts", &self.context_artifacts.is_some())
@@ -207,6 +215,11 @@ impl ToolExecutionContext {
 
     pub fn with_workspace_handle(mut self, handle: Arc<dyn ScopedWorkspaceHandle>) -> Self {
         self.handles.workspace = Some(handle);
+        self
+    }
+
+    pub fn with_remote_workspace(mut self, remote: Arc<RemoteWorkspace>) -> Self {
+        self.handles.remote_workspace = Some(remote);
         self
     }
 

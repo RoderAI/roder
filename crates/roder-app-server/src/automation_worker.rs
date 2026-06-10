@@ -116,6 +116,7 @@ pub async fn execute_automation_task(
             tool_allowlist: Vec::new(),
             developer_instructions: None,
             external_tools: Vec::new(),
+            runner: None,
         })
         .await?;
     let mut events = runtime.subscribe_events();

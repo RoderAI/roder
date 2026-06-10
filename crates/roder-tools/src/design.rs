@@ -176,7 +176,8 @@ impl ToolExecutor for DesignReadTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (path, document) = load_or_create(&workspace)?;
         Ok(result(
             call,
@@ -228,7 +229,8 @@ impl ToolExecutor for DesignBatchGetTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<BatchGetArgs>(&call)?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (path, document) = load_or_create(&workspace)?;
         let args = resolve_batch_get_aliases(&document, args);
         let nodes = batch_get(&document, &args);
@@ -266,7 +268,8 @@ impl ToolExecutor for DesignVariablesTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (path, document) = load_or_create(&workspace)?;
         Ok(result(
             call,
@@ -312,7 +315,8 @@ impl ToolExecutor for DesignSetVariablesTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<SetVariablesArgs>(&call)?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (path, mut document) = load_or_create(&workspace)?;
         let count = args.variables.len();
         set_design_variables(&mut document, args.variables, args.replace);
@@ -352,7 +356,8 @@ impl ToolExecutor for DesignSnapshotLayoutTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (path, document) = load_or_create(&workspace)?;
         let nodes = snapshot_layout(&document);
         Ok(result(
@@ -400,7 +405,8 @@ impl ToolExecutor for DesignSpawnAgentsTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<SpawnAgentsArgs>(&call)?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (path, document) = load_or_create(&workspace)?;
         let planned = design_spawn_agent_plan(&document, &args)?;
         let allow_patch = args.allow_patch.unwrap_or(false);
@@ -483,7 +489,8 @@ impl ToolExecutor for DesignExportNodesTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<ExportNodesArgs>(&call)?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (_path, document) = load_or_create(&workspace)?;
         let export_dir = args
             .output_dir
@@ -547,7 +554,8 @@ impl ToolExecutor for DesignPatchTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         let args = parse::<PatchArgs>(&call)?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "design tools")?;
         let (path, mut document) = load_or_create(&workspace)?;
         let applied = args.operations.len();
         for operation in args.operations {

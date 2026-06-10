@@ -1,6 +1,9 @@
 use std::path::Path;
 use std::process::Stdio;
 
+use roder_api::remote_runner::{
+    RemoteRunnerSession, RunnerCommandRequest, RunnerFileReadRequest, RunnerFileWriteRequest,
+};
 use roder_api::tools::{ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec};
 use serde::Deserialize;
 use serde_json::json;
@@ -100,6 +103,200 @@ pub(crate) async fn apply_patch_to_workspace(
         apply_codex_patch(workspace, patch).await
     } else {
         apply_unified_patch(workspace, patch).await
+    }
+}
+
+/**
+ * Applies a patch entirely through a remote runner session so nothing touches
+ * the local filesystem. Codex patches are replayed as read/write/delete
+ * operations; unified patches are uploaded to a temp file inside the
+ * workspace and applied with `git apply` on the runner.
+ */
+pub(crate) async fn apply_patch_to_runner_workspace(
+    workspace: &Workspace,
+    session: &dyn RemoteRunnerSession,
+    patch: &str,
+) -> anyhow::Result<String> {
+    if is_codex_patch(patch) {
+        apply_codex_patch_via_runner(workspace, session, patch).await
+    } else {
+        apply_unified_patch_via_runner(workspace, session, patch).await
+    }
+}
+
+async fn apply_codex_patch_via_runner(
+    workspace: &Workspace,
+    session: &dyn RemoteRunnerSession,
+    patch: &str,
+) -> anyhow::Result<String> {
+    let changes = roder_edit_core::patch::parse_codex_patch(patch)?;
+    if changes.is_empty() {
+        anyhow::bail!("no changes found");
+    }
+    let mut summaries = Vec::new();
+    for change in changes {
+        let rel = workspace.display(&workspace.resolve_for_write(&change.path)?);
+        match change.op {
+            roder_edit_core::patch::CodexPatchOp::Add => {
+                if runner_path_exists(workspace, session, &rel).await? {
+                    anyhow::bail!("{} already exists", change.path);
+                }
+                session
+                    .write_file(RunnerFileWriteRequest {
+                        path: rel.clone().into(),
+                        contents: join_patch_lines(&change.lines).into_bytes(),
+                    })
+                    .await?;
+                summaries.push(format!("Added {rel}"));
+            }
+            roder_edit_core::patch::CodexPatchOp::Delete => {
+                runner_remove_file(workspace, session, &rel).await?;
+                summaries.push(format!("Deleted {rel}"));
+            }
+            roder_edit_core::patch::CodexPatchOp::Update => {
+                let read = session
+                    .read_file(RunnerFileReadRequest {
+                        path: rel.clone().into(),
+                    })
+                    .await?;
+                let mut text = String::from_utf8(read.contents)?;
+                for hunk in &change.hunks {
+                    let old_text = hunk.old_lines.join("\n");
+                    let new_text = hunk.new_lines.join("\n");
+                    if old_text.is_empty() {
+                        text = format!("{new_text}{text}");
+                        continue;
+                    }
+                    let Some(index) = text.find(&old_text) else {
+                        anyhow::bail!("expected hunk not found in {}:\n{old_text}", change.path);
+                    };
+                    text.replace_range(index..index + old_text.len(), &new_text);
+                }
+                let target = match &change.move_to {
+                    Some(move_to) => workspace.display(&workspace.resolve_for_write(move_to)?),
+                    None => rel.clone(),
+                };
+                session
+                    .write_file(RunnerFileWriteRequest {
+                        path: target.clone().into(),
+                        contents: text.into_bytes(),
+                    })
+                    .await?;
+                if target != rel {
+                    runner_remove_file(workspace, session, &rel).await?;
+                    summaries.push(format!("Moved {rel} to {target}"));
+                } else {
+                    summaries.push(format!("Updated {rel}"));
+                }
+            }
+        }
+    }
+    Ok(format!("Success. {}", summaries.join("\n")))
+}
+
+async fn apply_unified_patch_via_runner(
+    workspace: &Workspace,
+    session: &dyn RemoteRunnerSession,
+    patch: &str,
+) -> anyhow::Result<String> {
+    validate_unified_patch_paths(workspace, patch)?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let temp_name = format!(".roder-apply-patch-{nanos}.patch");
+    session
+        .write_file(RunnerFileWriteRequest {
+            path: temp_name.clone().into(),
+            contents: patch.as_bytes().to_vec(),
+        })
+        .await?;
+    let output = session
+        .run_command(RunnerCommandRequest {
+            command_id: "apply-patch".to_string(),
+            program: "git".to_string(),
+            args: vec![
+                "apply".to_string(),
+                "--whitespace=nowarn".to_string(),
+                temp_name.clone(),
+            ],
+            cwd: Some(workspace.root().to_path_buf()),
+            env: Vec::new(),
+        })
+        .await;
+    let cleanup = session
+        .run_command(RunnerCommandRequest {
+            command_id: "apply-patch-cleanup".to_string(),
+            program: "rm".to_string(),
+            args: vec!["-f".to_string(), "--".to_string(), temp_name],
+            cwd: Some(workspace.root().to_path_buf()),
+            env: Vec::new(),
+        })
+        .await;
+    let output = output?;
+    cleanup?;
+    let text = format!("{}{}", output.stdout, output.stderr)
+        .trim()
+        .to_string();
+    if output.exit_code != Some(0) {
+        anyhow::bail!(
+            "{}",
+            if text.is_empty() {
+                format!("git apply exited with {:?}", output.exit_code)
+            } else {
+                text
+            }
+        );
+    }
+    Ok(if text.is_empty() {
+        "Success. Applied patch".to_string()
+    } else {
+        text
+    })
+}
+
+async fn runner_path_exists(
+    workspace: &Workspace,
+    session: &dyn RemoteRunnerSession,
+    rel: &str,
+) -> anyhow::Result<bool> {
+    let output = session
+        .run_command(RunnerCommandRequest {
+            command_id: "apply-patch-stat".to_string(),
+            program: "test".to_string(),
+            args: vec!["-e".to_string(), rel.to_string()],
+            cwd: Some(workspace.root().to_path_buf()),
+            env: Vec::new(),
+        })
+        .await?;
+    Ok(output.exit_code == Some(0))
+}
+
+async fn runner_remove_file(
+    workspace: &Workspace,
+    session: &dyn RemoteRunnerSession,
+    rel: &str,
+) -> anyhow::Result<()> {
+    let output = session
+        .run_command(RunnerCommandRequest {
+            command_id: "apply-patch-delete".to_string(),
+            program: "rm".to_string(),
+            args: vec!["--".to_string(), rel.to_string()],
+            cwd: Some(workspace.root().to_path_buf()),
+            env: Vec::new(),
+        })
+        .await?;
+    if output.exit_code != Some(0) {
+        anyhow::bail!("delete {rel} failed: {}", output.stderr.trim_end());
+    }
+    Ok(())
+}
+
+fn join_patch_lines(lines: &[String]) -> String {
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
     }
 }
 

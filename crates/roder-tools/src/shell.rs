@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use roder_api::remote_runner::RunnerCommandRequest;
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
 };
@@ -85,30 +86,67 @@ impl ToolExecutor for ShellTool {
             .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
             .clamp(1, MAX_TIMEOUT_SECONDS);
         let timeout = effective_timeout_seconds(requested_timeout, ctx.deadline_remaining_seconds);
-        let shell = shell_for_context(&ctx, &self.command_shell);
-        let started = Instant::now();
-        let mut process = Command::new(&shell);
-        process.args(command_args_for_shell(&shell, &command, true));
-        process.current_dir(&cwd).kill_on_drop(true);
-        let output =
-            tokio::time::timeout(std::time::Duration::from_secs(timeout), process.output()).await;
-
-        let (exit_code, aggregated_output, timed_out) = match output {
-            Ok(Ok(output)) => (
-                output
-                    .status
-                    .code()
-                    .unwrap_or_else(|| if output.status.success() { 0 } else { -1 }),
-                aggregate_output(&output.stdout, &output.stderr),
-                false,
-            ),
-            Ok(Err(err)) => (-1, format!("execution error: {err:?}"), false),
-            Err(_) => (
-                -1,
-                format!("command timed out after {timeout} seconds"),
-                true,
-            ),
+        /*
+         * Runner-bound threads execute through the remote session; `sh -lc` is
+         * used instead of the locally configured shell because the local shell
+         * need not exist on the runner.
+         */
+        let shell = match ctx.handles.remote_workspace.as_ref() {
+            Some(_) => "sh".to_string(),
+            None => shell_for_context(&ctx, &self.command_shell),
         };
+        let started = Instant::now();
+        let (exit_code, aggregated_output, timed_out) =
+            if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
+                let request = RunnerCommandRequest {
+                    command_id: call.id.clone(),
+                    program: shell.clone(),
+                    args: vec!["-lc".to_string(), command.clone()],
+                    cwd: Some(cwd.clone()),
+                    env: Vec::new(),
+                };
+                let output = tokio::time::timeout(
+                    std::time::Duration::from_secs(timeout),
+                    remote.session.run_command(request),
+                )
+                .await;
+                match output {
+                    Ok(Ok(output)) => (
+                        output.exit_code.unwrap_or(-1),
+                        aggregate_output(output.stdout.as_bytes(), output.stderr.as_bytes()),
+                        false,
+                    ),
+                    Ok(Err(err)) => (-1, format!("execution error: {err:?}"), false),
+                    Err(_) => (
+                        -1,
+                        format!("command timed out after {timeout} seconds"),
+                        true,
+                    ),
+                }
+            } else {
+                let mut process = Command::new(&shell);
+                process.args(command_args_for_shell(&shell, &command, true));
+                process.current_dir(&cwd).kill_on_drop(true);
+                let output =
+                    tokio::time::timeout(std::time::Duration::from_secs(timeout), process.output())
+                        .await;
+                match output {
+                    Ok(Ok(output)) => (
+                        output
+                            .status
+                            .code()
+                            .unwrap_or_else(|| if output.status.success() { 0 } else { -1 }),
+                        aggregate_output(&output.stdout, &output.stderr),
+                        false,
+                    ),
+                    Ok(Err(err)) => (-1, format!("execution error: {err:?}"), false),
+                    Err(_) => (
+                        -1,
+                        format!("command timed out after {timeout} seconds"),
+                        true,
+                    ),
+                }
+            };
         let duration_ms = started.elapsed().as_millis() as u64;
         let status = if timed_out {
             "timed_out"
@@ -387,6 +425,51 @@ mod tests {
         )
         .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
         .with_process_runner(Arc::new(LocalProcessRunnerHandle))
+    }
+
+    #[tokio::test]
+    async fn shell_tool_routes_remote_commands_through_runner_session() {
+        let root = temp_workspace("roder-shell-remote");
+        std::fs::create_dir_all(&root).unwrap();
+        let state =
+            std::sync::Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        let ctx = context(&root).with_remote_workspace(Arc::new(
+            roder_api::remote_runner::RemoteWorkspace {
+                session: Arc::new(crate::remote_test_support::RecordingRunnerSession {
+                    state: state.clone(),
+                }),
+                root: "/sandbox/workspace".into(),
+            },
+        ));
+        let tool = ShellTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: roder_api::command_shell::default_command_shell(),
+        };
+
+        let result = tool
+            .execute(
+                ctx,
+                call(json!({ "command": "echo hi", "workdir": "apps/web" })),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.text.contains("remote ok"));
+        let commands = state.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].program, "sh");
+        assert_eq!(
+            commands[0].args,
+            vec!["-lc".to_string(), "echo hi".to_string()]
+        );
+        // cwd resolves against the runner workspace root, not the local cwd.
+        assert_eq!(
+            commands[0].cwd.as_deref(),
+            Some(std::path::Path::new("/sandbox/workspace/apps/web"))
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn temp_workspace(prefix: &str) -> std::path::PathBuf {

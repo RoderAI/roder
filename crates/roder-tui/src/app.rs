@@ -1445,6 +1445,7 @@ where
                     tool_allowlist: None,
                     developer_instructions: None,
                     external_tools: None,
+                    runner: None,
                     ephemeral: false,
                 })
                 .unwrap(),

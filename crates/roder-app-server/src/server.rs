@@ -2274,6 +2274,7 @@ impl AppServer {
             tool_allowlist,
             developer_instructions,
             external_tools,
+            runner,
             ephemeral: _,
         } = params;
         /*
@@ -2311,6 +2312,17 @@ impl AppServer {
             .resolve_root(cfg.workspace.clone(), &workspace_id, root_id.as_deref())
             .await?;
         let cwd = crate::workspaces::validate_cwd(&resolved.root, cwd)?;
+        let runner = runner.map(|runner| roder_core::ThreadRunnerSelection {
+            provider_id: runner.provider_id,
+            config: runner.config.unwrap_or_else(|| serde_json::json!({})),
+            workspace: runner.workspace,
+        });
+        if let Some(runner) = runner.clone() {
+            self.runtime
+                .validate_thread_runner_selection(runner)
+                .await
+                .map_err(invalid_params_error)?;
+        }
         let metadata = self
             .runtime
             .create_thread_with(roder_core::CreateThreadRequest {
@@ -2324,6 +2336,7 @@ impl AppServer {
                 tool_allowlist: tool_allowlist.unwrap_or_default(),
                 developer_instructions,
                 external_tools: external_tools.unwrap_or_default(),
+                runner,
             })
             .await
             .map_err(internal_error)?;
@@ -2574,6 +2587,7 @@ impl AppServer {
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
                 external_tools: Vec::new(),
+                runner: None,
             })
             .await
             .map_err(internal_error)?;
