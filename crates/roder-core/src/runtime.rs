@@ -1612,10 +1612,7 @@ impl Runtime {
         thread_id: &ThreadId,
     ) -> anyhow::Result<Option<(RunnerDestination, Arc<dyn RemoteRunnerSession>)>> {
         let metadata = if let Some(store) = &self.thread_store {
-            store
-                .load_thread(thread_id)
-                .await?
-                .and_then(|snapshot| snapshot.metadata)
+            store.load_thread_metadata(thread_id).await?
         } else {
             None
         };
@@ -1668,9 +1665,8 @@ impl Runtime {
             return Ok(None);
         };
         let binding = store
-            .load_thread(thread_id)
+            .load_thread_metadata(thread_id)
             .await?
-            .and_then(|snapshot| snapshot.metadata)
             .and_then(|metadata| metadata.runner_binding);
         let Some(binding) = binding else {
             return Ok(None);
