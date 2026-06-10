@@ -166,6 +166,13 @@ pub struct Thread {
      */
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_tools: Vec<ToolSpec>,
+    /**
+     * Remote-runner binding fixed at thread/start; absent = native coding tools execute locally.
+     * Lets hosts verify that a reused thread targets the intended runner workspace, since the
+     * binding never changes after creation. The destination config carries no secrets.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<ThreadRunnerParams>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
