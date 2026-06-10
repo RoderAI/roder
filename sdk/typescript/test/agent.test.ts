@@ -67,7 +67,7 @@ test("agent send passes tool allowlist and instructions on thread/start", async 
     cwd: "/workspace",
     workspaceId: "ws-1",
     toolAllowlist: ["edit", "read_file"],
-    instructions: "You are embedded in Sauna.",
+    instructions: "You are embedded in a host app.",
   });
 
   await agent.send("hello");
@@ -78,7 +78,7 @@ test("agent send passes tool allowlist and instructions on thread/start", async 
     model: undefined,
     modelProvider: undefined,
     toolAllowlist: ["edit", "read_file"],
-    developerInstructions: "You are embedded in Sauna.",
+    developerInstructions: "You are embedded in a host app.",
     workspaceId: "ws-1",
   });
 });
@@ -96,7 +96,7 @@ test("agent send passes the runner binding on thread/start", async () => {
     return { jsonrpc: "2.0", id: request.id, result: {} };
   });
   const runner = {
-    providerId: "sauna",
+    providerId: "e2b",
     config: { space_id: "space-1", mode: "readwrite" },
     workspace: "/workspace",
   };
@@ -132,7 +132,7 @@ test("agent registers external tools and resolves calls, including thrown errors
     return { jsonrpc: "2.0", id: request.id, result: { resolved: true } };
   });
   const externalTools = [
-    { name: "sauna_lookup", description: "Look up Sauna state.", parameters: { type: "object" } },
+    { name: "acme_lookup", description: "Look up Acme state.", parameters: { type: "object" } },
   ];
   const agent = await RoderAgent.create({
     transport,
@@ -140,7 +140,7 @@ test("agent registers external tools and resolves calls, including thrown errors
     workspaceId: "ws-1",
     externalTools,
     onToolExecute(call) {
-      if (call.name === "sauna_lookup") {
+      if (call.name === "acme_lookup") {
         return { output: "2 open threads" };
       }
       throw new Error("unknown external tool");
@@ -165,7 +165,7 @@ test("agent registers external tools and resolves calls, including thrown errors
       threadId: "thread-1",
       turnId: "turn-1",
       requestId: "exttool-1",
-      call: { id: "call-1", name: "sauna_lookup", arguments: { query: "threads" } },
+      call: { id: "call-1", name: "acme_lookup", arguments: { query: "threads" } },
     },
   });
   transport.emit({
@@ -264,7 +264,7 @@ test("agent ignores tool execution requests for other threads", async () => {
       threadId: "thread-other",
       turnId: "turn-9",
       requestId: "exttool-other",
-      call: { id: "call-other", name: "sauna_lookup", arguments: {} },
+      call: { id: "call-other", name: "acme_lookup", arguments: {} },
     },
   });
   transport.emit({
@@ -274,7 +274,7 @@ test("agent ignores tool execution requests for other threads", async () => {
       threadId: "thread-1",
       turnId: "turn-1",
       requestId: "exttool-own",
-      call: { id: "call-own", name: "sauna_lookup", arguments: {} },
+      call: { id: "call-own", name: "acme_lookup", arguments: {} },
     },
   });
 
@@ -325,7 +325,7 @@ test("agent callback loop survives tools/resolve failures", async () => {
         threadId: "thread-1",
         turnId: "turn-1",
         requestId,
-        call: { id: requestId, name: "sauna_lookup", arguments: {} },
+        call: { id: requestId, name: "acme_lookup", arguments: {} },
       },
     });
   }
@@ -377,7 +377,7 @@ test("agent executes a parallel external tool batch concurrently", async () => {
         threadId: "thread-1",
         turnId: "turn-1",
         requestId: `exttool-${id}`,
-        call: { id, name: "sauna_lookup", arguments: {} },
+        call: { id, name: "acme_lookup", arguments: {} },
       },
     });
   }

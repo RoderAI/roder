@@ -155,7 +155,7 @@ function check(scenario: string, condition: boolean, detail: string): void {
  * size (4096 tokens for Haiku-class models; below it cache writes are silently
  * 0 and the scenario-d assertion would be vacuous). ~30k chars ≈ 7.5k tokens.
  */
-const CACHE_PRIMER = `Background reference material (ignore unless asked): ${"the sauna workspace indexes threads, files, schedules, and artifacts for retrieval. ".repeat(350)}`;
+const CACHE_PRIMER = `Background reference material (ignore unless asked): ${"the acme workspace indexes threads, files, schedules, and artifacts for retrieval. ".repeat(350)}`;
 
 // --- c. external tool round-trip ---
 {
