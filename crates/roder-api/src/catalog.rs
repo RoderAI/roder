@@ -1180,7 +1180,10 @@ const fn cursor_model(
         max_context_window: context_window,
         auto_compact_token_limit,
         supports_compaction: true,
-        supports_images: false,
+        // Cursor's AgentService proxies vision-capable frontier models and
+        // accepts inline images via `agent.v1.SelectedImage`, which the Cursor
+        // provider now encodes.
+        supports_images: true,
         supports_tools: false,
         supports_structured: false,
         edit_tool: None,

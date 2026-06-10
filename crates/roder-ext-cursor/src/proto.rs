@@ -52,10 +52,18 @@ pub fn encode_agent_client_message_with_history(
     conversation_id: &str,
     message_id: &str,
     history: &[CursorHistoryMessage],
+    images: &[CursorImage],
 ) -> Vec<u8> {
     proto_message(vec![proto_field_bytes(
         1,
-        encode_agent_run_request(prompt, model_id, conversation_id, message_id, history),
+        encode_agent_run_request(
+            prompt,
+            model_id,
+            conversation_id,
+            message_id,
+            history,
+            images,
+        ),
     )])
 }
 
@@ -65,16 +73,33 @@ fn encode_agent_run_request(
     conversation_id: &str,
     message_id: &str,
     history: &[CursorHistoryMessage],
+    images: &[CursorImage],
 ) -> Vec<u8> {
-    proto_message(vec![
+    // Whether any inline image bytes are present in this turn (current message
+    // or replayed history). Cursor only honours inline `SelectedImage.data` /
+    // `ConversationHistoryImageContent` when the client advertises support via
+    // `AgentRunRequest.client_supports_inline_images` (field 19).
+    let has_inline_images = !images.is_empty()
+        || history.iter().any(|item| {
+            matches!(item, CursorHistoryMessage::User { images, .. } if !images.is_empty())
+        });
+    let mut fields = vec![
         proto_field_bytes(1, Vec::new()),
-        proto_field_bytes(2, encode_conversation_action(prompt, message_id, history)),
+        proto_field_bytes(
+            2,
+            encode_conversation_action(prompt, message_id, history, images),
+        ),
         proto_field_bytes(4, Vec::new()),
         proto_field_string(5, conversation_id),
         proto_field_bytes(9, encode_requested_model(model_id)),
         proto_field_varint(12, 0),
         proto_field_string(16, conversation_id),
-    ])
+    ];
+    if has_inline_images {
+        // agent.v1.AgentRunRequest.client_supports_inline_images (field 19).
+        fields.push(proto_field_varint(19, 1));
+    }
+    proto_message(fields)
 }
 
 /// `agent.v1.AgentMode` enum value enabling Cursor's full agentic tool loop.
@@ -82,10 +107,27 @@ fn encode_agent_run_request(
 /// bundle's `agent.v1` protobuf schema.
 const AGENT_MODE_AGENT: u64 = 1;
 
+/// A decoded inline image ready for the Cursor `agent.v1` wire format.
+///
+/// `data` is the raw (base64-decoded) image bytes and `mime_type` is the
+/// source MIME type (e.g. `image/png`). Field numbers for the surrounding
+/// messages are sourced from the Cursor app bundle's `agent.v1` protobuf
+/// schema (`cursor-agent-worker/dist/main.js`):
+/// - `agent.v1.SelectedImage { data 8: bytes, mime_type 7: string }`
+/// - `agent.v1.ConversationHistoryImageContent { data 1: string, mime_type 2: string }`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorImage {
+    pub mime_type: String,
+    pub data: Vec<u8>,
+}
+
 /// One prior conversation turn, mapped to `agent.v1.ConversationHistoryMessage`.
 #[derive(Debug, Clone)]
 pub enum CursorHistoryMessage {
-    User(String),
+    User {
+        text: String,
+        images: Vec<CursorImage>,
+    },
     AssistantText(String),
     AssistantToolCall {
         id: String,
@@ -104,12 +146,16 @@ fn encode_conversation_action(
     prompt: &str,
     message_id: &str,
     history: &[CursorHistoryMessage],
+    images: &[CursorImage],
 ) -> Vec<u8> {
-    // agent.v1.UserMessage { text 1, message_id 2, mode 4 }
+    // agent.v1.UserMessage { text 1, message_id 2, selected_context 3, mode 4 }
     let user_message = proto_message(vec![
         proto_field_string(1, prompt),
         proto_field_string(2, message_id),
-        proto_field_bytes(3, Vec::new()),
+        // agent.v1.UserMessage.selected_context (field 3) = agent.v1.SelectedContext.
+        // Attached images ride here as `selected_images`; with no images this is a
+        // zero-length message, matching the prior empty-bytes encoding.
+        proto_field_bytes(3, encode_selected_context(images)),
         // agent.v1.UserMessage.mode (field 4) = agent.v1.AgentMode enum.
         // AGENT_MODE_AGENT = 1 enables Cursor's agentic tool loop (file edits,
         // shell, search). The previous value 2 = AGENT_MODE_ASK ran the model
@@ -126,6 +172,61 @@ fn encode_conversation_action(
         1,
         proto_message(user_message_action),
     )])
+}
+
+impl CursorImage {
+    /// Parse a `data:<mime>;base64,<payload>` URL into raw bytes + MIME type.
+    /// Returns `None` for non-base64 data URLs or malformed payloads (e.g. a
+    /// remote `https://` image URL Cursor's inline path cannot carry).
+    pub fn from_data_url(image_url: &str) -> Option<Self> {
+        use base64::Engine as _;
+        let rest = image_url.strip_prefix("data:")?;
+        let (meta, payload) = rest.split_once(',')?;
+        let meta = meta.strip_suffix(";base64")?;
+        let mime_type = if meta.is_empty() {
+            "application/octet-stream".to_string()
+        } else {
+            meta.to_string()
+        };
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(payload.trim())
+            .ok()?;
+        Some(Self { mime_type, data })
+    }
+}
+
+/// Encode `agent.v1.SelectedContext { selected_images 1: repeated SelectedImage }`.
+/// Returns an empty message when there are no images so the field stays present
+/// but carries no payload.
+fn encode_selected_context(images: &[CursorImage]) -> Vec<u8> {
+    if images.is_empty() {
+        return Vec::new();
+    }
+    let fields = images
+        .iter()
+        .map(|image| proto_field_bytes(1, encode_selected_image(image)))
+        .collect();
+    proto_message(fields)
+}
+
+/// Encode `agent.v1.SelectedImage { data 8: bytes, mime_type 7: string }`.
+/// `data` (field 8) is the inline-bytes arm of the `data_or_blob_id` oneof.
+fn encode_selected_image(image: &CursorImage) -> Vec<u8> {
+    proto_message(vec![
+        proto_field_string(7, &image.mime_type),
+        proto_field_bytes(8, image.data.clone()),
+    ])
+}
+
+/// Encode `agent.v1.ConversationHistoryImageContent { data 1: string, mime_type 2: string }`.
+/// History images carry the data as a base64 string (not raw bytes).
+fn encode_history_image_content(image: &CursorImage) -> Vec<u8> {
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&image.data);
+    proto_message(vec![
+        proto_field_string(1, &encoded),
+        proto_field_string(2, &image.mime_type),
+    ])
 }
 
 /// Encode `agent.v1.ConversationHistory { messages 1: repeated ConversationHistoryMessage }`.
@@ -149,14 +250,23 @@ fn history_text_content(text: &str) -> Vec<u8> {
 fn encode_history_message(item: &CursorHistoryMessage) -> Vec<u8> {
     match item {
         // ConversationHistoryMessage { user 1: ConversationHistoryUserMessage }
-        // ConversationHistoryUserMessage { content 1: [ConversationHistoryUserContent{ text 1 }] }
-        CursorHistoryMessage::User(text) => proto_message(vec![proto_field_bytes(
-            1,
-            proto_message(vec![proto_field_bytes(
-                1,
-                proto_message(vec![proto_field_bytes(1, history_text_content(text))]),
-            )]),
-        )]),
+        // ConversationHistoryUserMessage { content 1: [ConversationHistoryUserContent] }
+        // ConversationHistoryUserContent oneof: { text 1, image 2 }
+        CursorHistoryMessage::User { text, images } => {
+            let mut content = Vec::new();
+            if !text.is_empty() || images.is_empty() {
+                // ConversationHistoryUserContent { text 1: ConversationHistoryTextContent }
+                content.push(proto_field_bytes(
+                    1,
+                    proto_message(vec![proto_field_bytes(1, history_text_content(text))]),
+                ));
+            }
+            for image in images {
+                // ConversationHistoryUserContent { image 2: ConversationHistoryImageContent }
+                content.push(proto_field_bytes(2, encode_history_image_content(image)));
+            }
+            proto_message(vec![proto_field_bytes(1, proto_message(content))])
+        }
         // ConversationHistoryMessage { assistant 2: ConversationHistoryAssistantMessage }
         // assistant content { text 1 }
         CursorHistoryMessage::AssistantText(text) => proto_message(vec![proto_field_bytes(
@@ -1101,6 +1211,7 @@ mod tests {
             "conv",
             "msg",
             &[],
+            &[],
         );
         let strings = collect_utf8_strings(&bytes, 0);
         assert!(strings.iter().any(|value| value.contains("hello cursor")));
@@ -1207,7 +1318,7 @@ mod tests {
         // Regression: roder must send UserMessage.mode = AGENT_MODE_AGENT (1).
         // Sending 2 (AGENT_MODE_ASK) made Cursor run the model read-only.
         let bytes =
-            encode_agent_client_message_with_history("hi", "claude-opus-4-8", "conv", "msg", &[]);
+            encode_agent_client_message_with_history("hi", "claude-opus-4-8", "conv", "msg", &[], &[]);
         let run = submessage(&bytes, 1).expect("agent run request");
         let action = submessage(&run, 2).expect("conversation action");
         let user_message_action = submessage(&action, 1).expect("user message action");
@@ -1245,7 +1356,7 @@ mod tests {
                 is_error: false,
             },
         ];
-        let bytes = encode_agent_client_message_with_history("edit it", "m", "c", "mid", &history);
+        let bytes = encode_agent_client_message_with_history("edit it", "m", "c", "mid", &history, &[]);
         // ConversationHistory lives at AgentRunRequest(1).action(2).user_message_action(1).conversation_history(7).
         let run = submessage(&bytes, 1).unwrap();
         let action = submessage(&run, 2).unwrap();
@@ -1256,6 +1367,86 @@ mod tests {
         assert!(text.contains("toolu_1"));
         assert!(text.contains("AGENTS.md"));
         assert!(text.contains("file body"));
+    }
+
+    #[test]
+    fn parses_base64_data_url_into_bytes_and_mime() {
+        let image = CursorImage::from_data_url("data:image/png;base64,UE5HREFUQQ==").unwrap();
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.data, b"PNGDATA");
+        // Remote URLs and non-base64 data URLs cannot carry inline bytes.
+        assert!(CursorImage::from_data_url("https://example.com/x.png").is_none());
+        assert!(CursorImage::from_data_url("data:image/png,raw").is_none());
+    }
+
+    #[test]
+    fn current_message_image_rides_in_selected_context_and_sets_inline_flag() {
+        let image = CursorImage {
+            mime_type: "image/png".to_string(),
+            data: b"PNGDATA".to_vec(),
+        };
+        let bytes = encode_agent_client_message_with_history(
+            "look at this",
+            "claude-opus-4-8",
+            "conv",
+            "msg",
+            &[],
+            std::slice::from_ref(&image),
+        );
+        let run = submessage(&bytes, 1).unwrap();
+        // AgentRunRequest.client_supports_inline_images (field 19) must be set.
+        assert_eq!(scalar_u64(&run, 19), Some(1));
+        let action = submessage(&run, 2).unwrap();
+        let uma = submessage(&action, 1).unwrap();
+        let user_message = submessage(&uma, 1).unwrap();
+        // UserMessage.selected_context(3).selected_images(1) = SelectedImage.
+        let selected_context = submessage(&user_message, 3).expect("selected_context present");
+        let selected_image = submessage(&selected_context, 1).expect("selected_image present");
+        // SelectedImage { mime_type 7, data 8 }.
+        assert_eq!(scalar_string(&selected_image, 7).as_deref(), Some("image/png"));
+        assert_eq!(scalar_string(&selected_image, 8).as_deref(), Some("PNGDATA"));
+    }
+
+    #[test]
+    fn turn_without_images_keeps_empty_selected_context_and_no_inline_flag() {
+        let bytes =
+            encode_agent_client_message_with_history("hello", "m", "c", "mid", &[], &[]);
+        let run = submessage(&bytes, 1).unwrap();
+        assert_eq!(scalar_u64(&run, 19), None);
+        let action = submessage(&run, 2).unwrap();
+        let uma = submessage(&action, 1).unwrap();
+        let user_message = submessage(&uma, 1).unwrap();
+        // selected_context (field 3) is present but empty (zero-length message).
+        assert_eq!(submessage(&user_message, 3), Some(Vec::new()));
+    }
+
+    #[test]
+    fn history_user_image_encodes_as_image_content() {
+        let history = vec![CursorHistoryMessage::User {
+            text: "earlier".to_string(),
+            images: vec![CursorImage {
+                mime_type: "image/jpeg".to_string(),
+                data: b"JPEGDATA".to_vec(),
+            }],
+        }];
+        use base64::Engine as _;
+        let bytes = encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[]);
+        let run = submessage(&bytes, 1).unwrap();
+        // History images also require the inline-images capability flag.
+        assert_eq!(scalar_u64(&run, 19), Some(1));
+        let action = submessage(&run, 2).unwrap();
+        let uma = submessage(&action, 1).unwrap();
+        let conv_history = submessage(&uma, 7).expect("conversation_history present");
+        let message = submessage(&conv_history, 1).unwrap();
+        let user = submessage(&message, 1).unwrap();
+        // ConversationHistoryUserContent.image(2) -> ImageContent { data 1, mime_type 2 }.
+        let image_content = submessage(&user, 2).expect("image content present");
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"JPEGDATA");
+        assert_eq!(scalar_string(&image_content, 1).as_deref(), Some(encoded.as_str()));
+        assert_eq!(
+            scalar_string(&image_content, 2).as_deref(),
+            Some("image/jpeg")
+        );
     }
 
     #[test]
