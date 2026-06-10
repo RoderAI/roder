@@ -83,6 +83,42 @@ test("agent send passes tool allowlist and instructions on thread/start", async 
   });
 });
 
+test("agent send passes the runner binding on thread/start", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  });
+  const runner = {
+    providerId: "sauna",
+    config: { space_id: "space-1", mode: "readwrite" },
+    workspace: "/workspace",
+  };
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/local/scratch",
+    workspaceId: "ws-1",
+    runner,
+  });
+
+  await agent.send("hello");
+
+  const threadStart = requests.find((request) => request.method === "thread/start");
+  assert.deepEqual(threadStart?.params, {
+    cwd: "/local/scratch",
+    model: undefined,
+    modelProvider: undefined,
+    runner,
+    workspaceId: "ws-1",
+  });
+});
+
 test("agent registers external tools and resolves calls, including thrown errors", async () => {
   const requests: JsonRpcRequest[] = [];
   const transport = new InMemoryTransport((request) => {

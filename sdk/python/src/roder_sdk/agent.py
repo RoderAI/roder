@@ -24,6 +24,7 @@ class RoderAgent:
         workspace_id: str | None = None,
         tool_allowlist: list[str] | None = None,
         instructions: str | None = None,
+        runner: dict[str, Any] | None = None,
         approvals: dict[str, ApprovalCallback] | None = None,
         event_mode: EventMode = "permissive",
     ) -> None:
@@ -35,6 +36,7 @@ class RoderAgent:
         self.workspace_id = workspace_id
         self.tool_allowlist = tool_allowlist
         self.instructions = instructions
+        self.runner = runner
         self.approvals = approvals or {}
         self.event_mode: EventMode = event_mode
         self._callback_task: asyncio.Task[None] | None = None
@@ -52,6 +54,7 @@ class RoderAgent:
         workspace_id: str | None = None,
         tool_allowlist: list[str] | None = None,
         instructions: str | None = None,
+        runner: dict[str, Any] | None = None,
         approvals: dict[str, ApprovalCallback] | None = None,
         event_mode: EventMode = "permissive",
     ) -> "RoderAgent":
@@ -64,6 +67,7 @@ class RoderAgent:
             workspace_id=workspace_id,
             tool_allowlist=tool_allowlist,
             instructions=instructions,
+            runner=runner,
             approvals=approvals,
             event_mode=event_mode,
         )
@@ -125,6 +129,8 @@ class RoderAgent:
             params["toolAllowlist"] = self.tool_allowlist
         if self.instructions is not None:
             params["developerInstructions"] = self.instructions
+        if self.runner is not None:
+            params["runner"] = self.runner
         params["workspaceId"] = workspace_id
         result = await self.client.call("thread/start", params)
         thread_id = _extract_id(result, "thread") or _extract_string(result, "threadId") or _extract_string(result, "id")

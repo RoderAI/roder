@@ -106,6 +106,31 @@ test("typescript sdk replays external tool fixture", async () => {
   assert.equal(completed?.turn.id, "turn-external");
 });
 
+test("typescript sdk replays runner thread fixture", async () => {
+  const fixture = loadFixture("runner-thread-flow.jsonl");
+  const transport = fixtureTransport(fixture);
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/local/scratch",
+    workspaceId: "ws-fixture",
+    model: { provider: "mock", id: "mock" },
+    runner: {
+      providerId: "sauna",
+      config: { space_id: "space-1", mode: "readwrite" },
+      workspace: "/workspace",
+    },
+  });
+
+  const run = await agent.send("write a file");
+  const completion = run.wait();
+  emitNotifications(transport, fixture);
+
+  const completed = await completion;
+  assert.equal(completed?.turn.id, "turn-runner");
+  // fixtureTransport already asserted the runner binding shape on thread/start.
+  assert.ok(transport.seenMethods.includes("thread/start"));
+});
+
 test("typescript sdk replays user input and plan exit fixture", async () => {
   const fixture = loadFixture("user-input-flow.jsonl");
   const transport = fixtureTransport(fixture);
