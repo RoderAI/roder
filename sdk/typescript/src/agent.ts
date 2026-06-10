@@ -262,18 +262,14 @@ export class RoderAgent {
       return;
     }
     if (method === "thread/toolExecutionRequested" && this.options.onToolExecute) {
-      const call = extractExternalToolCall(params);
-      let result: ExternalToolResult;
-      try {
-        result = await this.options.onToolExecute(call);
-      } catch (error) {
-        result = { output: String(error), isError: true };
-      }
-      await this.client.call("tools/resolve", {
-        requestId: extractString(params, "requestId"),
-        output: result.output,
-        isError: result.isError ?? false,
-      });
+      /**
+       * Dispatched without awaiting: the server publishes a parallel tool
+       * batch as back-to-back notifications and starts each call's
+       * tools/resolve timeout at publication, so executing serially here
+       * would burn call N+1's budget while call N runs. Each call resolves
+       * independently; resolveExternalToolCall never rejects.
+       */
+      void this.resolveExternalToolCall(this.options.onToolExecute, params);
       return;
     }
     const approvals = this.options.approvals;
@@ -298,6 +294,33 @@ export class RoderAgent {
         requestId: extractString(params, "requestId"),
         approved: decision.approved,
       });
+    }
+  }
+
+  private async resolveExternalToolCall(
+    onToolExecute: NonNullable<RoderAgentOptions["onToolExecute"]>,
+    params: unknown,
+  ): Promise<void> {
+    const call = extractExternalToolCall(params);
+    let result: ExternalToolResult;
+    try {
+      result = await onToolExecute(call);
+    } catch (error) {
+      result = { output: String(error), isError: true };
+    }
+    try {
+      await this.client.call("tools/resolve", {
+        requestId: extractString(params, "requestId"),
+        output: result.output,
+        isError: result.isError ?? false,
+      });
+    } catch {
+      /**
+       * The resolve rejects when the transport drops mid-call or the server
+       * refuses a stale request id; the server already times the pending
+       * call out. Swallow so the detached dispatch never surfaces as an
+       * unhandled rejection that crashes the host process.
+       */
     }
   }
 }
