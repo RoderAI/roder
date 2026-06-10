@@ -21,7 +21,7 @@ test("typescript sdk replays basic thread fixture", async () => {
     cwd: "/workspace",
     model: { provider: "mock", id: "mock" },
     toolAllowlist: ["edit", "read_file"],
-    instructions: "You are embedded in Sauna.",
+    instructions: "You are embedded in a host app.",
   });
   const run = await agent.send("hello");
   const events = collectEvents(run.stream());
@@ -74,8 +74,8 @@ test("typescript sdk replays external tool fixture", async () => {
     model: { provider: "mock", id: "mock" },
     externalTools: [
       {
-        name: "sauna_lookup",
-        description: "Look up Sauna workspace state.",
+        name: "acme_lookup",
+        description: "Look up Acme workspace state.",
         parameters: {
           type: "object",
           properties: { query: { type: "string" } },
@@ -100,7 +100,7 @@ test("typescript sdk replays external tool fixture", async () => {
 
   await eventually(() => transport.seenMethods.includes("tools/resolve"));
   assert.deepEqual(calls, [
-    { id: "call-1", name: "sauna_lookup", arguments: { query: "thread status" } },
+    { id: "call-1", name: "acme_lookup", arguments: { query: "thread status" } },
   ]);
   const completed = await completion;
   assert.equal(completed?.turn.id, "turn-external");
@@ -115,7 +115,7 @@ test("typescript sdk replays runner thread fixture", async () => {
     workspaceId: "ws-fixture",
     model: { provider: "mock", id: "mock" },
     runner: {
-      providerId: "sauna",
+      providerId: "e2b",
       config: { space_id: "space-1", mode: "readwrite" },
       workspace: "/workspace",
     },

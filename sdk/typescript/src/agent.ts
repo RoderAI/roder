@@ -38,7 +38,7 @@ export interface RoderAgentOptions {
   /**
    * Binds the thread's native coding tools to a remote-runner workspace on the server. The config
    * is persisted with the thread, so secrets must reach the provider through its environment
-   * (e.g. SAUNA_RUNNER_TOKEN), not this object.
+   * (e.g. E2B_API_KEY), not this object.
    */
   runner?: RoderThreadRunner;
   /**
@@ -60,7 +60,7 @@ export interface RoderExternalTool {
 }
 
 export interface RoderThreadRunner {
-  /** Installed remote-runner provider id (e.g. "sauna"). */
+  /** Installed remote-runner provider id (e.g. "e2b"). */
   providerId: string;
   /** Provider-specific destination config; persisted with the thread, so no secrets. */
   config?: Record<string, unknown>;

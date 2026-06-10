@@ -5,7 +5,7 @@ import type { JsonRpcNotification, RoderSdkEvent } from "../src/index.js";
 
 /**
  * Verbatim app-server notification lines captured from live Anthropic runs
- * (sauna roder-migration spike transcripts, stage 0 and stage 2). They pin the
+ * (host-app migration spike transcripts, stage 0 and stage 2). They pin the
  * typed event layer to the real wire format.
  */
 const TRANSCRIPT = {
@@ -194,14 +194,14 @@ test("thread/toolExecutionRequested maps to a typed call", () => {
       threadId: "thread-external",
       turnId: "turn-external",
       requestId: "exttool-1",
-      call: { id: "call-1", name: "sauna_lookup", arguments: { query: "thread status" } },
+      call: { id: "call-1", name: "acme_lookup", arguments: { query: "thread status" } },
     },
   });
   assert.ok(event?.type === "tool_execution.requested");
   assert.equal(event.requestId, "exttool-1");
   assert.deepEqual(event.call, {
     id: "call-1",
-    name: "sauna_lookup",
+    name: "acme_lookup",
     arguments: { query: "thread status" },
   });
 });
@@ -215,7 +215,7 @@ test("thread/toolExecutionResolved maps to a typed outcome", () => {
       turnId: "turn-external",
       requestId: "exttool-1",
       toolId: "call-1",
-      toolName: "sauna_lookup",
+      toolName: "acme_lookup",
       outcome: "resolved",
       isError: false,
     },

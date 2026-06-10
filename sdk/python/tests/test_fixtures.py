@@ -27,7 +27,7 @@ async def test_python_sdk_replays_basic_thread_fixture() -> None:
         cwd="/workspace",
         model={"provider": "mock", "id": "mock"},
         tool_allowlist=["edit", "read_file"],
-        instructions="You are embedded in Sauna.",
+        instructions="You are embedded in a host app.",
     )
     run = await agent.send("hello")
     events: list[str] = []
@@ -75,7 +75,7 @@ async def test_python_sdk_replays_runner_thread_fixture() -> None:
         workspace_id="ws-fixture",
         model={"provider": "mock", "id": "mock"},
         runner={
-            "providerId": "sauna",
+            "providerId": "e2b",
             "config": {"space_id": "space-1", "mode": "readwrite"},
             "workspace": "/workspace",
         },

@@ -1,5 +1,5 @@
 {"kind":"header","schemaVersion":1,"createdAt":"1970-01-01T00:00:00Z","roderVersion":"dev","cwd":"<redacted>","terminal":{"cols":80,"rows":24},"features":["sdk","app-server"],"metadata":{"fixture":"runner-thread-flow"}}
-{"kind":"api.request","seq":1,"atMs":0,"client":"sdk","request":{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{"cwd":"/local/scratch","model":"mock","modelProvider":"mock","runner":{"providerId":"sauna","config":{"space_id":"space-1","mode":"readwrite"},"workspace":"/workspace"},"workspaceId":"ws-fixture"}}}
+{"kind":"api.request","seq":1,"atMs":0,"client":"sdk","request":{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{"cwd":"/local/scratch","model":"mock","modelProvider":"mock","runner":{"providerId":"e2b","config":{"space_id":"space-1","mode":"readwrite"},"workspace":"/workspace"},"workspaceId":"ws-fixture"}}}
 {"kind":"api.response","seq":2,"atMs":1,"requestSeq":1,"response":{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-runner"}}}}
 {"kind":"api.request","seq":3,"atMs":2,"client":"sdk","request":{"jsonrpc":"2.0","id":2,"method":"turn/start","params":{"threadId":"thread-runner","input":[{"type":"text","text":"write a file"}]}}}
 {"kind":"api.response","seq":4,"atMs":3,"requestSeq":3,"response":{"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-runner"}}}}
