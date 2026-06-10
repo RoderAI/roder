@@ -10,6 +10,8 @@ The TUI keeps keyboard actions aligned with mouse interactions so clickable regi
 | Cycle mode | `shift+tab` |
 | Focus next region | `tab` |
 | Focus previous region | `shift+tab` |
+| Queue a prompt while a turn is running | `tab` (composer has content) |
+| Steer the running turn | `enter` (while a turn is active) |
 | Expand or collapse a tool call | `enter` |
 | Open a focused URL or file reference | `enter`, `o` |
 | Fold or unfold a long message | `enter` |
