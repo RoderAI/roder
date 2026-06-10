@@ -312,6 +312,12 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
         Ok(rel)
     }
 
+    /**
+     * Routed through roder_edit_core like the local backend so an ambiguous
+     * old_string is refused instead of silently rewriting the first
+     * occurrence in the runner workspace (which the sauna sandbox
+     * auto-commits).
+     */
     async fn edit_text(
         &self,
         path: &str,
@@ -319,20 +325,28 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
         new_string: &str,
     ) -> anyhow::Result<Option<EditOutcome>> {
         let (rel, text) = self.read_text(path).await?;
-        let Some(index) = text.find(old_string) else {
-            return Ok(None);
+        let (updated, outcome) = match roder_edit_core::apply_edit(
+            rel.clone(),
+            &text,
+            old_string,
+            new_string,
+            roder_edit_core::EditOptions {
+                fuzzy: roder_edit_core::EditMatchMode::Off,
+                strip_line_numbers: false,
+            },
+        ) {
+            Ok(result) => result,
+            Err(_) => return Ok(None),
         };
-        let mut updated = text;
-        updated.replace_range(index..index + old_string.len(), new_string);
         self.session
             .write_file(RunnerFileWriteRequest {
-                path: rel.clone().into(),
+                path: rel.into(),
                 contents: updated.into_bytes(),
             })
             .await?;
         Ok(Some(EditOutcome {
-            path: rel,
-            replacements: 1,
+            path: outcome.path,
+            replacements: outcome.replacements,
         }))
     }
 
@@ -341,25 +355,49 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
         path: &str,
         edits: Vec<TextEdit>,
     ) -> anyhow::Result<Result<EditOutcome, usize>> {
-        let (rel, mut text) = self.read_text(path).await?;
-        for (index, edit) in edits.iter().enumerate() {
-            let Some(position) = text.find(&edit.old_string) else {
-                return Ok(Err(index));
-            };
-            text.replace_range(position..position + edit.old_string.len(), &edit.new_string);
-        }
+        let (rel, text) = self.read_text(path).await?;
+        let core_edits = edits
+            .iter()
+            .map(|edit| roder_edit_core::TextEdit {
+                old_string: edit.old_string.clone(),
+                new_string: edit.new_string.clone(),
+            })
+            .collect::<Vec<_>>();
+        let (updated, outcome) = match roder_edit_core::apply_multi_edit(
+            rel.clone(),
+            &text,
+            &core_edits,
+            roder_edit_core::EditOptions {
+                fuzzy: roder_edit_core::EditMatchMode::Off,
+                strip_line_numbers: false,
+            },
+        ) {
+            Ok(result) => result,
+            Err(roder_edit_core::EditApplyError::OldStringNotFound { edit, .. }) => {
+                return Ok(Err(edit.unwrap_or(0)));
+            }
+            Err(roder_edit_core::EditApplyError::OldStringAmbiguous { edit, .. }) => {
+                return Ok(Err(edit.unwrap_or(0)));
+            }
+        };
         self.session
             .write_file(RunnerFileWriteRequest {
-                path: rel.clone().into(),
-                contents: text.into_bytes(),
+                path: rel.into(),
+                contents: updated.into_bytes(),
             })
             .await?;
         Ok(Ok(EditOutcome {
-            path: rel,
-            replacements: edits.len(),
+            path: outcome.path,
+            replacements: outcome.replacements,
         }))
     }
 
+    /**
+     * One shell round trip on the runner instead of a read_file per
+     * candidate: every runner request is a full sandbox round trip, so the
+     * per-file variant took minutes on real workspaces (node_modules
+     * included) and starved the host's turn inactivity budget.
+     */
     async fn grep_search(
         &self,
         options: SearchOptions,
@@ -368,44 +406,53 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
         let input_path = options.path.to_string_lossy().to_string();
         let start = self.guard.resolve_existing(&input_path)?;
         let start = self.guard.display(&start);
-        let files = self.glob("*").await?;
-        let mut matches = Vec::new();
-        let mut verified_files = 0;
-        let pattern = if options.regex {
-            options.query.clone()
-        } else {
-            regex::escape(&options.query)
-        };
-        let pattern = if options.word_boundary {
-            format!(r"\b(?:{})\b", pattern)
-        } else {
-            pattern
-        };
-        let matcher = RegexBuilder::new(&pattern)
-            .case_insensitive(!options.case_sensitive)
-            .build()?;
-        for file in files.into_iter().filter(|file| {
-            start.is_empty()
-                || start == "."
-                || file == &start
-                || file
-                    .strip_prefix(&start)
-                    .is_some_and(|s| s.starts_with('/'))
-        }) {
-            let Ok((_, text)) = self.read_text(&file).await else {
-                continue;
-            };
-            verified_files += 1;
-            for (line_index, line) in text.lines().enumerate() {
-                if matcher.is_match(line) {
-                    matches.push(format!("{file}:{}:{line}", line_index + 1));
-                }
-            }
+        /*
+         * Validate regex queries locally first: the find pipeline below
+         * absorbs grep's exit status (a no-match exit 1 is indistinguishable
+         * from a bad pattern), so an invalid pattern must error here.
+         */
+        if options.regex {
+            RegexBuilder::new(&options.query)
+                .case_insensitive(!options.case_sensitive)
+                .build()?;
         }
+        let mut flags = String::from("-n");
+        if !options.case_sensitive {
+            flags.push('i');
+        }
+        if options.word_boundary {
+            flags.push('w');
+        }
+        flags.push(if options.regex { 'E' } else { 'F' });
+        let target = if start.is_empty() || start == "." {
+            ".".to_string()
+        } else {
+            format!("./{start}")
+        };
+        /*
+         * /dev/null forces the file:line: prefix even when a -exec batch
+         * holds a single file; the sed strips find's ./ prefix so paths come
+         * back workspace-relative. Regex queries run as ERE on the runner,
+         * which can diverge from the local Rust regex engine on perl-style
+         * classes like \d.
+         */
+        let command = format!(
+            "find {} -type f ! -path './.git/*' ! -path './target/*' -exec grep {flags} -e {} /dev/null {{}} + 2>/dev/null | sed 's#^\\./##'",
+            shell_quote(&target),
+            shell_quote(&options.query),
+        );
+        let output = self.run_shell(command).await?;
+        let matches = output.lines().map(ToString::to_string).collect::<Vec<_>>();
+        let matched_files = matches
+            .iter()
+            .filter_map(|line| line.split(':').next())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
         let metadata = SearchMetadata {
             engine: SearchEngine::Fallback,
-            candidate_files: verified_files,
-            verified_files,
+            // The runner reports matches only, so files scanned is unknown.
+            candidate_files: matched_files,
+            verified_files: matched_files,
             stale: false,
             elapsed_ms: started_at.elapsed().as_millis(),
             index_version: INDEX_VERSION.to_string(),
@@ -457,7 +504,7 @@ impl RunnerWorkspaceBackend {
     }
 }
 
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -520,6 +567,100 @@ mod tests {
         // Nothing may leak onto the local fallback workspace.
         assert!(!root.join("notes").exists());
         assert!(!std::path::Path::new("/sandbox/workspace").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn remote_edit_matches_local_ambiguity_semantics() {
+        let state = Arc::new(RecordingRunnerState::default());
+        state
+            .files
+            .lock()
+            .unwrap()
+            .insert("notes/dup.txt".to_string(), b"same\nsame\n".to_vec());
+        let ctx = remote_context(state.clone());
+        let (root, fallback_workspace, fallback_backend) = local_fallback("runner-backend-edit");
+
+        let backend =
+            backend_from_context_or_fallback(&ctx, &fallback_workspace, &fallback_backend).unwrap();
+
+        // Ambiguous old_string is refused; the runner file stays untouched.
+        let ambiguous = backend
+            .edit_text("notes/dup.txt", "same", "changed")
+            .await
+            .unwrap();
+        assert_eq!(ambiguous, None);
+        assert_eq!(
+            state
+                .files
+                .lock()
+                .unwrap()
+                .get("notes/dup.txt")
+                .map(|contents| contents.as_slice()),
+            Some(b"same\nsame\n".as_slice())
+        );
+        let multi_ambiguous = backend
+            .multi_edit_text(
+                "notes/dup.txt",
+                vec![TextEdit {
+                    old_string: "same".to_string(),
+                    new_string: "changed".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(multi_ambiguous, Err(0));
+
+        let unique = backend
+            .edit_text("notes/dup.txt", "same\nsame", "one\ntwo")
+            .await
+            .unwrap();
+        assert_eq!(
+            unique,
+            Some(EditOutcome {
+                path: "notes/dup.txt".to_string(),
+                replacements: 1,
+            })
+        );
+        assert_eq!(
+            state
+                .files
+                .lock()
+                .unwrap()
+                .get("notes/dup.txt")
+                .map(|contents| contents.as_slice()),
+            Some(b"one\ntwo\n".as_slice())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn remote_grep_runs_a_single_server_side_search() {
+        let state = Arc::new(RecordingRunnerState::default());
+        let ctx = remote_context(state.clone());
+        let (root, fallback_workspace, fallback_backend) = local_fallback("runner-backend-grep");
+
+        let backend =
+            backend_from_context_or_fallback(&ctx, &fallback_workspace, &fallback_backend).unwrap();
+        let (start, matches, metadata) = backend
+            .grep_search(SearchOptions::new("needle"))
+            .await
+            .unwrap();
+
+        assert_eq!(start, "");
+        // The recording session returns one canned stdout line per command.
+        assert_eq!(matches, vec!["remote ok".to_string()]);
+        assert!(metadata.elapsed_ms < 10_000);
+        let commands = state.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1, "grep must be a single runner round trip");
+        let script = commands[0].args.last().unwrap();
+        assert!(script.contains("find '.' -type f"), "{script}");
+        assert!(
+            script.contains("grep -nF -e 'needle' /dev/null"),
+            "{script}"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

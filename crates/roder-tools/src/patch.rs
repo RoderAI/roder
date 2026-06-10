@@ -200,41 +200,26 @@ async fn apply_unified_patch_via_runner(
     patch: &str,
 ) -> anyhow::Result<String> {
     validate_unified_patch_paths(workspace, patch)?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or_default();
-    let temp_name = format!(".roder-apply-patch-{nanos}.patch");
-    session
-        .write_file(RunnerFileWriteRequest {
-            path: temp_name.clone().into(),
-            contents: patch.as_bytes().to_vec(),
-        })
-        .await?;
+    /*
+     * The patch is piped to `git apply` through the shell (mirroring the
+     * local stdin path) instead of staged as a temp file: runner workspaces
+     * may be auto-committed after every request (sauna sandbox), where a
+     * temp file would pollute the repo history and a failed cleanup would
+     * turn a successful apply into a tool error.
+     */
+    let script = format!(
+        "printf '%s' {} | git apply --whitespace=nowarn -",
+        crate::backend::shell_quote(patch)
+    );
     let output = session
         .run_command(RunnerCommandRequest {
             command_id: "apply-patch".to_string(),
-            program: "git".to_string(),
-            args: vec![
-                "apply".to_string(),
-                "--whitespace=nowarn".to_string(),
-                temp_name.clone(),
-            ],
+            program: "sh".to_string(),
+            args: vec!["-c".to_string(), script],
             cwd: Some(workspace.root().to_path_buf()),
             env: Vec::new(),
         })
-        .await;
-    let cleanup = session
-        .run_command(RunnerCommandRequest {
-            command_id: "apply-patch-cleanup".to_string(),
-            program: "rm".to_string(),
-            args: vec!["-f".to_string(), "--".to_string(), temp_name],
-            cwd: Some(workspace.root().to_path_buf()),
-            env: Vec::new(),
-        })
-        .await;
-    let output = output?;
-    cleanup?;
+        .await?;
     let text = format!("{}{}", output.stdout, output.stderr)
         .trim()
         .to_string();
@@ -434,6 +419,49 @@ async fn apply_codex_patch(workspace: &Workspace, patch: &str) -> anyhow::Result
         patch,
         workspace.path_scope().allows_external_paths(),
     )
+}
+
+#[cfg(test)]
+mod runner_tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::remote_test_support::{RecordingRunnerSession, RecordingRunnerState};
+    use crate::workspace::ToolPathScope;
+
+    #[tokio::test]
+    async fn unified_patch_pipes_through_the_runner_shell_without_temp_files() {
+        let state = Arc::new(RecordingRunnerState::default());
+        let session = RecordingRunnerSession {
+            state: state.clone(),
+        };
+        let workspace = Workspace::remote(
+            PathBuf::from("/sandbox/workspace"),
+            ToolPathScope::Workspace,
+        )
+        .unwrap();
+        let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n";
+
+        let summary = apply_patch_to_runner_workspace(&workspace, &session, patch)
+            .await
+            .unwrap();
+
+        assert_eq!(summary, "remote ok");
+        assert!(
+            state.files.lock().unwrap().is_empty(),
+            "no temp patch file may be written into the runner workspace"
+        );
+        let commands = state.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1, "apply must be a single runner command");
+        assert_eq!(commands[0].program, "sh");
+        let script = commands[0].args.last().unwrap();
+        assert!(
+            script.contains("| git apply --whitespace=nowarn -"),
+            "{script}"
+        );
+        assert!(script.contains("-old"), "{script}");
+    }
 }
 
 #[cfg(test)]
