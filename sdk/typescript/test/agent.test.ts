@@ -334,6 +334,64 @@ test("agent callback loop survives tools/resolve failures", async () => {
   await eventually(() => resolveAttempts.length === 2);
 });
 
+test("agent executes a parallel external tool batch concurrently", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: { resolved: true } };
+  });
+  /**
+   * Call 1 only finishes after call 2's result has been resolved: passes
+   * only when the callback loop dispatches without awaiting (a serial loop
+   * deadlocks here and the test times out on `eventually`).
+   */
+  let releaseSlowCall: (() => void) | undefined;
+  const slowCallGate = new Promise<void>((resolve) => {
+    releaseSlowCall = resolve;
+  });
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-1",
+    async onToolExecute(call) {
+      if (call.id === "call-slow") {
+        await slowCallGate;
+        return { output: "slow done" };
+      }
+      return { output: "fast done" };
+    },
+  });
+  await agent.send("hello");
+
+  for (const id of ["call-slow", "call-fast"]) {
+    transport.emit({
+      jsonrpc: "2.0",
+      method: "thread/toolExecutionRequested",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        requestId: `exttool-${id}`,
+        call: { id, name: "sauna_lookup", arguments: {} },
+      },
+    });
+  }
+
+  const resolvedRequestIds = () =>
+    requests
+      .filter((request) => request.method === "tools/resolve")
+      .map((request) => (request.params as { requestId?: string }).requestId);
+  await eventually(() => resolvedRequestIds().includes("exttool-call-fast"));
+  releaseSlowCall?.();
+  await eventually(() => resolvedRequestIds().length === 2);
+  assert.deepEqual(resolvedRequestIds(), ["exttool-call-fast", "exttool-call-slow"]);
+});
+
 test("agent read-only helpers call safe app-server methods", async () => {
   const methods: string[] = [];
   const agent = await RoderAgent.create({
