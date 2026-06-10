@@ -2,7 +2,7 @@ use roder_api::thread::{
     ThreadItem, ThreadItemStatus, ThreadItemTurnRecord, project_thread_item_events,
 };
 use roder_api::transcript::{InputImage, TranscriptItem};
-use roder_protocol::{Thread, ThreadStatus, Turn, TurnInputItem};
+use roder_protocol::{Thread, ThreadRunnerParams, ThreadStatus, Turn, TurnInputItem};
 
 pub(crate) fn protocol_thread_from_metadata(
     metadata: roder_api::thread::ThreadMetadata,
@@ -33,6 +33,11 @@ pub(crate) fn protocol_thread_from_metadata(
         tool_allowlist: metadata.tool_allowlist,
         developer_instructions: metadata.developer_instructions,
         external_tools: metadata.external_tools,
+        runner: metadata.runner_binding.map(|binding| ThreadRunnerParams {
+            provider_id: binding.destination.provider_id,
+            config: Some(binding.destination.config),
+            workspace: binding.workspace.to_string_lossy().to_string(),
+        }),
     }
 }
 
