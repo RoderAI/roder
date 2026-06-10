@@ -14,6 +14,8 @@ export interface RoderAgentOptions {
     command?: string;
     args?: string[];
     env?: NodeJS.ProcessEnv;
+    /** When false, the app-server receives exactly `env` instead of inheriting process.env. */
+    inheritEnv?: boolean;
   };
   remote?: {
     url: string;
@@ -313,6 +315,7 @@ function resolveTransport(options: RoderAgentOptions): RoderTransport {
       args: options.local.args,
       cwd: options.local.cwd ?? options.cwd,
       env: options.local.env,
+      inheritEnv: options.local.inheritEnv,
     });
   }
   return new InMemoryTransport((request) => ({

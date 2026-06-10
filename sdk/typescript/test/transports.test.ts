@@ -80,6 +80,38 @@ test("local process transport exchanges json lines without a roder binary", asyn
   await transport.close();
 });
 
+test("local process transport spawns with only the explicit env when inheritEnv is false", async () => {
+  const script = `
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    rl.on("line", line => {
+      const request = JSON.parse(line);
+      console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
+        explicit: process.env.RODER_SDK_EXPLICIT ?? null,
+        inherited: process.env.RODER_SDK_INHERITED ?? null,
+      } }));
+    });
+  `;
+  process.env.RODER_SDK_INHERITED = "leaked";
+  try {
+    const transport = new LocalProcessTransport({
+      command: process.execPath,
+      args: ["-e", script],
+      env: { RODER_SDK_EXPLICIT: "kept" },
+      inheritEnv: false,
+    });
+    const response = await transport.request({
+      jsonrpc: "2.0",
+      id: "req-env",
+      method: "providers/list",
+    });
+    assert.deepEqual(response.result, { explicit: "kept", inherited: null });
+    await transport.close();
+  } finally {
+    delete process.env.RODER_SDK_INHERITED;
+  }
+});
+
 test("local process transport drains chatty stderr and reports a bounded tail on exit", async () => {
   /**
    * The child floods stderr (~200KB, well past the 64KB pipe buffer) before

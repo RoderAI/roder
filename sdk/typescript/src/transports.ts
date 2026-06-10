@@ -63,6 +63,13 @@ export interface LocalProcessTransportOptions {
   args?: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * When false, the spawned app-server receives exactly `env` instead of inheriting the host
+   * process environment merged with `env`. Hosts holding secrets the server must not see (and
+   * that could surface through its stderr tail) pass an explicit allowlist this way. Defaults
+   * to true.
+   */
+  inheritEnv?: boolean;
   startupTimeoutMs?: number;
 }
 
@@ -83,7 +90,7 @@ export class LocalProcessTransport implements RoderTransport {
     const args = options.args ?? ["app-server", "--listen", "stdio://"];
     this.process = spawn(command, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      env: options.inheritEnv === false ? { ...options.env } : { ...process.env, ...options.env },
       stdio: "pipe",
     });
     this.lines = createInterface({ input: this.process.stdout });
