@@ -203,7 +203,7 @@ async fn apply_unified_patch_via_runner(
     /*
      * The patch is piped to `git apply` through the shell (mirroring the
      * local stdin path) instead of staged as a temp file: runner workspaces
-     * may be auto-committed after every request (sauna sandbox), where a
+     * may be auto-committed after every request (hosted sandboxes that snapshot the workspace), where a
      * temp file would pollute the repo history and a failed cleanup would
      * turn a successful apply into a tool error.
      */

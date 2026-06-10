@@ -518,7 +518,7 @@ pub struct ThreadStartParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadRunnerParams {
-    /// Installed remote-runner provider id (e.g. "sauna").
+    /// Installed remote-runner provider id (e.g. "e2b").
     pub provider_id: String,
     /**
      * Provider-specific destination config. Persisted with the thread, so it
@@ -4120,7 +4120,7 @@ mod tests {
             "modelProvider": null,
             "reasoning": null,
             "runner": {
-                "providerId": "sauna",
+                "providerId": "acme",
                 "config": { "space_id": "space-1", "mode": "readwrite" },
                 "workspace": "/workspace"
             }
@@ -4128,7 +4128,7 @@ mod tests {
         .unwrap();
 
         let runner = params.runner.clone().expect("runner params");
-        assert_eq!(runner.provider_id, "sauna");
+        assert_eq!(runner.provider_id, "acme");
         assert_eq!(
             runner.config,
             Some(serde_json::json!({ "space_id": "space-1", "mode": "readwrite" }))
@@ -4136,7 +4136,7 @@ mod tests {
         assert_eq!(runner.workspace, "/workspace");
 
         let encoded = serde_json::to_value(&params).unwrap();
-        assert_eq!(encoded["runner"]["providerId"], "sauna");
+        assert_eq!(encoded["runner"]["providerId"], "acme");
         assert_eq!(encoded["runner"]["workspace"], "/workspace");
 
         // Absent runner stays absent on the wire.

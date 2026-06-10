@@ -1245,8 +1245,8 @@ Request:
   "developerInstructions": "You are embedded in HostApp.",
   "externalTools": [
     {
-      "name": "sauna_lookup",
-      "description": "Look up Sauna workspace state.",
+      "name": "acme_lookup",
+      "description": "Look up Acme workspace state.",
       "parameters": { "type": "object", "properties": { "query": { "type": "string" } } }
     }
   ],
@@ -1277,8 +1277,8 @@ Response:
     "developerInstructions": "You are embedded in HostApp.",
     "externalTools": [
       {
-        "name": "sauna_lookup",
-        "description": "Look up Sauna workspace state.",
+        "name": "acme_lookup",
+        "description": "Look up Acme workspace state.",
         "parameters": { "type": "object", "properties": { "query": { "type": "string" } } }
       }
     ]

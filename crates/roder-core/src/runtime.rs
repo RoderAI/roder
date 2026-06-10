@@ -6073,7 +6073,7 @@ mod tests {
                 thread_id: "thread-sweep".to_string(),
                 turn_id: turn_id.clone(),
                 tool_id: "call-1".to_string(),
-                tool_name: "sauna_lookup".to_string(),
+                tool_name: "acme_lookup".to_string(),
                 tx,
             },
         );
@@ -6123,7 +6123,7 @@ mod tests {
             &runtime,
             &requests,
             Vec::new(),
-            Some("You are embedded in Sauna.".to_string()),
+            Some("You are embedded in a host app.".to_string()),
             Vec::new(),
         )
         .await;
@@ -6134,7 +6134,7 @@ mod tests {
             .instructions
             .developer
             .expect("developer instructions");
-        assert!(developer.starts_with("You are embedded in Sauna."));
+        assert!(developer.starts_with("You are embedded in a host app."));
 
         let plain =
             captured_thread_override_request(&runtime, &requests, Vec::new(), None, Vec::new())
@@ -6164,8 +6164,8 @@ mod tests {
 
         let external_tools = vec![
             ToolSpec {
-                name: "sauna_lookup".to_string(),
-                description: "Look up Sauna workspace state.".to_string(),
+                name: "acme_lookup".to_string(),
+                description: "Look up Acme workspace state.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": { "query": { "type": "string" } },
@@ -6187,13 +6187,13 @@ mod tests {
         )
         .await;
 
-        let sauna = request
+        let acme = request
             .tools
             .iter()
-            .find(|tool| tool.name == "sauna_lookup")
+            .find(|tool| tool.name == "acme_lookup")
             .expect("external tool advertised");
-        assert_eq!(sauna.description, "Look up Sauna workspace state.");
-        assert_eq!(sauna.parameters["required"][0], "query");
+        assert_eq!(acme.description, "Look up Acme workspace state.");
+        assert_eq!(acme.parameters["required"][0], "query");
         let edits = request
             .tools
             .iter()
@@ -6205,7 +6205,7 @@ mod tests {
         let plain =
             captured_thread_override_request(&runtime, &requests, Vec::new(), None, Vec::new())
                 .await;
-        assert!(plain.tools.iter().all(|tool| tool.name != "sauna_lookup"));
+        assert!(plain.tools.iter().all(|tool| tool.name != "acme_lookup"));
         let plain_edit = plain
             .tools
             .iter()

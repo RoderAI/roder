@@ -225,12 +225,12 @@ mod tests {
         let instructions = apply_runtime_profile(
             apply_thread_developer_instructions(
                 default_instructions(),
-                "You are embedded in Sauna.",
+                "You are embedded in a host app.",
             ),
             RuntimeProfile::NonInteractive,
         );
         let developer = instructions.developer.expect("developer instructions");
-        assert!(developer.starts_with("You are embedded in Sauna."));
+        assert!(developer.starts_with("You are embedded in a host app."));
         assert!(developer.contains("non-interactive profile"));
         assert!(instructions.system.expect("system").starts_with("You are Roder"));
 

@@ -315,7 +315,7 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
     /**
      * Routed through roder_edit_core like the local backend so an ambiguous
      * old_string is refused instead of silently rewriting the first
-     * occurrence in the runner workspace (which the sauna sandbox
+     * occurrence in the runner workspace (which the hosted sandbox
      * auto-commits).
      */
     async fn edit_text(
