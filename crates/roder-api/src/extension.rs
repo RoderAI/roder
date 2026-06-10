@@ -261,6 +261,11 @@ impl ExtensionRegistryBuilder {
         }
     }
 
+    /// Installs the extension and checks that every service it registers is
+    /// declared in its manifest `provides` list, so a manifest is a complete
+    /// inventory of what an installed extension contributes. Host code that
+    /// registers services directly on the builder (outside `install`) is not
+    /// subject to this check.
     pub fn install<E: RoderExtension>(&mut self, ext: E) -> anyhow::Result<()> {
         let manifest = ext.manifest();
         if self
@@ -270,7 +275,19 @@ impl ExtensionRegistryBuilder {
         {
             anyhow::bail!("extension {} is already installed", manifest.id);
         }
+        let before = service_counts(self)?;
         ext.install(self)?;
+        let declared: BTreeSet<ProvidedService> = manifest.provides.iter().cloned().collect();
+        for (service, count) in service_counts(self)? {
+            let prior = before.get(&service).copied().unwrap_or(0);
+            if count > prior && !declared.contains(&service) {
+                anyhow::bail!(
+                    "extension {} installed undeclared service {}; declare it in the manifest provides list",
+                    manifest.id,
+                    service_label(&service)
+                );
+            }
+        }
         self.manifests.push(manifest);
         Ok(())
     }
@@ -309,6 +326,9 @@ impl ExtensionRegistryBuilder {
         self.manifests.push(manifest);
     }
 
+    /// Capability grants are advisory metadata surfaced through
+    /// `extensions/list` (statically linked extensions run in-process);
+    /// nothing enforces them at runtime.
     pub fn grant_capability(&mut self, extension_id: impl Into<String>, grant: CapabilityGrant) {
         self.granted_capabilities
             .entry(extension_id.into())
@@ -316,6 +336,9 @@ impl ExtensionRegistryBuilder {
             .insert(grant.id);
     }
 
+    /// Advisory, like [`Self::grant_capability`]: a denial fails `build()` for
+    /// extensions that require the capability but does not constrain runtime
+    /// behavior.
     pub fn deny_capability(&mut self, extension_id: impl Into<String>, denial: CapabilityDenial) {
         self.denied_capabilities
             .entry(extension_id.into())
@@ -528,6 +551,18 @@ fn validate_duplicate_actual_services(actual: &[ProvidedService]) -> anyhow::Res
         }
     }
     Ok(())
+}
+
+/// Multiset of the services currently registered on the builder; diffed
+/// around each extension install to attribute new services to that extension.
+fn service_counts(
+    builder: &ExtensionRegistryBuilder,
+) -> anyhow::Result<BTreeMap<ProvidedService, usize>> {
+    let mut counts = BTreeMap::new();
+    for service in actual_services(builder)? {
+        *counts.entry(service).or_insert(0) += 1;
+    }
+    Ok(counts)
 }
 
 fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<ProvidedService>> {
@@ -955,6 +990,45 @@ mod tests {
                 .to_string()
                 .contains("duplicate installed service VersionControlProvider(git)")
         );
+    }
+
+    #[test]
+    fn installing_an_undeclared_service_fails_install() {
+        let mut builder = ExtensionRegistryBuilder::new();
+
+        let error = match builder.install(UndeclaredServiceExtension) {
+            Ok(()) => panic!("undeclared service should fail install"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("installed undeclared service VersionControlProvider(git)"),
+            "unexpected error: {error}"
+        );
+        assert!(builder.manifests.is_empty());
+    }
+
+    struct UndeclaredServiceExtension;
+
+    impl RoderExtension for UndeclaredServiceExtension {
+        fn manifest(&self) -> ExtensionManifest {
+            ExtensionManifest {
+                id: "undeclared-service-extension".to_string(),
+                name: "Undeclared Service".to_string(),
+                version: Version::new(0, 1, 0),
+                api_version: SUPPORTED_EXTENSION_API_VERSION.to_string(),
+                description: None,
+                provides: Vec::new(),
+                required_capabilities: Vec::new(),
+            }
+        }
+
+        fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+            registry.version_control_provider(Arc::new(FakeVcsProvider::new("git")));
+            Ok(())
+        }
     }
 
     struct FakeVcsExtension {
