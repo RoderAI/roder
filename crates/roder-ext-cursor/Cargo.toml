@@ -20,6 +20,7 @@ docs_url = "https://cursor.com"
 anyhow.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 bytes.workspace = true
 futures.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }

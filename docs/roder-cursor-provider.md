@@ -107,6 +107,16 @@ Two request requirements were discovered as prerequisites for the agentic tool l
 
 Any unmapped Cursor-native tool is surfaced as a `cursor_unsupported_tool` call so the frame can be captured (see below) and decoded.
 
+### Image input
+
+The Cursor provider advertises `image_input: true` and uploads images inline (field numbers sourced from the Cursor app bundle's `agent.v1` protobuf schema, same as the tool mapping above):
+
+- **Current message.** Images on the latest `UserMessage` are encoded into `UserMessage.selected_context` (field 3) as `agent.v1.SelectedContext.selected_images` (field 1), each a `SelectedImage { mime_type 7, data 8 }` carrying the raw decoded bytes.
+- **History.** Images on prior user turns are replayed as `ConversationHistoryUserContent.image` (field 2) → `ConversationHistoryImageContent { data 1 (base64 string), mime_type 2 }`.
+- **Capability flag.** When any inline image is present, `AgentRunRequest.client_supports_inline_images` (field 19) is set so Cursor accepts the inline bytes.
+
+Roder `InputImage`s are `data:<mime>;base64,<payload>` URLs; non-base64 / remote-URL images are skipped because Cursor's inline path needs raw bytes. The Cursor catalog models advertise `supports_images: true`.
+
 > **Known limitation (in progress):** tool *results* are currently replayed as flattened prompt text in the next round, and each round opens a fresh Cursor conversation. Cursor's agent does not treat that as a native tool result, so multi-step tool loops (e.g. read-then-edit) can re-issue the same tool call. Completing the loop requires sending results via `ConversationAction.resume_action` / `UserMessageAction.conversation_history` against a stable `conversation_id`.
 
 ## Capturing Cursor-native tool frames

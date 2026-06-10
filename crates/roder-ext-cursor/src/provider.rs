@@ -20,7 +20,7 @@ use crate::context::{
     CursorContextOptions, discovery_context_frames_from_env, encode_request_context_frame,
 };
 use crate::models::fallback_models;
-use crate::proto::CursorHistoryMessage;
+use crate::proto::{CursorHistoryMessage, CursorImage};
 
 #[derive(Debug, Clone, Default)]
 pub struct CursorConfig {
@@ -77,7 +77,7 @@ impl InferenceEngine for CursorInferenceEngine {
             parallel_tool_calls: false,
             reasoning_summaries: true,
             structured_output: false,
-            image_input: false,
+            image_input: true,
             prompt_cache: false,
             provider_metadata: true,
             tool_search: false,
@@ -121,7 +121,7 @@ impl InferenceEngine for CursorInferenceEngine {
         // agent runtime: keep the Run stream open and service exec read/write/shell
         // requests in-stream so the model completes multi-step edits in one turn.
         if let Some(executor) = ctx.tool_executor.clone() {
-            let (prompt, history) = cursor_request_parts(&request);
+            let (prompt, history, images) = cursor_request_parts(&request);
             let conversation_id = uuid::Uuid::new_v4().to_string();
             let message_id = uuid::Uuid::new_v4().to_string();
             let run_request = crate::proto::encode_agent_client_message_with_history(
@@ -130,6 +130,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 &conversation_id,
                 &message_id,
                 &history,
+                &images,
             );
             let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
                 vec![encode_request_context_frame(
@@ -155,7 +156,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 &CursorContextOptions::from_workspace(workspace_for_ctx),
             )]
         });
-        let (prompt, history) = cursor_request_parts(&request);
+        let (prompt, history, images) = cursor_request_parts(&request);
         let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
         let service_stream = stream_agent_service(
             self.agent_service_config(),
@@ -165,6 +166,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 model: request.model.model.clone(),
                 context_frames,
                 history,
+                images,
                 workspace,
             },
         )
@@ -263,7 +265,7 @@ impl InferenceEngine for CursorInferenceEngine {
 /// continue the loop instead of restarting and re-issuing the same tool call.
 pub fn cursor_request_parts(
     request: &AgentInferenceRequest,
-) -> (String, Vec<CursorHistoryMessage>) {
+) -> (String, Vec<CursorHistoryMessage>, Vec<CursorImage>) {
     let last_user_idx = request
         .transcript
         .iter()
@@ -271,13 +273,19 @@ pub fn cursor_request_parts(
 
     let mut history = Vec::new();
     let mut current_user_text = String::new();
+    let mut current_images = Vec::new();
     for (idx, item) in request.transcript.iter().enumerate() {
         match item {
             TranscriptItem::UserMessage(message) => {
+                let images = cursor_images_from_inputs(&message.images);
                 if Some(idx) == last_user_idx {
                     current_user_text = message.text.clone();
+                    current_images = images;
                 } else {
-                    history.push(CursorHistoryMessage::User(message.text.clone()));
+                    history.push(CursorHistoryMessage::User {
+                        text: message.text.clone(),
+                        images,
+                    });
                 }
             }
             TranscriptItem::AssistantMessage(message) if !message.text.is_empty() => {
@@ -299,10 +307,10 @@ pub fn cursor_request_parts(
                 });
             }
             TranscriptItem::ContextCompaction(compaction) => {
-                history.push(CursorHistoryMessage::User(format!(
-                    "Context summary:\n{}",
-                    compaction.summary
-                )));
+                history.push(CursorHistoryMessage::User {
+                    text: format!("Context summary:\n{}", compaction.summary),
+                    images: Vec::new(),
+                });
             }
             _ => {}
         }
@@ -331,7 +339,18 @@ pub fn cursor_request_parts(
                 .to_string(),
         );
     }
-    (sections.join("\n\n"), history)
+    (sections.join("\n\n"), history, current_images)
+}
+
+/// Decode Roder `InputImage` data URLs into Cursor inline images, dropping any
+/// that are not base64 `data:` URLs (Cursor's inline path needs raw bytes).
+fn cursor_images_from_inputs(
+    images: &[roder_api::transcript::InputImage],
+) -> Vec<CursorImage> {
+    images
+        .iter()
+        .filter_map(|image| CursorImage::from_data_url(&image.image_url))
+        .collect()
 }
 
 fn validate_request(request: &AgentInferenceRequest) -> anyhow::Result<()> {
@@ -391,11 +410,12 @@ mod tests {
 
     #[test]
     fn request_parts_keep_instructions_and_latest_user_message_in_prompt() {
-        let (prompt, history) = cursor_request_parts(&request());
+        let (prompt, history, images) = cursor_request_parts(&request());
         assert!(prompt.contains("System:\nbe useful"));
         assert!(prompt.contains("hello"));
         // A single fresh user turn has no prior history.
         assert!(history.is_empty());
+        assert!(images.is_empty());
     }
 
     #[test]
@@ -418,7 +438,7 @@ mod tests {
                 is_error: false,
             }));
 
-        let (prompt, history) = cursor_request_parts(&request);
+        let (prompt, history, _images) = cursor_request_parts(&request);
 
         // The original user request stays the current prompt...
         assert!(prompt.contains("hello"));
