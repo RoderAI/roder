@@ -25,3 +25,4 @@ roder-ext-runner-sprites.workspace = true
 roder-ext-task-ledger.workspace = true
 roder-ext-runner-unix-local.workspace = true
 roder-ext-verification.workspace = true
+roder-tools.workspace = true

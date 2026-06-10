@@ -149,6 +149,7 @@ fn counting_thread_snapshot(thread_id: &str) -> ThreadSnapshot {
             external_tools: Vec::new(),
             runner_destination: None,
             runner_state: None,
+            runner_binding: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 1,

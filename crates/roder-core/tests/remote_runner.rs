@@ -40,7 +40,7 @@ struct MockRunnerState {
     files: Mutex<HashMap<String, Vec<u8>>>,
     created: Mutex<usize>,
     resumed: Mutex<usize>,
-    commands: Mutex<Vec<String>>,
+    commands: Mutex<Vec<RunnerCommandRequest>>,
 }
 
 #[derive(Clone, Default)]
@@ -226,7 +226,7 @@ impl RemoteRunnerSession for MockRunnerSession {
         &self,
         request: RunnerCommandRequest,
     ) -> anyhow::Result<RunnerCommandResult> {
-        self.state.commands.lock().unwrap().push(request.program);
+        self.state.commands.lock().unwrap().push(request.clone());
         Ok(RunnerCommandResult {
             command_id: request.command_id,
             exit_code: Some(0),
@@ -702,6 +702,343 @@ async fn live_sprites_runner_runtime_creates_session_and_offloads_operations() {
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(workspace);
+}
+
+/// Serves one scripted event batch per inference round, then a final message.
+struct ScriptedEngine {
+    rounds: Mutex<Vec<Vec<InferenceEvent>>>,
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for ScriptedEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut rounds = self.rounds.lock().unwrap();
+        let events = if rounds.is_empty() {
+            vec![
+                InferenceEvent::MessageDelta(MessageDelta {
+                    text: "done".to_string(),
+                    phase: None,
+                }),
+                InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: Some("resp-final".to_string()),
+                }),
+            ]
+        } else {
+            rounds.remove(0)
+        };
+        Ok(Box::pin(stream::iter(events.into_iter().map(Ok))))
+    }
+}
+
+fn tool_call_round(calls: &[(&str, &str, &str)]) -> Vec<InferenceEvent> {
+    let mut events = calls
+        .iter()
+        .map(|(id, name, arguments)| {
+            InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                id: id.to_string(),
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    events.push(InferenceEvent::Completed(CompletionMetadata {
+        stop_reason: Some("tool_calls".to_string()),
+        provider_response_id: Some("resp-tools".to_string()),
+    }));
+    events
+}
+
+fn coding_tools_runtime(
+    session_dir: PathBuf,
+    scratch: PathBuf,
+    provider: MockRunnerProvider,
+    rounds: Vec<Vec<InferenceEvent>>,
+) -> Arc<Runtime> {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(ScriptedEngine {
+        rounds: Mutex::new(rounds),
+    }));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: session_dir,
+    }));
+    builder.remote_runner_provider(Arc::new(provider));
+    builder
+        .tool_contributor(roder_tools::builtin_coding_tools_contributor(scratch.clone()).unwrap());
+    Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                workspace: Some(scratch.display().to_string()),
+                policy_mode: roder_api::policy_mode::PolicyMode::Bypass,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    )
+}
+
+#[derive(Debug, Clone)]
+struct CompletedToolCall {
+    tool_name: Option<String>,
+    output: Option<String>,
+    is_error: bool,
+}
+
+async fn run_turn_collecting_tool_calls(
+    runtime: &Arc<Runtime>,
+    thread_id: &str,
+    workspace: &std::path::Path,
+) -> Vec<CompletedToolCall> {
+    let mut events = runtime.subscribe_events();
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: thread_id.to_string(),
+            message: "run the scripted tools".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            reasoning_override: None,
+            workspace: workspace.display().to_string(),
+            instructions: default_instructions(),
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+    let mut completed = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event.event {
+            RoderEvent::ToolCallCompleted(call) => completed.push(CompletedToolCall {
+                tool_name: call.tool_name,
+                output: call.output,
+                is_error: call.is_error,
+            }),
+            RoderEvent::TurnCompleted(_) => break,
+            RoderEvent::TurnFailed(failed) => panic!("turn failed: {}", failed.error),
+            _ => {}
+        }
+    }
+    completed
+}
+
+#[tokio::test]
+async fn runner_bound_thread_routes_coding_tools_through_remote_runner() {
+    let session_dir = temp_dir("runner-bound-sessions");
+    let scratch = temp_dir("runner-bound-scratch");
+    let provider = MockRunnerProvider::default();
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![
+            tool_call_round(&[
+                (
+                    "write",
+                    "write_file",
+                    r#"{"path":"remote-out.txt","content":"hello from runner"}"#,
+                ),
+                ("shell", "shell", r#"{"command":"echo hi"}"#),
+                ("exec", "exec_command", r#"{"cmd":"echo nope"}"#),
+            ]),
+            tool_call_round(&[("read", "read_file", r#"{"path":"remote-out.txt"}"#)]),
+        ],
+    );
+
+    let metadata = runtime
+        .create_thread_with(roder_core::CreateThreadRequest {
+            title: None,
+            workspace: scratch.display().to_string(),
+            workspace_id: None,
+            root_id: None,
+            provider: None,
+            model: None,
+            selection_mode: None,
+            tool_allowlist: Vec::new(),
+            developer_instructions: None,
+            external_tools: Vec::new(),
+            runner: Some(roder_core::ThreadRunnerSelection {
+                provider_id: "mock-hosted".to_string(),
+                config: serde_json::json!({ "space_id": "space-1" }),
+                workspace: "/sandbox/workspace".to_string(),
+            }),
+        })
+        .await
+        .unwrap();
+    let binding = metadata.runner_binding.clone().expect("runner binding");
+    assert_eq!(binding.destination.provider_id, "mock-hosted");
+    assert_eq!(
+        binding.destination.id,
+        format!("thread-{}", metadata.thread_id)
+    );
+    assert_eq!(binding.destination.config["space_id"], "space-1");
+    assert_eq!(binding.workspace, PathBuf::from("/sandbox/workspace"));
+
+    let completed = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+
+    // write_file went to the runner, not local disk.
+    assert_eq!(
+        provider
+            .state
+            .files
+            .lock()
+            .unwrap()
+            .get("remote-out.txt")
+            .cloned(),
+        Some(b"hello from runner".to_vec())
+    );
+    assert!(!scratch.join("remote-out.txt").exists());
+
+    // shell executed through the runner session, scoped to the runner workspace root.
+    let shell_command = provider
+        .state
+        .commands
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|command| command.args.contains(&"echo hi".to_string()))
+        .cloned()
+        .expect("shell command routed to runner");
+    assert_eq!(shell_command.program, "sh");
+    assert_eq!(
+        shell_command.cwd.as_deref(),
+        Some(std::path::Path::new("/sandbox/workspace"))
+    );
+
+    // read_file returned the runner contents.
+    let read = completed
+        .iter()
+        .find(|call| call.tool_name.as_deref() == Some("read_file"))
+        .expect("read_file completed");
+    assert!(!read.is_error);
+    assert!(
+        read.output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("hello from runner")
+    );
+
+    // Tools without a remote transport fail clearly instead of touching local disk.
+    let exec = completed
+        .iter()
+        .find(|call| call.tool_name.as_deref() == Some("exec_command"))
+        .expect("exec_command completed");
+    assert!(exec.is_error);
+    assert!(
+        exec.output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("not supported on a remote runner workspace"),
+        "unexpected exec output: {:?}",
+        exec.output
+    );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn unbound_thread_keeps_local_coding_tools_on_a_runner_capable_server() {
+    let session_dir = temp_dir("runner-unbound-sessions");
+    let scratch = temp_dir("runner-unbound-scratch");
+    let provider = MockRunnerProvider::default();
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "write",
+            "write_file",
+            r#"{"path":"local-out.txt","content":"hello locally"}"#,
+        )])],
+    );
+
+    let metadata = runtime.create_thread(None).await.unwrap();
+    assert!(metadata.runner_binding.is_none());
+
+    let completed = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+    let write = completed
+        .iter()
+        .find(|call| call.tool_name.as_deref() == Some("write_file"))
+        .expect("write_file completed");
+    assert!(!write.is_error);
+
+    assert_eq!(
+        std::fs::read_to_string(scratch.join("local-out.txt")).unwrap(),
+        "hello locally"
+    );
+    assert!(provider.state.files.lock().unwrap().is_empty());
+    assert_eq!(*provider.state.created.lock().unwrap(), 0);
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn thread_runner_binding_rejects_unknown_providers_and_relative_workspaces() {
+    let session_dir = temp_dir("runner-validate-sessions");
+    let scratch = temp_dir("runner-validate-scratch");
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        MockRunnerProvider::default(),
+        Vec::new(),
+    );
+
+    let request = |provider_id: &str, workspace: &str| roder_core::CreateThreadRequest {
+        title: None,
+        workspace: scratch.display().to_string(),
+        workspace_id: None,
+        root_id: None,
+        provider: None,
+        model: None,
+        selection_mode: None,
+        tool_allowlist: Vec::new(),
+        developer_instructions: None,
+        external_tools: Vec::new(),
+        runner: Some(roder_core::ThreadRunnerSelection {
+            provider_id: provider_id.to_string(),
+            config: serde_json::json!({}),
+            workspace: workspace.to_string(),
+        }),
+    };
+
+    let unknown = runtime
+        .create_thread_with(request("missing-provider", "/sandbox/workspace"))
+        .await
+        .unwrap_err();
+    assert!(unknown.to_string().contains("is not installed"));
+
+    let relative = runtime
+        .create_thread_with(request("mock-hosted", "sandbox/workspace"))
+        .await
+        .unwrap_err();
+    assert!(relative.to_string().contains("absolute"));
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
 }
 
 async fn runtime(session_dir: PathBuf, workspace: PathBuf) -> Arc<Runtime> {

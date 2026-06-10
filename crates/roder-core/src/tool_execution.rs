@@ -267,6 +267,46 @@ impl Runtime {
         if let Some(remaining) = crate::runtime::deadline_remaining_seconds(deadline) {
             ctx = ctx.with_deadline_remaining_seconds(remaining);
         }
+        /*
+         * A runner-bound thread must never fall back to local tool execution:
+         * a session-resolution failure becomes an error tool result instead of
+         * dispatching the call against the local filesystem.
+         */
+        match self.remote_workspace_for_thread(thread_id).await {
+            Ok(Some(remote)) => ctx = ctx.with_remote_workspace(remote),
+            Ok(None) => {}
+            Err(err) => {
+                let item = ToolResultRecord {
+                    id: call.id.clone(),
+                    name: Some(call.name.clone()),
+                    result: format!("remote runner workspace is unavailable: {err}"),
+                    display_payload: tool_display_payload(
+                        Some(&call.name),
+                        Some(&parsed_args),
+                        None,
+                    ),
+                    is_error: true,
+                };
+                self.persist_turn_item(
+                    thread_id,
+                    turn_id,
+                    &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
+                )
+                .await?;
+                self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: call.id,
+                    tool_name: item.name.clone(),
+                    display_payload: item.display_payload.clone(),
+                    is_error: true,
+                    output: Some(item.result.clone()),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                return Ok(item);
+            }
+        }
         let decision = DefaultPolicyGate::new()
             .decide_with_contributors(&tool_call, mode, &ctx, &self.registry.policy_contributors)
             .await?;

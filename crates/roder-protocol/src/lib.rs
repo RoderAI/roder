@@ -497,8 +497,30 @@ pub struct ThreadStartParams {
      */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_tools: Option<Vec<ToolSpec>>,
+    /**
+     * Binds the thread's native coding tools to a remote-runner workspace.
+     * Absent = local execution, even when a runtime-level runner destination
+     * is selected via `runners/select`.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<ThreadRunnerParams>,
     #[serde(default)]
     pub ephemeral: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRunnerParams {
+    /// Installed remote-runner provider id (e.g. "sauna").
+    pub provider_id: String,
+    /**
+     * Provider-specific destination config. Persisted with the thread, so it
+     * must not carry secrets; providers read those from their environment.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+    /// Absolute path on the runner used as the thread's coding-tool workspace root.
+    pub workspace: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4081,6 +4103,50 @@ mod tests {
         .unwrap();
 
         assert!(params.task_ledger_required);
+    }
+
+    #[test]
+    fn protocol_thread_start_params_round_trip_runner_selection() {
+        let params: ThreadStartParams = serde_json::from_value(serde_json::json!({
+            "workspaceId": "ws-1",
+            "model": null,
+            "modelProvider": null,
+            "reasoning": null,
+            "runner": {
+                "providerId": "sauna",
+                "config": { "space_id": "space-1", "mode": "readwrite" },
+                "workspace": "/workspace"
+            }
+        }))
+        .unwrap();
+
+        let runner = params.runner.clone().expect("runner params");
+        assert_eq!(runner.provider_id, "sauna");
+        assert_eq!(
+            runner.config,
+            Some(serde_json::json!({ "space_id": "space-1", "mode": "readwrite" }))
+        );
+        assert_eq!(runner.workspace, "/workspace");
+
+        let encoded = serde_json::to_value(&params).unwrap();
+        assert_eq!(encoded["runner"]["providerId"], "sauna");
+        assert_eq!(encoded["runner"]["workspace"], "/workspace");
+
+        // Absent runner stays absent on the wire.
+        let without: ThreadStartParams = serde_json::from_value(serde_json::json!({
+            "workspaceId": "ws-1",
+            "model": null,
+            "modelProvider": null,
+            "reasoning": null
+        }))
+        .unwrap();
+        assert!(without.runner.is_none());
+        assert!(
+            serde_json::to_value(&without)
+                .unwrap()
+                .get("runner")
+                .is_none()
+        );
     }
 
     #[test]

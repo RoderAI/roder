@@ -26,7 +26,9 @@ use roder_api::reliability::{
     ReliabilityRequestPolicy, ReliabilityRetryDecision, ReliabilityRetryRecorded,
     provider_retry_delay_ms,
 };
-use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
+use roder_api::remote_runner::{
+    RemoteRunnerSession, RemoteWorkspace, RunnerDestination, ThreadRunnerBinding,
+};
 use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
 use roder_api::thread::{
@@ -182,6 +184,21 @@ pub struct CreateThreadRequest {
     pub developer_instructions: Option<String>,
     /// Host-executed tool specs advertised to the model on every turn of this thread.
     pub external_tools: Vec<roder_api::tools::ToolSpec>,
+    /// Explicit remote-runner binding for the thread's native coding tools.
+    pub runner: Option<ThreadRunnerSelection>,
+}
+
+/**
+ * Thread-level remote-runner selection. The destination config is persisted
+ * with the thread, so secrets must reach the provider through its
+ * environment, not this config.
+ */
+#[derive(Debug, Clone)]
+pub struct ThreadRunnerSelection {
+    pub provider_id: String,
+    pub config: serde_json::Value,
+    /// Absolute path on the runner used as the thread's coding-tool workspace root.
+    pub workspace: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -922,8 +939,59 @@ impl Runtime {
             tool_allowlist: Vec::new(),
             developer_instructions: None,
             external_tools: Vec::new(),
+            runner: None,
         })
         .await
+    }
+
+    /**
+     * Resolves an explicit thread-runner selection into a persisted binding.
+     * Fails fast at thread creation when the provider is missing or rejects
+     * the destination, instead of surfacing the error on the first tool call.
+     */
+    async fn resolve_thread_runner_binding(
+        &self,
+        thread_id: &str,
+        selection: ThreadRunnerSelection,
+    ) -> anyhow::Result<ThreadRunnerBinding> {
+        let provider = self
+            .registry
+            .remote_runner_providers
+            .iter()
+            .find(|provider| provider.id() == selection.provider_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "remote runner provider {:?} is not installed",
+                    selection.provider_id
+                )
+            })?;
+        let workspace = selection.workspace.trim();
+        anyhow::ensure!(
+            std::path::Path::new(workspace).is_absolute(),
+            "runner workspace must be an absolute path on the runner: {workspace:?}"
+        );
+        let destination = RunnerDestination {
+            id: format!("thread-{thread_id}"),
+            provider_id: selection.provider_id,
+            config: selection.config,
+            default_manifest: roder_api::remote_runner::RunnerManifest::default(),
+        };
+        provider.validate_destination(&destination).await?;
+        Ok(ThreadRunnerBinding {
+            destination,
+            workspace: PathBuf::from(workspace),
+        })
+    }
+
+    /// Validates a runner selection without creating a thread; the placeholder destination id only appears in error messages.
+    pub async fn validate_thread_runner_selection(
+        &self,
+        selection: ThreadRunnerSelection,
+    ) -> anyhow::Result<()> {
+        self.resolve_thread_runner_binding("validate", selection)
+            .await
+            .map(|_| ())
     }
 
     pub async fn create_thread_with(
@@ -938,8 +1006,20 @@ impl Runtime {
         let selection_mode = req
             .selection_mode
             .unwrap_or_else(|| ModelSelectionMode::manual(provider.clone(), model.clone(), None));
+        let thread_id = uuid::Uuid::new_v4().to_string();
+        let runner_binding = match req.runner {
+            Some(selection) => Some(
+                self.resolve_thread_runner_binding(&thread_id, selection)
+                    .await?,
+            ),
+            None => None,
+        };
+        let runner_destination = runner_binding
+            .as_ref()
+            .map(|binding| binding.destination.clone())
+            .or_else(|| cfg.remote_runner_destination.clone());
         let metadata = ThreadMetadata {
-            thread_id: uuid::Uuid::new_v4().to_string(),
+            thread_id,
             title: req.title,
             workspace,
             workspace_id: req.workspace_id,
@@ -950,8 +1030,9 @@ impl Runtime {
             tool_allowlist: req.tool_allowlist,
             developer_instructions: req.developer_instructions,
             external_tools: req.external_tools,
-            runner_destination: cfg.remote_runner_destination.clone(),
+            runner_destination,
             runner_state: None,
+            runner_binding,
             created_at: now,
             updated_at: now,
             message_count: 0,
@@ -1030,6 +1111,7 @@ impl Runtime {
                     tool_allowlist: Vec::new(),
                     developer_instructions: None,
                     external_tools: Vec::new(),
+                    runner: None,
                 })
                 .await?
                 .thread_id
@@ -1056,6 +1138,7 @@ impl Runtime {
                     tool_allowlist: Vec::new(),
                     developer_instructions: None,
                     external_tools: Vec::new(),
+                    runner: None,
                 })
                 .await?;
             let member_id = format!("member-{}", index + 1);
@@ -1129,6 +1212,7 @@ impl Runtime {
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
                 external_tools: Vec::new(),
+                runner: None,
             })
             .await?;
         let team = self
@@ -1527,7 +1611,21 @@ impl Runtime {
         &self,
         thread_id: &ThreadId,
     ) -> anyhow::Result<Option<(RunnerDestination, Arc<dyn RemoteRunnerSession>)>> {
-        let Some(destination) = self.config.read().await.remote_runner_destination.clone() else {
+        let metadata = if let Some(store) = &self.thread_store {
+            store
+                .load_thread(thread_id)
+                .await?
+                .and_then(|snapshot| snapshot.metadata)
+        } else {
+            None
+        };
+        // An explicit per-thread binding wins over the runtime-level destination.
+        let destination = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.runner_binding.as_ref())
+            .map(|binding| binding.destination.clone())
+            .or(self.config.read().await.remote_runner_destination.clone());
+        let Some(destination) = destination else {
             return Ok(None);
         };
         let provider = self
@@ -1542,15 +1640,7 @@ impl Runtime {
                     destination.provider_id
                 )
             })?;
-        let persisted_state = if let Some(store) = &self.thread_store {
-            store
-                .load_thread(thread_id)
-                .await?
-                .and_then(|snapshot| snapshot.metadata)
-                .and_then(|metadata| metadata.runner_state)
-        } else {
-            None
-        };
+        let persisted_state = metadata.and_then(|metadata| metadata.runner_state);
         let session = if let Some(state) = persisted_state
             && state.provider_id == destination.provider_id
             && state.destination_id == destination.id
@@ -1563,6 +1653,39 @@ impl Runtime {
             provider.create_session(destination.clone()).await?
         };
         Ok(Some((destination, session)))
+    }
+
+    /**
+     * Remote workspace for tool execution on a runner-bound thread. `None`
+     * for threads without an explicit binding, including threads on a
+     * runtime-level `runners/select` destination — those keep local tools.
+     */
+    pub(crate) async fn remote_workspace_for_thread(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<Arc<RemoteWorkspace>>> {
+        let Some(store) = &self.thread_store else {
+            return Ok(None);
+        };
+        let binding = store
+            .load_thread(thread_id)
+            .await?
+            .and_then(|snapshot| snapshot.metadata)
+            .and_then(|metadata| metadata.runner_binding);
+        let Some(binding) = binding else {
+            return Ok(None);
+        };
+        let session = self
+            .runner_session_for_thread(thread_id)
+            .await?
+            .map(|(_, session)| session)
+            .ok_or_else(|| {
+                anyhow::anyhow!("runner-bound thread {thread_id} has no runner session")
+            })?;
+        Ok(Some(Arc::new(RemoteWorkspace {
+            session,
+            root: binding.workspace,
+        })))
     }
 
     async fn persist_runner_state(
@@ -4084,6 +4207,7 @@ mod tests {
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
                 external_tools: Vec::new(),
+                runner: None,
             })
             .await
             .unwrap();
@@ -5075,6 +5199,7 @@ mod tests {
                     Some("coding".to_string()),
                     None,
                 )),
+                runner: None,
             })
             .await
             .unwrap()
@@ -5223,6 +5348,7 @@ mod tests {
                     None,
                     None,
                 )),
+                runner: None,
             })
             .await
             .unwrap()
@@ -5334,6 +5460,7 @@ mod tests {
                     selected.model.clone(),
                     None,
                 )),
+                runner: None,
             })
             .await
             .unwrap()
@@ -5662,6 +5789,7 @@ mod tests {
                 tool_allowlist,
                 developer_instructions,
                 external_tools,
+                runner: None,
             })
             .await
             .unwrap()
@@ -5839,6 +5967,7 @@ mod tests {
                 tool_allowlist: vec!["edit".to_string(), "write_file".to_string()],
                 developer_instructions: None,
                 external_tools: Vec::new(),
+                runner: None,
             })
             .await
             .unwrap()
@@ -6136,6 +6265,7 @@ mod tests {
                 tool_allowlist: Vec::new(),
                 developer_instructions: None,
                 external_tools: Vec::new(),
+                runner: None,
             })
             .await
             .unwrap()

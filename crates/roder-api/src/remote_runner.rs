@@ -125,6 +125,31 @@ pub struct RunnerSessionState {
     pub metadata: serde_json::Value,
 }
 
+/**
+ * Per-thread remote-runner binding chosen at thread creation. Native coding
+ * tools for a bound thread execute against this runner instead of the local
+ * filesystem; the destination config is persisted with the thread, so secrets
+ * must reach the provider through its environment, not this config.
+ */
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThreadRunnerBinding {
+    pub destination: RunnerDestination,
+    /// Absolute path on the runner used as the thread's coding-tool workspace root.
+    pub workspace: PathBuf,
+}
+
+/**
+ * Remote workspace handle carried on the tool execution context for
+ * runner-bound threads. Tools route file and shell operations through
+ * `session` with paths scoped under `root` (a path on the runner, not the
+ * local filesystem).
+ */
+#[derive(Clone)]
+pub struct RemoteWorkspace {
+    pub session: Arc<dyn RemoteRunnerSession>,
+    pub root: PathBuf,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunnerCommandRequest {
     pub command_id: RunnerCommandId,

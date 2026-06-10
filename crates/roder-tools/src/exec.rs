@@ -135,7 +135,9 @@ impl ToolExecutor for ExecCommandTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         ctx.require_process_runner()?;
-        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
+        // No interactive PTY/stdin transport exists over a remote runner session.
+        let workspace =
+            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "exec_command")?;
         let args = parse::<ExecCommandArgs>(&call)?;
         let command = args.cmd.trim().to_string();
         require_nonempty(&command, "cmd")?;
@@ -724,6 +726,42 @@ mod tests {
         assert_eq!(result.data["status"], "timed_out");
         assert_eq!(result.data["timed_out"], true);
         assert_eq!(result.data["effective_timeout_ms"], 1000);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn exec_command_fails_clearly_on_a_remote_runner_workspace() {
+        let root = temp_workspace("roder-exec-remote");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager: Arc::new(ExecSessionManager::default()),
+            command_shell: roder_api::command_shell::default_command_shell(),
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        let ctx = context(&root).with_remote_workspace(Arc::new(
+            roder_api::remote_runner::RemoteWorkspace {
+                session: Arc::new(crate::remote_test_support::RecordingRunnerSession {
+                    state: state.clone(),
+                }),
+                root: "/sandbox/workspace".into(),
+            },
+        ));
+
+        let error = tool
+            .execute(ctx, call("exec_command", json!({ "cmd": "echo hi" })))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("exec_command is not supported on a remote runner workspace"),
+            "unexpected error: {error}"
+        );
+        // Nothing may run locally or remotely.
+        assert!(state.commands.lock().unwrap().is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }

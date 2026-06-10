@@ -1,16 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-#[cfg(test)]
 use regex::RegexBuilder;
-#[cfg(test)]
 use roder_api::remote_runner::{
     RemoteRunnerSession, RunnerCommandRequest, RunnerFileReadRequest, RunnerFileWriteRequest,
 };
 use roder_api::tools::ToolExecutionContext;
-#[cfg(test)]
-use roder_search::{INDEX_VERSION, SearchEngine};
-use roder_search::{SearchMetadata, SearchOptions};
+use roder_search::{INDEX_VERSION, SearchEngine, SearchMetadata, SearchOptions};
 
 use crate::workspace::Workspace;
 
@@ -65,13 +61,17 @@ pub(crate) struct LocalWorkspaceBackend {
     searcher: Arc<Mutex<roder_search::WorkspaceSearcher>>,
 }
 
-#[cfg(test)]
+/**
+ * Workspace backend that executes every operation through a
+ * `RemoteRunnerSession`. The `guard` only scopes and displays paths (use a
+ * remote `Workspace` so resolution never touches local disk); content and
+ * existence come from the runner.
+ */
 pub(crate) struct RunnerWorkspaceBackend {
     guard: Workspace,
     session: Arc<dyn RemoteRunnerSession>,
 }
 
-#[cfg(test)]
 impl RunnerWorkspaceBackend {
     pub(crate) fn new(guard: Workspace, session: Arc<dyn RemoteRunnerSession>) -> Self {
         Self { guard, session }
@@ -103,6 +103,13 @@ pub(crate) fn backend_from_context_or_fallback(
     fallback_workspace: &Workspace,
     fallback_backend: &WorkspaceBackendHandle,
 ) -> anyhow::Result<WorkspaceBackendHandle> {
+    if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
+        let guard = Workspace::remote(remote.root.clone(), fallback_workspace.path_scope())?;
+        return Ok(Arc::new(RunnerWorkspaceBackend::new(
+            guard,
+            remote.session.clone(),
+        )));
+    }
     let Some(handle) = ctx.handles.workspace.as_ref() else {
         return Ok(fallback_backend.clone());
     };
@@ -265,7 +272,6 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 }
 
-#[cfg(test)]
 #[async_trait]
 impl WorkspaceBackend for RunnerWorkspaceBackend {
     async fn read_text(&self, path: &str) -> anyhow::Result<(String, String)> {
@@ -283,7 +289,8 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
     async fn list_files(&self, path: &str) -> anyhow::Result<(String, Vec<String>)> {
         let path = self.guard.resolve_existing(path)?;
         let rel = self.guard.display(&path);
-        let quoted = shell_quote(&rel);
+        // The workspace root displays as ""; quote "." so the glob stays inside the root.
+        let quoted = shell_quote(if rel.is_empty() { "." } else { &rel });
         let command = format!(
             "for p in {quoted}/* {quoted}/.[!.]* {quoted}/..?*; do [ -e \"$p\" ] || continue; name=$(basename \"$p\"); if [ -d \"$p\" ]; then printf '%s/\\n' \"$name\"; else printf '%s\\n' \"$name\"; fi; done"
         );
@@ -426,11 +433,11 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
     }
 
     async fn apply_patch(&self, patch: &str) -> anyhow::Result<String> {
-        crate::patch::apply_patch_to_workspace(&self.guard, patch).await
+        crate::patch::apply_patch_to_runner_workspace(&self.guard, self.session.as_ref(), patch)
+            .await
     }
 }
 
-#[cfg(test)]
 impl RunnerWorkspaceBackend {
     async fn run_shell(&self, command: String) -> anyhow::Result<String> {
         let output = self
@@ -439,7 +446,7 @@ impl RunnerWorkspaceBackend {
                 command_id: "workspace-backend".to_string(),
                 program: "sh".to_string(),
                 args: vec!["-lc".to_string(), command],
-                cwd: None,
+                cwd: Some(self.guard.root().to_path_buf()),
                 env: Vec::new(),
             })
             .await?;
@@ -450,7 +457,105 @@ impl RunnerWorkspaceBackend {
     }
 }
 
-#[cfg(test)]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use roder_api::policy_mode::PolicyMode;
+    use roder_api::remote_runner::RemoteWorkspace;
+
+    use super::*;
+    use crate::remote_test_support::{RecordingRunnerSession, RecordingRunnerState};
+
+    fn remote_context(state: Arc<RecordingRunnerState>) -> ToolExecutionContext {
+        ToolExecutionContext::new("thread-remote", "turn-remote", PolicyMode::Default)
+            .with_remote_workspace(Arc::new(RemoteWorkspace {
+                session: Arc::new(RecordingRunnerSession { state }),
+                root: PathBuf::from("/sandbox/workspace"),
+            }))
+    }
+
+    fn local_fallback(prefix: &str) -> (PathBuf, Workspace, WorkspaceBackendHandle) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("{prefix}-{nanos}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let backend: WorkspaceBackendHandle =
+            Arc::new(LocalWorkspaceBackend::new(workspace.clone()));
+        (root, workspace, backend)
+    }
+
+    #[tokio::test]
+    async fn remote_context_routes_file_operations_through_runner_session() {
+        let state = Arc::new(RecordingRunnerState::default());
+        let ctx = remote_context(state.clone());
+        let (root, fallback_workspace, fallback_backend) = local_fallback("runner-backend-files");
+
+        let backend =
+            backend_from_context_or_fallback(&ctx, &fallback_workspace, &fallback_backend).unwrap();
+        backend
+            .write_text("notes/todo.txt", "remote contents".to_string())
+            .await
+            .unwrap();
+        let (path, text) = backend.read_text("notes/todo.txt").await.unwrap();
+
+        assert_eq!(path, "notes/todo.txt");
+        assert_eq!(text, "remote contents");
+        assert_eq!(
+            state
+                .files
+                .lock()
+                .unwrap()
+                .get("notes/todo.txt")
+                .map(|contents| contents.as_slice()),
+            Some(b"remote contents".as_slice())
+        );
+        // Nothing may leak onto the local fallback workspace.
+        assert!(!root.join("notes").exists());
+        assert!(!std::path::Path::new("/sandbox/workspace").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn remote_context_applies_codex_patches_through_runner_session() {
+        let state = Arc::new(RecordingRunnerState::default());
+        state
+            .files
+            .lock()
+            .unwrap()
+            .insert("src/lib.rs".to_string(), b"old line\n".to_vec());
+        let ctx = remote_context(state.clone());
+        let (root, fallback_workspace, fallback_backend) = local_fallback("runner-backend-patch");
+
+        let backend =
+            backend_from_context_or_fallback(&ctx, &fallback_workspace, &fallback_backend).unwrap();
+        let summary = backend
+            .apply_patch(
+                "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old line\n+new line\n*** End Patch\n",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary, "Success. Updated src/lib.rs");
+        assert_eq!(
+            state
+                .files
+                .lock()
+                .unwrap()
+                .get("src/lib.rs")
+                .map(|contents| contents.as_slice()),
+            Some(b"new line\n".as_slice())
+        );
+        assert!(!root.join("src").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

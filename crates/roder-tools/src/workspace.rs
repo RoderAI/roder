@@ -75,6 +75,41 @@ mod tests {
     }
 
     #[test]
+    fn remote_workspace_resolves_paths_lexically_without_local_disk() {
+        let workspace = Workspace::remote(
+            PathBuf::from("/sandbox/workspace"),
+            ToolPathScope::Workspace,
+        )
+        .unwrap();
+
+        // None of these paths exist locally; resolution must not touch local disk.
+        assert_eq!(
+            workspace.resolve_existing("src/main.rs").unwrap(),
+            PathBuf::from("/sandbox/workspace/src/main.rs")
+        );
+        assert_eq!(
+            workspace.resolve_for_write("src/../notes.txt").unwrap(),
+            PathBuf::from("/sandbox/workspace/notes.txt")
+        );
+        assert_eq!(
+            workspace.resolve_existing_workdir("./").unwrap(),
+            PathBuf::from("/sandbox/workspace")
+        );
+
+        let escape = workspace.resolve_for_write("../outside.txt").unwrap_err();
+        assert!(escape.to_string().contains("outside workspace"));
+        let home = workspace.resolve_existing("~/secrets").unwrap_err();
+        assert!(home.to_string().contains("not supported"));
+    }
+
+    #[test]
+    fn remote_workspace_requires_an_absolute_root() {
+        let error =
+            Workspace::remote(PathBuf::from("workspace"), ToolPathScope::Workspace).unwrap_err();
+        assert!(error.to_string().contains("absolute"));
+    }
+
+    #[test]
     fn workdir_resolution_still_accepts_normal_relative_directories() {
         let root = temp_workspace("roder-workdir-subdir");
         let subdir = root.join("crates").join("roder-tools");
@@ -121,6 +156,12 @@ fn home_dir() -> anyhow::Result<PathBuf> {
 pub(crate) struct Workspace {
     root: PathBuf,
     path_scope: ToolPathScope,
+    /**
+     * Remote workspaces scope paths on a runner filesystem: resolution is
+     * purely lexical (no canonicalize/existence checks against local disk)
+     * and existence errors surface from the runner backend instead.
+     */
+    remote: bool,
 }
 
 impl Workspace {
@@ -138,7 +179,25 @@ impl Workspace {
         let root = root
             .canonicalize()
             .with_context(|| format!("workspace root does not exist: {}", root.display()))?;
-        Ok(Self { root, path_scope })
+        Ok(Self {
+            root,
+            path_scope,
+            remote: false,
+        })
+    }
+
+    pub(crate) fn remote(root: PathBuf, path_scope: ToolPathScope) -> anyhow::Result<Self> {
+        if !root.is_absolute() {
+            bail!(
+                "remote workspace root must be an absolute runner path: {}",
+                root.display()
+            );
+        }
+        Ok(Self {
+            root,
+            path_scope,
+            remote: true,
+        })
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -153,6 +212,9 @@ impl Workspace {
         ctx: &ToolExecutionContext,
         fallback: &Workspace,
     ) -> anyhow::Result<Self> {
+        if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
+            return Self::remote(remote.root.clone(), fallback.path_scope);
+        }
         let Some(handle) = ctx.handles.workspace.as_ref() else {
             return Ok(fallback.clone());
         };
@@ -162,8 +224,25 @@ impl Workspace {
         Self::new_with_scope(root, fallback.path_scope)
     }
 
+    /// Like `from_context_or_fallback` but rejects remote workspaces for tools that only run locally.
+    pub(crate) fn local_from_context_or_fallback(
+        ctx: &ToolExecutionContext,
+        fallback: &Workspace,
+        tool: &str,
+    ) -> anyhow::Result<Self> {
+        if ctx.handles.remote_workspace.is_some() {
+            bail!("{tool} is not supported on a remote runner workspace");
+        }
+        Self::from_context_or_fallback(ctx, fallback)
+    }
+
     pub(crate) fn resolve_existing(&self, input: &str) -> anyhow::Result<PathBuf> {
         let candidate = self.candidate(input)?;
+        if self.remote {
+            let normalized = self.normalize(candidate)?;
+            self.ensure_allowed(&normalized)?;
+            return Ok(normalized);
+        }
         let canonical = candidate
             .canonicalize()
             .with_context(|| format!("path does not exist: {input}"))?;
@@ -196,6 +275,10 @@ impl Workspace {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             bail!("path is required");
+        }
+        // `~` would expand to the local home, not the runner's; reject it.
+        if self.remote && (trimmed == "~" || trimmed.starts_with("~/")) {
+            bail!("home-relative paths are not supported on a remote runner workspace: {trimmed}");
         }
         let path = expand_home(trimmed)?;
         if path.is_absolute() {
