@@ -1,0 +1,180 @@
+// Cursor `agent.v1` wire schema (partial), reverse-engineered for Roder.
+//
+// PROVENANCE
+// ----------
+// Field numbers and message shapes here are transcribed from the authoritative
+// Cursor app bundle protobuf-es schema, found in:
+//
+//   /Applications/Cursor.app/Contents/Resources/app/extensions/cursor-agent/
+//     dist/cursor-agent-worker/dist/main.js   (generated protobuf-es output)
+//
+// and cross-checked against a live `cursor-agent` `agent.v1.AgentService/Run`
+// capture (see docs/roder-cursor-agent-runtime-protocol.md). This is the SAME
+// source the existing encoders in `src/proto.rs` were derived from.
+//
+// SCOPE / STATUS
+// --------------
+// This is NOT the complete Cursor schema. It covers only the messages Roder
+// encodes today plus the full inline-image contract. Messages/fields Roder does
+// not send are included where known for context and marked accordingly. Field
+// numbers are wire-truth; field *names* mirror the bundle where recovered and
+// are otherwise best-effort.
+//
+// This file is reference/codegen material. Roder hand-rolls the encoding in
+// `src/proto.rs` (no protoc build step). Keep the two in sync: every field
+// number below should match a comment in `src/proto.rs`.
+//
+// Verified live: text turns, agentic tool loop (read/write/shell/search), and
+// the agent mode field. Inline images are encoded per the bundle schema and
+// covered by unit tests, but had not been confirmed against a live image turn
+// at time of writing.
+
+syntax = "proto3";
+
+package agent.v1;
+
+// ===========================================================================
+// Run request
+// ===========================================================================
+
+// AgentService/Run initial client message payload.
+// Roder encodes: f1, f2, f5, f9, f12, f16, f19 (see encode_agent_run_request).
+message AgentRunRequest {
+  bytes conversation_state = 1;                 // sent empty by Roder
+  ConversationAction action = 2;
+  bytes unknown_f4 = 4;                         // sent empty by Roder
+  string conversation_id = 5;
+  RequestedModel requested_model = 9;
+  uint32 unknown_f12 = 12;                      // sent as 0 by Roder
+  string conversation_id_dup = 16;              // mirrors field 5
+  // Gates inline image bytes. Cursor only honours SelectedImage.data /
+  // ConversationHistoryImageContent when this is true. REQUIRED for images.
+  bool client_supports_inline_images = 19;
+}
+
+message RequestedModel {
+  string model_id = 1;
+  // Repeated key/value params. Roder sends:
+  //   thinking=true, context=300k, effort=high, fast=false
+  // effort=high is required for full agentic thoroughness.
+  repeated ModelParam params = 3;
+}
+
+message ModelParam {
+  string key = 1;
+  string value = 2;
+}
+
+message ConversationAction {
+  UserMessageAction user_message_action = 1;
+}
+
+message UserMessageAction {
+  UserMessage user_message = 1;
+  ConversationHistory conversation_history = 7;  // omitted when empty
+}
+
+// AgentMode enum (UserMessage.mode). AGENT(1) enables the tool loop; ASK(2) is
+// read-only ("Ask mode") and refuses edits.
+enum AgentMode {
+  AGENT_MODE_UNSPECIFIED = 0;
+  AGENT_MODE_AGENT = 1;
+  AGENT_MODE_ASK = 2;
+  AGENT_MODE_PLAN = 3;
+}
+
+message UserMessage {
+  string text = 1;
+  string message_id = 2;
+  SelectedContext selected_context = 3;          // attached images ride here
+  AgentMode mode = 4;
+}
+
+// ===========================================================================
+// Inline images on the live (current) user message
+// ===========================================================================
+
+message SelectedContext {
+  repeated SelectedImage selected_images = 1;
+  // Other selected_* context (files, symbols, docs) exists in the bundle but is
+  // not encoded by Roder.
+}
+
+message SelectedImage {
+  string uuid = 2;
+  string path = 3;
+  ImageDimension dimension = 4;
+  string mime_type = 7;
+  // oneof source { bytes data = 8; ... }
+  // Inline raw image bytes. Roder sends only `data` (+ mime_type); `data`
+  // requires AgentRunRequest.client_supports_inline_images = true.
+  bytes data = 8;
+}
+
+message ImageDimension {
+  uint32 width = 1;   // not sent by Roder
+  uint32 height = 2;  // not sent by Roder
+}
+
+// ===========================================================================
+// Conversation history (prior turns)
+// ===========================================================================
+
+message ConversationHistory {
+  repeated ConversationHistoryMessage messages = 1;
+}
+
+message ConversationHistoryMessage {
+  // Exactly one of:
+  ConversationHistoryUserMessage user = 1;
+  ConversationHistoryAssistantMessage assistant = 2;
+  ConversationHistoryToolMessage tool = 3;
+}
+
+message ConversationHistoryUserMessage {
+  repeated ConversationHistoryUserContent content = 1;
+}
+
+message ConversationHistoryUserContent {
+  // oneof content:
+  ConversationHistoryTextContent text = 1;
+  ConversationHistoryImageContent image = 2;   // history images ride here
+}
+
+message ConversationHistoryTextContent {
+  string text = 1;
+}
+
+// History images carry data as a STRING (base64 / data-URL), unlike the live
+// SelectedImage which uses raw `bytes`.
+message ConversationHistoryImageContent {
+  string data = 1;
+  string mime_type = 2;
+}
+
+message ConversationHistoryAssistantMessage {
+  repeated ConversationHistoryAssistantContent content = 1;
+}
+
+message ConversationHistoryAssistantContent {
+  // oneof content:
+  ConversationHistoryTextContent text = 1;
+  ConversationHistoryToolCall tool_call = 4;
+}
+
+message ConversationHistoryToolCall {
+  string id = 1;
+  string name = 2;
+  string args_json = 3;
+}
+
+message ConversationHistoryToolMessage {
+  string tool_call_id = 1;
+  string tool_name = 2;
+  repeated ToolResultContent content = 3;
+  bool is_error = 4;
+}
+
+message ToolResultContent {
+  string text = 1;
+}
