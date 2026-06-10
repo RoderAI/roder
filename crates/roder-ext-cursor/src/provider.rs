@@ -149,9 +149,10 @@ impl InferenceEngine for CursorInferenceEngine {
             .await;
         }
 
+        let workspace_for_ctx = workspace.clone();
         let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
             vec![encode_request_context_frame(
-                &CursorContextOptions::from_workspace(workspace),
+                &CursorContextOptions::from_workspace(workspace_for_ctx),
             )]
         });
         let (prompt, history) = cursor_request_parts(&request);
@@ -164,6 +165,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 model: request.model.model.clone(),
                 context_frames,
                 history,
+                workspace,
             },
         )
         .await?;
