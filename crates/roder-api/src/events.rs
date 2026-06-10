@@ -221,7 +221,7 @@ fn default_model_selection() -> ModelSelection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InferenceRoutingDecisionEvent {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,

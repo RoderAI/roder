@@ -163,8 +163,8 @@ the selected root or a child path of that root.
 ```
 
 `item` is a typed visible row or event within a turn. Public item `type` values
-are `userMessage`, `agentMessage`, `reasoning`, `toolExecution`, `compaction`,
-`error`, and `raw`.
+are `userMessage`, `agentMessage`, `reasoning`, `toolExecution`,
+`routingDecision`, `compaction`, `error`, and `raw`.
 
 `provider` is an inference backend. Provider/model notation is exposed as a
 provider id plus model id, for example `openai` and `gpt-5.5`, or provider
@@ -4939,6 +4939,8 @@ or the remote WebSocket notification stream for remote clients.
 `seq`, `eventId`, `threadId`, `turnId`, `timestamp`, and `event`. The `event`
 is `itemStarted`, `itemDelta`, or `itemCompleted`, and every lifecycle update
 targets the same stable item id that later appears in `thread/read`.
+Inference routing decisions are emitted as completed `routingDecision` items and
+remain visible when a completed thread is read or resumed.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
 `completed`, `failed`, or `interrupted`. Completed and failed turns include

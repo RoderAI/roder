@@ -22,7 +22,7 @@ use roder_api::context::ContextBlock;
 use roder_api::discovery::{
     DiscoveryCatalog, DiscoveryCatalogGroup, DiscoveryCatalogItem, DiscoveryPromotionRecord,
 };
-use roder_api::events::{InferenceRoutingDecisionEvent, ThreadId, TurnId};
+use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
 pub use roder_api::goals::{ThreadGoal, ThreadGoalStatus};
 use roder_api::inference::{
@@ -30,8 +30,8 @@ use roder_api::inference::{
     TokenUsage,
 };
 use roder_api::inference_routing::{
-    InferenceRoutingCostDelta, InferenceRoutingOptionDescriptor, InferenceRoutingOutcome,
-    ModelSelectionMode,
+    InferenceRoutingCostDelta, InferenceRoutingDecision, InferenceRoutingOptionDescriptor,
+    InferenceRoutingOutcome, ModelSelectionMode,
 };
 use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
@@ -261,6 +261,12 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    RoutingDecision {
+        id: String,
+        decision: InferenceRoutingDecisionEvent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
     Compaction {
         id: String,
         summary: String,
@@ -333,6 +339,15 @@ impl From<roder_api::thread::ThreadItem> for Item {
                 input,
                 output,
                 error,
+            },
+            roder_api::thread::ThreadItem::RoutingDecision {
+                id,
+                decision,
+                status,
+            } => Self::RoutingDecision {
+                id,
+                decision: decision.into(),
+                status: status.map(Into::into),
             },
             roder_api::thread::ThreadItem::Compaction {
                 id,
@@ -2825,6 +2840,34 @@ pub struct InferenceRoutingStatusParams {
     pub turn_id: Option<TurnId>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct InferenceRoutingDecisionEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(default)]
+    pub round_index: u32,
+    pub default_selection: ModelSelection,
+    pub selected_selection: ModelSelection,
+    pub decision: InferenceRoutingDecision,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+impl From<roder_api::events::InferenceRoutingDecisionEvent> for InferenceRoutingDecisionEvent {
+    fn from(event: roder_api::events::InferenceRoutingDecisionEvent) -> Self {
+        Self {
+            thread_id: event.thread_id,
+            turn_id: event.turn_id,
+            round_index: event.round_index,
+            default_selection: event.default_selection,
+            selected_selection: event.selected_selection,
+            decision: event.decision,
+            timestamp: event.timestamp,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InferenceRoutingStatusResult {
@@ -4232,6 +4275,47 @@ mod tests {
                 "status": "completed"
             })
         );
+    }
+
+    #[test]
+    fn thread_item_routing_decision_serializes_as_typed_public_item() {
+        let selected = roder_api::inference::ModelSelection {
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-5".to_string(),
+        };
+        let value = serde_json::to_value(Item::RoutingDecision {
+            id: "turn-1-routing-decision-0".to_string(),
+            decision: InferenceRoutingDecisionEvent {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                round_index: 0,
+                default_selection: roder_api::inference::ModelSelection {
+                    provider: "openai".to_string(),
+                    model: "gpt-5.5".to_string(),
+                },
+                selected_selection: selected.clone(),
+                decision: roder_api::inference_routing::InferenceRoutingDecision::selected(
+                    "local",
+                    selected,
+                    "Large diff and failing tests",
+                ),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+            status: Some(ThreadItemStatus::Completed),
+        })
+        .unwrap();
+
+        assert_eq!(value["type"], "routingDecision");
+        assert_eq!(value["id"], "turn-1-routing-decision-0");
+        assert_eq!(
+            value["decision"]["selectedSelection"]["model"],
+            "claude-sonnet-5"
+        );
+        assert_eq!(
+            value["decision"]["decision"]["reason"],
+            "Large diff and failing tests"
+        );
+        assert_eq!(value["status"], "completed");
     }
 
     #[test]

@@ -246,6 +246,10 @@ where
                     );
                 }
             }
+            Item::RoutingDecision { decision, .. } => {
+                self.timeline
+                    .push_system(routing_decision_summary(decision));
+            }
             Item::Compaction { .. } => {}
             Item::Error { message, .. } => {
                 self.timeline.push_error(message.clone());
@@ -279,6 +283,10 @@ where
                 }
             }
             Item::ToolExecution { .. } => {}
+            Item::RoutingDecision { decision, .. } => {
+                self.timeline
+                    .prepend_system(routing_decision_summary(decision));
+            }
             Item::Compaction { .. } => {}
             Item::Error { message, .. } => {
                 self.timeline.prepend_error(message.clone());
@@ -338,6 +346,33 @@ fn reasoning_blocks_text(blocks: &[String]) -> String {
         .cloned()
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn routing_decision_summary(decision: &roder_protocol::InferenceRoutingDecisionEvent) -> String {
+    let selected = format!(
+        "{} / {}",
+        decision.selected_selection.provider, decision.selected_selection.model
+    );
+    let verb = match format!("{:?}", decision.decision.outcome).as_str() {
+        "Abstained" => "kept",
+        "Fallback" => "fell back to",
+        "Escalated" => "escalated to",
+        _ => "selected",
+    };
+    let thinking = decision
+        .decision
+        .reasoning
+        .as_ref()
+        .map(|reasoning| {
+            if !reasoning.enabled {
+                "thinking off".to_string()
+            } else {
+                format!("thinking {}", reasoning.level.as_deref().unwrap_or("on"))
+            }
+        })
+        .map(|label| format!(" ({label})"))
+        .unwrap_or_default();
+    format!("Auto {verb} {selected}{thinking}")
 }
 
 pub(super) async fn load_thread<C>(client: &C, thread_id: &str) -> anyhow::Result<Option<Thread>>

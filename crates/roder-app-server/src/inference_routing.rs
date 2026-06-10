@@ -125,7 +125,7 @@ fn status_result(
         latest_outcome,
         default_selection,
         selected_selection,
-        latest_decision,
+        latest_decision: latest_decision.map(Into::into),
         summary,
     }
 }
@@ -176,7 +176,7 @@ fn metrics_result(
     InferenceRoutingMetricsResult {
         thread_id,
         turn_id,
-        decisions,
+        decisions: decisions.into_iter().map(Into::into).collect(),
         decision_count,
         outcome_counts,
         cost,
@@ -452,6 +452,10 @@ mod tests {
         assert_eq!(result.router_id.as_deref(), Some("local"));
         assert_eq!(result.selected_selection, Some(selected));
         assert!(result.latest_decision.is_some());
+        let json = serde_json::to_value(&result.latest_decision).unwrap();
+        assert_eq!(json["threadId"], "thread");
+        assert_eq!(json["turnId"], "turn");
+        assert_eq!(json["defaultSelection"]["provider"], "mock");
     }
 
     fn estimate(selection: ModelSelection, total_cost_usd: f64) -> InferenceRoutingCostEstimate {
