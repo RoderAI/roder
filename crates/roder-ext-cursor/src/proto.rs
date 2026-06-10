@@ -1,3 +1,11 @@
+// Cursor `agent.v1` hand-rolled protobuf encoders/decoders.
+//
+// The wire schema (message shapes + field numbers) is documented in
+// `../proto/agent_v1.proto`, transcribed from the Cursor app bundle's
+// protobuf-es output. That `.proto` is reference/codegen material only — this
+// module encodes by hand. Keep the two in sync: every field number used here
+// should have a matching definition in `agent_v1.proto`.
+
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
