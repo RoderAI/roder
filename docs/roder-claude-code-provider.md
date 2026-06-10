@@ -67,6 +67,23 @@ The initial provider maps SDK streaming events into canonical Roder inference ev
 
 Structured `response_format` is rejected before a prompt is sent because the current Claude Code SDK path does not expose a stable structured-output contract.
 
+## Session reuse and automatic compaction
+
+The provider keeps overflow under control with two layers:
+
+**1. CLI session reuse (default on).** Instead of replaying the whole transcript every turn, the provider resumes the persisted `claude` CLI session (`ClaudeAgentOptions::resume`) and sends only the new transcript tail — the items after the previous turn's final assistant message. The CLI then keeps history server-side and applies its *own* auto-compaction, so a long thread no longer rebuilds a multi-hundred-thousand-token prompt on each request. Mechanics:
+
+- The provider records the session id returned on `turn/completed` plus a fingerprint of the transcript prefix the session is known to contain (`SessionContinuity` in `crates/roder-ext-claude-code/src/provider.rs`).
+- A turn resumes only when there is a stored session id and the current transcript still extends that fingerprinted prefix. If Roder rewrote the head (e.g. its own compaction inserted a `ContextCompaction` summary) or a new conversation started, the prefix check fails and the provider falls back to a fresh full-transcript send, starting a new session.
+- Any turn error clears the stored session so the next attempt replays the full transcript rather than resuming a stale/invalid session.
+- Set `ClaudeCodeConfig::reuse_cli_session = Some(false)` to force the legacy behavior of replaying the full transcript every turn.
+
+**2. Client-side compaction (safety net).** Because session reuse can fall back to a full send, the fresh-send path still needs to fit. claude-code models are catalogued with `supports_compaction = false`, so Roder proactively summarizes the transcript once the estimated token count reaches the model's `auto_compact_token_limit` (e.g. 900k for the 1M-window aliases) instead of waiting for the full context window. If a turn still fails with a context-overflow error (`Prompt is too long`, `Prompt too long`, `input exceeds`, or `context window`), the next turn force-compacts before resending.
+
+When `file_backed_dynamic_context` is enabled, the pre-compaction transcript is written to a chat-history artifact so earlier details remain recoverable via `read_artifact`.
+
+> Note: this client-side compaction is specific to the `claude-code` CLI provider. The direct **`anthropic`** API-key provider instead uses Anthropic's native server-side compaction: those models are catalogued with `supports_compaction = true`, and Roder forwards `auto_compact_token_limit` as a `context_management` edit (`compact_20260112`, beta header `anthropic-beta: compact-2026-01-12`) so the server summarizes older turns once input crosses the trigger (clamped to Anthropic's 50k-token minimum). See `crates/roder-ext-anthropic/src/provider.rs`.
+
 ## Tool safety
 
 Claude Code tool-use events are surfaced through Roder's canonical event stream. The provider installs a default SDK `can_use_tool` callback that denies unmapped Claude Code tool execution, so the harness does not run local filesystem or shell tools outside Roder while same-stream `TurnToolExecutor` mapping is still being hardened. Broader same-stream execution of Claude Code tool requests through `TurnToolExecutor` remains the next hardening area before advertising more aggressive tool autonomy.

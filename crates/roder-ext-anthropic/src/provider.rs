@@ -58,8 +58,42 @@ impl AnthropicEngine {
             body["tools"] = json!(anthropic_tools(request));
             body["tool_choice"] = anthropic_tool_choice(&request.tool_choice);
         }
+        if let Some(trigger) = anthropic_compaction_trigger(request) {
+            body["context_management"] = json!({
+                "edits": [{
+                    "type": COMPACTION_EDIT_TYPE,
+                    "trigger": { "type": "input_tokens", "value": trigger },
+                }]
+            });
+        }
         body
     }
+}
+
+/// Beta header that enables native server-side context compaction.
+const COMPACTION_BETA: &str = "compact-2026-01-12";
+/// Context-management edit type for the `compact-2026-01-12` beta.
+const COMPACTION_EDIT_TYPE: &str = "compact_20260112";
+/// Anthropic rejects compaction triggers below 50k input tokens.
+const MIN_COMPACTION_TRIGGER: u32 = 50_000;
+
+/// Returns the input-token trigger for server-side compaction when the runtime
+/// requests it, clamped to Anthropic's minimum of 50k tokens.
+fn anthropic_compaction_trigger(request: &AgentInferenceRequest) -> Option<u32> {
+    request
+        .runtime
+        .auto_compact_token_limit
+        .filter(|threshold| *threshold > 0)
+        .map(|threshold| threshold.max(MIN_COMPACTION_TRIGGER))
+}
+
+/// Beta flags required by the request body (e.g. native compaction).
+fn anthropic_betas(request: &AgentInferenceRequest) -> Vec<String> {
+    let mut betas = Vec::new();
+    if anthropic_compaction_trigger(request).is_some() {
+        betas.push(COMPACTION_BETA.to_string());
+    }
+    betas
 }
 
 #[async_trait::async_trait]
@@ -110,6 +144,7 @@ impl InferenceEngine for AnthropicEngine {
             client: anthropic_stream_client()?,
             url: ANTHROPIC_MESSAGES_URL.to_string(),
             api_key: self.api_key.clone(),
+            betas: anthropic_betas(&request),
             body: Self::map_request(&request),
             policy: request.runtime.reliability.clone().unwrap_or_default(),
         };
@@ -544,5 +579,43 @@ mod tests {
         let body = AnthropicEngine::map_request(&request);
         assert_eq!(body["tools"][0]["name"], "webwright__run_script");
         assert_eq!(body["tool_choice"]["name"], "webwright__run_script");
+    }
+
+    #[test]
+    fn emits_native_server_side_compaction_when_runtime_requests_it() {
+        let mut request = request();
+        request.runtime.auto_compact_token_limit = Some(900_000);
+
+        let body = AnthropicEngine::map_request(&request);
+
+        let edit = &body["context_management"]["edits"][0];
+        assert_eq!(edit["type"], COMPACTION_EDIT_TYPE);
+        assert_eq!(edit["trigger"]["type"], "input_tokens");
+        assert_eq!(edit["trigger"]["value"], 900_000);
+        assert_eq!(anthropic_betas(&request), vec![COMPACTION_BETA.to_string()]);
+    }
+
+    #[test]
+    fn clamps_compaction_trigger_to_anthropic_minimum() {
+        let mut request = request();
+        request.runtime.auto_compact_token_limit = Some(10_000);
+
+        let body = AnthropicEngine::map_request(&request);
+
+        assert_eq!(
+            body["context_management"]["edits"][0]["trigger"]["value"],
+            MIN_COMPACTION_TRIGGER
+        );
+    }
+
+    #[test]
+    fn omits_compaction_when_runtime_has_no_limit() {
+        let mut request = request();
+        request.runtime.auto_compact_token_limit = None;
+
+        let body = AnthropicEngine::map_request(&request);
+
+        assert!(body.get("context_management").is_none());
+        assert!(anthropic_betas(&request).is_empty());
     }
 }

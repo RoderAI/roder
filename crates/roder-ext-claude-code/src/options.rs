@@ -13,10 +13,19 @@ pub fn build_options(
     request: &AgentInferenceRequest,
     tool_executor: Option<Arc<dyn TurnToolExecutor>>,
     cwd: Option<&Path>,
+    resume_session_id: Option<&str>,
 ) -> anyhow::Result<ClaudeAgentOptions> {
     let mut builder = ClaudeAgentOptions::builder()
         .model(request.model.model.clone())
         .include_partial_messages(true);
+    // Resume the persisted CLI session so the `claude` process keeps the prior
+    // conversation server-side and applies its own auto-compaction. When set,
+    // the provider only sends the new transcript tail as the prompt instead of
+    // replaying the whole transcript every turn (which is what overflowed the
+    // 1M context window with "Prompt is too long").
+    if let Some(session_id) = resume_session_id.filter(|value| !value.trim().is_empty()) {
+        builder = builder.resume(session_id.to_string());
+    }
     if let Some(cli_path) = config
         .cli_path
         .as_deref()
@@ -36,10 +45,10 @@ pub fn build_options(
     if let Some(setting_sources) = &config.setting_sources {
         builder = builder.setting_sources(parse_setting_sources(setting_sources)?);
     }
-    if request.reasoning.enabled {
-        if let Some(level) = request.reasoning.level.as_deref() {
-            builder = builder.effort(level.to_string());
-        }
+    if request.reasoning.enabled
+        && let Some(level) = request.reasoning.level.as_deref()
+    {
+        builder = builder.effort(level.to_string());
     }
     if let Some(max_tokens) = request.output.max_tokens {
         let budget = i32::try_from(max_tokens).unwrap_or(i32::MAX);
@@ -379,8 +388,10 @@ mod tests {
                 permission_mode: Some("default".to_string()),
                 setting_sources: Some(vec!["user".to_string(), "project".to_string()]),
                 workspace: None,
+                reuse_cli_session: None,
             },
             &request,
+            None,
             None,
             None,
         )
@@ -441,6 +452,7 @@ mod tests {
             &request,
             Some(Arc::new(FakeToolExecutor)),
             None,
+            None,
         )
         .unwrap();
 
@@ -464,11 +476,48 @@ mod tests {
         assert!(options.tools.is_empty());
 
         request.tool_choice = ToolChoice::None;
-        let options = build_options(&ClaudeCodeConfig::default(), &request, None, None).unwrap();
+        let options =
+            build_options(&ClaudeCodeConfig::default(), &request, None, None, None).unwrap();
         assert!(options.sdk_mcp_servers.is_empty());
         assert!(options.allowed_tools.is_empty());
         // With no Roder tools advertised we leave the built-in tool set alone.
         assert!(!options.tools_set);
+    }
+
+    #[test]
+    fn resume_session_id_is_passed_through_to_options() {
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "claude-code".to_string(),
+                model: "sonnet".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints {
+                hosted_web_search: HostedWebSearchConfig::disabled(),
+                ..RuntimeHints::default()
+            },
+            metadata: serde_json::json!({}),
+        };
+
+        let options = build_options(
+            &ClaudeCodeConfig::default(),
+            &request,
+            None,
+            None,
+            Some("session-123"),
+        )
+        .unwrap();
+        assert_eq!(options.resume.as_deref(), Some("session-123"));
+
+        // Blank/whitespace ids never resume a session.
+        let options =
+            build_options(&ClaudeCodeConfig::default(), &request, None, None, Some("  ")).unwrap();
+        assert!(options.resume.is_none());
     }
 
     #[test]

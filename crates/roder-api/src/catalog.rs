@@ -1006,7 +1006,13 @@ const fn anthropic_model(
         context_window,
         max_context_window: context_window,
         auto_compact_token_limit,
-        supports_compaction: false,
+        // The direct Anthropic API supports native server-side compaction
+        // (`context_management` with a `compact_20260112` edit). Keep this
+        // `true` so Roder forwards `auto_compact_token_limit` as the input-token
+        // trigger and defers to the server instead of compacting the transcript
+        // client-side, which is what prevents 1M sessions ending in
+        // "Prompt is too long".
+        supports_compaction: true,
         supports_images: false,
         supports_tools: true,
         supports_structured: false,
@@ -1034,7 +1040,12 @@ const fn claude_code_model(
         context_window,
         max_context_window: context_window,
         auto_compact_token_limit,
-        supports_compaction: true,
+        // The Claude Code provider re-sends the full Roder transcript every turn
+        // and does not reuse CLI sessions, so there is no server-side compaction
+        // to rely on. Keep this `false` so Roder proactively compacts the
+        // transcript on the fly at `auto_compact_token_limit` instead of waiting
+        // for the full context window (which overflows into "Prompt too long").
+        supports_compaction: false,
         supports_images: false,
         supports_tools: true,
         supports_structured: false,
@@ -1527,6 +1538,14 @@ mod tests {
         assert_eq!(direct.context_window, 1_000_000);
         assert_eq!(claude_code.context_window, 1_000_000);
         assert_eq!(claude_code.auto_compact_token_limit, 900_000);
+        // The Claude Code provider has no server-side compaction, so Roder must
+        // compact the transcript locally before the prompt overflows the window.
+        assert!(!claude_code.supports_compaction);
+        // The direct Anthropic API does support native server-side compaction,
+        // so the threshold is forwarded to the server instead of compacting the
+        // transcript locally.
+        assert!(direct.supports_compaction);
+        assert_eq!(direct.auto_compact_token_limit, 900_000);
     }
 
     #[test]
