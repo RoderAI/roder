@@ -419,6 +419,46 @@ test("agent read-only helpers call safe app-server methods", async () => {
   ]);
 });
 
+test("agent listSkills resolves a workspace id and passes cwd", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    if (request.method === "workspace/list") {
+      return { jsonrpc: "2.0", id: request.id, result: { workspaces: [] } };
+    }
+    if (request.method === "workspace/create") {
+      return { jsonrpc: "2.0", id: request.id, result: { workspace: { id: "ws-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: { skills: [], diagnostics: [] } };
+  });
+  const agent = await RoderAgent.create({ transport, cwd: "/workspace" });
+
+  await agent.listSkills();
+
+  const listRequest = requests.find((request) => request.method === "skills/list");
+  assert.deepEqual(listRequest?.params, { workspaceId: "ws-1", cwd: "/workspace" });
+});
+
+test("agent listSkills prefers the configured workspace id and explicit cwd", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    return { jsonrpc: "2.0", id: request.id, result: { skills: [], diagnostics: [] } };
+  });
+  const agent = await RoderAgent.create({ transport, workspaceId: "ws-9", cwd: "/workspace" });
+
+  await agent.listSkills({ cwd: "/workspace/sub" });
+
+  assert.deepEqual(requests, [
+    {
+      jsonrpc: "2.0",
+      id: requests[0]?.id,
+      method: "skills/list",
+      params: { workspaceId: "ws-9", cwd: "/workspace/sub" },
+    },
+  ]);
+});
+
 test("agent approval callback resolves approval requests", async () => {
   const methods: string[] = [];
   const transport = new InMemoryTransport((request) => {

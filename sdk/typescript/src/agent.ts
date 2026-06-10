@@ -169,6 +169,21 @@ export class RoderAgent {
     return this.client.call("tools/list");
   }
 
+  /**
+   * Lists skills for the agent's workspace. Always sends a workspaceId (resolved from cwd when
+   * not configured), which makes the server rebuild its skill registry from the workspace roots —
+   * the app-server boots with builtin skills only, so call this after creating the agent (and
+   * after adding skill directories) for workspace skills to reach subsequent turns.
+   */
+  async listSkills(options: { cwd?: string } = {}): Promise<unknown> {
+    const cwd = options.cwd ?? this.options.cwd ?? this.options.local?.cwd;
+    const workspaceId = this.options.workspaceId ?? (await this.resolveWorkspaceId(cwd));
+    return this.client.call("skills/list", {
+      workspaceId,
+      ...(cwd === undefined ? {} : { cwd }),
+    });
+  }
+
   async listCommands(): Promise<unknown> {
     return this.client.call("commands/list");
   }
