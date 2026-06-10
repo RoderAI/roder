@@ -991,7 +991,7 @@ fn active_turn_prompt_shortcut(
         return None;
     }
     match key.code {
-        KeyCode::Tab | KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
+        KeyCode::Tab if key.modifiers == KeyModifiers::NONE => {
             Some(ActiveTurnPromptShortcut::Queue)
         }
         _ => None,
@@ -1207,6 +1207,7 @@ where
     image_attachments: Vec<ImageAttachment>,
     last_image_attachment_remove_buttons: Vec<ImageAttachmentRemoveButton>,
     last_queued_prompt_buttons: Vec<QueuedPromptButton>,
+    hovered_queued_prompt_button: Option<(usize, QueuedPromptAction)>,
     queued_prompts: PromptQueue,
     last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
@@ -1650,6 +1651,7 @@ where
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
             last_queued_prompt_buttons: Vec::new(),
+            hovered_queued_prompt_button: None,
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
             command_catalog,
@@ -2000,9 +2002,6 @@ where
                                     }
                                 }
                                 _ => match handle_composer_key(&mut self.composer, key) {
-                                    ComposerKeyAction::Submit if self.active_turn_id.is_some() => {
-                                        self.queue_or_start_current_prompt().await;
-                                    }
                                     ComposerKeyAction::Submit => self.submit_prompt().await,
                                     ComposerKeyAction::Edited => {
                                         self.slash_command_selection = 0;
@@ -3570,6 +3569,7 @@ where
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         self.update_context_counter_hover(&mouse);
+        self.update_queued_prompt_button_hover(&mouse);
         if let Some(modal) = self.tool_detail_modal.as_mut() {
             modal.handle_mouse(mouse);
             return;
@@ -3628,6 +3628,14 @@ where
         self.last_image_attachment_remove_buttons.clear();
         self.push_event(format!("detached image {}", attachment.label()));
         true
+    }
+
+    fn update_queued_prompt_button_hover(&mut self, mouse: &MouseEvent) {
+        self.hovered_queued_prompt_button = self
+            .last_queued_prompt_buttons
+            .iter()
+            .find(|button| rect_contains(button.area, mouse.column, mouse.row))
+            .map(|button| (button.index, button.action));
     }
 
     fn handle_queued_prompt_mouse(&mut self, mouse: MouseEvent) -> bool {
@@ -3893,6 +3901,7 @@ where
             composer_index += 1;
         } else {
             self.last_queued_prompt_buttons.clear();
+            self.hovered_queued_prompt_button = None;
         }
         if self.active_turn_id.is_some() {
             f.render_widget(self.working_line(), chunks[composer_index]);
@@ -4218,10 +4227,12 @@ where
         f.render_widget(self.queued_prompt_bar(), area);
         self.last_queued_prompt_buttons = queued_prompt_buttons(area, self.queued_prompts.len());
         for button in &self.last_queued_prompt_buttons {
+            let hovered = self.hovered_queued_prompt_button
+                == Some((button.index, button.action));
             f.render_widget(Clear, button.area);
             f.render_widget(
                 Paragraph::new(queued_prompt_action_label(button.action))
-                    .style(queued_prompt_action_style(button.action, self.theme)),
+                    .style(queued_prompt_action_style(button.action, self.theme, hovered)),
                 button.area,
             );
         }
@@ -6848,11 +6859,16 @@ fn queued_prompt_action_label(action: QueuedPromptAction) -> &'static str {
     }
 }
 
-fn queued_prompt_action_style(action: QueuedPromptAction, theme: Theme) -> Style {
-    match action {
+fn queued_prompt_action_style(action: QueuedPromptAction, theme: Theme, hovered: bool) -> Style {
+    let base = match action {
         QueuedPromptAction::Edit => theme.subtle(),
         QueuedPromptAction::Steer => theme.accent_soft(),
         QueuedPromptAction::Delete => theme.error(),
+    };
+    if hovered {
+        base.bg(theme.dialog_key_bg)
+    } else {
+        base
     }
 }
 
@@ -9302,6 +9318,7 @@ mod tests {
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
             last_queued_prompt_buttons: Vec::new(),
+            hovered_queued_prompt_button: None,
             queued_prompts: PromptQueue::default(),
             last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
@@ -12678,14 +12695,16 @@ mod tests {
     }
 
     #[test]
-    fn active_turn_prompt_shortcuts_queue_tab_and_enter() {
+    fn active_turn_prompt_shortcuts_queue_tab_only() {
+        // Tab queues a prompt while a turn is running.
         assert_eq!(
             active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), true),
             Some(ActiveTurnPromptShortcut::Queue)
         );
+        // Enter steers (not queues), so it is no longer a queue shortcut here.
         assert_eq!(
             active_turn_prompt_shortcut(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true),
-            Some(ActiveTurnPromptShortcut::Queue)
+            None
         );
     }
 

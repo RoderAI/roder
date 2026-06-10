@@ -482,11 +482,13 @@ fn user_prompt_continuation_lines_keep_prompt_width() {
     let mut timeline = TimelineState::default();
     timeline.push_user("first\nsecond");
 
+    // Rows: [0] blank top, [1] "▌ ❯ first", [2] "▌   second", [3] blank bottom.
     let rows = timeline
         .render(Theme::for_dark_background(true), Rect::new(0, 0, 40, 10))
         .text
         .lines
         .iter()
+        .skip(1) // skip blank top padding row
         .take(2)
         .map(|line| {
             line.spans
@@ -496,9 +498,47 @@ fn user_prompt_continuation_lines_keep_prompt_width() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(rows[0].trim_end(), "  ❯ first");
-    assert_eq!(rows[1].trim_end(), "    second");
+    assert_eq!(rows[0].trim_end(), "▌ ❯ first");
+    assert_eq!(rows[1].trim_end(), "▌   second");
     assert!(rows.iter().all(|row| row.chars().count() == 40));
+}
+
+#[test]
+fn user_prompt_long_line_wraps_instead_of_truncating() {
+    let mut timeline = TimelineState::default();
+    // Message that exceeds 40-char terminal width.
+    // " ❯ " prefix = 3 chars, rail "▌" = 1 char → text fits in 36 chars.
+    timeline.push_user("the quick brown fox jumps over the lazy dog and keeps running");
+
+    let rows = timeline
+        .render(Theme::for_dark_background(true), Rect::new(0, 0, 40, 10))
+        .text
+        .lines
+        .iter()
+        .skip(1) // skip blank top padding row
+        .take_while(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.style.bg == Some(Theme::for_dark_background(true).user_message_bg))
+        })
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    // Should produce multiple rows (wrapped), not a single truncated "..." row.
+    assert!(rows.len() >= 2, "long message should wrap to multiple rows");
+    assert!(
+        rows.iter().all(|row| row.chars().count() == 40),
+        "each wrapped row should fill the terminal width"
+    );
+    // Entire message content should be visible across wrapped rows, not cut off.
+    let combined: String = rows.iter().map(|r| r.trim()).collect::<Vec<_>>().join(" ");
+    assert!(!combined.contains("..."), "text should wrap, not truncate with ...");
+    assert!(combined.contains("lazy dog"), "wrapped content should contain full message");
 }
 
 #[test]

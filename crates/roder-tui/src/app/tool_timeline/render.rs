@@ -647,10 +647,29 @@ fn push_user_block_lines(
 
     let style = item_style(theme.user_surface(), selected, theme);
     let rail_style = item_style(theme.user_rail(), selected, theme);
+    let content_width = timeline_block_content_width(width);
+    // Prefix widths: " ❯ " = 3, "   " = 3 — text available after prefix.
+    let text_width = content_width.saturating_sub(3).max(1);
     push_timeline_block_row(lines, Vec::new(), style, rail_style, width);
-    for (line_index, line) in body.split('\n').enumerate() {
-        let prefix = if line_index == 0 { " ❯ " } else { "   " };
-        push_timeline_block_text_row(lines, &format!("{prefix}{line}"), style, rail_style, width);
+    let mut is_first = true;
+    for paragraph in body.split('\n') {
+        if paragraph.trim().is_empty() {
+            let prefix = if is_first { " ❯ " } else { "   " };
+            push_timeline_block_text_row(lines, prefix, style, rail_style, width);
+            is_first = false;
+            continue;
+        }
+        for wrapped in wrap_text(paragraph, text_width) {
+            let prefix = if is_first { " ❯ " } else { "   " };
+            is_first = false;
+            push_timeline_block_text_row(
+                lines,
+                &format!("{prefix}{wrapped}"),
+                style,
+                rail_style,
+                width,
+            );
+        }
     }
     push_timeline_block_row(lines, Vec::new(), style, rail_style, width);
 }
