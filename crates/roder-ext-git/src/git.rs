@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use roder_api::version_control::{
@@ -820,6 +822,7 @@ fn git_at(
     provider_id: &str,
     operation: VcsOperation,
 ) -> Result<String, VcsError> {
+    let command = format!("git {}", args.join(" "));
     let mut child = Command::new("git")
         .args(args)
         .current_dir(cwd)
@@ -829,24 +832,42 @@ fn git_at(
         .map_err(|err| VcsError::CommandFailed {
             provider_id: provider_id.to_string(),
             operation,
-            command: format!("git {}", args.join(" ")),
+            command: command.clone(),
             exit_code: None,
             stderr: err.to_string(),
         })?;
+    let stdout = child.stdout.take().ok_or_else(|| VcsError::CommandFailed {
+        provider_id: provider_id.to_string(),
+        operation,
+        command: command.clone(),
+        exit_code: None,
+        stderr: "failed to capture git stdout".to_string(),
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| VcsError::CommandFailed {
+        provider_id: provider_id.to_string(),
+        operation,
+        command: command.clone(),
+        exit_code: None,
+        stderr: "failed to capture git stderr".to_string(),
+    })?;
+    let stdout_reader = read_pipe(stdout);
+    let stderr_reader = read_pipe(stderr);
     let started = Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() < GIT_COMMAND_TIMEOUT => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = join_pipe(stdout_reader);
+                let _ = join_pipe(stderr_reader);
                 return Err(VcsError::CommandFailed {
                     provider_id: provider_id.to_string(),
                     operation,
-                    command: format!("git {}", args.join(" ")),
+                    command: command.clone(),
                     exit_code: None,
                     stderr: format!("timed out after {}s", GIT_COMMAND_TIMEOUT.as_secs()),
                 });
@@ -854,35 +875,59 @@ fn git_at(
             Err(err) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = join_pipe(stdout_reader);
+                let _ = join_pipe(stderr_reader);
                 return Err(VcsError::CommandFailed {
                     provider_id: provider_id.to_string(),
                     operation,
-                    command: format!("git {}", args.join(" ")),
+                    command: command.clone(),
                     exit_code: None,
                     stderr: err.to_string(),
                 });
             }
         }
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|err| VcsError::CommandFailed {
-            provider_id: provider_id.to_string(),
-            operation,
-            command: format!("git {}", args.join(" ")),
-            exit_code: None,
-            stderr: err.to_string(),
-        })?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    };
+    let stdout = join_pipe(stdout_reader).map_err(|err| VcsError::CommandFailed {
+        provider_id: provider_id.to_string(),
+        operation,
+        command: command.clone(),
+        exit_code: None,
+        stderr: err.to_string(),
+    })?;
+    let stderr = join_pipe(stderr_reader).map_err(|err| VcsError::CommandFailed {
+        provider_id: provider_id.to_string(),
+        operation,
+        command: command.clone(),
+        exit_code: None,
+        stderr: err.to_string(),
+    })?;
+    if status.success() {
+        return Ok(String::from_utf8_lossy(&stdout).into_owned());
     }
     Err(VcsError::CommandFailed {
         provider_id: provider_id.to_string(),
         operation,
-        command: format!("git {}", args.join(" ")),
-        exit_code: output.status.code(),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        command,
+        exit_code: status.code(),
+        stderr: String::from_utf8_lossy(&stderr).trim().to_string(),
     })
+}
+
+fn read_pipe<R>(mut reader: R) -> JoinHandle<std::io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+}
+
+fn join_pipe(handle: JoinHandle<std::io::Result<Vec<u8>>>) -> std::io::Result<Vec<u8>> {
+    handle
+        .join()
+        .unwrap_or_else(|_| Err(std::io::Error::other("failed to join git output reader")))
 }
 
 fn untracked_file_text(path: &Path) -> std::io::Result<Option<String>> {
@@ -893,6 +938,7 @@ fn untracked_file_text(path: &Path) -> std::io::Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::GIT_VCS_PROVIDER_ID;
 
     fn unique_temp(prefix: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -902,14 +948,24 @@ mod tests {
         std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
     }
 
-    fn run_git(root: &Path, args: &[&str]) {
+    fn git(workspace: &Path, args: &[&str]) {
         let status = Command::new("git")
-            .arg("-C")
-            .arg(root)
             .args(args)
+            .current_dir(workspace)
             .status()
             .unwrap();
-        assert!(status.success(), "git {args:?} failed");
+        assert!(
+            status.success(),
+            "git command failed: git {}",
+            args.join(" ")
+        );
+    }
+
+    fn write(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, content).unwrap();
     }
 
     #[test]
@@ -917,29 +973,48 @@ mod tests {
         if Command::new("git").arg("--version").output().is_err() {
             return;
         }
-        let root = unique_temp("roder-ext-git-list-files");
-        std::fs::create_dir_all(&root).unwrap();
-        run_git(&root, &["init"]);
-        std::fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
-        std::fs::write(root.join("tracked.txt"), "tracked").unwrap();
-        std::fs::write(root.join("untracked.txt"), "untracked").unwrap();
-        std::fs::write(root.join("ignored.txt"), "ignored").unwrap();
-        run_git(&root, &["add", ".gitignore", "tracked.txt"]);
+        let workspace = unique_temp("roder-ext-git-list-files");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let workspace = std::fs::canonicalize(workspace).unwrap();
+        git(&workspace, &["init"]);
+        git(&workspace, &["config", "user.email", "test@example.com"]);
+        git(&workspace, &["config", "user.name", "Test User"]);
+        write(&workspace.join(".gitignore"), "ignored.log\n");
+        write(&workspace.join("tracked.txt"), "tracked\n");
+        git(&workspace, &["add", ".gitignore", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        write(&workspace.join("untracked.txt"), "untracked\n");
+        write(&workspace.join("ignored.log"), "ignored\n");
+        write(&workspace.join("nested/scoped.txt"), "scoped\n");
 
-        let repo = GitRepo::open(&root, "git".to_string()).unwrap();
-        let files = repo.list_files(&root).unwrap();
-        let names = files
-            .iter()
-            .filter_map(|path| path.file_name())
-            .map(|name| name.to_string_lossy().to_string())
-            .collect::<BTreeSet<_>>();
+        let repo = GitRepo::open(&workspace, GIT_VCS_PROVIDER_ID.to_string()).unwrap();
+        let mut files = repo
+            .list_files(&workspace.join("nested"))
+            .unwrap()
+            .into_iter()
+            .map(|path| path.strip_prefix(&workspace).unwrap().to_path_buf())
+            .collect::<Vec<_>>();
+        files.sort();
 
-        assert!(names.contains(".gitignore"));
-        assert!(names.contains("tracked.txt"));
-        assert!(names.contains("untracked.txt"));
-        assert!(!names.contains("ignored.txt"));
-        assert!(files.iter().all(|path| path.is_absolute()));
+        assert_eq!(files, vec![PathBuf::from("nested/scoped.txt")]);
 
-        let _ = std::fs::remove_dir_all(root);
+        let mut all_files = repo
+            .list_files(&workspace)
+            .unwrap()
+            .into_iter()
+            .map(|path| path.strip_prefix(&workspace).unwrap().to_path_buf())
+            .collect::<Vec<_>>();
+        all_files.sort();
+        assert_eq!(
+            all_files,
+            vec![
+                PathBuf::from(".gitignore"),
+                PathBuf::from("nested/scoped.txt"),
+                PathBuf::from("tracked.txt"),
+                PathBuf::from("untracked.txt"),
+            ]
+        );
+
+        std::fs::remove_dir_all(workspace).unwrap();
     }
 }
