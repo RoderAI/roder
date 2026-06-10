@@ -303,6 +303,11 @@ fn transcript_contains_context_limit_failure(items: &[TranscriptItem]) -> bool {
         message.contains("context window")
             || message.contains("input exceeds")
             || message.contains("response.incomplete")
+            // Anthropic / Claude Code surface oversized prompts as "Prompt is too
+            // long" (or "Prompt too long"). Match both so a context overflow on the
+            // claude-code provider forces a local compaction on the next turn.
+            || message.contains("prompt is too long")
+            || message.contains("prompt too long")
     })
 }
 
@@ -653,6 +658,87 @@ mod tests {
             .unwrap();
 
         assert_eq!(compacted, transcript);
+    }
+
+    #[test]
+    fn prompt_too_long_errors_are_recognized_as_context_limit_failures() {
+        for message in [
+            "Prompt is too long: 1048576 tokens > 1000000 maximum",
+            "API Error: 400 prompt too long",
+            "Your input exceeds the context window of this model.",
+        ] {
+            let items = vec![TranscriptItem::Error(ErrorRecord {
+                message: message.to_string(),
+            })];
+            assert!(
+                transcript_contains_context_limit_failure(&items),
+                "expected context-limit failure for message: {message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn claude_code_models_compact_locally_on_the_fly() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-claude-code-compaction-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                // Force the proactive threshold low so the test does not have to
+                // build a million-token transcript. Claude Code models must honor
+                // this local threshold because the provider has no server-side
+                // compaction of its own.
+                auto_compact_token_limit: Some(1),
+                file_backed_dynamic_context: true,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+        let thread_id = runtime
+            .create_thread(Some("Claude Code compaction".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
+        let transcript = vec![
+            TranscriptItem::UserMessage(UserMessage {
+                text: "very large old context".repeat(20),
+                images: Vec::new(),
+            }),
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "old answer".to_string(),
+                phase: None,
+            }),
+            TranscriptItem::UserMessage(UserMessage {
+                text: "current prompt".to_string(),
+                images: Vec::new(),
+            }),
+        ];
+
+        let compacted = runtime
+            .compact_transcript_if_needed(&thread_id, &"turn".to_string(), "sonnet", transcript)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            &compacted[0],
+            TranscriptItem::ContextCompaction(summary)
+                if summary.summary.contains("Previous transcript was compacted")
+        ));
+        assert!(matches!(
+            &compacted[1],
+            TranscriptItem::UserMessage(message) if message.text == "current prompt"
+        ));
+        let _ = std::fs::remove_dir_all(thread_root);
     }
 
     #[tokio::test]

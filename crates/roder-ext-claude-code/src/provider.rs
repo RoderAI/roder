@@ -1,5 +1,7 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_stream::try_stream;
 use claude_code_sdk_rust::{ClaudeAgentClient, ClaudeAgentOptions, MessageResponse, StreamEvent};
@@ -11,6 +13,7 @@ use roder_api::inference::{
     InferenceProviderMetadata, InferenceTurnContext, MessageDelta, ModelDescriptor,
     ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted, ToolCallDelta,
 };
+use roder_api::transcript::TranscriptItem;
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -22,6 +25,17 @@ pub struct ClaudeCodeConfig {
     pub permission_mode: Option<String>,
     pub setting_sources: Option<Vec<String>>,
     pub workspace: Option<PathBuf>,
+    /// Reuse the persisted `claude` CLI session across turns (default: on) so
+    /// the CLI keeps history server-side and auto-compacts it, and Roder only
+    /// sends the new transcript tail each turn. Set to `Some(false)` to force
+    /// the legacy behavior of replaying the full transcript every turn.
+    pub reuse_cli_session: Option<bool>,
+}
+
+impl ClaudeCodeConfig {
+    fn session_reuse_enabled(&self) -> bool {
+        self.reuse_cli_session.unwrap_or(true)
+    }
 }
 
 #[async_trait::async_trait]
@@ -47,9 +61,23 @@ impl ClaudeCodeRunner for SdkClaudeCodeRunner {
     }
 }
 
+/// Tracks the persisted `claude` CLI session so successive turns resume it
+/// instead of replaying the whole transcript. `synced` holds a per-item
+/// fingerprint of the transcript prefix the CLI session is already known to
+/// contain (everything up to and including the last assistant message of the
+/// previous turn). If a later request no longer extends that prefix — e.g.
+/// Roder compacted the transcript or a brand-new conversation started — the
+/// fingerprint check fails and the provider falls back to a fresh full send.
+#[derive(Debug, Default)]
+struct SessionContinuity {
+    session_id: Option<String>,
+    synced: Vec<u64>,
+}
+
 pub struct ClaudeCodeEngine {
     config: ClaudeCodeConfig,
     runner: Arc<dyn ClaudeCodeRunner>,
+    continuity: Arc<Mutex<SessionContinuity>>,
 }
 
 impl ClaudeCodeEngine {
@@ -58,7 +86,11 @@ impl ClaudeCodeEngine {
     }
 
     pub fn new_with_runner(config: ClaudeCodeConfig, runner: Arc<dyn ClaudeCodeRunner>) -> Self {
-        Self { config, runner }
+        Self {
+            config,
+            runner,
+            continuity: Arc::new(Mutex::new(SessionContinuity::default())),
+        }
     }
 
     fn auth_configured(&self) -> bool {
@@ -121,10 +153,72 @@ impl InferenceEngine for ClaudeCodeEngine {
             .workspace
             .as_deref()
             .or_else(|| current_dir.as_deref());
-        let options = build_options(&self.config, &request, _ctx.tool_executor.clone(), cwd)?;
-        let prompt = prompt_from_request(&request);
-        let events = self.runner.stream(options, prompt).await?;
-        Ok(Box::pin(map_stream_events(events)))
+        let plan = self.plan_turn(&request);
+        let options = build_options(
+            &self.config,
+            &request,
+            _ctx.tool_executor.clone(),
+            cwd,
+            plan.resume_session_id.as_deref(),
+        )?;
+        let events = self.runner.stream(options, plan.prompt).await?;
+        Ok(Box::pin(map_stream_events(
+            events,
+            Arc::clone(&self.continuity),
+            plan.synced,
+        )))
+    }
+}
+
+/// Outcome of deciding whether the upcoming turn resumes the persisted CLI
+/// session (sending only the new transcript tail) or starts fresh (sending the
+/// whole transcript).
+struct TurnPlan {
+    resume_session_id: Option<String>,
+    prompt: String,
+    /// Fingerprint of the transcript prefix the session will be known to
+    /// contain once this turn is sent. Committed to `SessionContinuity` only
+    /// after the turn completes successfully.
+    synced: Vec<u64>,
+}
+
+impl ClaudeCodeEngine {
+    fn plan_turn(&self, request: &AgentInferenceRequest) -> TurnPlan {
+        let fingerprints = transcript_fingerprints(&request.transcript);
+        // The CLI session always contains everything up to and including the
+        // previous turn's final assistant message; only items after it are new
+        // input the resumed session has not seen yet.
+        let boundary = delta_boundary(&request.transcript);
+
+        if self.config.session_reuse_enabled()
+            && let Ok(state) = self.continuity.lock()
+        {
+            let can_resume = state.session_id.is_some()
+                && boundary > 0
+                && is_prefix(&state.synced, &fingerprints)
+                && boundary <= request.transcript.len();
+            if can_resume {
+                let delta = prompt_from_delta(request, boundary);
+                if !delta.trim().is_empty() {
+                    return TurnPlan {
+                        resume_session_id: state.session_id.clone(),
+                        prompt: delta,
+                        // After this resume the session covers the full current
+                        // transcript (prior items + this new tail).
+                        synced: fingerprints,
+                    };
+                }
+            }
+        }
+
+        // Fresh send: replay the whole transcript and start a new session. The
+        // synced baseline becomes the current transcript so the next turn can
+        // resume from here.
+        TurnPlan {
+            resume_session_id: None,
+            prompt: prompt_from_request(request),
+            synced: fingerprints,
+        }
     }
 }
 
@@ -136,8 +230,24 @@ fn validate_request(request: &AgentInferenceRequest) -> anyhow::Result<()> {
 }
 
 fn prompt_from_request(request: &AgentInferenceRequest) -> String {
+    prompt_from_items(request, &request.transcript)
+}
+
+/// Builds the prompt from only the transcript items at/after `boundary`, used
+/// when resuming a persisted CLI session that already holds the earlier items.
+fn prompt_from_delta(request: &AgentInferenceRequest, boundary: usize) -> String {
+    let tail = request.transcript.get(boundary..).unwrap_or(&[]);
+    prompt_from_items(request, tail)
+}
+
+fn prompt_from_items(request: &AgentInferenceRequest, items: &[TranscriptItem]) -> String {
     let mut parts = Vec::new();
-    for item in &request.transcript {
+    for item in items {
+        // Provider metadata (rate-limit blobs, tool-result echoes) is internal
+        // bookkeeping, not conversational input. Never replay it as a prompt.
+        if matches!(item, TranscriptItem::ProviderMetadata(_)) {
+            continue;
+        }
         parts.push(format!("{item:?}"));
     }
     if let Some(value) = request
@@ -154,7 +264,37 @@ fn prompt_from_request(request: &AgentInferenceRequest) -> String {
     }
 }
 
-fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> InferenceEventStream {
+/// Index of the first transcript item the CLI session has NOT seen yet: the
+/// position just after the previous turn's final assistant message. Returns 0
+/// when there is no prior assistant message (first turn -> send everything).
+fn delta_boundary(transcript: &[TranscriptItem]) -> usize {
+    transcript
+        .iter()
+        .rposition(|item| matches!(item, TranscriptItem::AssistantMessage(_)))
+        .map(|index| index + 1)
+        .unwrap_or(0)
+}
+
+fn transcript_fingerprints(transcript: &[TranscriptItem]) -> Vec<u64> {
+    transcript.iter().map(fingerprint_item).collect()
+}
+
+fn fingerprint_item(item: &TranscriptItem) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    format!("{item:?}").hash(&mut hasher);
+    hasher.finish()
+}
+
+/// True when `prefix` is a (non-strict) leading slice of `full`.
+fn is_prefix(prefix: &[u64], full: &[u64]) -> bool {
+    prefix.len() <= full.len() && full[..prefix.len()] == *prefix
+}
+
+fn map_stream_events(
+    mut events: mpsc::UnboundedReceiver<StreamEvent>,
+    continuity: Arc<Mutex<SessionContinuity>>,
+    synced: Vec<u64>,
+) -> InferenceEventStream {
     Box::pin(try_stream! {
         let mut saw_partial_text = false;
         let mut accumulated_text = String::new();
@@ -271,12 +411,16 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
                     let session_id = (!response.session_id.trim().is_empty())
                         .then_some(response.session_id)
                         .or(last_session_id.take());
+                    commit_session(&continuity, session_id.as_deref(), &synced);
                     yield InferenceEvent::Completed(CompletionMetadata {
                         stop_reason: response.stop_reason.or(last_stop_reason.take()),
                         provider_response_id: session_id,
                     });
                 }
                 StreamEvent::Error(message) => {
+                    // The turn failed (possibly a stale/invalid resume). Drop the
+                    // session so the next attempt replays the full transcript.
+                    clear_session(&continuity);
                     yield InferenceEvent::Failed(InferenceFailure { message: redact_error(&message) });
                 }
             }
@@ -285,12 +429,39 @@ fn map_stream_events(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> Infere
         // died after its last assistant message). Close the turn with what
         // we saw so the runtime never hangs waiting for completion.
         if !completed && (last_session_id.is_some() || last_stop_reason.is_some()) {
+            commit_session(&continuity, last_session_id.as_deref(), &synced);
             yield InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: last_stop_reason,
                 provider_response_id: last_session_id,
             });
         }
     })
+}
+
+/// Records the resumable session id and the transcript prefix it now covers so
+/// the next turn can resume instead of replaying the full transcript.
+fn commit_session(
+    continuity: &Arc<Mutex<SessionContinuity>>,
+    session_id: Option<&str>,
+    synced: &[u64],
+) {
+    let Some(session_id) = session_id.filter(|value| !value.trim().is_empty()) else {
+        // No usable session id: force a fresh send next turn rather than
+        // resuming against a session we cannot name.
+        clear_session(continuity);
+        return;
+    };
+    if let Ok(mut state) = continuity.lock() {
+        state.session_id = Some(session_id.to_string());
+        state.synced = synced.to_vec();
+    }
+}
+
+fn clear_session(continuity: &Arc<Mutex<SessionContinuity>>) {
+    if let Ok(mut state) = continuity.lock() {
+        state.session_id = None;
+        state.synced.clear();
+    }
 }
 
 fn usage_from_response(response: &MessageResponse) -> Option<TokenUsage> {
@@ -958,5 +1129,215 @@ mod tests {
         assert_eq!(usage.cached_prompt_tokens, 25);
         assert_eq!(usage.completion_tokens, 7);
         assert_eq!(usage.total_tokens, 132);
+    }
+
+    use roder_api::transcript::{AssistantMessage, UserMessage};
+    use std::sync::Mutex as StdMutex;
+
+    /// `(resume_session_id, prompt)` captured for each CLI invocation.
+    type RecordedCall = (Option<String>, String);
+
+    /// Records the `resume` id and prompt of every CLI invocation and always
+    /// completes the turn with the configured session id.
+    #[derive(Default)]
+    struct RecordingRunner {
+        session_id: String,
+        calls: Arc<StdMutex<Vec<RecordedCall>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ClaudeCodeRunner for RecordingRunner {
+        async fn stream(
+            &self,
+            options: ClaudeAgentOptions,
+            prompt: String,
+        ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((options.resume.clone(), prompt));
+            let (tx, rx) = mpsc::unbounded_channel();
+            tx.send(StreamEvent::Complete(MessageResponse {
+                content: "ok".to_string(),
+                blocks: Vec::new(),
+                model: "sonnet".to_string(),
+                stop_reason: Some("end_turn".to_string()),
+                session_id: self.session_id.clone(),
+                usage: None,
+            }))
+            .unwrap();
+            tx.send(StreamEvent::TurnComplete(MessageResponse {
+                content: String::new(),
+                blocks: Vec::new(),
+                model: String::new(),
+                stop_reason: Some("end_turn".to_string()),
+                session_id: self.session_id.clone(),
+                usage: None,
+            }))
+            .unwrap();
+            Ok(rx)
+        }
+    }
+
+    fn request_with_transcript(transcript: Vec<TranscriptItem>) -> AgentInferenceRequest {
+        AgentInferenceRequest {
+            transcript,
+            metadata: json!({}),
+            ..request()
+        }
+    }
+
+    async fn drain(engine: &ClaudeCodeEngine, request: AgentInferenceRequest) {
+        let _ = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request,
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+    }
+
+    #[tokio::test]
+    async fn second_turn_resumes_session_and_sends_only_the_new_tail() {
+        let calls = Arc::new(StdMutex::new(Vec::new()));
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(RecordingRunner {
+                session_id: "session-1".to_string(),
+                calls: Arc::clone(&calls),
+            }),
+        );
+
+        // Turn 1: only a user message -> fresh send, no resume.
+        drain(
+            &engine,
+            request_with_transcript(vec![TranscriptItem::UserMessage(UserMessage::text(
+                "first question",
+            ))]),
+        )
+        .await;
+
+        // Turn 2: prior exchange plus a new user message. The session already
+        // holds everything up to the assistant reply, so only the new user
+        // message should be sent, and the call must resume session-1.
+        drain(
+            &engine,
+            request_with_transcript(vec![
+                TranscriptItem::UserMessage(UserMessage::text("first question")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "first answer".to_string(),
+                    phase: None,
+                }),
+                TranscriptItem::UserMessage(UserMessage::text("second question")),
+            ]),
+        )
+        .await;
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        // Turn 1: fresh, replays the whole transcript.
+        assert_eq!(calls[0].0, None);
+        assert!(calls[0].1.contains("first question"));
+        // Turn 2: resumes and sends ONLY the new tail.
+        assert_eq!(calls[1].0.as_deref(), Some("session-1"));
+        assert!(calls[1].1.contains("second question"));
+        assert!(
+            !calls[1].1.contains("first answer"),
+            "resumed turn must not replay prior assistant output: {}",
+            calls[1].1
+        );
+        assert!(
+            !calls[1].1.contains("first question"),
+            "resumed turn must not replay the prior user message: {}",
+            calls[1].1
+        );
+    }
+
+    #[tokio::test]
+    async fn compacted_transcript_falls_back_to_a_fresh_send() {
+        let calls = Arc::new(StdMutex::new(Vec::new()));
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(RecordingRunner {
+                session_id: "session-1".to_string(),
+                calls: Arc::clone(&calls),
+            }),
+        );
+
+        drain(
+            &engine,
+            request_with_transcript(vec![
+                TranscriptItem::UserMessage(UserMessage::text("original question")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "original answer".to_string(),
+                    phase: None,
+                }),
+            ]),
+        )
+        .await;
+
+        // Roder compacted the head: the prefix no longer matches what the
+        // session was synced to, so the next turn must NOT resume.
+        drain(
+            &engine,
+            request_with_transcript(vec![
+                TranscriptItem::ContextCompaction(roder_api::transcript::ContextCompactionRecord {
+                    summary: "summary of earlier turns".to_string(),
+                }),
+                TranscriptItem::UserMessage(UserMessage::text("next question")),
+            ]),
+        )
+        .await;
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[1].0, None, "compacted transcript must send fresh");
+        assert!(calls[1].1.contains("summary of earlier turns"));
+    }
+
+    #[tokio::test]
+    async fn session_reuse_can_be_disabled_via_config() {
+        let calls = Arc::new(StdMutex::new(Vec::new()));
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig {
+                reuse_cli_session: Some(false),
+                ..ClaudeCodeConfig::default()
+            },
+            Arc::new(RecordingRunner {
+                session_id: "session-1".to_string(),
+                calls: Arc::clone(&calls),
+            }),
+        );
+
+        drain(
+            &engine,
+            request_with_transcript(vec![TranscriptItem::UserMessage(UserMessage::text("one"))]),
+        )
+        .await;
+        drain(
+            &engine,
+            request_with_transcript(vec![
+                TranscriptItem::UserMessage(UserMessage::text("one")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "answer".to_string(),
+                    phase: None,
+                }),
+                TranscriptItem::UserMessage(UserMessage::text("two")),
+            ]),
+        )
+        .await;
+
+        let calls = calls.lock().unwrap();
+        assert!(
+            calls.iter().all(|(resume, _)| resume.is_none()),
+            "reuse disabled: no turn should resume a session"
+        );
+        // Full transcript replayed every turn.
+        assert!(calls[1].1.contains("answer"));
     }
 }

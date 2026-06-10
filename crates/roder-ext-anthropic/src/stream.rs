@@ -43,6 +43,7 @@ pub(crate) struct AnthropicTurnRequest {
     pub(crate) client: reqwest::Client,
     pub(crate) url: String,
     pub(crate) api_key: String,
+    pub(crate) betas: Vec<String>,
     pub(crate) body: Value,
     pub(crate) policy: ReliabilityRequestPolicy,
 }
@@ -66,14 +67,15 @@ impl AnthropicTurnRequest {
         let mut last_error = None;
         while *attempt < attempts {
             *attempt += 1;
-            let response = self
+            let mut builder = self
                 .client
                 .post(&self.url)
                 .header("x-api-key", &self.api_key)
-                .header("anthropic-version", "2023-06-01")
-                .json(&self.body)
-                .send()
-                .await;
+                .header("anthropic-version", "2023-06-01");
+            if !self.betas.is_empty() {
+                builder = builder.header("anthropic-beta", self.betas.join(","));
+            }
+            let response = builder.json(&self.body).send().await;
             match response {
                 Ok(response) if response.status().is_success() => return Ok(response),
                 Ok(response) => {
@@ -359,6 +361,7 @@ mod tests {
             client: reqwest::Client::new(),
             url: url.to_string(),
             api_key: "secret".to_string(),
+            betas: Vec::new(),
             body: json!({}),
             policy,
         }
@@ -766,6 +769,7 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}
                 .unwrap(),
             url,
             api_key: "secret".to_string(),
+            betas: Vec::new(),
             body: json!({}),
             policy: fast_policy(1),
         };

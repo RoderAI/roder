@@ -298,6 +298,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         permission_mode: config.claude_code_permission_mode,
         setting_sources: config.claude_code_setting_sources,
         workspace: config.workspace.clone(),
+        // Resume the CLI session across turns by default so the `claude`
+        // process keeps history server-side and auto-compacts it instead of
+        // Roder replaying the full transcript every turn.
+        reuse_cli_session: None,
     }))?;
     if let Some(gemini_key) = config.gemini_api_key.clone() {
         builder.install(GeminiExtension::new(gemini_key))?;
