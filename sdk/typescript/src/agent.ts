@@ -34,6 +34,12 @@ export interface RoderAgentOptions {
   /** Host-executed tools advertised to the model; calls arrive via onToolExecute. */
   externalTools?: RoderExternalTool[];
   /**
+   * Binds the thread's native coding tools to a remote-runner workspace on the server. The config
+   * is persisted with the thread, so secrets must reach the provider through its environment
+   * (e.g. SAUNA_RUNNER_TOKEN), not this object.
+   */
+  runner?: RoderThreadRunner;
+  /**
    * Executes a host tool call published by thread/toolExecutionRequested and replies via
    * tools/resolve. A thrown error resolves the call as an error result.
    */
@@ -49,6 +55,15 @@ export interface RoderExternalTool {
   description: string;
   /** JSON-schema for the tool arguments. */
   parameters: Record<string, unknown>;
+}
+
+export interface RoderThreadRunner {
+  /** Installed remote-runner provider id (e.g. "sauna"). */
+  providerId: string;
+  /** Provider-specific destination config; persisted with the thread, so no secrets. */
+  config?: Record<string, unknown>;
+  /** Absolute path on the runner used as the thread's coding-tool workspace root. */
+  workspace: string;
 }
 
 export interface RoderExternalToolCall {
@@ -167,6 +182,7 @@ export class RoderAgent {
     const toolAllowlist = this.options.toolAllowlist;
     const instructions = this.options.instructions;
     const externalTools = this.options.externalTools;
+    const runner = this.options.runner;
     const result = (await this.client.call("thread/start", {
       cwd,
       model: this.options.model?.id,
@@ -175,6 +191,7 @@ export class RoderAgent {
       ...(toolAllowlist === undefined ? {} : { toolAllowlist }),
       ...(instructions === undefined ? {} : { developerInstructions: instructions }),
       ...(externalTools === undefined ? {} : { externalTools }),
+      ...(runner === undefined ? {} : { runner }),
       workspaceId,
     })) as Record<string, unknown>;
     const threadId = extractId(result, "thread") ?? extractString(result, "threadId") ?? extractString(result, "id");

@@ -66,6 +66,39 @@ async def test_python_sdk_replays_approval_fixture() -> None:
 
 
 @pytest.mark.anyio
+async def test_python_sdk_replays_runner_thread_fixture() -> None:
+    fixture = load_fixture("runner-thread-flow.jsonl")
+    transport = fixture_transport(fixture)
+    agent = await RoderAgent.create(
+        transport=transport,
+        cwd="/local/scratch",
+        workspace_id="ws-fixture",
+        model={"provider": "mock", "id": "mock"},
+        runner={
+            "providerId": "sauna",
+            "config": {"space_id": "space-1", "mode": "readwrite"},
+            "workspace": "/workspace",
+        },
+    )
+
+    run = await agent.send("write a file")
+    completed: list[dict[str, Any]] = []
+
+    async def wait() -> None:
+        turn = await run.wait()
+        if turn is not None:
+            completed.append(turn)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(wait)
+        await emit_notifications(transport, fixture)
+
+    # The fixture transport already asserted the runner binding shape on thread/start.
+    assert "thread/start" in transport.seen_methods
+    assert completed and completed[0]["raw"]["params"]["turn"]["id"] == "turn-runner"
+
+
+@pytest.mark.anyio
 async def test_python_sdk_replays_user_input_and_plan_exit_fixture() -> None:
     fixture = load_fixture("user-input-flow.jsonl")
     transport = fixture_transport(fixture)

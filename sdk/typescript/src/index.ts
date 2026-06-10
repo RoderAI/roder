@@ -7,6 +7,7 @@ export {
   type RoderApprovals,
   type RoderExternalTool,
   type RoderExternalToolCall,
+  type RoderThreadRunner,
   type UserInputDecision,
 } from "./agent.js";
 export { RoderRpcClient, type MethodHelpers } from "./client.js";
