@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
@@ -122,6 +122,39 @@ pub struct DefaultRegistryConfig {
     pub notifications: DefaultNotificationsConfig,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub inference_router: Option<roder_config::InferenceRouterConfig>,
+    pub extra_extensions: ExtraExtensions,
+}
+
+/// Out-of-tree extensions installed after the built-in set. Supplied by
+/// distribution binaries that bundle extensions the workspace does not know
+/// about; shared handles so one process-level list can feed every registry
+/// build.
+#[derive(Clone, Default)]
+pub struct ExtraExtensions(pub Vec<Arc<dyn RoderExtension>>);
+
+impl std::fmt::Debug for ExtraExtensions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|extension| extension.manifest().id))
+            .finish()
+    }
+}
+
+static DISTRIBUTION_EXTENSIONS: OnceLock<ExtraExtensions> = OnceLock::new();
+
+/// Registers process-wide extra extensions for distribution binaries. Call
+/// once before any registry is built; registry-building entry points fold the
+/// list into `DefaultRegistryConfig::extra_extensions`.
+pub fn set_distribution_extensions(
+    extensions: Vec<Arc<dyn RoderExtension>>,
+) -> anyhow::Result<()> {
+    DISTRIBUTION_EXTENSIONS
+        .set(ExtraExtensions(extensions))
+        .map_err(|_| anyhow::anyhow!("distribution extensions are already set for this process"))
+}
+
+pub fn distribution_extensions() -> ExtraExtensions {
+    DISTRIBUTION_EXTENSIONS.get().cloned().unwrap_or_default()
 }
 
 impl Default for DefaultRegistryConfig {
@@ -173,6 +206,7 @@ impl Default for DefaultRegistryConfig {
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
             inference_router: None,
+            extra_extensions: ExtraExtensions::default(),
         }
     }
 }
@@ -401,6 +435,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(ZeroEntropyEmbeddingsExtension::new(
         zeroentropy_embeddings_config,
     ))?;
+
+    for extension in config.extra_extensions.0 {
+        builder.install(extension)?;
+    }
 
     builder.build()
 }
@@ -987,6 +1025,110 @@ mod tests {
         );
     }
 
+    struct FakeDistributionRunnerProvider;
+
+    #[async_trait::async_trait]
+    impl roder_api::remote_runner::RemoteRunnerProvider for FakeDistributionRunnerProvider {
+        fn id(&self) -> roder_api::remote_runner::RemoteRunnerProviderId {
+            "fake-distribution".to_string()
+        }
+
+        fn capabilities(&self) -> roder_api::remote_runner::RunnerCapabilities {
+            roder_api::remote_runner::RunnerCapabilities {
+                command_exec: true,
+                file_read: true,
+                file_write: true,
+                port_preview: false,
+                snapshots: false,
+                cancellation: false,
+                artifact_export: false,
+                mounts: Default::default(),
+            }
+        }
+
+        async fn create_session(
+            &self,
+            _destination: RunnerDestination,
+        ) -> anyhow::Result<Arc<dyn roder_api::remote_runner::RemoteRunnerSession>> {
+            anyhow::bail!("not used in this test")
+        }
+
+        async fn resume_session(
+            &self,
+            _state: roder_api::remote_runner::RunnerSessionState,
+        ) -> anyhow::Result<Arc<dyn roder_api::remote_runner::RemoteRunnerSession>> {
+            anyhow::bail!("not used in this test")
+        }
+    }
+
+    struct FakeDistributionExtension;
+
+    impl RoderExtension for FakeDistributionExtension {
+        fn manifest(&self) -> ExtensionManifest {
+            ExtensionManifest {
+                id: "roder-ext-test-distribution".to_string(),
+                name: "Test Distribution Extension".to_string(),
+                version: Version::new(0, 1, 0),
+                api_version: "0.1.0".to_string(),
+                description: None,
+                provides: vec![ProvidedService::RemoteRunnerProvider(
+                    "fake-distribution".to_string(),
+                )],
+                required_capabilities: vec![],
+            }
+        }
+
+        fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+            registry.remote_runner_provider(Arc::new(FakeDistributionRunnerProvider));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn default_registry_installs_extra_extensions() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            extra_extensions: ExtraExtensions(vec![Arc::new(FakeDistributionExtension)]),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert!(
+            registry
+                .manifests
+                .iter()
+                .any(|manifest| manifest.id == "roder-ext-test-distribution")
+        );
+        assert!(
+            registry
+                .remote_runner_providers
+                .iter()
+                .any(|provider| provider.id() == "fake-distribution")
+        );
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::RemoteRunnerProvider(
+                    "fake-distribution".to_string()
+                ))
+        );
+    }
+
+    #[test]
+    fn extra_extensions_with_duplicate_id_fail_to_install() {
+        let err = match build_default_registry(DefaultRegistryConfig {
+            extra_extensions: ExtraExtensions(vec![
+                Arc::new(FakeDistributionExtension),
+                Arc::new(FakeDistributionExtension),
+            ]),
+            ..Default::default()
+        }) {
+            Ok(_) => panic!("expected duplicate extra extension to fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("already installed"));
+    }
+
     #[test]
     fn default_registry_installs_zerolang_tools_without_zero_binary() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1112,6 +1254,7 @@ mod tests {
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
             inference_router: None,
+            extra_extensions: ExtraExtensions::default(),
         })
         .unwrap();
         for provider in [
