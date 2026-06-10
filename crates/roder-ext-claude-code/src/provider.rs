@@ -881,8 +881,7 @@ mod tests {
             })
             .collect::<String>();
         assert_eq!(
-            rendered,
-            "I'll read the file.The magic word is pomegranate.",
+            rendered, "I'll read the file.The magic word is pomegranate.",
             "post-tool assistant text must stream and echoes must dedupe"
         );
         let completions = events

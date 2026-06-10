@@ -224,6 +224,12 @@ pub enum ThreadItem {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    RoutingDecision {
+        id: String,
+        decision: crate::events::InferenceRoutingDecisionEvent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
     Compaction {
         id: String,
         summary: String,
@@ -325,6 +331,7 @@ impl ThreadItem {
             | ThreadItem::AgentMessage { id, .. }
             | ThreadItem::Reasoning { id, .. }
             | ThreadItem::ToolExecution { id, .. }
+            | ThreadItem::RoutingDecision { id, .. }
             | ThreadItem::Compaction { id, .. }
             | ThreadItem::Error { id, .. }
             | ThreadItem::Raw { id, .. } => id,
