@@ -3434,6 +3434,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-dist-hosted"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "roder-api",
+ "roder-app-server",
+ "roder-config",
+ "roder-core",
+ "roder-ext-jsonl-thread-store",
+ "roder-extension-host",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "toml",
+ "uuid",
+]
+
+[[package]]
 name = "roder-dynamic-workflows"
 version = "0.1.0"
 dependencies = [
@@ -5410,6 +5430,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",

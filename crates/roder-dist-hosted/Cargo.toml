@@ -1,0 +1,27 @@
+[package]
+name = "roder-dist-hosted"
+version = "0.1.0"
+edition = "2024"
+description = "First-party hosted multi-tenant Roder service distribution (roadmap phase 72)"
+
+[[bin]]
+name = "roder-hosted"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+roder-api.workspace = true
+roder-app-server.workspace = true
+roder-config.workspace = true
+roder-core.workspace = true
+roder-ext-jsonl-thread-store.workspace = true
+roder-extension-host.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["full"] }
+toml.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+tokio-tungstenite.workspace = true
+uuid = { workspace = true, features = ["v4"] }
