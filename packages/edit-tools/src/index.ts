@@ -13,6 +13,8 @@ import type {
 } from "./types.js";
 export type * from "./types.js";
 export { createRoderEditTools } from "./tool-adapter.js";
+export { loadWasmCore } from "./wasm.js";
+import { applyMultiEditViaWasm, loadWasmCore } from "./wasm.js";
 
 export async function createEditWorkspace(options: EditWorkspaceOptions): Promise<EditWorkspace> {
   return { kind: "fs", root: await realpath(options.root) };
@@ -56,6 +58,29 @@ export async function multiEditTool(workspace: EditWorkspace, args: MultiEditArg
   const filePath = resolveWorkspacePath(workspace, args.path);
   let content = await readWorkspaceFile(workspace, filePath);
   const rel = displayPath(workspace, filePath);
+  // Prefer the generated Rust/WASM core so edit semantics (exact unique
+  // match, ordered application, hunk metadata) come from `roder-edit-core`.
+  const wasm = loadWasmCore();
+  if (wasm) {
+    const outcome = applyMultiEditViaWasm(wasm, rel, content, args.edits);
+    if (!outcome.ok) {
+      const edit = outcome.errorEdit ?? 0;
+      const reason =
+        outcome.errorKind === "old_string_ambiguous"
+          ? `edit ${edit} old_string is ambiguous`
+          : `edit ${edit} old_string does not match file`;
+      return error("multi_edit", reason, {
+        error: { kind: outcome.errorKind, edit },
+      });
+    }
+    await writeWorkspaceFile(workspace, filePath, outcome.content ?? content);
+    return ok("multi_edit", `edited ${rel} (${args.edits.length} replacements)`, {
+      path: rel,
+      replacements: args.edits.length,
+      hunks: outcome.hunks ?? [],
+      core: "wasm",
+    });
+  }
   const hunks: EditHunk[] = [];
   for (let index = 0; index < args.edits.length; index += 1) {
     const edit = args.edits[index];
