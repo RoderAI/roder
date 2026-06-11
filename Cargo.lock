@@ -3218,6 +3218,7 @@ dependencies = [
  "qrcode",
  "rand 0.10.1",
  "rcgen",
+ "reqwest",
  "roder-api",
  "roder-api-transcript",
  "roder-automations",
