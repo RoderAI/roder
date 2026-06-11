@@ -1,7 +1,8 @@
-//! Hosted gateway e2e over loopback WebSocket (phase 72, Task 2): auth
+//! Hosted gateway e2e over loopback WebSocket (phase 72, Tasks 2–3): auth
 //! before dispatch, query-token rejection, hosted/whoami + service-account
-//! lifecycle, tenant thread isolation, notification filtering, and rate
-//! limits. Fully offline with the fake inference engine.
+//! lifecycle, per-tenant runtime isolation (stores and notifications),
+//! hosted workspace policy, idle eviction, and rate limits. Fully offline
+//! with the fake inference engine.
 
 use std::sync::Arc;
 
@@ -11,8 +12,8 @@ use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantConte
 use roder_app_server::AppServer;
 use roder_app_server::hosted::auth::PrincipalSeed;
 use roder_app_server::hosted::{
-    AuditLog, HostedAuthenticator, HostedGatewayOptions, RateLimitConfig, TenantRegistry,
-    serve_hosted_gateway,
+    AuditLog, HostedAuthenticator, HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile,
+    RateLimitConfig, TenantRegistry, serve_hosted_gateway,
 };
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};
@@ -31,15 +32,30 @@ fn temp_dir(label: &str) -> std::path::PathBuf {
     dir
 }
 
-fn app_server(label: &str) -> Arc<AppServer> {
-    let mut builder = ExtensionRegistryBuilder::new();
-    builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
-        base_path: temp_dir(label),
-    }));
-    let runtime =
-        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
-    Arc::new(AppServer::new(runtime))
+/// Per-tenant app-server factory: every tenant gets its own runtime with a
+/// private JSONL thread store under its data directory.
+fn tenant_pool(label: &str, allow_local_workspaces: bool) -> Arc<HostedRuntimePool> {
+    Arc::new(HostedRuntimePool::new(
+        HostedRuntimeProfile {
+            data_root: temp_dir(label),
+            allow_local_workspaces,
+            idle_ttl: std::time::Duration::from_secs(3600),
+        },
+        Arc::new(|_tenant_id, data_dir| {
+            Box::pin(async move {
+                let mut builder = ExtensionRegistryBuilder::new();
+                builder.inference_engine(Arc::new(FakeInferenceEngine));
+                builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+                    base_path: data_dir.join("threads"),
+                }));
+                let runtime = Arc::new(Runtime::new(
+                    builder.build().unwrap(),
+                    RuntimeConfig::default(),
+                )?);
+                Ok(Arc::new(AppServer::new(runtime)))
+            })
+        }),
+    ))
 }
 
 struct Fixture {
@@ -48,7 +64,7 @@ struct Fixture {
     url: String,
 }
 
-async fn fixture(label: &str, limits: RateLimitConfig) -> Fixture {
+async fn fixture(label: &str, limits: RateLimitConfig, allow_local_workspaces: bool) -> Fixture {
     let authenticator = Arc::new(HostedAuthenticator::default());
     let tenants = Arc::new(TenantRegistry::default());
     for tenant in ["tenant-a", "tenant-b"] {
@@ -72,13 +88,17 @@ async fn fixture(label: &str, limits: RateLimitConfig) -> Fixture {
             .unwrap();
     }
     let controller = serve_hosted_gateway(
-        app_server(label),
+        tenant_pool(label, allow_local_workspaces),
         HostedGatewayOptions {
             listen: "127.0.0.1:0".to_string(),
             authenticator: authenticator.clone(),
             tenants,
             audit: Arc::new(AuditLog::default()),
             limits,
+            hooks: Arc::new(roder_app_server::hosted::HookStore::default()),
+            hook_delivery: Arc::new(roder_app_server::hosted::HookDeliveryService::new(
+                Default::default(),
+            )),
         },
     )
     .await
@@ -129,7 +149,7 @@ async fn call(socket: &mut Socket, method: &str, params: serde_json::Value) -> J
 
 #[tokio::test(flavor = "multi_thread")]
 async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
-    let fixture = fixture("whoami", RateLimitConfig::default()).await;
+    let fixture = fixture("whoami", RateLimitConfig::default(), true).await;
 
     // Bad token: handshake fails before any dispatch.
     assert!(connect(&fixture.url, "rk_test_wrong").await.is_err());
@@ -182,8 +202,8 @@ async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tenants_cannot_touch_or_observe_each_others_threads() {
-    let fixture = fixture("isolation", RateLimitConfig::default()).await;
+async fn tenants_run_isolated_runtimes_with_isolated_stores_and_notifications() {
+    let fixture = fixture("isolation", RateLimitConfig::default(), true).await;
     let mut tenant_a = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
     let mut tenant_b = connect(&fixture.url, "rk_test_tenant_b_writer").await.unwrap();
     for socket in [&mut tenant_a, &mut tenant_b] {
@@ -218,17 +238,45 @@ async fn tenants_cannot_touch_or_observe_each_others_threads() {
     assert!(started.error.is_none(), "{:?}", started.error);
     let thread_id = started.result.unwrap()["thread"]["id"].as_str().unwrap().to_string();
 
-    // Tenant B cannot read, steer, or archive tenant A's thread.
-    for method in ["thread/read", "thread/archive"] {
-        let response = call(
-            &mut tenant_b,
-            method,
-            serde_json::json!({ "threadId": thread_id }),
-        )
-        .await;
-        let error = response.error.expect(method);
-        assert!(error.message.contains("wrong_tenant"), "{method}: {}", error.message);
-    }
+    // Tenant B's runtime has never seen the thread: list is empty and reads
+    // fail — isolation by construction, not by request filtering.
+    let listed = call(&mut tenant_b, "thread/list", serde_json::json!({})).await;
+    let count = listed.result.unwrap()["data"].as_array().map(Vec::len);
+    assert_eq!(count, Some(0), "tenant B must not list tenant A threads");
+    // thread/read returns no data for B (its store has no such thread) and
+    // archive fails outright.
+    let read = call(
+        &mut tenant_b,
+        "thread/read",
+        serde_json::json!({ "threadId": thread_id }),
+    )
+    .await;
+    let leaked = read
+        .result
+        .as_ref()
+        .and_then(|result| result.get("thread"))
+        .is_some_and(|thread| !thread.is_null());
+    assert!(
+        read.error.is_some() || !leaked,
+        "thread/read must not leak tenant A data: {:?}",
+        read.result
+    );
+    // Archive on B's runtime is a no-op against B's empty store; tenant A's
+    // thread stays fully readable afterwards.
+    let _ = call(
+        &mut tenant_b,
+        "thread/archive",
+        serde_json::json!({ "threadId": thread_id }),
+    )
+    .await;
+    let still_there = call(
+        &mut tenant_a,
+        "thread/read",
+        serde_json::json!({ "threadId": thread_id }),
+    )
+    .await;
+    let thread = &still_there.result.expect("tenant A read")["thread"];
+    assert_eq!(thread["id"].as_str(), Some(thread_id.as_str()));
 
     // A turn in tenant A's thread emits notifications to A but never to B.
     let turn = call(
@@ -257,12 +305,175 @@ async fn tenants_cannot_touch_or_observe_each_others_threads() {
     }
     assert!(a_saw_notification, "owner tenant must receive thread notifications");
 
-    // Tenant B's socket stays silent (no notifications for A's thread).
+    // Tenant B's socket stays silent (its runtime emitted nothing).
     let quiet =
         tokio::time::timeout(std::time::Duration::from_millis(500), tenant_b.next()).await;
     assert!(quiet.is_err(), "tenant B must not receive tenant A notifications");
 
     fixture.controller.stop().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gateway_dispatches_tenant_hooks_on_thread_start() {
+    // Minimal always-200 hook target counting hits.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hook_url = format!("http://{}/hook", listener.local_addr().unwrap());
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let task_hits = hits.clone();
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buffer = [0u8; 8192];
+            let _ = stream.read(&mut buffer).await;
+            task_hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+                .await;
+        }
+    });
+
+    let fixture = fixture("hooks-e2e", RateLimitConfig::default(), true).await;
+    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+    assert!(call(&mut socket, "initialize", serde_json::json!({})).await.error.is_none());
+
+    let created = call(
+        &mut socket,
+        "hosted/hooks/create",
+        serde_json::json!({ "hook": {
+            "id": "hook-e2e",
+            "scope": "tenant",
+            "eventKinds": ["thread."],
+            "url": hook_url,
+            "enabled": true,
+            "createdAt": "1970-01-01T00:00:00Z",
+            "updatedAt": "1970-01-01T00:00:00Z",
+        }}),
+    )
+    .await;
+    assert!(created.error.is_none(), "{:?}", created.error);
+    let listed = call(&mut socket, "hosted/hooks/list", serde_json::json!({})).await;
+    assert_eq!(listed.result.unwrap()["hooks"].as_array().map(Vec::len), Some(1));
+
+    let workspace = temp_dir("hooks-ws");
+    let created = call(
+        &mut socket,
+        "workspace/create",
+        serde_json::json!({
+            "name": null,
+            "roots": [{ "path": workspace.display().to_string(), "name": null }],
+            "defaultRootPath": workspace.display().to_string(),
+        }),
+    )
+    .await;
+    let workspace_result = created.result.unwrap();
+    let started = call(
+        &mut socket,
+        "thread/start",
+        serde_json::json!({
+            "workspaceId": workspace_result["workspace"]["id"],
+            "rootId": workspace_result["workspace"]["defaultRootId"],
+            "model": "mock",
+            "modelProvider": null,
+            "reasoning": null,
+        }),
+    )
+    .await;
+    assert!(started.error.is_none(), "{:?}", started.error);
+
+    // The hook fires asynchronously; poll briefly.
+    let mut delivered = false;
+    for _ in 0..40 {
+        if hits.load(std::sync::atomic::Ordering::SeqCst) >= 1 {
+            delivered = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(delivered, "thread/start must dispatch the tenant hook");
+
+    fixture.controller.stop().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hosted_profile_denies_local_workspaces_by_default() {
+    let fixture = fixture("no-local-ws", RateLimitConfig::default(), false).await;
+    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+
+    let denied = call(
+        &mut socket,
+        "workspace/create",
+        serde_json::json!({
+            "name": null,
+            "roots": [{ "path": "/etc", "name": null }],
+            "defaultRootPath": "/etc",
+        }),
+    )
+    .await;
+    let error = denied.error.expect("workspace/create must be denied");
+    assert!(error.message.contains("local_workspace_disabled"), "{}", error.message);
+
+    let denied = call(
+        &mut socket,
+        "thread/start",
+        serde_json::json!({ "workspaceId": "w", "cwd": "/etc" }),
+    )
+    .await;
+    let error = denied.error.expect("thread/start with cwd must be denied");
+    assert!(error.message.contains("local_workspace_disabled"), "{}", error.message);
+
+    fixture.controller.stop().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_tenant_runtimes_evict_without_touching_busy_ones() {
+    let pool = Arc::new(HostedRuntimePool::new(
+        HostedRuntimeProfile {
+            data_root: temp_dir("evict"),
+            allow_local_workspaces: true,
+            idle_ttl: std::time::Duration::from_millis(0),
+        },
+        Arc::new(|_tenant_id, data_dir| {
+            Box::pin(async move {
+                let mut builder = ExtensionRegistryBuilder::new();
+                builder.inference_engine(Arc::new(FakeInferenceEngine));
+                builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+                    base_path: data_dir.join("threads"),
+                }));
+                let runtime = Arc::new(Runtime::new(
+                    builder.build().unwrap(),
+                    RuntimeConfig::default(),
+                )?);
+                Ok(Arc::new(AppServer::new(runtime)))
+            })
+        }),
+    ));
+
+    // A held lease (in-flight request / resident connection) blocks
+    // eviction; a released one does not.
+    let lease_a = pool.lease("tenant-a").await.unwrap();
+    let lease_b = pool.lease("tenant-b").await.unwrap();
+    drop(lease_b);
+    assert_eq!(pool.len().await, 2);
+
+    let evicted = pool.evict_idle().await;
+    assert_eq!(evicted, vec!["tenant-b".to_string()]);
+    assert_eq!(pool.len().await, 1);
+
+    drop(lease_a);
+    let evicted = pool.evict_idle().await;
+    assert_eq!(evicted, vec!["tenant-a".to_string()]);
+    assert!(pool.is_empty().await);
+
+    // Per-tenant data directories are distinct (separate stores and
+    // automation databases by construction).
+    let lease_a = pool.lease("tenant-a").await.unwrap();
+    let lease_b = pool.lease("tenant-b").await.unwrap();
+    assert!(!Arc::ptr_eq(&lease_a.server, &lease_b.server));
+    pool.shutdown(std::time::Duration::from_secs(1)).await;
+    assert!(pool.is_empty().await);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -274,6 +485,7 @@ async fn rate_and_size_limits_fail_requests_deterministically() {
             per_second: 0.0001,
             max_request_bytes: 4096,
         },
+        true,
     )
     .await;
     let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();

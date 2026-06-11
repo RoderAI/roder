@@ -42,6 +42,10 @@ name = "hosted_gateway"
 path = "tests/hosted_gateway.rs"
 
 [[test]]
+name = "hosted_hooks"
+path = "tests/hosted_hooks.rs"
+
+[[test]]
 name = "agent_node_security"
 path = "tests/agent_node_security.rs"
 
@@ -70,6 +74,7 @@ roder-usage-analytics.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
 rcgen.workspace = true
+reqwest.workspace = true
 rustls-pemfile.workspace = true
 roder-core.workspace = true
 roder-dynamic-workflows.workspace = true

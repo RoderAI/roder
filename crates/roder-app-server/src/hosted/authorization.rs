@@ -18,6 +18,8 @@ fn is_tenant_admin_method(method: &str) -> bool {
             | "hosted/hooks/create"
             | "hosted/hooks/update"
             | "hosted/hooks/delete"
+            | "hosted/hooks/list"
+            | "hosted/hooks/test"
             | "hosted/audit/list"
     )
 }

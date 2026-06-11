@@ -1830,6 +1830,12 @@ impl Runtime {
             .any(|handle| &handle.thread_id == thread_id)
     }
 
+    /// Number of currently running turns across all threads. Hosted runtime
+    /// pools use this to avoid evicting tenants with active work.
+    pub async fn active_turn_count(&self) -> usize {
+        self.active_turns.read().await.len()
+    }
+
     pub async fn active_turn_for_thread(&self, thread_id: &ThreadId) -> Option<TurnId> {
         self.active_turns
             .read()
