@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod agent_node;
 mod automations;
 mod chrome;
 mod commands;
@@ -159,6 +160,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("stats")) {
         return stats::run_stats_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("agent-node")) {
+        return agent_node::run_agent_node_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("chrome")) {
         return chrome::run_chrome_cli(&args[1..]).await;
