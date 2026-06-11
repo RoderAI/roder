@@ -18,11 +18,12 @@ use crate::media::gemini_user_message_parts;
 use crate::schema::gemini_schema;
 
 pub struct GeminiEngine {
-    api_key: String,
+    /// Absent keys still register the engine; inference fails at call time.
+    api_key: Option<String>,
 }
 
 impl GeminiEngine {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: Option<String>) -> Self {
         Self { api_key }
     }
 
@@ -94,7 +95,7 @@ impl InferenceEngine for GeminiEngine {
             description: Some("Gemini API key provider".to_string()),
             auth_type: ProviderAuthType::ApiKey,
             auth_label: Some("API key".to_string()),
-            auth_configured: Some(true),
+            auth_configured: Some(self.api_key.is_some()),
             recommended: false,
             sort_order: 40,
         }
@@ -112,10 +113,15 @@ impl InferenceEngine for GeminiEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        let Some(api_key) = self.api_key.as_deref() else {
+            anyhow::bail!(
+                "Gemini API key is missing; set GEMINI_API_KEY or configure it from the provider menu"
+            )
+        };
         let body = Self::map_request(&request)?;
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            request.model.model, self.api_key
+            request.model.model, api_key
         );
         let (value, retry_events) =
             send_gemini_request(&url, &body, request.runtime.reliability.as_ref()).await?;
@@ -648,7 +654,7 @@ mod tests {
             "YWJj"
         );
         assert!(
-            GeminiEngine::new("key".to_string())
+            GeminiEngine::new(Some("key".to_string()))
                 .capabilities()
                 .image_input
         );
@@ -879,6 +885,40 @@ mod tests {
         assert_eq!(
             extract_candidate_thinking(&val_b),
             "Analyzing repo structure..."
+        );
+    }
+
+    #[test]
+    fn reports_auth_configured_from_key_presence() {
+        let configured = GeminiEngine::new(Some("key".to_string()));
+        assert_eq!(configured.metadata().auth_configured, Some(true));
+
+        let unconfigured = GeminiEngine::new(None);
+        assert_eq!(unconfigured.metadata().auth_configured, Some(false));
+    }
+
+    #[tokio::test]
+    async fn stream_turn_without_key_fails_naming_the_env_var() {
+        let engine = GeminiEngine::new(None);
+
+        let err = match engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+        {
+            Ok(_) => panic!("missing key must fail at call time"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Gemini API key is missing; set GEMINI_API_KEY or configure it from the provider menu"
         );
     }
 

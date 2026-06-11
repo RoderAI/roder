@@ -7,11 +7,12 @@ use semver::Version;
 use std::sync::Arc;
 
 pub struct AnthropicExtension {
-    api_key: String,
+    /// Absent keys still register the engine; inference fails at call time.
+    api_key: Option<String>,
 }
 
 impl AnthropicExtension {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: Option<String>) -> Self {
         Self { api_key }
     }
 }

@@ -59,6 +59,7 @@ use roder_extension_host::{
     CustomInferenceProviderConfig, DefaultNotificationsConfig, DefaultRegistryConfig,
     DefaultSubagentsConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
     SessionStoreConfig, build_default_registry, distribution_extensions,
+    distribution_inference_providers,
 };
 use roder_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, MemoryDeleteParams, MemoryDeleteResult,
@@ -1131,7 +1132,10 @@ pub(crate) async fn build_runtime_from_config(
     let model_tool_search = resolve_model_tool_search_configs(&cfg.models);
     let extra_extensions =
         stats::extensions_with_usage_analytics(distribution_extensions(), cfg.analytics.clone());
+    let inference_providers =
+        distribution_inference_providers().unwrap_or_else(|| stock_inference_providers(&keys));
     let registry = build_default_registry(DefaultRegistryConfig {
+        inference_providers,
         openai_api_key: keys.openai,
         openai_speech_api_key: keys.openai_speech,
         google_speech_access_token: keys.google_speech_access_token,
@@ -2287,6 +2291,35 @@ struct ProviderKeys {
     xiaomi_mimo_token_plan_base_url: Option<String>,
 }
 
+/**
+ * Stock provider declaration: an API-key inference provider is declared
+ * exactly when its credential resolved (env or user config), preserving the
+ * historical key-gated UX. Distribution binaries pin the set through
+ * `DistributionOptions` instead, in which case this derivation is skipped.
+ * The enum stays function-scoped because `lib.rs` re-exports it at the crate
+ * root and `include!`s this file.
+ */
+fn stock_inference_providers(
+    keys: &ProviderKeys,
+) -> Vec<roder_extension_host::InferenceProviderSelection> {
+    use roder_extension_host::InferenceProviderSelection;
+
+    let mut providers = Vec::new();
+    if keys.anthropic.is_some() {
+        providers.push(InferenceProviderSelection::Anthropic);
+    }
+    if keys.openai.is_some() {
+        providers.push(InferenceProviderSelection::OpenAi);
+    }
+    if keys.gemini.is_some() {
+        providers.push(InferenceProviderSelection::Gemini);
+    }
+    if keys.xai.is_some() {
+        providers.push(InferenceProviderSelection::Xai);
+    }
+    providers
+}
+
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
     ProviderKeys {
         openai: std::env::var("OPENAI_API_KEY")
@@ -2988,6 +3021,28 @@ mod tests {
             xiaomi_mimo_token_plan: None,
             xiaomi_mimo_token_plan_base_url: None,
         }
+    }
+
+    #[test]
+    fn stock_inference_providers_derive_from_resolved_keys() {
+        use roder_extension_host::InferenceProviderSelection;
+
+        assert!(stock_inference_providers(&provider_keys_for_test()).is_empty());
+
+        let declared = stock_inference_providers(&ProviderKeys {
+            anthropic: Some("anthropic-key".to_string()),
+            openai: Some("openai-key".to_string()),
+            xai: Some("xai-key".to_string()),
+            ..provider_keys_for_test()
+        });
+        assert_eq!(
+            declared,
+            vec![
+                InferenceProviderSelection::Anthropic,
+                InferenceProviderSelection::OpenAi,
+                InferenceProviderSelection::Xai,
+            ]
+        );
     }
 
     #[test]
