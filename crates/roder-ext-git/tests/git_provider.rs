@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use roder_api::version_control::{
     VcsCapabilityState, VcsChangeArea, VcsChangedFileStatus, VcsError, VcsLineSwitchRequest,
@@ -236,6 +237,44 @@ async fn git_provider_reads_paged_changed_content_and_validates_paths() {
         .await
         .expect_err("git pathspec magic should fail validation");
     assert!(matches!(pathspec_magic, VcsError::PathInvalid { .. }));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn git_provider_reads_large_changed_content_without_pipe_deadlock() {
+    let workspace = temp_workspace("roder-git-provider-large-read");
+    init_repo(&workspace);
+    let base = (0..10_000)
+        .map(|index| format!("base line {index}\n"))
+        .collect::<String>();
+    let changed = (0..10_000)
+        .map(|index| format!("changed line {index}\n"))
+        .collect::<String>();
+    std::fs::write(workspace.join("large.txt"), base).unwrap();
+    run_git(&workspace, &["add", "large.txt"]);
+    run_git(&workspace, &["commit", "-m", "base"]);
+    std::fs::write(workspace.join("large.txt"), changed).unwrap();
+
+    let provider = GitProvider;
+    let page = tokio::time::timeout(
+        Duration::from_secs(5),
+        provider.read_changed_content(VcsReadChangedContentRequest {
+            workspace_root: workspace.clone(),
+            path: "large.txt".into(),
+            offset: 0,
+            limit: 20,
+            area: None,
+            ignore_whitespace: false,
+        }),
+    )
+    .await
+    .expect("large diff should not block on full stdout")
+    .expect("read large changed content");
+
+    assert_eq!(page.offset, 0);
+    assert_eq!(page.content.unwrap().lines().count(), 20);
+    assert!(page.next_offset.is_some());
 
     let _ = std::fs::remove_dir_all(workspace);
 }
