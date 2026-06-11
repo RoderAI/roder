@@ -241,10 +241,16 @@ message McpDescriptor {
 // reference) and lists its tools as McpToolDescriptors read from `definition_path`
 // files under `folder_path`. Registering a server here is what makes its tools
 // appear in the model's tool surface (surfaced via the get_mcp_tools meta-tool
-// and invoked via mcp_tool_call). NOTE: whether the resulting `mcp_tool_call`
-// is dispatched back to the client over the exec channel, or executed by Cursor
-// connecting to the server process itself (per .cursor/mcp.json `mcpServers`),
-// is still unconfirmed — needs a live capture with a registered server.
+// and invoked via mcp_tool_call). RESOLVED (bundle analysis): the resulting
+// `mcp_tool_call` is NOT dispatched back to the client — it is executed by
+// Cursor's backend against a server registered via the separate aiserver.v1
+// MCP-config RPCs (SetMcpConfig/GetMcpConfig/GetAvailableMcpServers/…). The
+// schema makes this conclusive: MCP *resource/state* ops have client-exec types
+// (ReadMcpResourceExecArgs/Result, ListMcpResourcesExecArgs/Result,
+// McpStateExecArgs/Result) but MCP *tool invocation* (McpArgs/McpToolResult) has
+// NO *Exec* type. So an AgentService client (Roder) cannot service mcp_tool_call
+// in-process; native exec tools (read/write/shell/grep/glob) remain the only way
+// Roder's executor reaches a Cursor model. See docs/roder-cursor-provider.md.
 message McpFileSystemOptions {
   bool enabled = 1;
   string workspace_project_dir = 2;
