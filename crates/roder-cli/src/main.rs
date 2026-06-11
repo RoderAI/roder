@@ -158,6 +158,9 @@ async fn main() -> anyhow::Result<()> {
     if matches!(args.first().map(String::as_str), Some("thread")) {
         return forks::run_thread_cli(&args[1..]).await;
     }
+    if matches!(args.first().map(String::as_str), Some("forks")) {
+        return forks::run_forks_cli(&args[1..]).await;
+    }
     if matches!(args.first().map(String::as_str), Some("stats")) {
         return stats::run_stats_cli(&args[1..]).await;
     }

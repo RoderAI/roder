@@ -10,7 +10,8 @@ use roder_api::events::{
     EventEnvelope, EventSource, RoderEvent, TranscriptItemAppended, TurnCompleted, TurnStarted,
 };
 use roder_api::extension::ExtensionRegistryBuilder;
-use roder_api::thread::{ThreadStore, ThreadStoreFactory, WorktreeForkStatus};
+use roder_api::forks::ForkStatus;
+use roder_api::thread::{ThreadStore, ThreadStoreFactory};
 use roder_api::transcript::{TranscriptItem, UserMessage};
 use roder_core::conversation_forks::ForkThreadRequest;
 use roder_core::fake_provider::FakeInferenceEngine;
@@ -74,6 +75,9 @@ fn fixture(label: &str) -> Fixture {
     builder.tool_contributor(
         roder_tools::builtin_coding_tools_contributor(&repo).expect("coding tools"),
     );
+    builder.fork_provider(std::sync::Arc::new(
+        roder_ext_git::GitWorktreeForkProvider,
+    ));
     // Bypass tool approvals so the offline fake-provider write turn can
     // complete without an interactive approval client.
     let runtime = Arc::new(
@@ -207,7 +211,9 @@ async fn conversation_fork_creates_isolated_child_with_seeded_transcript() {
 
     let outcome = fixture
         .runtime
-        .fork_thread_worktree(ForkThreadRequest {
+        .fork_thread(ForkThreadRequest {
+            provider_id: None,
+            provider_config: serde_json::json!({}),
             parent_thread_id: parent_id.clone(),
             name: "experiment".to_string(),
             from_turn_id: None,
@@ -217,10 +223,10 @@ async fn conversation_fork_creates_isolated_child_with_seeded_transcript() {
 
     let child = &outcome.child;
     assert_eq!(child.parent_thread_id.as_deref(), Some(parent_id.as_str()));
-    let fork = child.worktree_fork.as_ref().expect("fork provenance");
-    assert_eq!(fork.status, WorktreeForkStatus::Active);
-    assert_eq!(fork.source_workspace, fixture.repo.display().to_string());
-    assert_eq!(child.workspace, fork.worktree_path);
+    let fork = child.workspace_fork.as_ref().expect("fork provenance");
+    assert_eq!(fork.status, ForkStatus::Active);
+    assert_eq!(fork.source_workspace, fixture.repo);
+    assert_eq!(child.workspace, fork.workspace.display().to_string());
     assert_ne!(child.workspace, fixture.repo.display().to_string());
     assert!(
         Path::new(&child.workspace).join("README.md").exists(),
@@ -287,7 +293,7 @@ async fn conversation_fork_creates_isolated_child_with_seeded_transcript() {
         parent_metadata.workspace,
         fixture.repo.display().to_string()
     );
-    assert!(parent_metadata.worktree_fork.is_none());
+    assert!(parent_metadata.workspace_fork.is_none());
 
     let _ = std::fs::remove_dir_all(&fixture.repo);
 }
@@ -301,8 +307,10 @@ async fn conversation_fork_truncates_at_requested_turn() {
 
     let outcome = fixture
         .runtime
-        .fork_thread_worktree(ForkThreadRequest {
+        .fork_thread(ForkThreadRequest {
             parent_thread_id: parent_id.clone(),
+            provider_id: None,
+            provider_config: serde_json::json!({}),
             name: "from-turn-1".to_string(),
             from_turn_id: Some("turn-1".to_string()),
         })
@@ -333,8 +341,10 @@ async fn conversation_fork_truncates_at_requested_turn() {
     // Forking at an unknown turn fails closed without creating a thread.
     let error = fixture
         .runtime
-        .fork_thread_worktree(ForkThreadRequest {
+        .fork_thread(ForkThreadRequest {
             parent_thread_id: parent_id.clone(),
+            provider_id: None,
+            provider_config: serde_json::json!({}),
             name: "bad-turn".to_string(),
             from_turn_id: Some("missing".to_string()),
         })
@@ -352,8 +362,10 @@ async fn conversation_fork_removal_is_path_confirmed_and_missing_worktrees_fail_
 
     let outcome = fixture
         .runtime
-        .fork_thread_worktree(ForkThreadRequest {
+        .fork_thread(ForkThreadRequest {
             parent_thread_id: parent_id.clone(),
+            provider_id: None,
+            provider_config: serde_json::json!({}),
             name: "short-lived".to_string(),
             from_turn_id: None,
         })
@@ -365,7 +377,7 @@ async fn conversation_fork_removal_is_path_confirmed_and_missing_worktrees_fail_
     // Removal requires the exact worktree path as confirmation.
     let error = fixture
         .runtime
-        .remove_thread_worktree_fork(&child_id, "/wrong/path")
+        .remove_thread_workspace_fork(&child_id, "/wrong/path")
         .await
         .unwrap_err();
     assert!(error.to_string().contains("path-confirmed"), "{error}");
@@ -373,10 +385,10 @@ async fn conversation_fork_removal_is_path_confirmed_and_missing_worktrees_fail_
 
     let removed = fixture
         .runtime
-        .remove_thread_worktree_fork(&child_id, &worktree_path)
+        .remove_thread_workspace_fork(&child_id, &worktree_path)
         .await
         .unwrap();
-    assert_eq!(removed.status, WorktreeForkStatus::Removed);
+    assert_eq!(removed.status, ForkStatus::Removed);
     assert!(!Path::new(&worktree_path).exists());
 
     // The conversation is preserved; metadata records the removed status.
@@ -387,14 +399,14 @@ async fn conversation_fork_removal_is_path_confirmed_and_missing_worktrees_fail_
         .unwrap()
         .expect("child metadata after removal");
     assert_eq!(
-        metadata.worktree_fork.as_ref().map(|fork| fork.status),
-        Some(WorktreeForkStatus::Removed)
+        metadata.workspace_fork.as_ref().map(|fork| fork.status),
+        Some(ForkStatus::Removed)
     );
 
     // Double removal fails closed.
     let error = fixture
         .runtime
-        .remove_thread_worktree_fork(&child_id, &worktree_path)
+        .remove_thread_workspace_fork(&child_id, &worktree_path)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("already removed"), "{error}");
@@ -403,8 +415,10 @@ async fn conversation_fork_removal_is_path_confirmed_and_missing_worktrees_fail_
     // write: workspace resolution names the fork and the missing path.
     let second = fixture
         .runtime
-        .fork_thread_worktree(ForkThreadRequest {
+        .fork_thread(ForkThreadRequest {
             parent_thread_id: parent_id.clone(),
+            provider_id: None,
+            provider_config: serde_json::json!({}),
             name: "orphaned".to_string(),
             from_turn_id: None,
         })
@@ -416,11 +430,11 @@ async fn conversation_fork_removal_is_path_confirmed_and_missing_worktrees_fail_
         .workspace_for_thread(&second.child.thread_id)
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("missing its worktree"), "{error}");
+    assert!(error.to_string().contains("missing its workspace"), "{error}");
     assert!(
         error
             .to_string()
-            .contains(&second.child.worktree_fork.as_ref().unwrap().fork_id),
+            .contains(&second.child.workspace_fork.as_ref().unwrap().id),
         "{error}"
     );
 
@@ -435,8 +449,10 @@ async fn conversation_fork_refuses_dirty_parent_workspace() {
 
     let error = fixture
         .runtime
-        .fork_thread_worktree(ForkThreadRequest {
+        .fork_thread(ForkThreadRequest {
             parent_thread_id: parent_id,
+            provider_id: None,
+            provider_config: serde_json::json!({}),
             name: "blocked".to_string(),
             from_turn_id: None,
         })

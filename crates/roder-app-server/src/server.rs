@@ -362,10 +362,11 @@ impl AppServer {
                 })
                 .await
             }
-            "thread/fork_worktree" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_thread_fork_worktree(p).await
-                })
+            "thread/fork" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_thread_fork(p).await },
+                )
                 .await
             }
             "thread/fork_status" => {
@@ -374,9 +375,29 @@ impl AppServer {
                 })
                 .await
             }
-            "thread/remove_worktree_fork" => {
+            "thread/remove_fork" => {
                 self.decode_and(req.params, |p| async move {
-                    self.handle_thread_remove_worktree_fork(p).await
+                    self.handle_thread_remove_fork(p).await
+                })
+                .await
+            }
+            "forks/providers/list" => self.handle_forks_providers_list().await,
+            "forks/list" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_forks_list(p).await },
+                )
+                .await
+            }
+            "forks/create" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_forks_create(p).await
+                })
+                .await
+            }
+            "forks/remove" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_forks_remove(p).await
                 })
                 .await
             }

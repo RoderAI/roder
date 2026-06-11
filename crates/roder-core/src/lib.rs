@@ -2,6 +2,7 @@ mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
 pub mod conversation_forks;
+pub mod forks;
 mod deadline_policy;
 pub mod dynamic_workflows;
 mod event_sink_dispatch;

@@ -24,8 +24,8 @@ path = "tests/postgres_like_thread_store.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
-name = "fork_worktree"
-path = "tests/fork_worktree.rs"
+name = "forks"
+path = "tests/forks.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
@@ -92,6 +92,7 @@ roder-ext-google-embeddings.workspace = true
 roder-ext-openai-embeddings.workspace = true
 roder-ext-zeroentropy-embeddings.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
+roder-ext-git.workspace = true
 roder-ext-process-host.workspace = true
 roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true

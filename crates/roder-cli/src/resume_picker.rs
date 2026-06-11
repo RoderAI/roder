@@ -709,7 +709,7 @@ mod tests {
             external_tools: Vec::new(),
             runner: None,
             parent_thread_id: None,
-            worktree_fork: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,

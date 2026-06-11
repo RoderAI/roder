@@ -152,7 +152,7 @@ fn counting_thread_snapshot(thread_id: &str) -> ThreadSnapshot {
             runner_binding: None,
             parent_thread_id: None,
             forked_from_turn_id: None,
-            worktree_fork: None,
+            workspace_fork: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 1,

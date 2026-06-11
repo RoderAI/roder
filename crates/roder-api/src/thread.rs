@@ -145,58 +145,12 @@ pub struct ThreadMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from_turn_id: Option<TurnId>,
     /**
-     * Workspace-fork provenance for conversation forks backed by a local Git
-     * worktree (roadmap phase 90 MVP). The shape is intentionally additive so
-     * phase 81's provider-neutral `WorkspaceFork` can supersede it without
-     * migrating old thread records.
+     * Provider-neutral workspace-fork provenance for threads whose
+     * workspace is a fork of another workspace (roadmap phase 81; the
+     * phase-90 Git-worktree MVP shape was folded into this canonical type).
      */
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worktree_fork: Option<ThreadWorktreeFork>,
-}
-
-/// Provenance for a child thread whose workspace is a Roder-owned Git worktree.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadWorktreeFork {
-    pub fork_id: String,
-    /// Workspace-fork backend kind; this MVP only produces `git_worktree`.
-    pub backend: WorktreeForkBackend,
-    /// Absolute path of the source workspace (the parent repository root).
-    pub source_workspace: String,
-    /// Absolute path of the child worktree this thread operates in.
-    pub worktree_path: String,
-    /// Branch created for the fork (e.g. `roder/fork/<name>`).
-    pub branch: String,
-    /// Source branch the fork was taken from; `None` when HEAD was detached.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_branch: Option<String>,
-    /// Commit the worktree was created at.
-    pub source_commit: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    pub status: WorktreeForkStatus,
-    pub cleanup: WorktreeForkCleanup,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorktreeForkBackend {
-    GitWorktree,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorktreeForkStatus {
-    Active,
-    Removed,
-}
-
-/// How the fork's worktree may be cleaned up. The MVP only supports explicit,
-/// path-confirmed removal; never automatic deletion.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorktreeForkCleanup {
-    Explicit,
+    pub workspace_fork: Option<crate::forks::WorkspaceFork>,
 }
 
 pub fn validate_thread_workspace(workspace: &str) -> anyhow::Result<String> {
@@ -536,45 +490,53 @@ mod tests {
         let metadata: ThreadMetadata = serde_json::from_value(legacy).unwrap();
         assert!(metadata.parent_thread_id.is_none());
         assert!(metadata.forked_from_turn_id.is_none());
-        assert!(metadata.worktree_fork.is_none());
+        assert!(metadata.workspace_fork.is_none());
 
         // Non-forked threads serialize without any fork keys.
         let value = serde_json::to_value(&metadata).unwrap();
         assert!(value.get("parentThreadId").is_none());
         assert!(value.get("parent_thread_id").is_none());
-        assert!(value.get("worktree_fork").is_none());
+        assert!(value.get("workspace_fork").is_none());
     }
 
     #[test]
-    fn thread_fork_metadata_round_trips_worktree_provenance() {
-        let fork = ThreadWorktreeFork {
-            fork_id: "fork-parser-experiment".to_string(),
-            backend: WorktreeForkBackend::GitWorktree,
-            source_workspace: "/repo".to_string(),
-            worktree_path: "/repo/.roder/worktrees/parser-experiment".to_string(),
-            branch: "roder/fork/parser-experiment".to_string(),
-            source_branch: Some("main".to_string()),
-            source_commit: "abc123".to_string(),
-            created_at: OffsetDateTime::UNIX_EPOCH,
-            status: WorktreeForkStatus::Active,
-            cleanup: WorktreeForkCleanup::Explicit,
+    fn thread_fork_metadata_round_trips_workspace_fork_provenance() {
+        let fork = crate::forks::WorkspaceFork {
+            id: "/repo/.roder/worktrees/parser-experiment".to_string(),
+            provider_id: "git-worktree".to_string(),
+            source_workspace: std::path::PathBuf::from("/repo"),
+            workspace: std::path::PathBuf::from("/repo/.roder/worktrees/parser-experiment"),
+            status: crate::forks::ForkStatus::Active,
+            provenance: crate::forks::ForkProvenance {
+                branch: Some("roder/fork/parser-experiment".to_string()),
+                source_branch: Some("main".to_string()),
+                source_commit: Some("abc123".to_string()),
+                snapshot_id: None,
+                session_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            cleanup: crate::forks::ForkCleanupPolicy::Explicit,
+            metadata: serde_json::json!({}),
         };
         let value = serde_json::to_value(&fork).unwrap();
-        assert_eq!(value["backend"], "git_worktree");
+        assert_eq!(value["providerId"], "git-worktree");
         assert_eq!(value["status"], "active");
         assert_eq!(value["cleanup"], "explicit");
-        assert_eq!(value["sourceCommit"], "abc123");
+        assert_eq!(value["provenance"]["sourceCommit"], "abc123");
 
-        let round_trip: ThreadWorktreeFork = serde_json::from_value(value).unwrap();
+        let round_trip: crate::forks::WorkspaceFork = serde_json::from_value(value).unwrap();
         assert_eq!(round_trip, fork);
 
         // A detached-HEAD fork keeps clear provenance without a branch name.
-        let detached = ThreadWorktreeFork {
-            source_branch: None,
+        let detached = crate::forks::WorkspaceFork {
+            provenance: crate::forks::ForkProvenance {
+                source_branch: None,
+                ..fork.provenance.clone()
+            },
             ..fork
         };
         let value = serde_json::to_value(&detached).unwrap();
-        assert!(value.get("sourceBranch").is_none());
+        assert!(value["provenance"].get("sourceBranch").is_none());
     }
 
     #[test]
@@ -596,7 +558,7 @@ mod tests {
             runner_binding: None,
             parent_thread_id: None,
             forked_from_turn_id: None,
-            worktree_fork: None,
+            workspace_fork: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,
@@ -658,7 +620,7 @@ mod tests {
             runner_binding: None,
             parent_thread_id: None,
             forked_from_turn_id: None,
-            worktree_fork: None,
+            workspace_fork: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,

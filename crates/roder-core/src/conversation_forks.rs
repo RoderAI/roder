@@ -1,10 +1,11 @@
-//! Native worktree conversation forks (roadmap phase 90).
+//! Conversation forks (roadmap phases 90 + 81).
 //!
-//! Forks an existing thread into a child thread backed by a local Git
-//! worktree: the child starts from the parent transcript (no side-effectful
-//! tool replay — only conversation history records are copied) and all
-//! subsequent tool execution resolves against the child worktree because the
-//! child's `ThreadMetadata.workspace` points at it. Cleanup is explicit and
+//! Forks an existing thread into a child thread backed by a workspace fork
+//! from any registered `ForkProvider` (default: `git-worktree`): the child
+//! starts from the parent transcript (no side-effectful tool replay — only
+//! conversation history records are copied) and all subsequent tool
+//! execution resolves against the fork workspace because the child's
+//! `ThreadMetadata.workspace` points at it. Cleanup is explicit and
 //! path-confirmed; the parent workspace is never modified.
 
 use std::path::PathBuf;
@@ -14,22 +15,39 @@ use roder_api::events::{
     EventEnvelope, RoderEvent, ThreadCreated, ThreadForkFailed, ThreadForkRemoved,
     ThreadForkRequested, ThreadForked, ThreadId, TurnId,
 };
-use roder_api::thread::{
-    ThreadMetadata, ThreadStore, ThreadWorktreeFork, WorktreeForkBackend, WorktreeForkCleanup,
-    WorktreeForkStatus,
+use roder_api::forks::{
+    ForkPolicy, ForkReason, ForkRequest, ForkStatus, RemoveForkPolicy, WorkspaceFork,
 };
-use roder_ext_git::{GitWorktreeForkRequest, create_worktree_fork, remove_worktree_fork};
+use roder_api::thread::{ThreadMetadata, ThreadStore};
 use time::OffsetDateTime;
 
 use crate::Runtime;
+use crate::forks::DEFAULT_FORK_PROVIDER;
 
 #[derive(Debug, Clone)]
 pub struct ForkThreadRequest {
     pub parent_thread_id: ThreadId,
-    /// User-facing fork name; becomes the worktree directory and branch name.
+    /// User-facing fork name; the provider sanitizes it into its naming
+    /// scheme (directories, branches, snapshot names).
     pub name: String,
     /// Fork at a specific parent turn; `None` forks at the latest turn.
     pub from_turn_id: Option<TurnId>,
+    /// Fork provider id; `None` uses [`DEFAULT_FORK_PROVIDER`].
+    pub provider_id: Option<String>,
+    /// Provider-specific options (never secrets).
+    pub provider_config: serde_json::Value,
+}
+
+impl ForkThreadRequest {
+    pub fn new(parent_thread_id: ThreadId, name: impl Into<String>) -> Self {
+        Self {
+            parent_thread_id,
+            name: name.into(),
+            from_turn_id: None,
+            provider_id: None,
+            provider_config: serde_json::json!({}),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -39,9 +57,9 @@ pub struct ForkThreadOutcome {
 }
 
 impl Runtime {
-    /// Forks `parent_thread_id` into a new child thread backed by a fresh Git
-    /// worktree of the parent workspace.
-    pub async fn fork_thread_worktree(
+    /// Forks `parent_thread_id` into a new child thread backed by a fresh
+    /// workspace fork of the parent workspace.
+    pub async fn fork_thread(
         &self,
         request: ForkThreadRequest,
     ) -> anyhow::Result<ForkThreadOutcome> {
@@ -51,7 +69,7 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        match self.fork_thread_worktree_inner(&request).await {
+        match self.fork_thread_inner(&request).await {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
                 self.emit(RoderEvent::ThreadForkFailed(ThreadForkFailed {
@@ -66,7 +84,7 @@ impl Runtime {
         }
     }
 
-    async fn fork_thread_worktree_inner(
+    async fn fork_thread_inner(
         &self,
         request: &ForkThreadRequest,
     ) -> anyhow::Result<ForkThreadOutcome> {
@@ -87,31 +105,26 @@ impl Runtime {
             )
         })?;
 
-        // Materialize the worktree first; thread creation only proceeds once
-        // an isolated workspace exists.
-        let worktree_request = GitWorktreeForkRequest {
-            source_workspace: PathBuf::from(&parent_metadata.workspace),
-            fork_name: request.name.clone(),
-            base_dir: None,
-        };
-        let fork = tokio::task::spawn_blocking(move || create_worktree_fork(&worktree_request))
-            .await
-            .map_err(|err| anyhow::anyhow!("worktree fork task panicked: {err}"))??;
+        // Materialize the workspace fork first; thread creation only
+        // proceeds once an isolated workspace exists.
+        let provider_id = request
+            .provider_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_FORK_PROVIDER.to_string());
+        let fork = self
+            .create_workspace_fork(
+                &provider_id,
+                ForkRequest {
+                    source_workspace: PathBuf::from(&parent_metadata.workspace),
+                    name: Some(request.name.clone()),
+                    reason: ForkReason::ConversationFork,
+                    policy: ForkPolicy::default(),
+                    provider_config: request.provider_config.clone(),
+                },
+            )
+            .await?;
 
         let now = OffsetDateTime::now_utc();
-        let worktree_fork = ThreadWorktreeFork {
-            fork_id: fork.fork_id.clone(),
-            backend: WorktreeForkBackend::GitWorktree,
-            source_workspace: fork.source_workspace.display().to_string(),
-            worktree_path: fork.worktree_path.display().to_string(),
-            branch: fork.branch.clone(),
-            source_branch: fork.source_branch.clone(),
-            source_commit: fork.source_commit.clone(),
-            created_at: now,
-            status: WorktreeForkStatus::Active,
-            cleanup: WorktreeForkCleanup::Explicit,
-        };
-
         let seed_events = seed_events_for_child(&parent.events, request.from_turn_id.as_deref())?;
         let mut warnings = Vec::new();
         if request.from_turn_id.is_none() && seed_events.is_empty() && !parent.events.is_empty() {
@@ -129,8 +142,8 @@ impl Runtime {
                 Some(title) => format!("{title} (fork: {})", request.name),
                 None => format!("fork: {}", request.name),
             }),
-            workspace: worktree_fork.worktree_path.clone(),
-            // The worktree lives outside registered workspace roots.
+            workspace: fork.workspace.display().to_string(),
+            // The fork workspace lives outside registered workspace roots.
             workspace_id: None,
             root_id: None,
             provider: parent_metadata.provider.clone(),
@@ -139,7 +152,7 @@ impl Runtime {
             tool_allowlist: parent_metadata.tool_allowlist.clone(),
             developer_instructions: parent_metadata.developer_instructions.clone(),
             external_tools: parent_metadata.external_tools.clone(),
-            // Native worktree forks are local-only; runner bindings stay behind.
+            // Local workspace forks never inherit runner bindings.
             runner_destination: None,
             runner_state: None,
             runner_binding: None,
@@ -149,17 +162,23 @@ impl Runtime {
             usage: None,
             parent_thread_id: Some(request.parent_thread_id.clone()),
             forked_from_turn_id: request.from_turn_id.clone(),
-            worktree_fork: Some(worktree_fork.clone()),
+            workspace_fork: Some(fork.clone()),
         };
 
         if let Err(error) = self
             .seed_child_thread(&store, child_metadata.clone(), &child_id, seed_events)
             .await
         {
-            // Best-effort cleanup so a failed fork does not leak a worktree.
-            let source = fork.source_workspace.clone();
-            let path = fork.worktree_path.clone();
-            let _ = tokio::task::spawn_blocking(move || remove_worktree_fork(&source, &path)).await;
+            // Best-effort cleanup so a failed fork does not leak a workspace.
+            let _ = self
+                .remove_workspace_fork(
+                    &provider_id,
+                    &fork.id,
+                    RemoveForkPolicy {
+                        confirm_workspace: fork.workspace.clone(),
+                    },
+                )
+                .await;
             return Err(error);
         }
 
@@ -171,7 +190,7 @@ impl Runtime {
         self.emit(RoderEvent::ThreadForked(ThreadForked {
             parent_thread_id: request.parent_thread_id.clone(),
             child_thread_id: child_id.clone(),
-            fork: worktree_fork,
+            fork,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -198,16 +217,16 @@ impl Runtime {
     }
 
     /**
-     * Removes the worktree behind a forked thread. Destructive and explicit:
-     * `confirm_path` must match the stored worktree path exactly, and only
-     * Git-registered Roder worktrees are ever removed. The thread itself is
-     * kept (status flips to `Removed`) so the conversation stays readable.
+     * Removes the workspace fork behind a forked thread. Destructive and
+     * explicit: `confirm_path` must match the fork workspace exactly. The
+     * thread itself is kept (status flips to `Removed`) so the conversation
+     * stays readable.
      */
-    pub async fn remove_thread_worktree_fork(
+    pub async fn remove_thread_workspace_fork(
         &self,
         thread_id: &ThreadId,
         confirm_path: &str,
-    ) -> anyhow::Result<ThreadWorktreeFork> {
+    ) -> anyhow::Result<WorkspaceFork> {
         let store = self
             .thread_store
             .clone()
@@ -217,36 +236,39 @@ impl Runtime {
             .await?
             .ok_or_else(|| anyhow::anyhow!("thread {thread_id} was not found"))?;
         let mut fork = metadata
-            .worktree_fork
+            .workspace_fork
             .clone()
-            .ok_or_else(|| anyhow::anyhow!("thread {thread_id} is not a worktree fork"))?;
+            .ok_or_else(|| anyhow::anyhow!("thread {thread_id} is not a workspace fork"))?;
         anyhow::ensure!(
-            fork.status == WorktreeForkStatus::Active,
+            fork.status == ForkStatus::Active,
             "fork {} was already removed",
-            fork.fork_id
+            fork.id
         );
         anyhow::ensure!(
-            confirm_path == fork.worktree_path,
-            "confirmation path does not match the fork worktree path {}; removal is \
+            std::path::Path::new(confirm_path) == fork.workspace,
+            "confirmation path does not match the fork workspace {}; removal is \
              path-confirmed to prevent accidental deletion",
-            fork.worktree_path
+            fork.workspace.display()
         );
 
-        let source = PathBuf::from(&fork.source_workspace);
-        let path = PathBuf::from(&fork.worktree_path);
-        tokio::task::spawn_blocking(move || remove_worktree_fork(&source, &path))
-            .await
-            .map_err(|err| anyhow::anyhow!("worktree removal task panicked: {err}"))??;
+        self.remove_workspace_fork(
+            &fork.provider_id.clone(),
+            &fork.id.clone(),
+            RemoveForkPolicy {
+                confirm_workspace: fork.workspace.clone(),
+            },
+        )
+        .await?;
 
-        fork.status = WorktreeForkStatus::Removed;
-        metadata.worktree_fork = Some(fork.clone());
+        fork.status = ForkStatus::Removed;
+        metadata.workspace_fork = Some(fork.clone());
         metadata.updated_at = OffsetDateTime::now_utc();
         store.update_thread_metadata(metadata).await?;
 
         self.emit(RoderEvent::ThreadForkRemoved(ThreadForkRemoved {
             thread_id: thread_id.clone(),
-            fork_id: fork.fork_id.clone(),
-            worktree_path: fork.worktree_path.clone(),
+            fork_id: fork.id.clone(),
+            worktree_path: fork.workspace.display().to_string(),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;

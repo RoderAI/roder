@@ -3228,6 +3228,7 @@ dependencies = [
  "roder-core",
  "roder-dynamic-workflows",
  "roder-evals",
+ "roder-ext-git",
  "roder-ext-google-embeddings",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",

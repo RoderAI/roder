@@ -1,12 +1,11 @@
-//! `/fork` slash command: native worktree conversation forks (roadmap
-//! phase 90). Forks the current conversation into a child thread backed by
-//! a local Git worktree — this is a Roder conversation/workspace fork, not
-//! a GitHub repository fork.
+//! `/fork` slash command: conversation forks backed by workspace fork
+//! providers (roadmap phases 90 + 81; `git-worktree` by default) — these
+//! are Roder conversation/workspace forks, not GitHub repository forks.
 
 use roder_app_server::AppClient;
 use roder_protocol::{
-    JsonRpcRequest, ThreadForkStatusParams, ThreadForkStatusResult, ThreadForkWorktreeParams,
-    ThreadForkWorktreeResult, ThreadRemoveWorktreeForkParams, ThreadRemoveWorktreeForkResult,
+    JsonRpcRequest, ThreadForkParams, ThreadForkResult, ThreadForkStatusParams,
+    ThreadForkStatusResult, ThreadRemoveForkParams, ThreadRemoveForkResult,
 };
 
 use super::{TuiApp, decode_response, truncate};
@@ -23,7 +22,7 @@ where
             return;
         }
         if let Some(rest) = args.strip_prefix("remove") {
-            self.remove_fork_worktree(rest.trim()).await;
+            self.remove_fork_workspace(rest.trim()).await;
             self.push_event("slash command: /fork remove".to_string());
             return;
         }
@@ -32,12 +31,14 @@ where
     }
 
     async fn fork_current_thread(&mut self, name: &str) {
-        let params = ThreadForkWorktreeParams {
+        let params = ThreadForkParams {
             thread_id: self.thread_id.clone(),
             name: name.to_string(),
             from_turn_id: None,
+            provider: None,
+            provider_config: None,
         };
-        let result = fork_worktree(&self.client, params).await;
+        let result = fork_thread(&self.client, params).await;
         match result {
             Ok(forked) => {
                 let child_id = forked.thread.id.clone();
@@ -45,10 +46,10 @@ where
                 // summary is pushed afterwards to stay visible.
                 self.load_thread(child_id.clone()).await;
                 let mut lines = vec![format!(
-                    "Forked conversation into {} (worktree {}, branch {}).",
+                    "Forked conversation into {} ({} fork at {}).",
                     truncate(&child_id, 12),
-                    forked.fork.worktree_path,
-                    forked.fork.branch
+                    forked.fork.provider_id,
+                    forked.fork.workspace.display()
                 )];
                 lines.extend(
                     forked
@@ -57,13 +58,13 @@ where
                         .map(|warning| format!("warning: {warning}")),
                 );
                 lines.push(
-                    "Tool writes now happen in the fork worktree; /fork remove <worktree-path> \
+                    "Tool writes now happen in the fork workspace; /fork remove <workspace-path> \
                      cleans it up."
                         .to_string(),
                 );
                 self.timeline.push_system(lines.join("\n"));
             }
-            Err(err) => self.record_error(format!("thread/fork_worktree failed: {err}")),
+            Err(err) => self.record_error(format!("thread/fork failed: {err}")),
         }
     }
 
@@ -76,16 +77,18 @@ where
                 let text = match (&status.fork, &status.parent_thread_id) {
                     (Some(fork), parent) => {
                         let mut lines = vec![format!(
-                            "Worktree fork {} ({:?}) at {}",
-                            fork.fork_id, fork.status, fork.worktree_path
+                            "{} fork ({:?}) at {}",
+                            fork.provider_id,
+                            fork.status,
+                            fork.workspace.display()
                         )];
                         if let Some(parent) = parent {
                             lines.push(format!("Forked from thread {}", truncate(parent, 12)));
                         }
-                        if status.worktree_missing {
+                        if status.workspace_missing {
                             lines.push(
-                                "warning: the worktree directory is missing; restore it or run \
-                                 /fork remove <worktree-path>"
+                                "warning: the fork workspace is missing; restore it or run \
+                                 /fork remove <workspace-path>"
                                     .to_string(),
                             );
                         }
@@ -93,13 +96,13 @@ where
                     }
                     (None, Some(parent)) => {
                         format!(
-                            "This thread was forked from {} but has no worktree fork.",
+                            "This thread was forked from {} but has no workspace fork.",
                             truncate(parent, 12)
                         )
                     }
                     (None, None) => {
                         "This thread is not a fork. Use /fork <name> to fork the conversation \
-                         into an isolated Git worktree (not a GitHub repository fork)."
+                         into an isolated workspace fork (not a GitHub repository fork)."
                             .to_string()
                     }
                 };
@@ -109,40 +112,40 @@ where
         }
     }
 
-    async fn remove_fork_worktree(&mut self, confirm_path: &str) {
+    async fn remove_fork_workspace(&mut self, confirm_path: &str) {
         if confirm_path.is_empty() {
             self.timeline.push_system(
                 "Removal is destructive and path-confirmed: run /fork status to see the exact \
-                 worktree path, then /fork remove <worktree-path>."
+                 workspace path, then /fork remove <workspace-path>."
                     .to_string(),
             );
             return;
         }
-        let params = ThreadRemoveWorktreeForkParams {
+        let params = ThreadRemoveForkParams {
             thread_id: self.thread_id.clone(),
             confirm_path: confirm_path.to_string(),
         };
-        match remove_worktree_fork(&self.client, params).await {
+        match remove_thread_fork(&self.client, params).await {
             Ok(removed) => {
                 self.timeline.push_system(format!(
-                    "Removed fork worktree {} (branch {} kept for provenance).",
-                    removed.fork.worktree_path, removed.fork.branch
+                    "Removed fork workspace {} ({} provenance kept).",
+                    removed.fork.workspace.display(), removed.fork.provenance.branch.as_deref().unwrap_or("-")
                 ));
             }
-            Err(err) => self.record_error(format!("thread/remove_worktree_fork failed: {err}")),
+            Err(err) => self.record_error(format!("thread/remove_fork failed: {err}")),
         }
     }
 }
 
-async fn fork_worktree<C: AppClient>(
+async fn fork_thread<C: AppClient>(
     client: &C,
-    params: ThreadForkWorktreeParams,
-) -> anyhow::Result<ThreadForkWorktreeResult> {
+    params: ThreadForkParams,
+) -> anyhow::Result<ThreadForkResult> {
     let response = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("thread/fork_worktree")),
-            method: "thread/fork_worktree".to_string(),
+            id: Some(serde_json::json!("thread/fork")),
+            method: "thread/fork".to_string(),
             params: Some(serde_json::to_value(params)?),
         })
         .await;
@@ -164,15 +167,15 @@ async fn fork_status<C: AppClient>(
     decode_response(response)
 }
 
-async fn remove_worktree_fork<C: AppClient>(
+async fn remove_thread_fork<C: AppClient>(
     client: &C,
-    params: ThreadRemoveWorktreeForkParams,
-) -> anyhow::Result<ThreadRemoveWorktreeForkResult> {
+    params: ThreadRemoveForkParams,
+) -> anyhow::Result<ThreadRemoveForkResult> {
     let response = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!("thread/remove_worktree_fork")),
-            method: "thread/remove_worktree_fork".to_string(),
+            id: Some(serde_json::json!("thread/remove_fork")),
+            method: "thread/remove_fork".to_string(),
             params: Some(serde_json::to_value(params)?),
         })
         .await;
