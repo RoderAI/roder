@@ -80,7 +80,11 @@ pub(crate) fn protocol_turns_from_snapshot(
                 .find(|turn| turn.turn_id == record.turn_id)
                 .map(|turn| turn.items.clone());
             let items = if record.completed_at.is_some() {
-                thread_items_from_transcript_items(&record.turn_id, &record.items)
+                let mut items = thread_items_from_transcript_items(&record.turn_id, &record.items);
+                if let Some(projected_items) = projected_items {
+                    merge_supplemental_projected_items(&mut items, projected_items);
+                }
+                items
             } else {
                 projected_items.unwrap_or_else(|| {
                     thread_items_from_transcript_items(&record.turn_id, &record.items)
@@ -106,6 +110,22 @@ fn thread_items_from_transcript_items(turn_id: &str, items: &[TranscriptItem]) -
         .enumerate()
         .map(|(index, item)| thread_item_from_transcript_item(turn_id, index, item))
         .collect()
+}
+
+fn merge_supplemental_projected_items(
+    items: &mut Vec<ThreadItem>,
+    projected_items: Vec<ThreadItem>,
+) {
+    for item in projected_items {
+        match item {
+            ThreadItem::RoutingDecision { .. } => {
+                if !items.iter().any(|existing| existing.id() == item.id()) {
+                    items.push(item);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn thread_item_from_transcript_item(
@@ -245,8 +265,12 @@ pub(crate) fn protocol_turn_images(input: &[TurnInputItem]) -> Vec<InputImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::events::InferenceRoutingDecisionEvent;
+    use roder_api::inference::ModelSelection;
+    use roder_api::inference_routing::InferenceRoutingDecision;
     use roder_api::thread::{
-        ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadSnapshot, TurnRecord,
+        ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind,
+        ThreadItemStatus as ApiThreadItemStatus, ThreadSnapshot, TurnRecord,
     };
     use roder_api::transcript::{AssistantMessage, ToolCallRecord, UserMessage};
     use roder_protocol::{Item, ThreadItemStatus};
@@ -373,5 +397,68 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(commentary, vec!["First commentary.", "Second commentary."]);
+    }
+
+    #[test]
+    fn completed_snapshot_merges_routing_decision_item_events() {
+        let timestamp = OffsetDateTime::UNIX_EPOCH;
+        let selected = ModelSelection {
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-5".to_string(),
+        };
+        let turns = protocol_turns_from_snapshot(&ThreadSnapshot {
+            metadata: None,
+            events: Vec::new(),
+            turns: vec![TurnRecord {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                items: vec![TranscriptItem::UserMessage(UserMessage::text("inspect"))],
+                created_at: timestamp,
+                completed_at: Some(timestamp),
+                usage: None,
+                finish_reason: None,
+            }],
+            item_events: vec![ThreadItemEvent {
+                seq: 1,
+                event_id: "item-event-1".to_string(),
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                timestamp,
+                event: ThreadItemEventKind::ItemCompleted {
+                    item: ThreadItem::RoutingDecision {
+                        id: "turn-1-routing-decision-0".to_string(),
+                        decision: InferenceRoutingDecisionEvent {
+                            thread_id: "thread-1".to_string(),
+                            turn_id: "turn-1".to_string(),
+                            round_index: 0,
+                            default_selection: ModelSelection {
+                                provider: "openai".to_string(),
+                                model: "gpt-5.5".to_string(),
+                            },
+                            selected_selection: selected.clone(),
+                            decision: InferenceRoutingDecision::selected(
+                                "local",
+                                selected,
+                                "Large diff and failing tests",
+                            ),
+                            timestamp,
+                        },
+                        status: Some(ApiThreadItemStatus::Completed),
+                    },
+                },
+            }],
+            extension_states: Vec::new(),
+        });
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].status, "completed");
+        assert!(
+            turns[0].items.iter().any(|item| matches!(
+                item,
+                Item::RoutingDecision { decision, .. }
+                    if decision.selected_selection.model == "claude-sonnet-5"
+            )),
+            "completed turn should preserve supplemental routing decision item"
+        );
     }
 }

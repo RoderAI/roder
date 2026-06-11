@@ -5826,10 +5826,8 @@ mod tests {
     #[tokio::test]
     async fn thread_tool_allowlist_filters_only_that_thread() {
         let requests = Arc::new(StdMutex::new(Vec::new()));
-        let thread_root = std::env::temp_dir().join(format!(
-            "roder-thread-allowlist-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-thread-allowlist-{}", uuid::Uuid::new_v4()));
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(SwitchCaptureEngine {
             requests: requests.clone(),
