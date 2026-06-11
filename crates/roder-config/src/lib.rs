@@ -52,6 +52,10 @@ pub struct Config {
     pub models: HashMap<String, ModelConfig>,
     #[serde(default)]
     pub model_profiles: HashMap<String, ModelHarnessProfileConfig>,
+    /// Process-hosted extensions (`[[process_extensions]]`), installed
+    /// through `roder-ext-process-host` as ordinary registry extensions.
+    #[serde(default)]
+    pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1413,6 +1417,7 @@ mod tests {
             providers: HashMap::new(),
             models: HashMap::new(),
             model_profiles: HashMap::new(),
+            process_extensions: Vec::new(),
         };
         config.providers.insert(
             "openai".to_string(),
@@ -1427,6 +1432,42 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn deserializes_process_extensions_entries() {
+        let config: Config = toml::from_str(
+            r#"
+            [[process_extensions]]
+            id = "python-chat-completions"
+            enabled = true
+            manifest = "examples/non-rust-extensions/python-chat-completions/roder-extension.toml"
+            command = "python3"
+            args = ["-m", "roder_python_chat_provider"]
+            cwd = "examples/non-rust-extensions/python-chat-completions"
+            env = { PYTHONUNBUFFERED = "1" }
+            event_filter = { kinds = ["turn.", "inference."] }
+
+            [[process_extensions]]
+            id = "disabled-extension"
+            enabled = false
+            manifest = "missing.toml"
+            command = "false"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.process_extensions.len(), 2);
+        let python = &config.process_extensions[0];
+        assert_eq!(python.id, "python-chat-completions");
+        assert!(python.enabled);
+        assert_eq!(python.command, "python3");
+        assert_eq!(python.env.get("PYTHONUNBUFFERED").map(String::as_str), Some("1"));
+        assert!(python.event_filter.matches("turn.started"));
+        assert!(!config.process_extensions[1].enabled);
+
+        let empty: Config = toml::from_str("provider = \"mock\"").unwrap();
+        assert!(empty.process_extensions.is_empty());
     }
 
     #[test]

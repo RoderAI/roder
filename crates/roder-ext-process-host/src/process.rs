@@ -78,12 +78,12 @@ impl ProcessHost {
                 self.loaded.manifest.id
             )
         })??;
-        Ok(serde_json::from_value(value).with_context(|| {
+        serde_json::from_value(value).with_context(|| {
             format!(
                 "process extension {} returned a malformed {method} result",
                 self.loaded.manifest.id
             )
-        })?)
+        })
     }
 
     /// Sends a notification (no response expected).

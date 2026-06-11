@@ -1,0 +1,17 @@
+id = "roder-ext-python-chat-completions"
+name = "Python Chat Completions"
+version = "0.1.0"
+api_version = "^0.1"
+description = "Process-hosted Python OpenAI-compatible chat-completions provider"
+
+provides = [
+  { type = "inference_engine", id = "python-chat-completions" },
+  { type = "event_sink", id = "python-chat-completions-events" },
+]
+
+required_capabilities = [
+  "network.api.openai.com",
+  "secret.read.PY_CHAT_COMPLETIONS_API_KEY",
+  "events.read.turn",
+  "events.emit.extension",
+]

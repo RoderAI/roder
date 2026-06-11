@@ -124,6 +124,9 @@ pub struct DefaultRegistryConfig {
     pub remote_runner_destination: Option<RunnerDestination>,
     pub inference_router: Option<roder_config::InferenceRouterConfig>,
     pub extra_extensions: ExtraExtensions,
+    /// Process-hosted extensions from `[[process_extensions]]` config;
+    /// enabled entries are installed through `roder-ext-process-host`.
+    pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
 }
 
 /// Out-of-tree extensions installed after the built-in set. Supplied by
@@ -206,6 +209,7 @@ impl Default for DefaultRegistryConfig {
             remote_runner_destination: None,
             inference_router: None,
             extra_extensions: ExtraExtensions::default(),
+            process_extensions: Vec::new(),
         }
     }
 }
@@ -444,6 +448,19 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(ZeroEntropyEmbeddingsExtension::new(
         zeroentropy_embeddings_config,
     ))?;
+
+    // Process-hosted extensions: enabled entries fail registry construction
+    // loudly when their manifests are missing or invalid (the user asked for
+    // them); disabled entries are skipped entirely.
+    let process_extension_base = workspace.clone();
+    for entry in &config.process_extensions {
+        if !entry.enabled {
+            continue;
+        }
+        let loaded =
+            roder_ext_process_host::load_process_extension(entry.clone(), &process_extension_base)?;
+        builder.install(roder_ext_process_host::ProcessHostExtension::new(loaded))?;
+    }
 
     for extension in config.extra_extensions.0 {
         builder.install(extension)?;
@@ -1142,6 +1159,65 @@ mod tests {
     }
 
     #[test]
+    fn default_registry_installs_enabled_process_extensions() {
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../roder-ext-process-host/tests/fixtures");
+        let manifest = fixtures.join("fake-extension.toml");
+        let entry = roder_api::process_extension::ProcessExtensionConfig {
+            id: "fake-child".to_string(),
+            enabled: true,
+            manifest: manifest.display().to_string(),
+            command: "python3".to_string(),
+            args: vec![fixtures.join("fake_child.py").display().to_string()],
+            cwd: None,
+            env: std::collections::BTreeMap::from([(
+                "FAKE_CHILD_MANIFEST".to_string(),
+                manifest.display().to_string(),
+            )]),
+            startup_timeout_ms: 10_000,
+            event_filter: roder_api::process_extension::ProcessEventFilter::default(),
+        };
+
+        let registry = build_default_registry(DefaultRegistryConfig {
+            process_extensions: vec![entry.clone()],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            registry
+                .manifests
+                .iter()
+                .any(|manifest| manifest.id == "roder-ext-fake-child")
+        );
+        assert!(registry.inference_engine("fake-process-engine").is_some());
+        assert_eq!(registry.event_sinks.len(), 1);
+
+        // Disabled entries are skipped entirely.
+        let registry = build_default_registry(DefaultRegistryConfig {
+            process_extensions: vec![roder_api::process_extension::ProcessExtensionConfig {
+                enabled: false,
+                ..entry.clone()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(registry.inference_engine("fake-process-engine").is_none());
+
+        // Enabled entries with unreadable manifests fail loudly.
+        let err = match build_default_registry(DefaultRegistryConfig {
+            process_extensions: vec![roder_api::process_extension::ProcessExtensionConfig {
+                manifest: "/definitely/missing.toml".to_string(),
+                ..entry
+            }],
+            ..Default::default()
+        }) {
+            Ok(_) => panic!("expected unreadable manifest to fail registry construction"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("unreadable"), "{err}");
+    }
+
+    #[test]
     fn default_registry_installs_extra_extensions() {
         let registry = build_default_registry(DefaultRegistryConfig {
             extra_extensions: ExtraExtensions(vec![Arc::new(FakeDistributionExtension)]),
@@ -1312,6 +1388,7 @@ mod tests {
             remote_runner_destination: None,
             inference_router: None,
             extra_extensions: ExtraExtensions::default(),
+            process_extensions: Vec::new(),
         })
         .unwrap();
         for provider in [
