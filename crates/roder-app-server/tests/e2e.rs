@@ -4463,6 +4463,28 @@ async fn workspace_files_rebuild_children_query_and_read_flow() {
     );
     assert_eq!(query["indexedFileCount"], 4);
 
+    let directory_query: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/query",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "query": "roadmap",
+            "limit": 5
+        })),
+    )
+    .await;
+    assert!(
+        directory_query["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|match_result| {
+                match_result["entry"]["path"] == "roadmap"
+                    && match_result["entry"]["kind"] == "directory"
+                    && match_result["entry"]["hasChildren"] == true
+            })
+    );
+
     let read: serde_json::Value = request(
         &fixture.client,
         "workspace/files/read",

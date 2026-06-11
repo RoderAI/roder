@@ -209,6 +209,14 @@ test("typescript sdk replays workspace files fixture", async () => {
   })) as any;
   assert.equal(query.matches[0].entry.path, "roadmap/001-desktop-custom-user-extensions.md");
 
+  const directoryQuery = (await client.call("workspace/files/query", {
+    workspaceId: "ws_files",
+    query: "roadmap",
+    limit: 5,
+  })) as any;
+  assert.equal(directoryQuery.matches[0].entry.path, "roadmap");
+  assert.equal(directoryQuery.matches[0].entry.kind, "directory");
+
   const read = (await client.call("workspace/files/read", {
     workspaceId: "ws_files",
     rootId: "root_repo",
