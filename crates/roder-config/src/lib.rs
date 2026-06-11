@@ -807,6 +807,29 @@ pub fn delete_provider_api_key(provider: &str) -> anyhow::Result<()> {
     delete_provider_api_key_to_path(config_path(), provider)
 }
 
+/**
+ * API key persisted for a provider in user config: the stored `api_key`,
+ * falling back to the `api_key_env` indirection. Inference engines resolve
+ * this per call (after their construction-time key and canonical env var) so
+ * keys persisted by `providers/configure` take effect without a process
+ * restart.
+ */
+pub fn provider_api_key(provider: &str) -> Option<String> {
+    let config = load_config().ok()?;
+    let entry = config.providers.get(provider)?;
+    let stored = entry
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    stored.or_else(|| {
+        let value = std::env::var(entry.api_key_env.as_deref()?).ok()?;
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
 pub fn save_skills_config(skills: &roder_skills::SkillsConfig) -> anyhow::Result<()> {
     save_skills_config_to_path(config_path(), skills)
 }

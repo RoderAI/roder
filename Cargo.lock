@@ -3521,6 +3521,7 @@ dependencies = [
  "futures",
  "reqwest",
  "roder-api",
+ "roder-config",
  "semver",
  "serde",
  "serde_json",
