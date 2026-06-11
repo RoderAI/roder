@@ -220,6 +220,16 @@ pub trait RemoteRunnerProvider: Send + Sync + 'static {
     fn id(&self) -> RemoteRunnerProviderId;
     fn capabilities(&self) -> RunnerCapabilities;
 
+    /**
+     * Optional setup guidance shown by runner pickers when the provider is
+     * installed but not yet usable (for example a missing credential env
+     * var). Must name only documented env vars and never include secret
+     * values. `None` means the provider is ready or needs no setup hint.
+     */
+    fn setup_hint(&self) -> Option<String> {
+        None
+    }
+
     async fn create_session(
         &self,
         destination: RunnerDestination,

@@ -1606,6 +1606,7 @@ mod tests {
                     artifact_export: false,
                     mounts: Default::default(),
                 },
+                setup_hint: None,
             }],
         });
 

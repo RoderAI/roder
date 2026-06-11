@@ -7903,6 +7903,20 @@ fn runner_menu_label(
     } else {
         ""
     };
+    // Providers that need setup (e.g. a missing credential env var) show the
+    // guidance instead of a capability list that cannot be used yet.
+    if let Some(hint) = provider
+        .setup_hint
+        .as_deref()
+        .filter(|hint| !hint.trim().is_empty())
+    {
+        return format!(
+            "{}{} - needs setup: {}",
+            provider.provider_id,
+            active_suffix,
+            truncate(hint, 72)
+        );
+    }
     format!(
         "{}{} - {}",
         provider.provider_id,
@@ -12169,6 +12183,7 @@ mod tests {
                     artifact_export: false,
                     mounts: Default::default(),
                 },
+                setup_hint: None,
             }],
         });
 
@@ -12185,6 +12200,36 @@ mod tests {
                 && label.contains("cancel")
         ));
         assert!(matches!(items.last(), Some(ProviderMenuItem::Back)));
+    }
+
+    #[test]
+    fn runner_menu_label_shows_setup_guidance_for_missing_credentials() {
+        let label = runner_menu_label(
+            &roder_protocol::RunnerProviderDescriptor {
+                provider_id: "sprites".to_string(),
+                capabilities: roder_api::remote_runner::RunnerCapabilities {
+                    command_exec: true,
+                    file_read: false,
+                    file_write: false,
+                    port_preview: false,
+                    snapshots: false,
+                    cancellation: false,
+                    artifact_export: false,
+                    mounts: Default::default(),
+                },
+                setup_hint: Some(
+                    "set SPRITES_TOKEN (or RODER_SPRITES_TOKEN) to run Fly Sprites sandboxes; \
+                     see docs/roder-fly-sprites-runner.md"
+                        .to_string(),
+                ),
+            },
+            None,
+        );
+
+        assert!(label.starts_with("sprites - needs setup: "), "{label}");
+        assert!(label.contains("SPRITES_TOKEN"), "{label}");
+        // Hints stay compact in the picker.
+        assert!(label.len() <= 110, "{label}");
     }
 
     #[test]

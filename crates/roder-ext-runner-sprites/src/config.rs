@@ -34,6 +34,10 @@ pub struct SpritesConfig {
     pub connectors: Vec<serde_json::Value>,
     pub labels: Vec<String>,
     pub metadata: serde_json::Value,
+    /// Restore the sprite filesystem from this checkpoint right after
+    /// session creation (fresh or reused sprite). Applied once per
+    /// `create_session`; resume never re-restores.
+    pub restore_checkpoint_id: Option<String>,
     pub app_server: Option<SpritesAppServerConfig>,
 }
 
@@ -193,6 +197,7 @@ impl SpritesConfig {
                 .get("metadata")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null),
+            restore_checkpoint_id: string_field(config, "restore_checkpoint_id"),
             app_server: parse_app_server_config(config)?,
         })
     }
@@ -224,6 +229,7 @@ impl SpritesConfig {
             connectors: Vec::new(),
             labels: Vec::new(),
             metadata: serde_json::Value::Null,
+            restore_checkpoint_id: None,
             app_server: None,
         })
     }

@@ -17,12 +17,15 @@ mod exec_ws;
 mod filesystem;
 mod policies;
 mod session;
+mod ws;
 
-pub use checkpoints::is_checkpoint_restore_supported;
+pub use checkpoints::{SpriteCheckpoint, is_checkpoint_restore_supported};
 pub use client::{
     SpriteService, SpriteServiceState, SpritesAppServerDeployment, SpritesClient,
     SpritesCommandResponse, SpritesHttpError,
 };
+pub use filesystem::SpriteFsEntry;
+pub use ws::{WsExecOutcome, WsExecRequest};
 pub use config::{
     BASE_URL_ENV, CleanupMode, DEFAULT_APP_SERVER_TOKEN_ENV, DEFAULT_BASE_URL,
     DEFAULT_REMOTE_RODER_BASE_URL, DEFAULT_REMOTE_RODER_BINARY, LIVE_ENV, PROVIDER_ID,
@@ -74,6 +77,22 @@ impl RemoteRunnerProvider for SpritesRunnerProvider {
         PROVIDER_ID.to_string()
     }
 
+    fn setup_hint(&self) -> Option<String> {
+        let has_token = [RODER_TOKEN_ENV, TOKEN_ENV].iter().any(|name| {
+            std::env::var(name)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty())
+        });
+        if has_token {
+            None
+        } else {
+            Some(format!(
+                "set {TOKEN_ENV} (or {RODER_TOKEN_ENV}) to run Fly Sprites sandboxes; see \
+                 docs/roder-fly-sprites-runner.md"
+            ))
+        }
+    }
+
     fn capabilities(&self) -> RunnerCapabilities {
         RunnerCapabilities {
             command_exec: true,
@@ -97,6 +116,11 @@ impl RemoteRunnerProvider for SpritesRunnerProvider {
         let config = SpritesConfig::from_destination(&destination)?;
         let client = SpritesClient::new(self.client.clone(), config.clone());
         let sprite = client.ensure_sprite().await?;
+        // Restore happens first so manifests/app-server bootstrap overlay the
+        // restored filesystem rather than the other way around.
+        if let Some(checkpoint_id) = &config.restore_checkpoint_id {
+            client.restore_checkpoint(&sprite.name, checkpoint_id).await?;
+        }
         policies::apply_configured_policies(&client, &sprite.name, &config).await?;
         client.ensure_working_dir(&sprite.name).await?;
         client
