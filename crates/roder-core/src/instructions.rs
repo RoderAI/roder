@@ -121,8 +121,10 @@ pub fn apply_thread_developer_instructions(
 /**
  * Sets the per-turn developer-context slot. Supplied on turn/start only and
  * never persisted, so a context delivered on turn N is absent on turn N+1
- * unless the host sends it again. Providers render the slot after the stable
- * `developer` slot so cached stable-prefix blocks survive per-turn changes.
+ * unless the host sends it again. Providers render the slot after all stable
+ * instruction content — through a provider-native per-turn channel (e.g. a
+ * trailing system-role message) where available — so cached stable-prefix
+ * blocks survive per-turn changes.
  */
 pub fn apply_turn_developer_context(
     mut instructions: InstructionBundle,
