@@ -99,6 +99,37 @@ async def test_python_sdk_replays_runner_thread_fixture() -> None:
 
 
 @pytest.mark.anyio
+async def test_python_sdk_replays_developer_context_fixture() -> None:
+    fixture = load_fixture("developer-context-flow.jsonl")
+    transport = fixture_transport(fixture)
+    agent = await RoderAgent.create(
+        transport=transport,
+        cwd="/workspace",
+        workspace_id="ws-fixture",
+        model={"provider": "mock", "id": "mock"},
+    )
+
+    first = await agent.send("hello", developer_context="Connected accounts: example-service.")
+    assert first.turn_id == "turn-context"
+
+    # The next turn omits developer_context; the fixture asserts it stays
+    # absent on the wire instead of leaking from the previous turn.
+    second = await agent.send("and now?")
+    completed: list[dict[str, Any]] = []
+
+    async def wait() -> None:
+        turn = await second.wait()
+        if turn is not None:
+            completed.append(turn)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(wait)
+        await emit_notifications(transport, fixture)
+
+    assert completed and completed[0]["raw"]["params"]["turn"]["id"] == "turn-context-2"
+
+
+@pytest.mark.anyio
 async def test_python_sdk_replays_user_input_and_plan_exit_fixture() -> None:
     fixture = load_fixture("user-input-flow.jsonl")
     transport = fixture_transport(fixture)

@@ -23,6 +23,10 @@ impl AnthropicEngine {
     }
 
     fn map_request(request: &AgentInferenceRequest) -> Value {
+        /*
+         * Body-level cache_control auto-caches the last cacheable block, so
+         * warm turns reuse the conversation prefix when nothing else changed.
+         */
         let mut body = json!({
             "model": request.model.model,
             "max_tokens": request.output.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
@@ -35,6 +39,19 @@ impl AnthropicEngine {
             system.push(json!({ "type": "text", "text": text }));
         }
         if let Some(text) = request.instructions.developer.as_deref() {
+            system.push(json!({ "type": "text", "text": text }));
+        }
+        /*
+         * Breakpoint on the last stable block (tools render before system, so
+         * it covers tools + system + developer). The per-turn developer
+         * context goes after it without a marker: when it changes between
+         * turns only the tail re-processes and the stable prefix still reads
+         * from cache.
+         */
+        if let Some(last) = system.last_mut() {
+            last["cache_control"] = json!({ "type": "ephemeral" });
+        }
+        if let Some(text) = request.instructions.developer_context.as_deref() {
             system.push(json!({ "type": "text", "text": text }));
         }
         if !system.is_empty() {
@@ -339,6 +356,7 @@ mod tests {
             instructions: InstructionBundle {
                 system: Some("system".to_string()),
                 developer: Some("developer".to_string()),
+                developer_context: None,
             },
             transcript: vec![
                 TranscriptItem::UserMessage(UserMessage::text("Hello")),
@@ -404,6 +422,60 @@ mod tests {
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
         assert_eq!(body["tool_choice"]["type"], "auto");
         assert_eq!(body["output_config"]["effort"], "medium");
+    }
+
+    #[test]
+    fn places_cache_breakpoint_on_last_stable_system_block() {
+        let body = AnthropicEngine::map_request(&request());
+
+        // No per-turn context: developer is the last stable block and carries
+        // the breakpoint covering tools + system + developer.
+        assert_eq!(body["system"].as_array().unwrap().len(), 2);
+        assert!(body["system"][0].get("cache_control").is_none());
+        assert_eq!(
+            body["system"][1]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert_eq!(body["cache_control"], json!({ "type": "ephemeral" }));
+    }
+
+    #[test]
+    fn renders_developer_context_after_cached_stable_prefix() {
+        let mut request = request();
+        request.instructions.developer_context = Some("per-turn context".to_string());
+
+        let body = AnthropicEngine::map_request(&request);
+
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 3);
+        assert_eq!(system[0]["text"], "system");
+        assert_eq!(system[1]["text"], "developer");
+        assert_eq!(system[2]["text"], "per-turn context");
+        // The volatile per-turn block must not carry a marker; the breakpoint
+        // stays on the stable developer block so its prefix survives per-turn
+        // changes.
+        assert_eq!(
+            system[1]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert!(system[2].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn caches_system_block_when_developer_slot_is_empty() {
+        let mut request = request();
+        request.instructions.developer = None;
+        request.instructions.developer_context = Some("per-turn context".to_string());
+
+        let body = AnthropicEngine::map_request(&request);
+
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 2);
+        assert_eq!(
+            system[0]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert!(system[1].get("cache_control").is_none());
     }
 
     #[test]

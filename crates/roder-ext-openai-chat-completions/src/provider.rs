@@ -51,6 +51,12 @@ impl OpenAiChatCompletionsEngine {
                 content: dev.clone(),
             });
         }
+        if let Some(context) = &req.instructions.developer_context {
+            messages.push(ChatMessage {
+                role: "developer".to_string(),
+                content: context.clone(),
+            });
+        }
         for item in &req.transcript {
             match item {
                 roder_api::transcript::TranscriptItem::UserMessage(m) => {
@@ -198,6 +204,7 @@ mod tests {
             instructions: InstructionBundle {
                 system: Some("You are a helpful assistant.".to_string()),
                 developer: Some("Be concise.".to_string()),
+                developer_context: None,
             },
             transcript: vec![
                 TranscriptItem::UserMessage(UserMessage::text("Hello")),

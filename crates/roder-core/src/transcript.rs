@@ -937,6 +937,7 @@ mod tests {
             reasoning_override: None,
             workspace: test_workspace(),
             instructions: Default::default(),
+            developer_context: None,
             task_ledger_required: false,
         }
     }

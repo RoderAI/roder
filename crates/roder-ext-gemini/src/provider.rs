@@ -542,6 +542,7 @@ mod tests {
             instructions: InstructionBundle {
                 system: Some("system".to_string()),
                 developer: Some("developer".to_string()),
+                developer_context: None,
             },
             transcript: vec![
                 TranscriptItem::UserMessage(UserMessage::text("Hello")),

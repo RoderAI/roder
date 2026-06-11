@@ -337,6 +337,7 @@ impl Runtime {
                 reasoning_override: None,
                 workspace,
                 instructions: crate::default_instructions(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await?;

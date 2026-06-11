@@ -46,6 +46,7 @@ async fn eval_runtime_retries_transient_provider_stream_decode_failure() {
             reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: InstructionBundle::default(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await

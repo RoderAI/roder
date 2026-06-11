@@ -313,6 +313,7 @@ async fn run_offline_fixture(
                 reasoning_override: None,
                 workspace: workspace.path.display().to_string(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: fixture.expected.task_ledger_required,
             })
             .await?;

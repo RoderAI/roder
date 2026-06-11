@@ -3386,6 +3386,7 @@ where
             model_provider: None,
             model: None,
             reasoning: None,
+            developer_context: None,
             policy_mode: Some(self.policy_mode),
             task_ledger_required: false,
         };

@@ -756,6 +756,13 @@ pub struct TurnStartParams {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /**
+     * Per-turn developer-authority context layered after the thread's
+     * developerInstructions for this turn only. Never persisted to thread
+     * metadata; absent means no per-turn context.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub developer_context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_mode: Option<PolicyMode>,
     #[serde(default)]
@@ -4110,6 +4117,38 @@ mod tests {
         .unwrap();
 
         assert!(params.task_ledger_required);
+    }
+
+    #[test]
+    fn protocol_turn_start_params_round_trip_developer_context() {
+        let params: TurnStartParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "developerContext": "Connected accounts: example-service."
+        }))
+        .unwrap();
+        assert_eq!(
+            params.developer_context.as_deref(),
+            Some("Connected accounts: example-service.")
+        );
+
+        let encoded = serde_json::to_value(&params).unwrap();
+        assert_eq!(
+            encoded["developerContext"],
+            "Connected accounts: example-service."
+        );
+
+        // Absent developerContext stays absent on the wire.
+        let without: TurnStartParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1"
+        }))
+        .unwrap();
+        assert!(without.developer_context.is_none());
+        assert!(
+            serde_json::to_value(&without)
+                .unwrap()
+                .get("developerContext")
+                .is_none()
+        );
     }
 
     #[test]

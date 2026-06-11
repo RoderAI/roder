@@ -51,6 +51,7 @@ async fn eval_deadline_finalization_disables_tools_and_completes_turn() {
             reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: InstructionBundle::default(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -134,6 +135,7 @@ async fn eval_deadline_finalization_interrupts_model_stream_at_reserve() {
             reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: InstructionBundle::default(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -207,6 +209,7 @@ async fn provider_without_tool_capability_receives_no_tools() {
             reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: InstructionBundle::default(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await

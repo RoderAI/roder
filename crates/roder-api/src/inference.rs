@@ -186,6 +186,13 @@ impl ToolSearchConfigOverlay {
 pub struct InstructionBundle {
     pub system: Option<String>,
     pub developer: Option<String>,
+    /**
+     * Per-turn developer-authority context supplied on turn/start. Volatile:
+     * providers must render it after `system` and `developer` so prompt-cache
+     * breakpoints on the stable prefix survive per-turn changes. Never
+     * persisted to thread state.
+     */
+    pub developer_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

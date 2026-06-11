@@ -163,6 +163,7 @@ fn turn(thread_id: &str) -> StartTurnRequest {
         reasoning_override: None,
         workspace: std::env::current_dir().unwrap().display().to_string(),
         instructions: default_instructions(),
+        developer_context: None,
         task_ledger_required: false,
     }
 }

@@ -436,6 +436,7 @@ impl InProcessDispatcher {
                 instructions: InstructionBundle {
                     system: definition.system_prompt.clone(),
                     developer: Some(subagent_developer_instructions(lane, &request)),
+                    developer_context: None,
                 },
                 transcript: model_transcript.clone(),
                 tools: tools.specs(),

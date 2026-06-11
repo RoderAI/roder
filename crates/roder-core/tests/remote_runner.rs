@@ -820,6 +820,7 @@ async fn run_turn_collecting_tool_calls(
             reasoning_override: None,
             workspace: workspace.display().to_string(),
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -1104,6 +1105,7 @@ async fn start_and_wait(
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await

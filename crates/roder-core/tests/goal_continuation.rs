@@ -215,6 +215,7 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
             reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await

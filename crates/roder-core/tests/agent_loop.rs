@@ -699,6 +699,7 @@ async fn run_turn_continues_after_tool_result() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -790,6 +791,7 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -854,6 +856,7 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -923,6 +926,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -971,6 +975,7 @@ async fn steer_turn_is_included_in_next_provider_request() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -1053,6 +1058,7 @@ async fn runtime_advertises_apply_patch_for_default_edit_models() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -1106,6 +1112,7 @@ async fn runtime_keeps_apply_patch_for_edit_profile_models() {
             reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -1214,6 +1221,7 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
             reasoning_override: None,
             workspace: std::env::current_dir().unwrap().display().to_string(),
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -1308,6 +1316,7 @@ async fn tool_execution_errors_are_returned_to_model() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -1382,6 +1391,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await
@@ -1453,6 +1463,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await

@@ -57,6 +57,7 @@ pub fn default_instructions() -> InstructionBundle {
     InstructionBundle {
         system: Some(system),
         developer: None,
+        developer_context: None,
     }
 }
 
@@ -114,6 +115,24 @@ pub fn apply_thread_developer_instructions(
         Some(existing) if !existing.trim().is_empty() => format!("{addition}\n\n{existing}"),
         _ => addition.to_string(),
     });
+    instructions
+}
+
+/**
+ * Sets the per-turn developer-context slot. Supplied on turn/start only and
+ * never persisted, so a context delivered on turn N is absent on turn N+1
+ * unless the host sends it again. Providers render the slot after the stable
+ * `developer` slot so cached stable-prefix blocks survive per-turn changes.
+ */
+pub fn apply_turn_developer_context(
+    mut instructions: InstructionBundle,
+    context: &str,
+) -> InstructionBundle {
+    let context = context.trim();
+    if context.is_empty() {
+        return instructions;
+    }
+    instructions.developer_context = Some(context.to_string());
     instructions
 }
 
@@ -236,6 +255,30 @@ mod tests {
 
         let unchanged = apply_thread_developer_instructions(default_instructions(), "   ");
         assert_eq!(unchanged.developer, None);
+    }
+
+    #[test]
+    fn turn_developer_context_fills_dedicated_slot_after_thread_instructions() {
+        let instructions = apply_turn_developer_context(
+            apply_runtime_profile(
+                apply_thread_developer_instructions(
+                    default_instructions(),
+                    "You are embedded in a host app.",
+                ),
+                RuntimeProfile::NonInteractive,
+            ),
+            "Connected accounts: example-service.",
+        );
+        let developer = instructions.developer.expect("developer instructions");
+        assert!(developer.starts_with("You are embedded in a host app."));
+        assert!(!developer.contains("Connected accounts"));
+        assert_eq!(
+            instructions.developer_context.as_deref(),
+            Some("Connected accounts: example-service.")
+        );
+
+        let unchanged = apply_turn_developer_context(default_instructions(), "   ");
+        assert_eq!(unchanged.developer_context, None);
     }
 
     #[test]

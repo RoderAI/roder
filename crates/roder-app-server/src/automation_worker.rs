@@ -130,6 +130,7 @@ pub async fn execute_automation_task(
             reasoning_override: None,
             workspace: input.definition.project.cwd.clone(),
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await?;

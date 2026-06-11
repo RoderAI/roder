@@ -83,6 +83,40 @@ test("agent send passes tool allowlist and instructions on thread/start", async 
   });
 });
 
+test("agent send passes developerContext on turn/start for that turn only", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const transport = new InMemoryTransport((request) => {
+    requests.push(request);
+    if (request.method === "thread/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { thread: { id: "thread-1" } } };
+    }
+    if (request.method === "turn/start") {
+      return { jsonrpc: "2.0", id: request.id, result: { turn: { id: "turn-1" } } };
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  });
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-1",
+  });
+
+  await agent.send("hello", { developerContext: "Connected accounts: example-service." });
+  await agent.send("and now?");
+
+  const turnStarts = requests.filter((request) => request.method === "turn/start");
+  assert.deepEqual(turnStarts[0]?.params, {
+    threadId: "thread-1",
+    input: [{ type: "text", text: "hello" }],
+    developerContext: "Connected accounts: example-service.",
+  });
+  // Omitting the option keeps the param off the wire entirely.
+  assert.deepEqual(turnStarts[1]?.params, {
+    threadId: "thread-1",
+    input: [{ type: "text", text: "and now?" }],
+  });
+});
+
 test("agent send passes the runner binding on thread/start", async () => {
   const requests: JsonRpcRequest[] = [];
   const transport = new InMemoryTransport((request) => {
