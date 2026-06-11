@@ -19,6 +19,7 @@ roder-ext-claude-code.workspace = true
 roder-ext-cursor.workspace = true
 roder-ext-firecrawl-search.workspace = true
 roder-ext-git.workspace = true
+roder-ext-process-host.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-google-embeddings.workspace = true
 roder-ext-honcho.workspace = true

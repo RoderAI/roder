@@ -1166,6 +1166,7 @@ pub(crate) async fn build_runtime_from_config(
         remote_runner_destination: remote_runner_destination.clone(),
         inference_router: cfg.inference_router.clone(),
         extra_extensions: distribution_extensions(),
+        process_extensions: cfg.process_extensions.clone(),
     })?;
 
     let runtime = Arc::new(Runtime::new(

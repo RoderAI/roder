@@ -28,6 +28,11 @@ name = "fork_worktree"
 path = "tests/fork_worktree.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "process_extension_python_provider"
+path = "tests/process_extension_python_provider.rs"
+required-features = ["e2e-tests"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -72,6 +77,7 @@ roder-ext-google-embeddings.workspace = true
 roder-ext-openai-embeddings.workspace = true
 roder-ext-zeroentropy-embeddings.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
+roder-ext-process-host.workspace = true
 roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
 roder-tools.workspace = true
