@@ -884,6 +884,7 @@ async fn runner_bound_thread_routes_coding_tools_through_remote_runner() {
                 provider_id: "mock-hosted".to_string(),
                 config: serde_json::json!({ "space_id": "space-1" }),
                 workspace: "/sandbox/workspace".to_string(),
+                read_roots: Vec::new(),
             }),
         })
         .await
@@ -1023,6 +1024,7 @@ async fn thread_runner_binding_rejects_unknown_providers_and_relative_workspaces
             provider_id: provider_id.to_string(),
             config: serde_json::json!({}),
             workspace: workspace.to_string(),
+            read_roots: Vec::new(),
         }),
     };
 

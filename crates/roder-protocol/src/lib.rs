@@ -553,6 +553,13 @@ pub struct ThreadRunnerParams {
     pub config: Option<serde_json::Value>,
     /// Absolute path on the runner used as the thread's coding-tool workspace root.
     pub workspace: String,
+    /**
+     * Extra absolute runner paths file reads may resolve under, beyond
+     * `workspace`. Writes and the working directory stay confined to
+     * `workspace`.
+     */
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -205,6 +205,12 @@ pub struct ThreadRunnerSelection {
     pub config: serde_json::Value,
     /// Absolute path on the runner used as the thread's coding-tool workspace root.
     pub workspace: String,
+    /**
+     * Extra absolute runner paths file reads may resolve under, beyond
+     * `workspace`. Writes and the working directory stay confined to
+     * `workspace`.
+     */
+    pub read_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -981,6 +987,15 @@ impl Runtime {
             std::path::Path::new(workspace).is_absolute(),
             "runner workspace must be an absolute path on the runner: {workspace:?}"
         );
+        let mut read_roots = Vec::with_capacity(selection.read_roots.len());
+        for read_root in &selection.read_roots {
+            let trimmed = read_root.trim();
+            anyhow::ensure!(
+                std::path::Path::new(trimmed).is_absolute(),
+                "runner read root must be an absolute path on the runner: {trimmed:?}"
+            );
+            read_roots.push(PathBuf::from(trimmed));
+        }
         let destination = RunnerDestination {
             id: format!("thread-{thread_id}"),
             provider_id: selection.provider_id,
@@ -991,6 +1006,7 @@ impl Runtime {
         Ok(ThreadRunnerBinding {
             destination,
             workspace: PathBuf::from(workspace),
+            read_roots,
         })
     }
 
@@ -1709,6 +1725,7 @@ impl Runtime {
         Ok(Some(Arc::new(RemoteWorkspace {
             session,
             root: binding.workspace,
+            read_roots: binding.read_roots,
         })))
     }
 

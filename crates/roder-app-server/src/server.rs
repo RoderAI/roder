@@ -2403,6 +2403,7 @@ impl AppServer {
             provider_id: runner.provider_id,
             config: runner.config.unwrap_or_else(|| serde_json::json!({})),
             workspace: runner.workspace,
+            read_roots: runner.read_roots,
         });
         if let Some(runner) = runner.clone() {
             self.runtime

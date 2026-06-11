@@ -136,6 +136,14 @@ pub struct ThreadRunnerBinding {
     pub destination: RunnerDestination,
     /// Absolute path on the runner used as the thread's coding-tool workspace root.
     pub workspace: PathBuf,
+    /**
+     * Extra absolute runner paths that file reads may resolve under, in
+     * addition to `workspace`. Writes and the working directory stay confined
+     * to `workspace`; these only widen read resolution (e.g. read-only
+     * resource mounts outside the writable workspace root).
+     */
+    #[serde(default)]
+    pub read_roots: Vec<PathBuf>,
 }
 
 /**
@@ -148,6 +156,11 @@ pub struct ThreadRunnerBinding {
 pub struct RemoteWorkspace {
     pub session: Arc<dyn RemoteRunnerSession>,
     pub root: PathBuf,
+    /**
+     * Extra absolute runner paths reads may resolve under, beyond `root`.
+     * Writes and the working directory stay confined to `root`.
+     */
+    pub read_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
