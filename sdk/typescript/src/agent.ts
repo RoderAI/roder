@@ -117,7 +117,18 @@ export class RoderAgent {
     return agent;
   }
 
-  async send(input: string | Array<Record<string, unknown>>, options: { eventMode?: EventMode } = {}): Promise<RoderRun> {
+  async send(
+    input: string | Array<Record<string, unknown>>,
+    options: {
+      eventMode?: EventMode;
+      /**
+       * Per-turn developer-authority context layered after the thread's
+       * developerInstructions for this turn only. Never persisted with the
+       * thread; resend it on each turn that needs it.
+       */
+      developerContext?: string;
+    } = {},
+  ): Promise<RoderRun> {
     const threadId = this.threadId ?? (await this.startThread());
     this.threadId = threadId;
     /**
@@ -131,6 +142,7 @@ export class RoderAgent {
       const result = (await this.client.call("turn/start", {
         threadId,
         input: normalizeInput(input),
+        ...(options.developerContext === undefined ? {} : { developerContext: options.developerContext }),
       })) as Record<string, unknown>;
       const turnId = extractId(result, "turn") ?? extractString(result, "turnId") ?? extractString(result, "id");
       if (!turnId) {

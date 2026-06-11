@@ -101,6 +101,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
                 model_provider: None,
                 model: None,
                 reasoning: None,
+                developer_context: None,
                 policy_mode: None,
                 task_ledger_required: options.task_ledger_required,
             })?),

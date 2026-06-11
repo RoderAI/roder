@@ -62,7 +62,7 @@ use crate::inference_routing::{
 };
 use crate::instructions::{
     apply_model_instruction_overlay, apply_plan_mode, apply_runtime_profile,
-    apply_task_ledger_required, apply_thread_developer_instructions,
+    apply_task_ledger_required, apply_thread_developer_instructions, apply_turn_developer_context,
 };
 use crate::policy_gate::DefaultPolicyGate;
 use crate::reliability::{
@@ -166,6 +166,12 @@ pub struct StartTurnRequest {
     pub reasoning_override: Option<String>,
     pub workspace: String,
     pub instructions: InstructionBundle,
+    /**
+     * Per-turn developer-authority context for this turn's InstructionBundle.
+     * Applies to every inference round of the turn, is never written to
+     * thread state, and does not carry over to later turns.
+     */
+    pub developer_context: Option<String>,
     pub task_ledger_required: bool,
 }
 
@@ -1287,6 +1293,7 @@ impl Runtime {
                     reasoning_override: None,
                     workspace: workspace.clone(),
                     instructions: crate::default_instructions(),
+                    developer_context: None,
                     task_ledger_required: false,
                 })
                 .await?
@@ -1301,6 +1308,7 @@ impl Runtime {
                 reasoning_override: None,
                 workspace,
                 instructions: crate::default_instructions(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await?
@@ -2250,6 +2258,9 @@ impl Runtime {
             let mut instructions = req.instructions.clone();
             if let Some(extra) = &thread_overrides.developer_instructions {
                 instructions = apply_thread_developer_instructions(instructions, extra);
+            }
+            if let Some(context) = req.developer_context.as_deref() {
+                instructions = apply_turn_developer_context(instructions, context);
             }
             let mut instructions = apply_runtime_profile(instructions, runtime_profile);
             if let Some(profile) = &model_profile {
@@ -4025,6 +4036,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -4121,6 +4133,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -4971,7 +4984,9 @@ mod tests {
                 instructions: InstructionBundle {
                     system: None,
                     developer: Some("base developer".to_string()),
+                    developer_context: None,
                 },
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -5088,7 +5103,9 @@ mod tests {
                 instructions: InstructionBundle {
                     system: None,
                     developer: None,
+                    developer_context: None,
                 },
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -5211,6 +5228,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -5360,6 +5378,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -5472,6 +5491,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -5573,6 +5593,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn turn_developer_context_reaches_inference_and_does_not_persist() {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        async fn run_turn(runtime: &Arc<Runtime>, developer_context: Option<String>) {
+            let mut rx = runtime.subscribe_events();
+            let turn_id = runtime
+                .start_turn(StartTurnRequest {
+                    thread_id: "thread-turn-context".to_string(),
+                    message: "hello".to_string(),
+                    images: Vec::new(),
+                    provider_override: None,
+                    model_override: None,
+                    reasoning_override: None,
+                    workspace: test_workspace(),
+                    instructions: InstructionBundle::default(),
+                    developer_context,
+                    task_ledger_required: false,
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let envelope = rx.recv().await.unwrap();
+                    if envelope.turn_id.as_deref() != Some(&turn_id) {
+                        continue;
+                    }
+                    match envelope.event {
+                        RoderEvent::TurnCompleted(_) => break,
+                        RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .unwrap();
+        }
+
+        run_turn(
+            &runtime,
+            Some("Connected accounts: example-service.".to_string()),
+        )
+        .await;
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            request.instructions.developer_context.as_deref(),
+            Some("Connected accounts: example-service.")
+        );
+
+        // The context is per-turn only: the next turn on the same thread
+        // without a developerContext must not see the previous one.
+        run_turn(&runtime, None).await;
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(request.instructions.developer_context, None);
+    }
+
+    #[tokio::test]
     async fn tool_search_overrides_route_to_next_inference_request() {
         let request = captured_profile_request(RuntimeConfig {
             default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
@@ -5661,6 +5752,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: thread_workspace.display().to_string(),
                 instructions: crate::instructions::default_instructions(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -5801,6 +5893,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: crate::default_instructions(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -6056,7 +6149,9 @@ mod tests {
                 instructions: InstructionBundle {
                     system: None,
                     developer: None,
+                    developer_context: None,
                 },
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -6281,6 +6376,7 @@ mod tests {
                     reasoning_override: None,
                     workspace: test_workspace(),
                     instructions: InstructionBundle::default(),
+                    developer_context: None,
                     task_ledger_required: false,
                 })
                 .await
@@ -6411,7 +6507,9 @@ mod tests {
                 instructions: InstructionBundle {
                     system: None,
                     developer: Some("base developer".to_string()),
+                    developer_context: None,
                 },
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -6504,6 +6602,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: true,
             })
             .await
@@ -6576,6 +6675,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: true,
             })
             .await
@@ -6651,6 +6751,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: true,
             })
             .await
@@ -6775,6 +6876,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -6852,6 +6954,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await
@@ -6938,6 +7041,7 @@ mod tests {
                 reasoning_override: None,
                 workspace: test_workspace(),
                 instructions: InstructionBundle::default(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await

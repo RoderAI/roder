@@ -133,6 +133,7 @@ async fn oversized_tool_result_is_capped_before_next_provider_request() {
             workspace: std::env::current_dir().unwrap().display().to_string(),
 
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await

@@ -131,6 +131,31 @@ test("typescript sdk replays runner thread fixture", async () => {
   assert.ok(transport.seenMethods.includes("thread/start"));
 });
 
+test("typescript sdk replays developer context fixture", async () => {
+  const fixture = loadFixture("developer-context-flow.jsonl");
+  const transport = fixtureTransport(fixture);
+  const agent = await RoderAgent.create({
+    transport,
+    cwd: "/workspace",
+    workspaceId: "ws-fixture",
+    model: { provider: "mock", id: "mock" },
+  });
+
+  const first = await agent.send("hello", {
+    developerContext: "Connected accounts: example-service.",
+  });
+  assert.equal(first.turnId, "turn-context");
+
+  // The next turn omits developerContext; the fixture asserts it stays absent
+  // on the wire instead of leaking from the previous turn.
+  const second = await agent.send("and now?");
+  const completion = second.wait();
+  emitNotifications(transport, fixture);
+
+  const completed = await completion;
+  assert.equal(completed?.turn.id, "turn-context-2");
+});
+
 test("typescript sdk replays user input and plan exit fixture", async () => {
   const fixture = loadFixture("user-input-flow.jsonl");
   const transport = fixtureTransport(fixture);

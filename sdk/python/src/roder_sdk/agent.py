@@ -80,13 +80,23 @@ class RoderAgent:
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         await self.close()
 
-    async def send(self, input: str | list[dict[str, Any]]) -> RoderRun:
+    async def send(
+        self,
+        input: str | list[dict[str, Any]],
+        *,
+        developer_context: str | None = None,
+    ) -> RoderRun:
+        """
+        developer_context is per-turn developer-authority context layered after
+        the thread's developerInstructions for this turn only. Never persisted
+        with the thread; resend it on each turn that needs it.
+        """
         thread_id = self.thread_id or await self._start_thread()
         self.thread_id = thread_id
-        result = await self.client.call(
-            "turn/start",
-            {"threadId": thread_id, "input": _normalize_input(input)},
-        )
+        params: dict[str, Any] = {"threadId": thread_id, "input": _normalize_input(input)}
+        if developer_context is not None:
+            params["developerContext"] = developer_context
+        result = await self.client.call("turn/start", params)
         turn_id = _extract_id(result, "turn") or _extract_string(result, "turnId") or _extract_string(result, "id")
         if not turn_id:
             raise RuntimeError("turn/start response did not include a turn id")

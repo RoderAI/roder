@@ -5224,6 +5224,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             reasoning_override: None,
             workspace: "/tmp".to_string(),
             instructions: default_instructions(),
+            developer_context: None,
             task_ledger_required: false,
         })
         .await

@@ -1708,6 +1708,16 @@ fn response_input_items_with_options(
                 "Developer instructions:\n{developer}"
             )));
         }
+        if let Some(context) = request
+            .instructions
+            .developer_context
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            instruction_items.push(system_input_message(&format!(
+                "Developer context (this turn):\n{context}"
+            )));
+        }
         if !instruction_items.is_empty() {
             instruction_items.extend(items);
             items = instruction_items;
@@ -1976,6 +1986,7 @@ mod tests {
             instructions: InstructionBundle {
                 system: Some("be helpful".to_string()),
                 developer: None,
+                developer_context: None,
             },
             transcript: vec![
                 TranscriptItem::UserMessage(UserMessage::text("Hello")),

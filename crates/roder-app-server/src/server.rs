@@ -2777,6 +2777,12 @@ impl AppServer {
         let message = protocol_turn_message(&params.input, params.prompt);
         let images = protocol_turn_images(&params.input);
         if let Some(turn_id) = self.runtime.active_turn_for_thread(&params.thread_id).await {
+            /*
+             * Steering injects a user message into the running turn; the
+             * turn's InstructionBundle was fixed at turn/start, so a
+             * developerContext sent here cannot reach the active turn and is
+             * dropped. Hosts get it applied on the next turn/start.
+             */
             self.runtime
                 .steer_turn(params.thread_id.clone(), turn_id.clone(), message, images)
                 .await
@@ -2843,6 +2849,7 @@ impl AppServer {
                 reasoning_override,
                 workspace,
                 instructions: default_instructions(),
+                developer_context: params.developer_context,
                 task_ledger_required: params.task_ledger_required,
             })
             .await
@@ -3516,6 +3523,7 @@ impl AppServer {
                 reasoning_override: None,
                 workspace,
                 instructions: default_instructions(),
+                developer_context: None,
                 task_ledger_required: false,
             })
             .await

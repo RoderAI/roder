@@ -1086,6 +1086,7 @@ mod tests {
             instructions: InstructionBundle {
                 system: None,
                 developer: Some("profile overlay".to_string()),
+                developer_context: None,
             },
             transcript: vec![TranscriptItem::UserMessage(UserMessage::text("edit"))],
             tools: vec![ToolSpec {

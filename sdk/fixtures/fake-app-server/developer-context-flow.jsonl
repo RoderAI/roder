@@ -1,0 +1,8 @@
+{"kind":"header","schemaVersion":1,"createdAt":"1970-01-01T00:00:00Z","roderVersion":"dev","cwd":"<redacted>","terminal":{"cols":80,"rows":24},"features":["sdk","app-server"],"metadata":{"fixture":"developer-context-flow"}}
+{"kind":"api.request","seq":1,"atMs":0,"client":"sdk","request":{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{"cwd":"/workspace","model":"mock","modelProvider":"mock","workspaceId":"ws-fixture"}}}
+{"kind":"api.response","seq":2,"atMs":1,"requestSeq":1,"response":{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-context"}}}}
+{"kind":"api.request","seq":3,"atMs":2,"client":"sdk","request":{"jsonrpc":"2.0","id":2,"method":"turn/start","params":{"threadId":"thread-context","input":[{"type":"text","text":"hello"}],"developerContext":"Connected accounts: example-service."}}}
+{"kind":"api.response","seq":4,"atMs":3,"requestSeq":3,"response":{"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-context"}}}}
+{"kind":"api.request","seq":5,"atMs":4,"client":"sdk","request":{"jsonrpc":"2.0","id":3,"method":"turn/start","params":{"threadId":"thread-context","input":[{"type":"text","text":"and now?"}]}}}
+{"kind":"api.response","seq":6,"atMs":5,"requestSeq":5,"response":{"jsonrpc":"2.0","id":3,"result":{"turn":{"id":"turn-context-2"}}}}
+{"kind":"api.notification","seq":7,"atMs":6,"notification":{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-context","turn":{"id":"turn-context-2","items":[],"itemsView":"default","status":"completed","completedAt":6}}}}
