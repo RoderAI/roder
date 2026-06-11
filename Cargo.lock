@@ -4183,6 +4183,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-vertex"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "base64",
+ "bytes",
+ "futures",
+ "reqwest",
+ "ring",
+ "roder-api",
+ "rustls-pemfile",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-web-search"
 version = "0.1.0"
 dependencies = [
