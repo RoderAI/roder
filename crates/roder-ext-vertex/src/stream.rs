@@ -155,9 +155,12 @@ fn stream_vertex_turn(
             // The first event decides whether retrying is still duplicate-safe.
             match driver.next_event().await {
                 Some(Ok(InferenceEvent::Failed(failure))) => {
-                    // In-stream error payload on an HTTP 200 connection
-                    // before any content.
-                    if let Some(retry) = early_retry(&turn, &mut attempt, "stream_error").await {
+                    // A deterministic prompt block is non-retryable; only a
+                    // transient in-stream error payload (HTTP 200 connection,
+                    // no content yet) is replayed within budget.
+                    if !driver.blocked()
+                        && let Some(retry) = early_retry(&turn, &mut attempt, "stream_error").await
+                    {
                         yield InferenceEvent::ProviderMetadata(retry);
                         continue 'attempts;
                     }
@@ -231,6 +234,7 @@ struct VertexSseDriver {
     pending: VecDeque<InferenceEvent>,
     pending_error: Option<anyhow::Error>,
     received_frame: bool,
+    blocked: bool,
     source_done: bool,
     finished: bool,
 }
@@ -244,6 +248,7 @@ impl VertexSseDriver {
             pending: VecDeque::new(),
             pending_error: None,
             received_frame: false,
+            blocked: false,
             source_done: false,
             finished: false,
         }
@@ -251,6 +256,12 @@ impl VertexSseDriver {
 
     fn received_any_frame(&self) -> bool {
         self.received_frame
+    }
+
+    /// True when the surfaced `Failed` came from a deterministic prompt block;
+    /// such a failure must not be retried.
+    fn blocked(&self) -> bool {
+        self.blocked
     }
 
     async fn next_event(&mut self) -> Option<anyhow::Result<InferenceEvent>> {
@@ -319,6 +330,7 @@ impl VertexSseDriver {
                 let failed = events
                     .iter()
                     .any(|event| matches!(event, InferenceEvent::Failed(_)));
+                self.blocked = state.was_blocked();
                 self.pending.extend(events);
                 if failed {
                     // An error payload ends the turn; skip EOF finalization.
@@ -548,6 +560,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prompt_block_fails_without_retrying_or_burning_budget() {
+        // A pre-generation safety block (promptFeedback only, no candidates or
+        // finishReason) is deterministic: it must fail the turn immediately
+        // rather than retry the identical prompt against the budget.
+        let block_body = "data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\n\n";
+        let (url, request_count) =
+            spawn_counting_sse_server(vec![block_body.to_string(), happy_path_sse_body()]).await;
+        let policy = fast_policy(3);
+
+        let stream = start_vertex_stream(turn_request(&url, policy))
+            .await
+            .unwrap();
+        let events = collect_events(stream).await;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].as_ref().unwrap(),
+            &InferenceEvent::Failed(InferenceFailure {
+                message: "Vertex AI blocked the prompt (SAFETY)".to_string(),
+            })
+        );
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn error_payload_before_content_retries_then_streams() {
         let error_body =
             "data: {\"error\":{\"status\":\"UNAVAILABLE\",\"message\":\"Overloaded\"}}\n\n";
@@ -659,6 +696,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stalled_stream_errors_after_read_timeout() {
+        // Vertex sends no keepalive frames, so a stalled-but-TCP-alive
+        // connection can only be recovered by the read timeout firing. Serve
+        // one frame, then go silent: the stream must end with an Err rather
+        // than hang.
+        let body =
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}\n\n";
+        let url = spawn_stalling_sse_server(body.as_bytes().to_vec()).await;
+        let client = reqwest::Client::builder()
+            .read_timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let turn = VertexTurnRequest {
+            client,
+            url,
+            access_token: "test-token".to_string(),
+            body: json!({}),
+            policy: ReliabilityRequestPolicy::default(),
+        };
+
+        let stream = start_vertex_stream(turn).await.unwrap();
+        let events = tokio::time::timeout(Duration::from_secs(5), collect_events(stream))
+            .await
+            .expect("read timeout must end the stalled stream");
+
+        assert!(
+            events.last().unwrap().is_err(),
+            "stalled stream should end with an error, got {events:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn retry_recovers_after_retryable_status_then_streams() {
         let url = spawn_sse_retry_server(429, r#"{"error":"busy"}"#, happy_path_sse_body()).await;
         let policy = ReliabilityRequestPolicy {
@@ -736,6 +805,33 @@ mod tests {
         )
     }
 
+    /// Serves one SSE response per body on its own connection, counting how
+    /// many requests are actually made.
+    async fn spawn_counting_sse_server(bodies: Vec<String>) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+        tokio::spawn(async move {
+            for body in bodies {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0_u8; 16384];
+                let _ = stream.read(&mut buf).await.unwrap();
+                stream.write_all(SSE_RESPONSE_HEAD).await.unwrap();
+                stream.write_all(body.as_bytes()).await.unwrap();
+            }
+        });
+        (
+            format!(
+                "http://{addr}/v1/projects/p/locations/l/publishers/google/models/m:streamGenerateContent?alt=sse"
+            ),
+            request_count,
+        )
+    }
+
     /// Serves one SSE response per body, each on its own connection.
     async fn spawn_sse_server_with_bodies(bodies: Vec<String>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -750,6 +846,26 @@ mod tests {
                 stream.write_all(SSE_RESPONSE_HEAD).await.unwrap();
                 stream.write_all(body.as_bytes()).await.unwrap();
             }
+        });
+        format!(
+            "http://{addr}/v1/projects/p/locations/l/publishers/google/models/m:streamGenerateContent?alt=sse"
+        )
+    }
+
+    /// Serves the SSE head and one body chunk, then holds the connection open
+    /// silently (no further bytes, no close) so only the read timeout can end
+    /// the stream.
+    async fn spawn_stalling_sse_server(first: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 16384];
+            let _ = stream.read(&mut buf).await.unwrap();
+            stream.write_all(SSE_RESPONSE_HEAD).await.unwrap();
+            stream.write_all(&first).await.unwrap();
+            stream.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
         });
         format!(
             "http://{addr}/v1/projects/p/locations/l/publishers/google/models/m:streamGenerateContent?alt=sse"

@@ -93,6 +93,7 @@ pub(crate) struct VertexStreamState {
     finish_reason: Option<String>,
     usage: Option<Value>,
     emitted_tool_call: bool,
+    blocked: bool,
 }
 
 impl VertexStreamState {
@@ -116,6 +117,19 @@ impl VertexStreamState {
 
     fn push_chunk(&mut self, chunk: &Value) -> Vec<InferenceEvent> {
         let mut events = Vec::new();
+        if let Some(block_reason) = chunk
+            .pointer("/promptFeedback/blockReason")
+            .and_then(Value::as_str)
+        {
+            // A pre-generation safety block arrives as a promptFeedback-only
+            // frame with no candidates or finishReason. It is deterministic,
+            // so surface it as a terminal Failed instead of letting EOF treat
+            // the missing finishReason as retryable truncation.
+            self.blocked = true;
+            return vec![InferenceEvent::Failed(InferenceFailure {
+                message: format!("Vertex AI blocked the prompt ({block_reason})"),
+            })];
+        }
         if let Some(id) = chunk.get("responseId").and_then(Value::as_str) {
             self.response_id = Some(id.to_string());
         }
@@ -161,6 +175,12 @@ impl VertexStreamState {
 
     pub(crate) fn saw_finish_reason(&self) -> bool {
         self.finish_reason.is_some()
+    }
+
+    /// True once a pre-generation `promptFeedback.blockReason` was seen; the
+    /// emitted `Failed` is deterministic and must not be retried.
+    pub(crate) fn was_blocked(&self) -> bool {
+        self.blocked
     }
 
     /// Terminal events emitted at EOF: usage, the reconstructed provider
@@ -333,6 +353,28 @@ mod tests {
     }
 
     #[test]
+    fn prompt_feedback_block_becomes_terminal_failed_event() {
+        let mut state = VertexStreamState::default();
+
+        let events = state
+            .push_frame(&frame(
+                json!({ "promptFeedback": { "blockReason": "SAFETY" } }),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            events,
+            vec![InferenceEvent::Failed(InferenceFailure {
+                message: "Vertex AI blocked the prompt (SAFETY)".to_string(),
+            })]
+        );
+        assert!(state.was_blocked());
+        // A pre-generation block carries no finishReason; without the terminal
+        // Failed above, EOF would misread that as retryable truncation.
+        assert!(!state.saw_finish_reason());
+    }
+
+    #[test]
     fn unparseable_data_frame_is_an_error() {
         let mut state = VertexStreamState::default();
         assert!(state.push_frame("data: {truncated").is_err());
@@ -362,6 +404,33 @@ mod tests {
         assert_eq!(buffer.take_frame().as_deref(), Some("data: {\"b\":2}"));
         assert_eq!(buffer.take_frame(), None);
         assert_eq!(buffer.take_trailing(), None);
+    }
+
+    #[test]
+    fn frame_buffer_reports_frame_cap_overflow() {
+        let mut buffer = SseFrameBuffer::default();
+        // Undelimited bytes just under the cap stay within bounds; pushing past
+        // it trips the guard so the driver can turn it into a stream error
+        // instead of growing the buffer without bound.
+        buffer.push(&vec![b'x'; MAX_FRAME_BYTES]);
+        assert!(buffer.within_frame_cap());
+        assert_eq!(buffer.take_frame(), None);
+        buffer.push(b"y");
+        assert!(!buffer.within_frame_cap());
+    }
+
+    #[test]
+    fn frame_buffer_finds_delimiter_spanning_scanned_boundary() {
+        let mut buffer = SseFrameBuffer::default();
+        // First push ends mid-delimiter ("data: a\r\n"); the scanned offset
+        // must rewind enough that the "\r\n\r\n" completed by the next push is
+        // still found rather than skipped.
+        buffer.push(b"data: a\r\n");
+        assert_eq!(buffer.take_frame(), None);
+        buffer.push(b"\r\ndata: b\r\n\r\n");
+        assert_eq!(buffer.take_frame().as_deref(), Some("data: a"));
+        assert_eq!(buffer.take_frame().as_deref(), Some("data: b"));
+        assert_eq!(buffer.take_frame(), None);
     }
 
     #[test]
