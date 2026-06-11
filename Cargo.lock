@@ -3394,6 +3394,7 @@ dependencies = [
  "roder-sandbox",
  "roder-skills",
  "roder-tools",
+ "roder-usage-analytics",
  "serde",
  "serde_json",
  "time",
@@ -4453,6 +4454,22 @@ dependencies = [
  "tokio",
  "toml",
  "tui-textarea-2",
+]
+
+[[package]]
+name = "roder-usage-analytics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "rusqlite",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
