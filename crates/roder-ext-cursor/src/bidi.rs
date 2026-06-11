@@ -306,24 +306,50 @@ async fn service_exec(
             mode,
             tool_call_id,
         } => {
+            // Cursor's unified search tool overloads one request shape, and the
+            // intent must be read from *which* pattern field is set, not from
+            // `mode`:
+            //   - a content regex in `pattern` (f1) is a GREP (ripgrep). `mode`
+            //     only selects the result shape: `content` = line matches,
+            //     `files_with_matches` = the distinct files that matched (rg -l).
+            //   - a path pattern in `glob` (f3), with no content pattern, is a
+            //     GLOB (list files whose path matches).
+            // Composer models send globs via `glob` + mode=files_with_matches;
+            // Claude models send grep-for-filenames via `pattern` + mode=
+            // files_with_matches. Routing on `mode` alone fed the grep regex
+            // into the path-glob matcher, so it matched no files and every
+            // Claude search returned empty.
+            let content_needle = pattern
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let path_glob = glob
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let is_grep = content_needle.is_some();
+            let want_files_only = mode == "files_with_matches";
+
             if let Some(exec) = executor {
-                let (name, arguments) = if mode == "files_with_matches" {
-                    (
-                        "glob",
-                        json!({
-                            "pattern": glob.as_ref().or(pattern.as_ref()).map(String::as_str).unwrap_or("**/*"),
-                        }),
-                    )
-                } else {
+                let (name, arguments) = if is_grep {
                     (
                         "grep",
                         json!({
-                            "query": pattern.as_deref().unwrap_or_default(),
+                            "query": content_needle.clone().unwrap_or_default(),
                             "path": if path.is_empty() { "." } else { path.as_str() },
                             "regex": false,
                             "case_sensitive": true,
                             "word_boundary": false,
                             "mode": "auto",
+                        }),
+                    )
+                } else {
+                    (
+                        "glob",
+                        json!({
+                            "pattern": path_glob.clone().unwrap_or_else(|| "**/*".to_string()),
                         }),
                     )
                 };
@@ -341,35 +367,52 @@ async fn service_exec(
             } else {
                 path.clone()
             };
-            if mode == "files_with_matches" {
-                // glob: list files under search_dir matching the glob pattern.
-                let glob_pat = glob
-                    .or_else(|| pattern.clone())
-                    .unwrap_or_else(|| "**/*".to_string());
-                let rel = tokio::task::spawn_blocking(move || {
-                    glob_files(&search_dir, &root, &glob_pat, 500)
-                })
-                .await
-                .unwrap_or_default();
-                let root2 = workspace.to_string_lossy().to_string();
-                Some((vec![encode_exec_glob_result(seq, &path, &root2, &rel)], true))
-            } else {
-                // content (grep): search files under search_dir for the pattern.
-                let needle = pattern.clone().unwrap_or_default();
-                let glob_pat = glob.clone();
+
+            if is_grep {
+                // Content grep. The result shape must match the mode the server
+                // asked for so Cursor can parse it.
+                let needle = content_needle.unwrap_or_default();
+                let glob_filter = path_glob.clone();
                 let root_c = root.clone();
+                let search_dir_c = search_dir.clone();
                 let matches = tokio::task::spawn_blocking(move || {
-                    grep_files(&search_dir, &root_c, &needle, glob_pat.as_deref(), 300)
+                    grep_files(&search_dir_c, &root_c, &needle, glob_filter.as_deref(), 300)
                 })
                 .await
                 .unwrap_or_default();
-                Some((vec![encode_exec_grep_result(
-                    seq,
-                    &pattern.unwrap_or_default(),
-                    &path,
-                    &root,
-                    &matches,
-                )], true))
+                if want_files_only {
+                    // rg -l: return the distinct files that matched, encoded in
+                    // the files_with_matches result shape.
+                    let mut files = Vec::new();
+                    for m in &matches {
+                        if !files.contains(&m.path) {
+                            files.push(m.path.clone());
+                        }
+                    }
+                    Some((vec![encode_exec_glob_result(seq, &path, &root, &files)], true))
+                } else {
+                    Some((
+                        vec![encode_exec_grep_result(
+                            seq,
+                            pattern.as_deref().unwrap_or_default(),
+                            &path,
+                            &root,
+                            &matches,
+                        )],
+                        true,
+                    ))
+                }
+            } else {
+                // Pure path glob: list files under search_dir whose path matches.
+                let glob_pat = path_glob.unwrap_or_else(|| "**/*".to_string());
+                let root_c = root.clone();
+                let search_dir_c = search_dir.clone();
+                let rel = tokio::task::spawn_blocking(move || {
+                    glob_files(&search_dir_c, &root_c, &glob_pat, 500)
+                })
+                .await
+                .unwrap_or_default();
+                Some((vec![encode_exec_glob_result(seq, &path, &root, &rel)], true))
             }
         }
     }
@@ -553,7 +596,82 @@ fn traceparent() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::glob_match;
+    use super::{glob_match, service_exec};
+    use crate::proto::CursorExecRequest;
+
+    fn frames_contain(frames: &[Vec<u8>], needle: &[u8]) -> bool {
+        frames
+            .iter()
+            .any(|frame| frame.windows(needle.len()).any(|w| w == needle))
+    }
+
+    /// Claude/Opus searches send the ripgrep regex in `pattern` (f1) with
+    /// `mode = files_with_matches` and no path `glob` (f3). The old router keyed
+    /// on `mode` and treated the regex as a path glob, so every Claude search
+    /// returned zero files. It must instead grep file *contents* and return the
+    /// distinct matching files.
+    #[tokio::test]
+    async fn files_with_matches_greps_content_when_only_a_pattern_is_set() {
+        let dir = std::env::temp_dir().join(format!("cursor-search-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/hit.rs"), "fn encode_exec_read_result() {}\n").unwrap();
+        std::fs::write(dir.join("src/miss.rs"), "fn unrelated() {}\n").unwrap();
+
+        let (frames, ack) = service_exec(
+            CursorExecRequest::Search {
+                seq: 7,
+                pattern: Some("encode_exec_read_result".to_string()),
+                path: String::new(),
+                glob: None,
+                mode: "files_with_matches".to_string(),
+                tool_call_id: "toolu_x".to_string(),
+            },
+            &dir,
+            None,
+        )
+        .await
+        .expect("search produces a result frame");
+
+        assert!(ack);
+        assert!(
+            frames_contain(&frames, b"src/hit.rs"),
+            "files_with_matches must return the file that contains the pattern"
+        );
+        assert!(
+            !frames_contain(&frames, b"src/miss.rs"),
+            "non-matching files must not be returned"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Composer-style path globs (pattern in `glob`/f3, no content pattern) must
+    /// still list files purely by path.
+    #[tokio::test]
+    async fn files_with_matches_globs_by_path_when_glob_is_set() {
+        let dir = std::env::temp_dir().join(format!("cursor-glob-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/app.rs"), "// nothing relevant\n").unwrap();
+        std::fs::write(dir.join("src/app.txt"), "// nothing relevant\n").unwrap();
+
+        let (frames, _) = service_exec(
+            CursorExecRequest::Search {
+                seq: 9,
+                pattern: None,
+                path: String::new(),
+                glob: Some("**/*.rs".to_string()),
+                mode: "files_with_matches".to_string(),
+                tool_call_id: "toolu_y".to_string(),
+            },
+            &dir,
+            None,
+        )
+        .await
+        .expect("glob produces a result frame");
+
+        assert!(frames_contain(&frames, b"src/app.rs"));
+        assert!(!frames_contain(&frames, b"src/app.txt"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn glob_match_handles_double_star_and_extensions() {
