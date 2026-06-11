@@ -496,6 +496,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         900_000,
         REASONING_HIGH,
         OPUS_REASONING,
+        true,
     ),
     anthropic_model(
         "claude-opus-4-8",
@@ -505,6 +506,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         900_000,
         REASONING_HIGH,
         OPUS_REASONING,
+        true,
     ),
     anthropic_model(
         "claude-opus-4-7",
@@ -514,6 +516,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         900_000,
         REASONING_HIGH,
         OPUS_REASONING,
+        true,
     ),
     anthropic_model(
         "claude-sonnet-4-6",
@@ -523,6 +526,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         900_000,
         REASONING_MEDIUM,
         SONNET_REASONING,
+        true,
     ),
     anthropic_model(
         "claude-haiku-4-5-20251001",
@@ -532,6 +536,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         180_000,
         REASONING_NONE,
         &[],
+        // Live API rejects the compaction edit for Haiku 4.5 with 400.
+        false,
     ),
     claude_code_model(
         "fable",
@@ -987,6 +993,7 @@ const fn openai_model(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 const fn anthropic_model(
     id: &'static str,
     display_name: &'static str,
@@ -995,6 +1002,17 @@ const fn anthropic_model(
     auto_compact_token_limit: u32,
     default_reasoning: &'static str,
     supported_reasoning: &'static [ReasoningOption],
+    // The direct Anthropic API supports native server-side compaction
+    // (`context_management` with a `compact_20260112` edit) on the 1M-context
+    // models. Pass `true` there so Roder forwards `auto_compact_token_limit`
+    // as the input-token trigger and defers to the server instead of
+    // compacting the transcript client-side, which is what prevents 1M
+    // sessions ending in "Prompt is too long". Not every model accepts the
+    // edit: the API rejects every request carrying it for Haiku 4.5 ("does
+    // not support the 'compact_20260112' context management strategy"), so
+    // such models must pass `false` and rely on Roder's client-side
+    // compaction at `auto_compact_token_limit`.
+    supports_compaction: bool,
 ) -> ModelCatalogEntry {
     ModelCatalogEntry {
         id,
@@ -1006,13 +1024,7 @@ const fn anthropic_model(
         context_window,
         max_context_window: context_window,
         auto_compact_token_limit,
-        // The direct Anthropic API supports native server-side compaction
-        // (`context_management` with a `compact_20260112` edit). Keep this
-        // `true` so Roder forwards `auto_compact_token_limit` as the input-token
-        // trigger and defers to the server instead of compacting the transcript
-        // client-side, which is what prevents 1M sessions ending in
-        // "Prompt is too long".
-        supports_compaction: true,
+        supports_compaction,
         supports_images: false,
         supports_tools: true,
         supports_structured: false,
@@ -1549,6 +1561,18 @@ mod tests {
         // transcript locally.
         assert!(direct.supports_compaction);
         assert_eq!(direct.auto_compact_token_limit, 900_000);
+    }
+
+    #[test]
+    fn claude_haiku_does_not_advertise_server_side_compaction() {
+        let haiku = lookup_model("claude-haiku-4-5-20251001").unwrap();
+
+        // The live API rejects every request carrying the `compact_20260112`
+        // edit for Haiku 4.5 ("does not support the 'compact_20260112'
+        // context management strategy"), so the entry must keep Roder on
+        // client-side compaction at the auto-compact threshold.
+        assert!(!haiku.supports_compaction);
+        assert_eq!(haiku.auto_compact_token_limit, 180_000);
     }
 
     #[test]
