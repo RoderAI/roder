@@ -343,7 +343,13 @@ fn truncate(text: &str) -> String {
     if normalized.len() <= LIMIT {
         normalized
     } else {
-        format!("{}...", &normalized[..LIMIT])
+        // Truncate on a UTF-8 char boundary at or below LIMIT so slicing never
+        // splits a multi-byte character (e.g. an em-dash spanning bytes 238..241).
+        let mut end = LIMIT;
+        while end > 0 && !normalized.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &normalized[..end])
     }
 }
 
@@ -658,6 +664,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(compacted, transcript);
+    }
+
+    #[test]
+    fn truncate_does_not_split_multibyte_chars() {
+        // An em-dash is 3 bytes; place it so the 240-byte limit lands mid-char.
+        let text = format!("{}\u{2014}tail", "a".repeat(238));
+        let truncated = truncate(&text);
+        assert!(truncated.ends_with("..."));
+        // Must not panic and must remain valid UTF-8 below the limit.
+        assert!(truncated.len() <= 240 + 3);
     }
 
     #[test]
