@@ -251,6 +251,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(FakeProviderExtension)?;
     builder.install(CodexOAuthProviderExtension)?;
     builder.install(GitExtension)?;
+    builder.install(roder_ext_fork_rift::RiftForkExtension::default())?;
 
     builder.install(OpenAiSpeechExtension::new(
         config
@@ -1156,6 +1157,19 @@ mod tests {
             registry.remote_runner_provider(Arc::new(FakeDistributionRunnerProvider));
             Ok(())
         }
+    }
+
+    #[test]
+    fn default_registry_installs_fork_providers() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let git = registry
+            .fork_provider("git-worktree")
+            .expect("git-worktree fork provider registered");
+        assert!(git.descriptor().capabilities.create);
+        let rift = registry
+            .fork_provider("rift")
+            .expect("rift fork provider registered");
+        assert!(rift.descriptor().capabilities.copy_on_write);
     }
 
     #[test]

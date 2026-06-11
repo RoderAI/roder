@@ -43,6 +43,7 @@ pub enum ProvidedService {
     SubagentDispatcher(SubagentDispatcherId),
     PolicyContributor(PolicyContributorId),
     EventSink(EventSinkId),
+    ForkProvider(crate::forks::ForkProviderId),
     TaskExecutor(TaskExecutorId),
     NotificationSink(NotificationSinkId),
     InteractiveRegionHandler(InteractiveRegionHandlerId),
@@ -101,6 +102,7 @@ pub struct ExtensionRegistry {
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
+    pub fork_providers: Vec<Arc<dyn crate::forks::ForkProvider>>,
     pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
     pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
     pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
@@ -152,6 +154,16 @@ impl ExtensionRegistry {
         self.speech_synthesizers
             .iter()
             .find(|synthesizer| synthesizer.id() == id)
+            .cloned()
+    }
+
+    pub fn fork_provider(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn crate::forks::ForkProvider>> {
+        self.fork_providers
+            .iter()
+            .find(|provider| provider.descriptor().id == id)
             .cloned()
     }
 
@@ -212,6 +224,7 @@ pub struct ExtensionRegistryBuilder {
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
     pub event_sinks: Vec<Arc<dyn crate::extension::EventSink>>,
+    pub fork_providers: Vec<Arc<dyn crate::forks::ForkProvider>>,
     pub task_executors: Vec<Arc<dyn crate::tasks::TaskExecutor>>,
     pub notification_sinks: Vec<Arc<dyn crate::notifications::NotificationSink>>,
     pub interactive_region_handlers: Vec<Arc<dyn crate::interactive::InteractiveRegionHandler>>,
@@ -248,6 +261,7 @@ impl ExtensionRegistryBuilder {
             subagent_dispatchers: Vec::new(),
             policy_contributors: Vec::new(),
             event_sinks: Vec::new(),
+            fork_providers: Vec::new(),
             task_executors: Vec::new(),
             notification_sinks: Vec::new(),
             interactive_region_handlers: Vec::new(),
@@ -309,6 +323,7 @@ impl ExtensionRegistryBuilder {
             subagent_dispatchers: self.subagent_dispatchers,
             policy_contributors: self.policy_contributors,
             event_sinks: self.event_sinks,
+            fork_providers: self.fork_providers,
             task_executors: self.task_executors,
             notification_sinks: self.notification_sinks,
             interactive_region_handlers: self.interactive_region_handlers,
@@ -398,6 +413,10 @@ impl ExtensionRegistryBuilder {
 
     pub fn event_sink(&mut self, sink: Arc<dyn crate::extension::EventSink>) {
         self.event_sinks.push(sink);
+    }
+
+    pub fn fork_provider(&mut self, provider: Arc<dyn crate::forks::ForkProvider>) {
+        self.fork_providers.push(provider);
     }
 
     pub fn task_executor(&mut self, executor: Arc<dyn crate::tasks::TaskExecutor>) {
@@ -641,6 +660,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     );
     services.extend(
         builder
+            .fork_providers
+            .iter()
+            .map(|service| ProvidedService::ForkProvider(service.descriptor().id)),
+    );
+    services.extend(
+        builder
             .task_executors
             .iter()
             .map(|service| ProvidedService::TaskExecutor(service.id())),
@@ -773,6 +798,7 @@ fn service_label(service: &ProvidedService) -> String {
         ProvidedService::SubagentDispatcher(id) => format!("SubagentDispatcher({id})"),
         ProvidedService::PolicyContributor(id) => format!("PolicyContributor({id})"),
         ProvidedService::EventSink(id) => format!("EventSink({id})"),
+        ProvidedService::ForkProvider(id) => format!("ForkProvider({id})"),
         ProvidedService::TaskExecutor(id) => format!("TaskExecutor({id})"),
         ProvidedService::NotificationSink(id) => format!("NotificationSink({id})"),
         ProvidedService::InteractiveRegionHandler(id) => {

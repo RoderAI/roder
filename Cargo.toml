@@ -100,6 +100,7 @@ roder-ext-openrouter = { path = "crates/roder-ext-openrouter" }
 roder-ext-zeroentropy-embeddings = { path = "crates/roder-ext-zeroentropy-embeddings" }
 roder-ext-google-speech = { path = "crates/roder-ext-google-speech" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode" }
+roder-ext-fork-rift = { path = "crates/roder-ext-fork-rift" }
 roder-ext-postgres-session = { path = "crates/roder-ext-postgres-session" }
 roder-ext-process-host = { path = "crates/roder-ext-process-host" }
 roder-usage-analytics = { path = "crates/roder-usage-analytics" }
