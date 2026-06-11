@@ -234,6 +234,40 @@ impl AnalyticsStore {
         Ok(())
     }
 
+    /**
+     * Deletes raw rows older than `retention_days` (sessions are kept while
+     * any of their activity remains). Returns the number of deleted rows.
+     * `0` days disables pruning. Rollups are not touched here; callers
+     * refresh them after pruning.
+     */
+    pub fn apply_retention(&self, retention_days: u32) -> anyhow::Result<u64> {
+        if retention_days == 0 {
+            return Ok(0);
+        }
+        let cutoff_ms = now_ms() - i64::from(retention_days) * 86_400_000;
+        let conn = self.conn.lock().unwrap();
+        let mut deleted = 0_u64;
+        deleted += conn.execute(
+            "DELETE FROM tool_calls WHERE COALESCE(started_at_ms, completed_at_ms) < ?1",
+            params![cutoff_ms],
+        )? as u64;
+        deleted += conn.execute(
+            "DELETE FROM token_usage WHERE recorded_at_ms < ?1",
+            params![cutoff_ms],
+        )? as u64;
+        deleted += conn.execute(
+            "DELETE FROM turns WHERE COALESCE(completed_at_ms, started_at_ms) < ?1",
+            params![cutoff_ms],
+        )? as u64;
+        deleted += conn.execute(
+            "DELETE FROM sessions WHERE updated_at_ms < ?1
+               AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.thread_id = sessions.thread_id)
+               AND NOT EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.thread_id = sessions.thread_id)",
+            params![cutoff_ms],
+        )? as u64;
+        Ok(deleted)
+    }
+
     pub fn counts(&self) -> anyhow::Result<StoreCounts> {
         let conn = self.conn.lock().unwrap();
         let count = |table: &str| -> anyhow::Result<u64> {
@@ -417,6 +451,83 @@ mod tests {
         }
         drop(statement);
         drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retention_prunes_old_rows_and_keeps_recent_ones() {
+        let (store, dir) = temp_store();
+        let now = now_ms();
+        let old = now - 100 * 86_400_000;
+        for (suffix, at) in [("old", old), ("new", now)] {
+            store
+                .upsert_turn(&TurnRecord {
+                    thread_id: format!("t-{suffix}"),
+                    turn_id: "u1".into(),
+                    provider: None,
+                    model: None,
+                    runtime_profile: None,
+                    started_at_ms: Some(at),
+                    completed_at_ms: Some(at + 10),
+                    status: "completed".into(),
+                    error_kind: None,
+                })
+                .unwrap();
+            store
+                .upsert_tool_call(&ToolCallRecord {
+                    thread_id: format!("t-{suffix}"),
+                    turn_id: "u1".into(),
+                    tool_id: "call-1".into(),
+                    tool_name: Some("grep".into()),
+                    started_at_ms: Some(at),
+                    completed_at_ms: Some(at + 5),
+                    duration_ms: Some(5),
+                    status: "success".into(),
+                    is_error: false,
+                })
+                .unwrap();
+            store
+                .upsert_token_usage(&TokenUsageRecord {
+                    thread_id: format!("t-{suffix}"),
+                    turn_id: "u1".into(),
+                    provider: None,
+                    model: None,
+                    recorded_at_ms: at,
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                    cached_prompt_tokens: 0,
+                })
+                .unwrap();
+            store
+                .upsert_session(&crate::model::SessionRecord {
+                    thread_id: format!("t-{suffix}"),
+                    workspace_key: None,
+                    workspace_label: None,
+                    provider: None,
+                    model: None,
+                    created_at_ms: at,
+                    updated_at_ms: at,
+                })
+                .unwrap();
+        }
+
+        // Disabled retention prunes nothing.
+        assert_eq!(store.apply_retention(0).unwrap(), 0);
+        assert_eq!(store.counts().unwrap().turns, 2);
+
+        // 30-day retention removes only the 100-day-old rows, including the
+        // now-empty session.
+        let deleted = store.apply_retention(30).unwrap();
+        assert_eq!(deleted, 4);
+        let counts = store.counts().unwrap();
+        assert_eq!(counts.turns, 1);
+        assert_eq!(counts.tool_calls, 1);
+        assert_eq!(counts.token_usage, 1);
+        assert_eq!(counts.sessions, 1);
+
+        // Idempotent: a second pass deletes nothing further.
+        assert_eq!(store.apply_retention(30).unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

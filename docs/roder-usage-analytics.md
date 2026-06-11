@@ -27,8 +27,12 @@ always be rebuilt from them.
 [analytics]
 enabled = true                 # default; set false to record nothing
 workspace_labels = "full_path" # or "hashed" / "basename_only"
+retention_days = 0             # 0 keeps everything; N prunes raw rows older than N days
 # store = "/custom/path/usage.sqlite3"
 ```
+
+Retention pruning runs once per process start and during `stats backfill`;
+sessions are kept while any of their turns or tool calls remain.
 
 Recording is passive: the analytics recorder is an event sink behind the
 runtime's bounded per-sink dispatch, so a slow or broken store can never

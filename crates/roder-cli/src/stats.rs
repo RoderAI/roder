@@ -37,9 +37,17 @@ pub(crate) fn extensions_with_usage_analytics(
         .map(PathBuf::from)
         .unwrap_or_else(|| AnalyticsStore::default_path(&roder_config::config_dir()));
     match AnalyticsStore::open(&path, mode) {
-        Ok(store) => extra.0.push(Arc::new(
-            roder_usage_analytics::UsageAnalyticsExtension::new(Arc::new(store)),
-        )),
+        Ok(store) => {
+            // Retention is enforced once per process start; 0 disables it.
+            if analytics.retention_days > 0
+                && let Err(error) = store.apply_retention(analytics.retention_days)
+            {
+                eprintln!("warning: analytics retention pruning failed: {error}");
+            }
+            extra.0.push(Arc::new(
+                roder_usage_analytics::UsageAnalyticsExtension::new(Arc::new(store)),
+            ));
+        }
         Err(error) => eprintln!("warning: usage analytics disabled: {error}"),
     }
     extra
@@ -175,13 +183,18 @@ fn stats_backfill(args: &[String]) -> anyhow::Result<()> {
             best_effort: flag(args, "--best-effort"),
         },
     )?;
+    let retention_days = roder_config::load_config()
+        .map(|config| config.analytics.unwrap_or_default().retention_days)
+        .unwrap_or(0);
+    let pruned = store.apply_retention(retention_days)?;
     let rolled = store.refresh_daily_rollups()?;
     println!(
-        "scanned {} file(s), ingested {} line(s), skipped {} by offset, enriched {} session(s), refreshed {} rollup row(s)",
+        "scanned {} file(s), ingested {} line(s), skipped {} by offset, enriched {} session(s), pruned {} row(s), refreshed {} rollup row(s)",
         report.files_scanned,
         report.lines_ingested,
         report.lines_skipped_by_offset,
         report.sessions_enriched,
+        pruned,
         rolled
     );
     for error in &report.parse_errors {
