@@ -3514,6 +3514,7 @@ dependencies = [
  "async-trait",
  "base64",
  "bytes",
+ "dirs 6.0.0",
  "futures",
  "reqwest",
  "roder-api",
