@@ -18,6 +18,11 @@ name = "turn_start_steering"
 path = "tests/turn_start_steering.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "postgres_like_thread_store"
+path = "tests/postgres_like_thread_store.rs"
+required-features = ["e2e-tests"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
