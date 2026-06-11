@@ -68,7 +68,7 @@ async fn live_vertex_streaming_emits_incremental_message_deltas() {
 
     let mut message_deltas = 0;
     let mut deltas_before_completed = 0;
-    let mut saw_usage = false;
+    let mut usage_tokens = None;
     let mut completed = false;
     let mut stop_reason = None;
     while let Some(event) = stream.next().await {
@@ -80,9 +80,9 @@ async fn live_vertex_streaming_emits_incremental_message_deltas() {
                 }
             }
             InferenceEvent::Usage(usage) => {
-                saw_usage = true;
                 assert!(usage.prompt_tokens > 0);
                 assert!(usage.completion_tokens > 0);
+                usage_tokens = Some((usage.prompt_tokens, usage.completion_tokens));
             }
             InferenceEvent::Completed(metadata) => {
                 completed = true;
@@ -92,7 +92,7 @@ async fn live_vertex_streaming_emits_incremental_message_deltas() {
         }
     }
     eprintln!(
-        "live vertex streaming: {message_deltas} MessageDelta events ({deltas_before_completed} before Completed)"
+        "live vertex streaming: {message_deltas} MessageDelta events ({deltas_before_completed} before Completed), usage {usage_tokens:?} (prompt, completion), stop_reason {stop_reason:?}"
     );
 
     // The API coalesces deltas; more than one proves the reply streamed
@@ -102,6 +102,6 @@ async fn live_vertex_streaming_emits_incremental_message_deltas() {
         "expected >1 incremental text deltas before Completed, got {deltas_before_completed}"
     );
     assert!(completed, "stream ended without a Completed event");
-    assert!(saw_usage);
+    assert!(usage_tokens.is_some(), "stream ended without a Usage event");
     assert_eq!(stop_reason.as_deref(), Some("stop"));
 }
