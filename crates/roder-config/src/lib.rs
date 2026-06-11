@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub mod agent_node;
 pub mod analytics;
 pub mod dynamic_workflows;
+pub mod hosted;
 pub mod marketplaces;
 pub mod workflow_import;
 

@@ -1,0 +1,26 @@
+# Hosted Roder service — local/dev compose example (roadmap phase 72).
+#
+# Requirements made explicit:
+# - TLS: terminate at a reverse proxy (e.g. caddy/traefik/nginx) in front of
+#   the gateway port; the gateway itself speaks plain WebSocket.
+# - Auth: static keys are env references; provide them via an .env file or
+#   your secret manager. NEVER write key material into this file.
+# - Database: the JSONL per-tenant stores live on the data volume; switch to
+#   PostgreSQL via the hosted config when running multi-node.
+
+services:
+  roder-hosted:
+    image: roder-hosted:latest # build with: docker build -f deploy/roder-hosted/Dockerfile .
+    command: ["roder-hosted", "--config", "/etc/roder/hosted.toml"]
+    ports:
+      - "127.0.0.1:7900:7900" # keep private; expose only via the TLS proxy
+    volumes:
+      - ./hosted.toml:/etc/roder/hosted.toml:ro
+      - roder-hosted-data:/var/lib/roder-hosted
+    environment:
+      # Secret env vars referenced from hosted.toml static_keys, e.g.:
+      RODER_HOSTED_KEY_ACME_ADMIN: ${RODER_HOSTED_KEY_ACME_ADMIN:?set in .env or secret store}
+    restart: unless-stopped
+
+volumes:
+  roder-hosted-data:

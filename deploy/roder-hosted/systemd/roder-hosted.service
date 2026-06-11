@@ -1,0 +1,23 @@
+# Hosted Roder service — systemd unit example (roadmap phase 72).
+# Secrets come from an EnvironmentFile readable only by the service user;
+# TLS terminates at the host's reverse proxy.
+
+[Unit]
+Description=Roder hosted multi-tenant gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=roder
+Group=roder
+ExecStart=/usr/local/bin/roder-hosted --config /etc/roder/hosted.toml
+# Contains RODER_HOSTED_KEY_* values; chmod 600, owned by the roder user.
+EnvironmentFile=/etc/roder/hosted.env
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/roder-hosted
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

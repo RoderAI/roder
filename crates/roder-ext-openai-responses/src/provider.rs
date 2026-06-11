@@ -986,14 +986,6 @@ fn xai_error_message(status: reqwest::StatusCode, body: &str) -> String {
     format!("xAI Responses error {status}: {detail}")
 }
 
-fn stream_responses_sse(
-    response: reqwest::Response,
-    tool_name_map: HashMap<String, String>,
-    retry_events: Vec<Value>,
-) -> InferenceEventStream {
-    stream_responses_sse_with_client_tool_search(response, tool_name_map, retry_events, None)
-}
-
 /// Bounded number of in-turn client-executed tool-search continuations.
 const MAX_CLIENT_TOOL_SEARCH_ROUNDS: usize = 3;
 
@@ -2538,7 +2530,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut stream = stream_responses_sse(response.response, HashMap::new(), Vec::new());
+        let mut stream = stream_responses_sse_with_client_tool_search(response.response, HashMap::new(), Vec::new(), None);
         let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .expect("silent responses stream should surface an idle timeout");

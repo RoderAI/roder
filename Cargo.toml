@@ -72,6 +72,7 @@ roder-commands = { path = "crates/roder-commands" }
 roder-config = { path = "crates/roder-config" }
 roder-context = { path = "crates/roder-context" }
 roder-core = { path = "crates/roder-core" }
+roder-dist-hosted = { path = "crates/roder-dist-hosted" }
 roder-code-index = { path = "crates/roder-code-index" }
 roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows" }
 roder-edit-core = { path = "crates/roder-edit-core" }
