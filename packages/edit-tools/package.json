@@ -14,12 +14,14 @@
   },
   "files": [
     "dist/src",
+    "wasm",
     "README.md",
     "CHANGELOG.md",
     "LICENSE-NOTICE.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:wasm": "../../scripts/build-roder-edit-wasm.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test dist/test/*.test.js",
     "prepack": "pnpm run typecheck && pnpm test"
