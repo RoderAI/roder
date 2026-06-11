@@ -174,7 +174,7 @@ mod tests {
     fn pairing_tokens_are_single_use_and_expire() {
         let tokens = PairingTokens::default();
         let (secret, preview) = tokens.mint(time::Duration::minutes(5));
-        assert!(preview.len() <= 8);
+        assert!(preview.chars().count() <= 8, "preview stays short: {preview}");
 
         // Wrong token fails.
         assert!(tokens.redeem("wrong-token").is_err());
