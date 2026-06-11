@@ -10,6 +10,21 @@ use time::OffsetDateTime;
 
 use crate::response_format::{ResponseFormat, render_memory_query_results};
 
+/// Cap on memory text accepted by save/update. Stored notes are re-injected
+/// into future turns by the memory context provider, so unbounded text would
+/// flood prompts; the model is told to store a shorter note instead.
+const MAX_MEMORY_TEXT_BYTES: usize = 16 * 1024;
+
+fn ensure_text_within_limit(text: &str) -> anyhow::Result<()> {
+    if text.len() > MAX_MEMORY_TEXT_BYTES {
+        anyhow::bail!(
+            "memory text is {} bytes; the limit is {MAX_MEMORY_TEXT_BYTES} bytes — store a shorter, more focused note",
+            text.len()
+        );
+    }
+    Ok(())
+}
+
 pub struct MemoryToolContributor {
     store: Arc<dyn MemoryStore>,
 }
@@ -63,7 +78,9 @@ struct QueryArgs {
     query: String,
     #[serde(default)]
     scope: Option<String>,
-    #[serde(default)]
+    /// The schema briefly advertised `includeGlobal`; the alias keeps
+    /// models that learned the camelCase spelling working.
+    #[serde(default, alias = "includeGlobal")]
     include_global: bool,
     #[serde(default)]
     limit: Option<usize>,
@@ -127,6 +144,7 @@ impl ToolExecutor for MemorySaveTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let args = parse::<SaveArgs>(&call)?;
+        ensure_text_within_limit(&args.text)?;
         let now = OffsetDateTime::now_utc();
         let record = MemoryRecord {
             id: None,
@@ -261,6 +279,7 @@ impl ToolExecutor for MemoryUpdateTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let args = parse::<UpdateArgs>(&call)?;
+        ensure_text_within_limit(&args.text)?;
         let existing = self
             .store
             .get(&args.id)
@@ -333,7 +352,7 @@ fn query_schema() -> serde_json::Value {
         "properties": {
             "query": { "type": "string" },
             "scope": { "type": "string" },
-            "includeGlobal": { "type": "boolean" },
+            "include_global": { "type": "boolean" },
             "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
             "response_format": response_format_schema()
         },
@@ -437,6 +456,100 @@ mod tests {
         assert!(concise.text.contains("..."));
         assert!(concise.text.len() < detailed.text.len());
         assert_eq!(detailed.data["response_format"], "detailed");
+    }
+
+    #[tokio::test]
+    async fn include_global_accepts_both_schema_and_legacy_camel_case_spelling() {
+        let store = Arc::new(test_store());
+        seed_global_memory(store.as_ref(), "the global launch codeword is heron").await;
+        let tool = MemoryQueryTool {
+            store,
+            name: "memory_query",
+        };
+
+        for (label, arguments) in [
+            (
+                "include_global",
+                json!({"query": "launch codeword", "scope": "project:p", "include_global": true}),
+            ),
+            (
+                "includeGlobal",
+                json!({"query": "launch codeword", "scope": "project:p", "includeGlobal": true}),
+            ),
+        ] {
+            let result = tool
+                .execute(context(), call("memory_query", arguments))
+                .await
+                .unwrap();
+            assert!(
+                result.text.contains("heron"),
+                "{label}: scoped query did not fold in the global record: {}",
+                result.text
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_save_rejects_oversized_text() {
+        let store = Arc::new(test_store());
+        let tool = MemorySaveTool {
+            store,
+            name: "memory_save",
+        };
+
+        let error = tool
+            .execute(
+                context(),
+                call(
+                    "memory_save",
+                    json!({"text": "x".repeat(MAX_MEMORY_TEXT_BYTES + 1)}),
+                ),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("store a shorter"));
+    }
+
+    #[tokio::test]
+    async fn memory_update_rejects_oversized_text() {
+        let store = Arc::new(test_store());
+        let id = seed_memory(store.as_ref(), "small note".to_string()).await;
+        let tool = MemoryUpdateTool {
+            store,
+            name: "memory_update",
+        };
+
+        let error = tool
+            .execute(
+                context(),
+                call(
+                    "memory_update",
+                    json!({"id": id, "text": "x".repeat(MAX_MEMORY_TEXT_BYTES + 1)}),
+                ),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("store a shorter"));
+    }
+
+    async fn seed_global_memory(store: &SqliteMemoryStore, text: &str) {
+        let now = OffsetDateTime::now_utc();
+        store
+            .put(MemoryRecord {
+                id: None,
+                scope: MemoryScope::Global,
+                text: text.to_string(),
+                content_hash: None,
+                metadata: json!({}),
+                usage: None,
+                deleted: false,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
     }
 
     async fn seed_memory(store: &SqliteMemoryStore, text: String) -> String {
