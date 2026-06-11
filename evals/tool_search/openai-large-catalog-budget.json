@@ -1,0 +1,17 @@
+{
+  "id": "openai-large-catalog-budget",
+  "title": "Large catalog defers every tool and caps catalog items at the configured budget",
+  "provider": "openai",
+  "model": "gpt-5.4",
+  "mode": "provider_native",
+  "catalog": {
+    "generated": { "count": 250, "namePrefix": "catalog_tool" },
+    "maxItems": 200
+  },
+  "expected": {
+    "outcome": "request_mapped",
+    "catalogItems": 200,
+    "deferredTools": 200,
+    "nativeToolSearchEntry": true
+  }
+}

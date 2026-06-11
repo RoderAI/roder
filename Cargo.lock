@@ -3443,6 +3443,8 @@ dependencies = [
  "roder-api",
  "roder-context",
  "roder-core",
+ "roder-ext-anthropic",
+ "roder-ext-openai-responses",
  "roder-ext-task-ledger",
  "roder-ext-verification",
  "roder-ext-zerolang",

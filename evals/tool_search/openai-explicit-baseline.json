@@ -1,0 +1,25 @@
+{
+  "id": "openai-explicit-baseline",
+  "title": "OpenAI explicit tool list baseline for the shared task catalog",
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "mode": "explicit",
+  "catalog": {
+    "tools": [
+      { "name": "edit_file", "description": "Edit a file by replacing an exact string." },
+      { "name": "git_status", "description": "Show the git working tree status." },
+      { "name": "grep", "description": "Search file contents with a regex." },
+      { "name": "list_files", "description": "List files under a directory." },
+      { "name": "read_file", "description": "Read a file from the workspace." },
+      { "name": "run_tests", "description": "Run the project test suite." },
+      { "name": "shell", "description": "Run a shell command in the workspace." },
+      { "name": "write_file", "description": "Create or overwrite a file." }
+    ]
+  },
+  "expected": {
+    "outcome": "request_mapped",
+    "catalogItems": 8,
+    "deferredTools": 0,
+    "nativeToolSearchEntry": false
+  }
+}

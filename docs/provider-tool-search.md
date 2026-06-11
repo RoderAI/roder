@@ -36,6 +36,33 @@ For supported direct Anthropic Claude models, Roder maps provider-native mode by
 
 The tool-search helper itself is never deferred. Unsupported models keep the current explicit Anthropic `tools` request shape.
 
+## Streamed Search Events
+
+Provider-side searches surface through the existing canonical hosted
+tool-call lifecycle, so timelines, transcripts, and app-server events stay
+vendor-neutral:
+
+- OpenAI Responses `tool_search_call` output items map to
+  `HostedToolCallStarted` / `HostedToolCallCompleted` events named
+  `tool_search`; the search query and any searched tool selections are
+  preserved in the completion arguments (`query`, `selected_tools`).
+- Anthropic `server_tool_use` blocks named `tool_search` map to the same
+  hosted tool-call events with the accumulated search input as arguments.
+  `tool_search_tool_result` and `tool_reference` blocks remain available in
+  provider metadata, and discovered `tool_use` blocks execute through the
+  normal Roder tool-call lifecycle.
+
+## Offline Evals
+
+`evals/tool_search/` holds the offline fixture matrix (explicit vs
+provider-native comparisons, large catalog budgets, unsupported-model
+fallback and fail-closed cases, malformed search results, unknown selected
+tool ids, denied permissions, and catalog redaction). Run it with:
+
+```sh
+cargo test -p roder-evals tool_search --lib
+```
+
 ## Safety Boundary
 
 Provider tool search only changes the provider request body. It does not grant tool execution. Roder remains authoritative for:

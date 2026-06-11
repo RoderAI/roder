@@ -1,0 +1,20 @@
+{
+  "id": "anthropic-unsupported-model-fail-closed",
+  "title": "Unsupported Claude model fails closed when explicit fallback is disabled",
+  "provider": "anthropic",
+  "model": "claude-3-haiku",
+  "mode": "provider_native",
+  "fallbackToExplicitTools": false,
+  "catalog": {
+    "tools": [
+      { "name": "read_file", "description": "Read a file from the workspace." }
+    ]
+  },
+  "expected": {
+    "outcome": "fail_closed",
+    "diagnosticContains": [
+      "provider-native tool search was requested",
+      "pick a supported model"
+    ]
+  }
+}

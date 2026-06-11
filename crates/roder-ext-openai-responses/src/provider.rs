@@ -145,8 +145,12 @@ impl OpenAiResponsesEngine {
         });
     }
 
-    #[cfg(test)]
-    fn map_request(request: &AgentInferenceRequest) -> Value {
+    /**
+     * Map a canonical inference request to the OpenAI Responses request body.
+     * Public so offline eval harnesses can snapshot exact provider payloads
+     * (for example explicit vs provider-native tool-search request bodies).
+     */
+    pub fn map_request(request: &AgentInferenceRequest) -> Value {
         Self::map_request_with_options(request, RequestMappingOptions::default()).0
     }
 
@@ -527,7 +531,12 @@ fn openai_provider_native_tool_search(request: &AgentInferenceRequest) -> bool {
         && openai_model_supports_tool_search(&request.model.model)
 }
 
-fn openai_model_supports_tool_search(model: &str) -> bool {
+/**
+ * Whether an OpenAI model id is known to support Responses `tool_search`.
+ * Public so offline eval fixtures exercise the same support gating as the
+ * live request mapping.
+ */
+pub fn openai_model_supports_tool_search(model: &str) -> bool {
     model.starts_with("gpt-5.4") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.6")
 }
 
@@ -1306,31 +1315,58 @@ fn hosted_tool_call_completed_from_item(item: &Value) -> Option<HostedToolCallCo
 fn hosted_tool_name(item: &Value) -> Option<&'static str> {
     match item.get("type").and_then(Value::as_str) {
         Some("web_search_call") => Some("web_search"),
+        Some("tool_search_call") => Some("tool_search"),
         _ => None,
     }
 }
 
 fn hosted_tool_arguments(item: &Value) -> String {
-    let Some(action) = item.get("action").and_then(Value::as_object) else {
-        return "{}".to_string();
-    };
     let mut arguments = serde_json::Map::new();
-    if let Some(action_type) = action.get("type").and_then(Value::as_str) {
-        arguments.insert("action".to_string(), Value::String(action_type.to_string()));
+    if let Some(action) = item.get("action").and_then(Value::as_object) {
+        if let Some(action_type) = action.get("type").and_then(Value::as_str) {
+            arguments.insert("action".to_string(), Value::String(action_type.to_string()));
+        }
+        if let Some(query) = action
+            .get("query")
+            .or_else(|| action.get("pattern"))
+            .and_then(Value::as_str)
+        {
+            arguments.insert("query".to_string(), Value::String(query.to_string()));
+        } else if let Some(queries) = action.get("queries").and_then(Value::as_array)
+            && let Some(query) = queries.first().and_then(Value::as_str)
+        {
+            arguments.insert("query".to_string(), Value::String(query.to_string()));
+        }
+        if let Some(url) = action.get("url").and_then(Value::as_str) {
+            arguments.insert("url".to_string(), Value::String(url.to_string()));
+        }
     }
-    if let Some(query) = action
-        .get("query")
-        .or_else(|| action.get("pattern"))
-        .and_then(Value::as_str)
-    {
-        arguments.insert("query".to_string(), Value::String(query.to_string()));
-    } else if let Some(queries) = action.get("queries").and_then(Value::as_array)
-        && let Some(query) = queries.first().and_then(Value::as_str)
-    {
-        arguments.insert("query".to_string(), Value::String(query.to_string()));
+    // tool_search_call items carry the search query and the searched tool
+    // selection at the item level; preserve them so the canonical hosted
+    // tool-call events never lose searched tool ids.
+    if !arguments.contains_key("query") {
+        if let Some(query) = item.get("query").and_then(Value::as_str) {
+            arguments.insert("query".to_string(), Value::String(query.to_string()));
+        } else if let Some(queries) = item.get("queries").and_then(Value::as_array)
+            && let Some(query) = queries.first().and_then(Value::as_str)
+        {
+            arguments.insert("query".to_string(), Value::String(query.to_string()));
+        }
     }
-    if let Some(url) = action.get("url").and_then(Value::as_str) {
-        arguments.insert("url".to_string(), Value::String(url.to_string()));
+    if let Some(results) = item.get("results").and_then(Value::as_array) {
+        let selected: Vec<Value> = results
+            .iter()
+            .filter_map(|result| {
+                result
+                    .get("name")
+                    .or_else(|| result.get("tool_name"))
+                    .and_then(Value::as_str)
+                    .map(|name| Value::String(name.to_string()))
+            })
+            .collect();
+        if !selected.is_empty() {
+            arguments.insert("selected_tools".to_string(), Value::Array(selected));
+        }
     }
     Value::Object(arguments).to_string()
 }
@@ -1952,6 +1988,10 @@ fn extract_usage(value: &Value) -> Option<TokenUsage> {
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
     value?.as_u64().and_then(|n| u32::try_from(n).ok())
 }
+
+#[cfg(test)]
+#[path = "tool_search_stream_tests.rs"]
+mod tool_search_stream_tests;
 
 #[cfg(test)]
 mod tests {

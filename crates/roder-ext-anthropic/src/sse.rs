@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use roder_api::inference::{
-    CompletionMetadata, InferenceEvent, InferenceFailure, MessageDelta, ReasoningDelta,
-    ToolCallCompleted, ToolCallDelta, ToolCallStarted,
+    CompletionMetadata, HostedToolCallCompleted, HostedToolCallStarted, InferenceEvent,
+    InferenceFailure, MessageDelta, ReasoningDelta, ToolCallCompleted, ToolCallDelta,
+    ToolCallStarted,
 };
 use roder_api::tools::ToolSpec;
 use serde_json::{Value, json};
@@ -95,9 +96,21 @@ enum ContentBlock {
         partial_json: String,
     },
     /**
-     * Provider-native blocks (e.g. server_tool_use from tool_search) emit no
-     * inference events, but their streamed input is still accumulated so the
-     * reconstructed ProviderMetadata matches the non-streaming response.
+     * Anthropic `server_tool_use` tool-search blocks map to the canonical
+     * hosted tool-call lifecycle so provider-native tool search stays visible
+     * in the same timeline as other hosted tools, while the block value is
+     * still accumulated for ProviderMetadata reconstruction.
+     */
+    ToolSearchUse {
+        id: String,
+        value: Value,
+        partial_json: String,
+    },
+    /**
+     * Remaining provider-native blocks (e.g. other server_tool_use kinds and
+     * tool_search_tool_result) emit no inference events, but their streamed
+     * input is still accumulated so the reconstructed ProviderMetadata
+     * matches the non-streaming response.
      */
     Other {
         value: Value,
@@ -290,6 +303,27 @@ impl AnthropicStreamState {
                     name,
                 })]
             }
+            "server_tool_use"
+                if block.get("name").and_then(Value::as_str) == Some("tool_search") =>
+            {
+                let id = block
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                self.blocks.insert(
+                    index,
+                    ContentBlock::ToolSearchUse {
+                        id: id.clone(),
+                        value: block,
+                        partial_json: String::new(),
+                    },
+                );
+                vec![InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
+                    id,
+                    name: "tool_search".to_string(),
+                })]
+            }
             _ => {
                 self.blocks.insert(
                     index,
@@ -365,7 +399,11 @@ impl AnthropicStreamState {
                     arguments_delta: chunk.to_string(),
                 })]
             }
-            ("input_json_delta", ContentBlock::Other { partial_json, .. }) => {
+            (
+                "input_json_delta",
+                ContentBlock::ToolSearchUse { partial_json, .. }
+                | ContentBlock::Other { partial_json, .. },
+            ) => {
                 if let Some(chunk) = delta.get("partial_json").and_then(Value::as_str) {
                     partial_json.push_str(chunk);
                 }
@@ -419,6 +457,27 @@ impl AnthropicStreamState {
                 (
                     json!({ "type": "tool_use", "id": id, "name": wire_name, "input": input }),
                     vec![InferenceEvent::ToolCallCompleted(call)],
+                )
+            }
+            ContentBlock::ToolSearchUse {
+                id,
+                mut value,
+                partial_json,
+            } => {
+                let input = if partial_json.is_empty() {
+                    value.get("input").cloned().unwrap_or_else(|| json!({}))
+                } else {
+                    parse_json_object(&partial_json)
+                };
+                value["input"] = input.clone();
+                let call = HostedToolCallCompleted {
+                    id,
+                    name: "tool_search".to_string(),
+                    arguments: input.to_string(),
+                };
+                (
+                    value,
+                    vec![InferenceEvent::HostedToolCallCompleted(call)],
                 )
             }
             ContentBlock::Other {
@@ -488,6 +547,10 @@ fn merge_usage(target: &mut Option<Value>, incoming: &Value) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "sse_tool_search_tests.rs"]
+mod sse_tool_search_tests;
 
 #[cfg(test)]
 mod tests {
@@ -851,13 +914,25 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}
             ],
         );
 
-        // server_tool_use blocks emit no inference events.
+        // tool_search server_tool_use blocks map to canonical hosted tool
+        // events; the accumulated input becomes the completion arguments.
         assert_eq!(
             events,
-            vec![InferenceEvent::MessageDelta(MessageDelta {
-                text: "cited".to_string(),
-                phase: None,
-            })]
+            vec![
+                InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
+                    id: "srv_1".to_string(),
+                    name: "tool_search".to_string(),
+                }),
+                InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                    id: "srv_1".to_string(),
+                    name: "tool_search".to_string(),
+                    arguments: r#"{"query":"shell"}"#.to_string(),
+                }),
+                InferenceEvent::MessageDelta(MessageDelta {
+                    text: "cited".to_string(),
+                    phase: None,
+                })
+            ]
         );
         assert_eq!(
             state.message["content"],
