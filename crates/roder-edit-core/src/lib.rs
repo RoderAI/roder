@@ -12,6 +12,10 @@ pub use hunks::{EditHunk, HunkDiffLine, HunkDiffLineKind};
 pub use patch::{
     CodexPatchChange, CodexPatchOp, apply_codex_patch_to_workspace, parse_codex_patch,
 };
+pub use post_edit::{
+    PostEditDiagnostic, PostEditHooks, PostEditOutcome, PostEditValidator, ValidatorPolicy,
+    normalize_inserted_indentation, run_post_edit_hooks,
+};
 pub use read::{ReadFormatOptions, format_line_numbered_read};
 pub use replace::{EditApplyError, EditMatchMode, EditOptions, apply_edit, apply_multi_edit};
 pub use write::{WriteFileOutcome, write_file};

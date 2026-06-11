@@ -9,4 +9,8 @@ async-trait.workspace = true
 roder-api.workspace = true
 semver.workspace = true
 serde_json.workspace = true
+time.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+uuid = { workspace = true, features = ["v4"] }

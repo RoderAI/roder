@@ -13,11 +13,11 @@ semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tar.workspace = true
-tokio = { workspace = true, features = ["fs", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "net", "time"] }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 urlencoding.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 roder-protocol.workspace = true
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread"] }
-tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }

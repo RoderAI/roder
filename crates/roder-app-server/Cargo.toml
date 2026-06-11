@@ -18,6 +18,45 @@ name = "turn_start_steering"
 path = "tests/turn_start_steering.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "postgres_like_thread_store"
+path = "tests/postgres_like_thread_store.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "forks"
+path = "tests/forks.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "process_extension_python_provider"
+path = "tests/process_extension_python_provider.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "hosted_auth"
+path = "tests/hosted_auth.rs"
+
+[[test]]
+name = "hosted_gateway"
+path = "tests/hosted_gateway.rs"
+
+[[test]]
+name = "hosted_hooks"
+path = "tests/hosted_hooks.rs"
+
+[[test]]
+name = "hosted_e2e"
+path = "tests/hosted_e2e.rs"
+
+[[test]]
+name = "agent_node_security"
+path = "tests/agent_node_security.rs"
+
+[[test]]
+name = "remote_app_client"
+path = "tests/remote_app_client.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -35,6 +74,12 @@ roder-codex-auth.workspace = true
 roder-code-index.workspace = true
 roder-commands.workspace = true
 roder-config.workspace = true
+roder-usage-analytics.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+rcgen.workspace = true
+reqwest.workspace = true
+rustls-pemfile.workspace = true
 roder-core.workspace = true
 roder-dynamic-workflows.workspace = true
 roder-evals.workspace = true
@@ -56,12 +101,16 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 async-trait.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
 futures.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-google-embeddings.workspace = true
 roder-ext-openai-embeddings.workspace = true
 roder-ext-zeroentropy-embeddings.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
+roder-ext-git.workspace = true
+roder-ext-process-host.workspace = true
 roder-ext-subagents.workspace = true
 roder-extension-host.workspace = true
 roder-tools.workspace = true

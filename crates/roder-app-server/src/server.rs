@@ -107,6 +107,9 @@ pub struct AppServer {
     pub(crate) workspaces: crate::workspaces::WorkspaceRegistry,
     pub(crate) workspace_files: crate::workspace_files::WorkspaceFileService,
     pub(crate) command_registry: OnceCell<CommandsRegistry>,
+    /// Set once by `serve_agent_node` when this app-server is served as a
+    /// remote agent node; `node/status` reports it.
+    pub(crate) node_identity: std::sync::OnceLock<roder_protocol::agent_node::NodeIdentity>,
 }
 
 #[derive(Clone, Debug)]
@@ -359,6 +362,89 @@ impl AppServer {
             "thread/archive" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_archive(p).await
+                })
+                .await
+            }
+            "thread/fork" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_thread_fork(p).await },
+                )
+                .await
+            }
+            "thread/fork_status" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_fork_status(p).await
+                })
+                .await
+            }
+            "thread/remove_fork" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_remove_fork(p).await
+                })
+                .await
+            }
+            "node/status" => {
+                let result = roder_protocol::agent_node::NodeStatusResult {
+                    served: self.node_identity.get().is_some(),
+                    node: self.node_identity.get().cloned(),
+                };
+                serde_json::to_value(result).map_err(internal_error)
+            }
+            "forks/providers/list" => self.handle_forks_providers_list().await,
+            "forks/list" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_forks_list(p).await },
+                )
+                .await
+            }
+            "forks/create" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_forks_create(p).await
+                })
+                .await
+            }
+            "forks/remove" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_forks_remove(p).await
+                })
+                .await
+            }
+            "stats/summary" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_summary(p).await
+                })
+                .await
+            }
+            "stats/tools" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_stats_tools(p).await },
+                )
+                .await
+            }
+            "stats/tokens" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_tokens(p).await
+                })
+                .await
+            }
+            "stats/sessions" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_sessions(p).await
+                })
+                .await
+            }
+            "stats/backfill" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_backfill(p).await
+                })
+                .await
+            }
+            "stats/export" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_export(p).await
                 })
                 .await
             }
@@ -1518,6 +1604,7 @@ impl AppServer {
             .map(|provider| RunnerProviderDescriptor {
                 provider_id: provider.id(),
                 capabilities: provider.capabilities(),
+                setup_hint: provider.setup_hint(),
             })
             .collect::<Vec<_>>();
         Ok(serde_json::to_value(RunnersListResult {
@@ -5133,6 +5220,12 @@ impl AppServer {
 
     pub(crate) fn publish_notification(&self, notification: JsonRpcNotification) {
         let _ = self.protocol_notifications.send(notification);
+    }
+
+    /// Marks this app-server as served by an agent node. Set once at node
+    /// startup; later calls are ignored.
+    pub fn set_node_identity(&self, identity: roder_protocol::agent_node::NodeIdentity) {
+        let _ = self.node_identity.set(identity);
     }
 }
 

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod agent_node;
 mod automations;
 mod chrome;
 mod commands;
@@ -8,6 +9,8 @@ mod evals;
 mod exec;
 mod exec_events;
 mod exec_output;
+mod forks;
+mod stats;
 mod marketplace;
 mod replay;
 mod resume_picker;
@@ -151,6 +154,18 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("team")) {
         return run_team_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("thread")) {
+        return forks::run_thread_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("forks")) {
+        return forks::run_forks_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("stats")) {
+        return stats::run_stats_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("agent-node")) {
+        return agent_node::run_agent_node_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("chrome")) {
         return chrome::run_chrome_cli(&args[1..]).await;
@@ -1114,6 +1129,8 @@ pub(crate) async fn build_runtime_from_config(
     let tool_search = resolve_tool_search_config(cfg.tool_search.as_ref());
     let provider_tool_search = resolve_provider_tool_search_configs(&cfg.providers);
     let model_tool_search = resolve_model_tool_search_configs(&cfg.models);
+    let extra_extensions =
+        stats::extensions_with_usage_analytics(distribution_extensions(), cfg.analytics.clone());
     let registry = build_default_registry(DefaultRegistryConfig {
         openai_api_key: keys.openai,
         openai_speech_api_key: keys.openai_speech,
@@ -1161,7 +1178,8 @@ pub(crate) async fn build_runtime_from_config(
         notifications,
         remote_runner_destination: remote_runner_destination.clone(),
         inference_router: cfg.inference_router.clone(),
-        extra_extensions: distribution_extensions(),
+        extra_extensions,
+        process_extensions: cfg.process_extensions.clone(),
     })?;
 
     let runtime = Arc::new(Runtime::new(

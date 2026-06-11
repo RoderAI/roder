@@ -147,6 +147,20 @@ impl From<Item> for ExecItem {
                 tool_call_id: Some(tool_call_id),
                 payload: input,
             },
+            Item::RoutingDecision {
+                id,
+                decision,
+                status,
+            } => Self {
+                id,
+                kind: "routingDecision".to_string(),
+                text: Some(decision.decision.reason.clone()),
+                status: status.map(exec_status),
+                phase: None,
+                tool_name: None,
+                tool_call_id: None,
+                payload: Some(serde_json::to_value(decision).unwrap_or(serde_json::Value::Null)),
+            },
             Item::Compaction {
                 id,
                 summary,

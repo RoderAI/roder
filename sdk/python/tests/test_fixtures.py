@@ -206,6 +206,13 @@ async def test_python_sdk_replays_workspace_files_fixture() -> None:
     )
     assert query["matches"][0]["entry"]["path"] == "roadmap/001-desktop-custom-user-extensions.md"
 
+    directory_query = await client.call(
+        "workspace/files/query",
+        {"workspaceId": "ws_files", "query": "roadmap", "limit": 5},
+    )
+    assert directory_query["matches"][0]["entry"]["path"] == "roadmap"
+    assert directory_query["matches"][0]["entry"]["kind"] == "directory"
+
     read = await client.call(
         "workspace/files/read",
         {

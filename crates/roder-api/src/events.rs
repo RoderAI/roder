@@ -105,6 +105,70 @@ pub struct ThreadCreated {
     pub timestamp: OffsetDateTime,
 }
 
+/// A conversation fork into a worktree-backed child thread was requested.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForkRequested {
+    pub parent_thread_id: ThreadId,
+    pub name: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// A child thread was created with its workspace fork.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForked {
+    pub parent_thread_id: ThreadId,
+    pub child_thread_id: ThreadId,
+    pub fork: crate::forks::WorkspaceFork,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// A requested conversation fork failed (worktree or thread creation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForkFailed {
+    pub parent_thread_id: ThreadId,
+    pub name: String,
+    pub message: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// A fork's worktree was explicitly removed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForkRemoved {
+    pub thread_id: ThreadId,
+    pub fork_id: String,
+    pub worktree_path: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// A typed event emitted by an extension (e.g. a process-hosted child)
+/// through the extension-owned event channel. Payloads are redacted and
+/// schema-versioned by the emitter; the host enforces a size cap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionEventEmitted {
+    pub extension_id: String,
+    pub event_kind: String,
+    pub schema_version: u32,
+    pub payload: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// An event sink failed or timed out while handling an envelope. The
+/// message is redacted; sink-failure events are never re-dispatched to
+/// sinks, so a broken sink cannot create an event loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventSinkFailed {
+    pub sink_id: String,
+    pub event_kind: String,
+    pub message: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadLoaded {
     pub thread_id: ThreadId,
@@ -221,7 +285,7 @@ fn default_model_selection() -> ModelSelection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InferenceRoutingDecisionEvent {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -1114,8 +1178,14 @@ pub struct RoadmapChanged {
 pub enum RoderEvent {
     RuntimeStarted(RuntimeStarted),
     ExtensionRegistered(ExtensionRegistered),
+    ExtensionEventEmitted(ExtensionEventEmitted),
+    EventSinkFailed(EventSinkFailed),
     ThreadCreated(ThreadCreated),
     ThreadLoaded(ThreadLoaded),
+    ThreadForkRequested(ThreadForkRequested),
+    ThreadForked(ThreadForked),
+    ThreadForkFailed(ThreadForkFailed),
+    ThreadForkRemoved(ThreadForkRemoved),
     TurnStarted(TurnStarted),
     ContextAssemblyStarted(ContextAssemblyStarted),
     ContextBlockAdded(ContextBlockAdded),
@@ -1296,8 +1366,14 @@ impl RoderEvent {
         match self {
             RoderEvent::RuntimeStarted(_) => "runtime.started",
             RoderEvent::ExtensionRegistered(_) => "extension.registered",
+            RoderEvent::ExtensionEventEmitted(_) => "extension.event",
+            RoderEvent::EventSinkFailed(_) => "extension.event_sink_failed",
             RoderEvent::ThreadCreated(_) => "thread.created",
             RoderEvent::ThreadLoaded(_) => "thread.loaded",
+            RoderEvent::ThreadForkRequested(_) => "thread.fork_requested",
+            RoderEvent::ThreadForked(_) => "thread.forked",
+            RoderEvent::ThreadForkFailed(_) => "thread.fork_failed",
+            RoderEvent::ThreadForkRemoved(_) => "thread.fork_removed",
             RoderEvent::TurnStarted(_) => "turn.started",
             RoderEvent::ContextAssemblyStarted(_) => "context.assembly_started",
             RoderEvent::ContextBlockAdded(_) => "context.block_added",
@@ -1612,8 +1688,13 @@ impl RoderEvent {
 
     pub fn thread_id(&self) -> Option<&ThreadId> {
         match self {
+            RoderEvent::ExtensionEventEmitted(_) | RoderEvent::EventSinkFailed(_) => None,
             RoderEvent::ThreadCreated(e) => Some(&e.thread_id),
             RoderEvent::ThreadLoaded(e) => Some(&e.thread_id),
+            RoderEvent::ThreadForkRequested(e) => Some(&e.parent_thread_id),
+            RoderEvent::ThreadForked(e) => Some(&e.child_thread_id),
+            RoderEvent::ThreadForkFailed(e) => Some(&e.parent_thread_id),
+            RoderEvent::ThreadForkRemoved(e) => Some(&e.thread_id),
             RoderEvent::TurnStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextAssemblyStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextBlockAdded(e) => Some(&e.thread_id),
@@ -1794,6 +1875,11 @@ impl RoderEvent {
 
     pub fn turn_id(&self) -> Option<&TurnId> {
         match self {
+            RoderEvent::ExtensionEventEmitted(_) | RoderEvent::EventSinkFailed(_) => None,
+            RoderEvent::ThreadForkRequested(_)
+            | RoderEvent::ThreadForked(_)
+            | RoderEvent::ThreadForkFailed(_)
+            | RoderEvent::ThreadForkRemoved(_) => None,
             RoderEvent::TurnStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextAssemblyStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextBlockAdded(e) => Some(&e.turn_id),

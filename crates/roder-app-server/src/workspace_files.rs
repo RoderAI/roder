@@ -292,6 +292,7 @@ impl WorkspaceFileService {
                 .cmp(&left.score)
                 .then_with(|| left.entry.path.len().cmp(&right.entry.path.len()))
                 .then_with(|| left.entry.path.cmp(&right.entry.path))
+                .then_with(|| left.entry.root_id.cmp(&right.entry.root_id))
         });
         candidates.truncate(limit);
         let indexed_file_count = status.file_count;
@@ -410,17 +411,41 @@ impl RootIndex {
     }
 
     fn query(&self, root: &WorkspaceRoot, query: &str) -> Vec<QueryCandidate> {
-        self.files
+        let mut candidates = self
+            .directories
             .iter()
-            .filter_map(|file| {
-                let (score, match_positions) = rank_file(query, file)?;
+            .filter_map(|directory| {
+                let name = basename(directory);
+                let (score, match_positions) = rank_path(query, directory, name)?;
                 Some(QueryCandidate {
-                    entry: file.entry(root),
+                    entry: self.directory_entry(root, directory),
                     score,
                     match_positions,
                 })
             })
-            .collect()
+            .collect::<Vec<_>>();
+        candidates.extend(self.files.iter().filter_map(|file| {
+            let (score, match_positions) = rank_path(query, &file.path, &file.name)?;
+            Some(QueryCandidate {
+                entry: file.entry(root),
+                score,
+                match_positions,
+            })
+        }));
+        candidates
+    }
+
+    fn directory_entry(&self, root: &WorkspaceRoot, path: &str) -> WorkspaceFileEntry {
+        WorkspaceFileEntry {
+            root_id: root.id.clone(),
+            root_name: root.name.clone(),
+            path: path.to_string(),
+            name: basename(path).to_string(),
+            kind: WorkspaceFileKind::Directory,
+            has_children: self.has_children(path),
+            size: None,
+            modified_ms: None,
+        }
     }
 
     fn file(&self, path: &str) -> Option<&IndexedFile> {
@@ -969,13 +994,13 @@ fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-fn rank_file(query: &str, file: &IndexedFile) -> Option<(i64, Vec<usize>)> {
+fn rank_path(query: &str, path: &str, name: &str) -> Option<(i64, Vec<usize>)> {
     let query = query.trim().to_ascii_lowercase();
     if query.is_empty() {
         return Some((0, Vec::new()));
     }
-    let path = file.path.to_ascii_lowercase();
-    let name = file.name.to_ascii_lowercase();
+    let path = path.to_ascii_lowercase();
+    let name = name.to_ascii_lowercase();
     let segments = path.split('/').collect::<Vec<_>>();
     let mut score = 0;
     let mut positions = BTreeSet::new();
@@ -1000,7 +1025,7 @@ fn rank_file(query: &str, file: &IndexedFile) -> Option<(i64, Vec<usize>)> {
     if path.contains(&query) {
         score += 250;
     }
-    score -= (file.path.len() as i64).min(200);
+    score -= (path.len() as i64).min(200);
     Some((score, positions.into_iter().collect()))
 }
 
@@ -1278,8 +1303,8 @@ mod tests {
             size: 1,
             modified_ms: None,
         };
-        let exact_score = rank_file("status.md", &exact).unwrap().0;
-        let weak_score = rank_file("status.md", &weak)
+        let exact_score = rank_path("status.md", &exact.path, &exact.name).unwrap().0;
+        let weak_score = rank_path("status.md", &weak.path, &weak.name)
             .map(|rank| rank.0)
             .unwrap_or(i64::MIN);
         assert!(exact_score > weak_score);

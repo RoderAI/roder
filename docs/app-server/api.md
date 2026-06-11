@@ -163,8 +163,8 @@ the selected root or a child path of that root.
 ```
 
 `item` is a typed visible row or event within a turn. Public item `type` values
-are `userMessage`, `agentMessage`, `reasoning`, `toolExecution`, `compaction`,
-`error`, and `raw`.
+are `userMessage`, `agentMessage`, `reasoning`, `toolExecution`,
+`routingDecision`, `compaction`, `error`, and `raw`.
 
 `provider` is an inference backend. Provider/model notation is exposed as a
 provider id plus model id, for example `openai` and `gpt-5.5`, or provider
@@ -204,6 +204,12 @@ Core:
 | `speech/transcribe` | Transcribe audio through a registered speech provider. |
 | `speech/synthesis/providers/list` | List speech synthesis providers and TTS models. |
 | `speech/synthesize` | Generate speech audio through a registered synthesis provider. |
+| `stats/summary` | Local usage analytics window summary (turns, tools, tokens). Filters: `{filter: {sinceMs?, untilMs?, threadId?, toolName?, provider?, model?, limit?}}`. |
+| `stats/tools` | Per-tool call/error counts and exact p50/p95/p99 durations; `sort`: `calls`/`p95`/`errors`/`underused`. |
+| `stats/tokens` | Token totals grouped by `day`/`session`/`provider`/`model`/`workspace`. |
+| `stats/sessions` | Per-thread turn/tool/error/token summaries with configured workspace labels. |
+| `stats/backfill` | Idempotently replay JSONL thread events into the analytics store (`rebuild`, `bestEffort`). |
+| `stats/export` | Write schema-versioned normalized JSONL to a server-side path (no inline payload). Responses never include prompt/output bodies; result limits are capped at 1000 rows. See `docs/roder-usage-analytics.md`. |
 
 Threads and turns:
 
@@ -248,7 +254,7 @@ Tools, commands, files, agents, and tasks:
 | `workspace/files/status` | Read workspace file-index state for registered roots. |
 | `workspace/files/rebuild` | Build or refresh the app-server-owned workspace file index. |
 | `workspace/files/children` | List workspace root or directory children for lazy file trees. |
-| `workspace/files/query` | Ranked fuzzy query over indexed workspace files. |
+| `workspace/files/query` | Ranked fuzzy query over indexed workspace files and directories. |
 | `workspace/files/read` | Read a bounded text preview or binary metadata for an indexed workspace file. |
 | `fs/readFile` | Low-level absolute host file read as base64. |
 | `fs/readDirectory` | Low-level direct child listing for an absolute host directory. |
@@ -1934,8 +1940,8 @@ Behavior:
 
 ### `workspace/files/query`
 
-Purpose: Ranked fuzzy file query for tree search, `@mentions`, and command-p
-quick-open.
+Purpose: Ranked fuzzy file and directory query for tree search, `@mentions`,
+and command-p quick-open.
 
 Request:
 
@@ -1960,6 +1966,18 @@ Response:
     "directoryCount": 932
   },
   "matches": [
+    {
+      "entry": {
+        "rootId": "root_abc123",
+        "rootName": "gode",
+        "path": "roadmap",
+        "name": "roadmap",
+        "kind": "directory",
+        "hasChildren": true
+      },
+      "score": 1200,
+      "matchPositions": [0, 1, 2, 3, 4, 5, 6]
+    },
     {
       "entry": {
         "rootId": "root_abc123",
@@ -4939,6 +4957,8 @@ or the remote WebSocket notification stream for remote clients.
 `seq`, `eventId`, `threadId`, `turnId`, `timestamp`, and `event`. The `event`
 is `itemStarted`, `itemDelta`, or `itemCompleted`, and every lifecycle update
 targets the same stable item id that later appears in `thread/read`.
+Inference routing decisions are emitted as completed `routingDecision` items and
+remain visible when a completed thread is read or resumed.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
 `completed`, `failed`, or `interrupted`. Completed and failed turns include

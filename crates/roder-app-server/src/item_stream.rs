@@ -77,6 +77,18 @@ async fn item_event_kinds_for_event(
                 )],
             )))
         }
+        RoderEvent::InferenceRoutingDecision(event) => Ok(Some((
+            event.thread_id.clone(),
+            event.turn_id.clone(),
+            event.timestamp,
+            vec![ThreadItemEventKind::ItemCompleted {
+                item: ThreadItem::RoutingDecision {
+                    id: routing_decision_item_id(&event.turn_id, event.round_index),
+                    decision: event.clone(),
+                    status: Some(ThreadItemStatus::Completed),
+                },
+            }],
+        ))),
         RoderEvent::ContextCompactionStarted(event) => Ok(Some((
             event.thread_id.clone(),
             event.turn_id.clone(),
@@ -310,14 +322,22 @@ fn compaction_item_id(turn_id: &str) -> String {
     format!("{turn_id}-compaction")
 }
 
+fn routing_decision_item_id(turn_id: &str, round_index: u32) -> String {
+    format!("{turn_id}-routing-decision-{round_index}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::events::{ContextCompactionStarted, EventSource, InferenceEventReceived};
+    use roder_api::events::{
+        ContextCompactionStarted, EventSource, InferenceEventReceived,
+        InferenceRoutingDecisionEvent,
+    };
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::inference::{
-        HostedToolCallStarted, MessageDelta, ReasoningDelta, ToolCallCompleted,
+        HostedToolCallStarted, MessageDelta, ModelSelection, ReasoningDelta, ToolCallCompleted,
     };
+    use roder_api::inference_routing::InferenceRoutingDecision;
     use roder_api::transcript::{ContextCompactionRecord, ToolCallRecord, ToolResultRecord};
     use roder_core::{RuntimeConfig, fake_provider::FakeInferenceEngine};
     use serde_json::json;
@@ -366,6 +386,66 @@ mod tests {
                 assert_eq!(status, &Some(ThreadItemStatus::InProgress));
             }
             other => panic!("expected in-progress compaction item, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn inference_routing_decision_projects_completed_item() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let runtime = Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap();
+        let timestamp = OffsetDateTime::UNIX_EPOCH;
+        let selected = ModelSelection {
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-5".to_string(),
+        };
+        let event = EventEnvelope {
+            event_id: "event-1".to_string(),
+            seq: 1,
+            timestamp,
+            source: EventSource::Core,
+            kind: "inference.routing_decision".to_string(),
+            thread_id: Some("thread-1".to_string()),
+            turn_id: Some("turn-1".to_string()),
+            event: RoderEvent::InferenceRoutingDecision(InferenceRoutingDecisionEvent {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                round_index: 0,
+                default_selection: ModelSelection {
+                    provider: "openai".to_string(),
+                    model: "gpt-5.5".to_string(),
+                },
+                selected_selection: selected.clone(),
+                decision: InferenceRoutingDecision::selected(
+                    "local",
+                    selected,
+                    "Large diff and failing tests",
+                ),
+                timestamp,
+            }),
+        };
+
+        let (_, _, _, events) = item_event_kinds_for_event(&runtime, &event)
+            .await
+            .unwrap()
+            .expect("routing decision projects to item event");
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ThreadItemEventKind::ItemCompleted {
+                item:
+                    ThreadItem::RoutingDecision {
+                        id,
+                        decision,
+                        status,
+                    },
+            } => {
+                assert_eq!(id, "turn-1-routing-decision-0");
+                assert_eq!(decision.turn_id, "turn-1");
+                assert_eq!(decision.selected_selection.model, "claude-sonnet-5");
+                assert_eq!(status, &Some(ThreadItemStatus::Completed));
+            }
+            other => panic!("expected routing decision item, got {other:?}"),
         }
     }
 

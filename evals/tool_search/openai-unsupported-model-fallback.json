@@ -1,0 +1,20 @@
+{
+  "id": "openai-unsupported-model-fallback",
+  "title": "Unsupported OpenAI model falls back to explicit tools when fallback is allowed",
+  "provider": "openai",
+  "model": "gpt-5.3",
+  "mode": "provider_native",
+  "fallbackToExplicitTools": true,
+  "catalog": {
+    "tools": [
+      { "name": "read_file", "description": "Read a file from the workspace." },
+      { "name": "shell", "description": "Run a shell command in the workspace." }
+    ]
+  },
+  "expected": {
+    "outcome": "request_mapped",
+    "catalogItems": 2,
+    "deferredTools": 0,
+    "nativeToolSearchEntry": false
+  }
+}

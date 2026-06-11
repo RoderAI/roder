@@ -1295,6 +1295,10 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
 }
 
 #[cfg(test)]
+#[path = "proto_exec_tests.rs"]
+mod proto_exec_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

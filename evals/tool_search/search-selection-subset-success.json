@@ -1,0 +1,25 @@
+{
+  "id": "search-selection-subset-success",
+  "title": "Provider search selects and executes a permitted subset of a larger catalog",
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "mode": "provider_native",
+  "catalog": {
+    "tools": [
+      { "name": "edit_file", "description": "Edit a file by replacing an exact string." },
+      { "name": "read_file", "description": "Read a file from the workspace." }
+    ],
+    "generated": { "count": 40, "namePrefix": "noise_tool" }
+  },
+  "search": {
+    "query": "edit files in the workspace",
+    "results": [
+      { "name": "edit_file" },
+      { "name": "read_file" }
+    ]
+  },
+  "expected": {
+    "outcome": "executed",
+    "executedTools": ["edit_file", "read_file"]
+  }
+}

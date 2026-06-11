@@ -23,6 +23,6 @@ cargo test -p roder-edit-core
   cat > "$tmpdir/smoke/package.json" <<'JSON'
 {"type":"module"}
 JSON
-  (cd "$tmpdir/smoke" && pnpm add "$tarball" >/dev/null && node -e "import('@roderai/edit-tools').then((m)=>{ if (!m.createMemoryEditWorkspace) process.exit(1) })")
+  (cd "$tmpdir/smoke" && pnpm add "$tarball" >/dev/null && node -e "import('@roderai/edit-tools').then((m)=>{ if (!m.createMemoryEditWorkspace) process.exit(1); const core = m.loadWasmCore(); if (core && !/^\d+\./.test(core.roder_edit_tools_version())) process.exit(1); })")
   rm -rf "$tmpdir"
 )

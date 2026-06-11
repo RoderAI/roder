@@ -28,15 +28,19 @@ impl RoderExtension for GitExtension {
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
             description: Some("Provides git-backed version-control workflows.".to_string()),
-            provides: vec![ProvidedService::VersionControlProvider(
-                GIT_VCS_PROVIDER_ID.to_string(),
-            )],
+            provides: vec![
+                ProvidedService::VersionControlProvider(GIT_VCS_PROVIDER_ID.to_string()),
+                ProvidedService::ForkProvider(
+                    crate::fork_provider::GIT_WORKTREE_FORK_PROVIDER_ID.to_string(),
+                ),
+            ],
             required_capabilities: Vec::new(),
         }
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.version_control_provider(Arc::new(GitProvider));
+        registry.fork_provider(Arc::new(crate::fork_provider::GitWorktreeForkProvider));
         Ok(())
     }
 }

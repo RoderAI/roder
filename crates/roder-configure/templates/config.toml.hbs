@@ -24,6 +24,13 @@ user_workflows_dir = "~/.roder/workflows"
 require_approval = true
 allow_always_for_script_and_workspace = true
 
+# Local usage analytics (never uploaded anywhere). Disable with
+# `enabled = false`; `workspace_labels` controls how workspace paths are
+# recorded: "full_path" (default), "hashed", or "basename_only".
+[analytics]
+enabled = true
+workspace_labels = "full_path"
+
 # Required environment variables:
 {{required_env_comments}}
 

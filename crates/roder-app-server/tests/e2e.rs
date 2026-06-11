@@ -288,6 +288,9 @@ impl ThreadStore for FailingThreadStore {
             runner_destination: None,
             runner_state: None,
             runner_binding: None,
+            parent_thread_id: None,
+            forked_from_turn_id: None,
+            workspace_fork: None,
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             updated_at: time::OffsetDateTime::UNIX_EPOCH,
             message_count: 0,
@@ -4462,6 +4465,28 @@ async fn workspace_files_rebuild_children_query_and_read_flow() {
         "roadmap/001-desktop-custom-user-extensions.md"
     );
     assert_eq!(query["indexedFileCount"], 4);
+
+    let directory_query: serde_json::Value = request(
+        &fixture.client,
+        "workspace/files/query",
+        Some(serde_json::json!({
+            "workspaceId": workspace_id.as_str(),
+            "query": "roadmap",
+            "limit": 5
+        })),
+    )
+    .await;
+    assert!(
+        directory_query["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|match_result| {
+                match_result["entry"]["path"] == "roadmap"
+                    && match_result["entry"]["kind"] == "directory"
+                    && match_result["entry"]["hasChildren"] == true
+            })
+    );
 
     let read: serde_json::Value = request(
         &fixture.client,

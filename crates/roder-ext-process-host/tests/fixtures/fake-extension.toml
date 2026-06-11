@@ -1,0 +1,15 @@
+id = "roder-ext-fake-child"
+name = "Fake Process Child"
+version = "0.1.0"
+api_version = "^0.1"
+description = "Offline fake child for process-host tests"
+
+provides = [
+  { type = "inference_engine", id = "fake-process-engine" },
+  { type = "event_sink", id = "fake-process-events" },
+]
+
+required_capabilities = [
+  "events.read.turn",
+  "events.emit.extension",
+]

@@ -118,16 +118,21 @@ class WebSocketTransport:
         url: str,
         *,
         token: str | None = None,
+        headers: dict[str, str] | None = None,
         subprotocols: list[str] | None = None,
         connector: Callable[..., Awaitable[Any]] | None = None,
     ) -> "WebSocketTransport":
         import websockets
 
-        headers = {"Authorization": f"Bearer {token}"} if token else None
+        merged: dict[str, str] = {}
+        if token:
+            merged["Authorization"] = f"Bearer {token}"
+        if headers:
+            merged.update(headers)
         connect = connector or websockets.connect
         socket = await connect(
             url,
-            additional_headers=headers,
+            additional_headers=merged or None,
             subprotocols=cast(Any, subprotocols),
         )
         return cls(socket)

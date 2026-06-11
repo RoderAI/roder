@@ -138,6 +138,19 @@ pub struct ThreadMetadata {
     pub message_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<ThreadUsageMetadata>,
+    /// Parent thread this conversation was forked from. Absent for normal threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<ThreadId>,
+    /// Parent turn the fork branched at, when the fork targeted a specific turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from_turn_id: Option<TurnId>,
+    /**
+     * Provider-neutral workspace-fork provenance for threads whose
+     * workspace is a fork of another workspace (roadmap phase 81; the
+     * phase-90 Git-worktree MVP shape was folded into this canonical type).
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_fork: Option<crate::forks::WorkspaceFork>,
 }
 
 pub fn validate_thread_workspace(workspace: &str) -> anyhow::Result<String> {
@@ -223,6 +236,12 @@ pub enum ThreadItem {
         output: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    RoutingDecision {
+        id: String,
+        decision: crate::events::InferenceRoutingDecisionEvent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
     },
     Compaction {
         id: String,
@@ -325,6 +344,7 @@ impl ThreadItem {
             | ThreadItem::AgentMessage { id, .. }
             | ThreadItem::Reasoning { id, .. }
             | ThreadItem::ToolExecution { id, .. }
+            | ThreadItem::RoutingDecision { id, .. }
             | ThreadItem::Compaction { id, .. }
             | ThreadItem::Error { id, .. }
             | ThreadItem::Raw { id, .. } => id,
@@ -455,6 +475,71 @@ mod tests {
     }
 
     #[test]
+    fn thread_fork_metadata_is_additive_for_legacy_records() {
+        // A legacy thread record without any fork fields still deserializes.
+        let legacy = serde_json::json!({
+            "thread_id": "thread-old",
+            "title": null,
+            "workspace": "/workspace",
+            "provider": null,
+            "model": null,
+            "created_at": "1970-01-01T00:00:00Z",
+            "updated_at": "1970-01-01T00:00:00Z",
+            "message_count": 3
+        });
+        let metadata: ThreadMetadata = serde_json::from_value(legacy).unwrap();
+        assert!(metadata.parent_thread_id.is_none());
+        assert!(metadata.forked_from_turn_id.is_none());
+        assert!(metadata.workspace_fork.is_none());
+
+        // Non-forked threads serialize without any fork keys.
+        let value = serde_json::to_value(&metadata).unwrap();
+        assert!(value.get("parentThreadId").is_none());
+        assert!(value.get("parent_thread_id").is_none());
+        assert!(value.get("workspace_fork").is_none());
+    }
+
+    #[test]
+    fn thread_fork_metadata_round_trips_workspace_fork_provenance() {
+        let fork = crate::forks::WorkspaceFork {
+            id: "/repo/.roder/worktrees/parser-experiment".to_string(),
+            provider_id: "git-worktree".to_string(),
+            source_workspace: std::path::PathBuf::from("/repo"),
+            workspace: std::path::PathBuf::from("/repo/.roder/worktrees/parser-experiment"),
+            status: crate::forks::ForkStatus::Active,
+            provenance: crate::forks::ForkProvenance {
+                branch: Some("roder/fork/parser-experiment".to_string()),
+                source_branch: Some("main".to_string()),
+                source_commit: Some("abc123".to_string()),
+                snapshot_id: None,
+                session_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            cleanup: crate::forks::ForkCleanupPolicy::Explicit,
+            metadata: serde_json::json!({}),
+        };
+        let value = serde_json::to_value(&fork).unwrap();
+        assert_eq!(value["providerId"], "git-worktree");
+        assert_eq!(value["status"], "active");
+        assert_eq!(value["cleanup"], "explicit");
+        assert_eq!(value["provenance"]["sourceCommit"], "abc123");
+
+        let round_trip: crate::forks::WorkspaceFork = serde_json::from_value(value).unwrap();
+        assert_eq!(round_trip, fork);
+
+        // A detached-HEAD fork keeps clear provenance without a branch name.
+        let detached = crate::forks::WorkspaceFork {
+            provenance: crate::forks::ForkProvenance {
+                source_branch: None,
+                ..fork.provenance.clone()
+            },
+            ..fork
+        };
+        let value = serde_json::to_value(&detached).unwrap();
+        assert!(value["provenance"].get("sourceBranch").is_none());
+    }
+
+    #[test]
     fn thread_metadata_timestamps_serialize_as_rfc3339_strings() {
         let value = serde_json::to_value(ThreadMetadata {
             thread_id: "thread-a".to_string(),
@@ -471,6 +556,9 @@ mod tests {
             runner_destination: None,
             runner_state: None,
             runner_binding: None,
+            parent_thread_id: None,
+            forked_from_turn_id: None,
+            workspace_fork: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,
@@ -530,6 +618,9 @@ mod tests {
             runner_destination: None,
             runner_state: None,
             runner_binding: None,
+            parent_thread_id: None,
+            forked_from_turn_id: None,
+            workspace_fork: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
             message_count: 0,

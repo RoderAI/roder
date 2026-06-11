@@ -108,6 +108,14 @@ async fn live_anthropic_tools_smoke_is_explicitly_opt_in() {
     );
 }
 
+/**
+ * Opt-in live validation that the provider-native tool-search request body
+ * produced by the real request mapper is accepted by the Anthropic Messages
+ * API (dated `tool_search_tool_*` entry plus `defer_loading` tools).
+ *
+ * Set `RODER_ANTHROPIC_TOOL_SEARCH_BETA` if the live API requires an
+ * `anthropic-beta` header for the tool-search variants.
+ */
 #[tokio::test]
 #[ignore = "requires RODER_ANTHROPIC_TOOL_SEARCH_LIVE=1 and ANTHROPIC_API_KEY"]
 async fn live_anthropic_tool_search_smoke_is_explicitly_opt_in() {
@@ -120,13 +128,105 @@ async fn live_anthropic_tool_search_smoke_is_explicitly_opt_in() {
         return;
     }
 
-    let has_key = std::env::var("ANTHROPIC_API_KEY")
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .is_some();
+        .expect("live Anthropic tool-search smoke tests require ANTHROPIC_API_KEY");
+    let model = std::env::var("RODER_ANTHROPIC_TOOL_SEARCH_MODEL")
+        .unwrap_or_else(|_| "claude-fable-5".to_string());
 
-    assert!(
-        has_key,
-        "live Anthropic tool-search smoke tests require ANTHROPIC_API_KEY"
+    let mut request = tool_search_request(&model);
+    request.runtime.tool_search =
+        roder_api::inference::ToolSearchConfig::provider_native();
+    let mut body = roder_ext_anthropic::AnthropicEngine::map_request(&request);
+    let tools = body["tools"].as_array().cloned().unwrap_or_default();
+    assert_eq!(
+        tools.len(),
+        3,
+        "expected the tool_search entry plus two deferred tools: {body}"
     );
+    assert!(
+        tools[0]["type"]
+            .as_str()
+            .is_some_and(|kind| kind.starts_with("tool_search_tool_")),
+        "expected dated tool-search entry first: {body}"
+    );
+    body["stream"] = serde_json::json!(false);
+
+    let mut builder = reqwest::Client::new()
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01");
+    if let Ok(beta) = std::env::var("RODER_ANTHROPIC_TOOL_SEARCH_BETA")
+        && !beta.trim().is_empty()
+    {
+        builder = builder.header("anthropic-beta", beta);
+    }
+    let response = builder
+        .json(&body)
+        .send()
+        .await
+        .expect("send live Anthropic tool-search request");
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    assert!(
+        status.is_success(),
+        "live Anthropic tool-search request rejected ({status}): {text}"
+    );
+}
+
+fn tool_search_request(model: &str) -> roder_api::inference::AgentInferenceRequest {
+    use roder_api::inference::{
+        InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
+    };
+    use roder_api::tools::{ToolChoice, ToolSpec};
+    use roder_api::transcript::{TranscriptItem, UserMessage};
+
+    roder_api::inference::AgentInferenceRequest {
+        model: ModelSelection {
+            provider: "anthropic".to_string(),
+            model: model.to_string(),
+        },
+        instructions: InstructionBundle {
+            system: Some("You are a coding agent; search for the right tool.".to_string()),
+            developer: None,
+            developer_context: None,
+        },
+        transcript: vec![TranscriptItem::UserMessage(UserMessage::text(
+            "Which tool would read README.md? Answer in one sentence without calling tools.",
+        ))],
+        tools: vec![
+            ToolSpec {
+                name: "read_file".to_string(),
+                description: "Read a file from the workspace.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } },
+                    "required": ["path"]
+                }),
+            },
+            ToolSpec {
+                name: "edit_file".to_string(),
+                description: "Edit a file by replacing an exact string.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } },
+                    "required": ["path"]
+                }),
+            },
+        ],
+        tool_choice: ToolChoice::Auto,
+        reasoning: ReasoningConfig {
+            enabled: false,
+            level: None,
+        },
+        output: OutputConfig {
+            max_tokens: Some(128),
+            temperature: None,
+            top_p: None,
+            response_format: None,
+        },
+        runtime: RuntimeHints::default(),
+        metadata: serde_json::json!({}),
+    }
 }

@@ -10,6 +10,7 @@ pub mod fixture;
 pub mod graders;
 pub(crate) mod retrieval_router;
 pub mod runner;
+pub mod tool_search;
 pub mod trace;
 
 pub use fixture::*;

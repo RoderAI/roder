@@ -9,6 +9,7 @@ import {
   createMemoryEditWorkspace,
   createRoderEditTools,
   editTool,
+  loadWasmCore,
   multiEditTool,
   readFileTool,
   writeFileTool,
@@ -88,8 +89,16 @@ test("line numbers are read orientation only and not edit anchors", async () => 
   assert.equal(read.text, "    2: beta");
 
   const edit = await editTool(workspace, { path: "a.txt", old_string: "    2: beta", new_string: "gamma" });
-  assert.equal(edit.isError, true);
-  assert.equal((edit.data as any).error.kind, "old_string_not_found");
+  if (loadWasmCore()) {
+    // The Rust core strips pasted line-number prefixes and edits the
+    // underlying text; the numbers themselves never act as anchors.
+    assert.equal(edit.isError, false);
+    assert.equal(workspace.kind === "memory" && workspace.files.get("a.txt"), "alpha\ngamma\n");
+  } else {
+    // The TypeScript fallback only supports exact unique matches.
+    assert.equal(edit.isError, true);
+    assert.equal((edit.data as any).error.kind, "old_string_not_found");
+  }
 });
 
 test("workspace path traversal is rejected for fs and memory workspaces", async () => {

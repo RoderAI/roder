@@ -1,0 +1,27 @@
+{
+  "id": "search-selection-denied-permission",
+  "title": "Searched tools still flow through permission checks and can be denied",
+  "provider": "anthropic",
+  "model": "claude-fable-5",
+  "mode": "provider_native",
+  "catalog": {
+    "tools": [
+      { "name": "read_file", "description": "Read a file from the workspace." },
+      { "name": "shell", "description": "Run a shell command in the workspace." }
+    ]
+  },
+  "search": {
+    "query": "run arbitrary shell",
+    "results": [
+      { "name": "shell" }
+    ],
+    "deniedTools": ["shell"]
+  },
+  "expected": {
+    "outcome": "fail_closed",
+    "diagnosticContains": [
+      "permission denied",
+      "does not bypass Roder permission checks"
+    ]
+  }
+}

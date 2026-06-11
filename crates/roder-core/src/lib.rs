@@ -1,8 +1,12 @@
 mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
+pub mod conversation_forks;
+pub mod forks;
+pub mod tool_search;
 mod deadline_policy;
 pub mod dynamic_workflows;
+mod event_sink_dispatch;
 pub mod fake_provider;
 mod goals;
 pub mod inference_routing;
@@ -29,6 +33,7 @@ mod verification_gate;
 mod workspace_changes;
 
 pub use bus::*;
+pub use conversation_forks::{ForkThreadOutcome, ForkThreadRequest};
 pub use dynamic_workflows::*;
 pub use goals::*;
 pub use instructions::*;

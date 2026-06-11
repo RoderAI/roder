@@ -13,7 +13,7 @@ use crate::filesystem::{normalize_workspace_path, target_manifest_path};
 
 #[derive(Debug, Clone)]
 pub struct SpritesClient {
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     pub config: SpritesConfig,
 }
 
@@ -737,7 +737,7 @@ impl SpritesClient {
         format!("{}{}", self.config.base_url, path)
     }
 
-    fn sprite_url(&self, sprite_name: &str, path: &str) -> String {
+    pub(crate) fn sprite_url(&self, sprite_name: &str, path: &str) -> String {
         format!(
             "{}/v1/sprites/{}{}",
             self.config.base_url,
@@ -779,7 +779,7 @@ impl SpritesClient {
         url
     }
 
-    fn fs_url(
+    pub(crate) fn fs_url(
         &self,
         sprite_name: &str,
         endpoint: &str,
@@ -803,7 +803,7 @@ impl SpritesClient {
         url
     }
 
-    async fn decode_json<T: for<'de> Deserialize<'de>>(
+    pub(crate) async fn decode_json<T: for<'de> Deserialize<'de>>(
         &self,
         response: reqwest::Response,
         operation: &str,
@@ -857,7 +857,7 @@ impl SpritesClient {
         })
     }
 
-    async fn decode_bytes(
+    pub(crate) async fn decode_bytes(
         &self,
         response: reqwest::Response,
         operation: &str,
@@ -875,7 +875,7 @@ impl SpritesClient {
         Ok(body.to_vec())
     }
 
-    async fn decode_empty(
+    pub(crate) async fn decode_empty(
         &self,
         response: reqwest::Response,
         operation: &str,
@@ -893,7 +893,7 @@ impl SpritesClient {
         Ok(())
     }
 
-    async fn decode_ndjson_for_errors(
+    pub(crate) async fn decode_ndjson_for_errors(
         &self,
         response: reqwest::Response,
         operation: &str,

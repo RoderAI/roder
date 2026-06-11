@@ -2,6 +2,8 @@
 
 Roder's public extension API is the `roder-api` crate. Extensions register through `RoderExtension`, declare an `ExtensionManifest`, and install services through `ExtensionRegistryBuilder`.
 
+Extensions do not have to be Rust: process-hosted extensions register the same way through a manifest plus a stdio JSON-RPC child process (see `docs/roder-process-extensions.md` and `roder_api::process_extension`).
+
 App clients inspect the installed surface with `extensions/list`. The response includes manifests and `capability_statuses`, keyed by extension id, so clients can show requested, granted, and denied capabilities without reading runtime internals.
 
 ## Service Categories

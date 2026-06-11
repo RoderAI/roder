@@ -1,0 +1,17 @@
+[package]
+name = "roder-ext-fork-rift"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["process"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid = { workspace = true, features = ["v4"] }

@@ -327,6 +327,9 @@ pub struct Runtime {
     thread_item_cache: Mutex<ThreadItemCache>,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) skills: RwLock<SkillRegistry>,
+    /// Lazily-started bounded dispatch of emitted events to registry
+    /// `EventSink`s (process extensions etc.); see `event_sink_dispatch`.
+    event_sink_dispatcher: tokio::sync::OnceCell<crate::event_sink_dispatch::EventSinkDispatcher>,
 }
 
 impl Runtime {
@@ -401,6 +404,7 @@ impl Runtime {
             skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
                 PathBuf::new(),
             ))),
+            event_sink_dispatcher: tokio::sync::OnceCell::new(),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -1043,6 +1047,9 @@ impl Runtime {
             updated_at: now,
             message_count: 0,
             usage: None,
+            parent_thread_id: None,
+            forked_from_turn_id: None,
+            workspace_fork: None,
         };
 
         let metadata = if let Some(store) = &self.thread_store {
@@ -1534,6 +1541,19 @@ impl Runtime {
             match snapshot {
                 Ok(snapshot) => {
                     if let Some(metadata) = snapshot.metadata {
+                        // Fork-backed threads fail closed before any write
+                        // when their workspace was removed out-of-band.
+                        if let Some(fork) = &metadata.workspace_fork
+                            && fork.status == roder_api::forks::ForkStatus::Active
+                            && !std::path::Path::new(&metadata.workspace).is_dir()
+                        {
+                            anyhow::bail!(
+                                "workspace fork {} is missing its workspace at {}; restore it or \
+                                 remove the fork before running turns in this thread",
+                                fork.id,
+                                metadata.workspace
+                            );
+                        }
                         return Ok(metadata.workspace);
                     }
                     eprintln!(
@@ -1816,6 +1836,12 @@ impl Runtime {
             .await
             .values()
             .any(|handle| &handle.thread_id == thread_id)
+    }
+
+    /// Number of currently running turns across all threads. Hosted runtime
+    /// pools use this to avoid evicting tenants with active work.
+    pub async fn active_turn_count(&self) -> usize {
+        self.active_turns.read().await.len()
     }
 
     pub async fn active_turn_for_thread(&self, thread_id: &ThreadId) -> Option<TurnId> {
@@ -3241,6 +3267,21 @@ impl Runtime {
         {
             let _ = store.append_event(thread_id, &envelope).await;
         }
+        // Registered event sinks (e.g. process extensions) receive the
+        // persisted envelope through bounded per-sink queues; a slow sink
+        // never blocks emit or turn progress.
+        let dispatcher = self
+            .event_sink_dispatcher
+            .get_or_init(|| async {
+                crate::event_sink_dispatch::EventSinkDispatcher::start(
+                    &self.registry.event_sinks,
+                    self.bus.clone(),
+                )
+            })
+            .await;
+        if !dispatcher.is_empty() {
+            dispatcher.dispatch(&envelope, &self.bus);
+        }
         envelope
     }
 
@@ -3588,7 +3629,7 @@ fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<
         .filter(|threshold| *threshold > 0)
 }
 
-fn tool_search_for_provider_model(
+pub(crate) fn tool_search_for_provider_model(
     cfg: &RuntimeConfig,
     provider: &str,
     model: &str,
@@ -5919,10 +5960,8 @@ mod tests {
     #[tokio::test]
     async fn thread_tool_allowlist_filters_only_that_thread() {
         let requests = Arc::new(StdMutex::new(Vec::new()));
-        let thread_root = std::env::temp_dir().join(format!(
-            "roder-thread-allowlist-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-thread-allowlist-{}", uuid::Uuid::new_v4()));
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(SwitchCaptureEngine {
             requests: requests.clone(),

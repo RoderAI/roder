@@ -1,0 +1,57 @@
+{
+  "fixtures": [
+    {
+      "name": "patch-add-update-delete-move",
+      "class": "patch-add-update-delete-move",
+      "files": {
+        "fixture.txt": "old\n",
+        "stale.txt": "remove me\n",
+        "src/legacy.txt": "keep this body\n"
+      },
+      "operation": {
+        "kind": "patch",
+        "patch": "*** Begin Patch\n*** Add File: docs/new.txt\n+brand new\n*** Update File: fixture.txt\n@@\n-old\n+new\n*** Delete File: stale.txt\n*** Update File: src/legacy.txt\n*** Move to: src/modern.txt\n@@\n-keep this body\n+kept and moved body\n*** End Patch\n"
+      },
+      "expected_files": {
+        "fixture.txt": "new\n",
+        "docs/new.txt": "brand new\n",
+        "src/modern.txt": "kept and moved body\n"
+      },
+      "absent_files": ["stale.txt", "src/legacy.txt"]
+    },
+    {
+      "name": "patch-missing-context-fails-closed",
+      "class": "patch-add-update-delete-move",
+      "initial": "actual content\n",
+      "operation": {
+        "kind": "patch",
+        "patch": "*** Begin Patch\n*** Update File: fixture.txt\n@@\n-content that is not there\n+replacement\n*** End Patch\n"
+      },
+      "expect_error": "apply_patch_failed"
+    },
+    {
+      "name": "large-paginated-read",
+      "class": "large-paginated-reads",
+      "generated_lines": { "count": 500, "prefix": "log line" },
+      "operation": {
+        "kind": "read",
+        "start_line": 201,
+        "limit": 50
+      },
+      "read_contains": ["  201: log line 201", "  250: log line 250"],
+      "read_absent": ["200: log line 200", "251: log line 251"]
+    },
+    {
+      "name": "read-first-page-default",
+      "class": "large-paginated-reads",
+      "generated_lines": { "count": 500, "prefix": "log line" },
+      "operation": {
+        "kind": "read",
+        "start_line": 1,
+        "limit": 200
+      },
+      "read_contains": ["    1: log line 1", "  200: log line 200"],
+      "read_absent": ["201: log line 201"]
+    }
+  ]
+}

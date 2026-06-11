@@ -2,7 +2,9 @@ use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use roder_app_server::{AppServer, LocalAppClient};
+use roder_api_transcript::{ApiTranscriptHeader, ApiTranscriptRecord, SUPPORTED_SCHEMA_VERSION};
+use roder_app_server::transcript::{RecordingAppClient, TranscriptRecorder};
+use roder_app_server::{AppClient, AppNotificationReceiver, AppServer, LocalAppClient};
 use roder_protocol::{
     JsonRpcRequest, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
     ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,
@@ -47,13 +49,35 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
     let (runtime, default_model) = build_runtime_from_config(options.cli_options.clone()).await?;
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server.clone());
+
+    // Optional API transcript capture for debugging harness runs: wrap the
+    // local client so every exec request/response/notification is recorded,
+    // then write the JSONL transcript even when the turn fails.
+    if let Some(path) = options.cli_options.record_api_transcript.clone() {
+        let recorder = TranscriptRecorder::default();
+        push_exec_transcript_header(&recorder)?;
+        let client = RecordingAppClient::new(client, recorder.clone(), "exec");
+        let result = run_exec_session(&client, &options, prompt, default_model).await;
+        crate::write_transcript(&path, &recorder)?;
+        eprintln!("API transcript: {}", path.display());
+        return result;
+    }
+    run_exec_session(&client, &options, prompt, default_model).await
+}
+
+async fn run_exec_session<C: AppClient>(
+    client: &C,
+    options: &ExecCli,
+    prompt: Option<String>,
+    default_model: String,
+) -> anyhow::Result<()> {
     let mut notifications = client.subscribe_notifications();
     let mut output = ExecOutput::new(options.json, options.output_last_message.clone());
     let cwd = std::env::current_dir()?.display().to_string();
 
     let thread_id = match &options.resume {
         ExecResume::New => {
-            let workspace = create_single_root_workspace(&client, &cwd).await?;
+            let workspace = create_single_root_workspace(client, &cwd).await?;
             let res = client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
@@ -79,10 +103,10 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
             result.thread.id
         }
         ExecResume::Thread(thread_id) => {
-            ensure_thread_exists(&client, thread_id).await?;
+            ensure_thread_exists(client, thread_id).await?;
             thread_id.clone()
         }
-        ExecResume::Last => last_thread_id(&client).await?,
+        ExecResume::Last => last_thread_id(client).await?,
     };
 
     output.emit_event(ExecEvent::ThreadStarted {
@@ -110,7 +134,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
     let TurnStartResult { turn_id } = decode_response::<TurnStartResult>(turn_result)?;
 
     let terminal = wait_for_turn(
-        &client,
+        client,
         &mut notifications,
         &mut output,
         &thread_id,
@@ -118,7 +142,7 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
     )
     .await?;
 
-    if let Some(items) = read_turn_items(&client, &thread_id, &turn_id).await? {
+    if let Some(items) = read_turn_items(client, &thread_id, &turn_id).await? {
         output.backfill_final_message(&items);
     }
     output.finish(&terminal)?;
@@ -129,8 +153,22 @@ pub(crate) async fn run_exec_cli(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn create_single_root_workspace(
-    client: &LocalAppClient,
+fn push_exec_transcript_header(recorder: &TranscriptRecorder) -> anyhow::Result<()> {
+    recorder.push(ApiTranscriptRecord::Header(ApiTranscriptHeader {
+        schema_version: SUPPORTED_SCHEMA_VERSION,
+        created_at: time::OffsetDateTime::now_utc(),
+        roder_version: env!("CARGO_PKG_VERSION").to_string(),
+        cwd: std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string()),
+        terminal: roder_api_transcript::RecordedTerminalSize { cols: 0, rows: 0 },
+        features: vec!["exec".to_string(), "app-server".to_string()],
+        metadata: serde_json::Value::Null,
+    }))
+}
+
+async fn create_single_root_workspace<C: AppClient>(
+    client: &C,
     cwd: &str,
 ) -> anyhow::Result<(String, String)> {
     let res = client
@@ -155,7 +193,7 @@ async fn create_single_root_workspace(
 
 fn print_exec_help() {
     println!(
-        "Usage: roder exec [OPTIONS] [PROMPT]\n       roder exec resume [THREAD_ID|--last] [PROMPT]\n\nOptions:\n  --json                         emit JSONL events to stdout\n  --output-last-message <FILE>   write final assistant text to FILE\n  --skip-git-repo-check          allow benchmark sandboxes without git metadata\n  --ephemeral                    request an ephemeral thread where supported\n  --task-ledger-required         require eval task ledger updates before work\n  --profile <PROFILE>            select runtime profile, for example eval\n  --mode <MODE>                  select policy mode, for example bypass\n  --image <FILE>                 attach local image input\n  -                              read prompt from stdin\n  -h, --help                     show this help\n\nDefault stdout is the final assistant message only; diagnostics are written to stderr."
+        "Usage: roder exec [OPTIONS] [PROMPT]\n       roder exec resume [THREAD_ID|--last] [PROMPT]\n\nOptions:\n  --json                         emit JSONL events to stdout\n  --output-last-message <FILE>   write final assistant text to FILE\n  --skip-git-repo-check          allow benchmark sandboxes without git metadata\n  --ephemeral                    request an ephemeral thread where supported\n  --task-ledger-required         require eval task ledger updates before work\n  --profile <PROFILE>            select runtime profile, for example eval\n  --mode <MODE>                  select policy mode, for example bypass\n  --image <FILE>                 attach local image input\n  --record-api-transcript <FILE> capture the app-server API transcript as JSONL\n  -                              read prompt from stdin\n  -h, --help                     show this help\n\nDefault stdout is the final assistant message only; diagnostics are written to stderr."
     );
 }
 
@@ -293,7 +331,7 @@ fn turn_input_items(images: &[PathBuf]) -> Vec<TurnInputItem> {
         .collect()
 }
 
-async fn ensure_thread_exists(client: &LocalAppClient, thread_id: &str) -> anyhow::Result<()> {
+async fn ensure_thread_exists<C: AppClient>(client: &C, thread_id: &str) -> anyhow::Result<()> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -312,7 +350,7 @@ async fn ensure_thread_exists(client: &LocalAppClient, thread_id: &str) -> anyho
     Ok(())
 }
 
-async fn last_thread_id(client: &LocalAppClient) -> anyhow::Result<String> {
+async fn last_thread_id<C: AppClient>(client: &C) -> anyhow::Result<String> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -333,9 +371,9 @@ async fn last_thread_id(client: &LocalAppClient) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("no previous thread found"))
 }
 
-async fn wait_for_turn(
-    client: &LocalAppClient,
-    notifications: &mut broadcast::Receiver<roder_protocol::JsonRpcNotification>,
+async fn wait_for_turn<C: AppClient>(
+    client: &C,
+    notifications: &mut C::NotificationReceiver,
     output: &mut ExecOutput,
     thread_id: &str,
     turn_id: &str,
@@ -375,8 +413,8 @@ async fn wait_for_turn(
     }
 }
 
-async fn read_turn_items(
-    client: &LocalAppClient,
+async fn read_turn_items<C: AppClient>(
+    client: &C,
     thread_id: &str,
     turn_id: &str,
 ) -> anyhow::Result<Option<Vec<roder_protocol::Item>>> {
@@ -436,6 +474,43 @@ mod tests {
         assert_eq!(
             parsed.output_last_message.as_deref(),
             Some(std::path::Path::new("/tmp/last.txt"))
+        );
+    }
+
+    #[test]
+    fn exec_cli_parses_record_api_transcript() {
+        let args = vec![
+            "--record-api-transcript".to_string(),
+            "/tmp/exec-transcript.jsonl".to_string(),
+            "reply ok".to_string(),
+        ];
+        let parsed = parse_exec_cli(&args).unwrap();
+        assert_eq!(
+            parsed.cli_options.record_api_transcript.as_deref(),
+            Some(std::path::Path::new("/tmp/exec-transcript.jsonl"))
+        );
+
+        let args = vec!["--record-api-transcript=/tmp/t.jsonl".to_string()];
+        let parsed = parse_exec_cli(&args).unwrap();
+        assert_eq!(
+            parsed.cli_options.record_api_transcript.as_deref(),
+            Some(std::path::Path::new("/tmp/t.jsonl"))
+        );
+    }
+
+    #[test]
+    fn exec_transcript_header_marks_exec_feature() {
+        let recorder = TranscriptRecorder::default();
+        push_exec_transcript_header(&recorder).unwrap();
+        let records = recorder.records();
+        assert_eq!(records.len(), 1);
+        let ApiTranscriptRecord::Header(header) = &records[0] else {
+            panic!("expected header record, got {records:?}");
+        };
+        assert_eq!(header.schema_version, SUPPORTED_SCHEMA_VERSION);
+        assert_eq!(
+            header.features,
+            vec!["exec".to_string(), "app-server".to_string()]
         );
     }
 

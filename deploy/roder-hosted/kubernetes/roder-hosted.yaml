@@ -1,0 +1,52 @@
+# Hosted Roder service — Kubernetes example (roadmap phase 72).
+# Secrets come from a Secret object (or external-secrets); TLS terminates
+# at the Ingress. Never inline key material in manifests.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roder-hosted
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: roder-hosted
+  template:
+    metadata:
+      labels:
+        app: roder-hosted
+    spec:
+      containers:
+        - name: roder-hosted
+          image: roder-hosted:latest
+          args: ["--config", "/etc/roder/hosted.toml"]
+          ports:
+            - containerPort: 7900
+          envFrom:
+            - secretRef:
+                name: roder-hosted-keys # holds RODER_HOSTED_KEY_* values
+          volumeMounts:
+            - name: config
+              mountPath: /etc/roder
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/roder-hosted
+      volumes:
+        - name: config
+          configMap:
+            name: roder-hosted-config # hosted.toml (no secrets inside)
+        - name: data
+          persistentVolumeClaim:
+            claimName: roder-hosted-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: roder-hosted
+spec:
+  selector:
+    app: roder-hosted
+  ports:
+    - port: 7900
+      targetPort: 7900
+# Add an Ingress with TLS in front; the gateway speaks plain WebSocket.
