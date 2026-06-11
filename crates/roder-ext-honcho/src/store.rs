@@ -213,7 +213,11 @@ impl HonchoMemoryStore {
                     .client
                     .list_session_messages(&self.config.workspace_id, &session, filters, size)
                     .await?;
-                records.extend(records_from_messages(messages, Some(scope)));
+                records.extend(records_from_messages(
+                    messages,
+                    &self.config.peer_id,
+                    Some(scope),
+                ));
             }
             None => {
                 let sessions = match &self.config.session_id {
@@ -241,7 +245,7 @@ impl HonchoMemoryStore {
                             size,
                         )
                         .await?;
-                    records.extend(records_from_messages(messages, None));
+                    records.extend(records_from_messages(messages, &self.config.peer_id, None));
                 }
             }
         }
@@ -284,6 +288,10 @@ impl MemoryStore for HonchoMemoryStore {
                 && query.scope.is_some()
             {
                 records.extend(self.list_records(Some(&MemoryScope::Global), limit).await?);
+                // Each batch arrives sorted internally; without a merged
+                // re-rank the global batch is starved exactly when the scope
+                // batch fills the limit.
+                records.sort_by_key(|record| std::cmp::Reverse(record.updated_at));
             }
             records.truncate(limit);
             return Ok(records
@@ -311,6 +319,12 @@ impl MemoryStore for HonchoMemoryStore {
                 .search_workspace(&self.config.workspace_id, &query.text, filters, limit)
                 .await?;
             for (rank, message) in messages.iter().enumerate() {
+                // Authorship is re-checked client-side (symmetric with
+                // `get`/`delete`): a search backend that ignores the
+                // `peer_id` filter must not surface another peer's records.
+                if message.peer_id != self.config.peer_id {
+                    continue;
+                }
                 let Some(record) = record_from_message(message, &message.session_id) else {
                     continue;
                 };
@@ -406,12 +420,17 @@ fn metadata_flag(metadata: &Value, key: &str) -> bool {
     metadata.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// `peer_id` re-applies the server-side authorship filter client-side so the
+/// list paths stay symmetric with `get`/`delete` even against a backend that
+/// ignores the `peer_id` filter key.
 fn records_from_messages(
     messages: Vec<HonchoMessage>,
+    peer_id: &str,
     scope: Option<&MemoryScope>,
 ) -> Vec<MemoryRecord> {
     messages
         .iter()
+        .filter(|message| message.peer_id == peer_id)
         .filter_map(|message| record_from_message(message, &message.session_id))
         .filter(|record| !record.deleted)
         .filter(|record| scope.is_none_or(|scope| record.scope == *scope))

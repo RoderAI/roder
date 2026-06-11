@@ -517,6 +517,11 @@ fn selected_memory_backend() -> Option<String> {
         .filter(|backend| !backend.is_empty())
 }
 
+/// Env wins over the `[memories.honcho]` table for every connection and
+/// identity field, mirroring `RODER_MEMORY_BACKEND`'s env-overrides-config
+/// precedence. Hosts inject per-process tenancy (workspace/peer/session)
+/// through the spawn environment; a static config entry must not silently
+/// collapse those processes onto one identity.
 fn honcho_memory_extension() -> anyhow::Result<HonchoMemoryExtension> {
     let honcho = roder_config::load_config()
         .ok()
@@ -528,29 +533,24 @@ fn honcho_memory_extension() -> anyhow::Result<HonchoMemoryExtension> {
         .unwrap_or_else(|| roder_ext_honcho::API_KEY_ENV.to_string());
     let api_key = env_nonempty(&api_key_env)
         .ok_or_else(|| anyhow::anyhow!("memory backend honcho requires {api_key_env}"))?;
-    let workspace_id = honcho
-        .workspace_id
-        .or_else(|| env_nonempty(roder_ext_honcho::WORKSPACE_ID_ENV))
+    let workspace_id = env_nonempty(roder_ext_honcho::WORKSPACE_ID_ENV)
+        .or(honcho.workspace_id)
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "memory backend honcho requires a workspace id ([memories.honcho] workspace_id or {})",
+                "memory backend honcho requires a workspace id ({} or [memories.honcho] workspace_id)",
                 roder_ext_honcho::WORKSPACE_ID_ENV
             )
         })?;
     Ok(HonchoMemoryExtension::new(HonchoMemoryConfig {
         api_key,
-        base_url: honcho
-            .base_url
-            .or_else(|| env_nonempty(roder_ext_honcho::BASE_URL_ENV))
+        base_url: env_nonempty(roder_ext_honcho::BASE_URL_ENV)
+            .or(honcho.base_url)
             .unwrap_or_else(|| roder_ext_honcho::DEFAULT_BASE_URL.to_string()),
         workspace_id,
-        peer_id: honcho
-            .peer_id
-            .or_else(|| env_nonempty(roder_ext_honcho::PEER_ID_ENV))
+        peer_id: env_nonempty(roder_ext_honcho::PEER_ID_ENV)
+            .or(honcho.peer_id)
             .unwrap_or_else(|| roder_ext_honcho::DEFAULT_PEER_ID.to_string()),
-        session_id: honcho
-            .session_id
-            .or_else(|| env_nonempty(roder_ext_honcho::SESSION_ID_ENV)),
+        session_id: env_nonempty(roder_ext_honcho::SESSION_ID_ENV).or(honcho.session_id),
     }))
 }
 

@@ -18,6 +18,10 @@ struct MockHoncho {
     messages: Vec<MockMessage>,
     sessions: HashMap<String, Value>,
     next_id: usize,
+    /// Simulates a server that silently drops the `peer_id` filter key (the
+    /// failure mode the store's client-side authorship re-checks defend
+    /// against).
+    ignore_peer_filter: bool,
 }
 
 #[derive(Clone)]
@@ -59,6 +63,16 @@ impl MockMessage {
 }
 
 impl MockHoncho {
+    fn effective_filters(&self, filters: &Value) -> Value {
+        let mut filters = filters.clone();
+        if self.ignore_peer_filter
+            && let Some(object) = filters.as_object_mut()
+        {
+            object.remove("peer_id");
+        }
+        filters
+    }
+
     fn handle(&mut self, method: &str, path: &str, body: Value) -> (u16, Value) {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         match (method, parts.as_slice()) {
@@ -133,10 +147,11 @@ impl MockHoncho {
             ("POST", ["v3", "workspaces", _, "search"]) => {
                 let query = body["query"].as_str().unwrap_or_default().to_lowercase();
                 let limit = body["limit"].as_u64().unwrap_or(10) as usize;
+                let filters = self.effective_filters(&body["filters"]);
                 let hits: Vec<Value> = self
                     .messages
                     .iter()
-                    .filter(|message| message.matches_filters(&body["filters"]))
+                    .filter(|message| message.matches_filters(&filters))
                     .filter(|message| {
                         query
                             .split_whitespace()
@@ -163,11 +178,12 @@ impl MockHoncho {
                     return (404, json!({ "error": "session not found" }));
                 }
                 let size = body["size"].as_u64().unwrap_or(50) as usize;
+                let filters = self.effective_filters(&body["filters"]);
                 let items: Vec<Value> = self
                     .messages
                     .iter()
                     .filter(|message| message.session_id == *session)
-                    .filter(|message| message.matches_filters(&body["filters"]))
+                    .filter(|message| message.matches_filters(&filters))
                     .take(size)
                     .map(MockMessage::to_json)
                     .collect();
@@ -436,6 +452,70 @@ async fn peers_sharing_a_workspace_do_not_read_each_other() {
     assert_eq!(results.len(), 1);
     assert_eq!(store_a.list(Some(scope), 10).await.unwrap().len(), 1);
     assert!(store_a.get(&a_id).await.unwrap().is_some());
+
+    server.abort();
+}
+
+/// The client-side authorship re-checks must hold on their own: the server
+/// here drops the `peer_id` filter (as a search API that ignores unknown
+/// filter keys would), so any cross-peer leak below means a read path is
+/// trusting the server-side filter alone.
+#[tokio::test]
+async fn peer_isolation_holds_when_server_ignores_peer_filter() {
+    let (base_url, state, server) = spawn_mock().await;
+    state.lock().unwrap().ignore_peer_filter = true;
+    let config = |peer: &str| HonchoMemoryConfig {
+        api_key: "test-key".to_string(),
+        base_url: base_url.clone(),
+        workspace_id: "ws-test".to_string(),
+        peer_id: peer.to_string(),
+        session_id: None,
+    };
+    let store_a = HonchoMemoryStore::new(config("peer-a"));
+    let store_b = HonchoMemoryStore::new(config("peer-b"));
+    let scope = MemoryScope::Project("project".to_string());
+
+    let a_id = store_a
+        .put(record("peer a launch checklist", scope.clone()))
+        .await
+        .unwrap();
+
+    // search (non-empty text), list, empty-text search, and get must all
+    // come back empty for peer-b despite the broken server-side filter.
+    assert!(
+        store_b
+            .search(query("launch", Some(scope.clone()), false))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store_b
+            .list(Some(scope.clone()), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(store_b.list(None, 10).await.unwrap().is_empty());
+    assert!(
+        store_b
+            .search(query("", Some(scope.clone()), true))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(store_b.get(&a_id).await.unwrap().is_none());
+
+    // peer-a still reads its own record (the client-side check matches).
+    assert_eq!(
+        store_a
+            .search(query("launch", Some(scope.clone()), false))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(store_a.list(Some(scope), 10).await.unwrap().len(), 1);
 
     server.abort();
 }

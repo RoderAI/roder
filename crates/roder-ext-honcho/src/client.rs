@@ -1,8 +1,15 @@
+use std::time::Duration;
+
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::HonchoMemoryConfig;
+
+/// Bound on every Honcho call. The store runs inside per-turn context
+/// assembly, so a hung connection without a client timeout stalls the whole
+/// turn until the host's watchdog fires.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Thin wrapper over Honcho's v3 REST API covering only the endpoints the
 /// memory store uses. Workspace/peer/session creation endpoints are
@@ -41,7 +48,12 @@ struct SessionResponse {
 impl HonchoClient {
     pub fn new(config: &HonchoMemoryConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            // Panics only when the TLS backend cannot initialize — the same
+            // condition `reqwest::Client::new()` panics on.
+            http: reqwest::Client::builder()
+                .timeout(HTTP_TIMEOUT)
+                .build()
+                .expect("build honcho http client"),
             base_url: config.base_url.trim_end_matches('/').to_string(),
             api_key: config.api_key.clone(),
         }
@@ -142,7 +154,7 @@ impl HonchoClient {
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let value = decode_response(response, "get message").await?;
+        let value = decode_response(response, "get message", &self.api_key).await?;
         let mut message: HonchoMessage =
             serde_json::from_value(value).context("decode get message response")?;
         if message.session_id.is_empty() {
@@ -170,7 +182,7 @@ impl HonchoClient {
             .send()
             .await
             .context("update message metadata")?;
-        decode_response(response, "update message metadata").await?;
+        decode_response(response, "update message metadata", &self.api_key).await?;
         Ok(())
     }
 
@@ -214,7 +226,7 @@ impl HonchoClient {
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(Vec::new());
         }
-        let value = decode_response(response, "list session messages").await?;
+        let value = decode_response(response, "list session messages", &self.api_key).await?;
         let page: PageResponse<HonchoMessage> =
             serde_json::from_value(value).context("decode list messages response")?;
         let mut messages = page.items;
@@ -253,15 +265,22 @@ impl HonchoClient {
             .send()
             .await
             .context(operation.to_string())?;
-        decode_response(response, operation).await
+        decode_response(response, operation, &self.api_key).await
     }
 }
 
-async fn decode_response(response: reqwest::Response, operation: &str) -> anyhow::Result<Value> {
+async fn decode_response(
+    response: reqwest::Response,
+    operation: &str,
+    api_key: &str,
+) -> anyhow::Result<Value> {
     let status = response.status();
     let body = response.bytes().await?;
     if !status.is_success() {
-        bail!("{operation} failed with {status}: {}", redact_body(&body));
+        bail!(
+            "{operation} failed with {status}: {}",
+            redact_body(&body, api_key)
+        );
     }
     if body.is_empty() {
         return Ok(Value::Null);
@@ -269,15 +288,16 @@ async fn decode_response(response: reqwest::Response, operation: &str) -> anyhow
     serde_json::from_slice(&body).with_context(|| format!("decode {operation} response"))
 }
 
-/// Error bodies may echo credentials back; strip secret-looking markers
-/// before they can reach logs.
-fn redact_body(body: &[u8]) -> String {
+/// Error bodies may echo the request back; strip the api key value before it
+/// can reach logs. Marker-word scrubbing is deliberately not done: it cannot
+/// catch an echoed key value and it mangles legitimate error text (for
+/// example "max_tokens").
+fn redact_body(body: &[u8], api_key: &str) -> String {
     let text = String::from_utf8_lossy(body);
-    let mut out = text.to_string();
-    for marker in ["token", "api_key", "secret", "authorization", "bearer"] {
-        out = out.replace(marker, "<redacted>");
+    if api_key.is_empty() {
+        return text.into_owned();
     }
-    out
+    text.replace(api_key, "<redacted>")
 }
 
 #[cfg(test)]
@@ -285,14 +305,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn redacts_secret_error_bodies() {
-        let body = br#"{"error":"authorization bearer token api_key secret leaked"}"#;
-        let redacted = redact_body(body);
+    fn redacts_echoed_api_key_value() {
+        let body = br#"{"error":"invalid credential hch-live-1234567890 supplied"}"#;
+        let redacted = redact_body(body, "hch-live-1234567890");
 
-        assert!(!redacted.contains("authorization"));
-        assert!(!redacted.contains("bearer"));
-        assert!(!redacted.contains("token"));
-        assert!(!redacted.contains("api_key"));
-        assert!(!redacted.contains("secret"));
+        assert!(!redacted.contains("hch-live-1234567890"));
+        assert!(redacted.contains("<redacted>"));
+    }
+
+    #[test]
+    fn leaves_legitimate_error_text_intact() {
+        let body = br#"{"error":"max_tokens exceeded; refresh the bearer token"}"#;
+        let redacted = redact_body(body, "hch-live-1234567890");
+
+        assert_eq!(redacted, String::from_utf8_lossy(body));
+    }
+
+    #[test]
+    fn empty_api_key_passes_body_through() {
+        let body = br#"{"error":"boom"}"#;
+        assert_eq!(redact_body(body, ""), String::from_utf8_lossy(body));
     }
 }
