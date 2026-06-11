@@ -59,7 +59,7 @@ impl InferenceEngine for SuperGrokEngine {
             anyhow::bail!("supergrok auth is missing; run `roder auth login supergrok`")
         };
         OpenAiResponsesEngine::new_with_config(
-            access_token,
+            Some(access_token),
             PROVIDER_SUPERGROK,
             DEFAULT_XAI_BASE_URL,
             Vec::new(),

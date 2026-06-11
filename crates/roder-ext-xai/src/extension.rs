@@ -12,17 +12,24 @@ use crate::provider::SuperGrokEngine;
 
 const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
 
+#[derive(Debug, Clone, Default)]
+pub struct XaiConfig {
+    /// Absent keys still register the engine; inference fails at call time.
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
 pub struct XaiExtension {
-    api_key: Option<String>,
-    base_url: String,
+    /**
+     * `Some` when the build declares the xai API-key provider; SuperGrok
+     * (OAuth) is provided regardless of the declaration.
+     */
+    api_key_provider: Option<XaiConfig>,
 }
 
 impl XaiExtension {
-    pub fn new(api_key: Option<String>, base_url: Option<String>) -> Self {
-        Self {
-            api_key,
-            base_url: base_url.unwrap_or_else(|| DEFAULT_XAI_BASE_URL.to_string()),
-        }
+    pub fn new(api_key_provider: Option<XaiConfig>) -> Self {
+        Self { api_key_provider }
     }
 }
 
@@ -32,7 +39,7 @@ impl RoderExtension for XaiExtension {
             PROVIDER_SUPERGROK.to_string(),
         )];
         let mut required_capabilities = vec![CapabilityRequest::new("network.api.x.ai")];
-        if self.api_key.is_some() {
+        if self.api_key_provider.is_some() {
             provides.push(ProvidedService::InferenceEngine(PROVIDER_XAI.to_string()));
             required_capabilities.push(CapabilityRequest::new("secret.read.XAI_API_KEY"));
         }
@@ -50,11 +57,14 @@ impl RoderExtension for XaiExtension {
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.inference_engine(Arc::new(SuperGrokEngine));
-        if let Some(api_key) = self.api_key.as_ref() {
+        if let Some(config) = self.api_key_provider.as_ref() {
             registry.inference_engine(Arc::new(OpenAiResponsesEngine::new_with_config(
-                api_key.clone(),
+                config.api_key.clone(),
                 PROVIDER_XAI,
-                self.base_url.clone(),
+                config
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_XAI_BASE_URL.to_string()),
                 Vec::new(),
             )));
         }
@@ -69,8 +79,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manifest_exposes_supergrok_without_api_key() {
-        let manifest = XaiExtension::new(None, None).manifest();
+    fn manifest_exposes_supergrok_when_xai_is_undeclared() {
+        let manifest = XaiExtension::new(None).manifest();
 
         assert_eq!(
             manifest.provides,
@@ -81,8 +91,8 @@ mod tests {
     }
 
     #[test]
-    fn manifest_exposes_xai_when_api_key_is_configured() {
-        let manifest = XaiExtension::new(Some("secret".to_string()), None).manifest();
+    fn manifest_exposes_xai_when_declared_even_without_api_key() {
+        let manifest = XaiExtension::new(Some(XaiConfig::default())).manifest();
 
         assert!(
             manifest

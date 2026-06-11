@@ -8,18 +8,19 @@ use semver::Version;
 use std::sync::Arc;
 
 pub struct OpenAiResponsesExtension {
-    api_key: String,
+    /// Absent keys still register the engine; inference fails at call time.
+    api_key: Option<String>,
     provider_id: String,
     base_url: String,
     headers: Vec<(String, String)>,
 }
 
 impl OpenAiResponsesExtension {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: Option<String>) -> Self {
         Self::new_with_provider_id(api_key, PROVIDER_OPENAI)
     }
 
-    pub fn new_with_provider_id(api_key: String, provider_id: impl Into<String>) -> Self {
+    pub fn new_with_provider_id(api_key: Option<String>, provider_id: impl Into<String>) -> Self {
         Self::new_with_config(
             api_key,
             provider_id,
@@ -29,7 +30,7 @@ impl OpenAiResponsesExtension {
     }
 
     pub fn new_with_config(
-        api_key: String,
+        api_key: Option<String>,
         provider_id: impl Into<String>,
         base_url: impl Into<String>,
         headers: Vec<(String, String)>,

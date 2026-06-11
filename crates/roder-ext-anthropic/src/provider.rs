@@ -14,11 +14,12 @@ use crate::stream::{
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 pub struct AnthropicEngine {
-    api_key: String,
+    /// Absent keys still register the engine; inference fails at call time.
+    api_key: Option<String>,
 }
 
 impl AnthropicEngine {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: Option<String>) -> Self {
         Self { api_key }
     }
 
@@ -219,7 +220,7 @@ impl InferenceEngine for AnthropicEngine {
             description: Some("Anthropic API key provider".to_string()),
             auth_type: ProviderAuthType::ApiKey,
             auth_label: Some("API key".to_string()),
-            auth_configured: Some(true),
+            auth_configured: Some(self.api_key.is_some()),
             recommended: true,
             sort_order: 30,
         }
@@ -237,10 +238,15 @@ impl InferenceEngine for AnthropicEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        let Some(api_key) = self.api_key.clone() else {
+            anyhow::bail!(
+                "Anthropic API key is missing; set ANTHROPIC_API_KEY or configure it from the provider menu"
+            )
+        };
         let turn = AnthropicTurnRequest {
             client: anthropic_stream_client()?,
             url: ANTHROPIC_MESSAGES_URL.to_string(),
-            api_key: self.api_key.clone(),
+            api_key,
             betas: anthropic_betas(&request),
             body: Self::map_request(&request),
             policy: request.runtime.reliability.clone().unwrap_or_default(),
@@ -754,9 +760,43 @@ mod tests {
 
     #[test]
     fn anthropic_capabilities_advertise_streaming_and_prompt_cache() {
-        let engine = AnthropicEngine::new("test-key".to_string());
+        let engine = AnthropicEngine::new(Some("test-key".to_string()));
         assert!(engine.capabilities().streaming);
         assert!(engine.capabilities().prompt_cache);
+    }
+
+    #[test]
+    fn reports_auth_configured_from_key_presence() {
+        let configured = AnthropicEngine::new(Some("test-key".to_string()));
+        assert_eq!(configured.metadata().auth_configured, Some(true));
+
+        let unconfigured = AnthropicEngine::new(None);
+        assert_eq!(unconfigured.metadata().auth_configured, Some(false));
+    }
+
+    #[tokio::test]
+    async fn stream_turn_without_key_fails_naming_the_env_var() {
+        let engine = AnthropicEngine::new(None);
+
+        let err = match engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+        {
+            Ok(_) => panic!("missing key must fail at call time"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "Anthropic API key is missing; set ANTHROPIC_API_KEY or configure it from the provider menu"
+        );
     }
 
     #[test]

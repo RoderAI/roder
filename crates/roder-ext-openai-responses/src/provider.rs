@@ -47,11 +47,11 @@ enum ResponsesProviderProfile {
 }
 
 impl OpenAiResponsesEngine {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: Option<String>) -> Self {
         Self::new_with_provider_id(api_key, PROVIDER_OPENAI)
     }
 
-    pub fn new_with_provider_id(api_key: String, provider_id: impl Into<String>) -> Self {
+    pub fn new_with_provider_id(api_key: Option<String>, provider_id: impl Into<String>) -> Self {
         Self::new_with_config(
             api_key,
             provider_id,
@@ -61,7 +61,7 @@ impl OpenAiResponsesEngine {
     }
 
     pub fn new_with_config(
-        api_key: String,
+        api_key: Option<String>,
         provider_id: impl Into<String>,
         base_url: impl Into<String>,
         headers: Vec<(String, String)>,
@@ -78,7 +78,7 @@ impl OpenAiResponsesEngine {
             _ => "OpenAI".to_string(),
         };
         Self {
-            api_key: Some(api_key),
+            api_key,
             provider_id,
             display_name,
             base_url: base_url.into().trim_end_matches('/').to_string(),
@@ -660,10 +660,24 @@ impl InferenceEngine for OpenAiResponsesEngine {
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         let Some(api_key) = self.api_key.as_ref() else {
-            anyhow::bail!(
-                "{} API key is missing; configure it from the provider menu or user config",
-                self.display_name
-            )
+            // Known API-key providers name their env var; custom providers
+            // have no canonical one so the guidance stays generic.
+            let env_var = match self.provider_id.as_str() {
+                PROVIDER_OPENAI => Some("OPENAI_API_KEY"),
+                PROVIDER_XAI => Some("XAI_API_KEY"),
+                PROVIDER_OPENROUTER => Some("OPENROUTER_API_KEY"),
+                _ => None,
+            };
+            match env_var {
+                Some(env_var) => anyhow::bail!(
+                    "{} API key is missing; set {env_var} or configure it from the provider menu",
+                    self.display_name
+                ),
+                None => anyhow::bail!(
+                    "{} API key is missing; configure it from the provider menu or user config",
+                    self.display_name
+                ),
+            }
         };
         let (body, tool_name_map) = Self::map_request_with_options(
             &request,
@@ -2628,6 +2642,62 @@ mod tests {
             std::env::remove_var("RODER_MODELS_CACHE_TTL_SECONDS");
         }
         let _ = fs::remove_file(cache_file);
+    }
+
+    #[tokio::test]
+    async fn stream_turn_without_key_fails_naming_the_env_var() {
+        let engine = OpenAiResponsesEngine::new(None);
+        assert_eq!(engine.metadata().auth_configured, Some(false));
+
+        let err = match engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+        {
+            Ok(_) => panic!("missing key must fail at call time"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "OpenAI API key is missing; set OPENAI_API_KEY or configure it from the provider menu"
+        );
+    }
+
+    #[tokio::test]
+    async fn xai_stream_turn_without_key_fails_naming_the_env_var() {
+        let engine = OpenAiResponsesEngine::new_with_config(
+            None,
+            PROVIDER_XAI,
+            "http://127.0.0.1:9",
+            Vec::new(),
+        );
+
+        let err = match engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+        {
+            Ok(_) => panic!("missing key must fail at call time"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "xAI API key is missing; set XAI_API_KEY or configure it from the provider menu"
+        );
     }
 
     async fn spawn_models_server(routes: Vec<(&'static str, u16, &'static str)>) -> String {

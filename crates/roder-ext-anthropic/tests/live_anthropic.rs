@@ -16,7 +16,7 @@ async fn live_anthropic_streaming_emits_incremental_message_deltas() {
     }
     let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
 
-    let engine = AnthropicEngine::new(api_key);
+    let engine = AnthropicEngine::new(Some(api_key));
     let request = AgentInferenceRequest {
         model: ModelSelection {
             provider: "anthropic".to_string(),

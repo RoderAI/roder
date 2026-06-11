@@ -60,7 +60,7 @@ use roder_ext_subagents::{
 use roder_ext_zeroentropy_embeddings::ZeroEntropyEmbeddingsExtension;
 use roder_extension_host::{
     DefaultRegistryConfig, DefaultWebSearchConfig, DefaultWebSearchProviderConfig,
-    build_default_registry,
+    InferenceProviderSelection, build_default_registry,
 };
 use roder_protocol::{
     AgentsListResult, ArtifactDeleteParams, ArtifactDeleteResult, ArtifactGrepParams,
@@ -3378,6 +3378,7 @@ async fn remote_health_endpoints_do_not_require_auth() {
 async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(DefaultRegistryConfig {
+        inference_providers: vec![InferenceProviderSelection::Xai],
         xai_api_key: Some("secret-xai-key".to_string()),
         ..isolated_default_registry_config()
     })

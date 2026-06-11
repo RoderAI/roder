@@ -55,7 +55,7 @@ use roder_ext_runner_sprites::SpritesRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
 use roder_ext_webwright::WebwrightExtension;
-use roder_ext_xai::XaiExtension;
+use roder_ext_xai::{XaiConfig, XaiExtension};
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
 use roder_ext_zeroentropy_embeddings::{
     DEFAULT_ENDPOINT as ZEROENTROPY_EMBEDDINGS_DEFAULT_ENDPOINT, ZeroEntropyEmbeddingProvider,
@@ -75,8 +75,26 @@ pub mod workflow_import;
 pub use subagents::DefaultSubagentsConfig;
 pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
 
+/**
+ * API-key inference providers whose registration is declared by the build —
+ * the stock CLI derives the set from resolved credentials, a distribution
+ * binary pins it via `DistributionOptions` — never by the registry peeking at
+ * key presence. A declared provider registers even when its key is absent:
+ * `providers/list` reports it unauthenticated and turn-time inference fails
+ * with a missing-credential error naming the env var. An undeclared provider
+ * stays out of the registry entirely.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InferenceProviderSelection {
+    Anthropic,
+    OpenAi,
+    Gemini,
+    Xai,
+}
+
 #[derive(Debug, Clone)]
 pub struct DefaultRegistryConfig {
+    pub inference_providers: Vec<InferenceProviderSelection>,
     pub openai_api_key: Option<String>,
     pub openai_speech_api_key: Option<String>,
     pub google_speech_access_token: Option<String>,
@@ -159,9 +177,33 @@ pub fn distribution_extensions() -> ExtraExtensions {
     DISTRIBUTION_EXTENSIONS.get().cloned().unwrap_or_default()
 }
 
+static DISTRIBUTION_INFERENCE_PROVIDERS: OnceLock<Vec<InferenceProviderSelection>> =
+    OnceLock::new();
+
+/**
+ * Pins the process-wide API-key inference-provider set for distribution
+ * binaries. Call once before any registry is built; callers that derive the
+ * declared set from resolved credentials must skip the derivation when this
+ * is set.
+ */
+pub fn set_distribution_inference_providers(
+    providers: Vec<InferenceProviderSelection>,
+) -> anyhow::Result<()> {
+    DISTRIBUTION_INFERENCE_PROVIDERS
+        .set(providers)
+        .map_err(|_| {
+            anyhow::anyhow!("distribution inference providers are already set for this process")
+        })
+}
+
+pub fn distribution_inference_providers() -> Option<Vec<InferenceProviderSelection>> {
+    DISTRIBUTION_INFERENCE_PROVIDERS.get().cloned()
+}
+
 impl Default for DefaultRegistryConfig {
     fn default() -> Self {
         Self {
+            inference_providers: Vec::new(),
             openai_api_key: None,
             openai_speech_api_key: None,
             google_speech_access_token: None,
@@ -291,11 +333,13 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         Some(_) => None,
     };
 
-    if let Some(openai_key) = config.openai_api_key.clone() {
-        builder.install(OpenAiResponsesExtension::new(openai_key))?;
+    let declared =
+        |provider: InferenceProviderSelection| config.inference_providers.contains(&provider);
+    if declared(InferenceProviderSelection::OpenAi) {
+        builder.install(OpenAiResponsesExtension::new(config.openai_api_key.clone()))?;
     }
-    if let Some(anthropic_key) = config.anthropic_api_key {
-        builder.install(AnthropicExtension::new(anthropic_key))?;
+    if declared(InferenceProviderSelection::Anthropic) {
+        builder.install(AnthropicExtension::new(config.anthropic_api_key.clone()))?;
     }
     builder.install(ClaudeCodeExtension::new(ClaudeCodeConfig {
         cli_path: config.claude_code_cli_path,
@@ -307,10 +351,15 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         // Roder replaying the full transcript every turn.
         reuse_cli_session: None,
     }))?;
-    if let Some(gemini_key) = config.gemini_api_key.clone() {
-        builder.install(GeminiExtension::new(gemini_key))?;
+    if declared(InferenceProviderSelection::Gemini) {
+        builder.install(GeminiExtension::new(config.gemini_api_key.clone()))?;
     }
-    builder.install(XaiExtension::new(config.xai_api_key, config.xai_base_url))?;
+    builder.install(XaiExtension::new(
+        declared(InferenceProviderSelection::Xai).then(|| XaiConfig {
+            api_key: config.xai_api_key.clone(),
+            base_url: config.xai_base_url.clone(),
+        }),
+    ))?;
     builder.install(OpenCodeExtension::new_with_go(
         OpenCodeConfig {
             api_key: config.opencode_api_key,
@@ -877,7 +926,7 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
             headers.push(("ChatGPT-Account-Id".to_string(), account_id));
         }
         OpenAiResponsesEngine::new_with_config(
-            access_token,
+            Some(access_token),
             PROVIDER_CODEX,
             "https://chatgpt.com/backend-api/codex",
             headers,
@@ -1353,6 +1402,12 @@ mod tests {
     #[test]
     fn default_registry_with_keys_has_gode_provider_ids() {
         let registry = build_default_registry(DefaultRegistryConfig {
+            inference_providers: vec![
+                InferenceProviderSelection::Anthropic,
+                InferenceProviderSelection::OpenAi,
+                InferenceProviderSelection::Gemini,
+                InferenceProviderSelection::Xai,
+            ],
             openai_api_key: Some("openai".to_string()),
             openai_speech_api_key: None,
             google_speech_access_token: None,
@@ -1474,6 +1529,60 @@ mod tests {
 
         assert!(registry.inference_engine(PROVIDER_SUPERGROK).is_some());
         assert!(registry.inference_engine(PROVIDER_XAI).is_none());
+    }
+
+    #[test]
+    fn declared_providers_register_without_keys_and_report_unauthenticated() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            inference_providers: vec![
+                InferenceProviderSelection::Anthropic,
+                InferenceProviderSelection::OpenAi,
+                InferenceProviderSelection::Gemini,
+                InferenceProviderSelection::Xai,
+            ],
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+
+        for provider in [
+            PROVIDER_ANTHROPIC,
+            PROVIDER_OPENAI,
+            PROVIDER_GEMINI,
+            PROVIDER_XAI,
+        ] {
+            let engine = registry
+                .inference_engine(provider)
+                .unwrap_or_else(|| panic!("declared provider {provider} should register"));
+            assert_eq!(
+                engine.metadata().auth_configured,
+                Some(false),
+                "{provider} should report missing auth"
+            );
+        }
+    }
+
+    #[test]
+    fn undeclared_providers_stay_unregistered_even_with_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            openai_api_key: Some("openai".to_string()),
+            anthropic_api_key: Some("anthropic".to_string()),
+            gemini_api_key: Some("gemini".to_string()),
+            xai_api_key: Some("xai".to_string()),
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+
+        for provider in [
+            PROVIDER_ANTHROPIC,
+            PROVIDER_OPENAI,
+            PROVIDER_GEMINI,
+            PROVIDER_XAI,
+        ] {
+            assert!(
+                registry.inference_engine(provider).is_none(),
+                "undeclared provider {provider} must not register"
+            );
+        }
     }
 
     #[test]
