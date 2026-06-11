@@ -1,0 +1,230 @@
+//! Same-stream tool executor hardening tests (roadmap phase 78, Task 4).
+//!
+//! These tests run the actual SDK MCP tool handlers registered by
+//! `build_options` against a fake Roder `TurnToolExecutor`, proving mapped
+//! Claude tools (canonical names plus `Read`/`Bash`-style aliases) execute
+//! through Roder's executor with repaired arguments, that executor errors
+//! and denials surface as tool errors back to the SDK loop, and that
+//! unmanaged tools stay denied by the `can_use_tool` callback — all without
+//! spawning a real `claude` CLI.
+
+use std::sync::{Arc, Mutex};
+
+use claude_code_sdk_rust::{PermissionResult, types::ToolPermissionContext};
+use roder_api::inference::{
+    AgentInferenceRequest, HostedWebSearchConfig, InstructionBundle, ModelSelection, OutputConfig,
+    ReasoningConfig, RuntimeHints, ToolCallCompleted, TurnToolExecutor, TurnToolOutcome,
+};
+use roder_api::tools::{ToolChoice, ToolSpec};
+use roder_ext_claude_code::{ClaudeCodeConfig, build_options};
+use serde_json::json;
+
+#[derive(Default)]
+struct RecordingExecutor {
+    calls: Mutex<Vec<ToolCallCompleted>>,
+    /// Tool names whose execution should fail like a Roder permission denial.
+    deny: Vec<String>,
+}
+
+#[async_trait::async_trait]
+impl TurnToolExecutor for RecordingExecutor {
+    async fn execute(&self, call: ToolCallCompleted) -> anyhow::Result<TurnToolOutcome> {
+        self.calls.lock().unwrap().push(call.clone());
+        if self.deny.iter().any(|name| name == &call.name) {
+            return Ok(TurnToolOutcome {
+                result: format!("permission denied for {}", call.name),
+                is_error: true,
+            });
+        }
+        if call.name == "shell" {
+            return Err(anyhow::anyhow!("executor rejected shell during shutdown"));
+        }
+        Ok(TurnToolOutcome {
+            result: format!("executed {} with {}", call.name, call.arguments),
+            is_error: false,
+        })
+    }
+}
+
+fn request_with_tools(tools: Vec<ToolSpec>) -> AgentInferenceRequest {
+    AgentInferenceRequest {
+        model: ModelSelection {
+            provider: "claude-code".to_string(),
+            model: "sonnet".to_string(),
+        },
+        instructions: InstructionBundle::default(),
+        transcript: Vec::new(),
+        tools,
+        tool_choice: ToolChoice::Auto,
+        reasoning: ReasoningConfig::default(),
+        output: OutputConfig::default(),
+        runtime: RuntimeHints {
+            hosted_web_search: HostedWebSearchConfig::disabled(),
+            ..RuntimeHints::default()
+        },
+        metadata: json!({}),
+    }
+}
+
+fn read_file_spec() -> ToolSpec {
+    ToolSpec {
+        name: "read_file".to_string(),
+        description: "Read a file".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": { "path": { "type": "string" } },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn shell_spec() -> ToolSpec {
+    ToolSpec {
+        name: "shell".to_string(),
+        description: "Run a command".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": { "command": { "type": "string" } },
+            "required": ["command"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_read_alias_executes_through_roder_executor_with_repaired_args() {
+    let executor = Arc::new(RecordingExecutor::default());
+    let options = build_options(
+        &ClaudeCodeConfig::default(),
+        &request_with_tools(vec![read_file_spec()]),
+        Some(executor.clone()),
+        None,
+        None,
+    )
+    .unwrap();
+    let server = options.sdk_mcp_servers.get("roder").unwrap();
+
+    // Claude calls its native alias `Read` with `file_path`; the handler must
+    // repair the argument name and execute canonical `read_file`.
+    let content = server
+        .call_tool("Read", json!({ "file_path": "README.md" }))
+        .expect("Read alias executes");
+    let text = match &content[0] {
+        claude_code_sdk_rust::mcp::MCPContent::Text { text } => text.clone(),
+        other => panic!("expected text content, got {other:?}"),
+    };
+    assert!(text.contains("executed read_file"), "{text}");
+    assert!(text.contains("\"path\":\"README.md\""), "{text}");
+
+    let calls = executor.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "read_file");
+    assert_eq!(calls[0].id, "claude-code-Read");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn denied_roder_permission_surfaces_as_tool_error_to_the_sdk_loop() {
+    let executor = Arc::new(RecordingExecutor {
+        calls: Mutex::new(Vec::new()),
+        deny: vec!["read_file".to_string()],
+    });
+    let options = build_options(
+        &ClaudeCodeConfig::default(),
+        &request_with_tools(vec![read_file_spec()]),
+        Some(executor.clone()),
+        None,
+        None,
+    )
+    .unwrap();
+    let server = options.sdk_mcp_servers.get("roder").unwrap();
+
+    let content = server
+        .call_tool("read_file", json!({ "path": "/etc/shadow" }))
+        .expect("denial is reported as tool content, not a transport error");
+    let text = match &content[0] {
+        claude_code_sdk_rust::mcp::MCPContent::Text { text } => text.clone(),
+        other => panic!("expected text content, got {other:?}"),
+    };
+    assert!(text.contains("Tool returned an error"), "{text}");
+    assert!(text.contains("permission denied for read_file"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn executor_failure_propagates_as_mcp_error() {
+    let executor = Arc::new(RecordingExecutor::default());
+    let options = build_options(
+        &ClaudeCodeConfig::default(),
+        &request_with_tools(vec![shell_spec()]),
+        Some(executor.clone()),
+        None,
+        None,
+    )
+    .unwrap();
+    let server = options.sdk_mcp_servers.get("roder").unwrap();
+
+    // Bash alias arrives as a raw argv array; the input repair joins it into
+    // the canonical `command` string before the executor rejects it.
+    let error = server
+        .call_tool("Bash", json!(["ls", "-la"]))
+        .expect_err("executor failure must propagate");
+    assert!(error.contains("executor rejected shell"), "{error}");
+
+    let calls = executor.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "shell");
+    let arguments: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+    assert_eq!(arguments["command"], "ls -la");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unmanaged_and_unadvertised_tools_stay_denied_by_can_use_tool() {
+    let options = build_options(
+        &ClaudeCodeConfig::default(),
+        &request_with_tools(vec![read_file_spec()]),
+        Some(Arc::new(RecordingExecutor::default())),
+        None,
+        None,
+    )
+    .unwrap();
+    let callback = options.can_use_tool.expect("can_use_tool registered");
+
+    // A bare built-in Claude tool is not managed by Roder.
+    let result = callback
+        .call(
+            "WebFetch".to_string(),
+            serde_json::Map::new(),
+            ToolPermissionContext::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, PermissionResult::Deny { ref message, .. } if message.contains("not managed by Roder")),
+        "{result:?}"
+    );
+
+    // A Roder-prefixed tool that was not advertised this turn is denied too.
+    let result = callback
+        .call(
+            "mcp__roder__shell".to_string(),
+            serde_json::Map::new(),
+            ToolPermissionContext::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, PermissionResult::Deny { ref message, .. } if message.contains("not advertised")),
+        "{result:?}"
+    );
+
+    // The advertised mapped tool is allowed.
+    let result = callback
+        .call(
+            "mcp__roder__read_file".to_string(),
+            serde_json::Map::new(),
+            ToolPermissionContext::default(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(result, PermissionResult::Allow { .. }), "{result:?}");
+}
