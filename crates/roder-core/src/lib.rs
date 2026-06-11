@@ -3,6 +3,7 @@ pub mod artifacts;
 pub mod bus;
 pub mod conversation_forks;
 pub mod forks;
+pub mod tool_search;
 mod deadline_policy;
 pub mod dynamic_workflows;
 mod event_sink_dispatch;

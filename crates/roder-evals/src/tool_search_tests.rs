@@ -163,3 +163,33 @@ fn large_catalog_native_mode_stays_within_prompt_budget() {
         tool["type"] != "function" || tool["defer_loading"] == serde_json::json!(true)
     }));
 }
+
+#[test]
+fn catalog_adapter_fixture_is_stable_redacted_and_searchable() {
+    use roder_api::inference::ToolSearchConfig;
+    use roder_api::tool_search_catalog::ToolSearchCatalog;
+
+    let fixture = crate::tool_search::load_catalog_adapter_fixture().expect("fixture");
+    let config = ToolSearchConfig::default();
+    let catalog = ToolSearchCatalog::build(&fixture.tools, &config);
+    assert_eq!(catalog, ToolSearchCatalog::build(&fixture.tools, &config));
+
+    let ids: Vec<&str> = catalog.items.iter().map(|item| item.id.as_str()).collect();
+    assert_eq!(ids, fixture.expected.ids, "stable catalog ids");
+    let sources: Vec<String> = catalog
+        .items
+        .iter()
+        .map(|item| serde_json::to_value(item.source).unwrap().as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(sources, fixture.expected.sources);
+
+    let serialized = serde_json::to_string(&catalog).unwrap();
+    for needle in &fixture.expected.forbidden_needles {
+        assert!(!serialized.contains(needle), "leaked {needle:?}");
+    }
+
+    let hits = catalog.search(&fixture.expected.search_query, 3);
+    assert_eq!(hits[0].name, fixture.expected.search_top_hit);
+    // Selected ids resolve back to canonical specs for execution.
+    assert!(catalog.resolve(&hits[0].id).is_some());
+}

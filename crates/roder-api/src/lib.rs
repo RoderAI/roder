@@ -39,6 +39,7 @@ pub mod tasks;
 pub mod teams;
 pub mod thread;
 pub mod tool_schema;
+pub mod tool_search_catalog;
 pub mod tools;
 pub mod trace;
 pub mod transcript;

@@ -3618,7 +3618,7 @@ fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<
         .filter(|threshold| *threshold > 0)
 }
 
-fn tool_search_for_provider_model(
+pub(crate) fn tool_search_for_provider_model(
     cfg: &RuntimeConfig,
     provider: &str,
     model: &str,

@@ -1,0 +1,51 @@
+{
+  "id": "catalog-adapter-snapshot",
+  "title": "Runtime tool-search catalog adapter snapshot (phase 79 Task 2)",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a file from the workspace",
+      "parameters": { "type": "object", "properties": { "path": { "type": "string" } } }
+    },
+    {
+      "name": "edit_file",
+      "description": "Edit a file in place",
+      "parameters": { "type": "object", "properties": { "path": { "type": "string" }, "diff": { "type": "string" } } }
+    },
+    {
+      "name": "edit_file",
+      "description": "Duplicate-named contributed tool",
+      "parameters": { "type": "object" }
+    },
+    {
+      "name": "mcp__github__search_issues",
+      "description": "Search GitHub issues via MCP",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "api_key": { "type": "string", "default": "sk-fixture-secret" }
+        },
+        "x-roder-internal": { "registry": "/Users/fixture/.roder/mcp" }
+      }
+    },
+    {
+      "name": "skill__deploy_app",
+      "description": "Deploy the app using the deploy skill",
+      "parameters": { "type": "object" }
+    }
+  ],
+  "expected": {
+    "ids": [
+      "tool:edit_file",
+      "tool:edit_file#2",
+      "tool:mcp__github__search_issues",
+      "tool:read_file",
+      "tool:skill__deploy_app"
+    ],
+    "sources": ["builtin", "builtin", "mcp", "builtin", "skill"],
+    "forbiddenNeedles": ["sk-fixture-secret", "/Users/fixture", "x-roder-internal"],
+    "searchQuery": "search github issues",
+    "searchTopHit": "mcp__github__search_issues"
+  }
+}
