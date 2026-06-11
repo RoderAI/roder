@@ -1,0 +1,85 @@
+{
+  "fixtures": [
+    {
+      "name": "multiline-function-replacement",
+      "class": "multiline-function-replacement",
+      "initial": "fn greet(name: &str) -> String {\n    format!(\"hi {name}\")\n}\n\nfn other() {}\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "fn greet(name: &str) -> String {\n    format!(\"hi {name}\")\n}",
+        "new_string": "fn greet(name: &str) -> String {\n    if name.is_empty() {\n        return \"hi\".to_string();\n    }\n    format!(\"hello {name}\")\n}"
+      },
+      "expected": "fn greet(name: &str) -> String {\n    if name.is_empty() {\n        return \"hi\".to_string();\n    }\n    format!(\"hello {name}\")\n}\n\nfn other() {}\n"
+    },
+    {
+      "name": "nested-insertion",
+      "class": "nested-insertion",
+      "initial": "impl Config {\n    fn load() {\n        read();\n    }\n}\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "    fn load() {\n        read();\n    }",
+        "new_string": "    fn load() {\n        validate();\n        read();\n    }"
+      },
+      "expected": "impl Config {\n    fn load() {\n        validate();\n        read();\n    }\n}\n"
+    },
+    {
+      "name": "repeated-import-deletion-with-context",
+      "class": "repeated-import-deletion",
+      "initial": "import os\nimport sys\nimport os\nimport json\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "import sys\nimport os\nimport json",
+        "new_string": "import sys\nimport json"
+      },
+      "expected": "import os\nimport sys\nimport json\n"
+    },
+    {
+      "name": "repeated-import-deletion-without-context-refuses",
+      "class": "repeated-import-deletion",
+      "initial": "import os\nimport sys\nimport os\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "import os\n",
+        "new_string": ""
+      },
+      "expect_error": "old_string_ambiguous",
+      "min_candidates": 1
+    },
+    {
+      "name": "repeated-block-disambiguated-by-context",
+      "class": "repeated-block-disambiguation",
+      "initial": "fn a() {\n    work();\n}\n\nfn b() {\n    work();\n}\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "fn b() {\n    work();\n}",
+        "new_string": "fn b() {\n    rest();\n}"
+      },
+      "expected": "fn a() {\n    work();\n}\n\nfn b() {\n    rest();\n}\n"
+    },
+    {
+      "name": "shifted-multi-edit-applies-sequentially",
+      "class": "shifted-multi-edit",
+      "initial": "let a = 1;\nlet b = a + 1;\nlet c = b + 1;\n",
+      "operation": {
+        "kind": "multi_edit",
+        "edits": [
+          { "old_string": "let a = 1;", "new_string": "let a = 10;\nlet a2 = 20;" },
+          { "old_string": "let c = b + 1;", "new_string": "let c = b + a2;" }
+        ]
+      },
+      "expected": "let a = 10;\nlet a2 = 20;\nlet b = a + 1;\nlet c = b + a2;\n"
+    },
+    {
+      "name": "stale-file-content-refuses-with-candidates",
+      "class": "stale-file-content",
+      "initial": "fn current() {\n    updated_call();\n}\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "fn current() {\n    old_call();\n}",
+        "new_string": "fn current() {\n    new_call();\n}"
+      },
+      "expect_error": "old_string_not_found",
+      "min_candidates": 1
+    }
+  ]
+}

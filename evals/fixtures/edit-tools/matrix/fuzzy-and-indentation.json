@@ -1,0 +1,77 @@
+{
+  "fixtures": [
+    {
+      "name": "formatter-whitespace-drift-apply-safe",
+      "class": "formatter-whitespace-drift",
+      "initial": "const value = 1;   \nconst other = 2;\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "const value = 1;\nconst other = 2;",
+        "new_string": "const value = 9;\nconst other = 2;",
+        "fuzzy": "apply_safe"
+      },
+      "expected": "const value = 9;\nconst other = 2;\n"
+    },
+    {
+      "name": "formatter-whitespace-drift-diagnose-refuses",
+      "class": "formatter-whitespace-drift",
+      "initial": "const value = 1;   \nconst other = 2;\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "const value = 1;\nconst other = 2;",
+        "new_string": "const value = 9;\nconst other = 2;",
+        "fuzzy": "diagnose"
+      },
+      "expect_error": "old_string_not_found",
+      "min_candidates": 1
+    },
+    {
+      "name": "accidental-line-number-prefixes-are-stripped",
+      "class": "accidental-line-number-prefixes",
+      "initial": "alpha\nbeta\ngamma\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "    2: beta",
+        "new_string": "BETA"
+      },
+      "expected": "alpha\nBETA\ngamma\n"
+    },
+    {
+      "name": "missing-indentation-restored-with-reindent",
+      "class": "missing-indentation",
+      "initial": "fn main() {\n    let a = 1;\n    let b = 2;\n}\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "    let a = 1;\n    let b = 2;",
+        "new_string": "let a = 1;\nif a > 0 {\n    use_it(a);\n}",
+        "reindent": true
+      },
+      "expected": "fn main() {\n    let a = 1;\n    if a > 0 {\n        use_it(a);\n    }\n}\n"
+    },
+    {
+      "name": "post-edit-reindent-snapshot",
+      "class": "post-edit-reindent-snapshot",
+      "initial": "class App {\n  start() {\n    boot();\n  }\n}\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "  start() {\n    boot();\n  }",
+        "new_string": "start() {\n  prepare();\n  boot();\n}",
+        "reindent": true
+      },
+      "expected": "class App {\n  start() {\n    prepare();\n    boot();\n  }\n}\n"
+    },
+    {
+      "name": "ambiguous-fuzzy-match-refuses-apply-safe",
+      "class": "ambiguous-fuzzy-matches",
+      "initial": "value()  \nvalue()\n",
+      "operation": {
+        "kind": "edit",
+        "old_string": "VALUE()",
+        "new_string": "other()",
+        "fuzzy": "apply_safe"
+      },
+      "expect_error": "old_string_not_found",
+      "min_candidates": 1
+    }
+  ]
+}

@@ -40,17 +40,55 @@ pub fn normalize_for_match(input: &str) -> String {
         .join("\n")
 }
 
-pub fn normalized_unique_match(haystack: &str, needle: &str) -> Option<usize> {
-    let normalized_haystack = normalize_for_match(haystack);
-    let normalized_needle = normalize_for_match(needle);
-    let first = normalized_haystack.find(&normalized_needle)?;
-    if normalized_haystack[first + normalized_needle.len()..]
-        .find(&normalized_needle)
-        .is_some()
-    {
+/**
+ * Finds the original byte range whose normalized form uniquely matches the
+ * normalized needle. Matching is line-wise so byte offsets always refer to
+ * the original text — normalization (trailing-whitespace and case folding)
+ * must never be used to index into the un-normalized haystack.
+ */
+pub fn normalized_unique_match_range(
+    haystack: &str,
+    needle: &str,
+) -> Option<std::ops::Range<usize>> {
+    let needle_lines: Vec<String> = needle
+        .split('\n')
+        .map(normalize_line_for_match)
+        .collect();
+    if needle_lines.is_empty() || needle_lines.iter().all(|line| line.is_empty()) {
         return None;
     }
-    Some(first)
+    // Byte offset and raw text for every original line.
+    let mut line_spans = Vec::new();
+    let mut offset = 0;
+    for line in haystack.split('\n') {
+        line_spans.push((offset, line));
+        offset += line.len() + 1;
+    }
+    let window = needle_lines.len();
+    if line_spans.len() < window {
+        return None;
+    }
+    let mut found: Option<std::ops::Range<usize>> = None;
+    for start in 0..=(line_spans.len() - window) {
+        let matches = (0..window).all(|index| {
+            normalize_line_for_match(line_spans[start + index].1) == needle_lines[index]
+        });
+        if !matches {
+            continue;
+        }
+        if found.is_some() {
+            // Two candidate windows match after normalization; refuse.
+            return None;
+        }
+        let (first_offset, _) = line_spans[start];
+        let (last_offset, last_line) = line_spans[start + window - 1];
+        found = Some(first_offset..last_offset + last_line.len());
+    }
+    found
+}
+
+fn normalize_line_for_match(line: &str) -> String {
+    line.trim_end().to_ascii_lowercase()
 }
 
 pub fn diagnostic_candidates(haystack: &str, needle: &str, limit: usize) -> Vec<FuzzyCandidate> {
