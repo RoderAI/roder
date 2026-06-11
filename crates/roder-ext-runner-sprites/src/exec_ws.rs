@@ -86,6 +86,17 @@ mod tests {
             ExecFrame::Stderr(b"e".to_vec())
         );
         assert_eq!(decode_non_tty_frame(&[3, 7]).unwrap(), ExecFrame::Exit(7));
+        assert_eq!(decode_non_tty_frame(&[0, b'x']).unwrap(), ExecFrame::Stdin(b"x".to_vec()));
+        assert_eq!(decode_non_tty_frame(&[4]).unwrap(), ExecFrame::StdinEof);
+    }
+
+    #[test]
+    fn malformed_frames_fail_closed() {
+        assert!(decode_non_tty_frame(&[]).is_err(), "empty frame must error");
+        assert!(
+            decode_non_tty_frame(&[9, b'x']).is_err(),
+            "unknown stream id must error"
+        );
     }
 
     #[test]
@@ -94,6 +105,46 @@ mod tests {
 
         assert_eq!(output.stdout, "4\n");
         assert_eq!(output.stderr, "");
+        assert_eq!(output.exit_code, Some(0));
+    }
+
+    #[test]
+    fn decodes_interleaved_stdout_and_stderr_with_nonzero_exit() {
+        let output = decode_non_tty_stream(&[
+            1, b'o', b'u', b't', b'\n', // stdout
+            2, b'w', b'a', b'r', b'n', b'\n', // stderr
+            1, b'm', b'o', b'r', b'e', // stdout continues
+            3, 17, // exit code 17
+        ]);
+
+        assert_eq!(output.stdout, "out\nmore");
+        assert_eq!(output.stderr, "warn\n");
+        assert_eq!(output.exit_code, Some(17));
+    }
+
+    #[test]
+    fn truncated_exit_frame_defaults_to_success_marker() {
+        // Exit marker with no code byte: the stream ended mid-frame; the
+        // decoder records exit 0 instead of dropping the marker.
+        let output = decode_non_tty_stream(&[1, b'a', 3]);
+        assert_eq!(output.stdout, "a");
+        assert_eq!(output.exit_code, Some(0));
+    }
+
+    #[test]
+    fn unknown_leading_bytes_are_preserved_as_stdout() {
+        // Streams that start without a known marker byte (e.g. raw TTY data)
+        // must not be silently dropped.
+        let output = decode_non_tty_stream(&[b'r', b'a', b'w', 3, 1]);
+        assert_eq!(output.stdout, "raw");
+        assert_eq!(output.exit_code, Some(1));
+    }
+
+    #[test]
+    fn stdin_eof_markers_are_ignored_in_output_accumulation() {
+        let output = decode_non_tty_stream(&[1, b'x', 4, 2, b'y', 3, 0]);
+        assert_eq!(output.stdout, "x");
+        assert_eq!(output.stderr, "y");
         assert_eq!(output.exit_code, Some(0));
     }
 }
