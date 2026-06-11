@@ -28,17 +28,59 @@ impl AnthropicEngine {
      * payloads (for example explicit vs provider-native tool-search bodies).
      */
     pub fn map_request(request: &AgentInferenceRequest) -> Value {
+        let mut messages = anthropic_messages(request);
+        let developer_context = request
+            .instructions
+            .developer_context
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
         /*
-         * Body-level cache_control auto-caches the last cacheable block, so
-         * warm turns reuse the conversation prefix when nothing else changed.
+         * The per-turn developer context changes between turns by design, so
+         * its rendering decides whether the conversation tier survives:
+         *
+         * - Models accepting mid-conversation system messages get it as a
+         *   trailing `role: system` message, with an explicit breakpoint on
+         *   the last stable message block. The cached conversation prefix
+         *   keeps reading across turns; only the volatile tail re-processes.
+         * - Other models get it as a trailing system block after the cached
+         *   stable prefix. Anthropic invalidates the messages tier whenever
+         *   system content changes, so the conversation history re-processes
+         *   (as a ~1.25x cache write) once per turn-start on these models;
+         *   the tools + system + developer prefix still reads from cache.
          */
+        let system_role_context = developer_context.filter(|_| {
+            anthropic_model_supports_system_role_messages(&request.model.model)
+                && last_message_is_user(&messages)
+        });
         let mut body = json!({
             "model": request.model.model,
             "max_tokens": request.output.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
-            "cache_control": { "type": "ephemeral" },
             "stream": true,
-            "messages": anthropic_messages(request),
         });
+        if let Some(text) = system_role_context {
+            if let Some(block) = messages
+                .last_mut()
+                .and_then(|message| message["content"].as_array_mut())
+                .and_then(|content| content.last_mut())
+            {
+                block["cache_control"] = json!({ "type": "ephemeral" });
+            }
+            messages.push(json!({
+                "role": "system",
+                "content": [{ "type": "text", "text": text }]
+            }));
+        } else {
+            /*
+             * Body-level cache_control auto-caches the last cacheable block,
+             * so warm turns reuse the conversation prefix when nothing else
+             * changed. With a trailing system-role message it stops reading
+             * the conversation tier (live-probed), hence the explicit message
+             * breakpoint on that path instead.
+             */
+            body["cache_control"] = json!({ "type": "ephemeral" });
+        }
+        body["messages"] = json!(messages);
         let mut system = Vec::new();
         if let Some(text) = request.instructions.system.as_deref() {
             system.push(json!({ "type": "text", "text": text }));
@@ -50,13 +92,14 @@ impl AnthropicEngine {
          * Breakpoint on the last stable block (tools render before system, so
          * it covers tools + system + developer). The per-turn developer
          * context goes after it without a marker: when it changes between
-         * turns only the tail re-processes and the stable prefix still reads
-         * from cache.
+         * turns the stable prefix still reads from cache.
          */
         if let Some(last) = system.last_mut() {
             last["cache_control"] = json!({ "type": "ephemeral" });
         }
-        if let Some(text) = request.instructions.developer_context.as_deref() {
+        if system_role_context.is_none()
+            && let Some(text) = developer_context
+        {
             system.push(json!({ "type": "text", "text": text }));
         }
         if !system.is_empty() {
@@ -92,6 +135,9 @@ impl AnthropicEngine {
     }
 }
 
+/// Beta header that enables mid-conversation `role: system` messages.
+const MID_CONVERSATION_SYSTEM_BETA: &str = "mid-conversation-system-2026-04-07";
+
 /// Beta header that enables native server-side context compaction.
 const COMPACTION_BETA: &str = "compact-2026-01-12";
 /// Context-management edit type for the `compact-2026-01-12` beta.
@@ -115,7 +161,36 @@ fn anthropic_betas(request: &AgentInferenceRequest) -> Vec<String> {
     if anthropic_compaction_trigger(request).is_some() {
         betas.push(COMPACTION_BETA.to_string());
     }
+    let has_developer_context = request
+        .instructions
+        .developer_context
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty());
+    if has_developer_context && anthropic_model_supports_system_role_messages(&request.model.model)
+    {
+        betas.push(MID_CONVERSATION_SYSTEM_BETA.to_string());
+    }
     betas
+}
+
+/**
+ * Whether a Claude model accepts mid-conversation `role: system` messages
+ * under the `mid-conversation-system-2026-04-07` beta. Live-probed
+ * 2026-06-11: claude-opus-4-8 and claude-fable-5 accept; claude-opus-4-7,
+ * claude-opus-4-6, claude-sonnet-4-6 and claude-haiku-4-5 reject with
+ * "role 'system' is not supported on this model".
+ */
+fn anthropic_model_supports_system_role_messages(model: &str) -> bool {
+    model.starts_with("claude-opus-4-8") || model.starts_with("claude-fable")
+}
+
+/**
+ * Mid-conversation system messages must follow a user-role message and cannot
+ * open the conversation; requests violating that are rejected with a 400, so
+ * the mapping falls back to the trailing-system-block rendering instead.
+ */
+fn last_message_is_user(messages: &[Value]) -> bool {
+    messages.last().and_then(|message| message["role"].as_str()) == Some("user")
 }
 
 #[async_trait::async_trait]
@@ -451,6 +526,8 @@ mod tests {
 
     #[test]
     fn renders_developer_context_after_cached_stable_prefix() {
+        // claude-sonnet-4-6 rejects mid-conversation system messages, so the
+        // per-turn context renders as a trailing system block.
         let mut request = request();
         request.instructions.developer_context = Some("per-turn context".to_string());
 
@@ -464,11 +541,73 @@ mod tests {
         // The volatile per-turn block must not carry a marker; the breakpoint
         // stays on the stable developer block so its prefix survives per-turn
         // changes.
+        assert_eq!(system[1]["cache_control"], json!({ "type": "ephemeral" }));
+        assert!(system[2].get("cache_control").is_none());
+        assert_eq!(body["cache_control"], json!({ "type": "ephemeral" }));
+        assert!(body["messages"].as_array().unwrap().len() == 4);
+        assert!(anthropic_betas(&request).is_empty());
+    }
+
+    #[test]
+    fn renders_developer_context_as_system_role_tail_on_supporting_models() {
+        let mut request = request();
+        request.model.model = "claude-opus-4-8".to_string();
+        request.instructions.developer_context = Some("per-turn context".to_string());
+
+        let body = AnthropicEngine::map_request(&request);
+
+        // The stable system prefix is unchanged: no trailing system block.
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 2);
+        assert_eq!(system[1]["cache_control"], json!({ "type": "ephemeral" }));
+
+        // The per-turn context rides a trailing system-role message instead.
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 5);
+        let tail = &messages[4];
+        assert_eq!(tail["role"], "system");
+        assert_eq!(tail["content"][0]["type"], "text");
+        assert_eq!(tail["content"][0]["text"], "per-turn context");
+        assert!(tail["content"][0].get("cache_control").is_none());
+
+        // Explicit breakpoint on the last stable message block keeps the
+        // conversation tier cached while the volatile tail changes; the
+        // body-level auto marker is dropped (it stops reading the
+        // conversation tier with a trailing system-role message).
         assert_eq!(
-            system[1]["cache_control"],
+            messages[3]["content"][0]["cache_control"],
             json!({ "type": "ephemeral" })
         );
-        assert!(system[2].get("cache_control").is_none());
+        assert!(body.get("cache_control").is_none());
+
+        assert_eq!(
+            anthropic_betas(&request),
+            vec![MID_CONVERSATION_SYSTEM_BETA.to_string()]
+        );
+    }
+
+    #[test]
+    fn falls_back_to_system_block_when_transcript_does_not_end_with_user() {
+        let mut request = request();
+        request.model.model = "claude-opus-4-8".to_string();
+        request.instructions.developer_context = Some("per-turn context".to_string());
+        request
+            .transcript
+            .push(TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "done".to_string(),
+                phase: None,
+            }));
+
+        let body = AnthropicEngine::map_request(&request);
+
+        // A system-role message must follow a user message, so the mapping
+        // keeps the trailing-system-block rendering for this request.
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 3);
+        assert_eq!(system[2]["text"], "per-turn context");
+        assert_eq!(body["cache_control"], json!({ "type": "ephemeral" }));
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.last().unwrap()["role"], "assistant");
     }
 
     #[test]
@@ -481,10 +620,7 @@ mod tests {
 
         let system = body["system"].as_array().unwrap();
         assert_eq!(system.len(), 2);
-        assert_eq!(
-            system[0]["cache_control"],
-            json!({ "type": "ephemeral" })
-        );
+        assert_eq!(system[0]["cache_control"], json!({ "type": "ephemeral" }));
         assert!(system[1].get("cache_control").is_none());
     }
 
