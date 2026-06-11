@@ -61,6 +61,7 @@ pub fn encode_agent_client_message_with_history(
     message_id: &str,
     history: &[CursorHistoryMessage],
     images: &[CursorImage],
+    tools: &[CursorMcpTool],
 ) -> Vec<u8> {
     proto_message(vec![proto_field_bytes(
         1,
@@ -71,6 +72,7 @@ pub fn encode_agent_client_message_with_history(
             message_id,
             history,
             images,
+            tools,
         ),
     )])
 }
@@ -82,6 +84,7 @@ fn encode_agent_run_request(
     message_id: &str,
     history: &[CursorHistoryMessage],
     images: &[CursorImage],
+    tools: &[CursorMcpTool],
 ) -> Vec<u8> {
     // Whether any inline image bytes are present in this turn (current message
     // or replayed history). Cursor only honours inline `SelectedImage.data` /
@@ -97,7 +100,10 @@ fn encode_agent_run_request(
             2,
             encode_conversation_action(prompt, message_id, history, images),
         ),
-        proto_field_bytes(4, Vec::new()),
+        // agent.v1.AgentRunRequest.mcp_tools (field 4) = agent.v1.McpTools.
+        // Advertises Roder's tools to the Cursor model. Empty when Roder sends
+        // no tools, which matches the prior empty-message encoding.
+        proto_field_bytes(4, encode_mcp_tools(tools)),
         proto_field_string(5, conversation_id),
         proto_field_bytes(9, encode_requested_model(model_id)),
         proto_field_varint(12, 0),
@@ -114,6 +120,91 @@ fn encode_agent_run_request(
 /// (UNSPECIFIED=0, AGENT=1, ASK=2, PLAN=3, ...). Sourced from the Cursor app
 /// bundle's `agent.v1` protobuf schema.
 const AGENT_MODE_AGENT: u64 = 1;
+
+/// A Roder tool advertised to the Cursor model via `AgentRunRequest.mcp_tools`.
+///
+/// Field numbers below are from the Cursor app bundle's `agent.v1` schema
+/// (`cursor-agent-worker/dist/main.js`):
+/// - `agent.v1.McpTools { mcp_tools 1: repeated McpToolDefinition }`
+/// - `agent.v1.McpToolDefinition { name 1, description 2, input_schema 3 }`
+///   where `input_schema` is a `google.protobuf.Value` (JSON Schema as a Value).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CursorMcpTool {
+    pub name: String,
+    pub description: String,
+    /// JSON Schema for the tool input (Roder `ToolSpec.parameters`).
+    pub input_schema: serde_json::Value,
+}
+
+/// Encode `agent.v1.McpTools { mcp_tools 1: repeated McpToolDefinition }`.
+/// Returns an empty message when there are no tools (advertises nothing),
+/// matching the historical empty-bytes encoding of `AgentRunRequest` field 4.
+pub(crate) fn encode_mcp_tools(tools: &[CursorMcpTool]) -> Vec<u8> {
+    proto_message(
+        tools
+            .iter()
+            .map(|tool| proto_field_bytes(1, encode_mcp_tool_definition(tool)))
+            .collect(),
+    )
+}
+
+/// Encode `agent.v1.McpToolDefinition { name 1, description 2, input_schema 3 }`.
+fn encode_mcp_tool_definition(tool: &CursorMcpTool) -> Vec<u8> {
+    proto_message(vec![
+        proto_field_string(1, &tool.name),
+        proto_field_string(2, &tool.description),
+        // input_schema is a google.protobuf.Value (the JSON Schema object).
+        proto_field_bytes(3, encode_protobuf_value(&tool.input_schema)),
+    ])
+}
+
+/// Encode a `serde_json::Value` as a `google.protobuf.Value` message body.
+///
+/// `google.protobuf.Value` is a oneof:
+///   null_value 1 (enum, 0) · number_value 2 (double) · string_value 3 ·
+///   bool_value 4 · struct_value 5 (Struct) · list_value 6 (ListValue).
+fn encode_protobuf_value(value: &serde_json::Value) -> Vec<u8> {
+    match value {
+        serde_json::Value::Null => proto_field_varint(1, 0),
+        serde_json::Value::Bool(b) => proto_field_varint(4, u64::from(*b)),
+        serde_json::Value::Number(n) => {
+            proto_field_double(2, n.as_f64().unwrap_or(0.0))
+        }
+        serde_json::Value::String(s) => proto_field_string(3, s),
+        serde_json::Value::Object(_) => proto_field_bytes(5, encode_protobuf_struct(value)),
+        serde_json::Value::Array(items) => {
+            // google.protobuf.ListValue { values 1: repeated Value }.
+            let list = proto_message(
+                items
+                    .iter()
+                    .map(|item| proto_field_bytes(1, encode_protobuf_value(item)))
+                    .collect(),
+            );
+            proto_field_bytes(6, list)
+        }
+    }
+}
+
+/// Encode a JSON object as a `google.protobuf.Struct { fields 1: map<string,Value> }`.
+/// A proto3 map entry is a sub-message `{ key 1: string, value 2: Value }`.
+fn encode_protobuf_struct(value: &serde_json::Value) -> Vec<u8> {
+    let serde_json::Value::Object(map) = value else {
+        return Vec::new();
+    };
+    proto_message(
+        map.iter()
+            .map(|(key, val)| {
+                proto_field_bytes(
+                    1,
+                    proto_message(vec![
+                        proto_field_string(1, key),
+                        proto_field_bytes(2, encode_protobuf_value(val)),
+                    ]),
+                )
+            })
+            .collect(),
+    )
+}
 
 /// A decoded inline image ready for the Cursor `agent.v1` wire format.
 ///
@@ -454,6 +545,14 @@ pub(crate) fn proto_field_bytes(no: u32, bytes: Vec<u8>) -> Vec<u8> {
 pub(crate) fn proto_field_varint(no: u32, value: u64) -> Vec<u8> {
     let mut out = encode_varint((no << 3) as u64);
     out.extend_from_slice(&encode_varint(value));
+    out
+}
+
+/// Encode a 64-bit double field (wire type 1, fixed64 little-endian). Used for
+/// `google.protobuf.Value.number_value`.
+pub(crate) fn proto_field_double(no: u32, value: f64) -> Vec<u8> {
+    let mut out = encode_varint(((no << 3) | 1) as u64);
+    out.extend_from_slice(&value.to_bits().to_le_bytes());
     out
 }
 
@@ -1220,6 +1319,7 @@ mod tests {
             "msg",
             &[],
             &[],
+            &[],
         );
         let strings = collect_utf8_strings(&bytes, 0);
         assert!(strings.iter().any(|value| value.contains("hello cursor")));
@@ -1326,7 +1426,7 @@ mod tests {
         // Regression: roder must send UserMessage.mode = AGENT_MODE_AGENT (1).
         // Sending 2 (AGENT_MODE_ASK) made Cursor run the model read-only.
         let bytes =
-            encode_agent_client_message_with_history("hi", "claude-opus-4-8", "conv", "msg", &[], &[]);
+            encode_agent_client_message_with_history("hi", "claude-opus-4-8", "conv", "msg", &[], &[], &[]);
         let run = submessage(&bytes, 1).expect("agent run request");
         let action = submessage(&run, 2).expect("conversation action");
         let user_message_action = submessage(&action, 1).expect("user message action");
@@ -1364,7 +1464,7 @@ mod tests {
                 is_error: false,
             },
         ];
-        let bytes = encode_agent_client_message_with_history("edit it", "m", "c", "mid", &history, &[]);
+        let bytes = encode_agent_client_message_with_history("edit it", "m", "c", "mid", &history, &[], &[]);
         // ConversationHistory lives at AgentRunRequest(1).action(2).user_message_action(1).conversation_history(7).
         let run = submessage(&bytes, 1).unwrap();
         let action = submessage(&run, 2).unwrap();
@@ -1375,6 +1475,57 @@ mod tests {
         assert!(text.contains("toolu_1"));
         assert!(text.contains("AGENTS.md"));
         assert!(text.contains("file body"));
+    }
+
+    #[test]
+    fn advertises_roder_tools_as_mcp_tool_definitions_with_value_schema() {
+        let tool = CursorMcpTool {
+            name: "grep".to_string(),
+            description: "Search text".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            }),
+        };
+        let bytes = encode_agent_client_message_with_history(
+            "find foo",
+            "claude-opus-4-8",
+            "conv",
+            "msg",
+            &[],
+            &[],
+            std::slice::from_ref(&tool),
+        );
+        // AgentRunRequest.mcp_tools(4).mcp_tools(1) = McpToolDefinition.
+        let run = submessage(&bytes, 1).unwrap();
+        let mcp_tools = submessage(&run, 4).expect("mcp_tools present");
+        let def = submessage(&mcp_tools, 1).expect("tool definition present");
+        assert_eq!(scalar_string(&def, 1).as_deref(), Some("grep"));
+        assert_eq!(scalar_string(&def, 2).as_deref(), Some("Search text"));
+        // input_schema(3) is a google.protobuf.Value carrying a struct_value(5).
+        let input_schema = submessage(&def, 3).expect("input_schema present");
+        let struct_value = submessage(&input_schema, 5).expect("struct_value present");
+        // The "type":"object" entry: map entry { key 1: "type", value 2: Value }
+        // whose Value.string_value (field 3) is "object".
+        let type_string = decode_fields_safe(&struct_value)
+            .iter()
+            .filter_map(|field| bytes_field(field, 1).cloned())
+            .find(|entry| scalar_string(entry, 1).as_deref() == Some("type"))
+            .and_then(|entry| submessage(&entry, 2))
+            .and_then(|value| scalar_string(&value, 3));
+        assert_eq!(type_string.as_deref(), Some("object"));
+    }
+
+    #[test]
+    fn omitting_tools_keeps_mcp_tools_message_empty() {
+        let bytes = encode_agent_client_message_with_history(
+            "hi", "m", "c", "mid", &[], &[], &[],
+        );
+        let run = submessage(&bytes, 1).unwrap();
+        // mcp_tools(4) is present but its repeated definition list is empty.
+        let mcp_tools = submessage(&run, 4).unwrap_or_default();
+        assert!(submessage(&mcp_tools, 1).is_none());
     }
 
     #[test]
@@ -1400,6 +1551,7 @@ mod tests {
             "msg",
             &[],
             std::slice::from_ref(&image),
+            &[],
         );
         let run = submessage(&bytes, 1).unwrap();
         // AgentRunRequest.client_supports_inline_images (field 19) must be set.
@@ -1418,7 +1570,7 @@ mod tests {
     #[test]
     fn turn_without_images_keeps_empty_selected_context_and_no_inline_flag() {
         let bytes =
-            encode_agent_client_message_with_history("hello", "m", "c", "mid", &[], &[]);
+            encode_agent_client_message_with_history("hello", "m", "c", "mid", &[], &[], &[]);
         let run = submessage(&bytes, 1).unwrap();
         assert_eq!(scalar_u64(&run, 19), None);
         let action = submessage(&run, 2).unwrap();
@@ -1438,7 +1590,7 @@ mod tests {
             }],
         }];
         use base64::Engine as _;
-        let bytes = encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[]);
+        let bytes = encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[], &[]);
         let run = submessage(&bytes, 1).unwrap();
         // History images also require the inline-images capability flag.
         assert_eq!(scalar_u64(&run, 19), Some(1));
