@@ -1,0 +1,23 @@
+{
+  "id": "search-selection-malformed-results",
+  "title": "Malformed provider search results fail closed instead of guessing a tool",
+  "provider": "anthropic",
+  "model": "claude-fable-5",
+  "mode": "provider_native",
+  "catalog": {
+    "tools": [
+      { "name": "read_file", "description": "Read a file from the workspace." }
+    ]
+  },
+  "search": {
+    "query": "read configuration",
+    "results": { "unexpected": "object instead of result array" }
+  },
+  "expected": {
+    "outcome": "fail_closed",
+    "diagnosticContains": [
+      "malformed provider tool-search results",
+      "failing closed"
+    ]
+  }
+}

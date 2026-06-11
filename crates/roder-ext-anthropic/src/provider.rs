@@ -22,7 +22,12 @@ impl AnthropicEngine {
         Self { api_key }
     }
 
-    fn map_request(request: &AgentInferenceRequest) -> Value {
+    /**
+     * Map a canonical inference request to the Anthropic Messages request
+     * body. Public so offline eval harnesses can snapshot exact provider
+     * payloads (for example explicit vs provider-native tool-search bodies).
+     */
+    pub fn map_request(request: &AgentInferenceRequest) -> Value {
         let mut body = json!({
             "model": request.model.model,
             "max_tokens": request.output.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
@@ -246,7 +251,12 @@ fn anthropic_provider_native_tool_search(request: &AgentInferenceRequest) -> boo
         && anthropic_model_supports_tool_search(&request.model.model)
 }
 
-fn anthropic_model_supports_tool_search(model: &str) -> bool {
+/**
+ * Whether a Claude model id is known to support the dated Anthropic
+ * tool-search tool variants. Public so offline eval fixtures exercise the
+ * same support gating as the live request mapping.
+ */
+pub fn anthropic_model_supports_tool_search(model: &str) -> bool {
     model.starts_with("claude-sonnet-4-6")
         || model.starts_with("claude-opus-4-8")
         || model.starts_with("claude-fable")
