@@ -1,6 +1,7 @@
 from .agent import RoderAgent
 from .client import RoderRpcClient
 from .events import normalize_notification
+from .hosted import HostedClient
 from .errors import RoderRpcError, RoderTransportError
 from .run import RoderRun
 from .transports import InMemoryTransport, LocalProcessTransport, WebSocketTransport
@@ -10,6 +11,7 @@ __all__ = [
     "APP_SERVER_MANIFEST",
     "APP_SERVER_METHODS",
     "AppServerMethod",
+    "HostedClient",
     "InMemoryTransport",
     "LocalProcessTransport",
     "RoderAgent",

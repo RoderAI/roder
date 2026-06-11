@@ -566,6 +566,42 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "forks/create",
+      "paramsType": "ForksCreateParams",
+      "resultType": "ForksCreateResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "forks/list",
+      "paramsType": "ForksListParams",
+      "resultType": "ForksListResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "forks/providers/list",
+      "paramsType": "ForksProvidersListParams",
+      "resultType": "ForksProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "forks/remove",
+      "paramsType": "ForksRemoveParams",
+      "resultType": "ForksRemoveResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "fs/readDirectory",
       "paramsType": "FsReadDirectoryParams",
       "resultType": "FsReadDirectoryResult",
@@ -580,6 +616,114 @@ export const appServerManifest = {
       "resultType": "FsReadFileResult",
       "stability": "stable",
       "featureGroup": "filesystem",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/audit/list",
+      "paramsType": "HostedAuditListParams",
+      "resultType": "HostedAuditListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/hooks/create",
+      "paramsType": "HostedHooksCreateParams",
+      "resultType": "HostedHooksCreateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/hooks/delete",
+      "paramsType": "HostedHooksDeleteParams",
+      "resultType": "HostedHooksDeleteResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/hooks/list",
+      "paramsType": "HostedHooksListParams",
+      "resultType": "HostedHooksListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/hooks/update",
+      "paramsType": "HostedHooksUpdateParams",
+      "resultType": "HostedHooksUpdateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/service_accounts/create",
+      "paramsType": "HostedServiceAccountsCreateParams",
+      "resultType": "HostedServiceAccountsCreateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/service_accounts/list",
+      "paramsType": "HostedServiceAccountsListParams",
+      "resultType": "HostedServiceAccountsListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/service_accounts/revoke",
+      "paramsType": "HostedServiceAccountsRevokeParams",
+      "resultType": "HostedServiceAccountsRevokeResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/tenant/read",
+      "paramsType": "HostedTenantReadParams",
+      "resultType": "HostedTenantReadResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/tenants/list",
+      "paramsType": "HostedTenantsListParams",
+      "resultType": "HostedTenantsListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/usage/read",
+      "paramsType": "HostedUsageReadParams",
+      "resultType": "HostedUsageReadResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/whoami",
+      "paramsType": "HostedWhoamiParams",
+      "resultType": "HostedWhoamiResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -888,6 +1032,15 @@ export const appServerManifest = {
       "featureGroup": "models",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "node/status",
+      "paramsType": "NodeStatusParams",
+      "resultType": "NodeStatusResult",
+      "stability": "stable",
+      "featureGroup": "node",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "plan/review/approve",
@@ -1397,6 +1550,60 @@ export const appServerManifest = {
       "sideEffect": "externalProcess"
     },
     {
+      "method": "stats/backfill",
+      "paramsType": "StatsBackfillParams",
+      "resultType": "StatsBackfillResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "stats/export",
+      "paramsType": "StatsExportParams",
+      "resultType": "StatsExportResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "stats/sessions",
+      "paramsType": "StatsSessionsParams",
+      "resultType": "StatsSessionsResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/summary",
+      "paramsType": "StatsSummaryParams",
+      "resultType": "StatsSummaryResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/tokens",
+      "paramsType": "StatsTokensParams",
+      "resultType": "StatsTokensResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/tools",
+      "paramsType": "StatsToolsParams",
+      "resultType": "StatsToolsResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "tasks/cancel",
       "paramsType": "TasksCancelParams",
       "resultType": "TasksCancelResult",
@@ -1566,6 +1773,24 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "thread/fork",
+      "paramsType": "ThreadForkParams",
+      "resultType": "ThreadForkResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/fork_status",
+      "paramsType": "ThreadForkStatusParams",
+      "resultType": "ThreadForkStatusResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "thread/goal/clear",
       "paramsType": "ThreadGoalClearParams",
       "resultType": "ThreadGoalClearResult",
@@ -1615,6 +1840,15 @@ export const appServerManifest = {
       "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/remove_fork",
+      "paramsType": "ThreadRemoveForkParams",
+      "resultType": "ThreadRemoveForkResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "thread/resolve_approval",
@@ -2263,8 +2497,24 @@ export const appServerMethods = [
   "eval/report/read",
   "eval/reports/list",
   "extensions/list",
+  "forks/create",
+  "forks/list",
+  "forks/providers/list",
+  "forks/remove",
   "fs/readDirectory",
   "fs/readFile",
+  "hosted/audit/list",
+  "hosted/hooks/create",
+  "hosted/hooks/delete",
+  "hosted/hooks/list",
+  "hosted/hooks/update",
+  "hosted/service_accounts/create",
+  "hosted/service_accounts/list",
+  "hosted/service_accounts/revoke",
+  "hosted/tenant/read",
+  "hosted/tenants/list",
+  "hosted/usage/read",
+  "hosted/whoami",
   "hunk/list",
   "hunk/read",
   "hunk/rollback",
@@ -2299,6 +2549,7 @@ export const appServerMethods = [
   "memory/update",
   "model/list",
   "model/select",
+  "node/status",
   "plan/review/approve",
   "plan/review/comment",
   "plan/review/read",
@@ -2355,6 +2606,12 @@ export const appServerMethods = [
   "speech/synthesis/providers/list",
   "speech/synthesize",
   "speech/transcribe",
+  "stats/backfill",
+  "stats/export",
+  "stats/sessions",
+  "stats/summary",
+  "stats/tokens",
+  "stats/tools",
   "tasks/cancel",
   "tasks/get",
   "tasks/list",
@@ -2373,11 +2630,14 @@ export const appServerMethods = [
   "thread/archive",
   "thread/attach",
   "thread/exit_plan",
+  "thread/fork",
+  "thread/fork_status",
   "thread/goal/clear",
   "thread/goal/get",
   "thread/goal/set",
   "thread/list",
   "thread/read",
+  "thread/remove_fork",
   "thread/resolve_approval",
   "thread/resolve_user_input",
   "thread/roadmap/open",

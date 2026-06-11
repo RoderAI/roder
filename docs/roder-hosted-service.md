@@ -77,6 +77,64 @@ directory; deleting a tenant directory is the current tenant-offboarding
 mechanism. Migrations are per-store (JSONL files are append-only; the
 analytics/automation SQLite files migrate on open).
 
+## SDK access
+
+Both SDKs connect to hosted Roder with the normal app-server protocol plus
+hosted helpers — no separate protocol:
+
+```ts
+import { HostedClient } from "@roder/sdk";
+const hosted = await HostedClient.connect({ url, token }); // or tokenProvider / headers
+await hosted.whoami();
+const key = await hosted.createServiceAccount("ci"); // token shown once
+await hosted.reconnect(); // fresh token from the provider; nothing is replayed
+```
+
+```python
+from roder_sdk import HostedClient
+hosted = await HostedClient.connect(url, token=token)  # or token_provider= / headers=
+await hosted.whoami()
+```
+
+Raw JSON-RPC stays available via `hosted.client` for forward-compatible
+hosted methods. Examples: `sdk/examples/typescript/hosted-service.ts`,
+`sdk/examples/python/hosted_service.py`; live smokes are gated behind
+`RODER_HOSTED_SDK_LIVE=1` (`sdk/scripts/hosted-live-smoke.ts`,
+`sdk/scripts/hosted_live_smoke.py`).
+
+## Operations runbook
+
+- **Key rotation**: add the new key env var to a new `[[static_keys]]`
+  entry and restart (startup fails closed if any referenced var is unset);
+  distribute the new key; remove the old entry and restart again. Service
+  accounts rotate by minting (`hosted/service_accounts/create`) then
+  revoking the old key id; revocation takes effect for new connections
+  immediately.
+- **Hook delivery replay**: failed deliveries retry automatically with
+  bounded backoff; terminal failures land in the dead-letter list with
+  coarse error classes (`timeout`, `http_5xx`, …). The current replay
+  mechanism is re-sending the originating action after fixing the target;
+  dead-letter records identify the hook and event kind. The per-hook
+  circuit breaker re-probes after its cooldown without operator action.
+- **Audit export**: the audit log is append-only JSONL at the configured
+  `audit_log` path (default `<data_root>/audit.jsonl`); ship it with any
+  log forwarder. Tenant admins can pull their own slice via
+  `hosted/audit/list`. Records carry credential ids and coarse reasons,
+  never secrets.
+- **Backups**: snapshot `data_root` per tenant directory (thread stores,
+  automation DBs) plus the audit JSONL; per-tenant directories are
+  self-contained, so restores can be per-tenant.
+- **Migrations**: JSONL stores are append-only; SQLite stores migrate on
+  open; the PostgreSQL session store migrates at connect. Upgrade by
+  stopping the service (idle eviction + bounded graceful shutdown protect
+  active turns), replacing the binary, and restarting.
+- **Incident response**: revoke the affected credential (static key env
+  removal + restart, or `hosted/service_accounts/revoke`), inspect
+  `audit.jsonl` for `auth_failed`/`method_denied`/`rate_limited` patterns
+  by credential id, and rotate hook signing secrets by updating the
+  referenced env values. The gateway never logs token material, so leaked
+  logs do not leak credentials.
+
 ## Deployment examples
 
 `deploy/roder-hosted/` contains secret-free examples for Docker Compose,
