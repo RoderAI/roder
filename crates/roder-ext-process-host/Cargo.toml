@@ -1,0 +1,20 @@
+[package]
+name = "roder-ext-process-host"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "sync", "time", "macros", "rt"] }
+toml.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+time.workspace = true

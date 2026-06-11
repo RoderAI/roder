@@ -321,6 +321,9 @@ pub struct Runtime {
     thread_item_cache: Mutex<ThreadItemCache>,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) skills: RwLock<SkillRegistry>,
+    /// Lazily-started bounded dispatch of emitted events to registry
+    /// `EventSink`s (process extensions etc.); see `event_sink_dispatch`.
+    event_sink_dispatcher: tokio::sync::OnceCell<crate::event_sink_dispatch::EventSinkDispatcher>,
 }
 
 impl Runtime {
@@ -395,6 +398,7 @@ impl Runtime {
             skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
                 PathBuf::new(),
             ))),
+            event_sink_dispatcher: tokio::sync::OnceCell::new(),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -3246,6 +3250,21 @@ impl Runtime {
             && should_persist_thread_event(thread_id)
         {
             let _ = store.append_event(thread_id, &envelope).await;
+        }
+        // Registered event sinks (e.g. process extensions) receive the
+        // persisted envelope through bounded per-sink queues; a slow sink
+        // never blocks emit or turn progress.
+        let dispatcher = self
+            .event_sink_dispatcher
+            .get_or_init(|| async {
+                crate::event_sink_dispatch::EventSinkDispatcher::start(
+                    &self.registry.event_sinks,
+                    self.bus.clone(),
+                )
+            })
+            .await;
+        if !dispatcher.is_empty() {
+            dispatcher.dispatch(&envelope, &self.bus);
         }
         envelope
     }

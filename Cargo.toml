@@ -97,6 +97,7 @@ roder-ext-zeroentropy-embeddings = { path = "crates/roder-ext-zeroentropy-embedd
 roder-ext-google-speech = { path = "crates/roder-ext-google-speech" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode" }
 roder-ext-postgres-session = { path = "crates/roder-ext-postgres-session" }
+roder-ext-process-host = { path = "crates/roder-ext-process-host" }
 roder-ext-parallel-search = { path = "crates/roder-ext-parallel-search" }
 roder-ext-perplexity-search = { path = "crates/roder-ext-perplexity-search" }
 roder-ext-poolside = { path = "crates/roder-ext-poolside" }
