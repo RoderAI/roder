@@ -3607,6 +3607,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-honcho"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "roder-ext-memory",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-inference-router"
 version = "0.1.0"
 dependencies = [
@@ -4189,6 +4207,7 @@ dependencies = [
  "roder-ext-git",
  "roder-ext-google-embeddings",
  "roder-ext-google-speech",
+ "roder-ext-honcho",
  "roder-ext-inference-router",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",

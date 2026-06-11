@@ -1,0 +1,33 @@
+[package]
+name = "roder-ext-honcho"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "honcho"
+category = "memory-store"
+display_name = "Honcho Memory Store"
+description = "Honcho-backed memory store extension; retrieval is delegated to Honcho's hosted semantic search."
+default_in_profiles = []
+required_env = ["HONCHO_API_KEY", "HONCHO_WORKSPACE_ID"]
+optional_env = ["HONCHO_BASE_URL", "HONCHO_PEER_ID", "HONCHO_SESSION_ID"]
+conflicts_with = []
+required_capabilities = ["network.http", "secret.read.HONCHO_API_KEY"]
+extension_path = "::extension"
+docs_url = "https://docs.honcho.dev"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+roder-api.workspace = true
+roder-ext-memory.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+time = { workspace = true, features = ["serde"] }
+tokio.workspace = true
+
+[dev-dependencies]
+uuid = { workspace = true, features = ["v4"] }
