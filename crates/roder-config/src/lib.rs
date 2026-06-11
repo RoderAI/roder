@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod analytics;
 pub mod dynamic_workflows;
 pub mod marketplaces;
 pub mod workflow_import;
@@ -56,6 +57,8 @@ pub struct Config {
     /// through `roder-ext-process-host` as ordinary registry extensions.
     #[serde(default)]
     pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
+    /// Local usage analytics (`[analytics]`); local-only, enabled by default.
+    pub analytics: Option<analytics::AnalyticsConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1418,6 +1421,7 @@ mod tests {
             models: HashMap::new(),
             model_profiles: HashMap::new(),
             process_extensions: Vec::new(),
+            analytics: None,
         };
         config.providers.insert(
             "openai".to_string(),

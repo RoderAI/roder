@@ -2,6 +2,7 @@ pub mod chrome;
 pub mod methods;
 pub mod schema;
 pub mod speech;
+pub mod stats;
 pub mod workflows;
 
 use roder_api::artifacts::{

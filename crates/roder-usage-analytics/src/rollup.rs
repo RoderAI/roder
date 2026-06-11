@@ -16,10 +16,10 @@ impl AnalyticsStore {
         conn.execute("DELETE FROM daily_rollups", [])?;
 
         // Tool-call aggregates per (day, workspace, provider, model, tool).
-        let mut grouped: std::collections::BTreeMap<
-            (String, String, String, String, String),
-            (Vec<i64>, u64, u64),
-        > = std::collections::BTreeMap::new();
+        type RollupKey = (String, String, String, String, String);
+        type RollupAggregate = (Vec<i64>, u64, u64);
+        let mut grouped: std::collections::BTreeMap<RollupKey, RollupAggregate> =
+            std::collections::BTreeMap::new();
         {
             let mut statement = conn.prepare(
                 "SELECT strftime('%Y-%m-%d', COALESCE(tc.started_at_ms, tc.completed_at_ms) / 1000, \

@@ -506,6 +506,12 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ExternalProcess,
         NonIdempotent
     ),
+    method_spec!("stats/backfill", "stats", LocalState, NonIdempotent),
+    method_spec!("stats/export", "stats", LocalState, NonIdempotent),
+    method_spec!("stats/sessions", "stats", ReadOnly, Idempotent),
+    method_spec!("stats/summary", "stats", ReadOnly, Idempotent),
+    method_spec!("stats/tokens", "stats", ReadOnly, Idempotent),
+    method_spec!("stats/tools", "stats", ReadOnly, Idempotent),
     method_spec!("tasks/cancel", "tasks", LocalState, NonIdempotent),
     method_spec!("tasks/get", "tasks", ReadOnly, Idempotent),
     method_spec!("tasks/list", "tasks", ReadOnly, Idempotent),

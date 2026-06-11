@@ -204,6 +204,12 @@ Core:
 | `speech/transcribe` | Transcribe audio through a registered speech provider. |
 | `speech/synthesis/providers/list` | List speech synthesis providers and TTS models. |
 | `speech/synthesize` | Generate speech audio through a registered synthesis provider. |
+| `stats/summary` | Local usage analytics window summary (turns, tools, tokens). Filters: `{filter: {sinceMs?, untilMs?, threadId?, toolName?, provider?, model?, limit?}}`. |
+| `stats/tools` | Per-tool call/error counts and exact p50/p95/p99 durations; `sort`: `calls`/`p95`/`errors`/`underused`. |
+| `stats/tokens` | Token totals grouped by `day`/`session`/`provider`/`model`/`workspace`. |
+| `stats/sessions` | Per-thread turn/tool/error/token summaries with configured workspace labels. |
+| `stats/backfill` | Idempotently replay JSONL thread events into the analytics store (`rebuild`, `bestEffort`). |
+| `stats/export` | Write schema-versioned normalized JSONL to a server-side path (no inline payload). Responses never include prompt/output bodies; result limits are capped at 1000 rows. See `docs/roder-usage-analytics.md`. |
 
 Threads and turns:
 

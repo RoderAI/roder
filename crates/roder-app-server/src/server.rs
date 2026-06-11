@@ -380,6 +380,43 @@ impl AppServer {
                 })
                 .await
             }
+            "stats/summary" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_summary(p).await
+                })
+                .await
+            }
+            "stats/tools" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_stats_tools(p).await },
+                )
+                .await
+            }
+            "stats/tokens" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_tokens(p).await
+                })
+                .await
+            }
+            "stats/sessions" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_sessions(p).await
+                })
+                .await
+            }
+            "stats/backfill" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_backfill(p).await
+                })
+                .await
+            }
+            "stats/export" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_stats_export(p).await
+                })
+                .await
+            }
             "roadmap/list" => self.handle_roadmap_list().await,
             "roadmap/read" => {
                 self.decode_and(
