@@ -14,13 +14,29 @@ use crate::stream::{
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 pub struct AnthropicEngine {
-    /// Absent keys still register the engine; inference fails at call time.
+    /// Construction-time key only; `resolve_api_key` is the call-time source.
     api_key: Option<String>,
 }
 
 impl AnthropicEngine {
     pub fn new(api_key: Option<String>) -> Self {
         Self { api_key }
+    }
+
+    /**
+     * Call-time key resolution: construction-time key, then env, then
+     * persisted user config. Registration never depends on key presence, so
+     * keys that appear after the registry is built — `providers/configure`
+     * or a deployment env — must take effect without a process restart.
+     */
+    fn resolve_api_key(&self) -> Option<String> {
+        self.api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_string)
+            .or_else(|| env_nonempty("ANTHROPIC_API_KEY"))
+            .or_else(|| roder_config::provider_api_key(PROVIDER_ANTHROPIC))
     }
 
     /**
@@ -148,6 +164,12 @@ const MIN_COMPACTION_TRIGGER: u32 = 50_000;
 
 /// Returns the input-token trigger for server-side compaction when the runtime
 /// requests it, clamped to Anthropic's minimum of 50k tokens.
+fn env_nonempty(name: &str) -> Option<String> {
+    let value = std::env::var(name).ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 fn anthropic_compaction_trigger(request: &AgentInferenceRequest) -> Option<u32> {
     request
         .runtime
@@ -220,7 +242,7 @@ impl InferenceEngine for AnthropicEngine {
             description: Some("Anthropic API key provider".to_string()),
             auth_type: ProviderAuthType::ApiKey,
             auth_label: Some("API key".to_string()),
-            auth_configured: Some(self.api_key.is_some()),
+            auth_configured: Some(self.resolve_api_key().is_some()),
             recommended: true,
             sort_order: 30,
         }
@@ -238,7 +260,7 @@ impl InferenceEngine for AnthropicEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let Some(api_key) = self.api_key.clone() else {
+        let Some(api_key) = self.resolve_api_key() else {
             anyhow::bail!(
                 "Anthropic API key is missing; set ANTHROPIC_API_KEY or configure it from the provider menu"
             )
@@ -437,6 +459,56 @@ mod tests {
     use roder_api::transcript::{
         AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
     };
+
+    struct KeySourceGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    /**
+     * Clears ambient key sources — the named env vars plus the user config
+     * dir, pinned to a fresh temp dir — so keyless-resolution tests stay
+     * deterministic on machines with real credentials; restores everything
+     * on drop. The lock serializes env mutation across these tests.
+     */
+    fn clear_key_sources(vars: &[&'static str]) -> KeySourceGuard {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let lock = LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let scratch = std::env::temp_dir().join(format!(
+            "roder-keyless-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut saved = Vec::new();
+        for var in [
+            roder_config::RODER_CONFIG_DIR_ENV,
+            roder_config::RODER_DATA_DIR_ENV,
+        ] {
+            saved.push((var, std::env::var_os(var)));
+            unsafe { std::env::set_var(var, &scratch) };
+        }
+        for var in vars {
+            saved.push((var, std::env::var_os(var)));
+            unsafe { std::env::remove_var(var) };
+        }
+        KeySourceGuard { _lock: lock, saved }
+    }
+
+    impl Drop for KeySourceGuard {
+        fn drop(&mut self) {
+            for (var, value) in self.saved.drain(..) {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(var, value),
+                        None => std::env::remove_var(var),
+                    }
+                }
+            }
+        }
+    }
 
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
