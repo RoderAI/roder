@@ -18,6 +18,8 @@ pub(crate) struct HonchoMessage {
     pub id: String,
     pub content: String,
     #[serde(default)]
+    pub peer_id: String,
+    #[serde(default)]
     pub session_id: String,
     #[serde(default)]
     pub metadata: Value,

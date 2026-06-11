@@ -44,6 +44,11 @@ impl MockMessage {
     }
 
     fn matches_filters(&self, filters: &Value) -> bool {
+        if let Some(peer_filter) = filters.get("peer_id").and_then(Value::as_str)
+            && self.peer_id != peer_filter
+        {
+            return false;
+        }
         let Some(metadata_filter) = filters.get("metadata").and_then(Value::as_object) else {
             return true;
         };
@@ -385,6 +390,52 @@ async fn honcho_store_lifecycle_against_mock_server() {
     assert_eq!(results.len(), 2);
     assert!(texts.contains(&"note about lunch"));
     assert!(texts.contains(&"global fact about gravel cycling"));
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn peers_sharing_a_workspace_do_not_read_each_other() {
+    let (base_url, _state, server) = spawn_mock().await;
+    let config = |peer: &str| HonchoMemoryConfig {
+        api_key: "test-key".to_string(),
+        base_url: base_url.clone(),
+        workspace_id: "ws-test".to_string(),
+        peer_id: peer.to_string(),
+        session_id: None,
+    };
+    let store_a = HonchoMemoryStore::new(config("peer-a"));
+    let store_b = HonchoMemoryStore::new(config("peer-b"));
+    let scope = MemoryScope::Project("project".to_string());
+
+    let a_id = store_a
+        .put(record("peer a launch checklist", scope.clone()))
+        .await
+        .unwrap();
+
+    // Same workspace, same scope-derived session: peer-b must see nothing.
+    let results = store_b
+        .search(query("launch", Some(scope.clone()), false))
+        .await
+        .unwrap();
+    assert!(results.is_empty());
+    assert!(
+        store_b
+            .list(Some(scope.clone()), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(store_b.get(&a_id).await.unwrap().is_none());
+
+    // peer-a still reads its own record through every path.
+    let results = store_a
+        .search(query("launch", Some(scope.clone()), false))
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(store_a.list(Some(scope), 10).await.unwrap().len(), 1);
+    assert!(store_a.get(&a_id).await.unwrap().is_some());
 
     server.abort();
 }
