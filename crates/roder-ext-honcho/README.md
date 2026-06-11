@@ -46,7 +46,10 @@ can instead install a configured `HonchoMemoryExtension` through
 ## Scope mapping
 
 One roder runtime maps to one Honcho workspace (`workspace_id`). Memories are
-stored as Honcho messages authored by `peer_id`.
+stored as Honcho messages authored by `peer_id`, and every read path (search,
+list, and direct id lookup) is constrained to messages authored by that peer —
+multiple runtimes can share a workspace under distinct peer ids without
+reading each other's records.
 
 | Roder scope | Honcho session |
 | --- | --- |

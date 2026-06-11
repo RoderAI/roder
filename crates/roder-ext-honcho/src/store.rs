@@ -160,6 +160,12 @@ impl HonchoMemoryStore {
             else {
                 return Ok(None);
             };
+            // Direct id lookups bypass the filtered list/search paths, so
+            // authorship is enforced here too — an id pointing at another
+            // peer's message resolves to "not found".
+            if message.peer_id != self.config.peer_id {
+                return Ok(None);
+            }
             let superseded_by = message
                 .metadata
                 .get("roder_superseded_by")
@@ -202,7 +208,7 @@ impl HonchoMemoryStore {
         match scope {
             Some(scope) => {
                 let session = self.session_id_for_scope(scope);
-                let filters = live_filters(Some(&scope.stable_id()));
+                let filters = live_filters(&self.config.peer_id, Some(&scope.stable_id()));
                 let messages = self
                     .client
                     .list_session_messages(&self.config.workspace_id, &session, filters, size)
@@ -231,7 +237,7 @@ impl HonchoMemoryStore {
                         .list_session_messages(
                             &self.config.workspace_id,
                             &session,
-                            live_filters(None),
+                            live_filters(&self.config.peer_id, None),
                             size,
                         )
                         .await?;
@@ -299,7 +305,7 @@ impl MemoryStore for HonchoMemoryStore {
         };
         let mut results = Vec::new();
         for scope_id in scope_ids.drain(..) {
-            let filters = live_filters(scope_id.as_deref());
+            let filters = live_filters(&self.config.peer_id, scope_id.as_deref());
             let messages = self
                 .client
                 .search_workspace(&self.config.workspace_id, &query.text, filters, limit)
@@ -357,15 +363,18 @@ impl MemoryStore for HonchoMemoryStore {
     }
 }
 
-/// Equality-only metadata filters; Honcho's filter language matches nested
-/// metadata keys. `roder_deleted` is written on every record so tombstones
-/// can be excluded with an equality match.
-fn live_filters(scope_id: Option<&str>) -> Value {
+/// Equality-only filters; Honcho's filter language matches message columns
+/// and nested metadata keys. `peer_id` pins reads to memories this store
+/// authored — scope ids (and the default tool scope) are not unique per
+/// runtime, so without it stores sharing a workspace under distinct peers
+/// would read each other's records. `roder_deleted` is written on every
+/// record so tombstones can be excluded with an equality match.
+fn live_filters(peer_id: &str, scope_id: Option<&str>) -> Value {
     let mut metadata = json!({ "roder_memory": true, "roder_deleted": false });
     if let Some(scope_id) = scope_id {
         metadata["roder_scope"] = Value::String(scope_id.to_string());
     }
-    json!({ "metadata": metadata })
+    json!({ "peer_id": peer_id, "metadata": metadata })
 }
 
 fn message_metadata(record: &MemoryRecord) -> Value {
@@ -615,6 +624,7 @@ mod tests {
         let message = HonchoMessage {
             id: "msg-1".to_string(),
             content: record.text.clone(),
+            peer_id: "peer".to_string(),
             session_id: "session".to_string(),
             metadata: message_metadata(&record),
             created_at: None,
