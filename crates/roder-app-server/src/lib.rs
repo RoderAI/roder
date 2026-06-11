@@ -20,7 +20,9 @@ mod method_manifest;
 mod notifications;
 mod processes;
 mod protocol_contract;
+pub mod agent_node;
 pub mod remote;
+pub mod remote_client;
 mod retrieval;
 mod search_index;
 pub mod server;
@@ -36,4 +38,5 @@ mod workspaces;
 
 pub use automations::AppServerFeatureConfig;
 pub use client::*;
+pub use remote_client::{RemoteAppClient, RemoteNodeConnection};
 pub use server::*;

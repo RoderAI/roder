@@ -33,6 +33,14 @@ name = "process_extension_python_provider"
 path = "tests/process_extension_python_provider.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "agent_node_security"
+path = "tests/agent_node_security.rs"
+
+[[test]]
+name = "remote_app_client"
+path = "tests/remote_app_client.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -51,6 +59,10 @@ roder-code-index.workspace = true
 roder-commands.workspace = true
 roder-config.workspace = true
 roder-usage-analytics.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+rcgen.workspace = true
+rustls-pemfile.workspace = true
 roder-core.workspace = true
 roder-dynamic-workflows.workspace = true
 roder-evals.workspace = true
@@ -72,6 +84,8 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 async-trait.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
 futures.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-google-embeddings.workspace = true
