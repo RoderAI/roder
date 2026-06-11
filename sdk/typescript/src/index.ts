@@ -12,6 +12,13 @@ export {
 } from "./agent.js";
 export { RoderRpcClient, type MethodHelpers } from "./client.js";
 export {
+  HostedClient,
+  type HostedConnectOptions,
+  type HostedHookDefinition,
+  type HostedServiceAccountKey,
+  type HostedWhoami,
+} from "./hosted.js";
+export {
   normalizeNotification,
   type EventMode,
   type ItemCompletedEvent,
