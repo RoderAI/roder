@@ -110,6 +110,58 @@ mod tests {
     }
 
     #[test]
+    fn remote_read_roots_widen_reads_but_not_writes_or_workdir() {
+        let workspace = Workspace::remote_with_read_roots(
+            PathBuf::from("/var/workspace/session"),
+            ToolPathScope::Workspace,
+            vec![PathBuf::from("/var/workspace/skills")],
+        )
+        .unwrap();
+
+        // A read under a declared read root resolves.
+        assert_eq!(
+            workspace
+                .resolve_existing("/var/workspace/skills/global/x/SKILL.md")
+                .unwrap(),
+            PathBuf::from("/var/workspace/skills/global/x/SKILL.md")
+        );
+        // Reads under the primary root still resolve.
+        assert_eq!(
+            workspace.resolve_existing("notes.md").unwrap(),
+            PathBuf::from("/var/workspace/session/notes.md")
+        );
+
+        // A read outside every declared root is rejected.
+        let undeclared = workspace
+            .resolve_existing("/var/workspace/documents/a.md")
+            .unwrap_err();
+        assert!(undeclared.to_string().contains("outside workspace"));
+
+        // Writes stay confined to the primary root even under a read root.
+        let write_escape = workspace
+            .resolve_for_write("/var/workspace/skills/global/x/out.md")
+            .unwrap_err();
+        assert!(write_escape.to_string().contains("outside workspace"));
+
+        // The working directory stays confined to the primary root.
+        let workdir_escape = workspace
+            .resolve_existing_workdir("/var/workspace/skills/global")
+            .unwrap_err();
+        assert!(workdir_escape.to_string().contains("outside workspace"));
+    }
+
+    #[test]
+    fn remote_read_roots_must_be_absolute() {
+        let error = Workspace::remote_with_read_roots(
+            PathBuf::from("/var/workspace/session"),
+            ToolPathScope::Workspace,
+            vec![PathBuf::from("skills")],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("absolute"));
+    }
+
+    #[test]
     fn workdir_resolution_still_accepts_normal_relative_directories() {
         let root = temp_workspace("roder-workdir-subdir");
         let subdir = root.join("crates").join("roder-tools");
@@ -157,6 +209,13 @@ pub(crate) struct Workspace {
     root: PathBuf,
     path_scope: ToolPathScope,
     /**
+     * Extra absolute roots that file reads may resolve under, beyond `root`.
+     * Writes and the working directory stay confined to `root`; only the
+     * read path (`resolve_existing`) consults these. Populated for remote
+     * workspaces that expose read-only mounts outside the writable root.
+     */
+    read_roots: Vec<PathBuf>,
+    /**
      * Remote workspaces scope paths on a runner filesystem: resolution is
      * purely lexical (no canonicalize/existence checks against local disk)
      * and existence errors surface from the runner backend instead.
@@ -182,20 +241,39 @@ impl Workspace {
         Ok(Self {
             root,
             path_scope,
+            read_roots: Vec::new(),
             remote: false,
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn remote(root: PathBuf, path_scope: ToolPathScope) -> anyhow::Result<Self> {
+        Self::remote_with_read_roots(root, path_scope, Vec::new())
+    }
+
+    pub(crate) fn remote_with_read_roots(
+        root: PathBuf,
+        path_scope: ToolPathScope,
+        read_roots: Vec<PathBuf>,
+    ) -> anyhow::Result<Self> {
         if !root.is_absolute() {
             bail!(
                 "remote workspace root must be an absolute runner path: {}",
                 root.display()
             );
         }
+        for read_root in &read_roots {
+            if !read_root.is_absolute() {
+                bail!(
+                    "remote workspace read root must be an absolute runner path: {}",
+                    read_root.display()
+                );
+            }
+        }
         Ok(Self {
             root,
             path_scope,
+            read_roots,
             remote: true,
         })
     }
@@ -213,7 +291,11 @@ impl Workspace {
         fallback: &Workspace,
     ) -> anyhow::Result<Self> {
         if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
-            return Self::remote(remote.root.clone(), fallback.path_scope);
+            return Self::remote_with_read_roots(
+                remote.root.clone(),
+                fallback.path_scope,
+                remote.read_roots.clone(),
+            );
         }
         let Some(handle) = ctx.handles.workspace.as_ref() else {
             return Ok(fallback.clone());
@@ -240,13 +322,13 @@ impl Workspace {
         let candidate = self.candidate(input)?;
         if self.remote {
             let normalized = self.normalize(candidate)?;
-            self.ensure_allowed(&normalized)?;
+            self.ensure_readable(&normalized)?;
             return Ok(normalized);
         }
         let canonical = candidate
             .canonicalize()
             .with_context(|| format!("path does not exist: {input}"))?;
-        self.ensure_allowed(&canonical)?;
+        self.ensure_readable(&canonical)?;
         Ok(canonical)
     }
 
@@ -255,7 +337,11 @@ impl Workspace {
         if trimmed.is_empty() || is_workspace_root_alias(trimmed) {
             return Ok(self.root.clone());
         }
-        self.resolve_existing(trimmed)
+        let resolved = self.resolve_existing(trimmed)?;
+        // The working directory is where writes land; keep it under the
+        // primary root even though read roots widen `resolve_existing`.
+        self.ensure_allowed(&resolved)?;
+        Ok(resolved)
     }
 
     pub(crate) fn resolve_for_write(&self, input: &str) -> anyhow::Result<PathBuf> {
@@ -290,6 +376,25 @@ impl Workspace {
 
     fn ensure_allowed(&self, path: &Path) -> anyhow::Result<()> {
         if self.path_scope.allows_external_paths() || path.starts_with(&self.root) {
+            return Ok(());
+        }
+        bail!(
+            "path {} is outside workspace {}",
+            path.display(),
+            self.root.display()
+        );
+    }
+
+    /**
+     * Read access check: the primary root, any declared read root, or an
+     * unrestricted scope. Reads may reach declared read roots even though
+     * writes (`ensure_allowed`) stay confined to the primary root.
+     */
+    fn ensure_readable(&self, path: &Path) -> anyhow::Result<()> {
+        if self.path_scope.allows_external_paths()
+            || path.starts_with(&self.root)
+            || self.read_roots.iter().any(|root| path.starts_with(root))
+        {
             return Ok(());
         }
         bail!(

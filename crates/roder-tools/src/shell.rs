@@ -439,6 +439,7 @@ mod tests {
                     state: state.clone(),
                 }),
                 root: "/sandbox/workspace".into(),
+                read_roots: Vec::new(),
             },
         ));
         let tool = ShellTool {

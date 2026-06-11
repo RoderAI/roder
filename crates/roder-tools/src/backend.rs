@@ -104,7 +104,11 @@ pub(crate) fn backend_from_context_or_fallback(
     fallback_backend: &WorkspaceBackendHandle,
 ) -> anyhow::Result<WorkspaceBackendHandle> {
     if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
-        let guard = Workspace::remote(remote.root.clone(), fallback_workspace.path_scope())?;
+        let guard = Workspace::remote_with_read_roots(
+            remote.root.clone(),
+            fallback_workspace.path_scope(),
+            remote.read_roots.clone(),
+        )?;
         return Ok(Arc::new(RunnerWorkspaceBackend::new(
             guard,
             remote.session.clone(),
@@ -527,6 +531,7 @@ mod tests {
             .with_remote_workspace(Arc::new(RemoteWorkspace {
                 session: Arc::new(RecordingRunnerSession { state }),
                 root: PathBuf::from("/sandbox/workspace"),
+                read_roots: Vec::new(),
             }))
     }
 

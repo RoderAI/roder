@@ -37,6 +37,11 @@ pub(crate) fn protocol_thread_from_metadata(
             provider_id: binding.destination.provider_id,
             config: Some(binding.destination.config),
             workspace: binding.workspace.to_string_lossy().to_string(),
+            read_roots: binding
+                .read_roots
+                .iter()
+                .map(|root| root.to_string_lossy().to_string())
+                .collect(),
         }),
         parent_thread_id: metadata.parent_thread_id,
         workspace_fork: metadata.workspace_fork,
