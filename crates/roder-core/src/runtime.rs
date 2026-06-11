@@ -1037,6 +1037,9 @@ impl Runtime {
             updated_at: now,
             message_count: 0,
             usage: None,
+            parent_thread_id: None,
+            forked_from_turn_id: None,
+            worktree_fork: None,
         };
 
         let metadata = if let Some(store) = &self.thread_store {
