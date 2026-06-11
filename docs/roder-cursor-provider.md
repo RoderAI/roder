@@ -107,6 +107,14 @@ Two request requirements were discovered as prerequisites for the agentic tool l
 
 Any unmapped Cursor-native tool is surfaced as a `cursor_unsupported_tool` call so the frame can be captured (see below) and decoded.
 
+### MCP / client-advertised tools (not surfaced by Cursor)
+
+`AgentRunRequest.mcp_tools` (field 4) carries `agent.v1.McpToolDefinition`s the client can advertise. Roder can map its own `ToolSpec`s into this field (`name 1`, `description 2`, `input_schema 3` as a `google.protobuf.Value`; see `encode_mcp_tools` and `proto/agent_v1.proto`), but **this does not expand a Cursor model's tool surface**.
+
+A live experiment (`cursor/claude-opus-4-8` with `RODER_CURSOR_CAPTURE_FRAMES`) advertised a Roder-only tool (`update_plan`) and the model reported it only had Cursor's native tools (`TodoWrite`) — no `update_plan`, and the response stream contained no `GetMcpTools`/`McpTool`/`tool_not_found` frames. Cursor controls the model's tool set server-side; `McpToolDefinition` entries without a registered `provider_identifier` (i.e. a Cursor-hosted MCP server) are ignored. The turn was unaffected (no regression).
+
+Consequently Roder's tools reach Cursor models **only** through the native exec mapping above (read/write/shell/grep/glob), not through `mcp_tools`. Advertising is therefore disabled by default. The encoder, schema (`proto/agent_v1.proto`), and tests are kept for future work (provider registration, or a client-exec channel for MCP). Set `RODER_CURSOR_ADVERTISE_MCP_TOOLS=1` to send the definitions anyway (harmless, currently a no-op on Cursor's side).
+
 ### Image input
 
 The Cursor provider advertises `image_input: true` and uploads images inline (field numbers sourced from the Cursor app bundle's `agent.v1` protobuf schema, same as the tool mapping above):

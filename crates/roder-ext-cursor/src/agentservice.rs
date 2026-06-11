@@ -7,7 +7,8 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::proto::{
-    ConnectFrame, CursorExecRequest, CursorHistoryMessage, CursorImage, CursorToolCall,
+    ConnectFrame, CursorExecRequest, CursorHistoryMessage, CursorImage, CursorMcpTool,
+    CursorToolCall,
     decode_agent_server_message, decode_server_frame,
     encode_agent_client_message_with_history, encode_cli_stream_control_frames,
     encode_connect_frame, encode_exec_request_context_result, take_connect_frame,
@@ -47,6 +48,8 @@ pub struct AgentServiceRequest {
     pub history: Vec<CursorHistoryMessage>,
     /// Inline images attached to the current user message.
     pub images: Vec<CursorImage>,
+    /// Roder tools advertised to the model via `AgentRunRequest.mcp_tools`.
+    pub tools: Vec<CursorMcpTool>,
     /// Workspace root used to respond to `request_context_args` so the model
     /// knows where to look for files before generating text.
     pub workspace: PathBuf,
@@ -82,6 +85,7 @@ pub async fn stream_agent_service(
             &message_id,
             &request.history,
             &request.images,
+            &request.tools,
         ),
     )];
     for frame in &request.context_frames {

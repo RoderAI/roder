@@ -20,7 +20,7 @@ use crate::context::{
     CursorContextOptions, discovery_context_frames_from_env, encode_request_context_frame,
 };
 use crate::models::fallback_models;
-use crate::proto::{CursorHistoryMessage, CursorImage};
+use crate::proto::{CursorHistoryMessage, CursorImage, CursorMcpTool};
 
 #[derive(Debug, Clone, Default)]
 pub struct CursorConfig {
@@ -122,6 +122,7 @@ impl InferenceEngine for CursorInferenceEngine {
         // requests in-stream so the model completes multi-step edits in one turn.
         if let Some(executor) = ctx.tool_executor.clone() {
             let (prompt, history, images) = cursor_request_parts(&request);
+            let tools = cursor_mcp_tools_from_request(&request);
             let conversation_id = uuid::Uuid::new_v4().to_string();
             let message_id = uuid::Uuid::new_v4().to_string();
             let run_request = crate::proto::encode_agent_client_message_with_history(
@@ -131,6 +132,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 &message_id,
                 &history,
                 &images,
+                &tools,
             );
             let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
                 vec![encode_request_context_frame(
@@ -157,6 +159,7 @@ impl InferenceEngine for CursorInferenceEngine {
             )]
         });
         let (prompt, history, images) = cursor_request_parts(&request);
+        let tools = cursor_mcp_tools_from_request(&request);
         let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
         let service_stream = stream_agent_service(
             self.agent_service_config(),
@@ -167,6 +170,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 context_frames,
                 history,
                 images,
+                tools,
                 workspace,
             },
         )
@@ -350,6 +354,42 @@ fn cursor_images_from_inputs(
     images
         .iter()
         .filter_map(|image| CursorImage::from_data_url(&image.image_url))
+        .collect()
+}
+
+/// Opt-in env flag for advertising Roder tools to Cursor via
+/// `AgentRunRequest.mcp_tools`. Default OFF — see [`cursor_mcp_tools_from_request`].
+const ADVERTISE_MCP_TOOLS_ENV: &str = "RODER_CURSOR_ADVERTISE_MCP_TOOLS";
+
+/// Map Roder's advertised `ToolSpec`s into Cursor `McpToolDefinition`s.
+///
+/// IMPORTANT: this is disabled by default. A live experiment
+/// (`cursor/claude-opus-4-8`, frame capture) showed Cursor **ignores**
+/// client-advertised `mcp_tools` that carry no registered `provider_identifier`:
+/// the model's tool surface is controlled server-side (it only saw Cursor's
+/// native tools), so listing tool definitions here does not make them callable.
+/// Roder tools reach Cursor models through the native exec mapping in `bidi.rs`
+/// (read/write/shell/grep/glob), not through this field.
+///
+/// The encoder + schema are kept for future work (e.g. once provider
+/// registration or a client-exec channel for MCP is understood). Set
+/// `RODER_CURSOR_ADVERTISE_MCP_TOOLS=1` to advertise the definitions anyway
+/// (harmless but currently a no-op on Cursor's side) for experimentation.
+fn cursor_mcp_tools_from_request(request: &AgentInferenceRequest) -> Vec<CursorMcpTool> {
+    let enabled = std::env::var(ADVERTISE_MCP_TOOLS_ENV)
+        .map(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    if !enabled {
+        return Vec::new();
+    }
+    request
+        .tools
+        .iter()
+        .map(|tool| CursorMcpTool {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+            input_schema: tool.parameters.clone(),
+        })
         .collect()
 }
 
