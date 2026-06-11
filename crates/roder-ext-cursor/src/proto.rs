@@ -1023,6 +1023,12 @@ pub(crate) fn encode_exec_request_context_result(id: u64, workspace_path: &str) 
 /// exec_client INIT (context handshake): `AgentClientMessage{ 2:{ 10:{ 1:{ 1:{ 2:[files] } } } } }`.
 /// Each file entry is `{ 1: path, 2: content }`. An empty list establishes the
 /// exec channel without pushing workspace files (the model reads on demand).
+///
+/// Kept as a documented encoder for the exec INIT frame (see
+/// docs/roder-cursor-agent-runtime-protocol.md): the live path responds to the
+/// server's `request_context_args` instead of proactively pushing files, so
+/// this is currently exercised only by unit tests.
+#[allow(dead_code)]
 pub(crate) fn encode_exec_init(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     let entries: Vec<Vec<u8>> = files
         .iter()
@@ -1308,6 +1314,27 @@ mod tests {
         )]));
         assert!(is_context_frame(&frame));
         assert!(!is_context_frame(&encode_connect_frame(b"abc")));
+    }
+
+    #[test]
+    fn exec_init_encodes_workspace_files_into_handshake() {
+        // AgentClientMessage{ 2:{ 10:{ 1:{ 1:{ 2:[ {1:path, 2:content} ] } } } } }.
+        let bytes = encode_exec_init(&[("AGENTS.md".to_string(), b"file body".to_vec())]);
+        let exec = submessage(&bytes, 2).expect("exec_client_message");
+        let ctx = submessage(&exec, 10).expect("context (field 10)");
+        let l1 = submessage(&ctx, 1).expect("context.1");
+        let file_list = submessage(&l1, 1).expect("file_list");
+        let file = submessage(&file_list, 2).expect("first file entry");
+        assert_eq!(scalar_string(&file, 1).as_deref(), Some("AGENTS.md"));
+        assert_eq!(submessage(&file, 2).as_deref(), Some(b"file body".as_slice()));
+
+        // An empty file list still establishes the exec channel (no file entries).
+        let empty = encode_exec_init(&[]);
+        let exec = submessage(&empty, 2).expect("exec_client_message");
+        let ctx = submessage(&exec, 10).expect("context (field 10)");
+        let l1 = submessage(&ctx, 1).expect("context.1");
+        let file_list = submessage(&l1, 1).expect("file_list");
+        assert!(submessage(&file_list, 2).is_none());
     }
 
     #[test]
