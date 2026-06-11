@@ -248,7 +248,7 @@ Tools, commands, files, agents, and tasks:
 | `workspace/files/status` | Read workspace file-index state for registered roots. |
 | `workspace/files/rebuild` | Build or refresh the app-server-owned workspace file index. |
 | `workspace/files/children` | List workspace root or directory children for lazy file trees. |
-| `workspace/files/query` | Ranked fuzzy query over indexed workspace files. |
+| `workspace/files/query` | Ranked fuzzy query over indexed workspace files and directories. |
 | `workspace/files/read` | Read a bounded text preview or binary metadata for an indexed workspace file. |
 | `fs/readFile` | Low-level absolute host file read as base64. |
 | `fs/readDirectory` | Low-level direct child listing for an absolute host directory. |
@@ -1934,8 +1934,8 @@ Behavior:
 
 ### `workspace/files/query`
 
-Purpose: Ranked fuzzy file query for tree search, `@mentions`, and command-p
-quick-open.
+Purpose: Ranked fuzzy file and directory query for tree search, `@mentions`,
+and command-p quick-open.
 
 Request:
 
@@ -1960,6 +1960,18 @@ Response:
     "directoryCount": 932
   },
   "matches": [
+    {
+      "entry": {
+        "rootId": "root_abc123",
+        "rootName": "gode",
+        "path": "roadmap",
+        "name": "roadmap",
+        "kind": "directory",
+        "hasChildren": true
+      },
+      "score": 1200,
+      "matchPositions": [0, 1, 2, 3, 4, 5, 6]
+    },
     {
       "entry": {
         "rootId": "root_abc123",
