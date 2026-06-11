@@ -5,11 +5,37 @@ use std::{
 
 use async_trait::async_trait;
 use roder_api::events::EventEnvelope;
-use roder_api_transcript::{ApiTranscriptRecord, write_jsonl_record};
+use roder_api_transcript::{
+    ApiTranscriptRecord, RedactionRule, TranscriptRedactor, write_jsonl_record,
+};
 use roder_protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
+use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::client::{AppClient, AppEventReceiver, AppNotificationReceiver};
+
+/**
+ * Redacts recorded API traffic before it reaches the transcript: default
+ * sensitive keys (auth tokens, API keys, bearer headers) plus raw audio
+ * payloads (`audio.bytesBase64` / `voiceSample.bytesBase64` on speech
+ * methods), so transcripts stay shareable for debugging.
+ */
+fn redact_recorded_value(mut value: Value) -> Value {
+    let redactor = TranscriptRedactor::new(vec![RedactionRule::SensitiveKey(
+        "bytesBase64".to_string(),
+    )]);
+    redactor.redact_value(&mut value);
+    value
+}
+
+fn recorded_json<T: serde::Serialize>(value: &T) -> Value {
+    let serialized = serde_json::to_value(value).unwrap_or_else(|err| {
+        serde_json::json!({
+            "serializationError": err.to_string()
+        })
+    });
+    redact_recorded_value(serialized)
+}
 
 #[derive(Clone, Default)]
 pub struct TranscriptRecorder {
@@ -98,11 +124,7 @@ where
 
     async fn send_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
         let (request_seq, request_at_ms) = self.recorder.next_seq_at_ms();
-        let request_value = serde_json::to_value(&request).unwrap_or_else(|err| {
-            serde_json::json!({
-                "serializationError": err.to_string()
-            })
-        });
+        let request_value = recorded_json(&request);
         let _ = self.recorder.push(ApiTranscriptRecord::ApiRequest {
             seq: request_seq,
             at_ms: request_at_ms,
@@ -111,11 +133,7 @@ where
         });
 
         let response = self.inner.send_request(request).await;
-        let response_value = serde_json::to_value(&response).unwrap_or_else(|err| {
-            serde_json::json!({
-                "serializationError": err.to_string()
-            })
-        });
+        let response_value = recorded_json(&response);
         let (response_seq, response_at_ms) = self.recorder.next_seq_at_ms();
         let _ = self.recorder.push(ApiTranscriptRecord::ApiResponse {
             seq: response_seq,
@@ -157,11 +175,7 @@ where
     async fn recv(&mut self) -> Result<EventEnvelope, broadcast::error::RecvError> {
         match self.inner.recv().await {
             Ok(envelope) => {
-                let value = serde_json::to_value(&envelope).unwrap_or_else(|err| {
-                    serde_json::json!({
-                        "serializationError": err.to_string()
-                    })
-                });
+                let value = recorded_json(&envelope);
                 let (seq, at_ms) = self.recorder.next_seq_at_ms();
                 let _ = self.recorder.push(ApiTranscriptRecord::RuntimeEvent {
                     seq,
@@ -187,11 +201,7 @@ where
     fn try_recv(&mut self) -> Result<EventEnvelope, broadcast::error::TryRecvError> {
         match self.inner.try_recv() {
             Ok(envelope) => {
-                let value = serde_json::to_value(&envelope).unwrap_or_else(|err| {
-                    serde_json::json!({
-                        "serializationError": err.to_string()
-                    })
-                });
+                let value = recorded_json(&envelope);
                 let (seq, at_ms) = self.recorder.next_seq_at_ms();
                 let _ = self.recorder.push(ApiTranscriptRecord::RuntimeEvent {
                     seq,
@@ -229,11 +239,7 @@ where
     async fn recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::RecvError> {
         match self.inner.recv().await {
             Ok(notification) => {
-                let value = serde_json::to_value(&notification).unwrap_or_else(|err| {
-                    serde_json::json!({
-                        "serializationError": err.to_string()
-                    })
-                });
+                let value = recorded_json(&notification);
                 let (seq, at_ms) = self.recorder.next_seq_at_ms();
                 let _ = self.recorder.push(ApiTranscriptRecord::ApiNotification {
                     seq,
@@ -259,11 +265,7 @@ where
     fn try_recv(&mut self) -> Result<JsonRpcNotification, broadcast::error::TryRecvError> {
         match self.inner.try_recv() {
             Ok(notification) => {
-                let value = serde_json::to_value(&notification).unwrap_or_else(|err| {
-                    serde_json::json!({
-                        "serializationError": err.to_string()
-                    })
-                });
+                let value = recorded_json(&notification);
                 let (seq, at_ms) = self.recorder.next_seq_at_ms();
                 let _ = self.recorder.push(ApiTranscriptRecord::ApiNotification {
                     seq,
@@ -382,6 +384,51 @@ mod tests {
                 .unwrap()
                 .contains("thread/state")
         );
+    }
+
+    #[tokio::test]
+    async fn recording_client_redacts_audio_payloads_and_sensitive_keys() {
+        let (event_tx, _) = broadcast::channel(8);
+        let (notification_tx, _) = broadcast::channel(8);
+        let recorder = TranscriptRecorder::default();
+        let client = RecordingAppClient::new(
+            FakeClient {
+                events: event_tx,
+                notifications: notification_tx,
+            },
+            recorder.clone(),
+            "exec",
+        );
+
+        let _ = client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(json!(1)),
+                method: "speech/transcribe".to_string(),
+                params: Some(json!({
+                    "provider": "openai-speech",
+                    "audio": {
+                        "bytesBase64": "UklGRlJhd0F1ZGlv",
+                        "mimeType": "audio/wav"
+                    },
+                    "apiKey": "sk-raw-secret"
+                })),
+            })
+            .await;
+
+        let jsonl = String::from_utf8(recorder.jsonl()).unwrap();
+        assert!(
+            !jsonl.contains("UklGRlJhd0F1ZGlv"),
+            "raw audio must not be recorded: {jsonl}"
+        );
+        assert!(
+            !jsonl.contains("sk-raw-secret"),
+            "API keys must not be recorded: {jsonl}"
+        );
+        assert!(jsonl.contains("<redacted>"), "{jsonl}");
+        // Non-sensitive request structure stays intact for debugging.
+        assert!(jsonl.contains("speech/transcribe"), "{jsonl}");
+        assert!(jsonl.contains("audio/wav"), "{jsonl}");
     }
 
     #[tokio::test]
