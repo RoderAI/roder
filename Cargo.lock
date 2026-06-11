@@ -3220,6 +3220,7 @@ dependencies = [
  "roder-supergrok-auth",
  "roder-tasks",
  "roder-tools",
+ "roder-usage-analytics",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3279,6 +3280,7 @@ dependencies = [
  "roder-supergrok-auth",
  "roder-tools",
  "roder-tui",
+ "roder-usage-analytics",
  "roder-web-search",
  "serde",
  "serde_json",
@@ -4305,6 +4307,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "roder-api",
+ "roder-usage-analytics",
  "serde",
  "serde_json",
  "time",

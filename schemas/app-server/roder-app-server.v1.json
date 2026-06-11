@@ -1395,6 +1395,60 @@
       "sideEffect": "externalProcess"
     },
     {
+      "method": "stats/backfill",
+      "paramsType": "StatsBackfillParams",
+      "resultType": "StatsBackfillResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "stats/export",
+      "paramsType": "StatsExportParams",
+      "resultType": "StatsExportResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "stats/sessions",
+      "paramsType": "StatsSessionsParams",
+      "resultType": "StatsSessionsResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/summary",
+      "paramsType": "StatsSummaryParams",
+      "resultType": "StatsSummaryResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/tokens",
+      "paramsType": "StatsTokensParams",
+      "resultType": "StatsTokensResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/tools",
+      "paramsType": "StatsToolsParams",
+      "resultType": "StatsToolsResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "tasks/cancel",
       "paramsType": "TasksCancelParams",
       "resultType": "TasksCancelResult",

@@ -50,6 +50,7 @@ roder-codex-auth.workspace = true
 roder-code-index.workspace = true
 roder-commands.workspace = true
 roder-config.workspace = true
+roder-usage-analytics.workspace = true
 roder-core.workspace = true
 roder-dynamic-workflows.workspace = true
 roder-evals.workspace = true

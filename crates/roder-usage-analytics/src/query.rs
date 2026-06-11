@@ -132,7 +132,7 @@ impl AnalyticsStore {
                 }
             })
             .collect();
-        summaries.sort_by(|a, b| b.call_count.cmp(&a.call_count));
+        summaries.sort_by_key(|summary| std::cmp::Reverse(summary.call_count));
         summaries.truncate(effective_limit(filter) as usize);
         Ok(summaries)
     }
@@ -383,14 +383,14 @@ impl AnalyticsStore {
 /// Sort orders shared by the CLI and app-server tool listings.
 pub fn sort_tool_summaries(summaries: &mut [ToolSummary], sort: &str) {
     match sort {
-        "p95" => summaries.sort_by(|a, b| b.p95_duration_ms.cmp(&a.p95_duration_ms)),
+        "p95" => summaries.sort_by_key(|summary| std::cmp::Reverse(summary.p95_duration_ms)),
         "errors" => summaries.sort_by(|a, b| {
             b.error_rate
                 .partial_cmp(&a.error_rate)
                 .unwrap_or(std::cmp::Ordering::Equal)
         }),
-        "underused" => summaries.sort_by(|a, b| a.call_count.cmp(&b.call_count)),
-        _ => summaries.sort_by(|a, b| b.call_count.cmp(&a.call_count)),
+        "underused" => summaries.sort_by_key(|summary| summary.call_count),
+        _ => summaries.sort_by_key(|summary| std::cmp::Reverse(summary.call_count)),
     }
 }
 
