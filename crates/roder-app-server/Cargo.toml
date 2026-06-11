@@ -23,6 +23,11 @@ name = "postgres_like_thread_store"
 path = "tests/postgres_like_thread_store.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "fork_worktree"
+path = "tests/fork_worktree.rs"
+required-features = ["e2e-tests"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

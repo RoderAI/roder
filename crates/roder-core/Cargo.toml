@@ -9,6 +9,7 @@ async-trait.workspace = true
 futures.workspace = true
 roder-api.workspace = true
 roder-dynamic-workflows.workspace = true
+roder-ext-git.workspace = true
 roder-roadmap.workspace = true
 roder-sandbox.workspace = true
 roder-skills.workspace = true

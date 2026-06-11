@@ -840,6 +840,75 @@ mod tests {
         std::env::temp_dir().join(name).display().to_string()
     }
 
+    /// Fork metadata (roadmap phase 90) must survive a process restart: a
+    /// second store instance over the same files reloads the full provenance.
+    #[tokio::test]
+    async fn fork_metadata_round_trips_across_store_instances() {
+        use roder_api::thread::{
+            ThreadWorktreeFork, WorktreeForkBackend, WorktreeForkCleanup, WorktreeForkStatus,
+        };
+
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-fork-roundtrip-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let fork = ThreadWorktreeFork {
+            fork_id: "fork-experiment".to_string(),
+            backend: WorktreeForkBackend::GitWorktree,
+            source_workspace: test_workspace("parent-repo"),
+            worktree_path: test_workspace("parent-repo-worktree"),
+            branch: "roder/fork/experiment".to_string(),
+            source_branch: Some("main".to_string()),
+            source_commit: "abc123".to_string(),
+            created_at: now,
+            status: WorktreeForkStatus::Active,
+            cleanup: WorktreeForkCleanup::Explicit,
+        };
+
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: "child-thread".to_string(),
+                title: Some("Fork child".to_string()),
+                workspace: fork.worktree_path.clone(),
+                workspace_id: None,
+                root_id: None,
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                selection_mode: None,
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
+                external_tools: Vec::new(),
+                runner_destination: None,
+                runner_state: None,
+                runner_binding: None,
+                parent_thread_id: Some("parent-thread".to_string()),
+                forked_from_turn_id: Some("turn-7".to_string()),
+                worktree_fork: Some(fork.clone()),
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+
+        // Simulated restart: a fresh store instance over the same base path.
+        let reopened = JsonlThreadStore { base_path };
+        let metadata = reopened
+            .load_thread_metadata(&"child-thread".to_string())
+            .await
+            .unwrap()
+            .expect("child metadata after restart");
+
+        assert_eq!(metadata.parent_thread_id.as_deref(), Some("parent-thread"));
+        assert_eq!(metadata.forked_from_turn_id.as_deref(), Some("turn-7"));
+        assert_eq!(metadata.worktree_fork, Some(fork));
+    }
+
     fn transcript_item_event(
         seq: u64,
         thread_id: &ThreadId,

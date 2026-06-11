@@ -105,6 +105,45 @@ pub struct ThreadCreated {
     pub timestamp: OffsetDateTime,
 }
 
+/// A conversation fork into a worktree-backed child thread was requested.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForkRequested {
+    pub parent_thread_id: ThreadId,
+    pub name: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// A child thread was created with its worktree workspace fork.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForked {
+    pub parent_thread_id: ThreadId,
+    pub child_thread_id: ThreadId,
+    pub fork: crate::thread::ThreadWorktreeFork,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// A requested conversation fork failed (worktree or thread creation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForkFailed {
+    pub parent_thread_id: ThreadId,
+    pub name: String,
+    pub message: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+/// A fork's worktree was explicitly removed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadForkRemoved {
+    pub thread_id: ThreadId,
+    pub fork_id: String,
+    pub worktree_path: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadLoaded {
     pub thread_id: ThreadId,
@@ -1116,6 +1155,10 @@ pub enum RoderEvent {
     ExtensionRegistered(ExtensionRegistered),
     ThreadCreated(ThreadCreated),
     ThreadLoaded(ThreadLoaded),
+    ThreadForkRequested(ThreadForkRequested),
+    ThreadForked(ThreadForked),
+    ThreadForkFailed(ThreadForkFailed),
+    ThreadForkRemoved(ThreadForkRemoved),
     TurnStarted(TurnStarted),
     ContextAssemblyStarted(ContextAssemblyStarted),
     ContextBlockAdded(ContextBlockAdded),
@@ -1298,6 +1341,10 @@ impl RoderEvent {
             RoderEvent::ExtensionRegistered(_) => "extension.registered",
             RoderEvent::ThreadCreated(_) => "thread.created",
             RoderEvent::ThreadLoaded(_) => "thread.loaded",
+            RoderEvent::ThreadForkRequested(_) => "thread.fork_requested",
+            RoderEvent::ThreadForked(_) => "thread.forked",
+            RoderEvent::ThreadForkFailed(_) => "thread.fork_failed",
+            RoderEvent::ThreadForkRemoved(_) => "thread.fork_removed",
             RoderEvent::TurnStarted(_) => "turn.started",
             RoderEvent::ContextAssemblyStarted(_) => "context.assembly_started",
             RoderEvent::ContextBlockAdded(_) => "context.block_added",
@@ -1614,6 +1661,10 @@ impl RoderEvent {
         match self {
             RoderEvent::ThreadCreated(e) => Some(&e.thread_id),
             RoderEvent::ThreadLoaded(e) => Some(&e.thread_id),
+            RoderEvent::ThreadForkRequested(e) => Some(&e.parent_thread_id),
+            RoderEvent::ThreadForked(e) => Some(&e.child_thread_id),
+            RoderEvent::ThreadForkFailed(e) => Some(&e.parent_thread_id),
+            RoderEvent::ThreadForkRemoved(e) => Some(&e.thread_id),
             RoderEvent::TurnStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextAssemblyStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextBlockAdded(e) => Some(&e.thread_id),
@@ -1794,6 +1845,10 @@ impl RoderEvent {
 
     pub fn turn_id(&self) -> Option<&TurnId> {
         match self {
+            RoderEvent::ThreadForkRequested(_)
+            | RoderEvent::ThreadForked(_)
+            | RoderEvent::ThreadForkFailed(_)
+            | RoderEvent::ThreadForkRemoved(_) => None,
             RoderEvent::TurnStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextAssemblyStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextBlockAdded(e) => Some(&e.turn_id),

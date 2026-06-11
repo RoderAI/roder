@@ -4,6 +4,7 @@ mod chrome;
 mod commands;
 mod composer;
 mod dialog;
+mod forks;
 mod goals;
 mod input_queue;
 mod media;
@@ -162,7 +163,7 @@ const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
 const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
 const WORKING_SHEEN_WIDTH: usize = 3;
-const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
+const MAX_VISIBLE_SLASH_COMMANDS: usize = 17;
 const MAX_VISIBLE_INLINE_COMPLETIONS: usize = 12;
 const MAX_FILE_COMPLETION_CACHE: usize = 1_000;
 const RESUME_VISIBLE_TAIL_ITEMS: usize = 160;
@@ -2797,6 +2798,9 @@ where
                 self.timeline
                     .push_system(commands::help_text(&self.command_catalog));
                 self.push_event("slash command: /help".to_string());
+            }
+            "fork" => {
+                self.run_fork_slash_command(&args).await;
             }
             "goal" => {
                 self.run_goal_slash_command(&args).await;
@@ -9360,6 +9364,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            worktree_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9561,6 +9567,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            worktree_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9629,6 +9637,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            worktree_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9778,6 +9788,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            worktree_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9849,6 +9861,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            worktree_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9879,6 +9893,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            worktree_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,

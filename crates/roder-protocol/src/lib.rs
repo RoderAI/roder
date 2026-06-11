@@ -56,6 +56,7 @@ use roder_api::teams::{
     TeamMemberStatus, TeamTaskDescriptor,
 };
 use roder_api::thread::ThreadUsageMetadata;
+pub use roder_api::thread::ThreadWorktreeFork;
 use roder_api::tools::ToolSpec;
 use roder_api::trace::{SubagentTraceDelta, SubagentTraceId, SubagentTraceSummary};
 use roder_api::transcript::InputImage;
@@ -173,6 +174,12 @@ pub struct Thread {
      */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<ThreadRunnerParams>,
+    /// Parent thread for conversation forks; absent for normal threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<ThreadId>,
+    /// Compact worktree-fork provenance for forked threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_fork: Option<ThreadWorktreeFork>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -683,6 +690,63 @@ pub struct ThreadArchiveParams {
 pub struct ThreadArchiveResult {
     pub thread_id: ThreadId,
     pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkWorktreeParams {
+    /// Parent thread to fork.
+    pub thread_id: ThreadId,
+    /// Fork name; becomes the worktree directory and branch name.
+    pub name: String,
+    /// Fork at a specific parent turn; absent = latest turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_turn_id: Option<TurnId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkWorktreeResult {
+    /// The new child thread (its `cwd` is the worktree path).
+    pub thread: Thread,
+    pub fork: ThreadWorktreeFork,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkStatusParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkStatusResult {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from_turn_id: Option<TurnId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<ThreadWorktreeFork>,
+    /// True when the fork is active but its worktree directory is missing.
+    pub worktree_missing: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRemoveWorktreeForkParams {
+    pub thread_id: ThreadId,
+    /// Exact worktree path; required as destructive-removal confirmation.
+    pub confirm_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRemoveWorktreeForkResult {
+    pub thread_id: ThreadId,
+    pub fork: ThreadWorktreeFork,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

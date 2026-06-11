@@ -38,6 +38,8 @@ pub(crate) fn protocol_thread_from_metadata(
             config: Some(binding.destination.config),
             workspace: binding.workspace.to_string_lossy().to_string(),
         }),
+        parent_thread_id: metadata.parent_thread_id,
+        worktree_fork: metadata.worktree_fork,
     }
 }
 
