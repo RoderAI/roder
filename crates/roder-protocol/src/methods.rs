@@ -380,6 +380,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("memory/update", "memory", LocalState, NonIdempotent),
     method_spec!("model/list", "models", ReadOnly, Idempotent),
     method_spec!("model/select", "models", LocalState, NonIdempotent),
+    method_spec!("node/status", "node", ReadOnly, Idempotent),
     method_spec!(
         "plan/review/approve",
         "plan-review",

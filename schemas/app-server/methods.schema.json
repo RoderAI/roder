@@ -145,6 +145,7 @@
               "memory/update",
               "model/list",
               "model/select",
+              "node/status",
               "plan/review/approve",
               "plan/review/comment",
               "plan/review/read",

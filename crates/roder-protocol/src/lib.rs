@@ -1,3 +1,4 @@
+pub mod agent_node;
 pub mod chrome;
 pub mod hosted;
 pub mod methods;

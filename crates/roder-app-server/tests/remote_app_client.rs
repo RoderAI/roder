@@ -94,6 +94,24 @@ async fn remote_controller_drives_a_full_turn_with_events_over_mtls() {
     .await
     .unwrap();
 
+    // node/status identifies the serving node with the connection auth mode.
+    let response = client
+        .request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("node-status")),
+            method: "node/status".to_string(),
+            params: Some(serde_json::json!({})),
+        })
+        .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let status: roder_protocol::agent_node::NodeStatusResult =
+        serde_json::from_value(response.result.unwrap()).unwrap();
+    assert!(status.served);
+    let identity = status.node.expect("node identity");
+    assert_eq!(identity.node_id, node.handle.node_id);
+    assert_eq!(identity.auth_mode.as_deref(), Some("mtls"));
+    assert_eq!(identity.protocol_version, "roder.agent-node.v1");
+
     // Event subscription is part of the same authenticated connection.
     let mut events = client.subscribe_events();
 

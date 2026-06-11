@@ -12,6 +12,7 @@ mod media;
 mod memories;
 mod mention;
 mod palette_ui;
+mod remote_node;
 #[cfg(test)]
 mod plan_hunk_tests;
 mod plan_panel;

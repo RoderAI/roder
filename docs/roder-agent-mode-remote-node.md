@@ -60,6 +60,64 @@ pending requests fail with explicit errors (mutating requests are never
 silently replayed) and the client reconnects with capped backoff using
 mTLS only.
 
+## Connection profiles and the controller TUI
+
+Configure nodes once in `config.toml` and connect with the full TUI:
+
+```toml
+[[agent_nodes]]
+name = "studio"
+address = "studio.local:7878"
+fingerprint = "<node cert sha256>"   # printed by `roder agent-node serve`
+token_env = "RODER_STUDIO_TOKEN"     # only consulted for first enrollment
+```
+
+```sh
+roder agent-node profiles            # list configured nodes
+roder agent-node connect studio      # open the TUI against the node
+```
+
+Pairing tokens are never stored in config — `token_env` names an
+environment variable holding a one-time token; after enrollment the
+controller certificate alone authorizes. The TUI renders a remote-node
+banner (node name/id, auth mode, certificate fingerprint, node workspace)
+so it stays unmistakable that turns, tools, and files run on the node, not
+the controller terminal. The model defaults to the node's default model
+(`--model` overrides).
+
+Any client can also ask `node/status` over JSON-RPC: locally-served
+app-servers answer `{ "served": false }`, agent nodes return the node
+identity with the per-connection `authMode`. Enrollment and revocation are
+deliberately CLI-only operations on the node host, not public app-server
+methods.
+
+## Trust management and recovery
+
+- `roder agent-node trust list` (on the node) shows enrolled controller
+  fingerprints.
+- `roder agent-node trust revoke <fingerprint>` revokes a controller;
+  revoked fingerprints cannot re-enroll and a fresh controller identity +
+  pairing token is required.
+- Lost node certificate: delete the node identity under
+  `<config>/agent-node/` and restart `serve`; a new fingerprint is
+  generated, so update controller profiles.
+- Lost controller certificate: delete `<config>/agent-node/controller/`;
+  the next `connect`/`connect-check` generates a new identity which must be
+  re-enrolled with a fresh pairing token.
+
+## Deployment notes
+
+- Run the node under a process supervisor (launchd/systemd) with
+  `roder agent-node serve --listen <addr>:<port> --name <label>`; mint
+  pairing tokens only when enrolling a new controller — they are
+  single-use and short-lived, not long-lived secrets.
+- There is no plaintext mode. For internet-facing nodes prefer a
+  WireGuard/Tailscale/SSH tunnel and keep the listener on a private
+  address; fingerprint pinning protects against MITM either way.
+- The trust store and certificates live under `<config>/agent-node/`; back
+  this directory up to preserve enrollment across reinstalls and protect it
+  like an SSH host key directory.
+
 ## Verification (offline)
 
 ```sh
@@ -77,11 +135,14 @@ events over loopback mTLS and prove explicit-failure + reconnect behavior.
 
 ## Current status and remaining work
 
-Implemented (phase 67 Stages 1–2): TLS/mTLS transport, fingerprint
-pinning both ways, pairing-token enrollment, revocation, the agent-node
-serve/connect-check CLI, and `RemoteAppClient`.
+Implemented (phase 67 Stages 1–5): TLS/mTLS transport with fingerprint
+pinning both ways, pairing-token enrollment and revocation,
+`RemoteAppClient`, the `node/status` protocol method, `[[agent_nodes]]`
+connection profiles, the `serve` / `connect` / `connect-check` /
+`profiles` / `trust` CLI, the controller TUI with a remote-node authority
+banner, and the trust-recovery/deployment guidance above.
 
-Open (Stages 3–5): `node/*` public protocol methods and schema entries,
-named connection profiles in config, TUI remote-authority status
-rendering, certificate rotation commands, and deployment recipes
-(Tailscale/SSH tunnel/public DNS).
+Open: automated certificate-rotation tooling (today rotation = replace the
+identity directory and re-enroll) and live multi-machine deployment
+recipes beyond loopback (the protocol carries no machine-local
+assumptions; loopback smoke + offline tests are the current evidence).
