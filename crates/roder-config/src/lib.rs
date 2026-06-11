@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod agent_node;
 pub mod analytics;
 pub mod dynamic_workflows;
 pub mod marketplaces;
@@ -61,6 +62,9 @@ pub struct Config {
     pub analytics: Option<analytics::AnalyticsConfig>,
     /// Workspace fork providers (`[forks]`).
     pub forks: Option<ForksConfig>,
+    /// Remote agent-node connection profiles (`[[agent_nodes]]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_nodes: Vec<agent_node::AgentNodeProfile>,
 }
 
 /// `[forks]` config block (roadmap phase 81).
@@ -1459,6 +1463,7 @@ mod tests {
             process_extensions: Vec::new(),
             analytics: None,
             forks: None,
+            agent_nodes: Vec::new(),
         };
         config.providers.insert(
             "openai".to_string(),

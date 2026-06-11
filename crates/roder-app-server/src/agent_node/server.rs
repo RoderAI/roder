@@ -140,6 +140,14 @@ pub async fn serve_agent_node(
         tokens: tokens.clone(),
     };
 
+    app_server.set_node_identity(roder_protocol::agent_node::NodeIdentity {
+        node_id: node_id.clone(),
+        name: options.node_name.clone(),
+        fingerprint: identity.fingerprint.clone(),
+        auth_mode: None,
+        protocol_version: AGENT_NODE_PROTOCOL.to_string(),
+        workspace: options.workspace.clone(),
+    });
     app_server
         .runtime
         .bus
@@ -353,13 +361,20 @@ async fn serve_connection(
         };
         let response = match serde_json::from_str::<JsonRpcRequest>(&text) {
             Ok(request) => {
-                let is_initialize = request.method == "initialize";
+                let method = request.method.clone();
                 let mut response = app_server.handle_request(request).await;
-                if is_initialize
+                if method == "initialize"
                     && let Some(result) = response.result.as_mut()
                     && let Some(object) = result.as_object_mut()
                 {
                     object.insert("node".to_string(), node_metadata.clone());
+                }
+                // node/status carries the per-connection auth mode.
+                if method == "node/status"
+                    && let Some(result) = response.result.as_mut()
+                    && let Some(node) = result.get_mut("node").and_then(|n| n.as_object_mut())
+                {
+                    node.insert("authMode".to_string(), serde_json::json!(auth_mode));
                 }
                 response
             }

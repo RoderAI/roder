@@ -107,6 +107,9 @@ pub struct AppServer {
     pub(crate) workspaces: crate::workspaces::WorkspaceRegistry,
     pub(crate) workspace_files: crate::workspace_files::WorkspaceFileService,
     pub(crate) command_registry: OnceCell<CommandsRegistry>,
+    /// Set once by `serve_agent_node` when this app-server is served as a
+    /// remote agent node; `node/status` reports it.
+    pub(crate) node_identity: std::sync::OnceLock<roder_protocol::agent_node::NodeIdentity>,
 }
 
 #[derive(Clone, Debug)]
@@ -380,6 +383,13 @@ impl AppServer {
                     self.handle_thread_remove_fork(p).await
                 })
                 .await
+            }
+            "node/status" => {
+                let result = roder_protocol::agent_node::NodeStatusResult {
+                    served: self.node_identity.get().is_some(),
+                    node: self.node_identity.get().cloned(),
+                };
+                serde_json::to_value(result).map_err(internal_error)
             }
             "forks/providers/list" => self.handle_forks_providers_list().await,
             "forks/list" => {
@@ -5202,6 +5212,12 @@ impl AppServer {
 
     pub(crate) fn publish_notification(&self, notification: JsonRpcNotification) {
         let _ = self.protocol_notifications.send(notification);
+    }
+
+    /// Marks this app-server as served by an agent node. Set once at node
+    /// startup; later calls are ignored.
+    pub fn set_node_identity(&self, identity: roder_protocol::agent_node::NodeIdentity) {
+        let _ = self.node_identity.set(identity);
     }
 }
 

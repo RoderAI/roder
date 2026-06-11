@@ -1032,6 +1032,15 @@
       "sideEffect": "localState"
     },
     {
+      "method": "node/status",
+      "paramsType": "NodeStatusParams",
+      "resultType": "NodeStatusResult",
+      "stability": "stable",
+      "featureGroup": "node",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "plan/review/approve",
       "paramsType": "PlanReviewApproveParams",
       "resultType": "PlanReviewApproveResult",
