@@ -6,7 +6,6 @@
 //! inline `VERTEX_CREDENTIALS_JSON`. Tokens are cached and refreshed 60
 //! seconds before expiry. Secrets never appear in errors or `Debug` output.
 
-use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
@@ -108,7 +107,12 @@ pub struct ServiceAccountTokenSource {
     credentials_path: Option<String>,
     /// Overrides both the JWT `aud` claim and the exchange URL (fake tests).
     token_endpoint_override: Option<String>,
-    cache: Mutex<Option<CachedToken>>,
+    /**
+     * Held across the mint so a burst of concurrent turns at startup or the
+     * refresh boundary coalesces onto one token-endpoint round trip instead
+     * of each minting (and overwriting) its own token.
+     */
+    cache: tokio::sync::Mutex<Option<CachedToken>>,
 }
 
 impl ServiceAccountTokenSource {
@@ -121,7 +125,7 @@ impl ServiceAccountTokenSource {
             credentials_json,
             credentials_path,
             token_endpoint_override,
-            cache: Mutex::new(None),
+            cache: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -150,7 +154,10 @@ impl ServiceAccountTokenSource {
     /// Returns a valid access token, minting when the cache is empty or
     /// within the expiry slack.
     pub async fn access_token(&self) -> anyhow::Result<String> {
-        if let Some(cached) = self.cache.lock().unwrap().as_ref()
+        // Hold the guard across the mint so queued callers re-check the cache
+        // and reuse the freshly minted token instead of minting again.
+        let mut cache = self.cache.lock().await;
+        if let Some(cached) = cache.as_ref()
             && Instant::now() + EXPIRY_SLACK < cached.expires_at
         {
             return Ok(cached.token.clone());
@@ -162,7 +169,7 @@ impl ServiceAccountTokenSource {
         .ok_or_else(missing_credentials_error)?;
         let (token, expires_in) = self.mint(&credentials).await?;
         let expires_at = Instant::now() + Duration::from_secs(expires_in.unwrap_or(3600));
-        *self.cache.lock().unwrap() = Some(CachedToken {
+        *cache = Some(CachedToken {
             token: token.clone(),
             expires_at,
         });
@@ -342,8 +349,8 @@ mod tests {
     use super::test_credentials::credentials_json;
     use super::*;
     use serde_json::{Value, json};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -446,6 +453,29 @@ mod tests {
 
         assert_eq!(source.access_token().await.unwrap(), "tok_1");
         assert_eq!(source.access_token().await.unwrap(), "tok_1");
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_callers_coalesce_onto_one_mint() {
+        // One response is served; if the single-flight lock failed to coalesce,
+        // the extra callers would each mint and block on the unanswered second
+        // connection, so the join below would hang.
+        let (url, count, _) = spawn_token_server(vec![(200, token_body("tok_1", 3600))]).await;
+        let source = Arc::new(ServiceAccountTokenSource::new(
+            Some(credentials_json()),
+            None,
+            Some(url),
+        ));
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let source = source.clone();
+            handles.push(tokio::spawn(async move { source.access_token().await }));
+        }
+        for handle in handles {
+            assert_eq!(handle.await.unwrap().unwrap(), "tok_1");
+        }
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
