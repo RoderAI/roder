@@ -21,6 +21,7 @@ mod notifications;
 mod processes;
 mod protocol_contract;
 pub mod agent_node;
+pub mod hosted;
 pub mod remote;
 pub mod remote_client;
 mod retrieval;
