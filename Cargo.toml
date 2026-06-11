@@ -124,6 +124,7 @@ roder-ext-subagents = { path = "crates/roder-ext-subagents" }
 roder-ext-task-ledger = { path = "crates/roder-ext-task-ledger" }
 roder-ext-task-process = { path = "crates/roder-ext-task-process" }
 roder-ext-verification = { path = "crates/roder-ext-verification" }
+roder-ext-vertex = { path = "crates/roder-ext-vertex" }
 roder-ext-tavily-search = { path = "crates/roder-ext-tavily-search" }
 roder-ext-webwright = { path = "crates/roder-ext-webwright" }
 roder-ext-web-search = { path = "crates/roder-ext-web-search" }

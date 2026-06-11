@@ -30,8 +30,8 @@ use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
     PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
-    PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
-    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
+    PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI,
+    PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
@@ -1147,6 +1147,10 @@ pub(crate) async fn build_runtime_from_config(
         claude_code_permission_mode: keys.claude_code_permission_mode,
         claude_code_setting_sources: keys.claude_code_setting_sources,
         gemini_api_key: keys.gemini,
+        vertex_credentials_path: keys.vertex_credentials_path,
+        vertex_credentials_json: keys.vertex_credentials_json,
+        vertex_project: keys.vertex_project,
+        vertex_location: keys.vertex_location,
         xai_api_key: keys.xai,
         xai_base_url: keys.xai_base_url,
         opencode_api_key: keys.opencode,
@@ -2267,6 +2271,10 @@ struct ProviderKeys {
     claude_code_permission_mode: Option<String>,
     claude_code_setting_sources: Option<Vec<String>>,
     gemini: Option<String>,
+    vertex_credentials_path: Option<String>,
+    vertex_credentials_json: Option<String>,
+    vertex_project: Option<String>,
+    vertex_location: Option<String>,
     xai: Option<String>,
     xai_base_url: Option<String>,
     opencode: Option<String>,
@@ -2313,6 +2321,9 @@ fn stock_inference_providers(
     }
     if keys.gemini.is_some() {
         providers.push(InferenceProviderSelection::Gemini);
+    }
+    if keys.vertex_credentials_path.is_some() || keys.vertex_credentials_json.is_some() {
+        providers.push(InferenceProviderSelection::Vertex);
     }
     if keys.xai.is_some() {
         providers.push(InferenceProviderSelection::Xai);
@@ -2404,6 +2415,22 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .or_else(|| std::env::var("GOOGLE_GENAI_API_KEY").ok())
             .or_else(|| std::env::var("GOOGLE_AI_API_KEY").ok())
             .or_else(|| cfg.providers.get("gemini").and_then(|p| p.api_key.clone())),
+        vertex_credentials_path: std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok(),
+        vertex_credentials_json: std::env::var("VERTEX_CREDENTIALS_JSON").ok(),
+        vertex_project: std::env::var("VERTEX_PROJECT")
+            .ok()
+            .or_else(|| {
+                cfg.providers
+                    .get("vertex")
+                    .and_then(|p| p.project_id.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get("vertex")
+                    .and_then(|p| p.project_id_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        vertex_location: std::env::var("VERTEX_LOCATION").ok(),
         xai: std::env::var("XAI_API_KEY")
             .ok()
             .or_else(|| std::env::var("RODER_XAI_API_KEY").ok())
@@ -2627,6 +2654,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "claude-code"
             | "anthropic"
             | "gemini"
+            | "vertex"
             | "xai"
             | "supergrok"
             | "opencode"
@@ -2976,6 +3004,9 @@ fn provider_can_be_registered(
         PROVIDER_OPENAI => keys.openai.is_some(),
         PROVIDER_ANTHROPIC => keys.anthropic.is_some(),
         PROVIDER_GEMINI => keys.gemini.is_some(),
+        PROVIDER_VERTEX => {
+            keys.vertex_credentials_path.is_some() || keys.vertex_credentials_json.is_some()
+        }
         PROVIDER_XAI => keys.xai.is_some(),
         provider => custom_providers.iter().any(|custom| custom.id == provider),
     }
@@ -2998,6 +3029,10 @@ mod tests {
             claude_code_permission_mode: None,
             claude_code_setting_sources: None,
             gemini: None,
+            vertex_credentials_path: None,
+            vertex_credentials_json: None,
+            vertex_project: None,
+            vertex_location: None,
             xai: None,
             xai_base_url: None,
             opencode: None,
@@ -3032,6 +3067,7 @@ mod tests {
         let declared = stock_inference_providers(&ProviderKeys {
             anthropic: Some("anthropic-key".to_string()),
             openai: Some("openai-key".to_string()),
+            vertex_credentials_json: Some("{}".to_string()),
             xai: Some("xai-key".to_string()),
             ..provider_keys_for_test()
         });
@@ -3040,6 +3076,7 @@ mod tests {
             vec![
                 InferenceProviderSelection::Anthropic,
                 InferenceProviderSelection::OpenAi,
+                InferenceProviderSelection::Vertex,
                 InferenceProviderSelection::Xai,
             ]
         );

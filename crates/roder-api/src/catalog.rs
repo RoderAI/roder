@@ -15,6 +15,7 @@ pub const PROVIDER_CODEX: &str = "codex";
 pub const PROVIDER_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_CLAUDE_CODE: &str = "claude-code";
 pub const PROVIDER_GEMINI: &str = "gemini";
+pub const PROVIDER_VERTEX: &str = "vertex";
 pub const PROVIDER_GOOGLE: &str = "google";
 pub const PROVIDER_ZEROENTROPY: &str = "zeroentropy";
 pub const PROVIDER_XAI: &str = "xai";
@@ -33,6 +34,7 @@ pub const PROVIDER_KIND_CHAT_COMPLETIONS: &str = "chat_completions";
 pub const PROVIDER_KIND_ANTHROPIC: &str = "anthropic";
 pub const PROVIDER_KIND_CLAUDE_CODE: &str = "claude_code";
 pub const PROVIDER_KIND_GEMINI: &str = "gemini";
+pub const PROVIDER_KIND_VERTEX: &str = "vertex";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
 pub const PROVIDER_KIND_OPENROUTER: &str = "openrouter";
@@ -227,6 +229,8 @@ pub const GEMINI_ENV_ALIASES: &[&str] = &[
     "GOOGLE_AI_API_KEY",
 ];
 
+pub const VERTEX_ENV_ALIASES: &[&str] = &["VERTEX_CREDENTIALS_JSON"];
+
 pub const XAI_ENV_ALIASES: &[&str] = &["RODER_XAI_API_KEY"];
 
 pub const XAI_CONFIGURABLE_REASONING: &[ReasoningOption] = &[
@@ -351,6 +355,17 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         base_url: None,
         env_key: Some("GEMINI_API_TOKEN"),
         env_aliases: GEMINI_ENV_ALIASES,
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_VERTEX,
+        name: "Vertex AI",
+        kind: PROVIDER_KIND_VERTEX,
+        default_model: "gemini-3.5-flash",
+        base_url: None,
+        env_key: Some("GOOGLE_APPLICATION_CREDENTIALS"),
+        env_aliases: VERTEX_ENV_ALIASES,
         requires_auth: true,
         supports_websockets: false,
     },
@@ -603,33 +618,66 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         OPUS_REASONING,
     ),
     gemini_model(
+        PROVIDER_GEMINI,
         "gemini-3.5-flash",
         "Gemini 3.5 Flash",
         "Stable Gemini Flash model for agentic coding, tool use, and long-horizon workflows.",
         REASONING_MEDIUM,
     ),
     gemini_model(
+        PROVIDER_GEMINI,
         "gemini-3.1-pro-preview",
         "Gemini 3.1 Pro Preview",
         "Gemini model for complex coding, long context, and tool-heavy agent workflows.",
         REASONING_HIGH,
     ),
     gemini_model(
+        PROVIDER_GEMINI,
         "gemini-3.1-pro-preview-customtools",
         "Gemini 3.1 Pro Preview Custom Tools",
         "Gemini preview variant exposed for custom tool validation and tool-heavy coding workflows.",
         REASONING_HIGH,
     ),
     gemini_model(
+        PROVIDER_GEMINI,
         "gemini-3-flash-preview",
         "Gemini 3 Flash Preview",
         "Fast Gemini model for everyday coding, tool use, and multimodal prompts.",
         REASONING_MEDIUM,
     ),
     gemini_model(
+        PROVIDER_GEMINI,
         "gemini-3.1-flash-lite-preview",
         "Gemini 3.1 Flash-Lite Preview",
         "Lightweight Gemini model for low-latency coding and agent interactions.",
+        REASONING_LOW,
+    ),
+    gemini_model(
+        PROVIDER_VERTEX,
+        "gemini-3.5-flash",
+        "Gemini 3.5 Flash",
+        "Stable Gemini Flash model on Vertex AI for agentic coding, tool use, and long-horizon workflows.",
+        REASONING_MEDIUM,
+    ),
+    gemini_model(
+        PROVIDER_VERTEX,
+        "gemini-3.1-pro-preview",
+        "Gemini 3.1 Pro Preview",
+        "Gemini model on Vertex AI for complex coding, long context, and tool-heavy agent workflows.",
+        REASONING_HIGH,
+    ),
+    gemini_model(
+        PROVIDER_VERTEX,
+        "gemini-3-flash-preview",
+        "Gemini 3 Flash Preview",
+        "Fast Gemini model on Vertex AI for everyday coding, tool use, and multimodal prompts.",
+        REASONING_MEDIUM,
+    ),
+    gemini_model(
+        PROVIDER_VERTEX,
+        "gemini-3.1-flash-lite-preview",
+        "Gemini 3.1 Flash-Lite Preview",
+        "Lightweight Gemini model on Vertex AI for low-latency coding and agent interactions.",
         REASONING_LOW,
     ),
     xai_model(
@@ -1067,6 +1115,7 @@ const fn claude_code_model(
 }
 
 const fn gemini_model(
+    provider: &'static str,
     id: &'static str,
     display_name: &'static str,
     description: &'static str,
@@ -1076,7 +1125,7 @@ const fn gemini_model(
         id,
         display_name,
         description,
-        provider: PROVIDER_GEMINI,
+        provider,
         default_reasoning,
         supported_reasoning: GEMINI_REASONING,
         context_window: 1_048_576,
@@ -1301,7 +1350,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
     match provider {
         PROVIDER_OPENAI | PROVIDER_CODEX => ProviderFamily::OpenAi,
         PROVIDER_ANTHROPIC | PROVIDER_CLAUDE_CODE => ProviderFamily::Anthropic,
-        PROVIDER_GEMINI => ProviderFamily::Gemini,
+        PROVIDER_GEMINI | PROVIDER_VERTEX => ProviderFamily::Gemini,
         PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
         PROVIDER_OPENROUTER => ProviderFamily::OpenAi,
@@ -1408,6 +1457,7 @@ mod tests {
                 "anthropic",
                 "claude-code",
                 "gemini",
+                "vertex",
                 "xai",
                 "supergrok",
                 "opencode",
@@ -1453,6 +1503,27 @@ mod tests {
     }
 
     #[test]
+    fn vertex_provider_mirrors_gemini_models_under_vertex_id() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_VERTEX)
+            .unwrap();
+
+        assert_eq!(provider.default_model, "gemini-3.5-flash");
+        assert_eq!(provider.env_key, Some("GOOGLE_APPLICATION_CREDENTIALS"));
+        assert_eq!(provider.env_aliases, &["VERTEX_CREDENTIALS_JSON"]);
+
+        let model = lookup_model_for_provider(PROVIDER_VERTEX, "gemini-3.5-flash").unwrap();
+        assert_eq!(model.provider, PROVIDER_VERTEX);
+        assert_eq!(model.context_window, 1_048_576);
+        assert!(model.supports_tools);
+        assert_eq!(
+            provider_family_for_provider(PROVIDER_VERTEX),
+            ProviderFamily::Gemini
+        );
+    }
+
+    #[test]
     fn catalog_contains_gode_visible_models() {
         let ids = built_in_models(false)
             .into_iter()
@@ -1479,6 +1550,10 @@ mod tests {
                 "gemini-3.5-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3.1-pro-preview-customtools",
+                "gemini-3-flash-preview",
+                "gemini-3.1-flash-lite-preview",
+                "gemini-3.5-flash",
+                "gemini-3.1-pro-preview",
                 "gemini-3-flash-preview",
                 "gemini-3.1-flash-lite-preview",
                 "grok-4.3",
@@ -1529,6 +1604,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
+        assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);

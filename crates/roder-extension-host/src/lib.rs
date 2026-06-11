@@ -6,7 +6,7 @@ use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
     PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_MOCK,
     PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
-    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
+    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
     PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
 use roder_api::embeddings::EmbeddingProvider;
@@ -54,6 +54,7 @@ use roder_ext_runner_runloop::RunloopRunnerExtension;
 use roder_ext_runner_sprites::SpritesRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
+use roder_ext_vertex::{VertexConfig, VertexExtension};
 use roder_ext_webwright::WebwrightExtension;
 use roder_ext_xai::{XaiConfig, XaiExtension};
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
@@ -89,6 +90,7 @@ pub enum InferenceProviderSelection {
     Anthropic,
     OpenAi,
     Gemini,
+    Vertex,
     Xai,
 }
 
@@ -106,6 +108,10 @@ pub struct DefaultRegistryConfig {
     pub claude_code_permission_mode: Option<String>,
     pub claude_code_setting_sources: Option<Vec<String>>,
     pub gemini_api_key: Option<String>,
+    pub vertex_credentials_path: Option<String>,
+    pub vertex_credentials_json: Option<String>,
+    pub vertex_project: Option<String>,
+    pub vertex_location: Option<String>,
     pub xai_api_key: Option<String>,
     pub xai_base_url: Option<String>,
     pub opencode_api_key: Option<String>,
@@ -215,6 +221,10 @@ impl Default for DefaultRegistryConfig {
             claude_code_permission_mode: None,
             claude_code_setting_sources: None,
             gemini_api_key: None,
+            vertex_credentials_path: None,
+            vertex_credentials_json: None,
+            vertex_project: None,
+            vertex_location: None,
             xai_api_key: None,
             xai_base_url: None,
             opencode_api_key: None,
@@ -353,6 +363,14 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     }))?;
     if declared(InferenceProviderSelection::Gemini) {
         builder.install(GeminiExtension::new(config.gemini_api_key.clone()))?;
+    }
+    if declared(InferenceProviderSelection::Vertex) {
+        builder.install(VertexExtension::new(VertexConfig {
+            credentials_path: config.vertex_credentials_path.clone(),
+            credentials_json: config.vertex_credentials_json.clone(),
+            project: config.vertex_project.clone(),
+            location: config.vertex_location.clone(),
+        }))?;
     }
     builder.install(XaiExtension::new(
         declared(InferenceProviderSelection::Xai).then(|| XaiConfig {
@@ -561,6 +579,7 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_CODEX
             | PROVIDER_ANTHROPIC
             | PROVIDER_GEMINI
+            | PROVIDER_VERTEX
             | PROVIDER_XAI
             | PROVIDER_SUPERGROK
             | PROVIDER_OPENCODE
@@ -1406,6 +1425,7 @@ mod tests {
                 InferenceProviderSelection::Anthropic,
                 InferenceProviderSelection::OpenAi,
                 InferenceProviderSelection::Gemini,
+                InferenceProviderSelection::Vertex,
                 InferenceProviderSelection::Xai,
             ],
             openai_api_key: Some("openai".to_string()),
@@ -1419,6 +1439,10 @@ mod tests {
             claude_code_permission_mode: None,
             claude_code_setting_sources: None,
             gemini_api_key: Some("gemini".to_string()),
+            vertex_credentials_path: None,
+            vertex_credentials_json: None,
+            vertex_project: None,
+            vertex_location: None,
             xai_api_key: Some("xai".to_string()),
             xai_base_url: None,
             opencode_api_key: Some("opencode".to_string()),
@@ -1467,6 +1491,7 @@ mod tests {
             roder_api::catalog::PROVIDER_CLAUDE_CODE,
             PROVIDER_ANTHROPIC,
             PROVIDER_GEMINI,
+            PROVIDER_VERTEX,
             PROVIDER_SUPERGROK,
             PROVIDER_XAI,
             PROVIDER_OPENCODE,
@@ -1538,6 +1563,7 @@ mod tests {
                 InferenceProviderSelection::Anthropic,
                 InferenceProviderSelection::OpenAi,
                 InferenceProviderSelection::Gemini,
+                InferenceProviderSelection::Vertex,
                 InferenceProviderSelection::Xai,
             ],
             ..DefaultRegistryConfig::default()
@@ -1548,6 +1574,7 @@ mod tests {
             PROVIDER_ANTHROPIC,
             PROVIDER_OPENAI,
             PROVIDER_GEMINI,
+            PROVIDER_VERTEX,
             PROVIDER_XAI,
         ] {
             let engine = registry
@@ -1567,6 +1594,7 @@ mod tests {
             openai_api_key: Some("openai".to_string()),
             anthropic_api_key: Some("anthropic".to_string()),
             gemini_api_key: Some("gemini".to_string()),
+            vertex_credentials_json: Some("{}".to_string()),
             xai_api_key: Some("xai".to_string()),
             ..DefaultRegistryConfig::default()
         })
@@ -1576,6 +1604,7 @@ mod tests {
             PROVIDER_ANTHROPIC,
             PROVIDER_OPENAI,
             PROVIDER_GEMINI,
+            PROVIDER_VERTEX,
             PROVIDER_XAI,
         ] {
             assert!(
