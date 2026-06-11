@@ -153,6 +153,16 @@ Roder `InputImage`s are `data:<mime>;base64,<payload>` URLs; non-base64 / remote
 
 > **Known limitation (in progress):** tool *results* are currently replayed as flattened prompt text in the next round, and each round opens a fresh Cursor conversation. Cursor's agent does not treat that as a native tool result, so multi-step tool loops (e.g. read-then-edit) can re-issue the same tool call. Completing the loop requires sending results via `ConversationAction.resume_action` / `UserMessageAction.conversation_history` against a stable `conversation_id`.
 
+## Model listing (live + on-disk cache)
+
+`list_models` keeps the model set up to date from Cursor's own model picker RPC, then caches the merged result on disk (same pattern as the OpenAI/OpenCode/Poolside providers):
+
+- **RPC:** `POST {backend}/aiserver.v1.AiService/AvailableModels` (Connect unary). Use `content-type: application/json` with body `{}` (the JSON Connect codec; `application/connect+proto` returns HTTP 415 for unary). Auth is the same exchanged access token + `connect-protocol-version: 1`, `x-cursor-client-type: cli`, `x-cursor-client-version`, `x-ghost-mode: true` headers as `AgentService/Run`. Backend host is the API key exchange host (`api2.cursor.sh`), not the AgentService host.
+- **Response:** `{ models: [ { serverModelName, clientDisplayName, supportsAgent, supportsImages, supportsThinking, tooltipData{ markdownContent } } ] }`.
+- **Important divergence:** the picker returns effort/fast variant ids (`claude-opus-4-8-thinking-high-fast`, `composer-2.5-fast`) that are **not** the ids `AgentService/Run` accepts. Run accepts the bare ids in Roder's curated catalog (`claude-opus-4-8`). So Roder reduces each picker id to its base form (strips trailing effort / `-thinking` / `-fast`) and **merges** it into the curated catalog rather than using picker ids verbatim: curated entries keep their hand-tuned context window + reasoning options; genuinely new base ids are appended with a cleaned display name and a context window parsed from the tooltip. Meta ids (`auto`/`default`) and namespaced ids (`accounts/.../...`) are skipped.
+
+Caching: `~/.roder/models-cache.json` (override with `RODER_MODELS_CACHE_PATH`), 6h TTL (`RODER_MODELS_CACHE_TTL_SECONDS`), background refresh on staleness, force a refresh with `RODER_MODELS_REFRESH=1`. The live call only runs when Cursor auth is configured; otherwise the static catalog (`models_for_provider`) is returned. Any auth/network/HTTP error falls back to the static catalog, so model listing never hard-depends on the live call.
+
 ## Capturing Cursor-native tool frames
 
 Mapping new Cursor-native tool calls (`edit`, `shell`, `search`, MCP) requires the real on-the-wire protobuf bytes. Set `RODER_CURSOR_CAPTURE_FRAMES` to a writable file path and every raw AgentService frame — outbound request frames (`"dir":"send"`) and inbound response payloads (`"dir":"recv"`) — is appended as hex JSONL. This is a diagnostic; with the variable unset there is zero overhead and no behavior change.

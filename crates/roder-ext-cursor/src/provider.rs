@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt;
 use roder_api::catalog::PROVIDER_CURSOR;
@@ -19,7 +21,10 @@ use crate::auth::CursorAuthConfig;
 use crate::context::{
     CursorContextOptions, discovery_context_frames_from_env, encode_request_context_frame,
 };
-use crate::models::fallback_models;
+use crate::models::{
+    cache_ttl, cached_models, discover_models, fallback_models, force_refresh_requested,
+    save_cached_models,
+};
 use crate::proto::{CursorHistoryMessage, CursorImage, CursorMcpTool};
 
 #[derive(Debug, Clone, Default)]
@@ -33,11 +38,38 @@ pub struct CursorConfig {
 
 pub struct CursorInferenceEngine {
     config: CursorConfig,
+    refresh_in_flight: Arc<AtomicBool>,
 }
 
 impl CursorInferenceEngine {
     pub fn new(config: CursorConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            refresh_in_flight: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Refresh the Cursor model list from the live picker RPC in the background
+    /// and write it to the on-disk cache. At most one refresh runs at a time.
+    fn schedule_model_refresh(&self, backend_base_url: String, client_version: String) {
+        if self
+            .refresh_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let auth = self.auth_config();
+        let refresh_in_flight = Arc::clone(&self.refresh_in_flight);
+        tokio::spawn(async move {
+            if let Ok(access) = auth.resolve_access_token().await
+                && let Ok(models) =
+                    discover_models(backend_base_url.clone(), access.token, client_version).await
+            {
+                let _ = save_cached_models(&backend_base_url, &models);
+            }
+            refresh_in_flight.store(false, Ordering::Release);
+        });
     }
 
     fn auth_config(&self) -> CursorAuthConfig {
@@ -100,6 +132,29 @@ impl InferenceEngine for CursorInferenceEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        let backend_base_url = self.auth_config().backend_base_url();
+        let cached = cached_models(&backend_base_url).ok();
+        let should_refresh = force_refresh_requested()
+            || cached
+                .as_ref()
+                .map(|entry| entry.is_stale(cache_ttl()))
+                .unwrap_or(true);
+
+        // Only attempt a live refresh when auth is configured; otherwise the
+        // static catalog is the best we can do.
+        if should_refresh && self.auth_config().has_auth() {
+            self.schedule_model_refresh(
+                backend_base_url,
+                self.agent_service_config().client_version,
+            );
+        }
+
+        if let Some(entry) = cached
+            && !entry.models.is_empty()
+        {
+            return Ok(entry.models);
+        }
+
         Ok(fallback_models())
     }
 

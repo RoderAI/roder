@@ -77,7 +77,7 @@ impl CursorAuthConfig {
             .or_else(|| env_nonempty("CURSOR_AUTH_TOKEN"))
     }
 
-    fn backend_base_url(&self) -> String {
+    pub(crate) fn backend_base_url(&self) -> String {
         self.backend_base_url
             .clone()
             .and_then(nonempty)
