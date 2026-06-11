@@ -10026,7 +10026,15 @@ mod tests {
         let mut app = test_app();
         app.show_provider_popup = true;
         app.provider_menu_items = main_provider_menu_items(&[], false);
-        app.provider_state.select(Some(3));
+        // Select the roadmap entry by value, not by hardcoded index: the
+        // menu gains/reorders entries over time (e.g. the Settings entry)
+        // and this test is about the roadmap action, not menu layout.
+        let roadmap_index = app
+            .provider_menu_items
+            .iter()
+            .position(|item| matches!(item, ProviderMenuItem::RoadmapMode))
+            .expect("provider menu offers a roadmap entry");
+        app.provider_state.select(Some(roadmap_index));
 
         app.select_current_provider_menu_item().await;
 

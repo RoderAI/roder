@@ -102,7 +102,7 @@ impl RemoteAppClient {
         // First connection is established eagerly so trust/auth failures
         // surface to the caller instead of a background retry loop.
         let socket = open_socket(&inner.connection).await?;
-        spawn_connection_driver(inner.clone(), socket);
+        spawn_connection_driver(inner.clone(), socket).await;
         tokio::spawn(reconnect_loop(inner.clone()));
         Ok(Self { inner })
     }
@@ -219,13 +219,15 @@ async fn open_socket(connection: &RemoteNodeConnection) -> anyhow::Result<Secure
     Ok(socket)
 }
 
-fn spawn_connection_driver(inner: Arc<Inner>, socket: SecureSocket) {
+async fn spawn_connection_driver(inner: Arc<Inner>, socket: SecureSocket) {
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
+    // Install the outbound sender before spawning so a request issued
+    // immediately after `connect()` returns can never observe the link as
+    // offline while the driver task is still starting up.
+    *inner.outbound.lock().await = Some(outbound_tx);
     {
         let inner = inner.clone();
         tokio::spawn(async move {
-            *inner.outbound.lock().await = Some(outbound_tx);
-
             let (mut write, mut read) = socket.split();
             let writer = tokio::spawn(async move {
                 while let Some(message) = outbound_rx.recv().await {
@@ -307,7 +309,7 @@ async fn reconnect_loop(inner: Arc<Inner>) {
         connection.pairing_token = None;
         match open_socket(&connection).await {
             Ok(socket) => {
-                spawn_connection_driver(inner.clone(), socket);
+                spawn_connection_driver(inner.clone(), socket).await;
                 backoff = RECONNECT_MIN;
             }
             Err(_) => {
