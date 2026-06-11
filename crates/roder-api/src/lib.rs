@@ -13,6 +13,7 @@ pub mod embeddings;
 pub mod events;
 pub mod extension;
 pub mod extension_state;
+pub mod forks;
 pub mod goals;
 pub mod inference;
 pub mod inference_routing;

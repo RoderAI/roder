@@ -3586,6 +3586,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-fork-rift"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-gemini"
 version = "0.1.0"
 dependencies = [
@@ -3609,7 +3623,9 @@ dependencies = [
  "roder-api",
  "semver",
  "serde_json",
+ "time",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -4255,6 +4271,7 @@ dependencies = [
  "roder-ext-claude-code",
  "roder-ext-cursor",
  "roder-ext-firecrawl-search",
+ "roder-ext-fork-rift",
  "roder-ext-gemini",
  "roder-ext-git",
  "roder-ext-google-embeddings",

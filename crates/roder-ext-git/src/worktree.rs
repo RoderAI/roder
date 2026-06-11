@@ -161,7 +161,7 @@ pub fn list_worktree_paths(repo_root: &Path) -> anyhow::Result<Vec<PathBuf>> {
         .collect())
 }
 
-fn repo_root(workspace: &Path) -> anyhow::Result<PathBuf> {
+pub(crate) fn repo_root(workspace: &Path) -> anyhow::Result<PathBuf> {
     let output = Command::new("git")
         .arg("-C")
         .arg(workspace)
@@ -221,7 +221,7 @@ fn branch_exists(root: &Path, branch: &str) -> anyhow::Result<bool> {
     Ok(output.status.success())
 }
 
-fn run_git(root: &Path, args: &[&str]) -> anyhow::Result<String> {
+pub(crate) fn run_git(root: &Path, args: &[&str]) -> anyhow::Result<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
