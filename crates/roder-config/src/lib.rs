@@ -527,6 +527,8 @@ pub struct MediaConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemoriesConfig {
+    /// Memory store backend: "sqlite" (default) or "honcho".
+    pub backend: Option<String>,
     pub store_path: Option<PathBuf>,
     pub embedding_provider: Option<String>,
     pub embedding_model: Option<String>,
@@ -536,19 +538,34 @@ pub struct MemoriesConfig {
     pub global_enabled: bool,
     #[serde(default)]
     pub include_global_with_project: bool,
+    pub honcho: Option<HonchoMemoriesConfig>,
 }
 
 impl Default for MemoriesConfig {
     fn default() -> Self {
         Self {
+            backend: None,
             store_path: None,
             embedding_provider: Some("openai".to_string()),
             embedding_model: Some("text-embedding-3-large".to_string()),
             project_enabled: true,
             global_enabled: false,
             include_global_with_project: false,
+            honcho: None,
         }
     }
+}
+
+/// Settings for the Honcho memory backend. The api key itself is never
+/// stored in config; `api_key_env` only names the environment variable that
+/// holds it.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HonchoMemoriesConfig {
+    pub base_url: Option<String>,
+    pub workspace_id: Option<String>,
+    pub peer_id: Option<String>,
+    pub session_id: Option<String>,
+    pub api_key_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1326,6 +1343,11 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
             .get_or_insert_with(Default::default)
             .store_path = Some(PathBuf::from(path));
     }
+    if let Some(backend) = env("RODER_MEMORY_BACKEND")
+        && !backend.trim().is_empty()
+    {
+        config.memories.get_or_insert_with(Default::default).backend = Some(backend);
+    }
     if let Some(provider) = env("RODER_MEMORY_EMBEDDING_PROVIDER")
         && !provider.trim().is_empty()
     {
@@ -1538,6 +1560,41 @@ mod tests {
                 .descriptor
                 .canonical_path
                 .ends_with(".cursor/rules/Review Rule.mdc")
+        );
+    }
+
+    #[test]
+    fn memories_honcho_backend_deserializes_and_env_override_applies() {
+        let mut config: Config = toml::from_str(
+            r#"
+            [memories]
+            backend = "sqlite"
+
+            [memories.honcho]
+            base_url = "https://honcho.internal"
+            workspace_id = "agents"
+            peer_id = "memory-writer"
+            session_id = "pinned-session"
+            api_key_env = "MY_HONCHO_KEY"
+            "#,
+        )
+        .unwrap();
+        apply_env_overrides_with(&mut config, |key| match key {
+            "RODER_MEMORY_BACKEND" => Some("honcho".to_string()),
+            _ => None,
+        });
+        let memories = config.memories.unwrap();
+        assert_eq!(memories.backend.as_deref(), Some("honcho"));
+        let honcho = memories.honcho.unwrap();
+        assert_eq!(
+            honcho,
+            HonchoMemoriesConfig {
+                base_url: Some("https://honcho.internal".to_string()),
+                workspace_id: Some("agents".to_string()),
+                peer_id: Some("memory-writer".to_string()),
+                session_id: Some("pinned-session".to_string()),
+                api_key_env: Some("MY_HONCHO_KEY".to_string()),
+            }
         );
     }
 

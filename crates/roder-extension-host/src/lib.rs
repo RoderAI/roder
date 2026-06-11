@@ -29,6 +29,7 @@ use roder_ext_google_embeddings::{
     GoogleEmbeddingsConfig, GoogleEmbeddingsExtension,
 };
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
+use roder_ext_honcho::{HonchoMemoryConfig, HonchoMemoryExtension};
 use roder_ext_inference_router::{
     LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
 };
@@ -145,9 +146,7 @@ static DISTRIBUTION_EXTENSIONS: OnceLock<ExtraExtensions> = OnceLock::new();
 /// Registers process-wide extra extensions for distribution binaries. Call
 /// once before any registry is built; registry-building entry points fold the
 /// list into `DefaultRegistryConfig::extra_extensions`.
-pub fn set_distribution_extensions(
-    extensions: Vec<Arc<dyn RoderExtension>>,
-) -> anyhow::Result<()> {
+pub fn set_distribution_extensions(extensions: Vec<Arc<dyn RoderExtension>>) -> anyhow::Result<()> {
     DISTRIBUTION_EXTENSIONS
         .set(ExtraExtensions(extensions))
         .map_err(|_| anyhow::anyhow!("distribution extensions are already set for this process"))
@@ -426,10 +425,16 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             builder.install(PostgresSessionExtension::new(postgres))?;
         }
     }
-    builder.install(
-        MemoryExtension::new(roder_home.join("memory"))
-            .with_embedding_provider(memory_embedding_provider.clone()),
-    )?;
+    match selected_memory_backend().as_deref() {
+        Some("honcho") => builder.install(honcho_memory_extension()?)?,
+        None | Some("sqlite") => builder.install(
+            MemoryExtension::new(roder_home.join("memory"))
+                .with_embedding_provider(memory_embedding_provider.clone()),
+        )?,
+        Some(other) => {
+            anyhow::bail!("unknown memory backend {other:?}; expected \"sqlite\" or \"honcho\"")
+        }
+    }
     if let Some(key) = openai_embedding_key {
         builder.install(OpenAiEmbeddingsExtension::with_api_key(key))?;
     } else {
@@ -499,6 +504,54 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_XIAOMI_MIMO
             | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
     )
+}
+
+/// `RODER_MEMORY_BACKEND` overrides `[memories] backend` via the config
+/// loader's env overrides.
+fn selected_memory_backend() -> Option<String> {
+    roder_config::load_config()
+        .ok()
+        .and_then(|config| config.memories)
+        .and_then(|memories| memories.backend)
+        .map(|backend| backend.trim().to_ascii_lowercase())
+        .filter(|backend| !backend.is_empty())
+}
+
+fn honcho_memory_extension() -> anyhow::Result<HonchoMemoryExtension> {
+    let honcho = roder_config::load_config()
+        .ok()
+        .and_then(|config| config.memories)
+        .and_then(|memories| memories.honcho)
+        .unwrap_or_default();
+    let api_key_env = honcho
+        .api_key_env
+        .unwrap_or_else(|| roder_ext_honcho::API_KEY_ENV.to_string());
+    let api_key = env_nonempty(&api_key_env)
+        .ok_or_else(|| anyhow::anyhow!("memory backend honcho requires {api_key_env}"))?;
+    let workspace_id = honcho
+        .workspace_id
+        .or_else(|| env_nonempty(roder_ext_honcho::WORKSPACE_ID_ENV))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "memory backend honcho requires a workspace id ([memories.honcho] workspace_id or {})",
+                roder_ext_honcho::WORKSPACE_ID_ENV
+            )
+        })?;
+    Ok(HonchoMemoryExtension::new(HonchoMemoryConfig {
+        api_key,
+        base_url: honcho
+            .base_url
+            .or_else(|| env_nonempty(roder_ext_honcho::BASE_URL_ENV))
+            .unwrap_or_else(|| roder_ext_honcho::DEFAULT_BASE_URL.to_string()),
+        workspace_id,
+        peer_id: honcho
+            .peer_id
+            .or_else(|| env_nonempty(roder_ext_honcho::PEER_ID_ENV))
+            .unwrap_or_else(|| roder_ext_honcho::DEFAULT_PEER_ID.to_string()),
+        session_id: honcho
+            .session_id
+            .or_else(|| env_nonempty(roder_ext_honcho::SESSION_ID_ENV)),
+    }))
 }
 
 fn selected_memory_embedding_provider_id() -> Option<String> {
