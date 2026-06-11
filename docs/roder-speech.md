@@ -11,7 +11,7 @@ timestamps/speaker labels/confidence, and raw provider `metadata`).
 | Provider id | Models | Auth |
 | --- | --- | --- |
 | `openai-speech` | `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe-diarize`, `whisper-1`, `gpt-realtime-whisper` (streaming metadata only) | `OPENAI_API_KEY` (or `RODER_OPENAI_SPEECH_API_KEY`), optional `OPENAI_BASE_URL` |
-| `google-speech` | `chirp_3`, `chirp`, `latest_long`, `latest_short`, `long`, `short` | OAuth: `RODER_GOOGLE_SPEECH_ACCESS_TOKEN` + `RODER_GOOGLE_SPEECH_PROJECT`/`GOOGLE_CLOUD_PROJECT`; or API key: `RODER_GOOGLE_SPEECH_API_KEY`/`GEMINI_API_KEY`/`GOOGLE_API_KEY`; optional `RODER_GOOGLE_SPEECH_LOCATION`, `RODER_GOOGLE_SPEECH_ENDPOINT` |
+| `google-speech` | `chirp_3`, `chirp`, `latest_long`, `latest_short`, `long`, `short` | OAuth: `RODER_GOOGLE_SPEECH_ACCESS_TOKEN` + `RODER_GOOGLE_SPEECH_PROJECT`/`GOOGLE_CLOUD_PROJECT`; or API key: `RODER_GOOGLE_SPEECH_API_KEY`/`GEMINI_API_KEY`/`GOOGLE_API_KEY`; or Application Default Credentials (authorized-user ADC JSON via `GOOGLE_APPLICATION_CREDENTIALS` or `~/.config/gcloud/`, else the gcloud CLI; `RODER_GCLOUD_BIN` overrides the binary). Optional `RODER_GOOGLE_SPEECH_LOCATION`, `RODER_GOOGLE_SPEECH_ENDPOINT` |
 
 Both providers are installed by default, so `speech/providers/list` shows
 them (with `authenticated: false`) even before credentials are configured.
@@ -58,6 +58,7 @@ Speech synthesis uses the parallel `speech/synthesis/providers/list` and
 roder speech providers
 roder speech transcribe clip.wav --provider openai-speech --model gpt-4o-mini-transcribe --language en
 cat clip.wav | roder speech transcribe - --format json
+roder speech transcribe clip.wav --to-thread <thread-id>   # transcript becomes a turn prompt
 ```
 
 Missing credentials produce explicit errors naming the env vars to set.
@@ -103,8 +104,13 @@ RODER_GOOGLE_SPEECH_LIVE=1 RODER_GOOGLE_SPEECH_ACCESS_TOKEN=... RODER_GOOGLE_SPE
 
 ## Known Gaps
 
-- Google auth requires a pre-minted OAuth access token or API key; ADC /
-  service-account token acquisition is not implemented.
+- Google ADC is supported for authorized-user credentials (refresh-token
+  flow, cached with early expiry) and via the gcloud CLI fallback.
+  Service-account key JSON is rejected with guidance — RS256 request
+  signing would need a crypto dependency; use
+  `gcloud auth application-default login` instead.
 - Streaming transcription (`gpt-realtime-whisper`) is metadata-only; there is
   no public streaming session API yet.
-- No CLI flag yet forwards a finished transcript directly into `turn/start`.
+- `roder speech transcribe <audio> --to-thread <thread-id>` forwards the
+  finished transcript into `turn/start` on that thread. The flag is the
+  explicit consent: turns are never started from audio without it.

@@ -53,13 +53,20 @@ impl GoogleSpeechConfig {
 pub struct GoogleSpeechTranscriber {
     config: GoogleSpeechConfig,
     client: reqwest::Client,
+    adc: crate::adc::AdcTokenSource,
 }
 
 impl GoogleSpeechTranscriber {
     pub fn new(config: GoogleSpeechConfig) -> Self {
+        Self::with_adc(config, crate::adc::AdcTokenSource::from_env())
+    }
+
+    /// Constructor with an explicit ADC source (tests, custom hosts).
+    pub fn with_adc(config: GoogleSpeechConfig, adc: crate::adc::AdcTokenSource) -> Self {
         Self {
             config,
             client: reqwest::Client::new(),
+            adc,
         }
     }
 }
@@ -112,9 +119,10 @@ impl SpeechTranscriber for GoogleSpeechTranscriber {
         _ctx: SpeechProviderContext<'_>,
         request: SpeechTranscriptionRequest,
     ) -> anyhow::Result<SpeechTranscriptionResult> {
-        let auth = self.google_speech_auth()?;
+        let auth = self.google_speech_auth().await?;
         let request = match auth {
             GoogleSpeechAuth::AccessToken(token) => {
+                let token = token.as_str();
                 let Some(project_id) = self.config.project_id.as_deref() else {
                     anyhow::bail!(
                         "Google speech transcription with OAuth requires RODER_GOOGLE_SPEECH_PROJECT or GOOGLE_CLOUD_PROJECT; set RODER_GOOGLE_SPEECH_API_KEY, GEMINI_API_KEY, GEMINI_API_TOKEN, or GOOGLE_API_KEY to use the projectless API-key fallback"
@@ -125,7 +133,7 @@ impl SpeechTranscriber for GoogleSpeechTranscriber {
                     .bearer_auth(token)
                     .json(&google_recognize_v2_body(&request))
             }
-            GoogleSpeechAuth::ApiKey(key) => {
+            GoogleSpeechAuth::ApiKey(ref key) => {
                 let (url, body) = if let Some(project_id) = self.config.project_id.as_deref() {
                     (
                         google_recognize_v2_url(&self.config, project_id),
@@ -153,22 +161,30 @@ impl SpeechTranscriber for GoogleSpeechTranscriber {
 }
 
 impl GoogleSpeechTranscriber {
-    fn google_speech_auth(&self) -> anyhow::Result<GoogleSpeechAuth<'_>> {
+    /**
+     * Auth resolution order: explicit access token, then API key, then
+     * Application Default Credentials (authorized-user ADC JSON refresh or
+     * the gcloud CLI; see `crate::adc`).
+     */
+    async fn google_speech_auth(&self) -> anyhow::Result<GoogleSpeechAuth> {
         if let Some(access_token) = self.config.access_token.as_deref() {
-            return Ok(GoogleSpeechAuth::AccessToken(access_token));
+            return Ok(GoogleSpeechAuth::AccessToken(access_token.to_string()));
         }
         if let Some(api_key) = self.config.api_key.as_deref() {
-            return Ok(GoogleSpeechAuth::ApiKey(api_key));
+            return Ok(GoogleSpeechAuth::ApiKey(api_key.to_string()));
         }
-        anyhow::bail!(
-            "Google speech transcription requires RODER_GOOGLE_SPEECH_ACCESS_TOKEN, RODER_GOOGLE_SPEECH_API_KEY, GEMINI_API_KEY, GEMINI_API_TOKEN, or GOOGLE_API_KEY"
-        )
+        match self.adc.access_token().await {
+            Ok(token) => Ok(GoogleSpeechAuth::AccessToken(token)),
+            Err(error) => anyhow::bail!(
+                "Google speech transcription requires RODER_GOOGLE_SPEECH_ACCESS_TOKEN,                  RODER_GOOGLE_SPEECH_API_KEY, GEMINI_API_KEY, GEMINI_API_TOKEN, GOOGLE_API_KEY,                  or Application Default Credentials ({error})"
+            ),
+        }
     }
 }
 
-enum GoogleSpeechAuth<'a> {
-    AccessToken(&'a str),
-    ApiKey(&'a str),
+enum GoogleSpeechAuth {
+    AccessToken(String),
+    ApiKey(String),
 }
 
 fn google_speech_api_key_from_env() -> Option<String> {
@@ -398,7 +414,16 @@ mod tests {
 
     #[tokio::test]
     async fn missing_credentials_fail_before_network_request() {
-        let provider = GoogleSpeechTranscriber::new(GoogleSpeechConfig::default());
+        // Explicitly unavailable ADC source: the developer machine may have
+        // real gcloud/ADC credentials and tests must never touch them.
+        let provider = GoogleSpeechTranscriber::with_adc(
+            GoogleSpeechConfig::default(),
+            crate::adc::AdcTokenSource::new(
+                None,
+                "http://127.0.0.1:1/token",
+                "/nonexistent/roder-test-gcloud",
+            ),
+        );
 
         let err = provider
             .transcribe(
@@ -424,8 +449,8 @@ mod tests {
         assert!(err.to_string().contains("RODER_GOOGLE_SPEECH_API_KEY"));
     }
 
-    #[test]
-    fn api_key_counts_as_configured_auth() {
+    #[tokio::test]
+    async fn api_key_counts_as_configured_auth() {
         let provider = GoogleSpeechTranscriber::new(GoogleSpeechConfig {
             api_key: Some("key".to_string()),
             ..GoogleSpeechConfig::default()
@@ -435,8 +460,8 @@ mod tests {
         assert_eq!(metadata.auth_type, ProviderAuthType::ApiKey);
         assert_eq!(metadata.auth_configured, Some(true));
         assert!(matches!(
-            provider.google_speech_auth().unwrap(),
-            GoogleSpeechAuth::ApiKey("key")
+            provider.google_speech_auth().await.unwrap(),
+            GoogleSpeechAuth::ApiKey(ref key) if key == "key"
         ));
     }
 

@@ -21,7 +21,7 @@ pub(crate) async fn run_speech_cli(args: &[String]) -> anyhow::Result<()> {
         Some("synthesize") => run_speech_synthesize(&args[1..]).await,
         Some("transcribe") => run_speech_transcribe(&args[1..]).await,
         _ => anyhow::bail!(
-            "usage: roder speech providers [--json]\n       roder speech synthesis-providers [--json]\n       roder speech synthesize <text> [--provider <id>] [--model <id>] [--voice <id>] [--audio-format wav|pcm16] [--prompt <text>] [--output <path>] [--format json]\n       roder speech transcribe <audio-file|-> [--provider <id>] [--model <id>] [--language <code>] [--diarization] [--format text|json]"
+            "usage: roder speech providers [--json]\n       roder speech synthesis-providers [--json]\n       roder speech synthesize <text> [--provider <id>] [--model <id>] [--voice <id>] [--audio-format wav|pcm16] [--prompt <text>] [--output <path>] [--format json]\n       roder speech transcribe <audio-file|-> [--provider <id>] [--model <id>] [--language <code>] [--diarization] [--format text|json] [--to-thread <thread-id>]"
         ),
     }
 }
@@ -124,6 +124,28 @@ async fn run_speech_transcribe(args: &[String]) -> anyhow::Result<()> {
     } else {
         println!("{}", result.text);
     }
+
+    // Explicit opt-in only: turns are never started from audio silently.
+    if let Some(thread_id) = options.to_thread {
+        anyhow::ensure!(
+            !result.text.trim().is_empty(),
+            "transcript is empty; not starting a turn on thread {thread_id}"
+        );
+        let started: roder_protocol::TurnStartResult = decode_response(
+            client
+                .send_request(JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(serde_json::json!(2)),
+                    method: "turn/start".to_string(),
+                    params: Some(serde_json::json!({
+                        "threadId": thread_id,
+                        "prompt": result.text,
+                    })),
+                })
+                .await,
+        )?;
+        eprintln!("started turn {} on thread {thread_id} from the transcript", started.turn_id);
+    }
     Ok(())
 }
 
@@ -210,6 +232,9 @@ struct TranscribeOptions {
     language: Option<String>,
     diarization: bool,
     format: OutputFormat,
+    /// Send the final transcript into `turn/start` on this thread. Turns
+    /// are never started from audio without this explicit flag.
+    to_thread: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,6 +329,7 @@ impl TranscribeOptions {
         let mut language = None;
         let mut diarization = false;
         let mut format = OutputFormat::Text;
+        let mut to_thread = None;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
@@ -328,9 +354,12 @@ impl TranscribeOptions {
                 "--diarization" => {
                     diarization = true;
                 }
+                "--to-thread" => {
+                    to_thread = Some(required_value(args, &mut i, "--to-thread")?);
+                }
                 "--help" | "-h" => {
                     anyhow::bail!(
-                        "usage: roder speech transcribe <audio-file|-> [--provider <id>] [--model <id>] [--language <code>] [--diarization] [--format text|json]"
+                        "usage: roder speech transcribe <audio-file|-> [--provider <id>] [--model <id>] [--language <code>] [--diarization] [--format text|json] [--to-thread <thread-id>]"
                     );
                 }
                 arg if arg.starts_with('-') && arg != "-" => {
@@ -354,6 +383,7 @@ impl TranscribeOptions {
             language,
             diarization,
             format,
+            to_thread,
         })
     }
 }
@@ -374,6 +404,21 @@ enum OutputFormat {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn transcribe_options_parse_to_thread_flag() {
+        let args: Vec<String> = ["clip.wav", "--provider", "fake", "--to-thread", "thread-9"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let options = TranscribeOptions::parse(&args).unwrap();
+        assert_eq!(options.input, "clip.wav");
+        assert_eq!(options.to_thread.as_deref(), Some("thread-9"));
+
+        // Without the flag, no turn is ever started from audio.
+        let args: Vec<String> = vec!["clip.wav".to_string()];
+        assert_eq!(TranscribeOptions::parse(&args).unwrap().to_thread, None);
+    }
     use super::*;
 
     #[test]
