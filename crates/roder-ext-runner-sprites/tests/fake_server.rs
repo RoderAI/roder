@@ -140,6 +140,49 @@ fn response_for(first: &str, auth_ok: bool) -> (&'static str, &'static str, Stri
     if first.starts_with("GET /v1/sprites/roder-test/fs/read?") {
         return ("200 OK", "application/octet-stream", "hello".to_string());
     }
+    if first.starts_with("GET /v1/sprites/roder-test/fs/list?") {
+        return (
+            "200 OK",
+            "application/json",
+            serde_json::json!([
+                {"name": "hello.txt", "size": 5, "dir": false, "mode": "0644"},
+                {"name": "src", "dir": true}
+            ])
+            .to_string(),
+        );
+    }
+    if first.starts_with("DELETE /v1/sprites/roder-test/fs/delete?")
+        || first.starts_with("POST /v1/sprites/roder-test/fs/rename?")
+        || first.starts_with("POST /v1/sprites/roder-test/fs/copy?")
+        || first.starts_with("POST /v1/sprites/roder-test/fs/chmod?")
+    {
+        return ("200 OK", "application/json", "{}".to_string());
+    }
+    if first.starts_with("GET /v1/sprites/roder-test/checkpoints ") {
+        return (
+            "200 OK",
+            "application/json",
+            serde_json::json!([
+                {"id": "v1", "comment": "Roder runner snapshot", "created_at": "2026-06-10T00:00:00Z"}
+            ])
+            .to_string(),
+        );
+    }
+    if first.starts_with("POST /v1/sprites/roder-test/checkpoints/v1/restore ") {
+        return (
+            "200 OK",
+            "application/x-ndjson",
+            "{\"type\":\"info\",\"data\":\"restoring\"}\n{\"type\":\"complete\",\"id\":\"v1\"}\n"
+                .to_string(),
+        );
+    }
+    if first.starts_with("POST /v1/sprites/roder-test/checkpoints/missing/restore ") {
+        return (
+            "200 OK",
+            "application/x-ndjson",
+            "{\"type\":\"error\",\"error\":\"checkpoint missing not found\"}\n".to_string(),
+        );
+    }
     if first.starts_with("GET /v1/sprites/") {
         return (
             "404 Not Found",

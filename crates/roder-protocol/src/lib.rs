@@ -2034,6 +2034,10 @@ pub struct RunnerStatus {
 pub struct RunnerProviderDescriptor {
     pub provider_id: String,
     pub capabilities: roder_api::remote_runner::RunnerCapabilities,
+    /// Setup guidance when the provider is installed but missing credentials
+    /// (documented env-var names only; never secret values).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

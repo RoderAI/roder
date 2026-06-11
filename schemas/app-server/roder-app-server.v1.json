@@ -1564,6 +1564,24 @@
       "sideEffect": "localState"
     },
     {
+      "method": "thread/fork_status",
+      "paramsType": "ThreadForkStatusParams",
+      "resultType": "ThreadForkStatusResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/fork_worktree",
+      "paramsType": "ThreadForkWorktreeParams",
+      "resultType": "ThreadForkWorktreeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/goal/clear",
       "paramsType": "ThreadGoalClearParams",
       "resultType": "ThreadGoalClearResult",
@@ -1613,6 +1631,15 @@
       "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/remove_worktree_fork",
+      "paramsType": "ThreadRemoveWorktreeForkParams",
+      "resultType": "ThreadRemoveWorktreeForkResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "thread/resolve_approval",

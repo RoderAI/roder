@@ -1536,6 +1536,7 @@ impl AppServer {
             .map(|provider| RunnerProviderDescriptor {
                 provider_id: provider.id(),
                 capabilities: provider.capabilities(),
+                setup_hint: provider.setup_hint(),
             })
             .collect::<Vec<_>>();
         Ok(serde_json::to_value(RunnersListResult {
