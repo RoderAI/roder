@@ -285,6 +285,33 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("extensions/list", "extensions", ReadOnly, Idempotent),
     method_spec!("fs/readDirectory", "filesystem", ReadOnly, Idempotent),
     method_spec!("fs/readFile", "filesystem", ReadOnly, Idempotent),
+    method_spec!("hosted/audit/list", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/hooks/create", "hosted", LocalState, NonIdempotent),
+    method_spec!("hosted/hooks/delete", "hosted", LocalState, NonIdempotent),
+    method_spec!("hosted/hooks/list", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/hooks/update", "hosted", LocalState, NonIdempotent),
+    method_spec!(
+        "hosted/service_accounts/create",
+        "hosted",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!(
+        "hosted/service_accounts/list",
+        "hosted",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "hosted/service_accounts/revoke",
+        "hosted",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("hosted/tenant/read", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/tenants/list", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/usage/read", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/whoami", "hosted", ReadOnly, Idempotent),
     method_spec!("hunk/list", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/read", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/rollback", "plan-review", LocalState, NonIdempotent),

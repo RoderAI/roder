@@ -582,6 +582,114 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "hosted/audit/list",
+      "paramsType": "HostedAuditListParams",
+      "resultType": "HostedAuditListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/hooks/create",
+      "paramsType": "HostedHooksCreateParams",
+      "resultType": "HostedHooksCreateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/hooks/delete",
+      "paramsType": "HostedHooksDeleteParams",
+      "resultType": "HostedHooksDeleteResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/hooks/list",
+      "paramsType": "HostedHooksListParams",
+      "resultType": "HostedHooksListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/hooks/update",
+      "paramsType": "HostedHooksUpdateParams",
+      "resultType": "HostedHooksUpdateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/service_accounts/create",
+      "paramsType": "HostedServiceAccountsCreateParams",
+      "resultType": "HostedServiceAccountsCreateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/service_accounts/list",
+      "paramsType": "HostedServiceAccountsListParams",
+      "resultType": "HostedServiceAccountsListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/service_accounts/revoke",
+      "paramsType": "HostedServiceAccountsRevokeParams",
+      "resultType": "HostedServiceAccountsRevokeResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/tenant/read",
+      "paramsType": "HostedTenantReadParams",
+      "resultType": "HostedTenantReadResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/tenants/list",
+      "paramsType": "HostedTenantsListParams",
+      "resultType": "HostedTenantsListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/usage/read",
+      "paramsType": "HostedUsageReadParams",
+      "resultType": "HostedUsageReadResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/whoami",
+      "paramsType": "HostedWhoamiParams",
+      "resultType": "HostedWhoamiResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "hunk/list",
       "paramsType": "HunkListParams",
       "resultType": "HunkListResult",

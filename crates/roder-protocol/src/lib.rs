@@ -1,4 +1,5 @@
 pub mod chrome;
+pub mod hosted;
 pub mod methods;
 pub mod schema;
 pub mod speech;
