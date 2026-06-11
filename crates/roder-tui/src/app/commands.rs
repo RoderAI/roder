@@ -13,6 +13,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ),
         ("help", "Show available commands and common workflows."),
         (
+            "fork",
+            "Fork this conversation into a child thread backed by an isolated Git worktree (not a GitHub repo fork).",
+        ),
+        (
             "goal",
             "Inspect, set, pause, resume, edit, or clear the thread goal.",
         ),
@@ -44,6 +48,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
     .into_iter()
     .map(|(name, description)| {
         let argument_hint = match name {
+            "fork" => Some("<name> | status | remove <worktree-path>".to_string()),
             "goal" => Some("[pause|resume|edit|clear|<objective>]".to_string()),
             "snapshot" => Some("[path-or-message]".to_string()),
             "marketplace" => {
@@ -167,6 +172,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
     let mut lines = vec![
         "Slash commands:".to_string(),
         "/clear - Clear the visible conversation state.".to_string(),
+        "/fork <name> | status | remove <worktree-path> - Fork this conversation into an isolated Git worktree (not a GitHub repo fork).".to_string(),
         "/goal [pause|resume|edit|clear|<objective>] - Manage the thread goal.".to_string(),
         "/retry - Resubmit the last user message.".to_string(),
         "/model - Show or change the active model.".to_string(),
@@ -189,6 +195,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         if matches!(
             command.name.as_str(),
             "clear"
+                | "fork"
                 | "goal"
                 | "retry"
                 | "model"
@@ -303,6 +310,7 @@ mod tests {
                 "clear",
                 "compact",
                 "help",
+                "fork",
                 "goal",
                 "retry",
                 "model",

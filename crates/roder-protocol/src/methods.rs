@@ -536,6 +536,8 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("thread/archive", "thread", LocalState, NonIdempotent),
     method_spec!("thread/attach", "thread", LocalState, NonIdempotent),
     method_spec!("thread/exit_plan", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/fork_status", "thread", ReadOnly, Idempotent),
+    method_spec!("thread/fork_worktree", "thread", LocalState, NonIdempotent),
     method_spec!(
         "thread/goal/clear",
         "thread",
@@ -553,6 +555,12 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     ),
     method_spec!("thread/list", "thread", ReadOnly, Idempotent),
     method_spec!("thread/read", "thread", ReadOnly, Idempotent),
+    method_spec!(
+        "thread/remove_worktree_fork",
+        "thread",
+        LocalState,
+        NonIdempotent
+    ),
     method_spec!(
         "thread/resolve_approval",
         "thread",

@@ -8,6 +8,7 @@ mod evals;
 mod exec;
 mod exec_events;
 mod exec_output;
+mod forks;
 mod marketplace;
 mod replay;
 mod resume_picker;
@@ -151,6 +152,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("team")) {
         return run_team_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("thread")) {
+        return forks::run_thread_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("chrome")) {
         return chrome::run_chrome_cli(&args[1..]).await;

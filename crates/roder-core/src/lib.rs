@@ -1,6 +1,7 @@
 mod agent_control_tools;
 pub mod artifacts;
 pub mod bus;
+pub mod conversation_forks;
 mod deadline_policy;
 pub mod dynamic_workflows;
 pub mod fake_provider;
@@ -29,6 +30,7 @@ mod verification_gate;
 mod workspace_changes;
 
 pub use bus::*;
+pub use conversation_forks::{ForkThreadOutcome, ForkThreadRequest};
 pub use dynamic_workflows::*;
 pub use goals::*;
 pub use instructions::*;

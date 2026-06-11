@@ -362,6 +362,24 @@ impl AppServer {
                 })
                 .await
             }
+            "thread/fork_worktree" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_fork_worktree(p).await
+                })
+                .await
+            }
+            "thread/fork_status" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_fork_status(p).await
+                })
+                .await
+            }
+            "thread/remove_worktree_fork" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_remove_worktree_fork(p).await
+                })
+                .await
+            }
             "roadmap/list" => self.handle_roadmap_list().await,
             "roadmap/read" => {
                 self.decode_and(

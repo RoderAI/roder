@@ -9,6 +9,7 @@ mod command_process;
 mod design;
 mod discovery;
 mod evals;
+mod forks;
 mod fs;
 mod goals;
 mod inference_routing;
