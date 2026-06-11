@@ -7,7 +7,7 @@ The TUI keeps keyboard actions aligned with mouse interactions so clickable regi
 | Action | Default keys |
 | --- | --- |
 | Open palette | `ctrl+p` |
-| Cycle mode | `shift+tab` |
+| Cycle policy mode (`default` -> `accept_all` -> `plan` -> `bypass`) | `shift+tab` |
 | Focus next region | `tab` |
 | Focus previous region | `shift+tab` |
 | Queue a prompt while a turn is running | `tab` (composer has content) |

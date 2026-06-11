@@ -891,7 +891,7 @@ fn confirm_action_for_key(key: KeyCode, selected: ConfirmChoice) -> ConfirmKeyAc
     }
 }
 
-fn is_plan_mode_shortcut_key(key: KeyEvent) -> bool {
+fn is_policy_mode_shortcut_key(key: KeyEvent) -> bool {
     key.code == KeyCode::BackTab
         || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
 }
@@ -1743,13 +1743,9 @@ where
                                 ToolDetailAction::Handled => {}
                             }
                         } else if self.confirm_dialog_allows_policy_switch()
-                            && is_plan_mode_shortcut_key(key)
+                            && is_policy_mode_shortcut_key(key)
                         {
-                            self.toggle_plan_mode(
-                                self.policy_mode != PolicyMode::Plan,
-                                "shift-tab plan mode toggle",
-                            )
-                            .await;
+                            self.cycle_policy_mode().await;
                         } else if self.confirm_dialog.is_some() {
                             if self.handle_confirm_key(key).await {
                                 break;
@@ -1820,12 +1816,8 @@ where
                         {
                             self.confirm_dialog =
                                 Some(ConfirmDialogState::new(ConfirmDialog::Exit));
-                        } else if is_plan_mode_shortcut_key(key) {
-                            self.toggle_plan_mode(
-                                self.policy_mode != PolicyMode::Plan,
-                                "shift-tab plan mode toggle",
-                            )
-                            .await;
+                        } else if is_policy_mode_shortcut_key(key) {
+                            self.cycle_policy_mode().await;
                         } else if self.pending_plan_exit.is_some()
                             && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
                         {
@@ -2538,6 +2530,7 @@ where
     async fn cycle_policy_mode(&mut self) {
         let next = next_policy_mode(self.policy_mode);
         self.set_policy_mode(next, "tui mode switcher").await;
+        self.refresh_main_provider_menu_plan_toggle();
     }
 
     async fn toggle_plan_mode(&mut self, enabled: bool, reason: &str) {
@@ -8428,7 +8421,8 @@ fn next_policy_mode(mode: PolicyMode) -> PolicyMode {
     match mode {
         PolicyMode::Default => PolicyMode::AcceptAll,
         PolicyMode::AcceptAll => PolicyMode::Plan,
-        PolicyMode::Plan | PolicyMode::Bypass => PolicyMode::Default,
+        PolicyMode::Plan => PolicyMode::Bypass,
+        PolicyMode::Bypass => PolicyMode::Default,
     }
 }
 
@@ -10626,7 +10620,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_confirm_dialog_allows_plan_mode_shortcut() {
+    fn approval_confirm_dialog_allows_policy_mode_shortcut() {
         let approval = ConfirmDialogState::new(ConfirmDialog::ToolApproval {
             approval_id: "approval-1".to_string(),
             tool_name: "write_file".to_string(),
@@ -10636,7 +10630,7 @@ mod tests {
 
         assert!(confirm_dialog_allows_policy_switch(&approval));
         assert!(!confirm_dialog_allows_policy_switch(&exit));
-        assert!(is_plan_mode_shortcut_key(KeyEvent::new(
+        assert!(is_policy_mode_shortcut_key(KeyEvent::new(
             KeyCode::BackTab,
             KeyModifiers::SHIFT
         )));
@@ -11422,24 +11416,24 @@ mod tests {
     }
 
     #[test]
-    fn policy_mode_switcher_cycles_non_bypass_modes() {
+    fn policy_mode_switcher_cycles_all_modes() {
         assert_eq!(next_policy_mode(PolicyMode::Default), PolicyMode::AcceptAll);
         assert_eq!(next_policy_mode(PolicyMode::AcceptAll), PolicyMode::Plan);
-        assert_eq!(next_policy_mode(PolicyMode::Plan), PolicyMode::Default);
+        assert_eq!(next_policy_mode(PolicyMode::Plan), PolicyMode::Bypass);
         assert_eq!(next_policy_mode(PolicyMode::Bypass), PolicyMode::Default);
     }
 
     #[test]
-    fn shift_tab_is_plan_mode_shortcut() {
-        assert!(is_plan_mode_shortcut_key(KeyEvent::new(
+    fn shift_tab_is_policy_mode_shortcut() {
+        assert!(is_policy_mode_shortcut_key(KeyEvent::new(
             KeyCode::BackTab,
             KeyModifiers::NONE
         )));
-        assert!(is_plan_mode_shortcut_key(KeyEvent::new(
+        assert!(is_policy_mode_shortcut_key(KeyEvent::new(
             KeyCode::Tab,
             KeyModifiers::SHIFT
         )));
-        assert!(!is_plan_mode_shortcut_key(KeyEvent::new(
+        assert!(!is_policy_mode_shortcut_key(KeyEvent::new(
             KeyCode::Tab,
             KeyModifiers::NONE
         )));
