@@ -1,6 +1,6 @@
 """Policy mode + shell mode tests.
 
-shift+tab cycles between policy modes (default → accept_edits → ...).
+shift+tab cycles between policy modes (default → accept_edits → plan → bypass → ...).
 Pressing ``!`` in default mode toggles a transient shell-prompt mode
 that wraps the composer with a ``shell`` label and prefixes the buffer.
 """
@@ -47,11 +47,19 @@ class TestPolicyMode:
     ) -> None:
         """Several shift+tab presses should eventually land back on default."""
         await _ready(tui, gode_bin, gode_env)
-        for _ in range(3):
+        for _ in range(4):
             await tui.press("shift+tab")
             await tui.wait_for_stable(quiet_ms=120, timeout=2)
         await tui.wait_for_text("policy mode set to default", timeout=2)
         assert "mode:" not in tui.screen.row(tui.screen.rows - 1)
+
+    async def test_shift_tab_cycles_through_plan_and_bypass(
+        self, tui: TuiSession, gode_bin: str, gode_env: dict[str, str]
+    ) -> None:
+        await _ready(tui, gode_bin, gode_env)
+        for expected in ("accept_all", "plan", "bypass"):
+            await tui.press("shift+tab")
+            await tui.wait_for_text(f"policy mode set to {expected}", timeout=3)
 
 
 class TestShellMode:
