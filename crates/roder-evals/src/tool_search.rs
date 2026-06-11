@@ -151,6 +151,10 @@ pub fn load_tool_search_fixtures(dir: &Path) -> anyhow::Result<Vec<ToolSearchEva
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
+        // The catalog-adapter snapshot has its own schema and test.
+        if path.file_name().and_then(|name| name.to_str()) == Some("catalog_fixture.json") {
+            continue;
+        }
         let text = std::fs::read_to_string(&path)?;
         let fixture: ToolSearchEvalFixture = serde_json::from_str(&text)
             .map_err(|err| anyhow::anyhow!("{}: {err}", path.display()))?;
@@ -162,6 +166,33 @@ pub fn load_tool_search_fixtures(dir: &Path) -> anyhow::Result<Vec<ToolSearchEva
 
 pub fn default_tool_search_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../evals/tool_search")
+}
+
+/// Catalog-adapter snapshot fixture (phase 79 Task 2): a fixed toolset with
+/// the expected stable catalog ids, source classification, redaction
+/// needles, and a ranked search expectation.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogAdapterFixture {
+    pub id: String,
+    pub tools: Vec<ToolSpec>,
+    pub expected: CatalogAdapterExpectation,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogAdapterExpectation {
+    pub ids: Vec<String>,
+    pub sources: Vec<String>,
+    pub forbidden_needles: Vec<String>,
+    pub search_query: String,
+    pub search_top_hit: String,
+}
+
+pub fn load_catalog_adapter_fixture() -> anyhow::Result<CatalogAdapterFixture> {
+    let path = default_tool_search_fixture_dir().join("catalog_fixture.json");
+    let text = std::fs::read_to_string(&path)?;
+    serde_json::from_str(&text).map_err(|err| anyhow::anyhow!("{}: {err}", path.display()))
 }
 
 /**

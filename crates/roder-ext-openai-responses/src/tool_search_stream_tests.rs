@@ -170,3 +170,82 @@ fn web_search_call_arguments_keep_existing_action_shape() {
     assert_eq!(arguments["action"], "search");
     assert_eq!(arguments["query"], "weather");
 }
+
+#[test]
+fn client_executed_tool_search_items_pend_without_completing() {
+    let mut state = ResponsesStreamState::default();
+
+    // No `results` and a query: the client must execute the search.
+    let done = sse(
+        "response.output_item.done",
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "id": "ts_7",
+                "type": "tool_search_call",
+                "status": "completed",
+                "query": "deploy"
+            }
+        }),
+    );
+    let events = events_from_sse_event(&done, &mut state);
+    assert_eq!(
+        events,
+        vec![InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
+            id: "ts_7".to_string(),
+            name: "tool_search".to_string(),
+        })],
+        "no completion is emitted before the local search runs"
+    );
+    assert_eq!(state.pending_client_tool_searches.len(), 1);
+
+    // response.completed recovery does not duplicate the pending item and
+    // does not surface it as a hosted completion.
+    let completed = sse(
+        "response.completed",
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_1",
+                "status": "completed",
+                "output": [{
+                    "id": "ts_7",
+                    "type": "tool_search_call",
+                    "status": "completed",
+                    "query": "deploy"
+                }]
+            }
+        }),
+    );
+    let events = events_from_sse_event(&completed, &mut state);
+    assert_eq!(state.pending_client_tool_searches.len(), 1);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, InferenceEvent::HostedToolCallCompleted(_))),
+        "{events:?}"
+    );
+
+    // Hosted (server-executed) searches with results still complete inline.
+    let mut hosted_state = ResponsesStreamState::default();
+    let hosted = sse(
+        "response.output_item.done",
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "id": "ts_8",
+                "type": "tool_search_call",
+                "status": "completed",
+                "query": "deploy",
+                "results": [{ "name": "deploy_app" }]
+            }
+        }),
+    );
+    let events = events_from_sse_event(&hosted, &mut hosted_state);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, InferenceEvent::HostedToolCallCompleted(_)))
+    );
+    assert!(hosted_state.pending_client_tool_searches.is_empty());
+}

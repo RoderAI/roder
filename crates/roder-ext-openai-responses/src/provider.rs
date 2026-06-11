@@ -688,10 +688,28 @@ impl InferenceEngine for OpenAiResponsesEngine {
             }
             ResponsesProviderProfile::OpenAi => err,
         })?;
-        Ok(stream_responses_sse(
+        // Provider-native tool search may require client-executed searches
+        // against the runtime catalog within the same turn.
+        let continuation = openai_provider_native_tool_search(&request).then(|| {
+            ClientToolSearchContext {
+                base_url: self.base_url.clone(),
+                api_key: api_key.clone(),
+                headers: self.headers.clone(),
+                grok_conversation_id: (self.profile == ResponsesProviderProfile::Xai)
+                    .then(|| _ctx.thread_id.to_string()),
+                body: body.clone(),
+                policy: request.runtime.reliability.clone(),
+                catalog: roder_api::tool_search_catalog::ToolSearchCatalog::build(
+                    &request.tools,
+                    &request.runtime.tool_search,
+                ),
+            }
+        });
+        Ok(stream_responses_sse_with_client_tool_search(
             response.response,
             tool_name_map.api_name_to_tool_name,
             response.retry_events,
+            continuation,
         ))
     }
 }
@@ -973,6 +991,35 @@ fn stream_responses_sse(
     tool_name_map: HashMap<String, String>,
     retry_events: Vec<Value>,
 ) -> InferenceEventStream {
+    stream_responses_sse_with_client_tool_search(response, tool_name_map, retry_events, None)
+}
+
+/// Bounded number of in-turn client-executed tool-search continuations.
+const MAX_CLIENT_TOOL_SEARCH_ROUNDS: usize = 3;
+
+/**
+ * Connection/request context for the client-executed `tool_search_call` →
+ * `tool_search_output` flow (roadmap phase 79): when the model emits a
+ * `tool_search_call` item without provider-side results, the client runs
+ * the search against the runtime catalog adapter and continues the same
+ * turn with a follow-up request carrying the `tool_search_output` item.
+ */
+struct ClientToolSearchContext {
+    base_url: String,
+    api_key: String,
+    headers: Vec<(String, String)>,
+    grok_conversation_id: Option<String>,
+    body: Value,
+    policy: Option<ReliabilityRequestPolicy>,
+    catalog: roder_api::tool_search_catalog::ToolSearchCatalog,
+}
+
+fn stream_responses_sse_with_client_tool_search(
+    response: reqwest::Response,
+    tool_name_map: HashMap<String, String>,
+    retry_events: Vec<Value>,
+    mut continuation: Option<ClientToolSearchContext>,
+) -> InferenceEventStream {
     Box::pin(async_stream::try_stream! {
         use futures::StreamExt as _;
 
@@ -980,40 +1027,139 @@ fn stream_responses_sse(
             yield InferenceEvent::ProviderMetadata(retry_event);
         }
 
-        let mut chunks = response.bytes_stream();
-        let mut buffer = String::new();
-        let mut state = ResponsesStreamState {
-            tool_name_map,
-            ..Default::default()
-        };
+        let mut response = response;
+        for _round in 0..=MAX_CLIENT_TOOL_SEARCH_ROUNDS {
+            let mut chunks = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut state = ResponsesStreamState {
+                tool_name_map: tool_name_map.clone(),
+                ..Default::default()
+            };
 
-        while let Some(chunk) = chunks.next().await {
-            let chunk = chunk?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some((frame, consumed)) = take_sse_frame(&buffer) {
-                buffer.drain(..consumed);
-                let Some(event) = parse_sse_frame(&frame)? else {
-                    continue;
-                };
+            while let Some(chunk) = chunks.next().await {
+                let chunk = chunk?;
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                while let Some((frame, consumed)) = take_sse_frame(&buffer) {
+                    buffer.drain(..consumed);
+                    let Some(event) = parse_sse_frame(&frame)? else {
+                        continue;
+                    };
+                    for inference_event in events_from_sse_event(&event, &mut state) {
+                        // A pending client search means this turn continues
+                        // with a follow-up request; the intermediate
+                        // completion must not terminate the canonical turn.
+                        if matches!(inference_event, InferenceEvent::Completed(_))
+                            && continuation.is_some()
+                            && !state.pending_client_tool_searches.is_empty()
+                        {
+                            continue;
+                        }
+                        yield inference_event;
+                    }
+                }
+            }
+
+            let trailing_event = if buffer.trim().is_empty() {
+                None
+            } else {
+                parse_sse_frame(&buffer)?
+            };
+            if let Some(event) = trailing_event {
                 for inference_event in events_from_sse_event(&event, &mut state) {
+                    if matches!(inference_event, InferenceEvent::Completed(_))
+                        && continuation.is_some()
+                        && !state.pending_client_tool_searches.is_empty()
+                    {
+                        continue;
+                    }
                     yield inference_event;
                 }
             }
-        }
 
-        let trailing_event = if buffer.trim().is_empty() {
-            None
-        } else {
-            parse_sse_frame(&buffer)?
-        };
-        if let Some(event) = trailing_event {
-            for inference_event in events_from_sse_event(&event, &mut state) {
-                yield inference_event;
+            if !state.terminal {
+                Err(anyhow::anyhow!("stream closed before response.completed"))?;
             }
-        }
 
-        if !state.terminal {
-            Err(anyhow::anyhow!("stream closed before response.completed"))?;
+            let pending = std::mem::take(&mut state.pending_client_tool_searches);
+            let Some(ctx) = continuation.as_mut() else {
+                break;
+            };
+            if pending.is_empty() {
+                break;
+            }
+
+            // Execute the searches locally against the runtime catalog and
+            // continue the turn with tool_search_output items. Execution of
+            // any selected tool still flows through TurnToolExecutor.
+            for item in pending {
+                let call_id = item
+                    .get("call_id")
+                    .or_else(|| item.get("id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let query = item
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let hits = ctx.catalog.search(&query, 10);
+                let selected: Vec<Value> = hits
+                    .iter()
+                    .map(|hit| Value::String(hit.name.clone()))
+                    .collect();
+                let output_tools: Vec<Value> = hits
+                    .iter()
+                    .map(|hit| {
+                        json!({
+                            "id": hit.id,
+                            "name": hit.name,
+                            "description": hit.description,
+                        })
+                    })
+                    .collect();
+                for event in emit_hosted_tool_completed_events(
+                    HostedToolCallCompleted {
+                        id: item
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or(&call_id)
+                            .to_string(),
+                        name: "tool_search".to_string(),
+                        arguments: json!({
+                            "query": query,
+                            "selected_tools": selected,
+                            "executor": "client",
+                        })
+                        .to_string(),
+                    },
+                    &mut state,
+                ) {
+                    yield event;
+                }
+                if let Some(input) = ctx.body.get_mut("input").and_then(Value::as_array_mut) {
+                    input.push(item.clone());
+                    input.push(json!({
+                        "type": "tool_search_output",
+                        "call_id": call_id,
+                        "output": Value::Array(output_tools).to_string(),
+                    }));
+                }
+            }
+
+            let retried = send_responses_request(
+                &ctx.base_url,
+                &ctx.api_key,
+                &ctx.headers,
+                ctx.grok_conversation_id.as_deref(),
+                &ctx.body,
+                ctx.policy.as_ref(),
+            )
+            .await?;
+            for retry_event in retried.retry_events {
+                yield InferenceEvent::ProviderMetadata(retry_event);
+            }
+            response = retried.response;
         }
     })
 }
@@ -1033,6 +1179,24 @@ struct ResponsesStreamState {
     emitted_hosted_tool_start_ids: HashSet<String>,
     emitted_hosted_tool_complete_ids: HashSet<String>,
     reasoning_delta_keys: HashSet<String>,
+    /// Completed `tool_search_call` items without provider-side results:
+    /// the client must execute the search and continue the turn.
+    pending_client_tool_searches: Vec<Value>,
+}
+
+/**
+ * A `tool_search_call` the client must execute: it carries a query but no
+ * provider-side results. Hosted (server-executed) searches always include
+ * `results`; failed calls report a failed status instead.
+ */
+fn is_client_executed_tool_search(item: &Value) -> bool {
+    item.get("type").and_then(Value::as_str) == Some("tool_search_call")
+        && item.get("results").is_none()
+        && item
+            .get("query")
+            .or_else(|| item.get("queries"))
+            .is_some()
+        && item.get("status").and_then(Value::as_str) != Some("failed")
 }
 
 #[derive(Debug, PartialEq)]
@@ -1218,7 +1382,15 @@ fn events_from_sse_event(
                 if let Some(message) = message_delta_from_done_item(item, state) {
                     events.push(message);
                 }
-                if let Some(call) = hosted_tool_call_completed_from_item(item) {
+                if is_client_executed_tool_search(item) {
+                    // Completion is emitted after the local search runs.
+                    state.pending_client_tool_searches.push(item.clone());
+                    if let Some(started) = hosted_tool_call_started_from_item(item)
+                        && let Some(event) = emit_hosted_tool_start_once(started, state)
+                    {
+                        events.push(event);
+                    }
+                } else if let Some(call) = hosted_tool_call_completed_from_item(item) {
                     events.extend(emit_hosted_tool_completed_events(call, state));
                 }
                 events.extend(
@@ -1234,6 +1406,25 @@ fn events_from_sse_event(
             let response = event.data.get("response").unwrap_or(&event.data);
             let mut events = Vec::new();
             events.extend(message_deltas_from_response(response, state));
+            // Recover unstreamed client-executed searches before treating
+            // any tool_search_call as a hosted completion.
+            if let Some(output) = response.get("output").and_then(Value::as_array) {
+                for item in output {
+                    if is_client_executed_tool_search(item)
+                        && !state
+                            .pending_client_tool_searches
+                            .iter()
+                            .any(|pending| pending.get("id") == item.get("id"))
+                    {
+                        state.pending_client_tool_searches.push(item.clone());
+                        if let Some(started) = hosted_tool_call_started_from_item(item)
+                            && let Some(event) = emit_hosted_tool_start_once(started, state)
+                        {
+                            events.push(event);
+                        }
+                    }
+                }
+            }
             for call in extract_hosted_tool_calls(response) {
                 events.extend(emit_hosted_tool_completed_events(call, state));
             }
@@ -1911,6 +2102,8 @@ fn extract_hosted_tool_calls(value: &Value) -> Vec<HostedToolCallCompleted> {
     };
     output
         .iter()
+        // Client-executed searches complete only after the local search.
+        .filter(|item| !is_client_executed_tool_search(item))
         .filter_map(hosted_tool_call_completed_from_item)
         .collect()
 }
@@ -2169,6 +2362,110 @@ mod tests {
             response.retry_events[0]["kind"],
             "reliability_retry_attempt"
         );
+    }
+
+    #[tokio::test]
+    async fn client_executed_tool_search_continues_the_turn_with_search_output() {
+        use roder_api::inference::ToolSearchConfig;
+        use roder_api::tool_search_catalog::ToolSearchCatalog;
+
+        const FIRST_SSE: &str = "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ts_9\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"query\":\"read files\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"ts_9\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"query\":\"read files\"}]}}\n\n";
+        const SECOND_SSE: &str = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n";
+
+        let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let base_url = spawn_recording_server(
+            vec![("/responses", 200, FIRST_SSE), ("/responses", 200, SECOND_SSE)],
+            Arc::clone(&bodies),
+        )
+        .await;
+
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": [
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "go" }] }
+            ]
+        });
+        let response = send_responses_request(&base_url, "secret", &[], None, &body, None)
+            .await
+            .unwrap();
+
+        let tools = vec![
+            roder_api::tools::ToolSpec {
+                name: "read_file".to_string(),
+                description: "Read a file from the workspace".to_string(),
+                parameters: json!({ "type": "object" }),
+            },
+            roder_api::tools::ToolSpec {
+                name: "deploy_app".to_string(),
+                description: "Deploy the application".to_string(),
+                parameters: json!({ "type": "object" }),
+            },
+        ];
+        let catalog = ToolSearchCatalog::build(&tools, &ToolSearchConfig::default());
+        let mut stream = stream_responses_sse_with_client_tool_search(
+            response.response,
+            HashMap::new(),
+            response.retry_events,
+            Some(ClientToolSearchContext {
+                base_url: base_url.clone(),
+                api_key: "secret".to_string(),
+                headers: Vec::new(),
+                grok_conversation_id: None,
+                body: body.clone(),
+                policy: None,
+                catalog,
+            }),
+        );
+
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("stream event"));
+        }
+
+        // Exactly one turn completion, from the continuation response.
+        let completions: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                InferenceEvent::Completed(metadata) => Some(metadata),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(completions.len(), 1, "{events:?}");
+        assert_eq!(completions[0].provider_response_id.as_deref(), Some("resp_2"));
+
+        // The locally-executed search surfaces through the canonical hosted
+        // lifecycle with searched tool ids preserved.
+        let search_completed = events
+            .iter()
+            .find_map(|event| match event {
+                InferenceEvent::HostedToolCallCompleted(call) if call.name == "tool_search" => {
+                    Some(call)
+                }
+                _ => None,
+            })
+            .expect("client search completion");
+        let arguments: Value = serde_json::from_str(&search_completed.arguments).unwrap();
+        assert_eq!(arguments["executor"], "client");
+        assert_eq!(arguments["selected_tools"][0], "read_file");
+
+        // The continuation request echoed the call and carried the
+        // tool_search_output with catalog payloads.
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 2);
+        let second: Value = serde_json::from_str(&bodies[1]).unwrap();
+        let input = second["input"].as_array().unwrap();
+        let echoed = input
+            .iter()
+            .find(|item| item["type"] == "tool_search_call")
+            .expect("echoed tool_search_call");
+        assert_eq!(echoed["id"], "ts_9");
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "tool_search_output")
+            .expect("tool_search_output item");
+        assert_eq!(output["call_id"], "ts_9");
+        assert!(output["output"].as_str().unwrap().contains("read_file"));
+        assert!(!output["output"].as_str().unwrap().contains("deploy_app"));
     }
 
     #[tokio::test]

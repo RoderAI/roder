@@ -196,6 +196,44 @@ pub fn builtin_coding_tools_contributor_with_path_scope_and_shell(
 }
 
 #[cfg(test)]
+mod tool_search_catalog_tests {
+    use super::*;
+    use roder_api::inference::ToolSearchConfig;
+    use roder_api::tool_search_catalog::ToolSearchCatalog;
+    use roder_api::tools::ToolRegistry;
+
+    #[test]
+    fn tool_search_catalog_over_builtin_tools_is_stable_and_provider_safe() {
+        let workspace = std::env::temp_dir();
+        let contributor = builtin_coding_tools_contributor(&workspace).expect("contributor");
+        let mut registry = ToolRegistry::default();
+        contributor.contribute(&mut registry).expect("register");
+        let specs = registry.specs();
+        assert!(!specs.is_empty());
+
+        let config = ToolSearchConfig::default();
+        let first = ToolSearchCatalog::build(&specs, &config);
+        let second = ToolSearchCatalog::build(&specs, &config);
+        assert_eq!(first, second, "catalog is stable across runs");
+
+        // Every catalog item resolves back to a registered executor.
+        for item in &first.items {
+            assert!(
+                registry.get(&item.name).is_some(),
+                "{} must map to a canonical executor",
+                item.name
+            );
+        }
+
+        // Nothing credential-like or process-local leaves through payloads.
+        let serialized = serde_json::to_string(&first).unwrap();
+        for needle in ["sk-", "Bearer ", "api_key\":\"", "/Users/", "x-roder-"] {
+            assert!(!serialized.contains(needle), "leaked {needle:?}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[cfg(unix)]
