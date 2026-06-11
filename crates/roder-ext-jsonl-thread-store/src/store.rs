@@ -655,6 +655,9 @@ impl JsonlThreadStore {
             runner_destination: None,
             runner_state: None,
             runner_binding: None,
+            parent_thread_id: None,
+            forked_from_turn_id: None,
+            workspace_fork: None,
             created_at: first_timestamp,
             updated_at: last_timestamp,
             message_count,
@@ -837,6 +840,80 @@ mod tests {
         std::env::temp_dir().join(name).display().to_string()
     }
 
+    /// Fork metadata (roadmap phase 90) must survive a process restart: a
+    /// second store instance over the same files reloads the full provenance.
+    #[tokio::test]
+    async fn fork_metadata_round_trips_across_store_instances() {
+        use roder_api::forks::{
+            ForkCleanupPolicy, ForkProvenance, ForkStatus, WorkspaceFork,
+        };
+
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-fork-roundtrip-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let fork = WorkspaceFork {
+            id: test_workspace("parent-repo-worktree"),
+            provider_id: "git-worktree".to_string(),
+            source_workspace: test_workspace("parent-repo").into(),
+            workspace: test_workspace("parent-repo-worktree").into(),
+            status: ForkStatus::Active,
+            provenance: ForkProvenance {
+                branch: Some("roder/fork/experiment".to_string()),
+                source_branch: Some("main".to_string()),
+                source_commit: Some("abc123".to_string()),
+                snapshot_id: None,
+                session_id: None,
+                created_at: now,
+            },
+            cleanup: ForkCleanupPolicy::Explicit,
+            metadata: serde_json::json!({}),
+        };
+
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: "child-thread".to_string(),
+                title: Some("Fork child".to_string()),
+                workspace: fork.workspace.display().to_string(),
+                workspace_id: None,
+                root_id: None,
+                provider: Some("mock".to_string()),
+                model: Some("mock".to_string()),
+                selection_mode: None,
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
+                external_tools: Vec::new(),
+                runner_destination: None,
+                runner_state: None,
+                runner_binding: None,
+                parent_thread_id: Some("parent-thread".to_string()),
+                forked_from_turn_id: Some("turn-7".to_string()),
+                workspace_fork: Some(fork.clone()),
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+
+        // Simulated restart: a fresh store instance over the same base path.
+        let reopened = JsonlThreadStore { base_path };
+        let metadata = reopened
+            .load_thread_metadata(&"child-thread".to_string())
+            .await
+            .unwrap()
+            .expect("child metadata after restart");
+
+        assert_eq!(metadata.parent_thread_id.as_deref(), Some("parent-thread"));
+        assert_eq!(metadata.forked_from_turn_id.as_deref(), Some("turn-7"));
+        assert_eq!(metadata.workspace_fork, Some(fork));
+    }
+
     fn transcript_item_event(
         seq: u64,
         thread_id: &ThreadId,
@@ -939,6 +1016,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1125,6 +1205,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1231,6 +1314,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1386,6 +1472,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1434,6 +1523,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1495,6 +1587,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1608,6 +1703,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1664,6 +1762,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1736,6 +1837,9 @@ mod tests {
                     runner_destination: None,
                     runner_state: None,
                     runner_binding: None,
+                    parent_thread_id: None,
+                    forked_from_turn_id: None,
+                    workspace_fork: None,
                     created_at: timestamp,
                     updated_at: timestamp,
                     message_count: index as u32,
@@ -1800,6 +1904,9 @@ mod tests {
                     runner_destination: None,
                     runner_state: None,
                     runner_binding: None,
+                    parent_thread_id: None,
+                    forked_from_turn_id: None,
+                    workspace_fork: None,
                     created_at: timestamp,
                     updated_at: timestamp,
                     message_count: index as u32,
@@ -1856,6 +1963,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1919,6 +2029,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -1990,6 +2103,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -2047,6 +2163,9 @@ mod tests {
             runner_destination: None,
             runner_state: None,
             runner_binding: None,
+            parent_thread_id: None,
+            forked_from_turn_id: None,
+            workspace_fork: None,
             created_at: now,
             updated_at: now,
             message_count: 1,
@@ -2104,6 +2223,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -2164,6 +2286,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
@@ -2235,6 +2360,9 @@ mod tests {
                 runner_destination: None,
                 runner_state: None,
                 runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
                 created_at: now,
                 updated_at: now,
                 message_count: 0,

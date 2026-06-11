@@ -4,6 +4,7 @@ mod chrome;
 mod commands;
 mod composer;
 mod dialog;
+mod forks;
 mod goals;
 mod input_queue;
 mod media;
@@ -11,6 +12,7 @@ mod media;
 mod memories;
 mod mention;
 mod palette_ui;
+mod remote_node;
 #[cfg(test)]
 mod plan_hunk_tests;
 mod plan_panel;
@@ -162,7 +164,7 @@ const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
 const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
 const WORKING_SHEEN_WIDTH: usize = 3;
-const MAX_VISIBLE_SLASH_COMMANDS: usize = 16;
+const MAX_VISIBLE_SLASH_COMMANDS: usize = 17;
 const MAX_VISIBLE_INLINE_COMPLETIONS: usize = 12;
 const MAX_FILE_COMPLETION_CACHE: usize = 1_000;
 const RESUME_VISIBLE_TAIL_ITEMS: usize = 160;
@@ -2797,6 +2799,9 @@ where
                 self.timeline
                     .push_system(commands::help_text(&self.command_catalog));
                 self.push_event("slash command: /help".to_string());
+            }
+            "fork" => {
+                self.run_fork_slash_command(&args).await;
             }
             "goal" => {
                 self.run_goal_slash_command(&args).await;
@@ -7900,6 +7905,20 @@ fn runner_menu_label(
     } else {
         ""
     };
+    // Providers that need setup (e.g. a missing credential env var) show the
+    // guidance instead of a capability list that cannot be used yet.
+    if let Some(hint) = provider
+        .setup_hint
+        .as_deref()
+        .filter(|hint| !hint.trim().is_empty())
+    {
+        return format!(
+            "{}{} - needs setup: {}",
+            provider.provider_id,
+            active_suffix,
+            truncate(hint, 72)
+        );
+    }
     format!(
         "{}{} - {}",
         provider.provider_id,
@@ -9361,6 +9380,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9562,6 +9583,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9630,6 +9653,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9779,6 +9804,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9850,6 +9877,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9880,6 +9909,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,
@@ -9996,7 +10027,15 @@ mod tests {
         let mut app = test_app();
         app.show_provider_popup = true;
         app.provider_menu_items = main_provider_menu_items(&[], false);
-        app.provider_state.select(Some(3));
+        // Select the roadmap entry by value, not by hardcoded index: the
+        // menu gains/reorders entries over time (e.g. the Settings entry)
+        // and this test is about the roadmap action, not menu layout.
+        let roadmap_index = app
+            .provider_menu_items
+            .iter()
+            .position(|item| matches!(item, ProviderMenuItem::RoadmapMode))
+            .expect("provider menu offers a roadmap entry");
+        app.provider_state.select(Some(roadmap_index));
 
         app.select_current_provider_menu_item().await;
 
@@ -12154,6 +12193,7 @@ mod tests {
                     artifact_export: false,
                     mounts: Default::default(),
                 },
+                setup_hint: None,
             }],
         });
 
@@ -12170,6 +12210,36 @@ mod tests {
                 && label.contains("cancel")
         ));
         assert!(matches!(items.last(), Some(ProviderMenuItem::Back)));
+    }
+
+    #[test]
+    fn runner_menu_label_shows_setup_guidance_for_missing_credentials() {
+        let label = runner_menu_label(
+            &roder_protocol::RunnerProviderDescriptor {
+                provider_id: "sprites".to_string(),
+                capabilities: roder_api::remote_runner::RunnerCapabilities {
+                    command_exec: true,
+                    file_read: false,
+                    file_write: false,
+                    port_preview: false,
+                    snapshots: false,
+                    cancellation: false,
+                    artifact_export: false,
+                    mounts: Default::default(),
+                },
+                setup_hint: Some(
+                    "set SPRITES_TOKEN (or RODER_SPRITES_TOKEN) to run Fly Sprites sandboxes; \
+                     see docs/roder-fly-sprites-runner.md"
+                        .to_string(),
+                ),
+            },
+            None,
+        );
+
+        assert!(label.starts_with("sprites - needs setup: "), "{label}");
+        assert!(label.contains("SPRITES_TOKEN"), "{label}");
+        // Hints stay compact in the picker.
+        assert!(label.len() <= 110, "{label}");
     }
 
     #[test]

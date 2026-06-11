@@ -256,6 +256,11 @@ fn speech_not_found(message: impl Into<String>) -> JsonRpcError {
 mod tests {
     use std::sync::Arc;
 
+    use roder_api::extension::{ExtensionRegistryBuilder, SpeechTranscriberId};
+    use roder_api::speech::{
+        SpeechCapabilities, SpeechModelDescriptor, SpeechSegment, SpeechTranscriber,
+        SpeechTranscriptionResult,
+    };
     use roder_core::{Runtime, RuntimeConfig};
     use roder_extension_host::{DefaultRegistryConfig, build_default_registry};
     use roder_protocol::{
@@ -263,6 +268,136 @@ mod tests {
     };
 
     use super::*;
+
+    /// Offline fake transcriber that "recognizes" the submitted bytes so the
+    /// JSON-RPC success path can be tested without provider credentials.
+    struct FakeSpeechTranscriber;
+
+    #[async_trait::async_trait]
+    impl SpeechTranscriber for FakeSpeechTranscriber {
+        fn id(&self) -> SpeechTranscriberId {
+            "fake-speech".to_string()
+        }
+
+        fn capabilities(&self) -> SpeechCapabilities {
+            SpeechCapabilities {
+                batch: true,
+                ..SpeechCapabilities::default()
+            }
+        }
+
+        fn metadata(&self) -> SpeechProviderMetadata {
+            SpeechProviderMetadata::local("Fake Speech")
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: SpeechProviderContext<'_>,
+        ) -> anyhow::Result<Vec<SpeechModelDescriptor>> {
+            Ok(vec![SpeechModelDescriptor {
+                id: "fake-stt".to_string(),
+                name: "Fake STT".to_string(),
+                description: None,
+                capabilities: SpeechCapabilities {
+                    batch: true,
+                    ..SpeechCapabilities::default()
+                },
+            }])
+        }
+
+        async fn transcribe(
+            &self,
+            _ctx: SpeechProviderContext<'_>,
+            request: SpeechTranscriptionRequest,
+        ) -> anyhow::Result<SpeechTranscriptionResult> {
+            anyhow::ensure!(request.model == "fake-stt", "unexpected model");
+            let decoded = String::from_utf8_lossy(&request.audio.bytes).into_owned();
+            Ok(SpeechTranscriptionResult {
+                text: format!("transcribed: {decoded}"),
+                language: request.language,
+                duration_millis: Some(400),
+                segments: vec![SpeechSegment {
+                    text: decoded,
+                    start_millis: Some(0),
+                    end_millis: Some(400),
+                    speaker: None,
+                    confidence: Some(0.99),
+                }],
+                provider_response_id: Some("fake-response-1".to_string()),
+                metadata: serde_json::json!({}),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn speech_transcribe_succeeds_through_json_rpc_with_fake_provider() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(roder_core::fake_provider::FakeInferenceEngine));
+        builder.speech_transcriber(Arc::new(FakeSpeechTranscriber));
+        let registry = builder.build().unwrap();
+        let runtime = Arc::new(Runtime::new(registry, RuntimeConfig::default()).unwrap());
+        let server = AppServer::new(runtime);
+
+        let audio_base64 =
+            base64::engine::general_purpose::STANDARD.encode(b"hello roder speech");
+        let response = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(1)),
+                method: "speech/transcribe".to_string(),
+                params: Some(serde_json::json!({
+                    "provider": "fake-speech",
+                    "audio": {
+                        "bytesBase64": audio_base64,
+                        "mimeType": "audio/wav",
+                        "filename": "clip.wav"
+                    },
+                    "language": "en"
+                })),
+            })
+            .await;
+
+        assert!(response.error.is_none(), "{:?}", response.error);
+        let result: SpeechTranscribeResult =
+            serde_json::from_value(response.result.unwrap()).unwrap();
+        assert_eq!(result.provider, "fake-speech");
+        assert_eq!(result.model, "fake-stt");
+        assert_eq!(result.text, "transcribed: hello roder speech");
+        assert_eq!(result.language.as_deref(), Some("en"));
+        assert_eq!(result.duration_millis, Some(400));
+        assert_eq!(result.segments.len(), 1);
+        assert_eq!(result.segments[0].confidence, Some(0.99));
+        assert_eq!(result.provider_response_id.as_deref(), Some("fake-response-1"));
+    }
+
+    #[tokio::test]
+    async fn speech_transcribe_rejects_invalid_base64_audio() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(roder_core::fake_provider::FakeInferenceEngine));
+        builder.speech_transcriber(Arc::new(FakeSpeechTranscriber));
+        let registry = builder.build().unwrap();
+        let runtime = Arc::new(Runtime::new(registry, RuntimeConfig::default()).unwrap());
+        let server = AppServer::new(runtime);
+
+        let response = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(1)),
+                method: "speech/transcribe".to_string(),
+                params: Some(serde_json::json!({
+                    "provider": "fake-speech",
+                    "audio": {
+                        "bytesBase64": "not base64 at all!!!",
+                        "mimeType": "audio/wav"
+                    }
+                })),
+            })
+            .await;
+
+        let error = response.error.expect("invalid base64 must fail");
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("bytesBase64"), "{}", error.message);
+    }
 
     #[tokio::test]
     async fn speech_providers_list_uses_default_registry_extensions() {

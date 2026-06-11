@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::fuzzy::{
-    FuzzyCandidate, diagnostic_candidates, normalized_unique_match, strip_line_number_prefixes,
+    FuzzyCandidate, diagnostic_candidates, normalized_unique_match_range,
+    strip_line_number_prefixes,
 };
 use crate::hunks::{EditHunk, text_edit_hunk};
 use crate::{EditToolResult, TextEdit};
@@ -18,6 +19,14 @@ pub enum EditMatchMode {
 pub struct EditOptions {
     pub fuzzy: EditMatchMode,
     pub strip_line_numbers: bool,
+    /**
+     * Bounded indentation normalization for inserted/replaced code: when the
+     * replaced text is uniformly indented and the replacement omitted that
+     * indentation entirely, shift the replacement right to match. Off by
+     * default; hosts opt in per call.
+     */
+    #[serde(default)]
+    pub reindent_inserted: bool,
 }
 
 impl Default for EditOptions {
@@ -25,6 +34,7 @@ impl Default for EditOptions {
         Self {
             fuzzy: EditMatchMode::Diagnose,
             strip_line_numbers: true,
+            reindent_inserted: false,
         }
     }
 }
@@ -72,8 +82,8 @@ pub fn apply_multi_edit(
             edit.old_string.clone()
         };
         let matches = match_positions(&updated, &old_string);
-        let position = match matches.as_slice() {
-            [position] => *position,
+        let range = match matches.as_slice() {
+            [position] => *position..*position + old_string.len(),
             [] => match options.fuzzy {
                 EditMatchMode::Off | EditMatchMode::Diagnose => {
                     return Err(EditApplyError::OldStringNotFound {
@@ -81,7 +91,7 @@ pub fn apply_multi_edit(
                         candidates: diagnostic_candidates(&updated, &old_string, 3),
                     });
                 }
-                EditMatchMode::ApplySafe => normalized_unique_match(&updated, &old_string)
+                EditMatchMode::ApplySafe => normalized_unique_match_range(&updated, &old_string)
                     .ok_or_else(|| EditApplyError::OldStringNotFound {
                         edit: Some(index),
                         candidates: diagnostic_candidates(&updated, &old_string, 3),
@@ -95,8 +105,16 @@ pub fn apply_multi_edit(
                 });
             }
         };
-        updated.replace_range(position..position + old_string.len(), &edit.new_string);
-        hunks.push(text_edit_hunk(&path, &old_string, &edit.new_string, index));
+        // Use the actual matched text (which may differ from old_string under
+        // fuzzy recovery) for reindent context and hunk/reverse-patch data.
+        let matched_old = updated[range.clone()].to_string();
+        let new_string = if options.reindent_inserted {
+            crate::post_edit::normalize_inserted_indentation(&matched_old, &edit.new_string)
+        } else {
+            edit.new_string.clone()
+        };
+        updated.replace_range(range, &new_string);
+        hunks.push(text_edit_hunk(&path, &matched_old, &new_string, index));
     }
     Ok((
         updated,

@@ -1,0 +1,22 @@
+{
+  "id": "anthropic-provider-native",
+  "title": "Anthropic provider-native tool search with the BM25 variant",
+  "provider": "anthropic",
+  "model": "claude-fable-5",
+  "mode": "provider_native",
+  "providerVariant": "bm25",
+  "catalog": {
+    "tools": [
+      { "name": "edit_file", "description": "Edit a file by replacing an exact string." },
+      { "name": "git_status", "description": "Show the git working tree status." },
+      { "name": "read_file", "description": "Read a file from the workspace." },
+      { "name": "shell", "description": "Run a shell command in the workspace." }
+    ]
+  },
+  "expected": {
+    "outcome": "request_mapped",
+    "catalogItems": 4,
+    "deferredTools": 4,
+    "nativeToolSearchEntry": true
+  }
+}

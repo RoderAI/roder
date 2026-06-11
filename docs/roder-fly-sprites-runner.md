@@ -130,7 +130,10 @@ The auth token value is read from `RODER_REMOTE_APP_SERVER_TOKEN` locally and in
 - Commands: maps Roder `RunnerCommandRequest` to Sprites HTTP POST exec with repeated `cmd` query parameters, cwd, and environment values. The live POST exec response is decoded as non-TTY binary stream frames.
 - Files: workspace-relative read/write through Sprites filesystem endpoints with parent directory creation on writes. Transient live API `404`, `502`, `503`, and `504` write responses are retried with bounded backoff during repo materialization and binary upload.
 - Manifest materialization: file entries and source directory entries are uploaded before the session is returned, so repo-like workspaces can be forked into the Sprite.
-- Checkpoints: maps Roder snapshots to Sprites checkpoint creation and stores only non-secret snapshot metadata.
+- Checkpoints: maps Roder snapshots to Sprites checkpoint creation and stores only non-secret snapshot metadata. `restore_checkpoint_id` in the destination config restores that checkpoint right after session creation (before manifest materialization and app-server bootstrap); restore progress is NDJSON and error frames fail closed.
+- Filesystem: beyond the canonical read/write contract, the client maps list, delete, rename, copy, and chmod onto the per-sprite `fs` endpoints with the same workspace-relative path validation.
+- WebSocket channels: `exec_ws` runs commands over the WSS exec channel (repeated `cmd` query parameters, multiplexed stdout/stderr/exit frames plus JSON info frames), and `serve_port_proxy` relays a local TCP listener to a sprite port through the WSS proxy channel (init JSON naming the target host/port, then a raw byte relay). Both authenticate with the same bearer token and are covered by offline fake-WSS tests.
+- Missing credentials: the runner picker shows setup guidance (`set SPRITES_TOKEN ...`) instead of an unusable capability list when no token env var is configured.
 - Ports: returns the sprite URL when available. Managed app-server sessions expose a direct WebSocket `connect_url` through the Sprites service `http_port`; generic WebSocket TCP proxying for arbitrary runner ports is intentionally deferred until Roder has a local preview relay contract.
 - Artifacts: file export is represented as provider metadata; recursive directory export is not implemented yet.
 

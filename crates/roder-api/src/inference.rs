@@ -119,7 +119,67 @@ impl ToolSearchConfig {
     pub fn is_provider_native_requested(&self) -> bool {
         self.mode.allows_provider_native()
     }
+
+    /**
+     * Resolve the effective tool-search mode for one provider/model turn.
+     *
+     * `Auto` silently falls back to explicit tools when the provider/model
+     * does not support native tool search. An explicit `ProviderNative`
+     * request only falls back when `fallback_to_explicit_tools` allows it;
+     * otherwise the turn must fail closed with the returned diagnostic.
+     */
+    pub fn resolve_effective_mode(
+        &self,
+        provider_native_supported: bool,
+    ) -> Result<EffectiveToolSearchMode, ToolSearchModeError> {
+        match self.mode {
+            ToolSearchMode::Explicit => Ok(EffectiveToolSearchMode::Explicit),
+            ToolSearchMode::Auto => {
+                if provider_native_supported {
+                    Ok(EffectiveToolSearchMode::ProviderNative)
+                } else {
+                    Ok(EffectiveToolSearchMode::Explicit)
+                }
+            }
+            ToolSearchMode::ProviderNative => {
+                if provider_native_supported {
+                    Ok(EffectiveToolSearchMode::ProviderNative)
+                } else if self.fallback_to_explicit_tools {
+                    Ok(EffectiveToolSearchMode::Explicit)
+                } else {
+                    Err(ToolSearchModeError::ProviderNativeUnsupported)
+                }
+            }
+        }
+    }
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectiveToolSearchMode {
+    Explicit,
+    ProviderNative,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSearchModeError {
+    ProviderNativeUnsupported,
+}
+
+impl std::fmt::Display for ToolSearchModeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProviderNativeUnsupported => write!(
+                f,
+                "provider-native tool search was requested but the selected provider/model does \
+                 not support it and fallback_to_explicit_tools is disabled; enable fallback or \
+                 pick a supported model"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ToolSearchModeError {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -827,5 +887,45 @@ mod tests {
         assert_eq!(config.mode, ToolSearchMode::Explicit);
         assert!(!config.is_provider_native_requested());
         assert!(config.fallback_to_explicit_tools);
+    }
+
+    #[test]
+    fn tool_search_effective_mode_resolution_covers_fallback_matrix() {
+        let explicit = ToolSearchConfig::explicit();
+        assert_eq!(
+            explicit.resolve_effective_mode(true).unwrap(),
+            EffectiveToolSearchMode::Explicit
+        );
+
+        let auto = ToolSearchConfig {
+            mode: ToolSearchMode::Auto,
+            ..ToolSearchConfig::default()
+        };
+        assert_eq!(
+            auto.resolve_effective_mode(true).unwrap(),
+            EffectiveToolSearchMode::ProviderNative
+        );
+        assert_eq!(
+            auto.resolve_effective_mode(false).unwrap(),
+            EffectiveToolSearchMode::Explicit
+        );
+
+        let native = ToolSearchConfig::provider_native();
+        assert_eq!(
+            native.resolve_effective_mode(true).unwrap(),
+            EffectiveToolSearchMode::ProviderNative
+        );
+        assert_eq!(
+            native.resolve_effective_mode(false).unwrap(),
+            EffectiveToolSearchMode::Explicit
+        );
+
+        let strict = ToolSearchConfig {
+            fallback_to_explicit_tools: false,
+            ..ToolSearchConfig::provider_native()
+        };
+        let error = strict.resolve_effective_mode(false).unwrap_err();
+        assert_eq!(error, ToolSearchModeError::ProviderNativeUnsupported);
+        assert!(error.to_string().contains("fallback_to_explicit_tools"));
     }
 }

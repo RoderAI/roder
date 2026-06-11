@@ -60,6 +60,18 @@ impl PostgresSessionConfig {
     }
 }
 
+/// Validates a tenant id for store scoping (shared by config validation
+/// and `for_tenant` handles).
+pub fn validate_tenant_id(tenant_id: &str) -> anyhow::Result<String> {
+    let tenant_id = tenant_id.trim();
+    anyhow::ensure!(!tenant_id.is_empty(), "tenant id is required");
+    anyhow::ensure!(
+        !tenant_id.contains('/'),
+        "tenant id cannot contain '/': {tenant_id}"
+    );
+    Ok(tenant_id.to_string())
+}
+
 pub fn redact_database_url(url: &str) -> String {
     let Some((scheme, rest)) = url.split_once("://") else {
         return "<redacted>".to_string();
@@ -103,6 +115,26 @@ impl PostgresSessionStore {
             pool,
             tenant_id: config.tenant_id.clone(),
         })
+    }
+
+    /**
+     * Derives a tenant-scoped handle that shares this store's connection
+     * pool (roadmap phase 72, Task 3). Hosted deployments connect once and
+     * mint per-tenant handles; the tenant id is fixed at construction from
+     * the authenticated request context — request payloads can never pick
+     * a tenant because every query is bound to `self.tenant_id`.
+     */
+    pub fn for_tenant(&self, tenant_id: &str) -> anyhow::Result<Self> {
+        let tenant_id = validate_tenant_id(tenant_id)?;
+        Ok(Self {
+            pool: self.pool.clone(),
+            tenant_id,
+        })
+    }
+
+    /// The tenant this handle is bound to.
+    pub fn tenant_id(&self) -> &str {
+        &self.tenant_id
     }
 
     fn artifact_store(&self) -> ContextArtifactStore {

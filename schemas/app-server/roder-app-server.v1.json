@@ -564,6 +564,42 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "forks/create",
+      "paramsType": "ForksCreateParams",
+      "resultType": "ForksCreateResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "forks/list",
+      "paramsType": "ForksListParams",
+      "resultType": "ForksListResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "forks/providers/list",
+      "paramsType": "ForksProvidersListParams",
+      "resultType": "ForksProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "forks/remove",
+      "paramsType": "ForksRemoveParams",
+      "resultType": "ForksRemoveResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "fs/readDirectory",
       "paramsType": "FsReadDirectoryParams",
       "resultType": "FsReadDirectoryResult",
@@ -578,6 +614,114 @@
       "resultType": "FsReadFileResult",
       "stability": "stable",
       "featureGroup": "filesystem",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/audit/list",
+      "paramsType": "HostedAuditListParams",
+      "resultType": "HostedAuditListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/hooks/create",
+      "paramsType": "HostedHooksCreateParams",
+      "resultType": "HostedHooksCreateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/hooks/delete",
+      "paramsType": "HostedHooksDeleteParams",
+      "resultType": "HostedHooksDeleteResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/hooks/list",
+      "paramsType": "HostedHooksListParams",
+      "resultType": "HostedHooksListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/hooks/update",
+      "paramsType": "HostedHooksUpdateParams",
+      "resultType": "HostedHooksUpdateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/service_accounts/create",
+      "paramsType": "HostedServiceAccountsCreateParams",
+      "resultType": "HostedServiceAccountsCreateResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/service_accounts/list",
+      "paramsType": "HostedServiceAccountsListParams",
+      "resultType": "HostedServiceAccountsListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/service_accounts/revoke",
+      "paramsType": "HostedServiceAccountsRevokeParams",
+      "resultType": "HostedServiceAccountsRevokeResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "hosted/tenant/read",
+      "paramsType": "HostedTenantReadParams",
+      "resultType": "HostedTenantReadResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/tenants/list",
+      "paramsType": "HostedTenantsListParams",
+      "resultType": "HostedTenantsListResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/usage/read",
+      "paramsType": "HostedUsageReadParams",
+      "resultType": "HostedUsageReadResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "hosted/whoami",
+      "paramsType": "HostedWhoamiParams",
+      "resultType": "HostedWhoamiResult",
+      "stability": "stable",
+      "featureGroup": "hosted",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
     },
@@ -886,6 +1030,15 @@
       "featureGroup": "models",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "node/status",
+      "paramsType": "NodeStatusParams",
+      "resultType": "NodeStatusResult",
+      "stability": "stable",
+      "featureGroup": "node",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "plan/review/approve",
@@ -1395,6 +1548,60 @@
       "sideEffect": "externalProcess"
     },
     {
+      "method": "stats/backfill",
+      "paramsType": "StatsBackfillParams",
+      "resultType": "StatsBackfillResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "stats/export",
+      "paramsType": "StatsExportParams",
+      "resultType": "StatsExportResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "stats/sessions",
+      "paramsType": "StatsSessionsParams",
+      "resultType": "StatsSessionsResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/summary",
+      "paramsType": "StatsSummaryParams",
+      "resultType": "StatsSummaryResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/tokens",
+      "paramsType": "StatsTokensParams",
+      "resultType": "StatsTokensResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "stats/tools",
+      "paramsType": "StatsToolsParams",
+      "resultType": "StatsToolsResult",
+      "stability": "stable",
+      "featureGroup": "stats",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "tasks/cancel",
       "paramsType": "TasksCancelParams",
       "resultType": "TasksCancelResult",
@@ -1564,6 +1771,24 @@
       "sideEffect": "localState"
     },
     {
+      "method": "thread/fork",
+      "paramsType": "ThreadForkParams",
+      "resultType": "ThreadForkResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/fork_status",
+      "paramsType": "ThreadForkStatusParams",
+      "resultType": "ThreadForkStatusResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "thread/goal/clear",
       "paramsType": "ThreadGoalClearParams",
       "resultType": "ThreadGoalClearResult",
@@ -1613,6 +1838,15 @@
       "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/remove_fork",
+      "paramsType": "ThreadRemoveForkParams",
+      "resultType": "ThreadRemoveForkResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "thread/resolve_approval",

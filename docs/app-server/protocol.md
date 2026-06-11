@@ -21,7 +21,7 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `workspace/files/status` | file tree/search bootstrap | Read app-server-owned file-index state for a workspace and optional root. | Returns `missing`, `building`, `ready`, `stale`, or `failed`. |
 | `workspace/files/rebuild` | file tree/search refresh | Build or refresh the cached workspace file index. | Emits `workspace/files/statusChanged`; cache is keyed by canonical root, not selected root order. |
 | `workspace/files/children` | file tree expansion | List registered workspace roots or direct children under a root-relative directory. | Canonical file-tree method; paths are relative and scoped to registered roots. |
-| `workspace/files/query` | quick-open and mentions | Ranked fuzzy match over indexed workspace files. | Result limits do not cap the underlying index. |
+| `workspace/files/query` | quick-open and mentions | Ranked fuzzy match over indexed workspace files and directories. | Result limits do not cap the underlying index. |
 | `workspace/files/read` | file preview | Read bounded UTF-8 text, binary metadata, or unsupported-encoding metadata for an indexed workspace file. | Use with `rootId` and root-relative `path`. |
 | `fs/readFile` | low-level host file read | Read an absolute host path and return base64 bytes as `dataBase64`. | Not the workspace file-preview API. |
 | `fs/readDirectory` | low-level host directory read | List direct children of an absolute host directory with `fileName`, `isDirectory`, and `isFile`. | File browsers should not recursively call this; use `workspace/files/children`. |
@@ -60,7 +60,7 @@ from the app-server process when persisted metadata is missing or invalid.
 | `item/started` | Full `ThreadItemEvent` envelope with `event.type: "itemStarted"` and a typed `event.item`; creates an in-progress canonical item. | Recorded public item event. |
 | `item/agentMessage/delta` | Full `ThreadItemEvent` envelope with `event.type: "itemDelta"` and `delta.type: "agentMessageText"`; appends assistant text to `event.itemId`. | Recorded public item event. |
 | `item/reasoning/textDelta` | Full `ThreadItemEvent` envelope with `delta.type: "reasoningText"`; appends reasoning content to `event.itemId`. | Recorded public item event. |
-| `item/completed` | Full `ThreadItemEvent` envelope with `event.type: "itemCompleted"` and a typed `event.item`; completes the existing canonical item. | Recorded public item event. |
+| `item/completed` | Full `ThreadItemEvent` envelope with `event.type: "itemCompleted"` and a typed `event.item`; completes the existing canonical item. Inference routing decisions complete a persisted `routingDecision` item. | Recorded public item event. |
 | `turn/completed` | `params.turn.id`; busy state clears when it matches the active turn. | Runtime turn completion. |
 | `thread/status/changed` | `threadId`, `status`; sidebar status updates. `activeFlags` marks wait states such as `approvalRequired`, `userInputRequired`, and `planExitRequired`. | Runtime active/idle/wait state changes. |
 | `thread/approvalRequested` | `approvalId`, `toolId`, `toolName`, `threadId`, and `turnId`; clients should prompt and answer with `thread/resolve_approval`. | Runtime tool policy approval request. |

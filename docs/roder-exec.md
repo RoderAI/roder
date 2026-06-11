@@ -39,6 +39,9 @@ Supported options:
 - `--profile eval|non_interactive`: selects an existing runtime profile
 - `--mode bypass|accept_all|plan`: selects an existing policy mode
 - `--image FILE`: attaches a local image input
+- `--record-api-transcript FILE`: captures the app-server API transcript
+  (header, requests, responses, notifications) as JSONL for debugging harness
+  runs; the path is reported on stderr after the turn ends
 - `-`: reads the prompt from stdin
 
 For Harbor or Terminal-Bench runs, use an isolated config directory and keep
@@ -77,3 +80,14 @@ The Harbor adapter in `evals/harbor` follows this pattern and stores generated
 jobs under `evals/harbor/jobs/`, which is gitignored. Analyze completed jobs
 with `python3 evals/harbor/analyze_tbench_run.py JOB_DIR --require-clean` to
 separate harness errors from reward-0 scored tasks.
+
+To debug a failing harness task at the app-server API level, add
+`--record-api-transcript /logs/agent/roder-api-transcript.jsonl` and replay or
+inspect the captured JSON-RPC traffic.
+
+A process-level offline smoke covers this contract end to end against the
+fake provider (no TTY, no network):
+
+```sh
+cargo test -p roder-cli --test exec_process_smoke
+```

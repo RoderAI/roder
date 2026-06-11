@@ -283,8 +283,39 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("eval/report/read", "eval", ReadOnly, Idempotent),
     method_spec!("eval/reports/list", "eval", ReadOnly, Idempotent),
     method_spec!("extensions/list", "extensions", ReadOnly, Idempotent),
+    method_spec!("forks/create", "forks", LocalState, NonIdempotent),
+    method_spec!("forks/list", "forks", ReadOnly, Idempotent),
+    method_spec!("forks/providers/list", "forks", ReadOnly, Idempotent),
+    method_spec!("forks/remove", "forks", LocalState, NonIdempotent),
     method_spec!("fs/readDirectory", "filesystem", ReadOnly, Idempotent),
     method_spec!("fs/readFile", "filesystem", ReadOnly, Idempotent),
+    method_spec!("hosted/audit/list", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/hooks/create", "hosted", LocalState, NonIdempotent),
+    method_spec!("hosted/hooks/delete", "hosted", LocalState, NonIdempotent),
+    method_spec!("hosted/hooks/list", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/hooks/update", "hosted", LocalState, NonIdempotent),
+    method_spec!(
+        "hosted/service_accounts/create",
+        "hosted",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!(
+        "hosted/service_accounts/list",
+        "hosted",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!(
+        "hosted/service_accounts/revoke",
+        "hosted",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("hosted/tenant/read", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/tenants/list", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/usage/read", "hosted", ReadOnly, Idempotent),
+    method_spec!("hosted/whoami", "hosted", ReadOnly, Idempotent),
     method_spec!("hunk/list", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/read", "plan-review", ReadOnly, Idempotent),
     method_spec!("hunk/rollback", "plan-review", LocalState, NonIdempotent),
@@ -349,6 +380,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("memory/update", "memory", LocalState, NonIdempotent),
     method_spec!("model/list", "models", ReadOnly, Idempotent),
     method_spec!("model/select", "models", LocalState, NonIdempotent),
+    method_spec!("node/status", "node", ReadOnly, Idempotent),
     method_spec!(
         "plan/review/approve",
         "plan-review",
@@ -506,6 +538,12 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ExternalProcess,
         NonIdempotent
     ),
+    method_spec!("stats/backfill", "stats", LocalState, NonIdempotent),
+    method_spec!("stats/export", "stats", LocalState, NonIdempotent),
+    method_spec!("stats/sessions", "stats", ReadOnly, Idempotent),
+    method_spec!("stats/summary", "stats", ReadOnly, Idempotent),
+    method_spec!("stats/tokens", "stats", ReadOnly, Idempotent),
+    method_spec!("stats/tools", "stats", ReadOnly, Idempotent),
     method_spec!("tasks/cancel", "tasks", LocalState, NonIdempotent),
     method_spec!("tasks/get", "tasks", ReadOnly, Idempotent),
     method_spec!("tasks/list", "tasks", ReadOnly, Idempotent),
@@ -536,6 +574,8 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("thread/archive", "thread", LocalState, NonIdempotent),
     method_spec!("thread/attach", "thread", LocalState, NonIdempotent),
     method_spec!("thread/exit_plan", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/fork", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/fork_status", "thread", ReadOnly, Idempotent),
     method_spec!(
         "thread/goal/clear",
         "thread",
@@ -553,6 +593,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     ),
     method_spec!("thread/list", "thread", ReadOnly, Idempotent),
     method_spec!("thread/read", "thread", ReadOnly, Idempotent),
+    method_spec!("thread/remove_fork", "thread", LocalState, NonIdempotent),
     method_spec!(
         "thread/resolve_approval",
         "thread",

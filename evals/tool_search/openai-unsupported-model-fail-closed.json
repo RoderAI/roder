@@ -1,0 +1,20 @@
+{
+  "id": "openai-unsupported-model-fail-closed",
+  "title": "Unsupported OpenAI model fails closed when explicit fallback is disabled",
+  "provider": "openai",
+  "model": "gpt-5.3",
+  "mode": "provider_native",
+  "fallbackToExplicitTools": false,
+  "catalog": {
+    "tools": [
+      { "name": "read_file", "description": "Read a file from the workspace." }
+    ]
+  },
+  "expected": {
+    "outcome": "fail_closed",
+    "diagnosticContains": [
+      "provider-native tool search was requested",
+      "fallback_to_explicit_tools"
+    ]
+  }
+}

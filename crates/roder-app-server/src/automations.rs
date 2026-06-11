@@ -135,6 +135,7 @@ impl AppServer {
             workspaces: crate::workspaces::WorkspaceRegistry::new(workspace_registry_path),
             workspace_files,
             command_registry: tokio::sync::OnceCell::new(),
+            node_identity: std::sync::OnceLock::new(),
         }
     }
 

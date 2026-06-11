@@ -1,0 +1,33 @@
+{
+  "id": "catalog-redaction",
+  "title": "Internal-only catalog metadata never reaches the provider request body",
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "mode": "provider_native",
+  "catalog": {
+    "tools": [
+      {
+        "name": "internal_deploy",
+        "description": "Deploy the service to staging.",
+        "internalMetadata": {
+          "authorizationHeader": "Bearer sk-test-internal-credential-LEAK-7c1f",
+          "localSocketPath": "/Users/internal/.roder/secrets/deploy.sock",
+          "hiddenPrompt": "INTERNAL-ONLY-PROMPT-DO-NOT-SEND"
+        }
+      },
+      { "name": "read_file", "description": "Read a file from the workspace." }
+    ]
+  },
+  "expected": {
+    "outcome": "request_mapped",
+    "catalogItems": 2,
+    "deferredTools": 2,
+    "nativeToolSearchEntry": true,
+    "bodyMustNotContain": [
+      "sk-test-internal-credential-LEAK-7c1f",
+      "/Users/internal/.roder/secrets/deploy.sock",
+      "INTERNAL-ONLY-PROMPT-DO-NOT-SEND",
+      "authorizationHeader"
+    ]
+  }
+}

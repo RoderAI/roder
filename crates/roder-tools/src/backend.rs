@@ -173,6 +173,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             roder_edit_core::EditOptions {
                 fuzzy: roder_edit_core::EditMatchMode::Off,
                 strip_line_numbers: false,
+                reindent_inserted: false,
             },
         ) {
             Ok(result) => result,
@@ -208,6 +209,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             roder_edit_core::EditOptions {
                 fuzzy: roder_edit_core::EditMatchMode::Off,
                 strip_line_numbers: false,
+                reindent_inserted: false,
             },
         ) {
             Ok(result) => result,
@@ -333,6 +335,7 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
             roder_edit_core::EditOptions {
                 fuzzy: roder_edit_core::EditMatchMode::Off,
                 strip_line_numbers: false,
+                reindent_inserted: false,
             },
         ) {
             Ok(result) => result,
@@ -370,6 +373,7 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
             roder_edit_core::EditOptions {
                 fuzzy: roder_edit_core::EditMatchMode::Off,
                 strip_line_numbers: false,
+                reindent_inserted: false,
             },
         ) {
             Ok(result) => result,

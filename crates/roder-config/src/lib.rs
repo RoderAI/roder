@@ -4,7 +4,10 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod agent_node;
+pub mod analytics;
 pub mod dynamic_workflows;
+pub mod hosted;
 pub mod marketplaces;
 pub mod workflow_import;
 
@@ -52,6 +55,51 @@ pub struct Config {
     pub models: HashMap<String, ModelConfig>,
     #[serde(default)]
     pub model_profiles: HashMap<String, ModelHarnessProfileConfig>,
+    /// Process-hosted extensions (`[[process_extensions]]`), installed
+    /// through `roder-ext-process-host` as ordinary registry extensions.
+    #[serde(default)]
+    pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
+    /// Local usage analytics (`[analytics]`); local-only, enabled by default.
+    pub analytics: Option<analytics::AnalyticsConfig>,
+    /// Workspace fork providers (`[forks]`).
+    pub forks: Option<ForksConfig>,
+    /// Remote agent-node connection profiles (`[[agent_nodes]]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_nodes: Vec<agent_node::AgentNodeProfile>,
+}
+
+/// `[forks]` config block (roadmap phase 81).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForksConfig {
+    /// Default fork provider id (`git-worktree` when absent). Overridable
+    /// per-invocation and via `RODER_FORK_PROVIDER`.
+    #[serde(default)]
+    pub default_provider: Option<String>,
+    /// Base directory override for created fork workspaces (providers fall
+    /// back to their own defaults, e.g. `<repo>/.roder/worktrees`).
+    /// Overridable via `RODER_FORK_BASE_DIR`.
+    #[serde(default)]
+    pub base_dir: Option<String>,
+}
+
+/// Env override for the default fork provider.
+pub const RODER_FORK_PROVIDER_ENV: &str = "RODER_FORK_PROVIDER";
+/// Env override for the fork base directory.
+pub const RODER_FORK_BASE_DIR_ENV: &str = "RODER_FORK_BASE_DIR";
+
+/// Resolves the effective default fork provider: env override, then
+/// `[forks].default_provider`, then `git-worktree`.
+pub fn default_fork_provider(config: &Config) -> String {
+    std::env::var(RODER_FORK_PROVIDER_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            config
+                .forks
+                .as_ref()
+                .and_then(|forks| forks.default_provider.clone())
+        })
+        .unwrap_or_else(|| "git-worktree".to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1413,6 +1461,10 @@ mod tests {
             providers: HashMap::new(),
             models: HashMap::new(),
             model_profiles: HashMap::new(),
+            process_extensions: Vec::new(),
+            analytics: None,
+            forks: None,
+            agent_nodes: Vec::new(),
         };
         config.providers.insert(
             "openai".to_string(),
@@ -1427,6 +1479,62 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn forks_config_resolves_default_provider_deterministically() {
+        let config: Config = toml::from_str(
+            r#"
+            [forks]
+            default_provider = "rift"
+            base_dir = "/tmp/forks"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(default_fork_provider(&config), "rift");
+        assert_eq!(
+            config.forks.as_ref().unwrap().base_dir.as_deref(),
+            Some("/tmp/forks")
+        );
+
+        let empty: Config = toml::from_str("").unwrap();
+        assert_eq!(default_fork_provider(&empty), "git-worktree");
+    }
+
+    #[test]
+    fn deserializes_process_extensions_entries() {
+        let config: Config = toml::from_str(
+            r#"
+            [[process_extensions]]
+            id = "python-chat-completions"
+            enabled = true
+            manifest = "examples/non-rust-extensions/python-chat-completions/roder-extension.toml"
+            command = "python3"
+            args = ["-m", "roder_python_chat_provider"]
+            cwd = "examples/non-rust-extensions/python-chat-completions"
+            env = { PYTHONUNBUFFERED = "1" }
+            event_filter = { kinds = ["turn.", "inference."] }
+
+            [[process_extensions]]
+            id = "disabled-extension"
+            enabled = false
+            manifest = "missing.toml"
+            command = "false"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.process_extensions.len(), 2);
+        let python = &config.process_extensions[0];
+        assert_eq!(python.id, "python-chat-completions");
+        assert!(python.enabled);
+        assert_eq!(python.command, "python3");
+        assert_eq!(python.env.get("PYTHONUNBUFFERED").map(String::as_str), Some("1"));
+        assert!(python.event_filter.matches("turn.started"));
+        assert!(!config.process_extensions[1].enabled);
+
+        let empty: Config = toml::from_str("provider = \"mock\"").unwrap();
+        assert!(empty.process_extensions.is_empty());
     }
 
     #[test]

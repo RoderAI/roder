@@ -708,6 +708,8 @@ mod tests {
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
+            parent_thread_id: None,
+            workspace_fork: None,
             model_provider: "mock".to_string(),
             model: "mock".to_string(),
             selection_mode: None,

@@ -251,7 +251,12 @@ mod tests {
         let developer = instructions.developer.expect("developer instructions");
         assert!(developer.starts_with("You are embedded in a host app."));
         assert!(developer.contains("non-interactive profile"));
-        assert!(instructions.system.expect("system").starts_with("You are Roder"));
+        assert!(
+            instructions
+                .system
+                .expect("system")
+                .starts_with("You are Roder")
+        );
 
         let unchanged = apply_thread_developer_instructions(default_instructions(), "   ");
         assert_eq!(unchanged.developer, None);

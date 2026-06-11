@@ -1,7 +1,10 @@
+pub mod agent_node;
 pub mod chrome;
+pub mod hosted;
 pub mod methods;
 pub mod schema;
 pub mod speech;
+pub mod stats;
 pub mod workflows;
 
 use roder_api::artifacts::{
@@ -22,7 +25,7 @@ use roder_api::context::ContextBlock;
 use roder_api::discovery::{
     DiscoveryCatalog, DiscoveryCatalogGroup, DiscoveryCatalogItem, DiscoveryPromotionRecord,
 };
-use roder_api::events::{InferenceRoutingDecisionEvent, ThreadId, TurnId};
+use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
 pub use roder_api::goals::{ThreadGoal, ThreadGoalStatus};
 use roder_api::inference::{
@@ -30,8 +33,8 @@ use roder_api::inference::{
     TokenUsage,
 };
 use roder_api::inference_routing::{
-    InferenceRoutingCostDelta, InferenceRoutingOptionDescriptor, InferenceRoutingOutcome,
-    ModelSelectionMode,
+    InferenceRoutingCostDelta, InferenceRoutingDecision, InferenceRoutingOptionDescriptor,
+    InferenceRoutingOutcome, ModelSelectionMode,
 };
 use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
@@ -56,6 +59,7 @@ use roder_api::teams::{
     TeamMemberStatus, TeamTaskDescriptor,
 };
 use roder_api::thread::ThreadUsageMetadata;
+pub use roder_api::forks::WorkspaceFork;
 use roder_api::tools::ToolSpec;
 use roder_api::trace::{SubagentTraceDelta, SubagentTraceId, SubagentTraceSummary};
 use roder_api::transcript::InputImage;
@@ -173,6 +177,12 @@ pub struct Thread {
      */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<ThreadRunnerParams>,
+    /// Parent thread for conversation forks; absent for normal threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<ThreadId>,
+    /// Compact workspace-fork provenance for forked threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_fork: Option<WorkspaceFork>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +271,12 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    RoutingDecision {
+        id: String,
+        decision: InferenceRoutingDecisionEvent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ThreadItemStatus>,
+    },
     Compaction {
         id: String,
         summary: String,
@@ -333,6 +349,15 @@ impl From<roder_api::thread::ThreadItem> for Item {
                 input,
                 output,
                 error,
+            },
+            roder_api::thread::ThreadItem::RoutingDecision {
+                id,
+                decision,
+                status,
+            } => Self::RoutingDecision {
+                id,
+                decision: decision.into(),
+                status: status.map(Into::into),
             },
             roder_api::thread::ThreadItem::Compaction {
                 id,
@@ -668,6 +693,126 @@ pub struct ThreadArchiveParams {
 pub struct ThreadArchiveResult {
     pub thread_id: ThreadId,
     pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkParams {
+    /// Parent thread to fork.
+    pub thread_id: ThreadId,
+    /// Fork name; the provider sanitizes it into its naming scheme.
+    pub name: String,
+    /// Fork at a specific parent turn; absent = latest turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_turn_id: Option<TurnId>,
+    /// Fork provider id; absent = `git-worktree`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Provider-specific options (never secrets).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkResult {
+    /// The new child thread (its `cwd` is the fork workspace).
+    pub thread: Thread,
+    pub fork: WorkspaceFork,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkStatusParams {
+    pub thread_id: ThreadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkStatusResult {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from_turn_id: Option<TurnId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<WorkspaceFork>,
+    /// True when the fork is active but its workspace is missing.
+    pub workspace_missing: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRemoveForkParams {
+    pub thread_id: ThreadId,
+    /// Exact fork workspace path; required as destructive confirmation.
+    pub confirm_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRemoveForkResult {
+    pub thread_id: ThreadId,
+    pub fork: WorkspaceFork,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksProvidersListResult {
+    pub providers: Vec<roder_api::forks::ForkProviderDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksListParams {
+    /// Source workspace to list forks of (absolute path).
+    pub source_workspace: String,
+    /// Provider id; absent = `git-worktree`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksListResult {
+    pub forks: Vec<WorkspaceFork>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksCreateParams {
+    pub source_workspace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksCreateResult {
+    pub fork: WorkspaceFork,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksRemoveParams {
+    pub fork_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Exact fork workspace path; required as destructive confirmation.
+    pub confirm_workspace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksRemoveResult {
+    pub fork_id: String,
+    pub removed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1962,6 +2107,10 @@ pub struct RunnerStatus {
 pub struct RunnerProviderDescriptor {
     pub provider_id: String,
     pub capabilities: roder_api::remote_runner::RunnerCapabilities,
+    /// Setup guidance when the provider is installed but missing credentials
+    /// (documented env-var names only; never secret values).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2830,6 +2979,34 @@ pub struct InferenceRoutingStatusParams {
     pub thread_id: ThreadId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<TurnId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct InferenceRoutingDecisionEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(default)]
+    pub round_index: u32,
+    pub default_selection: ModelSelection,
+    pub selected_selection: ModelSelection,
+    pub decision: InferenceRoutingDecision,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+impl From<roder_api::events::InferenceRoutingDecisionEvent> for InferenceRoutingDecisionEvent {
+    fn from(event: roder_api::events::InferenceRoutingDecisionEvent) -> Self {
+        Self {
+            thread_id: event.thread_id,
+            turn_id: event.turn_id,
+            round_index: event.round_index,
+            default_selection: event.default_selection,
+            selected_selection: event.selected_selection,
+            decision: event.decision,
+            timestamp: event.timestamp,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4271,6 +4448,47 @@ mod tests {
                 "status": "completed"
             })
         );
+    }
+
+    #[test]
+    fn thread_item_routing_decision_serializes_as_typed_public_item() {
+        let selected = roder_api::inference::ModelSelection {
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-5".to_string(),
+        };
+        let value = serde_json::to_value(Item::RoutingDecision {
+            id: "turn-1-routing-decision-0".to_string(),
+            decision: InferenceRoutingDecisionEvent {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                round_index: 0,
+                default_selection: roder_api::inference::ModelSelection {
+                    provider: "openai".to_string(),
+                    model: "gpt-5.5".to_string(),
+                },
+                selected_selection: selected.clone(),
+                decision: roder_api::inference_routing::InferenceRoutingDecision::selected(
+                    "local",
+                    selected,
+                    "Large diff and failing tests",
+                ),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+            status: Some(ThreadItemStatus::Completed),
+        })
+        .unwrap();
+
+        assert_eq!(value["type"], "routingDecision");
+        assert_eq!(value["id"], "turn-1-routing-decision-0");
+        assert_eq!(
+            value["decision"]["selectedSelection"]["model"],
+            "claude-sonnet-5"
+        );
+        assert_eq!(
+            value["decision"]["decision"]["reason"],
+            "Large diff and failing tests"
+        );
+        assert_eq!(value["status"], "completed");
     }
 
     #[test]

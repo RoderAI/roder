@@ -70,6 +70,12 @@ pub(crate) fn thread_started_notification(thread: Thread) -> JsonRpcNotification
 
 pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNotification> {
     match event {
+        RoderEvent::InferenceRoutingDecision(event) => {
+            vec![protocol_notification(
+                "inference/routing/decision",
+                roder_protocol::InferenceRoutingDecisionEvent::from(event.clone()),
+            )]
+        }
         RoderEvent::TurnStarted(event) => {
             let turn = Turn {
                 id: event.turn_id.clone(),
@@ -903,8 +909,12 @@ mod tests {
         AutomationCompleted, AutomationFailed, AutomationRunState, AutomationRunSummary,
         AutomationSkipped, AutomationStarted,
     };
-    use roder_api::events::{InferenceEventReceived, TranscriptItemAppended, VerificationRequired};
-    use roder_api::inference::{InferenceEvent, ReasoningDelta};
+    use roder_api::events::{
+        InferenceEventReceived, InferenceRoutingDecisionEvent, TranscriptItemAppended,
+        VerificationRequired,
+    };
+    use roder_api::inference::{InferenceEvent, ModelSelection, ReasoningDelta};
+    use roder_api::inference_routing::InferenceRoutingDecision;
     use roder_api::notifications::NotificationKind;
     use roder_api::thread::{
         ThreadItem, ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadItemStatus,
@@ -1020,6 +1030,39 @@ mod tests {
         ));
 
         assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn inference_routing_decision_forwards_protocol_notification() {
+        let selected = ModelSelection {
+            provider: "codex".to_string(),
+            model: "gpt-5.5".to_string(),
+        };
+        let notifications = protocol_notifications_for_event(
+            &RoderEvent::InferenceRoutingDecision(InferenceRoutingDecisionEvent {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                round_index: 1,
+                default_selection: selected.clone(),
+                selected_selection: selected,
+                decision: InferenceRoutingDecision::selected(
+                    "local",
+                    ModelSelection {
+                        provider: "codex".to_string(),
+                        model: "gpt-5.5".to_string(),
+                    },
+                    "risk floor signal",
+                ),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        );
+
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].method, "inference/routing/decision");
+        assert_eq!(notifications[0].params["threadId"], "thread-1");
+        assert_eq!(notifications[0].params["turnId"], "turn-1");
+        assert_eq!(notifications[0].params["roundIndex"], 1);
+        assert_eq!(notifications[0].params["decision"]["routerId"], "local");
     }
 
     #[test]

@@ -27,8 +27,13 @@ pub struct DistributionEntry {
     pub extras: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "kebab-case")]
+/**
+ * Extension category in distribution metadata. Serializes as a plain
+ * kebab-case string; unknown category names deserialize into
+ * [`ExtensionCategory::Other`] so new crates can declare novel categories
+ * (e.g. `inference-router`) without breaking older tooling.
+ */
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExtensionCategory {
     InferenceEngine,
     WireDialect,
@@ -48,6 +53,67 @@ pub enum ExtensionCategory {
     SpeechTranscriber,
     SpeechSynthesizer,
     Other(String),
+}
+
+impl ExtensionCategory {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::InferenceEngine => "inference-engine",
+            Self::WireDialect => "wire-dialect",
+            Self::ThreadStore => "thread-store",
+            Self::CheckpointStore => "checkpoint-store",
+            Self::MemoryStore => "memory-store",
+            Self::EmbeddingProvider => "embedding-provider",
+            Self::ContextProvider => "context-provider",
+            Self::ContextPlanner => "context-planner",
+            Self::ToolProvider => "tool-provider",
+            Self::PolicyContributor => "policy-contributor",
+            Self::SandboxBackend => "sandbox-backend",
+            Self::EventSink => "event-sink",
+            Self::TaskExecutor => "task-executor",
+            Self::StatusSegment => "status-segment",
+            Self::PaletteSource => "palette-source",
+            Self::SpeechTranscriber => "speech-transcriber",
+            Self::SpeechSynthesizer => "speech-synthesizer",
+            Self::Other(name) => name,
+        }
+    }
+
+    fn from_name(name: &str) -> Self {
+        match name {
+            "inference-engine" => Self::InferenceEngine,
+            "wire-dialect" => Self::WireDialect,
+            "thread-store" => Self::ThreadStore,
+            "checkpoint-store" => Self::CheckpointStore,
+            "memory-store" => Self::MemoryStore,
+            "embedding-provider" => Self::EmbeddingProvider,
+            "context-provider" => Self::ContextProvider,
+            "context-planner" => Self::ContextPlanner,
+            "tool-provider" => Self::ToolProvider,
+            "policy-contributor" => Self::PolicyContributor,
+            "sandbox-backend" => Self::SandboxBackend,
+            "event-sink" => Self::EventSink,
+            "task-executor" => Self::TaskExecutor,
+            "status-segment" => Self::StatusSegment,
+            "palette-source" => Self::PaletteSource,
+            "speech-transcriber" => Self::SpeechTranscriber,
+            "speech-synthesizer" => Self::SpeechSynthesizer,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ExtensionCategory {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ExtensionCategory {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Ok(Self::from_name(&name))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -182,17 +248,23 @@ mod tests {
 
     #[test]
     fn extension_category_other_remains_extensible() {
-        let encoded = serde_json::json!({ "other": "browser-automation" });
-        let decoded: ExtensionCategory = serde_json::from_value(encoded).unwrap();
-
-        assert_eq!(
-            decoded,
-            ExtensionCategory::Other("browser-automation".to_string())
-        );
-        assert_eq!(
-            serde_json::to_value(decoded).unwrap(),
-            serde_json::json!({ "other": "browser-automation" })
-        );
+        // Novel category names (declared by newer crates) parse into
+        // `Other` and round-trip as the same plain string, so older
+        // tooling never fails on metadata it has not heard of.
+        for name in ["browser-automation", "inference-router"] {
+            let decoded: ExtensionCategory =
+                serde_json::from_value(serde_json::json!(name)).unwrap();
+            assert_eq!(decoded, ExtensionCategory::Other(name.to_string()));
+            assert_eq!(decoded.as_str(), name);
+            assert_eq!(
+                serde_json::to_value(decoded).unwrap(),
+                serde_json::json!(name)
+            );
+        }
+        // Known categories still parse into their variants.
+        let known: ExtensionCategory =
+            serde_json::from_value(serde_json::json!("inference-engine")).unwrap();
+        assert_eq!(known, ExtensionCategory::InferenceEngine);
     }
 
     #[test]

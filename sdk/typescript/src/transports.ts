@@ -206,6 +206,8 @@ export class LocalProcessTransport implements RoderTransport {
 export interface WebSocketTransportOptions {
   url: string;
   token?: string;
+  /** Extra handshake headers (e.g. externally supplied auth headers). */
+  headers?: Record<string, string>;
   protocols?: string[];
   webSocketFactory?: WebSocketFactory;
 }
@@ -231,7 +233,13 @@ export class WebSocketTransport implements RoderTransport {
 
   constructor(options: WebSocketTransportOptions) {
     const protocols = options.protocols ?? [];
-    const headers = options.token ? { Authorization: `Bearer ${options.token}` } : undefined;
+    const headers: Record<string, string> | undefined =
+      options.token || options.headers
+        ? {
+            ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+            ...options.headers,
+          }
+        : undefined;
     const factory = options.webSocketFactory ?? defaultWebSocketFactory;
     this.socket = factory(options.url, protocols, { headers });
     this.opened = new Promise((resolve, reject) => {

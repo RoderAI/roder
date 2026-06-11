@@ -2485,6 +2485,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64",
+ "serde_core",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3020,6 +3030,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcgen"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
+dependencies = [
+ "pem",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3194,6 +3217,8 @@ dependencies = [
  "ignore",
  "qrcode",
  "rand 0.10.1",
+ "rcgen",
+ "reqwest",
  "roder-api",
  "roder-api-transcript",
  "roder-automations",
@@ -3204,10 +3229,12 @@ dependencies = [
  "roder-core",
  "roder-dynamic-workflows",
  "roder-evals",
+ "roder-ext-git",
  "roder-ext-google-embeddings",
  "roder-ext-jsonl-thread-store",
  "roder-ext-memory",
  "roder-ext-openai-embeddings",
+ "roder-ext-process-host",
  "roder-ext-subagents",
  "roder-ext-webwright",
  "roder-ext-zeroentropy-embeddings",
@@ -3219,11 +3246,15 @@ dependencies = [
  "roder-supergrok-auth",
  "roder-tasks",
  "roder-tools",
+ "roder-usage-analytics",
+ "rustls",
+ "rustls-pemfile",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "uuid",
 ]
@@ -3278,6 +3309,7 @@ dependencies = [
  "roder-supergrok-auth",
  "roder-tools",
  "roder-tui",
+ "roder-usage-analytics",
  "roder-web-search",
  "serde",
  "serde_json",
@@ -3383,6 +3415,7 @@ dependencies = [
  "roder-api",
  "roder-context",
  "roder-dynamic-workflows",
+ "roder-ext-git",
  "roder-ext-jsonl-thread-store",
  "roder-ext-runner-sprites",
  "roder-ext-runner-unix-local",
@@ -3392,10 +3425,31 @@ dependencies = [
  "roder-sandbox",
  "roder-skills",
  "roder-tools",
+ "roder-usage-analytics",
  "serde",
  "serde_json",
  "time",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "roder-dist-hosted"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "roder-api",
+ "roder-app-server",
+ "roder-config",
+ "roder-core",
+ "roder-ext-jsonl-thread-store",
+ "roder-extension-host",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "toml",
  "uuid",
 ]
 
@@ -3443,6 +3497,8 @@ dependencies = [
  "roder-api",
  "roder-context",
  "roder-core",
+ "roder-ext-anthropic",
+ "roder-ext-openai-responses",
  "roder-ext-task-ledger",
  "roder-ext-verification",
  "roder-ext-zerolang",
@@ -3552,6 +3608,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-fork-rift"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-gemini"
 version = "0.1.0"
 dependencies = [
@@ -3575,7 +3645,9 @@ dependencies = [
  "roder-api",
  "semver",
  "serde_json",
+ "time",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -3605,6 +3677,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -3866,6 +3939,23 @@ dependencies = [
  "sqlx-postgres",
  "time",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "roder-ext-process-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "toml",
  "uuid",
 ]
 
@@ -4204,6 +4294,7 @@ dependencies = [
  "roder-ext-claude-code",
  "roder-ext-cursor",
  "roder-ext-firecrawl-search",
+ "roder-ext-fork-rift",
  "roder-ext-gemini",
  "roder-ext-git",
  "roder-ext-google-embeddings",
@@ -4224,6 +4315,7 @@ dependencies = [
  "roder-ext-plan-mode",
  "roder-ext-poolside",
  "roder-ext-postgres-session",
+ "roder-ext-process-host",
  "roder-ext-runner-blaxel",
  "roder-ext-runner-cloudflare",
  "roder-ext-runner-daytona",
@@ -4282,6 +4374,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "roder-api",
+ "roder-usage-analytics",
  "serde",
  "serde_json",
  "time",
@@ -4434,6 +4527,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-usage-analytics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "rusqlite",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "roder-web-search"
 version = "0.1.0"
 dependencies = [
@@ -4518,6 +4627,7 @@ checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -4534,6 +4644,15 @@ dependencies = [
  "rustls-pki-types",
  "schannel",
  "security-framework",
+]
+
+[[package]]
+name = "rustls-pemfile"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
@@ -5311,6 +5430,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
@@ -6463,6 +6583,15 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix 1.1.4",
+]
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+dependencies = [
+ "time",
 ]
 
 [[package]]
