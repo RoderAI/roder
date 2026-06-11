@@ -1,3 +1,4 @@
+pub mod adc;
 use std::sync::Arc;
 
 use roder_api::capabilities::CapabilityRequest;
