@@ -23,6 +23,7 @@ pub mod memory;
 pub mod notifications;
 pub mod plan_review;
 pub mod policy_mode;
+pub mod process_extension;
 pub mod processes;
 pub mod reliability;
 pub mod remote_runner;

@@ -3873,6 +3873,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-process-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "toml",
+ "uuid",
+]
+
+[[package]]
 name = "roder-ext-runner-blaxel"
 version = "0.1.0"
 dependencies = [

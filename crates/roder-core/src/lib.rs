@@ -4,6 +4,7 @@ pub mod bus;
 pub mod conversation_forks;
 mod deadline_policy;
 pub mod dynamic_workflows;
+mod event_sink_dispatch;
 pub mod fake_provider;
 mod goals;
 pub mod inference_routing;
