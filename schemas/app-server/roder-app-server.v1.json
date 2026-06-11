@@ -564,6 +564,42 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "forks/create",
+      "paramsType": "ForksCreateParams",
+      "resultType": "ForksCreateResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "forks/list",
+      "paramsType": "ForksListParams",
+      "resultType": "ForksListResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "forks/providers/list",
+      "paramsType": "ForksProvidersListParams",
+      "resultType": "ForksProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "forks/remove",
+      "paramsType": "ForksRemoveParams",
+      "resultType": "ForksRemoveResult",
+      "stability": "stable",
+      "featureGroup": "forks",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "fs/readDirectory",
       "paramsType": "FsReadDirectoryParams",
       "resultType": "FsReadDirectoryResult",
@@ -1726,6 +1762,15 @@
       "sideEffect": "localState"
     },
     {
+      "method": "thread/fork",
+      "paramsType": "ThreadForkParams",
+      "resultType": "ThreadForkResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/fork_status",
       "paramsType": "ThreadForkStatusParams",
       "resultType": "ThreadForkStatusResult",
@@ -1733,15 +1778,6 @@
       "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
-    },
-    {
-      "method": "thread/fork_worktree",
-      "paramsType": "ThreadForkWorktreeParams",
-      "resultType": "ThreadForkWorktreeResult",
-      "stability": "stable",
-      "featureGroup": "thread",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState"
     },
     {
       "method": "thread/goal/clear",
@@ -1795,9 +1831,9 @@
       "sideEffect": "readOnly"
     },
     {
-      "method": "thread/remove_worktree_fork",
-      "paramsType": "ThreadRemoveWorktreeForkParams",
-      "resultType": "ThreadRemoveWorktreeForkResult",
+      "method": "thread/remove_fork",
+      "paramsType": "ThreadRemoveForkParams",
+      "resultType": "ThreadRemoveForkResult",
       "stability": "stable",
       "featureGroup": "thread",
       "idempotency": "nonIdempotent",

@@ -114,12 +114,12 @@ pub struct ThreadForkRequested {
     pub timestamp: OffsetDateTime,
 }
 
-/// A child thread was created with its worktree workspace fork.
+/// A child thread was created with its workspace fork.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadForked {
     pub parent_thread_id: ThreadId,
     pub child_thread_id: ThreadId,
-    pub fork: crate::thread::ThreadWorktreeFork,
+    pub fork: crate::forks::WorkspaceFork,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }

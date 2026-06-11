@@ -283,6 +283,10 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("eval/report/read", "eval", ReadOnly, Idempotent),
     method_spec!("eval/reports/list", "eval", ReadOnly, Idempotent),
     method_spec!("extensions/list", "extensions", ReadOnly, Idempotent),
+    method_spec!("forks/create", "forks", LocalState, NonIdempotent),
+    method_spec!("forks/list", "forks", ReadOnly, Idempotent),
+    method_spec!("forks/providers/list", "forks", ReadOnly, Idempotent),
+    method_spec!("forks/remove", "forks", LocalState, NonIdempotent),
     method_spec!("fs/readDirectory", "filesystem", ReadOnly, Idempotent),
     method_spec!("fs/readFile", "filesystem", ReadOnly, Idempotent),
     method_spec!("hosted/audit/list", "hosted", ReadOnly, Idempotent),
@@ -569,8 +573,8 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("thread/archive", "thread", LocalState, NonIdempotent),
     method_spec!("thread/attach", "thread", LocalState, NonIdempotent),
     method_spec!("thread/exit_plan", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/fork", "thread", LocalState, NonIdempotent),
     method_spec!("thread/fork_status", "thread", ReadOnly, Idempotent),
-    method_spec!("thread/fork_worktree", "thread", LocalState, NonIdempotent),
     method_spec!(
         "thread/goal/clear",
         "thread",
@@ -588,12 +592,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     ),
     method_spec!("thread/list", "thread", ReadOnly, Idempotent),
     method_spec!("thread/read", "thread", ReadOnly, Idempotent),
-    method_spec!(
-        "thread/remove_worktree_fork",
-        "thread",
-        LocalState,
-        NonIdempotent
-    ),
+    method_spec!("thread/remove_fork", "thread", LocalState, NonIdempotent),
     method_spec!(
         "thread/resolve_approval",
         "thread",

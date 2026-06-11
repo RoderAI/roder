@@ -1043,7 +1043,7 @@ impl Runtime {
             usage: None,
             parent_thread_id: None,
             forked_from_turn_id: None,
-            worktree_fork: None,
+            workspace_fork: None,
         };
 
         let metadata = if let Some(store) = &self.thread_store {
@@ -1533,17 +1533,16 @@ impl Runtime {
             match snapshot {
                 Ok(snapshot) => {
                     if let Some(metadata) = snapshot.metadata {
-                        // Worktree-forked threads fail closed before any write
-                        // when their worktree was removed out-of-band.
-                        if let Some(fork) = &metadata.worktree_fork
-                            && fork.status
-                                == roder_api::thread::WorktreeForkStatus::Active
+                        // Fork-backed threads fail closed before any write
+                        // when their workspace was removed out-of-band.
+                        if let Some(fork) = &metadata.workspace_fork
+                            && fork.status == roder_api::forks::ForkStatus::Active
                             && !std::path::Path::new(&metadata.workspace).is_dir()
                         {
                             anyhow::bail!(
-                                "worktree fork {} is missing its worktree at {}; restore it or \
+                                "workspace fork {} is missing its workspace at {}; restore it or \
                                  remove the fork before running turns in this thread",
-                                fork.fork_id,
+                                fork.id,
                                 metadata.workspace
                             );
                         }

@@ -58,7 +58,7 @@ use roder_api::teams::{
     TeamMemberStatus, TeamTaskDescriptor,
 };
 use roder_api::thread::ThreadUsageMetadata;
-pub use roder_api::thread::ThreadWorktreeFork;
+pub use roder_api::forks::WorkspaceFork;
 use roder_api::tools::ToolSpec;
 use roder_api::trace::{SubagentTraceDelta, SubagentTraceId, SubagentTraceSummary};
 use roder_api::transcript::InputImage;
@@ -179,9 +179,9 @@ pub struct Thread {
     /// Parent thread for conversation forks; absent for normal threads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_thread_id: Option<ThreadId>,
-    /// Compact worktree-fork provenance for forked threads.
+    /// Compact workspace-fork provenance for forked threads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worktree_fork: Option<ThreadWorktreeFork>,
+    pub workspace_fork: Option<WorkspaceFork>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -696,22 +696,28 @@ pub struct ThreadArchiveResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ThreadForkWorktreeParams {
+pub struct ThreadForkParams {
     /// Parent thread to fork.
     pub thread_id: ThreadId,
-    /// Fork name; becomes the worktree directory and branch name.
+    /// Fork name; the provider sanitizes it into its naming scheme.
     pub name: String,
     /// Fork at a specific parent turn; absent = latest turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_turn_id: Option<TurnId>,
+    /// Fork provider id; absent = `git-worktree`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Provider-specific options (never secrets).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ThreadForkWorktreeResult {
-    /// The new child thread (its `cwd` is the worktree path).
+pub struct ThreadForkResult {
+    /// The new child thread (its `cwd` is the fork workspace).
     pub thread: Thread,
-    pub fork: ThreadWorktreeFork,
+    pub fork: WorkspaceFork,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -731,24 +737,81 @@ pub struct ThreadForkStatusResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from_turn_id: Option<TurnId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fork: Option<ThreadWorktreeFork>,
-    /// True when the fork is active but its worktree directory is missing.
-    pub worktree_missing: bool,
+    pub fork: Option<WorkspaceFork>,
+    /// True when the fork is active but its workspace is missing.
+    pub workspace_missing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ThreadRemoveWorktreeForkParams {
+pub struct ThreadRemoveForkParams {
     pub thread_id: ThreadId,
-    /// Exact worktree path; required as destructive-removal confirmation.
+    /// Exact fork workspace path; required as destructive confirmation.
     pub confirm_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ThreadRemoveWorktreeForkResult {
+pub struct ThreadRemoveForkResult {
     pub thread_id: ThreadId,
-    pub fork: ThreadWorktreeFork,
+    pub fork: WorkspaceFork,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksProvidersListResult {
+    pub providers: Vec<roder_api::forks::ForkProviderDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksListParams {
+    /// Source workspace to list forks of (absolute path).
+    pub source_workspace: String,
+    /// Provider id; absent = `git-worktree`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksListResult {
+    pub forks: Vec<WorkspaceFork>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksCreateParams {
+    pub source_workspace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksCreateResult {
+    pub fork: WorkspaceFork,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksRemoveParams {
+    pub fork_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Exact fork workspace path; required as destructive confirmation.
+    pub confirm_workspace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForksRemoveResult {
+    pub fork_id: String,
+    pub removed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

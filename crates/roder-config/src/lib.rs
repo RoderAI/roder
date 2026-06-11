@@ -59,6 +59,42 @@ pub struct Config {
     pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
     /// Local usage analytics (`[analytics]`); local-only, enabled by default.
     pub analytics: Option<analytics::AnalyticsConfig>,
+    /// Workspace fork providers (`[forks]`).
+    pub forks: Option<ForksConfig>,
+}
+
+/// `[forks]` config block (roadmap phase 81).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForksConfig {
+    /// Default fork provider id (`git-worktree` when absent). Overridable
+    /// per-invocation and via `RODER_FORK_PROVIDER`.
+    #[serde(default)]
+    pub default_provider: Option<String>,
+    /// Base directory override for created fork workspaces (providers fall
+    /// back to their own defaults, e.g. `<repo>/.roder/worktrees`).
+    /// Overridable via `RODER_FORK_BASE_DIR`.
+    #[serde(default)]
+    pub base_dir: Option<String>,
+}
+
+/// Env override for the default fork provider.
+pub const RODER_FORK_PROVIDER_ENV: &str = "RODER_FORK_PROVIDER";
+/// Env override for the fork base directory.
+pub const RODER_FORK_BASE_DIR_ENV: &str = "RODER_FORK_BASE_DIR";
+
+/// Resolves the effective default fork provider: env override, then
+/// `[forks].default_provider`, then `git-worktree`.
+pub fn default_fork_provider(config: &Config) -> String {
+    std::env::var(RODER_FORK_PROVIDER_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            config
+                .forks
+                .as_ref()
+                .and_then(|forks| forks.default_provider.clone())
+        })
+        .unwrap_or_else(|| "git-worktree".to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1422,6 +1458,7 @@ mod tests {
             model_profiles: HashMap::new(),
             process_extensions: Vec::new(),
             analytics: None,
+            forks: None,
         };
         config.providers.insert(
             "openai".to_string(),
@@ -1436,6 +1473,26 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn forks_config_resolves_default_provider_deterministically() {
+        let config: Config = toml::from_str(
+            r#"
+            [forks]
+            default_provider = "rift"
+            base_dir = "/tmp/forks"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(default_fork_provider(&config), "rift");
+        assert_eq!(
+            config.forks.as_ref().unwrap().base_dir.as_deref(),
+            Some("/tmp/forks")
+        );
+
+        let empty: Config = toml::from_str("").unwrap();
+        assert_eq!(default_fork_provider(&empty), "git-worktree");
     }
 
     #[test]

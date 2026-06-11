@@ -290,7 +290,7 @@ impl ThreadStore for FailingThreadStore {
             runner_binding: None,
             parent_thread_id: None,
             forked_from_turn_id: None,
-            worktree_fork: None,
+            workspace_fork: None,
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             updated_at: time::OffsetDateTime::UNIX_EPOCH,
             message_count: 0,
