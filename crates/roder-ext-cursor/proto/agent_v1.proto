@@ -234,19 +234,48 @@ message McpDescriptor {
   string marketplace_id = 10;
 }
 
-message McpFileSystemOptions {}                  // shape not needed by Roder yet
+// AgentRunRequest.mcp_file_system_options (6). THIS is the MCP *registration*
+// entry point (not mcp_tools/field 4, which a Cursor model ignores). The Cursor
+// agent worker is a filesystem-based MCP host: each McpDescriptor names a server
+// (`server_identifier` == the `provider_identifier` the model's McpArgs must
+// reference) and lists its tools as McpToolDescriptors read from `definition_path`
+// files under `folder_path`. Registering a server here is what makes its tools
+// appear in the model's tool surface (surfaced via the get_mcp_tools meta-tool
+// and invoked via mcp_tool_call). NOTE: whether the resulting `mcp_tool_call`
+// is dispatched back to the client over the exec channel, or executed by Cursor
+// connecting to the server process itself (per .cursor/mcp.json `mcpServers`),
+// is still unconfirmed — needs a live capture with a registered server.
+message McpFileSystemOptions {
+  bool enabled = 1;
+  string workspace_project_dir = 2;
+  repeated McpDescriptor mcp_descriptors = 3;
+}
+
+// MCP meta-tool: the model lazily discovers tools by calling get_mcp_tools
+// (ToolCall field 44) -> GetMcpToolsArgs, and Cursor returns GetMcpToolsSuccess.
+message GetMcpToolsArgs {
+  string server = 1;
+  string tool_name = 2;
+  string pattern = 3;
+  string tool_call_id = 4;
+}
 
 // agent.v1.ToolCall tool oneof field numbers (the interaction-update display +
-// client-exec dispatch). Native tools also execute via the exec channel; see
+// client-exec dispatch). The full oneof has 62 server-defined slots: a Cursor
+// model's tool surface is fixed by the server and cannot be extended by the
+// client — only the MCP slots below bridge to external/MCP tools. Native tools
+// also execute via the exec channel; see
 // docs/roder-cursor-agent-runtime-protocol.md.
-//   shell_tool_call         = 1
-//   glob_tool_call          = 4
-//   grep_tool_call          = 5
-//   read_tool_call          = 8
-//   edit_tool_call          = 12
-//   mcp_tool_call           = 15   <- McpToolCall
-//   mcp_auth_tool_call      = 41
-//   get_mcp_tools_tool_call = 44
+//   shell_tool_call            = 1
+//   glob_tool_call             = 4
+//   grep_tool_call             = 5
+//   read_tool_call             = 8
+//   edit_tool_call             = 12
+//   mcp_tool_call              = 15   <- McpToolCall (invoke a registered MCP tool)
+//   list_mcp_resources_tool_call = 20
+//   read_mcp_resource_tool_call  = 21
+//   mcp_auth_tool_call         = 41
+//   get_mcp_tools_tool_call    = 44   <- GetMcpToolsArgs (discover MCP tools)
 
 message McpToolCall {
   McpArgs args = 1;

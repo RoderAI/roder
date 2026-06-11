@@ -115,6 +115,25 @@ A live experiment (`cursor/claude-opus-4-8` with `RODER_CURSOR_CAPTURE_FRAMES`) 
 
 Consequently Roder's tools reach Cursor models **only** through the native exec mapping above (read/write/shell/grep/glob), not through `mcp_tools`. Advertising is therefore disabled by default. The encoder, schema (`proto/agent_v1.proto`), and tests are kept for future work (provider registration, or a client-exec channel for MCP). Set `RODER_CURSOR_ADVERTISE_MCP_TOOLS=1` to send the definitions anyway (harmless, currently a no-op on Cursor's side).
 
+#### MCP server registration (investigation)
+
+Bundle analysis (`cursor-agent-worker/dist/main.js`, `agent.v1`) shows the real registration path is **`AgentRunRequest.mcp_file_system_options` (field 6)**, not `mcp_tools` (field 4):
+
+```
+McpFileSystemOptions { enabled 1, workspace_project_dir 2, mcp_descriptors 3: repeated McpDescriptor }
+McpDescriptor { server_name 1, server_identifier 2, folder_path 3, server_use_instructions 4,
+                tools 5: repeated McpToolDescriptor, plugin 7, marketplace 8, ... }
+McpToolDescriptor { tool_name 1, definition_path 2, description 3, input_schema 4: google.protobuf.Value }
+```
+
+Findings:
+
+- The model's `ToolCall` oneof has **62 server-defined slots**; the surface is fixed server-side. The only MCP bridges are `mcp_tool_call` (15, invoke), `get_mcp_tools_tool_call` (44, discover), `list_mcp_resources_tool_call` (20) and `read_mcp_resource_tool_call` (21).
+- `McpDescriptor.server_identifier` is the `provider_identifier` that `McpArgs` (an `mcp_tool_call`) must reference — which is exactly what our field-4 advertisement lacked, explaining why the model never saw `update_plan`.
+- The `folder_path` / `definition_path` / "file system options" naming indicates Cursor is a **filesystem-based MCP host**: it reads tool definitions from files on disk, and `.cursor/mcp.json` `mcpServers` is the IDE-managed config that populates these descriptors.
+
+Open question blocking implementation: **does an `mcp_tool_call` get dispatched back to the client over the exec channel (so Roder could service it in-process), or does Cursor connect to the MCP server process itself (per `mcpServers`)?** The `*ExecArgs`/`*ExecResult` naming for `McpState`/`ListMcpResources`/`ReadMcpResource` hints at a client-exec path for *some* MCP ops, but the tool-invocation path is unconfirmed. Recommended next experiment: capture a live Cursor-IDE `AgentService/Run` turn with a real `.cursor/mcp.json` server configured, to learn (a) the exact `mcp_file_system_options` payload the IDE sends and (b) whether `mcp_tool_call` arrives on the exec channel for the client to execute. The schema for all of the above is recorded in `proto/agent_v1.proto`.
+
 ### Image input
 
 The Cursor provider advertises `image_input: true` and uploads images inline (field numbers sourced from the Cursor app bundle's `agent.v1` protobuf schema, same as the tool mapping above):
