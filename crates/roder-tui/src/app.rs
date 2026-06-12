@@ -7926,8 +7926,8 @@ fn main_provider_menu_items(
 ) -> Vec<ProviderMenuItem> {
     let _provider_count = providers.len();
     vec![
-        ProviderMenuItem::PlanModeToggle(plan_mode_enabled),
         ProviderMenuItem::Models,
+        ProviderMenuItem::PlanModeToggle(plan_mode_enabled),
         ProviderMenuItem::Providers,
         ProviderMenuItem::Settings,
         ProviderMenuItem::RoadmapMode,
@@ -12116,13 +12116,13 @@ mod tests {
     }
 
     #[test]
-    fn provider_menu_starts_with_plan_toggle_and_submenus() {
+    fn provider_menu_starts_with_models_then_plan_toggle_and_submenus() {
         let items = main_provider_menu_items(&[], false);
+        assert!(matches!(items.first(), Some(ProviderMenuItem::Models)));
         assert!(matches!(
-            items.first(),
+            items.get(1),
             Some(ProviderMenuItem::PlanModeToggle(false))
         ));
-        assert!(matches!(items.get(1), Some(ProviderMenuItem::Models)));
         assert!(matches!(items.get(2), Some(ProviderMenuItem::Providers)));
         assert!(matches!(items.get(3), Some(ProviderMenuItem::Settings)));
         assert!(matches!(items.get(4), Some(ProviderMenuItem::RoadmapMode)));
@@ -12153,7 +12153,7 @@ mod tests {
 
         let enabled_items = main_provider_menu_items(&[], true);
         assert!(matches!(
-            enabled_items.first(),
+            enabled_items.get(1),
             Some(ProviderMenuItem::PlanModeToggle(true))
         ));
     }
