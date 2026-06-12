@@ -1133,6 +1133,78 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "packages/approve_extensions",
+      "paramsType": "PackagesApproveExtensionsParams",
+      "resultType": "PackagesApproveExtensionsResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/install",
+      "paramsType": "PackagesInstallParams",
+      "resultType": "PackagesInstallResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "packages/list",
+      "paramsType": "PackagesListParams",
+      "resultType": "PackagesListResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "packages/remove",
+      "paramsType": "PackagesRemoveParams",
+      "resultType": "PackagesRemoveResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/set_enabled",
+      "paramsType": "PackagesSetEnabledParams",
+      "resultType": "PackagesSetEnabledResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/set_filters",
+      "paramsType": "PackagesSetFiltersParams",
+      "resultType": "PackagesSetFiltersResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/sync",
+      "paramsType": "PackagesSyncParams",
+      "resultType": "PackagesSyncResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "packages/update",
+      "paramsType": "PackagesUpdateParams",
+      "resultType": "PackagesUpdateResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "plan/review/approve",
       "paramsType": "PlanReviewApproveParams",
       "resultType": "PlanReviewApproveResult",
@@ -2650,6 +2722,14 @@ export const appServerMethods = [
   "model/list",
   "model/select",
   "node/status",
+  "packages/approve_extensions",
+  "packages/install",
+  "packages/list",
+  "packages/remove",
+  "packages/set_enabled",
+  "packages/set_filters",
+  "packages/sync",
+  "packages/update",
   "plan/review/approve",
   "plan/review/comment",
   "plan/review/read",

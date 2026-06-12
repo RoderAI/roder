@@ -22,6 +22,7 @@ mod media_generation;
 #[cfg(test)]
 mod method_manifest;
 mod notifications;
+mod packages;
 mod processes;
 mod protocol_contract;
 pub mod remote;

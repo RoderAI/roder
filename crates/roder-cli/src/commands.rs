@@ -58,7 +58,19 @@ fn load_registry(cfg: &roder_config::Config) -> anyhow::Result<CommandsRegistry>
             CommandRegistryWatcher::new(roots, Duration::from_millis(250), SystemCommandClock)?;
         let _ = watcher.poll()?;
     }
-    let command_dirs = command_directories(user_dir, workspace_dir);
+    // Package command dirs load first; user/workspace commands shadow
+    // package commands regardless of insert order (registry semantics).
+    let package_paths =
+        roder_config::packages::PackagePaths::standard(workflow_workspace.as_deref());
+    let mut command_dirs: Vec<CommandDirectory> =
+        roder_config::packages::package_command_dirs(&package_paths)
+            .into_iter()
+            .map(|(package_id, root)| CommandDirectory {
+                root,
+                source: CommandSource::Package { package_id },
+            })
+            .collect();
+    command_dirs.extend(command_directories(user_dir, workspace_dir));
     let workflow_dirs = workflow_command_directories(user_workflows_dir, workspace_workflows_dir);
     CommandsRegistry::from_directories_with_workflows(
         command_dirs,

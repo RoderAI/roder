@@ -248,6 +248,7 @@ async fn run_turn(client: &LocalAppClient, thread_id: &str) {
                 model: None,
                 reasoning: None,
                 policy_mode: None,
+                developer_context: None,
                 task_ledger_required: false,
             })
             .unwrap(),

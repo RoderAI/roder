@@ -48,6 +48,7 @@ use roder_api::knowledge::{
 use roder_api::memory::{
     MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope, MemorySearchResult,
 };
+use roder_api::packages::{PackageRecord, PackageResource, PackageResourceFilters, PackageScope};
 use roder_api::plan_review::{
     HunkId, HunkRecord, PagedHunkDiff, PlanComment, PlanCommentAnchor, PlanReview, PlanReviewId,
     PlanRewrite,
@@ -3594,6 +3595,170 @@ pub struct PluginUninstallParams {
 #[serde(rename_all = "camelCase")]
 pub struct PluginUninstallResult {
     pub removed: bool,
+}
+
+/// One resource of an installed package, with its registry-facing id
+/// (`<package-id>:<kind>/<name>`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageResourceDescriptor {
+    #[serde(flatten)]
+    pub resource: PackageResource,
+    pub id: String,
+}
+
+impl From<PackageResource> for PackageResourceDescriptor {
+    fn from(resource: PackageResource) -> Self {
+        let id = resource.id();
+        Self { resource, id }
+    }
+}
+
+/// Installed package record plus its enumerated resources.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageDescriptor {
+    #[serde(flatten)]
+    pub record: PackageRecord,
+    pub shadowed_by_project: bool,
+    pub resources: Vec<PackageResourceDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesListResult {
+    pub packages: Vec<PackageDescriptor>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesInstallParams {
+    pub spec: String,
+    pub scope: PackageScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_scripts: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesInstallResult {
+    pub package: PackageDescriptor,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesRemoveParams {
+    pub spec_or_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<PackageScope>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesRemoveResult {
+    pub removed: PackageRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesUpdateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PackageUpdateStatus {
+    Updated,
+    SkippedPinned,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageUpdateOutcome {
+    pub package_id: String,
+    pub identity: String,
+    pub scope: PackageScope,
+    pub status: PackageUpdateStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesUpdateResult {
+    pub outcomes: Vec<PackageUpdateOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PackageSyncStatus {
+    Materialized,
+    AlreadyPresent,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSyncOutcome {
+    pub package_id: String,
+    pub identity: String,
+    pub status: PackageSyncStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesSyncResult {
+    pub outcomes: Vec<PackageSyncOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesSetEnabledParams {
+    /// Package id or resource id (`<package-id>:<kind>/<name>`).
+    pub id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesSetEnabledResult {
+    pub package: PackageDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesApproveExtensionsParams {
+    pub package_id: String,
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesApproveExtensionsResult {
+    pub package: PackageDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesSetFiltersParams {
+    pub package_id: String,
+    pub filters: PackageResourceFilters,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagesSetFiltersResult {
+    pub package: PackageDescriptor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

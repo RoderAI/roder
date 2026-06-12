@@ -320,6 +320,7 @@ mod tests {
             "snapshot",
             "marketplace",
             "plugin",
+            "packages",
             "remote",
             "voice",
             "roadmap",
@@ -348,6 +349,12 @@ mod tests {
                 .get("plugin")
                 .and_then(|spec| spec.argument_hint.as_deref()),
             Some("preview|install|install-all|list|disable|uninstall [args]")
+        );
+        assert_eq!(
+            registry
+                .get("packages")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some("list|install|remove|update|enable|disable|approve|sync [args]")
         );
         assert_eq!(
             registry

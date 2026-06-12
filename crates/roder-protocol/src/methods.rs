@@ -402,6 +402,39 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("model/select", "models", LocalState, NonIdempotent),
     method_spec!("node/status", "node", ReadOnly, Idempotent),
     method_spec!(
+        "packages/approve_extensions",
+        "packages",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!(
+        "packages/install",
+        "packages",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!("packages/list", "packages", ReadOnly, Idempotent),
+    method_spec!("packages/remove", "packages", LocalState, NonIdempotent),
+    method_spec!(
+        "packages/set_enabled",
+        "packages",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!(
+        "packages/set_filters",
+        "packages",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("packages/sync", "packages", ExternalProcess, NonIdempotent),
+    method_spec!(
+        "packages/update",
+        "packages",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!(
         "plan/review/approve",
         "plan-review",
         LocalState,
@@ -826,6 +859,8 @@ mod tests {
             "workflows/plan",
             "marketplaces/search",
             "plugins/install",
+            "packages/install",
+            "packages/list",
             "media/list",
             "memory/query",
             "automations/list",
