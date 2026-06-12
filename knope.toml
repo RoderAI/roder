@@ -193,6 +193,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-google-embeddings/CHANGELOG.md"
 
+[packages."roder-ext-google-images"]
+versioned_files = [
+    "crates/roder-ext-google-images/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-google-images/CHANGELOG.md"
+
 [packages."roder-ext-google-speech"]
 versioned_files = [
     "crates/roder-ext-google-speech/Cargo.toml",
@@ -269,6 +276,13 @@ versioned_files = [
     "Cargo.lock",
 ]
 changelog = "crates/roder-ext-openai-embeddings/CHANGELOG.md"
+
+[packages."roder-ext-openai-images"]
+versioned_files = [
+    "crates/roder-ext-openai-images/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-openai-images/CHANGELOG.md"
 
 [packages."roder-ext-openai-responses"]
 versioned_files = [
