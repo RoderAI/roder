@@ -710,6 +710,14 @@ pub(crate) enum CursorExecRequest {
         content: Vec<u8>,
         tool_call_id: String,
     },
+    /// Delete a file (exec field 4): `{ f1: path, f2: tool_call_id }`.
+    /// Wire shape confirmed from a live composer-2.5 capture (the model's
+    /// native file-deletion tool).
+    Delete {
+        seq: u64,
+        path: String,
+        tool_call_id: String,
+    },
     Shell {
         seq: u64,
         command: String,
@@ -833,6 +841,21 @@ fn decode_exec_server(bytes: &[u8]) -> Option<CursorExecRequest> {
             seq,
             field_no: 3,
             payload: write,
+        });
+    }
+    if let Some(delete) = submessage(bytes, 4) {
+        if let Some(path) = scalar_string(&delete, 1) {
+            let tool_call_id = scalar_string(&delete, 2).unwrap_or_default();
+            return Some(CursorExecRequest::Delete {
+                seq,
+                path,
+                tool_call_id,
+            });
+        }
+        return Some(CursorExecRequest::Unknown {
+            seq,
+            field_no: 4,
+            payload: delete,
         });
     }
     if let Some(shell) = submessage(bytes, 14) {

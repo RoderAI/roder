@@ -58,6 +58,9 @@ oneof request:
   f5  SEARCH (unified ripgrep) { f1: pattern (grep), f2: path, f3: glob (glob),
                f4: output_mode ("files_with_matches" | "content"),
                f14: tool_call_id }
+  f4  DELETE { f1: path, f2: tool_call_id }   (confirmed from a live
+               composer-2.5 capture; Roder routes it through the policy-gated
+               shell tool and mirrors an empty result)
   f10 INIT   { f2: conversation_id }     (handshake)
 f15 = message uuid
 f19 = routing { f1: session_key, f2: per-msg_key, f3: 0 }

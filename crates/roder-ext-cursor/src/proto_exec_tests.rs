@@ -151,6 +151,33 @@ fn decodes_exec_search_grep_and_glob_variants() {
 }
 
 #[test]
+fn decodes_exec_delete_request_with_path_and_tool_call_id() {
+    // Wire shape from a live composer-2.5 capture: ExecServerMessage
+    // { 1: seq, 4: { 1: path, 2: tool_call_id } }.
+    let frame = exec_server_frame(
+        50,
+        4,
+        proto_message(vec![
+            proto_field_string(1, "/tmp/composer_test.txt"),
+            proto_field_string(2, "tool_8799b25a"),
+        ]),
+    );
+
+    let decoded = decode_server_frame(&frame);
+    let Some(CursorExecRequest::Delete {
+        seq,
+        path,
+        tool_call_id,
+    }) = decoded.exec
+    else {
+        panic!("expected DELETE exec request, got {:?}", decoded.exec);
+    };
+    assert_eq!(seq, 50);
+    assert_eq!(path, "/tmp/composer_test.txt");
+    assert_eq!(tool_call_id, "tool_8799b25a");
+}
+
+#[test]
 fn decodes_unimplemented_exec_request_as_unknown_with_seq_and_field() {
     // An exec oneof slot Roder has no handler for (e.g. a delete/ls/todo
     // request). It must decode as Unknown — not None — so the bidi client can

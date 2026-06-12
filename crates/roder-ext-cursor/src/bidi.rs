@@ -286,6 +286,31 @@ async fn service_exec(
                 true,
             ))
         }
+        CursorExecRequest::Delete {
+            seq,
+            path,
+            tool_call_id,
+        } => {
+            // Route through Roder's policy-gated shell tool so the deletion is
+            // approval-gated and visible in the timeline; only fall back to a
+            // direct removal when no executor is available.
+            if let Some(exec) = executor {
+                let quoted = format!("'{}'", path.replace('\'', "'\\''"));
+                let _ = exec
+                    .execute(ToolCallCompleted {
+                        id: tool_call_id,
+                        name: "shell".to_string(),
+                        arguments: json!({ "command": format!("rm -f -- {quoted}") }).to_string(),
+                    })
+                    .await;
+            } else {
+                let _ = tokio::fs::remove_file(&path).await;
+            }
+            // Result body shape is unconfirmed; a mirrored empty result keeps
+            // the stream healthy (verified live) and the model can verify the
+            // deletion itself.
+            Some((vec![encode_exec_unknown_result(seq, 4)], true))
+        }
         CursorExecRequest::Shell {
             seq,
             command,
@@ -670,6 +695,34 @@ mod tests {
                 is_error: true,
             })
         }
+    }
+
+    /// Composer's native delete tool (exec field 4) must route through Roder's
+    /// policy-gated shell tool, with the path shell-quoted, and mirror a
+    /// result so the stream keeps moving.
+    #[tokio::test]
+    async fn delete_exec_routes_policy_gated_rm_and_replies() {
+        let executor = Arc::new(RecordingExecutor::default());
+        let (frames, ack) = service_exec(
+            CursorExecRequest::Delete {
+                seq: 9,
+                path: "/tmp/it's a file.txt".to_string(),
+                tool_call_id: "tool_del_1".to_string(),
+            },
+            std::path::Path::new("/tmp"),
+            Some(executor.as_ref()),
+        )
+        .await
+        .expect("delete exec must produce a reply");
+
+        assert!(ack);
+        assert_eq!(frames.len(), 1);
+        let calls = executor.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].id, "tool_del_1");
+        let args: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(args["command"], r#"rm -f -- '/tmp/it'\''s a file.txt'"#);
     }
 
     /// An exec request Roder cannot service must still produce a mirrored
