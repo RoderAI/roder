@@ -825,6 +825,78 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "knowledge/delete",
+      "paramsType": "KnowledgeDeleteParams",
+      "resultType": "KnowledgeDeleteResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "knowledge/links/set",
+      "paramsType": "KnowledgeLinksSetParams",
+      "resultType": "KnowledgeLinksSetResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "knowledge/list",
+      "paramsType": "KnowledgeListParams",
+      "resultType": "KnowledgeListResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/read",
+      "paramsType": "KnowledgeReadParams",
+      "resultType": "KnowledgeReadResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/revisions/list",
+      "paramsType": "KnowledgeRevisionsListParams",
+      "resultType": "KnowledgeRevisionsListResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/save",
+      "paramsType": "KnowledgeSaveParams",
+      "resultType": "KnowledgeSaveResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "knowledge/search",
+      "paramsType": "KnowledgeSearchParams",
+      "resultType": "KnowledgeSearchResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/update",
+      "paramsType": "KnowledgeUpdateParams",
+      "resultType": "KnowledgeUpdateResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "marketplaces/add",
       "paramsType": "MarketplacesAddParams",
       "resultType": "MarketplacesAddResult",

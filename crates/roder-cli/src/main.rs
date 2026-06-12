@@ -10,6 +10,7 @@ mod exec;
 mod exec_events;
 mod exec_output;
 mod forks;
+mod knowledge;
 mod stats;
 mod marketplace;
 mod replay;
@@ -150,6 +151,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("memory")) {
         return run_memory_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("knowledge")) {
+        return knowledge::run_knowledge_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("speech")) {
         return run_speech_cli(&args[1..]).await;

@@ -7,6 +7,7 @@ mod dialog;
 mod forks;
 mod goals;
 mod input_queue;
+mod knowledge;
 mod media;
 #[allow(dead_code)]
 mod memories;
@@ -164,7 +165,7 @@ const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
 const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
 const WORKING_SHEEN_WIDTH: usize = 3;
-const MAX_VISIBLE_SLASH_COMMANDS: usize = 17;
+const MAX_VISIBLE_SLASH_COMMANDS: usize = 18;
 const MAX_VISIBLE_INLINE_COMPLETIONS: usize = 12;
 const MAX_FILE_COMPLETION_CACHE: usize = 1_000;
 const RESUME_VISIBLE_TAIL_ITEMS: usize = 160;
@@ -2829,6 +2830,9 @@ where
             }
             "roadmap" => {
                 self.run_roadmap_slash_command(&args);
+            }
+            "knowledge" => {
+                self.run_knowledge_slash_command(&args).await;
             }
             "voice" => {
                 self.run_voice_slash_command(&args).await;

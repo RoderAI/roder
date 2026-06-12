@@ -3419,6 +3419,7 @@ dependencies = [
  "roder-dynamic-workflows",
  "roder-ext-git",
  "roder-ext-jsonl-thread-store",
+ "roder-ext-knowledge-md",
  "roder-ext-runner-sprites",
  "roder-ext-runner-unix-local",
  "roder-ext-task-ledger",

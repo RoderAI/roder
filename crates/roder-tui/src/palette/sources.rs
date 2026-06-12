@@ -466,6 +466,47 @@ pub fn memories_source() -> StaticPaletteSource {
     )
 }
 
+pub fn knowledge_source() -> StaticPaletteSource {
+    StaticPaletteSource::new(
+        "knowledge",
+        "Knowledge",
+        vec![
+            (
+                PaletteItem {
+                    id: "knowledge-list".to_string(),
+                    title: "Knowledge: list".to_string(),
+                    subtitle: Some("Browse project knowledge documents".to_string()),
+                    keywords: vec!["knowledge".to_string(), "list".to_string()],
+                    icon: Some('K'),
+                },
+                PaletteAction::InsertComposerText("/knowledge list".to_string()),
+            ),
+            (
+                PaletteItem {
+                    id: "knowledge-search".to_string(),
+                    title: "Knowledge: search".to_string(),
+                    subtitle: Some(
+                        "Search requirements, decisions, research, and notes".to_string(),
+                    ),
+                    keywords: vec!["knowledge".to_string(), "search".to_string()],
+                    icon: Some('K'),
+                },
+                PaletteAction::InsertComposerText("/knowledge search ".to_string()),
+            ),
+            (
+                PaletteItem {
+                    id: "knowledge-read".to_string(),
+                    title: "Knowledge: read".to_string(),
+                    subtitle: Some("Read a knowledge document by id".to_string()),
+                    keywords: vec!["knowledge".to_string(), "read".to_string()],
+                    icon: Some('K'),
+                },
+                PaletteAction::InsertComposerText("/knowledge read ".to_string()),
+            ),
+        ],
+    )
+}
+
 pub fn remote_source() -> StaticPaletteSource {
     StaticPaletteSource::new(
         "remote",

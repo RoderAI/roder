@@ -26,6 +26,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ("tasks", "Open the background task monitor."),
         ("ps", "Open the Roder-owned process monitor."),
         ("memory", "Inspect relevant project and user memory."),
+        (
+            "knowledge",
+            "Browse and search the project knowledge base.",
+        ),
         ("snapshot", "Create a scoped VCS snapshot."),
         ("marketplace", "Manage plugin marketplaces."),
         (
@@ -58,6 +62,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "knowledge" => Some("[list [kind]|search <text>|read <id>]".to_string()),
             "chrome" => Some("[status|enable|disable|reconnect|pair|panel]".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
@@ -318,6 +323,7 @@ mod tests {
                 "tasks",
                 "ps",
                 "memory",
+                "knowledge",
                 "snapshot",
                 "marketplace",
                 "plugin",
