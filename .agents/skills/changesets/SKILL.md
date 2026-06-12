@@ -1,6 +1,6 @@
 ---
 name: changesets
-description: Use when a PR changes any released package (crates/*, sdk/typescript, sdk/python, packages/edit-tools), when the changeset-gate CI check fails, when adding a new crate or package to the release config, or when working on knope versioning/release automation.
+description: Use when a PR changes any released package (crates/*, sdk/typescript, sdk/python, packages/edit-tools), when the changeset-gate CI check fails, when adding a new crate or package to the release config, or when working on knope versioning/release automation. For the step-by-step workflow to add a change file, use $create-changeset.
 ---
 
 # Changesets & per-package versioning (knope)
@@ -8,6 +8,9 @@ description: Use when a PR changes any released package (crates/*, sdk/typescrip
 This repo versions every Cargo crate and SDK package independently using
 [knope](https://knope.tech) with changesets. Commit messages never bump
 versions; only `.changeset/*.md` files do. Full docs: `docs/releases.md`.
+
+**Adding a changeset for a PR:** use **`$create-changeset`** — it walks through
+detecting touched packages, writing the file, verifying locally, and committing.
 
 ## Add a changeset (required by CI)
 
@@ -30,6 +33,7 @@ roder-cli: patch
 - Bump types: `major` | `minor` | `patch`. Pre-1.0, breaking changes are
   usually `minor`, everything else `patch`.
 - Never put non-changeset `.md` files (READMEs etc.) in `.changeset/`.
+- **Commit the changeset** — CI only counts files in the branch diff.
 
 Verify locally before pushing:
 

@@ -87,7 +87,7 @@ Prefer **Makefile / mise** over ad-hoc full-workspace `cargo test`.
 - [ ] `crates/<name>/Cargo.toml` with explicit `version = "0.1.0"` (crates are versioned per-package; do NOT use `version.workspace = true`) and `edition.workspace = true`
 - [ ] Root `Cargo.toml` `[workspace.dependencies]` entry for the package path
 - [ ] Regenerate the knope release config: `python3 scripts/generate-knope-config.py` (CI fails if `knope.toml` is stale)
-- [ ] Add a `.changeset/*.md` changeset for the PR (see [changesets](../changesets/SKILL.md) and `docs/releases.md`)
+- [ ] Add a `.changeset/*.md` changeset for the PR (see **`$create-changeset`** or [changesets](../changesets/SKILL.md) and `docs/releases.md`)
 - [ ] `cargo check -p <name>` then targeted tests
 
 ## Building the product binary
