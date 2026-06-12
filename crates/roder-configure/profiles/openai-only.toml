@@ -8,6 +8,7 @@ include_tui = true
 include_app_server = true
 include_cli = true
 extensions = [
+  "openai-images",
   "openai-responses",
   "jsonl-thread-store",
   "plan-mode",

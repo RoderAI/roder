@@ -139,6 +139,8 @@
               "marketplaces/search",
               "media/attachToTurn",
               "media/delete",
+              "media/image/generate",
+              "media/image/providers/list",
               "media/list",
               "media/read",
               "media/thumbnail",

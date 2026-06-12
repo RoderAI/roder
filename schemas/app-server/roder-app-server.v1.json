@@ -978,6 +978,24 @@
       "sideEffect": "localState"
     },
     {
+      "method": "media/image/generate",
+      "paramsType": "MediaImageGenerateParams",
+      "resultType": "MediaImageGenerateResult",
+      "stability": "stable",
+      "featureGroup": "media",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "media/image/providers/list",
+      "paramsType": "MediaImageProvidersListParams",
+      "resultType": "MediaImageProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "media",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "media/list",
       "paramsType": "MediaListParams",
       "resultType": "MediaListResult",

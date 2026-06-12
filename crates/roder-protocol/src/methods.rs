@@ -384,6 +384,13 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("marketplaces/search", "marketplaces", ReadOnly, Idempotent),
     method_spec!("media/attachToTurn", "media", LocalState, NonIdempotent),
     method_spec!("media/delete", "media", LocalState, NonIdempotent),
+    method_spec!("media/image/generate", "media", LocalState, NonIdempotent),
+    method_spec!(
+        "media/image/providers/list",
+        "media",
+        ReadOnly,
+        Idempotent
+    ),
     method_spec!("media/list", "media", ReadOnly, Idempotent),
     method_spec!("media/read", "media", ReadOnly, Idempotent),
     method_spec!("media/thumbnail", "media", ReadOnly, Idempotent),

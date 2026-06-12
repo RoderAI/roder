@@ -16,6 +16,7 @@ mod inference_routing;
 mod item_stream;
 mod knowledge;
 mod marketplaces;
+mod media_generation;
 #[cfg(test)]
 mod method_manifest;
 mod notifications;

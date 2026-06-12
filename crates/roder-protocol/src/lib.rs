@@ -3276,6 +3276,34 @@ pub struct MediaAttachToTurnResult {
     pub image: Option<InputImage>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaImageProvidersListParams {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaImageProvidersListResult {
+    pub default_provider: String,
+    pub providers: Vec<roder_api::media::MediaProviderDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaImageGenerateParams {
+    /// Canonical provider-neutral image generation request.
+    #[serde(flatten)]
+    pub request: roder_api::media::MediaGenerationRequest,
+    /// Optional thread to associate emitted media events with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaImageGenerateResult {
+    pub response: roder_api::media::MediaGenerationResponse,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowScanParams {
@@ -5340,6 +5368,37 @@ mod tests {
         assert_eq!(value["attachment"]["artifactId"], "media-1");
         assert_eq!(value["attachment"]["mimeType"], "image/png");
         assert_eq!(value["image"]["image_url"], "data:image/png;base64,YWJj");
+    }
+
+    #[test]
+    fn media_image_generation_params_flatten_the_canonical_request() {
+        let params: MediaImageGenerateParams = serde_json::from_value(serde_json::json!({
+            "prompt": "a tiny test image",
+            "provider": "openai",
+            "model": "gpt-image-2",
+            "count": 2,
+            "size": "1024x1024",
+            "threadId": "thread-1"
+        }))
+        .unwrap();
+        assert_eq!(params.request.prompt, "a tiny test image");
+        assert_eq!(params.request.provider.as_deref(), Some("openai"));
+        assert_eq!(params.request.count, Some(2));
+        assert_eq!(params.thread_id.as_deref(), Some("thread-1"));
+
+        let result = MediaImageProvidersListResult {
+            default_provider: "fake".to_string(),
+            providers: vec![roder_api::media::MediaProviderDescriptor {
+                id: "fake".to_string(),
+                display_name: "Fake Media (offline)".to_string(),
+                supports_images: true,
+                configured: true,
+                ..roder_api::media::MediaProviderDescriptor::default()
+            }],
+        };
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["defaultProvider"], "fake");
+        assert_eq!(value["providers"][0]["supportsImages"], true);
     }
 
     #[test]

@@ -30,7 +30,7 @@ use roder_core::{
     CreateThreadRequest, Runtime, StartTurnRequest,
     TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
     TeamStartRequest as RuntimeTeamStartRequest, TeamState, default_instructions,
-    media_artifacts::{MediaArtifactStore, default_media_artifact_dir},
+    media_artifacts::MediaArtifactStore,
     policy_gate::DefaultPolicyGate,
 };
 use roder_protocol::*;
@@ -1380,6 +1380,13 @@ impl AppServer {
             "media/attachToTurn" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_media_attach_to_turn(p).await
+                })
+                .await
+            }
+            "media/image/providers/list" => self.handle_media_image_providers_list().await,
+            "media/image/generate" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_media_image_generate(p).await
                 })
                 .await
             }
@@ -4856,19 +4863,13 @@ impl AppServer {
         Ok(serde_json::to_value(MediaAttachToTurnResult { attachment, image }).unwrap())
     }
 
+    /// Media methods share the runtime media-generation store so direct
+    /// generations, tool generations, and `media/*` reads agree on one root.
     fn media_store(&self) -> Result<MediaArtifactStore, JsonRpcError> {
-        let cfg = roder_config::load_config()
-            .unwrap_or_default()
-            .media
-            .unwrap_or_default();
-        let root = cfg
-            .artifacts_dir
-            .or_else(|| std::env::var_os("RODER_MEDIA_ARTIFACT_DIR").map(std::path::PathBuf::from))
-            .map(Ok)
-            .unwrap_or_else(default_media_artifact_dir)
-            .map_err(internal_error)?;
-        Ok(MediaArtifactStore::new(root)
-            .with_max_read_bytes(cfg.max_read_bytes.unwrap_or(10 * 1024 * 1024)))
+        self.runtime
+            .media_generation()
+            .store()
+            .map_err(internal_error)
     }
 
     async fn handle_memory_list(
