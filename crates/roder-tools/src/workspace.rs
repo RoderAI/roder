@@ -187,7 +187,7 @@ mod tests {
     }
 }
 
-fn expand_home(input: &str) -> anyhow::Result<PathBuf> {
+pub(crate) fn expand_home(input: &str) -> anyhow::Result<PathBuf> {
     if input == "~" {
         return home_dir();
     }

@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::process::Command;
 
+use crate::backend::WorkspaceBackendHandle;
 use crate::command_shell::{command_args_for_shell, shell_for_context};
 use crate::files::{parse, require_nonempty, result};
 use crate::workspace::Workspace;
@@ -22,17 +23,22 @@ pub(crate) fn register(
     registry: &mut ToolRegistry,
     workspace: Workspace,
     command_shell: String,
+    backend: Option<WorkspaceBackendHandle>,
 ) -> anyhow::Result<()> {
     registry.register(Arc::new(ShellTool {
         workspace,
         command_shell,
+        backend,
     }))
 }
 
-#[derive(Debug)]
 struct ShellTool {
     workspace: Workspace,
     command_shell: String,
+    /// Shell commands can create or modify files behind the search index's
+    /// back; the backend is notified after every command so the next grep
+    /// rebuilds instead of missing new files.
+    backend: Option<WorkspaceBackendHandle>,
 }
 
 #[async_trait::async_trait]
@@ -147,6 +153,9 @@ impl ToolExecutor for ShellTool {
                     ),
                 }
             };
+        if let Some(backend) = self.backend.as_ref() {
+            backend.note_external_change();
+        }
         let duration_ms = started.elapsed().as_millis() as u64;
         let status = if timed_out {
             "timed_out"
@@ -240,6 +249,7 @@ mod tests {
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         let command = success_command("hi");
@@ -266,6 +276,7 @@ mod tests {
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         let result = tool
@@ -290,6 +301,7 @@ mod tests {
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         let result = tool
@@ -316,6 +328,7 @@ mod tests {
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         for workdir in [".", "./", " . /", "'.'", "` . / `"] {
@@ -351,6 +364,7 @@ mod tests {
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             command_shell: "bash".to_string(),
+            backend: None,
         };
 
         let result = tool
@@ -388,6 +402,7 @@ mod tests {
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         let result = tool
@@ -445,6 +460,7 @@ mod tests {
         let tool = ShellTool {
             workspace: Workspace::new(root.clone()).unwrap(),
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         let result = tool

@@ -4706,6 +4706,7 @@ dependencies = [
  "async-trait",
  "base64",
  "dirs 6.0.0",
+ "globset",
  "ignore",
  "regex",
  "roder-api",

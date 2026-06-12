@@ -2,10 +2,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ignore::WalkBuilder;
+use regex::RegexBuilder;
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
 };
-use roder_search::{DEFAULT_MAX_FILE_SIZE, SearchMode, SearchOptions};
+use roder_search::{DEFAULT_MAX_FILE_SIZE, SearchEngine, SearchMetadata, SearchMode, SearchOptions};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -40,12 +41,12 @@ impl ToolExecutor for GrepTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "grep".to_string(),
-            description: "Search text files for a literal or regex query with paginated output. Relative paths resolve from the workspace root; absolute paths are searched directly."
+            description: "Search text files for a regular expression (default) or literal query with paginated output. Relative paths resolve from the workspace root; absolute paths are searched directly."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string" },
+                    "query": { "type": "string", "description": "Regular expression to search for (set regex:false for a literal string)." },
                     "path": {
                         "type": "string",
                         "default": ".",
@@ -53,8 +54,8 @@ impl ToolExecutor for GrepTool {
                     },
                     "regex": {
                         "type": "boolean",
-                        "default": false,
-                        "description": "Treat query as a regular expression instead of a literal string."
+                        "default": true,
+                        "description": "Treat query as a regular expression (default). Set false to match the query as a literal string."
                     },
                     "case_sensitive": {
                         "type": "boolean",
@@ -109,11 +110,20 @@ impl ToolExecutor for GrepTool {
         let limit = clamp_limit(args.limit);
         let query = args.query.clone();
         let path = args.path.clone().unwrap_or_else(|| ".".to_string());
-        let regex = args.regex.unwrap_or(false);
+        let regex = args.regex.unwrap_or(true);
         let case_sensitive = args.case_sensitive.unwrap_or(true);
         let word_boundary = args.word_boundary.unwrap_or(false);
         let mode = args.mode.clone().unwrap_or_else(|| "auto".to_string());
         let response_format = args.response_format.unwrap_or_default();
+        if regex
+            && let Err(err) = RegexBuilder::new(&query)
+                .case_insensitive(!case_sensitive)
+                .build()
+        {
+            anyhow::bail!(
+                "invalid regex {query:?}: {err}\nTo search for this text literally, set \"regex\": false."
+            );
+        }
         let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
         let options = args.into_search_options()?;
         let (start, matches, metadata) = backend.grep_search(options).await?;
@@ -138,6 +148,11 @@ impl ToolExecutor for GrepTool {
         let mut text = page.text.clone();
         if let Some(args) = continuation_args.as_ref() {
             append_continuation_instruction(&mut text, &page, "grep", args);
+        }
+        // An empty success is indistinguishable from a broken tool; always
+        // tell the model what was searched and how, plus likely remedies.
+        if page.total == 0 {
+            text = no_match_message(&query, regex, case_sensitive, &start, &metadata);
         }
         let mut data = page_metadata_with_continuation(
             start,
@@ -164,12 +179,12 @@ impl ToolExecutor for GlobTool {
         ToolSpec {
             name: "glob".to_string(),
             description:
-                "Find files under the workspace root matching a glob pattern with paginated output."
+                "Find files under the workspace root matching a glob pattern with paginated output. Patterns are workspace-relative and support *, ?, [..], {a,b} and **."
                     .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "pattern": { "type": "string" },
+                    "pattern": { "type": "string", "description": "Workspace-relative glob pattern, e.g. src/**/*.{ts,tsx}." },
                     "offset": {
                         "type": "integer",
                         "minimum": 0,
@@ -204,7 +219,8 @@ impl ToolExecutor for GlobTool {
         let args = parse::<GlobArgs>(&call)?;
         require_nonempty(&args.pattern, "pattern")?;
         let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
-        let matches = backend.glob(&args.pattern).await?;
+        let outcome = backend.glob(&args.pattern).await?;
+        let matches = outcome.matches;
         let offset = args.offset.unwrap_or_default();
         let limit = clamp_limit(args.limit);
         let response_format = args.response_format.unwrap_or_default();
@@ -221,6 +237,12 @@ impl ToolExecutor for GlobTool {
         if let Some(args) = continuation_args.as_ref() {
             append_continuation_instruction(&mut text, &page, "glob", args);
         }
+        if page.total == 0 {
+            text = format!(
+                "No files matched pattern {:?} ({} files considered under the workspace root). Patterns are workspace-relative and support *, ?, [..], {{a,b}} and **.",
+                args.pattern, outcome.files_considered
+            );
+        }
         let data = page_metadata_with_continuation(
             ".".to_string(),
             offset,
@@ -232,6 +254,7 @@ impl ToolExecutor for GlobTool {
         let mut data = data;
         data["response_format"] = json!(response_format.as_str());
         data["retrieval_mode"] = json!("file_name");
+        data["files_considered"] = json!(outcome.files_considered);
         Ok(result(call, text, data, false))
     }
 }
@@ -261,7 +284,7 @@ impl GrepArgs {
             query: self.query,
             path: self.path.unwrap_or_else(|| ".".to_string()).into(),
             mode,
-            regex: self.regex.unwrap_or(false),
+            regex: self.regex.unwrap_or(true),
             case_sensitive: self.case_sensitive.unwrap_or(true),
             word_boundary: self.word_boundary.unwrap_or(false),
             max_file_size: DEFAULT_MAX_FILE_SIZE,
@@ -341,32 +364,121 @@ fn merge_search_metadata(data: &mut Value, metadata: &roder_search::SearchMetada
     );
 }
 
-pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let pattern = pattern.as_bytes();
-    let text = text.as_bytes();
-    let (mut p, mut t) = (0, 0);
-    let mut star = None;
-    let mut star_text = 0;
-    while t < text.len() {
-        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
-            p += 1;
-            t += 1;
-        } else if p < pattern.len() && pattern[p] == b'*' {
-            star = Some(p);
-            p += 1;
-            star_text = t;
-        } else if let Some(star_index) = star {
-            p = star_index + 1;
-            star_text += 1;
-            t = star_text;
+pub(crate) struct GlobOutcome {
+    pub(crate) matches: Vec<String>,
+    pub(crate) files_considered: usize,
+}
+
+fn looks_like_regex(query: &str) -> bool {
+    query.chars().any(|ch| {
+        matches!(
+            ch,
+            '|' | '(' | ')' | '[' | ']' | '{' | '}' | '*' | '+' | '?' | '^' | '$' | '\\'
+        )
+    })
+}
+
+fn no_match_message(
+    query: &str,
+    regex: bool,
+    case_sensitive: bool,
+    start: &str,
+    metadata: &SearchMetadata,
+) -> String {
+    let mode = if regex { "regex" } else { "literal string" };
+    let case = if case_sensitive {
+        "case-sensitive"
+    } else {
+        "case-insensitive"
+    };
+    let scope = if start.is_empty() || start == "." {
+        "the workspace root"
+    } else {
+        start
+    };
+    let mut text = format!(
+        "No matches for {query:?} ({mode}, {case}) under {scope}. engine={}, files_scanned={}, candidate_files={}.",
+        metadata.engine.as_str(),
+        metadata.verified_files,
+        metadata.candidate_files,
+    );
+    if !regex && looks_like_regex(query) {
+        text.push_str(
+            "\nHint: the query contains regex syntax but was matched as a literal string; retry with \"regex\": true.",
+        );
+    }
+    // Only the local scan engine reports a true files-walked count; the
+    // runner backend reports matches only, so zero there is inconclusive.
+    if metadata.candidate_files == 0
+        && metadata.verified_files == 0
+        && matches!(metadata.engine, SearchEngine::Scan)
+    {
+        text.push_str(
+            "\nHint: no searchable text files were found under this path; it may be empty or contain only binary or oversized files.",
+        );
+    }
+    text
+}
+
+/// Resolve a glob pattern to a workspace-relative form. Absolute and
+/// home-relative patterns are accepted when they point inside the workspace
+/// root and rejected with a clear error otherwise, instead of silently
+/// matching nothing.
+pub(crate) fn prepare_glob_pattern(root: &Path, pattern: &str) -> anyhow::Result<String> {
+    let trimmed = pattern.trim();
+    let expanded = if trimmed == "~" || trimmed.starts_with("~/") {
+        crate::workspace::expand_home(trimmed)?
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        trimmed.to_string()
+    };
+    let normalized = expanded.replace('\\', "/");
+    if !Path::new(&normalized).is_absolute() {
+        return Ok(normalize_relative_pattern(&normalized));
+    }
+    // Split off the literal directory prefix (everything before the first
+    // wildcard component) so symlinked spellings of the workspace root, like
+    // /var vs /private/var on macOS, still resolve inside the workspace.
+    let mut literal_parts = Vec::new();
+    let mut wildcard_parts = Vec::new();
+    for part in normalized.split('/') {
+        if !wildcard_parts.is_empty()
+            || part
+                .chars()
+                .any(|ch| matches!(ch, '*' | '?' | '[' | '{'))
+        {
+            wildcard_parts.push(part);
         } else {
-            return false;
+            literal_parts.push(part);
         }
     }
-    while p < pattern.len() && pattern[p] == b'*' {
-        p += 1;
+    let literal_prefix = literal_parts.join("/");
+    let prefix_path = Path::new(&literal_prefix);
+    let resolved_prefix = prefix_path
+        .canonicalize()
+        .unwrap_or_else(|_| prefix_path.to_path_buf());
+    let Ok(inside) = resolved_prefix.strip_prefix(root) else {
+        anyhow::bail!(
+            "glob pattern {pattern:?} points outside the workspace root {}; glob only searches the workspace — pass a workspace-relative pattern, or use list_files/grep with an absolute path",
+            root.display()
+        );
+    };
+    let mut relative = inside.to_string_lossy().replace('\\', "/");
+    if !wildcard_parts.is_empty() {
+        if !relative.is_empty() {
+            relative.push('/');
+        }
+        relative.push_str(&wildcard_parts.join("/"));
     }
-    p == pattern.len()
+    Ok(normalize_relative_pattern(&relative))
+}
+
+pub(crate) fn compile_glob(pattern: &str) -> anyhow::Result<globset::GlobMatcher> {
+    globset::GlobBuilder::new(pattern)
+        .build()
+        .map(|glob| glob.compile_matcher())
+        .map_err(|err| anyhow::anyhow!("invalid glob pattern {pattern:?}: {err}"))
 }
 
 pub(crate) fn normalize_relative_pattern(pattern: &str) -> String {
