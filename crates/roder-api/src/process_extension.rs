@@ -1,4 +1,4 @@
-//! Process-hosted extension contract (roadmap phases 64 and 93).
+//! Process-hosted extension contract (roadmap phases 64, 95, and 97).
 //!
 //! A process extension is a non-Rust child process that registers ordinary
 //! extension services (inference engines, event sinks, tool providers,

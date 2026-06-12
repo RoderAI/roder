@@ -1,4 +1,4 @@
-//! Canonical Roder package contracts (roadmap phase 93).
+//! Canonical Roder package contracts (roadmap phase 97).
 //!
 //! A Roder package is an installable bundle of process extensions, skills,
 //! slash commands, and themes fetched from npm, git, or a local path with one

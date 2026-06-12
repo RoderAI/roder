@@ -90,7 +90,7 @@ pub enum CommandSource {
     Extension {
         extension_id: String,
     },
-    /// Installed Roder package (phase 93). Names load flat (no forced
+    /// Installed Roder package (phase 97). Names load flat (no forced
     /// namespace); user and workspace commands shadow package commands.
     Package {
         package_id: String,
