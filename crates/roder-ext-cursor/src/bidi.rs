@@ -26,8 +26,8 @@ use crate::proto::{
     ConnectFrame, CursorExecRequest, CursorGrepMatch, decode_server_frame,
     encode_cli_stream_control_frames, encode_connect_frame, encode_exec_control,
     encode_exec_glob_result, encode_exec_grep_result, encode_exec_read_result,
-    encode_exec_request_context_result, encode_exec_shell_results, encode_exec_write_result,
-    encode_heartbeat, encode_kv_ack, take_connect_frame,
+    encode_exec_request_context_result, encode_exec_shell_results, encode_exec_unknown_result,
+    encode_exec_write_result, encode_heartbeat, encode_kv_ack, take_connect_frame,
 };
 
 pub struct BidiRequest {
@@ -64,9 +64,14 @@ pub async fn run_bidi_turn(
     };
     // No overall request timeout: a bidi agent turn can run for minutes. Stalls
     // are bounded by the per-read idle timeout in the response loop below.
-    let client = reqwest::Client::builder()
-        .http2_adaptive_window(true)
-        .build()?;
+    let mut builder = reqwest::Client::builder().http2_adaptive_window(true);
+    // Plaintext endpoints (local mock AgentService in tests / diagnostics)
+    // cannot negotiate HTTP/2 via ALPN; force it so the same-stream bidi body
+    // works. The production endpoint is always https and unaffected.
+    if config.endpoint.starts_with("http://") {
+        builder = builder.http2_prior_knowledge();
+    }
+    let client = builder.build()?;
     let traceparent = traceparent();
     let response = client
         .post(format!("{}{}", config.endpoint, config.path))
@@ -172,7 +177,6 @@ pub async fn run_bidi_turn(
                             yield InferenceEvent::MessageDelta(MessageDelta { text: frame.text, phase: None });
                         }
                         if let Some(exec) = frame.exec {
-                            last_progress = tokio::time::Instant::now();
                             if let Some((result_frames, send_ctrl)) =
                                 service_exec(exec, &workspace, executor.as_deref()).await
                             {
@@ -184,6 +188,12 @@ pub async fn run_bidi_turn(
                                     let _ = outbound.send(Bytes::from(encode_connect_frame(&encode_exec_control())));
                                 }
                             }
+                            // Servicing the exec (which can include a slow tool
+                            // run or a user approval wait) is itself progress;
+                            // without this reset a tool that takes longer than
+                            // the no-progress cap ends the turn right after its
+                            // result is sent, before the model can continue.
+                            last_progress = tokio::time::Instant::now();
                         }
                         if frame.turn_ended {
                             done = true;
@@ -241,12 +251,10 @@ async fn service_exec(
             }
             let content = tokio::fs::read(&path).await.unwrap_or_default();
             let total_lines = content.iter().filter(|&&b| b == b'\n').count() as u64 + 1;
-            Some((vec![encode_exec_read_result(
-                seq,
-                &path,
-                &content,
-                total_lines,
-            )], true))
+            Some((
+                vec![encode_exec_read_result(seq, &path, &content, total_lines)],
+                true,
+            ))
         }
         CursorExecRequest::Write {
             seq,
@@ -273,7 +281,10 @@ async fn service_exec(
             if !applied {
                 let _ = tokio::fs::write(&path, &content).await;
             }
-            Some((vec![encode_exec_write_result(seq, &path, lines, size)], true))
+            Some((
+                vec![encode_exec_write_result(seq, &path, lines, size)],
+                true,
+            ))
         }
         CursorExecRequest::Shell {
             seq,
@@ -389,7 +400,10 @@ async fn service_exec(
                             files.push(m.path.clone());
                         }
                     }
-                    Some((vec![encode_exec_glob_result(seq, &path, &root, &files)], true))
+                    Some((
+                        vec![encode_exec_glob_result(seq, &path, &root, &files)],
+                        true,
+                    ))
                 } else {
                     Some((
                         vec![encode_exec_grep_result(
@@ -414,6 +428,35 @@ async fn service_exec(
                 .unwrap_or_default();
                 Some((vec![encode_exec_glob_result(seq, &path, &root, &rel)], true))
             }
+        }
+        CursorExecRequest::Unknown {
+            seq,
+            field_no,
+            payload,
+        } => {
+            // Surface the unimplemented exec in Roder's tool timeline so the
+            // user sees *which* Cursor-native tool was requested instead of a
+            // silently stalled turn (the registry rejects the unknown name and
+            // records an error result; nothing blocks).
+            if let Some(exec) = executor {
+                let strings = crate::proto::collect_payload_strings(&payload);
+                let _ = exec
+                    .execute(ToolCallCompleted {
+                        id: format!("cursor-exec-{seq}"),
+                        name: "cursor_unsupported_tool".to_string(),
+                        arguments: json!({
+                            "reason": "unsupported_cursor_exec_request",
+                            "exec_field_no": field_no,
+                            "strings": strings,
+                        })
+                        .to_string(),
+                    })
+                    .await;
+            }
+            // Reply with a mirrored empty result so the server does not wait
+            // forever on the call; an explicit (if empty) answer lets the model
+            // move on rather than hanging the whole turn.
+            Some((vec![encode_exec_unknown_result(seq, field_no)], true))
         }
     }
 }
@@ -595,7 +638,15 @@ fn traceparent() -> String {
 }
 
 #[cfg(test)]
+#[path = "bidi_stream_tests.rs"]
+mod bidi_stream_tests;
+
+#[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use roder_api::inference::{ToolCallCompleted, TurnToolExecutor, TurnToolOutcome};
+
     use super::{glob_match, service_exec};
     use crate::proto::CursorExecRequest;
 
@@ -603,6 +654,54 @@ mod tests {
         frames
             .iter()
             .any(|frame| frame.windows(needle.len()).any(|w| w == needle))
+    }
+
+    #[derive(Default)]
+    struct RecordingExecutor {
+        calls: Mutex<Vec<ToolCallCompleted>>,
+    }
+
+    #[async_trait::async_trait]
+    impl TurnToolExecutor for RecordingExecutor {
+        async fn execute(&self, call: ToolCallCompleted) -> anyhow::Result<TurnToolOutcome> {
+            self.calls.lock().unwrap().push(call);
+            Ok(TurnToolOutcome {
+                result: "unknown tool".to_string(),
+                is_error: true,
+            })
+        }
+    }
+
+    /// An exec request Roder cannot service must still produce a mirrored
+    /// result frame (so the server does not wait forever — the composer-2.5
+    /// "stuck on tool calls" failure) and surface a `cursor_unsupported_tool`
+    /// call in the timeline for visibility.
+    #[tokio::test]
+    async fn unknown_exec_request_gets_a_mirrored_reply_and_timeline_entry() {
+        let executor = Arc::new(RecordingExecutor::default());
+        let (frames, ack) = service_exec(
+            CursorExecRequest::Unknown {
+                seq: 51,
+                field_no: 21,
+                payload: crate::proto::proto_message(vec![crate::proto::proto_field_string(
+                    1,
+                    "mystery/arg",
+                )]),
+            },
+            std::path::Path::new("/tmp"),
+            Some(executor.as_ref()),
+        )
+        .await
+        .expect("unknown exec must produce a reply");
+
+        assert!(ack, "unknown exec follows the request/result/ack cycle");
+        assert_eq!(frames.len(), 1);
+        let calls = executor.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "cursor_unsupported_tool");
+        assert_eq!(calls[0].id, "cursor-exec-51");
+        assert!(calls[0].arguments.contains("\"exec_field_no\":21"));
+        assert!(calls[0].arguments.contains("mystery/arg"));
     }
 
     /// Claude/Opus searches send the ripgrep regex in `pattern` (f1) with

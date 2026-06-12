@@ -151,6 +151,72 @@ fn decodes_exec_search_grep_and_glob_variants() {
 }
 
 #[test]
+fn decodes_unimplemented_exec_request_as_unknown_with_seq_and_field() {
+    // An exec oneof slot Roder has no handler for (e.g. a delete/ls/todo
+    // request). It must decode as Unknown — not None — so the bidi client can
+    // reply; a silent drop left the server waiting and the turn stuck on the
+    // tool call until the no-progress cap killed it (seen with composer-2.5).
+    let frame = exec_server_frame(
+        47,
+        21,
+        proto_message(vec![proto_field_string(1, "some/target/path")]),
+    );
+
+    let decoded = decode_server_frame(&frame);
+    let Some(CursorExecRequest::Unknown {
+        seq,
+        field_no,
+        payload,
+    }) = decoded.exec
+    else {
+        panic!("expected UNKNOWN exec request, got {:?}", decoded.exec);
+    };
+    assert_eq!(seq, 47);
+    assert_eq!(field_no, 21);
+    assert_eq!(
+        collect_payload_strings(&payload),
+        vec!["some/target/path".to_string()]
+    );
+}
+
+#[test]
+fn exec_metadata_fields_do_not_decode_as_unknown_requests() {
+    // f15 (message uuid) and f19 (routing) are envelope metadata, not the
+    // request oneof; a frame carrying only those has no serviceable request.
+    let frame = exec_server_frame(48, 15, b"00000000-0000-0000-0000-000000000000".to_vec());
+    assert!(decode_server_frame(&frame).exec.is_none());
+}
+
+#[test]
+fn malformed_known_exec_request_decodes_as_unknown_not_dropped() {
+    // A SHELL request missing its command (field 1) used to abort decoding and
+    // drop the frame entirely; it must now surface as Unknown so a result is
+    // still sent.
+    let frame = exec_server_frame(49, 14, proto_message(vec![proto_field_string(2, "/repo")]));
+    let decoded = decode_server_frame(&frame);
+    assert!(matches!(
+        decoded.exec,
+        Some(CursorExecRequest::Unknown {
+            seq: 49,
+            field_no: 14,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn unknown_result_frame_mirrors_seq_and_request_field_number() {
+    let frame = encode_exec_unknown_result(47, 21);
+    let exec = exec_client_body(&frame);
+    assert_eq!(scalar_u64(&exec, 1), Some(47), "seq must echo the request");
+    assert_eq!(
+        submessage(&exec, 21),
+        Some(Vec::new()),
+        "result must mirror the request field number with an empty body"
+    );
+}
+
+#[test]
 fn decodes_request_context_and_kv_put_frames() {
     let context_frame = exec_server_frame(46, 10, proto_message(vec![proto_field_varint(1, 1)]));
     let decoded = decode_server_frame(&context_frame);

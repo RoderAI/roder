@@ -3574,6 +3574,8 @@ dependencies = [
  "bytes",
  "dirs 6.0.0",
  "futures",
+ "h2",
+ "http",
  "reqwest",
  "roder-api",
  "semver",
