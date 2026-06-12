@@ -1,14 +1,20 @@
 # Process-Hosted Extensions
 
 Roder can host extensions written in any language as child processes. A
-process extension registers ordinary extension services (currently inference
-engines and event sinks) through a manifest and speaks newline-delimited
-JSON-RPC 2.0 over stdio. App-server clients cannot tell a process-hosted
-provider from a native Rust one except through extension metadata.
+process extension registers ordinary extension services (inference
+engines, event sinks, subagent dispatchers, task executors) through a
+manifest and speaks newline-delimited JSON-RPC 2.0 over stdio. App-server
+clients cannot tell a process-hosted service from a native Rust one except
+through extension metadata.
 
-The reference implementation is the Python OpenAI-compatible
-chat-completions provider POC under
-`examples/non-rust-extensions/python-chat-completions/`.
+Reference implementations:
+
+- Python: the OpenAI-compatible chat-completions provider POC under
+  `examples/non-rust-extensions/python-chat-completions/` (inference
+  engine + event sink).
+- TypeScript: the Cursor SDK remote-agents extension under
+  `examples/non-rust-extensions/cursor-sdk-agents/` (subagent dispatcher +
+  task executor; see `docs/roder-cursor-sdk-agents.md`).
 
 ## Configuration
 
@@ -42,7 +48,9 @@ event_filter = { kinds = ["turn.", "inference."] }
 
 Newline-delimited JSON-RPC 2.0 over stdio. The host owns request ids; child
 diagnostics belong on stderr. Canonical DTOs live in
-`roder_api::process_extension` and the protocol version is `0.1.0`.
+`roder_api::process_extension` and the protocol version is `0.2.0`
+(bumped from 0.1.0 when subagent dispatcher and task executor services
+were added; children echo the version, so a stale child fails closed).
 
 | Method | Direction | Purpose |
 | --- | --- | --- |
@@ -50,6 +58,14 @@ diagnostics belong on stderr. Canonical DTOs live in
 | `inference/listModels` | host → child request | Canonical `ModelDescriptor` values. |
 | `inference/streamTurn` | host → child request | Canonical `AgentInferenceRequest` plus thread/turn ids and a host-chosen `streamId`. The child acks `{streamId}` then streams events. |
 | `inference/event` | child → host notification | `{streamId, event}` with canonical `InferenceEvent` payloads until `Completed` or `Failed`. |
+| `subagents/definitions` | host → child request | Canonical `SubagentDefinition` values for a dispatcher service. |
+| `subagents/dispatch` | host → child request | Parent thread/turn ids plus a canonical `SubagentRequest` and a host-chosen `dispatchId`. The child acks `{dispatchId}` then streams events. |
+| `subagents/event` | child → host notification | `{dispatchId, event}` where event is `status` (redacted progress, forwarded to subagent trace sinks), or terminal `completed` (canonical `SubagentResult`) / `failed`. |
+| `subagents/cancel` | host → child request | Cancel an in-flight dispatch (host timeout or caller cancellation). |
+| `tasks/spec` | host → child request | Canonical `TaskSpec` for a task executor service. |
+| `tasks/execute` | host → child request | Task id/provenance plus executor input and a host-chosen `executionId`. The child acks `{executionId}` then streams events. |
+| `tasks/event` | child → host notification | `{executionId, event}` where event is `output` (forwarded into the task output sink), or terminal `completed` (canonical `TaskExecutionResult`) / `failed`. |
+| `tasks/cancel` | host → child request | Cancel an in-flight execution (sent automatically when the host-side task is aborted). |
 | `events/handle` | host → child notification | Filtered canonical `EventEnvelope` values. |
 | `extension/event` | child → host notification | Typed extension-owned events (`extensionId`, `eventKind`, `schemaVersion`, redacted `payload`). |
 | `extension/shutdown` | host → child request | Graceful shutdown before the process is killed. |
@@ -60,12 +76,20 @@ diagnostics belong on stderr. Canonical DTOs live in
   initialize-echo validation (id, protocol version, services, manifest
   checksum) that fails closed.
 - Stdout lines are size-capped; non-JSON lines are dropped with a stderr
-  diagnostic; a child exit fails pending requests and active streams with
-  explicit errors.
+  diagnostic; a child exit fails pending requests and active streams
+  (inference, dispatch, and task executions) with explicit errors.
 - Event delivery to sinks is bounded and non-blocking: each registered sink
   gets its own queue and worker, slow or broken sinks surface redacted
   `extension.event_sink_failed` events (never re-dispatched to sinks, so no
   loops), and turns complete even when a sink hangs.
+- Dispatcher definitions and task specs are fetched from the child in the
+  background and cached for the synchronous registry accessors; a
+  deterministic placeholder spec is served only before the first fetch
+  lands.
+- Subagent dispatches honor `SubagentRequest.timeout_seconds` (default 30
+  minutes); on timeout the host sends `subagents/cancel` and fails the
+  dispatch. Aborted host-side tasks notify the child via `tasks/cancel` so
+  remote work is not silently orphaned.
 
 ## Python POC
 

@@ -1,5 +1,5 @@
 //! `TaskExecutor` adapter backed by a process-hosted child (roadmap
-//! phase 93).
+//! phase 95).
 //!
 //! `tasks/execute` is acked immediately by the child; output then streams
 //! back as `tasks/event` notifications (forwarded into the task's output

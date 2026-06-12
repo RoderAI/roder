@@ -1,6 +1,6 @@
 # Cursor SDK Agents (process-hosted TypeScript extension)
 
-Roder process extension (roadmap phase 93) that wraps the official Cursor
+Roder process extension (roadmap phase 95) that wraps the official Cursor
 TypeScript SDK so Roder can create, stream, resume, and cancel **remote
 Cursor cloud agents** through canonical Roder surfaces:
 

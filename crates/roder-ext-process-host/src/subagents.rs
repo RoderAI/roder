@@ -1,5 +1,5 @@
 //! `SubagentDispatcher` adapter backed by a process-hosted child (roadmap
-//! phase 93).
+//! phase 95).
 //!
 //! `subagents/dispatch` is acked immediately by the child; progress then
 //! streams back as `subagents/event` notifications until a terminal
@@ -17,10 +17,10 @@ use roder_api::process_extension::{
     ProcessSubagentDefinitionsResult, ProcessSubagentDispatchAck, ProcessSubagentDispatchParams,
     ProcessSubagentEvent,
 };
-use roder_api::subagents::{SubagentDefinition, SubagentDispatcher, SubagentRequest, SubagentResult};
-use roder_api::trace::{
-    ParentTurnRef, SubagentTraceStatus, SubagentTraceSink,
+use roder_api::subagents::{
+    SubagentDefinition, SubagentDispatcher, SubagentRequest, SubagentResult,
 };
+use roder_api::trace::{ParentTurnRef, SubagentTraceSink, SubagentTraceStatus};
 
 use crate::process::ProcessHost;
 
@@ -68,12 +68,7 @@ impl ProcessSubagentDispatcher {
     /// Awaits the child-declared definitions, caching them for the sync
     /// accessor.
     pub async fn fetch_definitions(&self) -> anyhow::Result<Vec<SubagentDefinition>> {
-        if let Some(definitions) = self
-            .definitions
-            .read()
-            .ok()
-            .and_then(|slot| slot.clone())
-        {
+        if let Some(definitions) = self.definitions.read().ok().and_then(|slot| slot.clone()) {
             return Ok(definitions);
         }
         let definitions = fetch_definitions(&self.host, &self.dispatcher_id).await?;
@@ -138,7 +133,10 @@ impl SubagentDispatcher for ProcessSubagentDispatcher {
             .timeout_seconds
             .map(Duration::from_secs)
             .unwrap_or(DEFAULT_DISPATCH_TIMEOUT);
-        let mut receiver = self.host.register_subagent_stream(dispatch_id.clone()).await?;
+        let mut receiver = self
+            .host
+            .register_subagent_stream(dispatch_id.clone())
+            .await?;
 
         let ack: ProcessSubagentDispatchAck = self
             .host
@@ -217,7 +215,7 @@ impl SubagentDispatcher for ProcessSubagentDispatcher {
                     }
                 }
                 Ok(Some(Ok(ProcessSubagentEvent::Completed { result }))) => {
-                    return Ok(result);
+                    return Ok(*result);
                 }
                 Ok(Some(Ok(ProcessSubagentEvent::Failed { error }))) => {
                     anyhow::bail!("subagent dispatcher {} failed: {error}", self.dispatcher_id);

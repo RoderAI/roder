@@ -6,8 +6,8 @@ use roder_api::inference::{
     AgentInferenceRequest, InferenceEvent, InstructionBundle, MessageDelta, ModelDescriptor,
     ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
 };
-use roder_api::tools::ToolChoice;
 use roder_api::process_extension::*;
+use roder_api::tools::ToolChoice;
 
 fn sample_request() -> AgentInferenceRequest {
     AgentInferenceRequest {
@@ -318,7 +318,7 @@ fn subagent_dispatch_payloads_use_canonical_json_names() {
     let completed = ProcessSubagentEventNotification {
         dispatch_id: "dispatch-1".to_string(),
         event: ProcessSubagentEvent::Completed {
-            result: roder_api::subagents::SubagentResult {
+            result: Box::new(roder_api::subagents::SubagentResult {
                 thread_id: "bc-agent-1".to_string(),
                 turn_id: "request-1".to_string(),
                 agent_type: "cursor-cloud".to_string(),
@@ -328,7 +328,7 @@ fn subagent_dispatch_payloads_use_canonical_json_names() {
                 exit_reason: roder_api::subagents::SubagentExitReason::Completed,
                 transcript: None,
                 metadata: serde_json::json!({ "agentId": "bc-agent-1" }),
-            },
+            }),
         },
     };
     let json = serde_json::to_value(&completed).unwrap();

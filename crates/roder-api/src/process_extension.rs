@@ -45,7 +45,7 @@ pub use dispatch::{
 
 /// Protocol version spoken by the host; children must echo a compatible
 /// version from `extension/initialize`. Bumped to 0.2.0 when subagent
-/// dispatcher and task executor services were added (phase 93).
+/// dispatcher and task executor services were added (phase 95).
 pub const PROCESS_EXTENSION_PROTOCOL_VERSION: &str = "0.2.0";
 
 pub const METHOD_INITIALIZE: &str = "extension/initialize";
