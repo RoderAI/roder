@@ -216,3 +216,204 @@ fn extension_owned_events_round_trip_with_schema_version() {
         serde_json::from_value(serde_json::to_value(&event).unwrap()).unwrap();
     assert_eq!(round_trip, event);
 }
+
+const DISPATCHER_MANIFEST_TOML: &str = r#"
+id = "roder-ext-cursor-sdk"
+name = "Cursor SDK Agents"
+version = "0.1.0"
+api_version = "^0.1"
+description = "Process-hosted TypeScript extension wrapping @cursor/sdk"
+
+provides = [
+  { type = "subagent_dispatcher", id = "cursor-cloud" },
+  { type = "task_executor", id = "cursor-cloud-agent" },
+  { type = "event_sink", id = "cursor-sdk-events" },
+]
+
+required_capabilities = [
+  "network.api.cursor.com",
+  "secret.read.CURSOR_API_KEY",
+  "events.read.turn",
+  "events.emit.extension",
+]
+"#;
+
+#[test]
+fn dispatcher_and_task_manifest_round_trips_and_echo_fails_closed() {
+    let manifest: ProcessExtensionManifest = toml::from_str(DISPATCHER_MANIFEST_TOML).unwrap();
+    validate_manifest(&manifest).unwrap();
+
+    let services: Vec<roder_api::extension::ProvidedService> =
+        manifest.provides.iter().map(Into::into).collect();
+    assert_eq!(
+        services,
+        vec![
+            roder_api::extension::ProvidedService::SubagentDispatcher("cursor-cloud".to_string()),
+            roder_api::extension::ProvidedService::TaskExecutor("cursor-cloud-agent".to_string()),
+            roder_api::extension::ProvidedService::EventSink("cursor-sdk-events".to_string()),
+        ]
+    );
+    assert_eq!(manifest.provides[0].service_id(), "cursor-cloud");
+
+    let good = ProcessInitializeResult {
+        protocol_version: PROCESS_EXTENSION_PROTOCOL_VERSION.to_string(),
+        extension_id: manifest.id.clone(),
+        services: manifest.provides.clone(),
+        manifest_checksum: manifest_checksum(DISPATCHER_MANIFEST_TOML),
+    };
+    validate_initialize_echo(&manifest, DISPATCHER_MANIFEST_TOML, &good).unwrap();
+
+    // A child that drops the task executor from its echo is refused.
+    let mut missing_service = good.clone();
+    missing_service
+        .services
+        .retain(|service| service.service_id() != "cursor-cloud-agent");
+    let error = validate_initialize_echo(&manifest, DISPATCHER_MANIFEST_TOML, &missing_service)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("echoed services"), "{error}");
+
+    // The protocol version is the bumped canonical one, with no aliases.
+    assert_eq!(PROCESS_EXTENSION_PROTOCOL_VERSION, "0.2.0");
+    let mut stale_protocol = good;
+    stale_protocol.protocol_version = "0.1.0".to_string();
+    let error = validate_initialize_echo(&manifest, DISPATCHER_MANIFEST_TOML, &stale_protocol)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("speaks protocol"), "{error}");
+}
+
+#[test]
+fn subagent_dispatch_payloads_use_canonical_json_names() {
+    let params = ProcessSubagentDispatchParams {
+        dispatcher_id: "cursor-cloud".to_string(),
+        dispatch_id: "dispatch-1".to_string(),
+        parent_thread_id: "thread-1".to_string(),
+        parent_turn_id: "turn-1".to_string(),
+        request: roder_api::subagents::SubagentRequest {
+            description: "Fix the bug remotely".to_string(),
+            prompt: "Fix the flaky test".to_string(),
+            subagent_type: Some("cursor-cloud".to_string()),
+            model: Some("composer-2.5".to_string()),
+            tools: None,
+            lane: None,
+            max_concurrent: None,
+            allowed_tools: None,
+            parent_deadline_seconds: None,
+            inputs: Some(serde_json::json!({
+                "repoUrl": "https://github.com/example-org/example-repo",
+            })),
+            timeout_seconds: Some(600),
+        },
+    };
+    let json = serde_json::to_value(&params).unwrap();
+    assert_eq!(json["dispatcherId"], "cursor-cloud");
+    assert_eq!(json["dispatchId"], "dispatch-1");
+    assert_eq!(json["parentThreadId"], "thread-1");
+    assert_eq!(json["parentTurnId"], "turn-1");
+    assert_eq!(json["request"]["prompt"], "Fix the flaky test");
+    let round_trip: ProcessSubagentDispatchParams = serde_json::from_value(json).unwrap();
+    assert_eq!(round_trip, params);
+
+    let completed = ProcessSubagentEventNotification {
+        dispatch_id: "dispatch-1".to_string(),
+        event: ProcessSubagentEvent::Completed {
+            result: roder_api::subagents::SubagentResult {
+                thread_id: "bc-agent-1".to_string(),
+                turn_id: "request-1".to_string(),
+                agent_type: "cursor-cloud".to_string(),
+                model: Some("composer-2.5".to_string()),
+                final_message: "All done".to_string(),
+                usage: None,
+                exit_reason: roder_api::subagents::SubagentExitReason::Completed,
+                transcript: None,
+                metadata: serde_json::json!({ "agentId": "bc-agent-1" }),
+            },
+        },
+    };
+    let json = serde_json::to_value(&completed).unwrap();
+    assert_eq!(json["dispatchId"], "dispatch-1");
+    assert_eq!(json["event"]["type"], "completed");
+    let round_trip: ProcessSubagentEventNotification = serde_json::from_value(json).unwrap();
+    assert_eq!(round_trip, completed);
+
+    let status = ProcessSubagentEvent::Status {
+        status: "RUNNING".to_string(),
+        detail: Some("cloud VM provisioning".to_string()),
+    };
+    let json = serde_json::to_value(&status).unwrap();
+    assert_eq!(json["type"], "status");
+    assert_eq!(json["status"], "RUNNING");
+
+    let cancel = ProcessSubagentCancelParams {
+        dispatcher_id: "cursor-cloud".to_string(),
+        dispatch_id: "dispatch-1".to_string(),
+        reason: Some("parent turn cancelled".to_string()),
+    };
+    let json = serde_json::to_value(&cancel).unwrap();
+    assert_eq!(json["dispatcherId"], "cursor-cloud");
+    assert_eq!(json["reason"], "parent turn cancelled");
+}
+
+#[test]
+fn task_execute_payloads_use_canonical_json_names() {
+    let spec_result = ProcessTaskSpecResult {
+        spec: roder_api::tasks::TaskSpec {
+            kind: "cursor-cloud-agent".to_string(),
+            description: "Remote Cursor cloud agent".to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            default_timeout_seconds: Some(1800),
+            metadata: serde_json::json!({}),
+        },
+    };
+    let json = serde_json::to_value(&spec_result).unwrap();
+    assert_eq!(json["spec"]["kind"], "cursor-cloud-agent");
+
+    let params = ProcessTaskExecuteParams {
+        executor_id: "cursor-cloud-agent".to_string(),
+        execution_id: "execution-1".to_string(),
+        task_id: "task-1".to_string(),
+        thread_id: Some("thread-1".to_string()),
+        turn_id: None,
+        workspace_root: Some("/workspace".to_string()),
+        input: serde_json::json!({ "prompt": "Summarize the repo" }),
+    };
+    let json = serde_json::to_value(&params).unwrap();
+    assert_eq!(json["executorId"], "cursor-cloud-agent");
+    assert_eq!(json["executionId"], "execution-1");
+    assert_eq!(json["taskId"], "task-1");
+    assert_eq!(json["threadId"], "thread-1");
+    assert!(json.get("turnId").is_none(), "absent options are omitted");
+    let round_trip: ProcessTaskExecuteParams = serde_json::from_value(json).unwrap();
+    assert_eq!(round_trip, params);
+
+    let output = ProcessTaskEventNotification {
+        execution_id: "execution-1".to_string(),
+        event: ProcessTaskEvent::Output {
+            stream: roder_api::tasks::TaskOutputStream::Log,
+            chunk: "status: RUNNING".to_string(),
+        },
+    };
+    let json = serde_json::to_value(&output).unwrap();
+    assert_eq!(json["executionId"], "execution-1");
+    assert_eq!(json["event"]["type"], "output");
+    assert_eq!(json["event"]["stream"], "log");
+
+    let completed = ProcessTaskEventNotification {
+        execution_id: "execution-1".to_string(),
+        event: ProcessTaskEvent::Completed {
+            result: roder_api::tasks::TaskExecutionResult::success(
+                serde_json::json!({ "agentId": "bc-agent-1" }),
+            ),
+        },
+    };
+    let round_trip: ProcessTaskEventNotification =
+        serde_json::from_value(serde_json::to_value(&completed).unwrap()).unwrap();
+    assert_eq!(round_trip, completed);
+
+    let failed = ProcessTaskEvent::Failed {
+        error: "cloud agent errored".to_string(),
+    };
+    let json = serde_json::to_value(&failed).unwrap();
+    assert_eq!(json["type"], "failed");
+}

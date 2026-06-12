@@ -17,7 +17,8 @@ use roder_api::inference::InferenceEvent;
 use roder_api::process_extension::{
     METHOD_INITIALIZE, METHOD_SHUTDOWN, PROCESS_EXTENSION_PROTOCOL_VERSION,
     ProcessExtensionOwnedEvent, ProcessInferenceEventNotification, ProcessInitializeParams,
-    ProcessInitializeResult, validate_initialize_echo,
+    ProcessInitializeResult, ProcessSubagentEvent, ProcessSubagentEventNotification,
+    ProcessTaskEvent, ProcessTaskEventNotification, validate_initialize_echo,
 };
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -43,6 +44,8 @@ struct RunningChild {
     child: Mutex<Child>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>>,
     streams: Mutex<HashMap<String, mpsc::Sender<anyhow::Result<InferenceEvent>>>>,
+    subagent_streams: Mutex<HashMap<String, mpsc::Sender<anyhow::Result<ProcessSubagentEvent>>>>,
+    task_streams: Mutex<HashMap<String, mpsc::Sender<anyhow::Result<ProcessTaskEvent>>>>,
     extension_events: Mutex<Vec<ProcessExtensionOwnedEvent>>,
     next_id: AtomicU64,
 }
@@ -105,6 +108,43 @@ impl ProcessHost {
         let (tx, rx) = mpsc::channel(256);
         child.streams.lock().await.insert(stream_id, tx);
         Ok(rx)
+    }
+
+    /// Registers a subagent dispatch event receiver for `dispatch_id`.
+    pub async fn register_subagent_stream(
+        &self,
+        dispatch_id: String,
+    ) -> anyhow::Result<mpsc::Receiver<anyhow::Result<ProcessSubagentEvent>>> {
+        let child = self.ensure_started().await?;
+        let (tx, rx) = mpsc::channel(256);
+        child.subagent_streams.lock().await.insert(dispatch_id, tx);
+        Ok(rx)
+    }
+
+    /// Drops the subagent dispatch channel for `dispatch_id` (e.g. after a
+    /// host-side timeout or cancellation).
+    pub async fn unregister_subagent_stream(&self, dispatch_id: &str) {
+        if let Some(child) = self.state.lock().await.clone() {
+            child.subagent_streams.lock().await.remove(dispatch_id);
+        }
+    }
+
+    /// Registers a task execution event receiver for `execution_id`.
+    pub async fn register_task_stream(
+        &self,
+        execution_id: String,
+    ) -> anyhow::Result<mpsc::Receiver<anyhow::Result<ProcessTaskEvent>>> {
+        let child = self.ensure_started().await?;
+        let (tx, rx) = mpsc::channel(256);
+        child.task_streams.lock().await.insert(execution_id, tx);
+        Ok(rx)
+    }
+
+    /// Drops the task execution channel for `execution_id`.
+    pub async fn unregister_task_stream(&self, execution_id: &str) {
+        if let Some(child) = self.state.lock().await.clone() {
+            child.task_streams.lock().await.remove(execution_id);
+        }
     }
 
     /// Drains extension-owned events the child emitted since the last call.
@@ -186,6 +226,8 @@ impl ProcessHost {
             child: Mutex::new(child),
             pending: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
+            subagent_streams: Mutex::new(HashMap::new()),
+            task_streams: Mutex::new(HashMap::new()),
             extension_events: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
         });
@@ -302,6 +344,20 @@ async fn read_stdout(
             .send(Err(anyhow::anyhow!("process extension exited mid-stream")))
             .await;
     }
+    for (_, tx) in child.subagent_streams.lock().await.drain() {
+        let _ = tx
+            .send(Err(anyhow::anyhow!(
+                "process extension exited mid-dispatch"
+            )))
+            .await;
+    }
+    for (_, tx) in child.task_streams.lock().await.drain() {
+        let _ = tx
+            .send(Err(anyhow::anyhow!(
+                "process extension exited mid-execution"
+            )))
+            .await;
+    }
 }
 
 async fn dispatch_message(child: &Arc<RunningChild>, message: serde_json::Value) {
@@ -341,6 +397,41 @@ async fn dispatch_message(child: &Arc<RunningChild>, message: serde_json::Value)
             }
             if terminal {
                 streams.remove(&notification.stream_id);
+            }
+        }
+        roder_api::process_extension::METHOD_SUBAGENTS_EVENT => {
+            let Ok(notification) =
+                serde_json::from_value::<ProcessSubagentEventNotification>(params)
+            else {
+                return;
+            };
+            let terminal = matches!(
+                notification.event,
+                ProcessSubagentEvent::Completed { .. } | ProcessSubagentEvent::Failed { .. }
+            );
+            let mut streams = child.subagent_streams.lock().await;
+            if let Some(tx) = streams.get(&notification.dispatch_id) {
+                let _ = tx.send(Ok(notification.event)).await;
+            }
+            if terminal {
+                streams.remove(&notification.dispatch_id);
+            }
+        }
+        roder_api::process_extension::METHOD_TASKS_EVENT => {
+            let Ok(notification) = serde_json::from_value::<ProcessTaskEventNotification>(params)
+            else {
+                return;
+            };
+            let terminal = matches!(
+                notification.event,
+                ProcessTaskEvent::Completed { .. } | ProcessTaskEvent::Failed { .. }
+            );
+            let mut streams = child.task_streams.lock().await;
+            if let Some(tx) = streams.get(&notification.execution_id) {
+                let _ = tx.send(Ok(notification.event)).await;
+            }
+            if terminal {
+                streams.remove(&notification.execution_id);
             }
         }
         roder_api::process_extension::METHOD_EXTENSION_EVENT => {

@@ -16,9 +16,11 @@ use roder_api::inference::{
 };
 use roder_api::process_extension::{ProcessEventFilter, ProcessExtensionConfig};
 use roder_api::tools::ToolChoice;
+use roder_api::subagents::SubagentDispatcher as _;
+use roder_api::tasks::TaskExecutor as _;
 use roder_ext_process_host::{
     ProcessEventSink, ProcessHost, ProcessHostExtension, ProcessInferenceEngine,
-    load_process_extension,
+    ProcessSubagentDispatcher, ProcessTaskExecutor, load_process_extension,
 };
 use time::OffsetDateTime;
 
@@ -254,7 +256,7 @@ async fn extension_installs_manifest_backed_services_into_registry() {
     let host = extension.host();
     let manifest = extension.manifest();
     assert_eq!(manifest.id, "roder-ext-fake-child");
-    assert_eq!(manifest.provides.len(), 2);
+    assert_eq!(manifest.provides.len(), 4);
 
     let mut builder = roder_api::extension::ExtensionRegistryBuilder::new();
     builder.install(extension).unwrap();
@@ -262,5 +264,247 @@ async fn extension_installs_manifest_backed_services_into_registry() {
     assert!(registry.inference_engine("fake-process-engine").is_some());
     assert_eq!(registry.event_sinks.len(), 1);
     assert_eq!(registry.event_sinks[0].id(), "fake-process-events");
+    assert!(
+        registry
+            .subagent_dispatcher("fake-process-dispatcher")
+            .is_some()
+    );
+    assert_eq!(registry.task_executors.len(), 1);
+    assert_eq!(registry.task_executors[0].id(), "fake-process-task");
     host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn subagent_dispatcher_streams_status_and_returns_result() {
+    let host = host_for(fake_config(BTreeMap::new()));
+    let dispatcher =
+        ProcessSubagentDispatcher::new(host.clone(), "fake-process-dispatcher".to_string());
+
+    // Definitions come from the child and are cached for the sync accessor.
+    let definitions = dispatcher.fetch_definitions().await.unwrap();
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].agent_type, "fake-remote");
+    assert_eq!(
+        roder_api::subagents::SubagentDispatcher::definitions(&dispatcher)[0].agent_type,
+        "fake-remote"
+    );
+
+    let trace = Arc::new(RecordingTraceSink::default());
+    let result = dispatcher
+        .dispatch_traced(
+            "parent-thread".to_string(),
+            "parent-turn".to_string(),
+            sample_subagent_request("do remote work", Some(30)),
+            Some(trace.clone()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.final_message, "remote work finished");
+    assert_eq!(result.thread_id, "bc-fake-agent");
+    assert_eq!(
+        result.exit_reason,
+        roder_api::subagents::SubagentExitReason::Completed
+    );
+    assert_eq!(result.metadata["agentId"], "bc-fake-agent");
+
+    let statuses = trace.statuses.lock().unwrap().clone();
+    assert_eq!(
+        statuses,
+        vec![
+            "CREATING: provisioning".to_string(),
+            "RUNNING".to_string()
+        ],
+        "child status events must surface through the trace sink"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn subagent_dispatch_failure_and_timeout_are_explicit() {
+    // Child-reported failure.
+    let host = host_for(fake_config(BTreeMap::new()));
+    let dispatcher =
+        ProcessSubagentDispatcher::new(host.clone(), "fake-process-dispatcher".to_string());
+    let error = dispatcher
+        .dispatch(
+            "parent-thread".to_string(),
+            "parent-turn".to_string(),
+            sample_subagent_request("fail please", Some(30)),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("fake dispatch failure"), "{error}");
+    host.shutdown().await;
+
+    // Host-side timeout: the dispatch never gets a terminal event, so the
+    // host cancels through `subagents/cancel` and fails the dispatch.
+    let host = host_for(fake_config(BTreeMap::from([(
+        "FAKE_CHILD_DISPATCH_HANG".to_string(),
+        "1".to_string(),
+    )])));
+    let dispatcher =
+        ProcessSubagentDispatcher::new(host.clone(), "fake-process-dispatcher".to_string());
+    let error = dispatcher
+        .dispatch(
+            "parent-thread".to_string(),
+            "parent-turn".to_string(),
+            sample_subagent_request("hang forever", Some(1)),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("timed out after 1s"), "{error}");
+    let cancelled = host.drain_extension_events().await;
+    assert!(
+        cancelled
+            .iter()
+            .any(|event| event.event_kind == "fake.dispatch_cancelled"),
+        "the child must observe the cancellation: {cancelled:?}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn subagent_dispatch_child_death_fails_without_hanging() {
+    let host = host_for(fake_config(BTreeMap::from([(
+        "FAKE_CHILD_DISPATCH_EXIT".to_string(),
+        "1".to_string(),
+    )])));
+    let dispatcher =
+        ProcessSubagentDispatcher::new(host.clone(), "fake-process-dispatcher".to_string());
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        dispatcher.dispatch(
+            "parent-thread".to_string(),
+            "parent-turn".to_string(),
+            sample_subagent_request("crash mid-dispatch", Some(30)),
+        ),
+    )
+    .await
+    .expect("child death must fail the dispatch promptly")
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("failed mid-dispatch"), "{error}");
+    assert!(
+        !error.contains("crash mid-dispatch"),
+        "prompt text must not leak into the failure: {error}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_executor_serves_spec_output_result_and_failure() {
+    let host = host_for(fake_config(BTreeMap::new()));
+    let executor = ProcessTaskExecutor::new(host.clone(), "fake-process-task".to_string());
+
+    let spec = executor.fetch_spec().await.unwrap();
+    assert_eq!(spec.kind, "fake-process-task");
+    assert_eq!(spec.default_timeout_seconds, Some(120));
+    assert_eq!(
+        roder_api::tasks::TaskExecutor::spec(&executor).kind,
+        "fake-process-task",
+        "the sync accessor serves the cached child spec"
+    );
+
+    let output = Arc::new(RecordingTaskOutput::default());
+    let ctx = roder_api::tasks::TaskExecutionContext {
+        task_id: "task-1".to_string(),
+        thread_id: Some("thread-1".to_string()),
+        turn_id: None,
+        workspace_root: None,
+        runner_destination: None,
+        runner_session: None,
+        deadline: None,
+        metadata: serde_json::json!({}),
+        process_registry: None,
+        output: roder_api::tasks::TaskOutputSink::new(output.clone()),
+    };
+    let result = executor
+        .execute(ctx.clone(), serde_json::json!({ "prompt": "go" }))
+        .await
+        .unwrap();
+    assert_eq!(result.payload["taskId"], "task-1");
+    assert_eq!(result.payload["agentId"], "bc-fake-agent");
+    assert_eq!(result.payload["echo"]["prompt"], "go");
+    assert_eq!(
+        output.chunks.lock().unwrap().clone(),
+        vec!["status: RUNNING".to_string()],
+        "child output events must reach the task output sink"
+    );
+
+    let error = executor
+        .execute(ctx, serde_json::json!({ "fail": true }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("fake task failure"), "{error}");
+    host.shutdown().await;
+}
+
+fn sample_subagent_request(
+    prompt: &str,
+    timeout_seconds: Option<u64>,
+) -> roder_api::subagents::SubagentRequest {
+    roder_api::subagents::SubagentRequest {
+        description: "host test".to_string(),
+        prompt: prompt.to_string(),
+        subagent_type: Some("fake-remote".to_string()),
+        model: Some("fake-model".to_string()),
+        tools: None,
+        lane: None,
+        max_concurrent: None,
+        allowed_tools: None,
+        parent_deadline_seconds: None,
+        inputs: None,
+        timeout_seconds,
+    }
+}
+
+#[derive(Default)]
+struct RecordingTraceSink {
+    statuses: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl roder_api::trace::SubagentTraceSink for RecordingTraceSink {
+    async fn trace_created(&self, _summary: roder_api::trace::SubagentTraceSummary) {}
+
+    async fn trace_delta(&self, _delta: roder_api::trace::SubagentTraceDelta) {}
+
+    async fn trace_status_changed(
+        &self,
+        _trace_id: roder_api::trace::SubagentTraceId,
+        _parent: roder_api::trace::ParentTurnRef,
+        _status: roder_api::trace::SubagentTraceStatus,
+        detail: Option<String>,
+    ) {
+        self.statuses
+            .lock()
+            .unwrap()
+            .push(detail.unwrap_or_default());
+    }
+
+    async fn trace_completed(&self, _summary: roder_api::trace::SubagentTraceSummary) {}
+
+    async fn trace_failed(&self, _summary: roder_api::trace::SubagentTraceSummary, _error: String) {
+    }
+}
+
+#[derive(Default)]
+struct RecordingTaskOutput {
+    chunks: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl roder_api::tasks::TaskOutputWriter for RecordingTaskOutput {
+    async fn write(
+        &self,
+        _stream: roder_api::tasks::TaskOutputStream,
+        chunk: String,
+    ) -> anyhow::Result<()> {
+        self.chunks.lock().unwrap().push(chunk);
+        Ok(())
+    }
 }

@@ -7,6 +7,8 @@ description = "Offline fake child for process-host tests"
 provides = [
   { type = "inference_engine", id = "fake-process-engine" },
   { type = "event_sink", id = "fake-process-events" },
+  { type = "subagent_dispatcher", id = "fake-process-dispatcher" },
+  { type = "task_executor", id = "fake-process-task" },
 ]
 
 required_capabilities = [

@@ -12,7 +12,7 @@ import json
 import sys
 from typing import Any, Callable
 
-PROTOCOL_VERSION = "0.1.0"
+PROTOCOL_VERSION = "0.2.0"
 
 #: Sentinel a handler returns after replying to the request itself (e.g. to
 #: acknowledge a stream before emitting its events).
