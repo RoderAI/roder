@@ -123,6 +123,12 @@ pub struct ProcessExtensionManifest {
     pub provides: Vec<ProcessProvidedService>,
     #[serde(default)]
     pub required_capabilities: Vec<String>,
+    /// How to launch the child process. Required for extensions shipped in
+    /// Roder packages (the package layer builds a [`ProcessExtensionConfig`]
+    /// from it); optional for `[[process_extensions]]` config entries, which
+    /// declare the launch command in config.
+    #[serde(default)]
+    pub launch: Option<crate::packages::PackageExtensionLaunch>,
 }
 
 /// A manifest service declaration; mirrors [`ProvidedService`] variants the

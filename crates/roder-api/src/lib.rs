@@ -25,6 +25,7 @@ pub mod marketplace;
 pub mod media;
 pub mod memory;
 pub mod notifications;
+pub mod packages;
 pub mod plan_review;
 pub mod policy_mode;
 pub mod process_extension;
