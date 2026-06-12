@@ -78,12 +78,25 @@ oneof result (mirrors request field number):
         glob:  { 1:{ 2:path, 3:"files_with_matches", 4:{ 1:root, 2:{ 2:{ 1:relpath*, 2:count } } } } }
         grep:  { 1:{ 1:pattern, 2:path, 3:"content", 4:{ 1:root,
                  2:{ 3:{ 1:{ 1:relpath, 2:{ 1:line, 2:text } }*, 2:count, 3:count } } } } }
-  f14 SHELL result  streamed across multiple messages with the same seq:
+  f14 SHELL result  streamed across multiple messages with the same seq
+        (shapes re-verified against a cursor-agent v2026.06.12 capture):
         start:  { f4: { f1: { f1: 1 } } }
-        stdout: { f1: { f1: { f6: <byte>…, f7: <chunk>, … } } }
-        exit:   { f3: { f2: cwd, f6: exit_code } }
+        stdout: { f1: { f1: <chunk> } }
+        exit:   { f3: { f2: cwd (non-empty), f6: duration_ms } }
   f10 INIT          workspace context push (see Flow step 2)
 ```
+
+cursor-agent also sets a varint field 39 on every `ExecClientMessage`
+(monotonically increasing per exec; semantics unknown). Roder does not send it
+and the server accepts results without it.
+
+**exec_client_control_message must echo the serviced seq**:
+`AgentClientMessage{ 5:{ 1:{ 1:seq } } }` (capture hex `0a020801` after exec
+seq 1). An ack without the seq (`{5:{1:<empty>}}`) is accepted for single-frame
+results (read/write/search) but after a *streamed* shell result the server
+never learns the exec finished — the model never resumes and the turn sits
+"stuck on the shell tool" until the no-progress cap ends it. This was the root
+cause of shell-terminated turns producing no final answer.
 
 ## `run_request` (`AgentRunRequest`)
 
@@ -118,7 +131,9 @@ building the client:
   unlock for multi-step turns.**
 - **exec INIT.** Send `AgentClientMessage{ 2:{ 10:{1:{1:{2:[files]}}} } }` after
   the run request (empty file list is accepted).
-- **exec control.** Ack each exec result with `AgentClientMessage{ 5:{1:<empty>} }`.
+- **exec control.** Ack each exec result with
+  `AgentClientMessage{ 5:{ 1:{ 1:seq } } }` — the ack must echo the exec seq
+  (see above; an empty ack stalls shell results).
 - **READ** results carry the raw file bytes (not Roder's line-numbered output).
 - **SEARCH** (exec field 5) covers both glob (`files_with_matches`) and grep
   (`content`); the client walks the workspace and returns the result structures
@@ -145,13 +160,13 @@ building the client:
   than ~1 minute on — affecting long edits/searches, not just shell). Stalls are
   bounded instead by a per-read idle timeout and a "no meaningful progress" cap.
 - **SHELL** is streamed as start + stdout (`14:{1:{1:stdout}}`) + exit
-  (`14:{3:{2:cwd,6:n}}`); the command executes and the full result reaches the
-  model (verified: the server renders `Exit code: 0\nWall time: …\nOutput:\n…`).
-  Remaining nuance: when shell is the *terminal* step of a turn, the model does
-  not always emit a final text answer (the turn completes via the no-progress
-  cap with no closing message). Shell used as an intermediate step is unaffected.
-  Pinning the exact post-result continuation/turn-end signal is the open
-  follow-up.
+  (`14:{3:{2:cwd,6:duration_ms}}`), followed by the seq-echoing exec_control
+  ack. The cwd in the exit message must be non-empty (fall back to the
+  workspace when the request carries no cwd). Resolved: the previous
+  "shell-terminal turns emit no final answer" nuance was the empty exec_control
+  ack — with the seq echoed, the model resumes immediately after the shell
+  result and closes the turn with its final message (verified live with
+  composer-2.5: shell-terminated turn completes in seconds with a text answer).
 
 ## Implications for Roder
 

@@ -177,15 +177,15 @@ pub async fn run_bidi_turn(
                             yield InferenceEvent::MessageDelta(MessageDelta { text: frame.text, phase: None });
                         }
                         if let Some(exec) = frame.exec {
-                            if let Some((result_frames, send_ctrl)) =
+                            if let Some((result_frames, ack_seq)) =
                                 service_exec(exec, &workspace, executor.as_deref()).await
                             {
                                 for result_frame in &result_frames {
                                     crate::agentservice::capture_cursor_frame("send-result", 0, result_frame);
                                     let _ = outbound.send(Bytes::from(encode_connect_frame(result_frame)));
                                 }
-                                if send_ctrl {
-                                    let _ = outbound.send(Bytes::from(encode_connect_frame(&encode_exec_control())));
+                                if let Some(seq) = ack_seq {
+                                    let _ = outbound.send(Bytes::from(encode_connect_frame(&encode_exec_control(seq))));
                                 }
                             }
                             // Servicing the exec (which can include a slow tool
@@ -214,14 +214,17 @@ pub async fn run_bidi_turn(
     Ok(Box::pin(events))
 }
 
-/// Execute one exec request and return `(frames_to_send, send_exec_control)`.
-/// Returns `None` to send nothing.  `send_exec_control` should be `true` only
-/// for exec types that follow the normal request/result/ack cycle.
+/// Execute one exec request and return `(frames_to_send, ack_seq)`.
+/// Returns `None` to send nothing. `ack_seq` is the exec seq to echo in the
+/// `exec_client_control_message` ack — required so the server knows the exec
+/// finished and resumes the model (an ack without the seq leaves streamed
+/// results, e.g. shell, looking unfinished). `None` for exec types that do not
+/// follow the request/result/ack cycle (request-context).
 async fn service_exec(
     exec: CursorExecRequest,
     workspace: &Path,
     executor: Option<&dyn TurnToolExecutor>,
-) -> Option<(Vec<Vec<u8>>, bool)> {
+) -> Option<(Vec<Vec<u8>>, Option<u64>)> {
     match exec {
         // Server requests workspace context (field 10 = request_context_args)
         // before it starts generating model output.  Respond with the workspace
@@ -230,7 +233,7 @@ async fn service_exec(
         // the context.
         CursorExecRequest::RequestContext { id } => {
             let ws = workspace.to_string_lossy().to_string();
-            Some((vec![encode_exec_request_context_result(id, &ws)], false))
+            Some((vec![encode_exec_request_context_result(id, &ws)], None))
         }
         CursorExecRequest::Read {
             seq,
@@ -253,7 +256,7 @@ async fn service_exec(
             let total_lines = content.iter().filter(|&&b| b == b'\n').count() as u64 + 1;
             Some((
                 vec![encode_exec_read_result(seq, &path, &content, total_lines)],
-                true,
+                Some(seq),
             ))
         }
         CursorExecRequest::Write {
@@ -283,7 +286,7 @@ async fn service_exec(
             }
             Some((
                 vec![encode_exec_write_result(seq, &path, lines, size)],
-                true,
+                Some(seq),
             ))
         }
         CursorExecRequest::Delete {
@@ -309,7 +312,7 @@ async fn service_exec(
             // Result body shape is unconfirmed; a mirrored empty result keeps
             // the stream healthy (verified live) and the model can verify the
             // deletion itself.
-            Some((vec![encode_exec_unknown_result(seq, 4)], true))
+            Some((vec![encode_exec_unknown_result(seq, 4)], Some(seq)))
         }
         CursorExecRequest::Shell {
             seq,
@@ -317,6 +320,7 @@ async fn service_exec(
             cwd,
             tool_call_id,
         } => {
+            let started = std::time::Instant::now();
             let stdout = if let Some(exec) = executor {
                 match exec
                     .execute(ToolCallCompleted {
@@ -332,7 +336,18 @@ async fn service_exec(
             } else {
                 run_shell(&command, &cwd, workspace).await
             };
-            Some((encode_exec_shell_results(seq, &cwd, &stdout), true))
+            let duration_ms = started.elapsed().as_millis() as u64;
+            // cursor-agent always reports a real working directory in the exit
+            // message; an empty cwd does not match the capture shape.
+            let exit_cwd = if cwd.is_empty() {
+                workspace.to_string_lossy().to_string()
+            } else {
+                cwd.clone()
+            };
+            Some((
+                encode_exec_shell_results(seq, &exit_cwd, &stdout, duration_ms),
+                Some(seq),
+            ))
         }
         CursorExecRequest::Search {
             seq,
@@ -427,7 +442,7 @@ async fn service_exec(
                     }
                     Some((
                         vec![encode_exec_glob_result(seq, &path, &root, &files)],
-                        true,
+                        Some(seq),
                     ))
                 } else {
                     Some((
@@ -438,7 +453,7 @@ async fn service_exec(
                             &root,
                             &matches,
                         )],
-                        true,
+                        Some(seq),
                     ))
                 }
             } else {
@@ -451,7 +466,7 @@ async fn service_exec(
                 })
                 .await
                 .unwrap_or_default();
-                Some((vec![encode_exec_glob_result(seq, &path, &root, &rel)], true))
+                Some((vec![encode_exec_glob_result(seq, &path, &root, &rel)], Some(seq)))
             }
         }
         CursorExecRequest::Unknown {
@@ -481,7 +496,7 @@ async fn service_exec(
             // Reply with a mirrored empty result so the server does not wait
             // forever on the call; an explicit (if empty) answer lets the model
             // move on rather than hanging the whole turn.
-            Some((vec![encode_exec_unknown_result(seq, field_no)], true))
+            Some((vec![encode_exec_unknown_result(seq, field_no)], Some(seq)))
         }
     }
 }
@@ -715,7 +730,7 @@ mod tests {
         .await
         .expect("delete exec must produce a reply");
 
-        assert!(ack);
+        assert_eq!(ack, Some(9));
         assert_eq!(frames.len(), 1);
         let calls = executor.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
@@ -747,7 +762,7 @@ mod tests {
         .await
         .expect("unknown exec must produce a reply");
 
-        assert!(ack, "unknown exec follows the request/result/ack cycle");
+        assert_eq!(ack, Some(51), "unknown exec follows the request/result/ack cycle");
         assert_eq!(frames.len(), 1);
         let calls = executor.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
@@ -784,7 +799,7 @@ mod tests {
         .await
         .expect("search produces a result frame");
 
-        assert!(ack);
+        assert_eq!(ack, Some(7));
         assert!(
             frames_contain(&frames, b"src/hit.rs"),
             "files_with_matches must return the file that contains the pattern"

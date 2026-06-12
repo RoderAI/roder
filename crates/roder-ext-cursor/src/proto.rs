@@ -950,11 +950,23 @@ pub(crate) fn encode_exec_write_result(seq: u64, path: &str, lines: u64, size: u
     ]))
 }
 
-/// SHELL result, streamed as three ExecClientMessages with the same seq:
+/// SHELL result, streamed as three ExecClientMessages with the same seq,
+/// matching an authoritative cursor-agent v2026.06.12 wire capture of a
+/// successful `wc -c` run:
 ///   start:  14:{ 4:{ 1:{ 1:1 } } }
-///   stdout: 14:{ 1:{ 1:{ 7:stdout } } }
-///   exit:   14:{ 3:{ 2:cwd, 6:byte_count } }
-pub(crate) fn encode_exec_shell_results(seq: u64, cwd: &str, stdout: &str) -> Vec<Vec<u8>> {
+///   stdout: 14:{ 1:{ 1:chunk } }
+///   exit:   14:{ 3:{ 2:cwd, 6:duration_ms } }
+///
+/// `cwd` must be non-empty (cursor-agent always sends the real working
+/// directory) and f6 of the exit message is the command duration in
+/// milliseconds, NOT an exit code or byte count — the capture shows f6=29 for
+/// a command that exited 0 and printed 25 bytes.
+pub(crate) fn encode_exec_shell_results(
+    seq: u64,
+    cwd: &str,
+    stdout: &str,
+    duration_ms: u64,
+) -> Vec<Vec<u8>> {
     let shell_msg = |inner: Vec<u8>| {
         wrap_exec_client(proto_message(vec![
             proto_field_varint(1, seq),
@@ -968,17 +980,17 @@ pub(crate) fn encode_exec_shell_results(seq: u64, cwd: &str, stdout: &str) -> Ve
             proto_message(vec![proto_field_varint(1, 1)]),
         )]),
     )]));
-    // stdout: 14:{ 1:{ 1:stdout } }
+    // stdout: 14:{ 1:{ 1:chunk } }
     let out = shell_msg(proto_message(vec![proto_field_bytes(
         1,
         proto_message(vec![proto_field_string(1, stdout)]),
     )]));
-    // exit: 14:{ 3:{ 2:cwd, 6:byte_count } }
+    // exit: 14:{ 3:{ 2:cwd, 6:duration_ms } }
     let exit = shell_msg(proto_message(vec![proto_field_bytes(
         3,
         proto_message(vec![
             proto_field_string(2, cwd),
-            proto_field_varint(6, stdout.len() as u64),
+            proto_field_varint(6, duration_ms),
         ]),
     )]));
     vec![start, out, exit]
@@ -1139,11 +1151,20 @@ pub(crate) fn encode_heartbeat() -> Vec<u8> {
     proto_message(vec![proto_field_bytes(7, Vec::new())])
 }
 
-/// exec_client_control_message ack: AgentClientMessage{ 5:{ 1:<empty> } }
-pub(crate) fn encode_exec_control() -> Vec<u8> {
+/// exec_client_control_message ack: AgentClientMessage{ 5:{ 1:{ 1:seq } } }.
+///
+/// The ack must echo the exec seq it acknowledges (authoritative cursor-agent
+/// capture: `0a020801` = {1:{1:1}} after servicing exec seq 1). The previous
+/// empty `{1:<empty>}` ack carried no seq, so after a *streamed* shell result
+/// the server never learned the exec was finished and did not resume the model
+/// — the turn sat "stuck on the shell tool" until the no-progress cap ended it.
+pub(crate) fn encode_exec_control(seq: u64) -> Vec<u8> {
     proto_message(vec![proto_field_bytes(
         5,
-        proto_message(vec![proto_field_bytes(1, Vec::new())]),
+        proto_message(vec![proto_field_bytes(
+            1,
+            proto_message(vec![proto_field_varint(1, seq)]),
+        )]),
     )])
 }
 
