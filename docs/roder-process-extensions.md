@@ -2,16 +2,18 @@
 
 Roder can host extensions written in any language as child processes. A
 process extension registers ordinary extension services (inference
-engines, event sinks, subagent dispatchers, task executors) through a
-manifest and speaks newline-delimited JSON-RPC 2.0 over stdio. App-server
-clients cannot tell a process-hosted service from a native Rust one except
-through extension metadata.
+engines, event sinks, model-callable tool providers, subagent
+dispatchers, task executors) through a manifest and speaks
+newline-delimited JSON-RPC 2.0 over stdio. App-server clients cannot tell
+a process-hosted service from a native Rust one except through extension
+metadata.
 
 Reference implementations:
 
 - Python: the OpenAI-compatible chat-completions provider POC under
   `examples/non-rust-extensions/python-chat-completions/` (inference
-  engine + event sink).
+  engine + event sink) and the stdlib-only tool provider under
+  `examples/non-rust-extensions/python-tools/`.
 - TypeScript: the Cursor SDK remote-agents extension under
   `examples/non-rust-extensions/cursor-sdk-agents/` (subagent dispatcher +
   task executor; see `docs/roder-cursor-sdk-agents.md`).
@@ -44,13 +46,68 @@ event_filter = { kinds = ["turn.", "inference."] }
 - Disabled entries are skipped. Enabled entries with missing or invalid
   manifests fail registry construction with a precise error.
 
+## Manifest
+
+The manifest TOML declares identity, the extension API requirement,
+provided services, required capabilities, and (for package-shipped
+extensions) how to launch the child.
+
+### Tool providers
+
+A `tool_provider` service declares its tool schemas statically in the
+manifest, so the registry (and the model-facing tool catalog) is built
+deterministically without spawning the child. `parameters` is a TOML inline
+table that converts into the JSON-schema object models receive; it must
+declare `type = "object"`. Tool names must be non-empty and unique within
+the provider.
+
+```toml
+[[provides]]
+type = "tool_provider"
+id = "python-tools"
+tools = [
+  { name = "word_count", description = "Count whitespace-separated words in the given text.", parameters = { type = "object", properties = { text = { type = "string", description = "Text to count words in." } }, required = ["text"] } },
+]
+```
+
+Other service types stay id-only, e.g.
+`{ type = "inference_engine", id = "python-chat-completions" }` and
+`{ type = "event_sink", id = "python-chat-completions-events" }`.
+
+### `[launch]`
+
+Package-shipped extensions declare how to start the child in the manifest;
+the package layer builds the process-extension config from it. Hand-written
+`[[process_extensions]]` config entries may still declare the launch
+command in config instead, in which case `[launch]` is optional. Relative
+`args` and `cwd` resolve against the manifest's directory.
+
+```toml
+[launch]
+command = "python3"
+args = ["main.py"]
+cwd = "."
+env = { PYTHONUNBUFFERED = "1" }
+startup_timeout_ms = 10000
+event_filter_kinds = ["turn."]
+```
+
+- `command` — executable to spawn (required).
+- `args` — arguments passed to the command.
+- `cwd` — working directory for the child.
+- `env` — explicit allowlist, same semantics as the config `env`.
+- `startup_timeout_ms` — spawn + initialize deadline.
+- `event_filter_kinds` — canonical event-kind prefixes forwarded to the
+  child (same semantics as the config `event_filter.kinds`).
+
 ## Protocol
 
 Newline-delimited JSON-RPC 2.0 over stdio. The host owns request ids; child
 diagnostics belong on stderr. Canonical DTOs live in
 `roder_api::process_extension` and the protocol version is `0.2.0`
-(bumped from 0.1.0 when subagent dispatcher and task executor services
-were added; children echo the version, so a stale child fails closed).
+(bumped from 0.1.0 when subagent dispatcher, task executor, and tool
+provider services were added; children echo the version, so a stale child
+fails closed — per the no-shim policy, migrate them).
 
 | Method | Direction | Purpose |
 | --- | --- | --- |
@@ -66,6 +123,7 @@ were added; children echo the version, so a stale child fails closed).
 | `tasks/execute` | host → child request | Task id/provenance plus executor input and a host-chosen `executionId`. The child acks `{executionId}` then streams events. |
 | `tasks/event` | child → host notification | `{executionId, event}` where event is `output` (forwarded into the task output sink), or terminal `completed` (canonical `TaskExecutionResult`) / `failed`. |
 | `tasks/cancel` | host → child request | Cancel an in-flight execution (sent automatically when the host-side task is aborted). |
+| `tools/call` | host → child request | One invocation of a manifest-declared tool: `{providerId, toolName, callId, threadId, turnId, arguments}`. The child answers `{content, isError, data?}`; `content` becomes the model-visible text, optional `data` carries a structured payload, and `isError: true` (or a JSON-RPC error) surfaces as a failed tool result without failing the turn. |
 | `events/handle` | host → child notification | Filtered canonical `EventEnvelope` values. |
 | `extension/event` | child → host notification | Typed extension-owned events (`extensionId`, `eventKind`, `schemaVersion`, redacted `payload`). |
 | `extension/shutdown` | host → child request | Graceful shutdown before the process is killed. |
@@ -74,7 +132,8 @@ were added; children echo the version, so a stale child fails closed).
 
 - Children spawn lazily on the first service use, with a startup timeout and
   initialize-echo validation (id, protocol version, services, manifest
-  checksum) that fails closed.
+  checksum) that fails closed. Tool registration never spawns the child —
+  schemas come from the manifest; the first `tools/call` does.
 - Stdout lines are size-capped; non-JSON lines are dropped with a stderr
   diagnostic; a child exit fails pending requests and active streams
   (inference, dispatch, and task executions) with explicit errors.
@@ -109,6 +168,7 @@ cargo test -p roder-config process_extensions
 cargo test -p roder-extension-host process_extensions
 cargo test -p roder-app-server --features e2e-tests --test process_extension_python_provider
 (cd examples/non-rust-extensions/python-chat-completions && python3 -m unittest discover -s tests)
+(cd examples/non-rust-extensions/python-tools && python3 -m unittest discover -s tests)
 ```
 
 All tests run offline with fake children and fake HTTP servers. The live

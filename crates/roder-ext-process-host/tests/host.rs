@@ -1,6 +1,7 @@
-//! Offline tests for the process-extension host (roadmap phase 64, Task 2)
-//! against the Python fake child in `tests/fixtures/fake_child.py`. No
-//! provider credentials or network access.
+//! Offline tests for the process-extension host (roadmap phase 64 Task 2
+//! and phase 93 Task 5) against the Python fake child in
+//! `tests/fixtures/fake_child.py`. No provider credentials or network
+//! access.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -14,10 +15,11 @@ use roder_api::inference::{
     InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,
     RuntimeHints,
 };
+use roder_api::policy_mode::PolicyMode;
 use roder_api::process_extension::{ProcessEventFilter, ProcessExtensionConfig};
 use roder_api::subagents::SubagentDispatcher as _;
 use roder_api::tasks::TaskExecutor as _;
-use roder_api::tools::ToolChoice;
+use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry};
 use roder_ext_process_host::{
     ProcessEventSink, ProcessHost, ProcessHostExtension, ProcessInferenceEngine,
     ProcessSubagentDispatcher, ProcessTaskExecutor, load_process_extension,
@@ -256,7 +258,7 @@ async fn extension_installs_manifest_backed_services_into_registry() {
     let host = extension.host();
     let manifest = extension.manifest();
     assert_eq!(manifest.id, "roder-ext-fake-child");
-    assert_eq!(manifest.provides.len(), 4);
+    assert_eq!(manifest.provides.len(), 5);
 
     let mut builder = roder_api::extension::ExtensionRegistryBuilder::new();
     builder.install(extension).unwrap();
@@ -271,6 +273,8 @@ async fn extension_installs_manifest_backed_services_into_registry() {
     );
     assert_eq!(registry.task_executors.len(), 1);
     assert_eq!(registry.task_executors[0].id(), "fake-process-task");
+    assert_eq!(registry.tools.len(), 1);
+    assert_eq!(registry.tools[0].id(), "fake-process-tools");
     host.shutdown().await;
 }
 
@@ -504,4 +508,172 @@ impl roder_api::tasks::TaskOutputWriter for RecordingTaskOutput {
         self.chunks.lock().unwrap().push(chunk);
         Ok(())
     }
+}
+
+fn tool_call(arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: "call-1".to_string(),
+        name: "word_count".to_string(),
+        raw_arguments: arguments.to_string(),
+        arguments,
+        thread_id: "thread-1".to_string(),
+        turn_id: "turn-1".to_string(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_provider_contributes_declared_tools_and_executes_through_the_child() {
+    let loaded = load_process_extension(fake_config(BTreeMap::new()), &fixtures_dir()).unwrap();
+    let extension = ProcessHostExtension::new(loaded);
+    let host = extension.host();
+
+    let mut builder = roder_api::extension::ExtensionRegistryBuilder::new();
+    builder.install(extension).unwrap();
+    let registry = builder.build().unwrap();
+
+    // The manifest-declared schema reaches the tool registry without
+    // spawning the child (contribution is static).
+    let mut tools = ToolRegistry::default();
+    registry.tools[0].contribute(&mut tools).unwrap();
+    let tool = tools.get("word_count").expect("word_count registered");
+    let spec = tool.spec();
+    assert_eq!(spec.description, "Count whitespace-separated words.");
+    assert_eq!(spec.parameters["type"], "object");
+    assert_eq!(spec.parameters["required"], serde_json::json!(["text"]));
+
+    // Executing the registered handler round-trips tools/call to the child.
+    let result = tool
+        .execute(
+            ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default),
+            tool_call(serde_json::json!({ "text": "one two three" })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.id, "call-1");
+    assert_eq!(result.name, "word_count");
+    assert_eq!(result.text, "3 words");
+    assert!(!result.is_error);
+    assert_eq!(result.data["wordCount"], 3);
+    assert_eq!(result.data["callId"], "call-1");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_call_child_errors_become_failed_tool_results() {
+    let host = host_for(fake_config(BTreeMap::from([(
+        "FAKE_CHILD_TOOL_ERROR".to_string(),
+        "word_count exploded".to_string(),
+    )])));
+    let contributor = roder_ext_process_host::ProcessToolContributor::new(
+        host.clone(),
+        "fake-process-tools".to_string(),
+        load_process_extension(fake_config(BTreeMap::new()), &fixtures_dir())
+            .unwrap()
+            .manifest
+            .provides
+            .iter()
+            .find_map(|service| match service {
+                roder_api::process_extension::ProcessProvidedService::ToolProvider {
+                    tools,
+                    ..
+                } => Some(tools.clone()),
+                _ => None,
+            })
+            .expect("tool provider declared"),
+    );
+    let mut tools = ToolRegistry::default();
+    roder_api::tools::ToolContributor::contribute(&contributor, &mut tools).unwrap();
+
+    let result = tools
+        .get("word_count")
+        .expect("word_count registered")
+        .execute(
+            ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default),
+            tool_call(serde_json::json!({ "text": "boom" })),
+        )
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.text.contains("word_count exploded"),
+        "{}",
+        result.text
+    );
+    assert_eq!(result.data["error"]["kind"], "tool_execution_failed");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn python_tools_example_package_serves_word_count_through_the_host() {
+    // The shipped example must satisfy the same echo validation as the
+    // fixture: identity, services (tomllib parse vs Rust toml parse), and
+    // manifest checksum.
+    let example_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/non-rust-extensions/python-tools");
+    let manifest = example_dir.join("roder-extension.toml");
+    let config = ProcessExtensionConfig {
+        id: "python-tools".to_string(),
+        enabled: true,
+        manifest: manifest.display().to_string(),
+        command: "python3".to_string(),
+        args: vec![example_dir.join("main.py").display().to_string()],
+        cwd: None,
+        env: BTreeMap::from([(
+            "RODER_EXTENSION_MANIFEST".to_string(),
+            manifest.display().to_string(),
+        )]),
+        startup_timeout_ms: 10_000,
+        event_filter: ProcessEventFilter::default(),
+    };
+    let loaded = load_process_extension(config, &example_dir).unwrap();
+    let extension = ProcessHostExtension::new(loaded);
+    let host = extension.host();
+
+    let mut builder = roder_api::extension::ExtensionRegistryBuilder::new();
+    builder.install(extension).unwrap();
+    let registry = builder.build().unwrap();
+    let mut tools = ToolRegistry::default();
+    registry.tools[0].contribute(&mut tools).unwrap();
+
+    let result = tools
+        .get("word_count")
+        .expect("word_count registered")
+        .execute(
+            ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default),
+            tool_call(serde_json::json!({ "text": "roder hosts python tools now" })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.text, "5 words");
+    assert!(!result.is_error);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_registration_never_spawns_the_child_and_spawn_failures_fail_the_call() {
+    // A config whose command cannot spawn still builds the registry and
+    // registers the declared tool — proof the schema comes statically from
+    // the manifest. Only execution touches the child.
+    let mut config = fake_config(BTreeMap::new());
+    config.command = "roder-definitely-missing-binary".to_string();
+    let loaded = load_process_extension(config, &fixtures_dir()).unwrap();
+    let extension = ProcessHostExtension::new(loaded);
+
+    let mut builder = roder_api::extension::ExtensionRegistryBuilder::new();
+    builder.install(extension).unwrap();
+    let registry = builder.build().unwrap();
+    let mut tools = ToolRegistry::default();
+    registry.tools[0].contribute(&mut tools).unwrap();
+
+    let result = tools
+        .get("word_count")
+        .expect("word_count registered")
+        .execute(
+            ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default),
+            tool_call(serde_json::json!({ "text": "unreachable" })),
+        )
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.text.contains("spawn"), "{}", result.text);
 }

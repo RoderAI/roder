@@ -10,6 +10,7 @@ pub mod analytics;
 pub mod dynamic_workflows;
 pub mod hosted;
 pub mod marketplaces;
+pub mod packages;
 pub mod workflow_import;
 
 pub use dynamic_workflows::{DynamicWorkflowApprovalConfig, DynamicWorkflowsConfig};
@@ -62,6 +63,8 @@ pub struct Config {
     /// through `roder-ext-process-host` as ordinary registry extensions.
     #[serde(default)]
     pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
+    /// Package install settings (`[packages]`), e.g. the npm wrapper command.
+    pub packages: Option<packages::PackagesConfig>,
     /// Local usage analytics (`[analytics]`); local-only, enabled by default.
     pub analytics: Option<analytics::AnalyticsConfig>,
     /// Workspace fork providers (`[forks]`).
@@ -1118,6 +1121,14 @@ pub fn build_skills_registry(
             ));
         }
     }
+    let package_paths = packages::PackagePaths::standard(Some(workspace));
+    for (package_id, root, canonical_prefix) in packages::package_skill_roots(&package_paths) {
+        options.roots.push(roder_skills::SkillRoot::plugin(
+            format!("pkg-{package_id}"),
+            root,
+            canonical_prefix,
+        ));
+    }
     roder_skills::SkillRegistry::load(options)
 }
 
@@ -1641,6 +1652,7 @@ mod tests {
             models: HashMap::new(),
             model_profiles: HashMap::new(),
             process_extensions: Vec::new(),
+            packages: None,
             analytics: None,
             forks: None,
             agent_nodes: Vec::new(),

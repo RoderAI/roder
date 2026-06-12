@@ -4,14 +4,30 @@ version = "0.1.0"
 api_version = "^0.1"
 description = "Offline fake child for process-host tests"
 
-provides = [
-  { type = "inference_engine", id = "fake-process-engine" },
-  { type = "event_sink", id = "fake-process-events" },
-  { type = "subagent_dispatcher", id = "fake-process-dispatcher" },
-  { type = "task_executor", id = "fake-process-task" },
-]
-
 required_capabilities = [
   "events.read.turn",
   "events.emit.extension",
 ]
+
+[[provides]]
+type = "inference_engine"
+id = "fake-process-engine"
+
+[[provides]]
+type = "event_sink"
+id = "fake-process-events"
+
+[[provides]]
+type = "tool_provider"
+id = "fake-process-tools"
+tools = [
+  { name = "word_count", description = "Count whitespace-separated words.", parameters = { type = "object", properties = { text = { type = "string" } }, required = ["text"] } },
+]
+
+[[provides]]
+type = "subagent_dispatcher"
+id = "fake-process-dispatcher"
+
+[[provides]]
+type = "task_executor"
+id = "fake-process-task"

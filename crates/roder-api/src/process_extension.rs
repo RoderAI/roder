@@ -1,11 +1,11 @@
 //! Process-hosted extension contract (roadmap phases 64 and 93).
 //!
 //! A process extension is a non-Rust child process that registers ordinary
-//! extension services (inference engines, event sinks, subagent
-//! dispatchers, task executors) through a manifest and speaks
+//! extension services (inference engines, event sinks, tool providers,
+//! subagent dispatchers, task executors) through a manifest and speaks
 //! newline-delimited JSON-RPC 2.0 over stdio. These DTOs are the canonical
 //! protocol: the Rust host serializes them as-is and child implementations
-//! (e.g. the Python POC, the Cursor SDK TypeScript extension) must
+//! (e.g. the Python POCs, the Cursor SDK TypeScript extension) must
 //! round-trip them without raw unowned JSON.
 //!
 //! Method names (host -> child requests unless noted):
@@ -21,17 +21,19 @@
 //! - `tasks/execute`
 //! - `tasks/event` (child -> host notification)
 //! - `tasks/cancel`
+//! - `tools/call`
 //! - `events/handle` (host -> child notification)
 //! - `extension/event` (child -> host notification)
 //! - `extension/shutdown`
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::events::{EventEnvelope, ThreadId, TurnId};
 use crate::extension::ProvidedService;
 use crate::inference::{AgentInferenceRequest, InferenceEvent, ModelDescriptor};
+use crate::tools::ToolSpec;
 
 mod dispatch;
 
@@ -45,7 +47,8 @@ pub use dispatch::{
 
 /// Protocol version spoken by the host; children must echo a compatible
 /// version from `extension/initialize`. Bumped to 0.2.0 when subagent
-/// dispatcher and task executor services were added (phase 95).
+/// dispatcher, task executor (phase 95), and tool provider (phase 97)
+/// services were added.
 pub const PROCESS_EXTENSION_PROTOCOL_VERSION: &str = "0.2.0";
 
 pub const METHOD_INITIALIZE: &str = "extension/initialize";
@@ -60,6 +63,7 @@ pub const METHOD_TASKS_SPEC: &str = "tasks/spec";
 pub const METHOD_TASKS_EXECUTE: &str = "tasks/execute";
 pub const METHOD_TASKS_EVENT: &str = "tasks/event";
 pub const METHOD_TASKS_CANCEL: &str = "tasks/cancel";
+pub const METHOD_TOOLS_CALL: &str = "tools/call";
 pub const METHOD_EVENTS_HANDLE: &str = "events/handle";
 pub const METHOD_EXTENSION_EVENT: &str = "extension/event";
 pub const METHOD_SHUTDOWN: &str = "extension/shutdown";
@@ -111,7 +115,7 @@ impl ProcessEventFilter {
 }
 
 /// The manifest TOML shipped next to a process extension.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessExtensionManifest {
     pub id: String,
     pub name: String,
@@ -132,14 +136,17 @@ pub struct ProcessExtensionManifest {
 }
 
 /// A manifest service declaration; mirrors [`ProvidedService`] variants the
-/// process host supports.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// process host supports. Tool providers declare their [`ToolSpec`]s
+/// statically so the registry can be built deterministically without
+/// spawning the child.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ProcessProvidedService {
     InferenceEngine { id: String },
     EventSink { id: String },
     SubagentDispatcher { id: String },
     TaskExecutor { id: String },
+    ToolProvider { id: String, tools: Vec<ToolSpec> },
 }
 
 impl ProcessProvidedService {
@@ -149,6 +156,7 @@ impl ProcessProvidedService {
             ProcessProvidedService::EventSink { id } => id,
             ProcessProvidedService::SubagentDispatcher { id } => id,
             ProcessProvidedService::TaskExecutor { id } => id,
+            ProcessProvidedService::ToolProvider { id, .. } => id,
         }
     }
 }
@@ -165,6 +173,9 @@ impl From<&ProcessProvidedService> for ProvidedService {
             }
             ProcessProvidedService::TaskExecutor { id } => {
                 ProvidedService::TaskExecutor(id.clone())
+            }
+            ProcessProvidedService::ToolProvider { id, .. } => {
+                ProvidedService::ToolProvider(id.clone())
             }
         }
     }
@@ -185,7 +196,7 @@ pub struct ProcessInitializeParams {
 }
 
 /// `extension/initialize` result (child -> host).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessInitializeResult {
     pub protocol_version: String,
@@ -224,6 +235,32 @@ pub struct ProcessStreamTurnParams {
 #[serde(rename_all = "camelCase")]
 pub struct ProcessStreamTurnAck {
     pub stream_id: String,
+}
+
+/// `tools/call` params (host -> child): one invocation of a tool the
+/// manifest declared under a `tool_provider` service.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessToolCallParams {
+    pub provider_id: String,
+    pub tool_name: String,
+    pub call_id: String,
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub arguments: serde_json::Value,
+}
+
+/// `tools/call` result (child -> host): the subset of the native
+/// [`crate::tools::ToolResult`] a child populates. `content` becomes the
+/// model-visible text, optional `data` carries a structured payload, and
+/// `is_error` marks a tool-level failure without failing the turn.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessToolCallResult {
+    pub content: String,
+    pub is_error: bool,
+    #[serde(default)]
+    pub data: serde_json::Value,
 }
 
 /// `inference/event` notification payload (child -> host). The host routes
@@ -320,6 +357,52 @@ pub fn validate_manifest(manifest: &ProcessExtensionManifest) -> anyhow::Result<
         manifest.api_version,
         supported
     );
+    for service in &manifest.provides {
+        let ProcessProvidedService::ToolProvider { id, tools } = service else {
+            continue;
+        };
+        validate_tool_provider(&manifest.id, id, tools)?;
+    }
+    Ok(())
+}
+
+/// Light JSON-schema-ish validation of a declared tool provider: names must
+/// be non-empty and unique within the provider, and `parameters` must be a
+/// JSON schema object (`"type": "object"`), which is what models require.
+fn validate_tool_provider(
+    extension_id: &str,
+    provider_id: &str,
+    tools: &[ToolSpec],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !tools.is_empty(),
+        "process extension {extension_id} tool provider {provider_id} declares no tools"
+    );
+    let mut names = BTreeSet::new();
+    for tool in tools {
+        anyhow::ensure!(
+            !tool.name.trim().is_empty(),
+            "process extension {extension_id} tool provider {provider_id} declares a tool with \
+             an empty name"
+        );
+        anyhow::ensure!(
+            names.insert(tool.name.as_str()),
+            "process extension {extension_id} tool provider {provider_id} declares tool {:?} \
+             more than once",
+            tool.name
+        );
+        let is_object_schema = tool
+            .parameters
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            == Some("object");
+        anyhow::ensure!(
+            is_object_schema,
+            "process extension {extension_id} tool {:?} parameters must be a JSON schema object \
+             (declare `type = \"object\"`)",
+            tool.name
+        );
+    }
     Ok(())
 }
 
