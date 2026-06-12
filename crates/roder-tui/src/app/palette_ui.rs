@@ -3,6 +3,7 @@ use super::*;
 use crate::palette::{
     PaletteAction, collect_entries, cycle_source_filter,
     index::{PaletteMatch, search as search_palette},
+    packages::packages_source,
     processes::process_source,
     render::palette_list,
     skills::skill_source,
@@ -14,7 +15,7 @@ use crate::palette::{
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
-use roder_protocol::MarketplacesListResult;
+use roder_protocol::{MarketplacesListResult, PackagesListResult};
 
 pub(super) fn is_palette_open_key(key: crossterm::event::KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k')
@@ -100,6 +101,17 @@ where
                 None
             }
         };
+        let packages = if self.palette_source_enabled("packages") {
+            match self.packages_list().await {
+                Ok(packages) => Some(packages),
+                Err(err) => {
+                    self.push_event(format!("packages/list unavailable: {err}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let skills = match self.skills_list().await {
             Ok(skills) => Some(skills),
             Err(err) => {
@@ -166,6 +178,11 @@ where
             && let Some(marketplaces) = marketplaces.as_ref()
         {
             sources.push(marketplace_source(&marketplaces.marketplaces));
+        }
+        if self.palette_source_enabled("packages")
+            && let Some(packages) = packages.as_ref()
+        {
+            sources.push(packages_source(&packages.packages, &packages.diagnostics));
         }
         if self.palette_source_enabled("skills")
             && let Some(skills) = skills.as_ref()
@@ -432,6 +449,19 @@ where
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("marketplaces/list")),
                 method: "marketplaces/list".to_string(),
+                params: None,
+            })
+            .await;
+        decode_response(res)
+    }
+
+    async fn packages_list(&self) -> anyhow::Result<PackagesListResult> {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("packages/list")),
+                method: "packages/list".to_string(),
                 params: None,
             })
             .await;

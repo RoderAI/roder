@@ -1,4 +1,5 @@
 pub mod index;
+pub mod packages;
 pub mod processes;
 pub mod render;
 pub mod skills;

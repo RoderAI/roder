@@ -25,8 +25,12 @@ pub struct ThemeEntry {
 }
 
 /// Default directory list, expanded with `~`.
+///
+/// Package-provided theme directories (roadmap phase 93) come first so that
+/// user, project, and bundled themes shadow package themes on basename
+/// collisions — `discover_themes` lets later directories win.
 pub fn default_directories() -> Vec<PathBuf> {
-    let mut out = Vec::new();
+    let mut out = package_theme_directories();
     if let Some(dir) = roder_data_dir() {
         out.push(dir.join("themes"));
     }
@@ -35,6 +39,15 @@ pub fn default_directories() -> Vec<PathBuf> {
     // the "factory defaults" source.
     out.push(PathBuf::from("themes"));
     out
+}
+
+/// Theme directories contributed by installed packages. Empty when no
+/// packages are installed; directories that vanish later are skipped by
+/// `discover_themes` anyway.
+fn package_theme_directories() -> Vec<PathBuf> {
+    use roder_config::packages::{PackagePaths, package_theme_dirs};
+    let workspace = std::env::current_dir().ok();
+    package_theme_dirs(&PackagePaths::standard(workspace.as_deref()))
 }
 
 pub fn discover_themes(directories: &[PathBuf]) -> Vec<ThemeEntry> {
@@ -113,4 +126,76 @@ pub fn load_theme_by_id(directories: &[PathBuf], id: &str) -> Option<ThemeOverri
     let entries = discover_themes(directories);
     let entry = entries.iter().find(|e| e.id == id)?;
     load_overrides(&entry.path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "roder-theme-discovery-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn user_theme_shadows_package_theme_with_same_basename() {
+        // Mirrors the default_directories() ordering: package dirs first,
+        // user dir later, so the user copy wins on basename collisions while
+        // package-only themes still surface.
+        let package_dir = unique_temp_dir("package");
+        let user_dir = unique_temp_dir("user");
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::create_dir_all(&user_dir).unwrap();
+        fs::write(
+            package_dir.join("aurora.css"),
+            ":root { --accent: #ff0000; }",
+        )
+        .unwrap();
+        fs::write(
+            package_dir.join("pkg-only.css"),
+            ":root { --accent: #00ff00; }",
+        )
+        .unwrap();
+        fs::write(user_dir.join("aurora.css"), ":root { --accent: #0000ff; }").unwrap();
+
+        let entries = discover_themes(&[package_dir.clone(), user_dir.clone()]);
+
+        let aurora = entries
+            .iter()
+            .find(|entry| entry.id == "aurora")
+            .expect("colliding theme discovered");
+        assert_eq!(aurora.path, user_dir.join("aurora.css"));
+        let pkg_only = entries
+            .iter()
+            .find(|entry| entry.id == "pkg-only")
+            .expect("package-only theme discovered");
+        assert_eq!(pkg_only.path, package_dir.join("pkg-only.css"));
+
+        let _ = fs::remove_dir_all(&package_dir);
+        let _ = fs::remove_dir_all(&user_dir);
+    }
+
+    #[test]
+    fn default_directories_keep_user_project_and_bundled_dirs_last() {
+        // Must not panic with no packages installed. Package dirs (possibly
+        // none) are prepended, so the shadowing tail keeps its order:
+        // data-dir themes, then .roder/themes, then the repo themes/.
+        let dirs = default_directories();
+        assert!(dirs.len() >= 2);
+        assert_eq!(dirs.last(), Some(&PathBuf::from("themes")));
+        let project = PathBuf::from(".roder/themes");
+        let project_pos = dirs
+            .iter()
+            .position(|dir| dir == &project)
+            .expect(".roder/themes present");
+        assert_eq!(project_pos, dirs.len() - 2);
+    }
 }

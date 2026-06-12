@@ -4733,6 +4733,7 @@ dependencies = [
  "roder-api",
  "roder-api-transcript",
  "roder-app-server",
+ "roder-config",
  "roder-core",
  "roder-protocol",
  "roder-roadmap",
