@@ -155,6 +155,16 @@ impl SearchIndex {
             .iter()
             .any(|document| self.document_is_stale(document.id))
     }
+
+    /// Whether any indexed document lives under `scope`. A scope with no
+    /// documents means the index cannot serve it (the directory was ignored at
+    /// build time or holds no text files), so callers should scan instead of
+    /// reporting an empty result.
+    pub(crate) fn has_documents_under(&self, scope: &Path) -> bool {
+        self.documents
+            .iter()
+            .any(|document| self.root.join(&document.path).starts_with(scope))
+    }
 }
 
 pub(crate) struct TextFile {
@@ -231,16 +241,41 @@ pub(crate) fn collect_text_files(
     max_file_size: u64,
 ) -> Result<Vec<TextFile>, SearchError> {
     let base = search_base(root, scope).to_path_buf();
+    let files = walk_text_files(&base, scope, max_file_size, false)?;
+    /*
+     * An explicitly narrowed scope that yields nothing is almost always a
+     * directory excluded by gitignore or the built-in skip list (node_modules,
+     * dist, ...). The caller named it on purpose, so retry without ancestor
+     * ignore rules instead of returning a silently empty result.
+     */
+    if files.is_empty() && scope != base && scope.starts_with(&base) {
+        return walk_text_files(&base, scope, max_file_size, true);
+    }
+    Ok(files)
+}
+
+fn walk_text_files(
+    base: &Path,
+    scope: &Path,
+    max_file_size: u64,
+    bypass_ancestor_ignores: bool,
+) -> Result<Vec<TextFile>, SearchError> {
     let mut files = Vec::new();
     let mut walk = WalkBuilder::new(scope);
     walk.standard_filters(true)
         .hidden(false)
         .require_git(false)
-        .filter_entry({
-            let base = base.clone();
-            move |entry| !ignored_path(&base, entry.path())
-        })
         .sort_by_file_path(|left, right| left.cmp(right));
+    // The built-in skip list applies below the scope, so an explicitly
+    // targeted node_modules is searched while nested ignored dirs are not.
+    let filter_base = if bypass_ancestor_ignores { scope } else { base }.to_path_buf();
+    walk.filter_entry(move |entry| !ignored_path(&filter_base, entry.path()));
+    if bypass_ancestor_ignores {
+        walk.parents(false)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false);
+    }
 
     for entry in walk.build() {
         let entry = entry.map_err(ignore_error)?;
@@ -254,7 +289,7 @@ pub(crate) fn collect_text_files(
             continue;
         }
         if metadata.is_file()
-            && let Some(file) = read_text_file(&base, path, &metadata, max_file_size)?
+            && let Some(file) = read_text_file(base, path, &metadata, max_file_size)?
         {
             files.push(file);
         }
@@ -296,6 +331,12 @@ fn read_text_file(
         modified_ms: modified_ms(metadata),
         language_hint: language_hint(path),
     }))
+}
+
+/// Whether `scope` itself sits inside a directory on the built-in skip list,
+/// meaning the workspace-wide index can never cover it.
+pub(crate) fn scope_is_ignored(base: &Path, scope: &Path) -> bool {
+    scope != base && ignored_path(base, scope)
 }
 
 fn ignored_path(root: &Path, path: &Path) -> bool {

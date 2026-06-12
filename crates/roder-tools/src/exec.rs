@@ -13,6 +13,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex, Notify};
 
+use crate::backend::WorkspaceBackendHandle;
 use crate::command_shell::{command_args_for_shell, shell_for_context};
 use crate::exec_output::{format_exec_output, trim_output_buffer_to_max_bytes, truncate_output};
 use crate::files::{parse, require_nonempty, result};
@@ -28,14 +29,16 @@ pub(crate) fn register(
     registry: &mut ToolRegistry,
     workspace: Workspace,
     command_shell: String,
+    backend: Option<WorkspaceBackendHandle>,
 ) -> anyhow::Result<()> {
     let manager = Arc::new(ExecSessionManager::default());
     registry.register(Arc::new(ExecCommandTool {
         workspace,
         manager: manager.clone(),
         command_shell,
+        backend: backend.clone(),
     }))?;
-    registry.register(Arc::new(WriteStdinTool { manager }))
+    registry.register(Arc::new(WriteStdinTool { manager, backend }))
 }
 
 #[derive(Debug, Default)]
@@ -65,16 +68,18 @@ struct ExecExit {
     timed_out: bool,
 }
 
-#[derive(Debug)]
 struct ExecCommandTool {
     workspace: Workspace,
     manager: Arc<ExecSessionManager>,
     command_shell: String,
+    /// Exec commands can change files behind the search index's back; the
+    /// backend is notified after each interaction so the next grep rebuilds.
+    backend: Option<WorkspaceBackendHandle>,
 }
 
-#[derive(Debug)]
 struct WriteStdinTool {
     manager: Arc<ExecSessionManager>,
+    backend: Option<WorkspaceBackendHandle>,
 }
 
 #[async_trait::async_trait]
@@ -204,6 +209,9 @@ impl ToolExecutor for ExecCommandTool {
         if completed {
             self.manager.sessions.lock().await.remove(&session_id);
         }
+        if let Some(backend) = self.backend.as_ref() {
+            backend.note_external_change();
+        }
         Ok(result(
             call,
             snapshot.text,
@@ -297,6 +305,9 @@ impl ToolExecutor for WriteStdinTool {
             .await;
         if completed {
             self.manager.sessions.lock().await.remove(&args.session_id);
+        }
+        if let Some(backend) = self.backend.as_ref() {
+            backend.note_external_change();
         }
         Ok(result(
             call,
@@ -523,6 +534,7 @@ mod tests {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager,
             command_shell: test_command_shell(),
+            backend: None,
         };
         let cmd = if cfg!(windows) {
             "[Console]::Out.Write('hi')"
@@ -558,6 +570,7 @@ mod tests {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager,
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         let result = tool
@@ -590,8 +603,12 @@ mod tests {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager: manager.clone(),
             command_shell: test_command_shell(),
+            backend: None,
         };
-        let stdin = WriteStdinTool { manager };
+        let stdin = WriteStdinTool {
+            manager,
+            backend: None,
+        };
         let cmd = if cfg!(windows) {
             "[Console]::Out.Write('got:' + [Console]::In.ReadLine())"
         } else {
@@ -664,6 +681,7 @@ mod tests {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager,
             command_shell: "bash".to_string(),
+            backend: None,
         };
 
         let result = tool
@@ -709,6 +727,7 @@ mod tests {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager,
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
 
         let result = tool
@@ -738,6 +757,7 @@ mod tests {
             workspace: Workspace::new(root.clone()).unwrap(),
             manager: Arc::new(ExecSessionManager::default()),
             command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
         };
         let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
         let ctx = context(&root).with_remote_workspace(Arc::new(

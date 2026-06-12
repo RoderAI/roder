@@ -23,6 +23,7 @@ futures = "0.3.32"
 h2 = "0.4.14"
 http = "1.4.0"
 if-addrs = "0.15.0"
+globset = "0.4.16"
 ignore = "0.4.25"
 rand = "0.10.1"
 qrcode = { version = "0.14.1", default-features = false }
