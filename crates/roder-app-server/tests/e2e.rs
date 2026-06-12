@@ -1002,6 +1002,10 @@ async fn test_app_server_e2e() {
     assert!(threads.next_cursor.is_none());
 
     let _older_thread = start_thread(&client).await;
+    // thread/list orders by creation time at second resolution; ties between
+    // threads created in the same second break nondeterministically, so put
+    // the two threads in different seconds.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let newest_thread = start_thread(&client).await;
     let first_page: ThreadListResult = request(
         &client,
@@ -1205,7 +1209,6 @@ async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
                 reasoning: None,
                 policy_mode: None,
                 task_ledger_required: false,
-                developer_context: None,
             })
             .unwrap(),
         ),
@@ -3497,27 +3500,19 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
     // A valid bearer is accepted regardless of Origin (see the
     // `remote_auth_accepts_valid_bearer_from_any_origin` unit test); browser
     // pages cannot set the Authorization header, so Origin-bearing requests
-    // with a valid token are app clients (e.g. Obsidian), not CSWSH.
-    let mut origin_request = url.clone().into_client_request().unwrap();
-    origin_request.headers_mut().insert(
-        "Authorization",
-        "Bearer remote-secret-token".parse().unwrap(),
-    );
-    origin_request
-        .headers_mut()
-        .insert("Origin", "https://client.example".parse().unwrap());
-    let (origin_websocket, _) = tokio_tungstenite::connect_async(origin_request)
-        .await
-        .expect("valid bearer with Origin header connects");
-    drop(origin_websocket);
-    wait_for_global_event(&mut events, "remote/clientConnected").await;
-
+    // with a valid token are app clients (e.g. Obsidian), not CSWSH. The main
+    // session below therefore carries an Origin header end to end.
     let mut request = url.clone().into_client_request().unwrap();
     request.headers_mut().insert(
         "Authorization",
         "Bearer remote-secret-token".parse().unwrap(),
     );
-    let (mut websocket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    request
+        .headers_mut()
+        .insert("Origin", "https://client.example".parse().unwrap());
+    let (mut websocket, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("valid bearer with Origin header connects");
     let connected = wait_for_global_event(&mut events, "remote/clientConnected").await;
     assert_eq!(connected.source, roder_api::events::EventSource::AppServer);
     websocket
@@ -3533,13 +3528,20 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
         ))
         .await
         .unwrap();
-    let message = websocket.next().await.unwrap().unwrap();
-    let Message::Text(text) = message else {
-        panic!("expected text response");
+    let result = loop {
+        let message = websocket.next().await.unwrap().unwrap();
+        let Message::Text(text) = message else {
+            continue;
+        };
+        let Ok(response) = serde_json::from_str::<roder_protocol::JsonRpcResponse>(&text) else {
+            continue;
+        };
+        if response.id != Some(serde_json::json!("init")) {
+            continue;
+        }
+        assert!(response.error.is_none(), "{:?}", response.error);
+        break response.result.unwrap();
     };
-    let response: roder_protocol::JsonRpcResponse = serde_json::from_str(&text).unwrap();
-    assert!(response.error.is_none(), "{:?}", response.error);
-    let result = response.result.unwrap();
     assert_eq!(
         result
             .get("remote")
@@ -10301,13 +10303,26 @@ async fn remote_request<T: serde::de::DeserializeOwned>(
         ))
         .await
         .unwrap();
-    let message = websocket.next().await.unwrap().unwrap();
-    let Message::Text(text) = message else {
-        panic!("expected text response for {method}");
-    };
-    let response: roder_protocol::JsonRpcResponse = serde_json::from_str(&text).unwrap();
-    assert!(response.error.is_none(), "{:?}", response.error);
-    serde_json::from_value(response.result.unwrap()).unwrap()
+    // The stream interleaves server-pushed notification frames with
+    // responses; take the frame whose id echoes this request.
+    loop {
+        let message = websocket
+            .next()
+            .await
+            .unwrap_or_else(|| panic!("websocket closed before {method} ({id}) response"))
+            .unwrap_or_else(|err| panic!("websocket error during {method} ({id}): {err}"));
+        let Message::Text(text) = message else {
+            continue;
+        };
+        let Ok(response) = serde_json::from_str::<roder_protocol::JsonRpcResponse>(&text) else {
+            continue;
+        };
+        if response.id != Some(serde_json::json!(id)) {
+            continue;
+        }
+        assert!(response.error.is_none(), "{:?}", response.error);
+        return serde_json::from_value(response.result.unwrap()).unwrap();
+    }
 }
 
 async fn request_error(
@@ -10414,7 +10429,6 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 reasoning: None,
                 policy_mode: None,
                 task_ledger_required: false,
-                developer_context: None,
             })
             .unwrap(),
         ),
