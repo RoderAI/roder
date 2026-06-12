@@ -3,8 +3,10 @@
 
 Implements the newline-delimited JSON-RPC process-extension protocol:
 initialize echo (manifest checksum via FNV-1a), model listing, a small
-streamed inference turn, events/handle recording (reported back through an
-extension/event notification), and graceful shutdown.
+streamed inference turn, a subagent dispatcher with streamed status
+events, a task executor with streamed output, cancellation, events/handle
+recording (reported back through an extension/event notification), and
+graceful shutdown.
 """
 
 import json
@@ -48,6 +50,7 @@ def main() -> None:
         or fnv1a(manifest_toml.encode("utf-8"))
     )
     handled_events = []
+    cancellations = {}
 
     for line in sys.stdin:
         line = line.strip()
@@ -67,6 +70,8 @@ def main() -> None:
                     "services": [
                         {"type": "inference_engine", "id": "fake-process-engine"},
                         {"type": "event_sink", "id": "fake-process-events"},
+                        {"type": "subagent_dispatcher", "id": "fake-process-dispatcher"},
+                        {"type": "task_executor", "id": "fake-process-task"},
                     ],
                     "manifestChecksum": checksum,
                 },
@@ -126,6 +131,140 @@ def main() -> None:
                     },
                 },
             )
+        elif method == "subagents/definitions":
+            reply(
+                msg_id,
+                {
+                    "definitions": [
+                        {
+                            "agent_type": "fake-remote",
+                            "description": "Fake remote dispatch for host tests",
+                            "tools": [],
+                            "model": "fake-model",
+                            "system_prompt": None,
+                            "permission_mode": "default",
+                            "max_turns": None,
+                            "max_result_chars": None,
+                        }
+                    ]
+                },
+            )
+        elif method == "subagents/dispatch":
+            did = params["dispatchId"]
+            reply(msg_id, {"dispatchId": did})
+            if os.environ.get("FAKE_CHILD_DISPATCH_EXIT"):
+                # Simulate a crash mid-dispatch: die before the terminal event.
+                sys.exit(3)
+            if os.environ.get("FAKE_CHILD_DISPATCH_HANG"):
+                # Never emit a terminal event; the host times out and cancels.
+                cancellations.setdefault("pending", []).append(did)
+                continue
+            notify(
+                "subagents/event",
+                {
+                    "dispatchId": did,
+                    "event": {"type": "status", "status": "CREATING", "detail": "provisioning"},
+                },
+            )
+            notify(
+                "subagents/event",
+                {"dispatchId": did, "event": {"type": "status", "status": "RUNNING"}},
+            )
+            if params["request"]["prompt"] == "fail please":
+                notify(
+                    "subagents/event",
+                    {
+                        "dispatchId": did,
+                        "event": {"type": "failed", "error": "fake dispatch failure"},
+                    },
+                )
+                continue
+            notify(
+                "subagents/event",
+                {
+                    "dispatchId": did,
+                    "event": {
+                        "type": "completed",
+                        "result": {
+                            "thread_id": "bc-fake-agent",
+                            "turn_id": "fake-request",
+                            "agent_type": params["request"].get("subagent_type")
+                            or "fake-remote",
+                            "model": params["request"].get("model"),
+                            "final_message": "remote work finished",
+                            "usage": None,
+                            "exit_reason": "completed",
+                            "metadata": {"agentId": "bc-fake-agent", "events": 2},
+                        },
+                    },
+                },
+            )
+        elif method == "subagents/cancel":
+            cancellations.setdefault("subagents", []).append(params["dispatchId"])
+            reply(msg_id, {})
+            notify(
+                "extension/event",
+                {
+                    "extensionId": extension_id,
+                    "eventKind": "fake.dispatch_cancelled",
+                    "schemaVersion": 1,
+                    "payload": {"dispatchId": params["dispatchId"]},
+                },
+            )
+        elif method == "tasks/spec":
+            reply(
+                msg_id,
+                {
+                    "spec": {
+                        "kind": "fake-process-task",
+                        "description": "Fake process task for host tests",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {"prompt": {"type": "string"}},
+                        },
+                        "default_timeout_seconds": 120,
+                        "metadata": {"category": "test"},
+                    }
+                },
+            )
+        elif method == "tasks/execute":
+            eid = params["executionId"]
+            reply(msg_id, {"executionId": eid})
+            if params["input"].get("fail"):
+                notify(
+                    "tasks/event",
+                    {
+                        "executionId": eid,
+                        "event": {"type": "failed", "error": "fake task failure"},
+                    },
+                )
+                continue
+            notify(
+                "tasks/event",
+                {
+                    "executionId": eid,
+                    "event": {"type": "output", "stream": "log", "chunk": "status: RUNNING"},
+                },
+            )
+            notify(
+                "tasks/event",
+                {
+                    "executionId": eid,
+                    "event": {
+                        "type": "completed",
+                        "result": {
+                            "payload": {
+                                "taskId": params["taskId"],
+                                "agentId": "bc-fake-agent",
+                                "echo": params["input"],
+                            }
+                        },
+                    },
+                },
+            )
+        elif method == "tasks/cancel":
+            cancellations.setdefault("tasks", []).append(params["executionId"])
+            reply(msg_id, {})
         elif method == "events/handle":
             handled_events.append(params["envelope"]["kind"])
             notify(

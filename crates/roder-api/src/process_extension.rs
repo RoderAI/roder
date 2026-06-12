@@ -1,17 +1,26 @@
-//! Process-hosted extension contract (roadmap phase 64).
+//! Process-hosted extension contract (roadmap phases 64 and 93).
 //!
 //! A process extension is a non-Rust child process that registers ordinary
-//! extension services (inference engines, event sinks) through a manifest
-//! and speaks newline-delimited JSON-RPC 2.0 over stdio. These DTOs are the
-//! canonical protocol: the Rust host serializes them as-is and child
-//! implementations (e.g. the Python POC) must round-trip them without raw
-//! unowned JSON.
+//! extension services (inference engines, event sinks, subagent
+//! dispatchers, task executors) through a manifest and speaks
+//! newline-delimited JSON-RPC 2.0 over stdio. These DTOs are the canonical
+//! protocol: the Rust host serializes them as-is and child implementations
+//! (e.g. the Python POC, the Cursor SDK TypeScript extension) must
+//! round-trip them without raw unowned JSON.
 //!
 //! Method names (host -> child requests unless noted):
 //! - `extension/initialize`
 //! - `inference/listModels`
 //! - `inference/streamTurn`
 //! - `inference/event` (child -> host notification)
+//! - `subagents/definitions`
+//! - `subagents/dispatch`
+//! - `subagents/event` (child -> host notification)
+//! - `subagents/cancel`
+//! - `tasks/spec`
+//! - `tasks/execute`
+//! - `tasks/event` (child -> host notification)
+//! - `tasks/cancel`
 //! - `events/handle` (host -> child notification)
 //! - `extension/event` (child -> host notification)
 //! - `extension/shutdown`
@@ -24,14 +33,33 @@ use crate::events::{EventEnvelope, ThreadId, TurnId};
 use crate::extension::ProvidedService;
 use crate::inference::{AgentInferenceRequest, InferenceEvent, ModelDescriptor};
 
+mod dispatch;
+
+pub use dispatch::{
+    ProcessSubagentCancelParams, ProcessSubagentDefinitionsParams,
+    ProcessSubagentDefinitionsResult, ProcessSubagentDispatchAck, ProcessSubagentDispatchParams,
+    ProcessSubagentEvent, ProcessSubagentEventNotification, ProcessTaskCancelParams,
+    ProcessTaskEvent, ProcessTaskEventNotification, ProcessTaskExecuteAck,
+    ProcessTaskExecuteParams, ProcessTaskSpecParams, ProcessTaskSpecResult,
+};
+
 /// Protocol version spoken by the host; children must echo a compatible
-/// version from `extension/initialize`.
-pub const PROCESS_EXTENSION_PROTOCOL_VERSION: &str = "0.1.0";
+/// version from `extension/initialize`. Bumped to 0.2.0 when subagent
+/// dispatcher and task executor services were added (phase 93).
+pub const PROCESS_EXTENSION_PROTOCOL_VERSION: &str = "0.2.0";
 
 pub const METHOD_INITIALIZE: &str = "extension/initialize";
 pub const METHOD_LIST_MODELS: &str = "inference/listModels";
 pub const METHOD_STREAM_TURN: &str = "inference/streamTurn";
 pub const METHOD_INFERENCE_EVENT: &str = "inference/event";
+pub const METHOD_SUBAGENTS_DEFINITIONS: &str = "subagents/definitions";
+pub const METHOD_SUBAGENTS_DISPATCH: &str = "subagents/dispatch";
+pub const METHOD_SUBAGENTS_EVENT: &str = "subagents/event";
+pub const METHOD_SUBAGENTS_CANCEL: &str = "subagents/cancel";
+pub const METHOD_TASKS_SPEC: &str = "tasks/spec";
+pub const METHOD_TASKS_EXECUTE: &str = "tasks/execute";
+pub const METHOD_TASKS_EVENT: &str = "tasks/event";
+pub const METHOD_TASKS_CANCEL: &str = "tasks/cancel";
 pub const METHOD_EVENTS_HANDLE: &str = "events/handle";
 pub const METHOD_EXTENSION_EVENT: &str = "extension/event";
 pub const METHOD_SHUTDOWN: &str = "extension/shutdown";
@@ -104,6 +132,8 @@ pub struct ProcessExtensionManifest {
 pub enum ProcessProvidedService {
     InferenceEngine { id: String },
     EventSink { id: String },
+    SubagentDispatcher { id: String },
+    TaskExecutor { id: String },
 }
 
 impl ProcessProvidedService {
@@ -111,6 +141,8 @@ impl ProcessProvidedService {
         match self {
             ProcessProvidedService::InferenceEngine { id } => id,
             ProcessProvidedService::EventSink { id } => id,
+            ProcessProvidedService::SubagentDispatcher { id } => id,
+            ProcessProvidedService::TaskExecutor { id } => id,
         }
     }
 }
@@ -122,6 +154,12 @@ impl From<&ProcessProvidedService> for ProvidedService {
                 ProvidedService::InferenceEngine(id.clone())
             }
             ProcessProvidedService::EventSink { id } => ProvidedService::EventSink(id.clone()),
+            ProcessProvidedService::SubagentDispatcher { id } => {
+                ProvidedService::SubagentDispatcher(id.clone())
+            }
+            ProcessProvidedService::TaskExecutor { id } => {
+                ProvidedService::TaskExecutor(id.clone())
+            }
         }
     }
 }

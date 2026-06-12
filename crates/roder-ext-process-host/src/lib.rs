@@ -16,11 +16,15 @@ mod events;
 mod inference;
 pub mod manifest;
 mod process;
+mod subagents;
+mod tasks;
 
 pub use events::ProcessEventSink;
 pub use inference::ProcessInferenceEngine;
 pub use manifest::{LoadedProcessExtension, load_process_extension};
 pub use process::ProcessHost;
+pub use subagents::ProcessSubagentDispatcher;
+pub use tasks::ProcessTaskExecutor;
 
 /// A manifest-backed process extension ready to install into the registry.
 pub struct ProcessHostExtension {
@@ -71,6 +75,18 @@ impl RoderExtension for ProcessHostExtension {
                 }
                 ProcessProvidedService::EventSink { id } => {
                     registry.event_sink(Arc::new(ProcessEventSink::new(
+                        self.host.clone(),
+                        id.clone(),
+                    )));
+                }
+                ProcessProvidedService::SubagentDispatcher { id } => {
+                    registry.subagent_dispatcher(Arc::new(ProcessSubagentDispatcher::new(
+                        self.host.clone(),
+                        id.clone(),
+                    )));
+                }
+                ProcessProvidedService::TaskExecutor { id } => {
+                    registry.task_executor(Arc::new(ProcessTaskExecutor::new(
                         self.host.clone(),
                         id.clone(),
                     )));
