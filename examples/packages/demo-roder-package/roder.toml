@@ -1,0 +1,16 @@
+# Roder package manifest. Publish this file at the root of your repository —
+# `roder install git:github.com/<you>/<repo>` reads it to discover what the
+# package provides and how to launch any process extensions.
+# Docs: docs/roder-packages.md
+
+[package]
+id = "demo-roder-package"
+name = "Demo Roder Package"
+version = "0.1.0"
+description = "Example package bundling a skill, a slash command, a theme, and a Python tool extension."
+
+[resources]
+extensions = ["extensions/wordtools/roder-extension.toml"]
+skills = ["skills"]
+commands = ["commands"]
+themes = ["themes"]

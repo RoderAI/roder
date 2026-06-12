@@ -1,0 +1,16 @@
+id = "wordtools"
+name = "Word Tools"
+version = "0.1.0"
+api_version = "^0.1"
+description = "Stdlib-only Python tool provider shipped by demo-roder-package"
+
+[launch]
+command = "python3"
+args = ["main.py"]
+
+[[provides]]
+type = "tool_provider"
+id = "wordtools"
+tools = [
+  { name = "word_count", description = "Count whitespace-separated words in the given text.", parameters = { type = "object", properties = { text = { type = "string", description = "Text to count words in." } }, required = ["text"] } },
+]
