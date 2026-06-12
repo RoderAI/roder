@@ -38,6 +38,8 @@ use roder_ext_knowledge_md::KnowledgeMdExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
+use roder_ext_google_images::{GoogleImagesConfig, GoogleImagesExtension};
+use roder_ext_openai_images::{OpenAiImagesConfig, OpenAiImagesExtension};
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension};
@@ -553,6 +555,18 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         zeroentropy_embeddings_config,
     ))?;
 
+    // First-party image generation providers. Installed whenever enabled
+    // (default) so provider listings can show them; generation fails at call
+    // time with an actionable error when no API key is configured. Live
+    // network calls only happen when a turn or client explicitly requests
+    // image generation from a live provider.
+    if let Some(openai_images) = openai_images_config(config.openai_api_key.clone()) {
+        builder.install(OpenAiImagesExtension::with_config(openai_images))?;
+    }
+    if let Some(google_images) = google_images_config(config.gemini_api_key.clone()) {
+        builder.install(GoogleImagesExtension::with_config(google_images))?;
+    }
+
     // Process-hosted extensions: enabled entries fail registry construction
     // loudly when their manifests are missing or invalid (the user asked for
     // them); disabled entries are skipped entirely.
@@ -706,6 +720,70 @@ fn google_embeddings_config(gemini_api_key: Option<String>) -> GoogleEmbeddingsC
         .or_else(|| provider_config.and_then(|provider| provider.endpoint.clone()))
         .unwrap_or_else(|| GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT.to_string());
     GoogleEmbeddingsConfig { api_key, endpoint }
+}
+
+fn image_provider_config(provider_id: &str) -> Option<roder_config::ImageProviderConfig> {
+    roder_config::load_config()
+        .unwrap_or_default()
+        .media
+        .as_ref()
+        .and_then(|media| media.image_generation.as_ref())
+        .and_then(|image_generation| image_generation.providers.get(provider_id))
+        .cloned()
+}
+
+/// Returns `None` when the provider is explicitly disabled in
+/// `[media.image_generation.providers.openai]`.
+fn openai_images_config(openai_api_key: Option<String>) -> Option<OpenAiImagesConfig> {
+    let provider_config = image_provider_config("openai");
+    if provider_config
+        .as_ref()
+        .and_then(|provider| provider.enabled)
+        == Some(false)
+    {
+        return None;
+    }
+    let api_key = provider_config
+        .as_ref()
+        .and_then(|provider| provider.api_key_env.as_deref())
+        .and_then(env_nonempty)
+        .or(openai_api_key)
+        .or_else(|| env_nonempty("OPENAI_API_KEY"));
+    let mut images_config = OpenAiImagesConfig::new(api_key);
+    if let Some(base_url) = env_nonempty("RODER_OPENAI_IMAGES_BASE_URL")
+        .or_else(|| provider_config.and_then(|provider| provider.base_url))
+    {
+        images_config = images_config.with_base_url(base_url);
+    }
+    Some(images_config)
+}
+
+/// Returns `None` when the provider is explicitly disabled in
+/// `[media.image_generation.providers.google]`.
+fn google_images_config(gemini_api_key: Option<String>) -> Option<GoogleImagesConfig> {
+    let provider_config = image_provider_config("google");
+    if provider_config
+        .as_ref()
+        .and_then(|provider| provider.enabled)
+        == Some(false)
+    {
+        return None;
+    }
+    let api_key = provider_config
+        .as_ref()
+        .and_then(|provider| provider.api_key_env.as_deref())
+        .and_then(env_nonempty)
+        .or(gemini_api_key)
+        .or_else(|| env_nonempty("GEMINI_API_TOKEN"))
+        .or_else(|| env_nonempty("GEMINI_API_KEY"))
+        .or_else(|| env_nonempty("GOOGLE_API_KEY"));
+    let mut images_config = GoogleImagesConfig::new(api_key);
+    if let Some(base_url) = env_nonempty("RODER_GOOGLE_IMAGES_BASE_URL")
+        .or_else(|| provider_config.and_then(|provider| provider.base_url))
+    {
+        images_config = images_config.with_base_url(base_url);
+    }
+    Some(images_config)
 }
 
 fn zeroentropy_embeddings_config() -> ZeroEntropyEmbeddingsConfig {
@@ -1153,6 +1231,36 @@ mod tests {
                 .embedding_providers
                 .iter()
                 .any(|provider| provider.descriptor().id == "zeroentropy")
+        );
+    }
+
+    #[test]
+    fn default_registry_installs_image_generation_providers_without_keys() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        let openai = registry
+            .media_generator("openai")
+            .expect("openai image provider installed");
+        assert!(openai.descriptor().supports_images);
+        assert!(
+            openai
+                .descriptor()
+                .image_models
+                .iter()
+                .any(|model| model.id == "gpt-image-2" && model.is_default)
+        );
+
+        let google = registry
+            .media_generator("google")
+            .expect("google image provider installed");
+        assert_eq!(
+            google.descriptor().default_model.as_deref(),
+            Some("gemini-3.1-flash-image")
+        );
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::MediaGenerator("openai".to_string()))
         );
     }
 

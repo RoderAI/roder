@@ -827,6 +827,78 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "knowledge/delete",
+      "paramsType": "KnowledgeDeleteParams",
+      "resultType": "KnowledgeDeleteResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "knowledge/links/set",
+      "paramsType": "KnowledgeLinksSetParams",
+      "resultType": "KnowledgeLinksSetResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "knowledge/list",
+      "paramsType": "KnowledgeListParams",
+      "resultType": "KnowledgeListResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/read",
+      "paramsType": "KnowledgeReadParams",
+      "resultType": "KnowledgeReadResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/revisions/list",
+      "paramsType": "KnowledgeRevisionsListParams",
+      "resultType": "KnowledgeRevisionsListResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/save",
+      "paramsType": "KnowledgeSaveParams",
+      "resultType": "KnowledgeSaveResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "knowledge/search",
+      "paramsType": "KnowledgeSearchParams",
+      "resultType": "KnowledgeSearchResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "knowledge/update",
+      "paramsType": "KnowledgeUpdateParams",
+      "resultType": "KnowledgeUpdateResult",
+      "stability": "stable",
+      "featureGroup": "knowledge",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "marketplaces/add",
       "paramsType": "MarketplacesAddParams",
       "resultType": "MarketplacesAddResult",
@@ -906,6 +978,24 @@ export const appServerManifest = {
       "featureGroup": "media",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "media/image/generate",
+      "paramsType": "MediaImageGenerateParams",
+      "resultType": "MediaImageGenerateResult",
+      "stability": "stable",
+      "featureGroup": "media",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "media/image/providers/list",
+      "paramsType": "MediaImageProvidersListParams",
+      "resultType": "MediaImageProvidersListResult",
+      "stability": "stable",
+      "featureGroup": "media",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "media/list",
@@ -2526,6 +2616,14 @@ export const appServerMethods = [
   "inference/routing/metrics",
   "inference/routing/status",
   "initialize",
+  "knowledge/delete",
+  "knowledge/links/set",
+  "knowledge/list",
+  "knowledge/read",
+  "knowledge/revisions/list",
+  "knowledge/save",
+  "knowledge/search",
+  "knowledge/update",
   "marketplaces/add",
   "marketplaces/install_default",
   "marketplaces/list",
@@ -2535,6 +2633,8 @@ export const appServerMethods = [
   "marketplaces/search",
   "media/attachToTurn",
   "media/delete",
+  "media/image/generate",
+  "media/image/providers/list",
   "media/list",
   "media/read",
   "media/thumbnail",

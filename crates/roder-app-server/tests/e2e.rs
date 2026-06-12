@@ -21,7 +21,7 @@ use roder_api::inference_routing::{
     InferenceRoutingOptionDescriptor, ModelSelectionMode,
 };
 use roder_api::marketplace::MarketplaceInstallState;
-use roder_api::media::{MediaDimensions, MediaGenerationRequest, MediaKind};
+use roder_api::media::{MediaDimensions, MediaKind};
 use roder_api::memory::MemoryScope;
 use roder_api::plan_review::{
     HunkDiffLine, HunkDiffLineKind, HunkRecord, HunkRollbackState, PlanCommentAnchor, PlanReview,
@@ -48,7 +48,9 @@ use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
 use roder_core::inference_routing::RuntimeInferenceRouterConfig;
 use roder_core::{
     CreateThreadRequest, PendingPlanExit, Runtime, RuntimeConfig, StartTurnRequest,
-    default_instructions, fake_provider::FakeInferenceEngine, media_artifacts::MediaArtifactStore,
+    default_instructions,
+    fake_provider::FakeInferenceEngine,
+    media_artifacts::{GeneratedMediaSpec, MediaArtifactStore},
 };
 use roder_ext_google_embeddings::GoogleEmbeddingsExtension;
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
@@ -83,7 +85,8 @@ use roder_protocol::{
     MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
     MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
     MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
-    MediaListParams, MediaListResult, MediaReadParams, MediaReadResult, MediaThumbnailParams,
+    MediaImageGenerateResult, MediaImageProvidersListResult, MediaListParams, MediaListResult,
+    MediaReadParams, MediaReadResult, MediaThumbnailParams,
     MediaThumbnailResult, KnowledgeDeleteParams, KnowledgeDeleteResult, KnowledgeLinkSetParams,
     KnowledgeListParams, KnowledgeListResult, KnowledgeReadParams, KnowledgeReadResult,
     KnowledgeRevisionsParams, KnowledgeRevisionsResult, KnowledgeSaveParams, KnowledgeSaveResult,
@@ -2896,22 +2899,19 @@ async fn media_methods_read_thumbnail_attach_and_delete_artifacts() {
     }
     let store = MediaArtifactStore::new(&root);
     let (artifact, _) = store
-        .write_generated(
-            &MediaGenerationRequest {
-                prompt: "attach me".to_string(),
-                model: None,
-                output_path: None,
-            },
-            MediaKind::Image,
-            "image/png",
-            "fake",
-            b"abc",
-            Some(MediaDimensions {
+        .write_generated(&GeneratedMediaSpec {
+            prompt: "attach me",
+            kind: MediaKind::Image,
+            mime_type: "image/png",
+            provider: "fake",
+            bytes: b"abc",
+            dimensions: Some(MediaDimensions {
                 width: 1,
                 height: 1,
             }),
-            None,
-        )
+            duration_millis: None,
+            generation: None,
+        })
         .unwrap();
 
     let runtime = Arc::new(
@@ -2993,6 +2993,126 @@ async fn media_methods_read_thumbnail_attach_and_delete_artifacts() {
     )
     .await;
     assert!(deleted.deleted);
+}
+
+#[tokio::test]
+async fn media_image_generation_lists_providers_generates_reads_and_attaches() {
+    let root = std::env::temp_dir().join(format!("roder-media-imagegen-e2e-{}", uuid::Uuid::new_v4()));
+    let runtime = Arc::new(
+        Runtime::new(
+            build_default_registry(isolated_default_registry_config()).unwrap(),
+            roder_core::RuntimeConfig {
+                media_generation: roder_core::media_generation::RuntimeMediaGenerationConfig {
+                    artifacts_dir: Some(root.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
+
+    // Provider listing includes the offline fake provider plus the installed
+    // first-party providers (unconfigured without keys).
+    let providers: MediaImageProvidersListResult =
+        request(&client, "media/image/providers/list", None).await;
+    assert_eq!(providers.default_provider, "fake");
+    let ids: Vec<&str> = providers
+        .providers
+        .iter()
+        .map(|provider| provider.id.as_str())
+        .collect();
+    assert!(ids.contains(&"openai"), "{ids:?}");
+    assert!(ids.contains(&"google"), "{ids:?}");
+    assert!(ids.contains(&"fake"), "{ids:?}");
+    let openai = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == "openai")
+        .unwrap();
+    assert!(
+        openai
+            .image_models
+            .iter()
+            .any(|model| model.id == "gpt-image-2" && model.is_default)
+    );
+
+    // Fake provider generates deterministic artifacts through public methods.
+    let generated: MediaImageGenerateResult = request(
+        &client,
+        "media/image/generate",
+        Some(serde_json::json!({
+            "prompt": "two tiny images",
+            "provider": "fake",
+            "count": 2
+        })),
+    )
+    .await;
+    assert_eq!(generated.response.provider, "fake");
+    assert_eq!(generated.response.outputs.len(), 2);
+    let artifact = generated.response.outputs[0].artifact.clone();
+    assert!(artifact.roder_owned);
+    assert!(artifact.store_path.starts_with(&*root.display().to_string()));
+
+    // Generated artifacts are readable and attachable through public methods.
+    let read: MediaReadResult = request(
+        &client,
+        "media/read",
+        Some(serde_json::json!({ "artifactId": artifact.id })),
+    )
+    .await;
+    assert_eq!(read.artifact.id, artifact.id);
+    assert!(!read.bytes_base64.is_empty());
+
+    let attach: MediaAttachToTurnResult = request(
+        &client,
+        "media/attachToTurn",
+        Some(serde_json::json!({ "artifactId": artifact.id })),
+    )
+    .await;
+    assert!(attach.attachment.data_url.starts_with("data:image/png;base64,"));
+    assert!(attach.image.is_some());
+
+    // Unsupported options fail with clear errors.
+    let too_many = request_error(
+        &client,
+        "media/image/generate",
+        Some(serde_json::json!({ "prompt": "too many", "count": 99 })),
+    )
+    .await;
+    assert!(too_many.message.contains("configured limit"), "{}", too_many.message);
+
+    let missing_provider = request_error(
+        &client,
+        "media/image/generate",
+        Some(serde_json::json!({ "prompt": "nope", "provider": "missing" })),
+    )
+    .await;
+    assert!(
+        missing_provider.message.contains("is not available"),
+        "{}",
+        missing_provider.message
+    );
+
+    // Live providers reject unsupported model-specific options before any
+    // network call, so this stays offline.
+    let bad_option = request_error(
+        &client,
+        "media/image/generate",
+        Some(serde_json::json!({
+            "prompt": "nope",
+            "provider": "google",
+            "model": "gemini-2.5-flash-image",
+            "imageSize": "2K"
+        })),
+    )
+    .await;
+    assert!(
+        bad_option.message.contains("imageSize is not supported"),
+        "{}",
+        bad_option.message
+    );
 }
 
 #[tokio::test]
