@@ -1,0 +1,691 @@
+# GENERATED FILE - regenerate with: python3 scripts/generate-knope-config.py
+#
+# Per-package versioning is driven by changesets in .changeset/ (see
+# docs/releases.md). Adding a crate under crates/ requires regenerating
+# this file; CI fails if it is stale.
+
+[packages."roder-api"]
+versioned_files = [
+    "crates/roder-api/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-api/CHANGELOG.md"
+
+[packages."roder-api-transcript"]
+versioned_files = [
+    "crates/roder-api-transcript/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-api-transcript/CHANGELOG.md"
+
+[packages."roder-app-server"]
+versioned_files = [
+    "crates/roder-app-server/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-app-server/CHANGELOG.md"
+
+[packages."roder-automations"]
+versioned_files = [
+    "crates/roder-automations/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-automations/CHANGELOG.md"
+
+[packages."roder-cli"]
+versioned_files = [
+    "crates/roder-cli/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-cli/CHANGELOG.md"
+
+[packages."roder-code-index"]
+versioned_files = [
+    "crates/roder-code-index/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-code-index/CHANGELOG.md"
+
+[packages."roder-codex-auth"]
+versioned_files = [
+    "crates/roder-codex-auth/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-codex-auth/CHANGELOG.md"
+
+[packages."roder-commands"]
+versioned_files = [
+    "crates/roder-commands/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-commands/CHANGELOG.md"
+
+[packages."roder-config"]
+versioned_files = [
+    "crates/roder-config/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-config/CHANGELOG.md"
+
+[packages."roder-configure"]
+versioned_files = [
+    "crates/roder-configure/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-configure/CHANGELOG.md"
+
+[packages."roder-context"]
+versioned_files = [
+    "crates/roder-context/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-context/CHANGELOG.md"
+
+[packages."roder-core"]
+versioned_files = [
+    "crates/roder-core/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-core/CHANGELOG.md"
+
+[packages."roder-dist-hosted"]
+versioned_files = [
+    "crates/roder-dist-hosted/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-dist-hosted/CHANGELOG.md"
+
+[packages."roder-dynamic-workflows"]
+versioned_files = [
+    "crates/roder-dynamic-workflows/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-dynamic-workflows/CHANGELOG.md"
+
+[packages."roder-edit-core"]
+versioned_files = [
+    "crates/roder-edit-core/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-edit-core/CHANGELOG.md"
+
+[packages."roder-edit-wasm"]
+versioned_files = [
+    "crates/roder-edit-wasm/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-edit-wasm/CHANGELOG.md"
+
+[packages."roder-evals"]
+versioned_files = [
+    "crates/roder-evals/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-evals/CHANGELOG.md"
+
+[packages."roder-ext-anthropic"]
+versioned_files = [
+    "crates/roder-ext-anthropic/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-anthropic/CHANGELOG.md"
+
+[packages."roder-ext-chrome"]
+versioned_files = [
+    "crates/roder-ext-chrome/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-chrome/CHANGELOG.md"
+
+[packages."roder-ext-claude-code"]
+versioned_files = [
+    "crates/roder-ext-claude-code/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-claude-code/CHANGELOG.md"
+
+[packages."roder-ext-cursor"]
+versioned_files = [
+    "crates/roder-ext-cursor/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-cursor/CHANGELOG.md"
+
+[packages."roder-ext-disk-context"]
+versioned_files = [
+    "crates/roder-ext-disk-context/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-disk-context/CHANGELOG.md"
+
+[packages."roder-ext-firecrawl-search"]
+versioned_files = [
+    "crates/roder-ext-firecrawl-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-firecrawl-search/CHANGELOG.md"
+
+[packages."roder-ext-fork-rift"]
+versioned_files = [
+    "crates/roder-ext-fork-rift/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-fork-rift/CHANGELOG.md"
+
+[packages."roder-ext-gemini"]
+versioned_files = [
+    "crates/roder-ext-gemini/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-gemini/CHANGELOG.md"
+
+[packages."roder-ext-git"]
+versioned_files = [
+    "crates/roder-ext-git/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-git/CHANGELOG.md"
+
+[packages."roder-ext-google-embeddings"]
+versioned_files = [
+    "crates/roder-ext-google-embeddings/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-google-embeddings/CHANGELOG.md"
+
+[packages."roder-ext-google-speech"]
+versioned_files = [
+    "crates/roder-ext-google-speech/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-google-speech/CHANGELOG.md"
+
+[packages."roder-ext-honcho"]
+versioned_files = [
+    "crates/roder-ext-honcho/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-honcho/CHANGELOG.md"
+
+[packages."roder-ext-inference-router"]
+versioned_files = [
+    "crates/roder-ext-inference-router/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-inference-router/CHANGELOG.md"
+
+[packages."roder-ext-jsonl-thread-store"]
+versioned_files = [
+    "crates/roder-ext-jsonl-thread-store/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-jsonl-thread-store/CHANGELOG.md"
+
+[packages."roder-ext-mcp"]
+versioned_files = [
+    "crates/roder-ext-mcp/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-mcp/CHANGELOG.md"
+
+[packages."roder-ext-memory"]
+versioned_files = [
+    "crates/roder-ext-memory/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-memory/CHANGELOG.md"
+
+[packages."roder-ext-notify-desktop"]
+versioned_files = [
+    "crates/roder-ext-notify-desktop/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-notify-desktop/CHANGELOG.md"
+
+[packages."roder-ext-notify-terminal"]
+versioned_files = [
+    "crates/roder-ext-notify-terminal/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-notify-terminal/CHANGELOG.md"
+
+[packages."roder-ext-openai-chat-completions"]
+versioned_files = [
+    "crates/roder-ext-openai-chat-completions/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-openai-chat-completions/CHANGELOG.md"
+
+[packages."roder-ext-openai-embeddings"]
+versioned_files = [
+    "crates/roder-ext-openai-embeddings/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-openai-embeddings/CHANGELOG.md"
+
+[packages."roder-ext-openai-responses"]
+versioned_files = [
+    "crates/roder-ext-openai-responses/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-openai-responses/CHANGELOG.md"
+
+[packages."roder-ext-openai-speech"]
+versioned_files = [
+    "crates/roder-ext-openai-speech/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-openai-speech/CHANGELOG.md"
+
+[packages."roder-ext-opencode"]
+versioned_files = [
+    "crates/roder-ext-opencode/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-opencode/CHANGELOG.md"
+
+[packages."roder-ext-openrouter"]
+versioned_files = [
+    "crates/roder-ext-openrouter/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-openrouter/CHANGELOG.md"
+
+[packages."roder-ext-parallel-search"]
+versioned_files = [
+    "crates/roder-ext-parallel-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-parallel-search/CHANGELOG.md"
+
+[packages."roder-ext-perplexity-search"]
+versioned_files = [
+    "crates/roder-ext-perplexity-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-perplexity-search/CHANGELOG.md"
+
+[packages."roder-ext-plan-mode"]
+versioned_files = [
+    "crates/roder-ext-plan-mode/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-plan-mode/CHANGELOG.md"
+
+[packages."roder-ext-poolside"]
+versioned_files = [
+    "crates/roder-ext-poolside/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-poolside/CHANGELOG.md"
+
+[packages."roder-ext-postgres-session"]
+versioned_files = [
+    "crates/roder-ext-postgres-session/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-postgres-session/CHANGELOG.md"
+
+[packages."roder-ext-process-host"]
+versioned_files = [
+    "crates/roder-ext-process-host/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-process-host/CHANGELOG.md"
+
+[packages."roder-ext-roder-cloud"]
+versioned_files = [
+    "crates/roder-ext-roder-cloud/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-roder-cloud/CHANGELOG.md"
+
+[packages."roder-ext-runner-blaxel"]
+versioned_files = [
+    "crates/roder-ext-runner-blaxel/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-blaxel/CHANGELOG.md"
+
+[packages."roder-ext-runner-cloudflare"]
+versioned_files = [
+    "crates/roder-ext-runner-cloudflare/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-cloudflare/CHANGELOG.md"
+
+[packages."roder-ext-runner-daytona"]
+versioned_files = [
+    "crates/roder-ext-runner-daytona/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-daytona/CHANGELOG.md"
+
+[packages."roder-ext-runner-docker"]
+versioned_files = [
+    "crates/roder-ext-runner-docker/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-docker/CHANGELOG.md"
+
+[packages."roder-ext-runner-e2b"]
+versioned_files = [
+    "crates/roder-ext-runner-e2b/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-e2b/CHANGELOG.md"
+
+[packages."roder-ext-runner-hosted-common"]
+versioned_files = [
+    "crates/roder-ext-runner-hosted-common/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-hosted-common/CHANGELOG.md"
+
+[packages."roder-ext-runner-modal"]
+versioned_files = [
+    "crates/roder-ext-runner-modal/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-modal/CHANGELOG.md"
+
+[packages."roder-ext-runner-runloop"]
+versioned_files = [
+    "crates/roder-ext-runner-runloop/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-runloop/CHANGELOG.md"
+
+[packages."roder-ext-runner-sprites"]
+versioned_files = [
+    "crates/roder-ext-runner-sprites/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-sprites/CHANGELOG.md"
+
+[packages."roder-ext-runner-unix-local"]
+versioned_files = [
+    "crates/roder-ext-runner-unix-local/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-unix-local/CHANGELOG.md"
+
+[packages."roder-ext-runner-vercel"]
+versioned_files = [
+    "crates/roder-ext-runner-vercel/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-vercel/CHANGELOG.md"
+
+[packages."roder-ext-subagents"]
+versioned_files = [
+    "crates/roder-ext-subagents/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-subagents/CHANGELOG.md"
+
+[packages."roder-ext-task-ledger"]
+versioned_files = [
+    "crates/roder-ext-task-ledger/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-task-ledger/CHANGELOG.md"
+
+[packages."roder-ext-task-process"]
+versioned_files = [
+    "crates/roder-ext-task-process/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-task-process/CHANGELOG.md"
+
+[packages."roder-ext-task-subagent"]
+versioned_files = [
+    "crates/roder-ext-task-subagent/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-task-subagent/CHANGELOG.md"
+
+[packages."roder-ext-tavily-search"]
+versioned_files = [
+    "crates/roder-ext-tavily-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-tavily-search/CHANGELOG.md"
+
+[packages."roder-ext-verification"]
+versioned_files = [
+    "crates/roder-ext-verification/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-verification/CHANGELOG.md"
+
+[packages."roder-ext-vertex"]
+versioned_files = [
+    "crates/roder-ext-vertex/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-vertex/CHANGELOG.md"
+
+[packages."roder-ext-web-search"]
+versioned_files = [
+    "crates/roder-ext-web-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-web-search/CHANGELOG.md"
+
+[packages."roder-ext-webwright"]
+versioned_files = [
+    "crates/roder-ext-webwright/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-webwright/CHANGELOG.md"
+
+[packages."roder-ext-xai"]
+versioned_files = [
+    "crates/roder-ext-xai/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-xai/CHANGELOG.md"
+
+[packages."roder-ext-xiaomi-mimo"]
+versioned_files = [
+    "crates/roder-ext-xiaomi-mimo/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-xiaomi-mimo/CHANGELOG.md"
+
+[packages."roder-ext-zeroentropy-embeddings"]
+versioned_files = [
+    "crates/roder-ext-zeroentropy-embeddings/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-zeroentropy-embeddings/CHANGELOG.md"
+
+[packages."roder-ext-zerolang"]
+versioned_files = [
+    "crates/roder-ext-zerolang/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-zerolang/CHANGELOG.md"
+
+[packages."roder-extension-host"]
+versioned_files = [
+    "crates/roder-extension-host/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-extension-host/CHANGELOG.md"
+
+[packages."roder-inference"]
+versioned_files = [
+    "crates/roder-inference/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-inference/CHANGELOG.md"
+
+[packages."roder-memory"]
+versioned_files = [
+    "crates/roder-memory/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-memory/CHANGELOG.md"
+
+[packages."roder-protocol"]
+versioned_files = [
+    "crates/roder-protocol/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-protocol/CHANGELOG.md"
+
+[packages."roder-roadmap"]
+versioned_files = [
+    "crates/roder-roadmap/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-roadmap/CHANGELOG.md"
+
+[packages."roder-sandbox"]
+versioned_files = [
+    "crates/roder-sandbox/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-sandbox/CHANGELOG.md"
+
+[packages."roder-search"]
+versioned_files = [
+    "crates/roder-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-search/CHANGELOG.md"
+
+[packages."roder-skills"]
+versioned_files = [
+    "crates/roder-skills/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-skills/CHANGELOG.md"
+
+[packages."roder-supergrok-auth"]
+versioned_files = [
+    "crates/roder-supergrok-auth/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-supergrok-auth/CHANGELOG.md"
+
+[packages."roder-tasks"]
+versioned_files = [
+    "crates/roder-tasks/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-tasks/CHANGELOG.md"
+
+[packages."roder-theme"]
+versioned_files = [
+    "crates/roder-theme/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-theme/CHANGELOG.md"
+
+[packages."roder-thread-store"]
+versioned_files = [
+    "crates/roder-thread-store/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-thread-store/CHANGELOG.md"
+
+[packages."roder-tools"]
+versioned_files = [
+    "crates/roder-tools/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-tools/CHANGELOG.md"
+
+[packages."roder-tui"]
+versioned_files = [
+    "crates/roder-tui/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-tui/CHANGELOG.md"
+
+[packages."roder-usage-analytics"]
+versioned_files = [
+    "crates/roder-usage-analytics/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-usage-analytics/CHANGELOG.md"
+
+[packages."roder-web-search"]
+versioned_files = [
+    "crates/roder-web-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-web-search/CHANGELOG.md"
+
+[packages."roder-sdk-typescript"]
+versioned_files = [
+    "sdk/typescript/package.json",
+    "sdk/typescript/package-lock.json",
+]
+changelog = "sdk/typescript/CHANGELOG.md"
+
+[packages."roder-sdk-python"]
+versioned_files = [
+    "sdk/python/pyproject.toml",
+]
+changelog = "sdk/python/CHANGELOG.md"
+
+[packages."roder-edit-tools"]
+versioned_files = [
+    "packages/edit-tools/package.json",
+]
+changelog = "packages/edit-tools/CHANGELOG.md"
+
+# Versions are driven exclusively by changesets, never by commit messages.
+[changes]
+ignore_conventional_commits = true
+
+# Interactive helper: `knope document-change` writes a .changeset/*.md file.
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+# Run on pushes to master: opens/updates the release preview PR.
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c knope/release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m \"chore: prepare release\""
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin knope/release"
+
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "master"
+
+[workflows.steps.title]
+template = "chore: prepare release"
+
+[workflows.steps.body]
+template = "Merging this PR releases every package whose version changed here. Created by knope from the pending changesets."
+
+# Run when the release preview PR merges: tags + GitHub release per package.
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"
+
+[github]
+owner = "PandelisZ"
+repo = "gode"

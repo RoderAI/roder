@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+
+jobs:
+  release:
+    name: Tag and publish GitHub releases
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository_owner == 'PandelisZ' &&
+      github.head_ref == 'knope/release' &&
+      github.event.pull_request.merged == true
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install knope
+        uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+
+      - name: Run knope release
+        run: knope release --verbose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

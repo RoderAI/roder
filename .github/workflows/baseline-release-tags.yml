@@ -1,0 +1,23 @@
+name: Baseline release tags
+
+# One-shot/manual: tags every knope package at its current version
+# (<package>/v<version>) so unchanged packages aren't released by the next
+# `knope release`. Run once after adopting knope, or after adding packages.
+on:
+  workflow_dispatch:
+
+jobs:
+  baseline-release-tags:
+    name: Create missing baseline tags
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'PandelisZ'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push missing tags
+        run: python3 scripts/init-release-tags.py --push

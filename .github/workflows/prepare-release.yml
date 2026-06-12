@@ -1,0 +1,44 @@
+name: Prepare release PR
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: true
+
+jobs:
+  prepare-release:
+    name: Open or update the release preview PR
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository_owner == 'PandelisZ' &&
+      !contains(github.event.head_commit.message, 'chore: prepare release')
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install knope
+        uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+
+      # Fails harmlessly at the commit step when there are no pending changesets.
+      - name: Run knope prepare-release
+        run: knope prepare-release --verbose
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
