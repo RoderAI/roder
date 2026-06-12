@@ -52,6 +52,7 @@ pub enum ExtensionCategory {
     PaletteSource,
     SpeechTranscriber,
     SpeechSynthesizer,
+    MediaGenerator,
     Other(String),
 }
 
@@ -75,6 +76,7 @@ impl ExtensionCategory {
             Self::PaletteSource => "palette-source",
             Self::SpeechTranscriber => "speech-transcriber",
             Self::SpeechSynthesizer => "speech-synthesizer",
+            Self::MediaGenerator => "media-generator",
             Self::Other(name) => name,
         }
     }
@@ -98,6 +100,7 @@ impl ExtensionCategory {
             "palette-source" => Self::PaletteSource,
             "speech-transcriber" => Self::SpeechTranscriber,
             "speech-synthesizer" => Self::SpeechSynthesizer,
+            "media-generator" => Self::MediaGenerator,
             other => Self::Other(other.to_string()),
         }
     }

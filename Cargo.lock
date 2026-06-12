@@ -3672,6 +3672,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-google-images"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-google-speech"
 version = "0.1.0"
 dependencies = [
@@ -3830,6 +3845,21 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "roder-ext-openai-images"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
  "reqwest",
  "roder-api",
  "semver",
