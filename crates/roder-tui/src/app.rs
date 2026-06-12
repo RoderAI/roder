@@ -1819,7 +1819,9 @@ where
                         {
                             self.confirm_dialog =
                                 Some(ConfirmDialogState::new(ConfirmDialog::Exit));
-                        } else if is_policy_mode_shortcut_key(key) {
+                        } else if is_policy_mode_shortcut_key(key) && self.roadmap_mode.is_none() {
+                            // In roadmap mode shift-tab navigates panes instead
+                            // of cycling policy modes.
                             self.cycle_policy_mode().await;
                         } else if self.pending_plan_exit.is_some()
                             && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'))
@@ -3800,6 +3802,9 @@ where
                         "roadmap ready".to_string()
                     },
                     active_turn: self.active_turn_id.is_some(),
+                    spinner: spinner_frame(self.working_spinner, self.animation_frame)
+                        .trim()
+                        .to_string(),
                 },
                 activity,
             );
@@ -10235,9 +10240,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rows.contains("Roadmap Manager"));
-        assert!(rows.contains("Task Queue"));
-        assert!(rows.contains("Agent Lanes"));
+        assert!(rows.contains("Roadmap"));
+        assert!(rows.contains("Tasks"));
+        assert!(rows.contains("Workers"));
         assert!(rows.contains("Validation"));
         assert!(!rows.contains("Send"));
     }
