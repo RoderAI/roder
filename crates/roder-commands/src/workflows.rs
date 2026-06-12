@@ -236,6 +236,9 @@ fn workflow_script_source(
             WorkflowScriptSourceKind::Extension,
             Some(extension_id.clone()),
         ),
+        CommandSource::Package { package_id } => {
+            (WorkflowScriptSourceKind::Extension, Some(package_id.clone()))
+        }
     };
     WorkflowScriptSource {
         kind,
