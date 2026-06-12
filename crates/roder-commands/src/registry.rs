@@ -169,6 +169,39 @@ impl CommandsRegistry {
             self.commands.insert(name, spec);
             return Ok(());
         }
+        // Package commands load flat but never beat built-in, user, or
+        // workspace commands: the higher-priority side wins in both load
+        // orders, with an audit entry recording the shadowing. Two packages
+        // shipping the same command name is a hard conflict.
+        let existing_shadows_package = matches!(spec.source, CommandSource::Package { .. })
+            && matches!(
+                existing.source,
+                CommandSource::BuiltIn | CommandSource::User | CommandSource::Workspace
+            );
+        if existing_shadows_package {
+            self.override_audits.push(CommandOverrideAudit {
+                name,
+                overridden_source: spec.source.clone(),
+                replacement_source: existing.source.clone(),
+                replacement_path: existing.path.clone(),
+            });
+            return Ok(());
+        }
+        let package_yields_to_new = matches!(existing.source, CommandSource::Package { .. })
+            && matches!(
+                spec.source,
+                CommandSource::User | CommandSource::Workspace
+            );
+        if package_yields_to_new {
+            self.override_audits.push(CommandOverrideAudit {
+                name: name.clone(),
+                overridden_source: existing.source.clone(),
+                replacement_source: spec.source.clone(),
+                replacement_path: spec.path.clone(),
+            });
+            self.commands.insert(name, spec);
+            return Ok(());
+        }
         if existing.source == CommandSource::BuiltIn && self.options.allow_builtin_override {
             self.override_audits.push(CommandOverrideAudit {
                 name: name.clone(),
@@ -366,6 +399,94 @@ mod tests {
             registry.override_audits()[0].overridden_source,
             CommandSource::BuiltIn
         );
+    }
+
+    #[test]
+    fn package_commands_load_flat_and_yield_to_user_and_workspace() {
+        let dir = tempdir("package_commands_load_flat_and_yield_to_user_and_workspace");
+        let package = dir.join("package");
+        let user = dir.join("user");
+        write(&package.join("greet.md"), "---\nname: greet\n---\n\nPkg");
+        write(&package.join("only.md"), "---\nname: only\n---\n\nOnly");
+        write(&user.join("greet.md"), "---\nname: greet\n---\n\nUser");
+
+        let package_dir = super::CommandDirectory {
+            root: package.clone(),
+            source: CommandSource::Package {
+                package_id: "demo-pkg".to_string(),
+            },
+        };
+
+        // Package loads after user: user keeps the name.
+        let registry = CommandsRegistry::from_directories([
+            super::CommandDirectory {
+                root: user.clone(),
+                source: CommandSource::User,
+            },
+            package_dir.clone(),
+        ])
+        .unwrap();
+        assert_eq!(registry.get("greet").unwrap().body, "User");
+        assert_eq!(
+            registry.get("only").unwrap().source,
+            CommandSource::Package {
+                package_id: "demo-pkg".to_string()
+            }
+        );
+        assert_eq!(registry.override_audits().len(), 1);
+
+        // Package loads before user: user replaces the package command.
+        let registry = CommandsRegistry::from_directories([
+            package_dir,
+            super::CommandDirectory {
+                root: user,
+                source: CommandSource::User,
+            },
+        ])
+        .unwrap();
+        assert_eq!(registry.get("greet").unwrap().body, "User");
+        assert_eq!(registry.override_audits().len(), 1);
+    }
+
+    #[test]
+    fn package_command_never_overrides_builtin_and_conflicts_with_other_package() {
+        let dir = tempdir("package_command_never_overrides_builtin");
+        let package = dir.join("package");
+        write(&package.join("help.md"), "---\nname: help\n---\n\nPkg help");
+
+        let registry = CommandsRegistry::from_directories([super::CommandDirectory {
+            root: package,
+            source: CommandSource::Package {
+                package_id: "demo-pkg".to_string(),
+            },
+        }])
+        .unwrap();
+        // Built-in stays; the package command is shadowed with an audit.
+        assert_eq!(registry.get("help").unwrap().source, CommandSource::BuiltIn);
+        assert_eq!(registry.override_audits().len(), 1);
+
+        let first = dir.join("first");
+        let second = dir.join("second");
+        write(&first.join("greet.md"), "---\nname: greet\n---\n\nOne");
+        write(&second.join("greet.md"), "---\nname: greet\n---\n\nTwo");
+        let err = CommandsRegistry::from_directories([
+            super::CommandDirectory {
+                root: first,
+                source: CommandSource::Package {
+                    package_id: "pkg-one".to_string(),
+                },
+            },
+            super::CommandDirectory {
+                root: second,
+                source: CommandSource::Package {
+                    package_id: "pkg-two".to_string(),
+                },
+            },
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("duplicate command `greet`"), "{err}");
+        assert!(err.contains("pkg-one") && err.contains("pkg-two"), "{err}");
     }
 
     fn tempdir(name: &str) -> PathBuf {

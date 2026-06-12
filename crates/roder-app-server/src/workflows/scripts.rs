@@ -128,6 +128,7 @@ fn script_from_command(command: CommandSpec) -> anyhow::Result<Option<WorkflowSc
         CommandSource::User => WorkflowScriptSourceKind::User,
         CommandSource::Workspace => WorkflowScriptSourceKind::Workspace,
         CommandSource::Extension { .. } => WorkflowScriptSourceKind::Extension,
+        CommandSource::Package { .. } => WorkflowScriptSourceKind::Extension,
     };
     script_from_source(
         &body,

@@ -27,6 +27,7 @@ impl CommandSpec {
             CommandSource::User => "user".to_string(),
             CommandSource::Workspace => "workspace".to_string(),
             CommandSource::Extension { extension_id } => format!("extension:{extension_id}"),
+            CommandSource::Package { package_id } => format!("package:{package_id}"),
         }
     }
 }
@@ -87,6 +88,9 @@ pub enum CommandSource {
     User,
     Workspace,
     Extension { extension_id: String },
+    /// Installed Roder package (phase 93). Names load flat (no forced
+    /// namespace); user and workspace commands shadow package commands.
+    Package { package_id: String },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
