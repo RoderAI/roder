@@ -30,7 +30,8 @@ use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
     PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
-    PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI,
+    PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK,
+    PROVIDER_VERTEX, PROVIDER_XAI,
     PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
@@ -1163,6 +1164,9 @@ pub(crate) async fn build_runtime_from_config(
         openrouter_base_url: keys.openrouter_base_url,
         openrouter_http_referer: keys.openrouter_http_referer,
         openrouter_app_title: keys.openrouter_app_title,
+        roder_cloud_api_key: keys.roder_cloud,
+        roder_cloud_base_url: keys.roder_cloud_base_url,
+        roder_cloud_web_url: keys.roder_cloud_web_url,
         poolside_api_key: keys.poolside,
         poolside_base_url: keys.poolside_base_url,
         cursor_api_key: keys.cursor,
@@ -2287,6 +2291,9 @@ struct ProviderKeys {
     openrouter_base_url: Option<String>,
     openrouter_http_referer: Option<String>,
     openrouter_app_title: Option<String>,
+    roder_cloud: Option<String>,
+    roder_cloud_base_url: Option<String>,
+    roder_cloud_web_url: Option<String>,
     poolside: Option<String>,
     poolside_base_url: Option<String>,
     cursor: Option<String>,
@@ -2533,6 +2540,26 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.app_title.clone())
             .or_else(|| std::env::var("RODER_OPENROUTER_APP_TITLE").ok())
             .or_else(|| std::env::var("OPENROUTER_APP_TITLE").ok()),
+        roder_cloud: std::env::var("RODER_CLOUD_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_CLOUD_TOKEN").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_RODER_CLOUD)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_RODER_CLOUD)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        roder_cloud_base_url: cfg
+            .providers
+            .get(PROVIDER_RODER_CLOUD)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_CLOUD_BASE_URL").ok()),
+        roder_cloud_web_url: std::env::var("RODER_CLOUD_WEB_URL").ok(),
         poolside: std::env::var("POOLSIDE_API_KEY")
             .ok()
             .or_else(|| std::env::var("RODER_POOLSIDE_API_KEY").ok())
@@ -2660,6 +2687,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "opencode"
             | "opencode-go"
             | "openrouter"
+            | "roder-cloud"
             | "poolside"
             | "cursor"
             | "xiaomi-mimo"
@@ -2874,6 +2902,9 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                         eprintln!("Signed in with SuperGrok account {}", tokens.email);
                     }
                 }
+                AuthProviderKind::RoderCloud => {
+                    roder_cloud_login().await?;
+                }
             }
             Ok(())
         }
@@ -2894,6 +2925,17 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     Some(_) => println!("supergrok: signed in"),
                     None => println!("supergrok: signed out"),
                 },
+                AuthProviderKind::RoderCloud => {
+                    let configured = env_nonempty("RODER_CLOUD_API_KEY")
+                        .or_else(|| env_nonempty("RODER_CLOUD_TOKEN"))
+                        .or_else(|| roder_config::provider_api_key(PROVIDER_RODER_CLOUD))
+                        .is_some();
+                    if configured {
+                        println!("roder-cloud: API key configured");
+                    } else {
+                        println!("roder-cloud: no API key configured");
+                    }
+                }
             }
             Ok(())
         }
@@ -2908,17 +2950,53 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     roder_supergrok_auth::logout()?;
                     println!("supergrok: signed out");
                 }
+                AuthProviderKind::RoderCloud => {
+                    roder_config::delete_provider_api_key(PROVIDER_RODER_CLOUD)?;
+                    println!("roder-cloud: API key removed from config");
+                }
             }
             Ok(())
         }
-        _ => anyhow::bail!("usage: roder auth login|status|logout [codex|supergrok]"),
+        _ => anyhow::bail!("usage: roder auth login|status|logout [codex|supergrok|roder-cloud]"),
     }
+}
+
+/**
+ * roder.cloud has no device-auth flow today, so login is a dashboard-key
+ * paste: point the user at the API-keys page, read the `roder_` key, validate
+ * it with one real token exchange, and only then persist it to config.
+ */
+async fn roder_cloud_login() -> anyhow::Result<()> {
+    let web_url = env_nonempty("RODER_CLOUD_WEB_URL")
+        .unwrap_or_else(|| roder_ext_roder_cloud::DEFAULT_WEB_URL.to_string());
+    eprintln!("Create an API key in the roder.cloud dashboard:");
+    eprintln!("  {web_url}/teams (Team -> API keys)");
+    eprint!("Paste your roder_ API key: ");
+    let mut key = String::new();
+    std::io::stdin().read_line(&mut key)?;
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        anyhow::bail!("no API key entered");
+    }
+    if !key.starts_with(roder_ext_roder_cloud::API_KEY_PREFIX) {
+        anyhow::bail!(
+            "that does not look like a roder.cloud API key (expected the {} prefix)",
+            roder_ext_roder_cloud::API_KEY_PREFIX
+        );
+    }
+    eprintln!("Validating key against {web_url}...");
+    let source = roder_ext_roder_cloud::RoderCloudTokenSource::new(web_url, key.clone());
+    source.token().await?;
+    roder_config::save_provider_api_key(PROVIDER_RODER_CLOUD, &key)?;
+    eprintln!("Saved roder.cloud API key to user config");
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthProviderKind {
     Codex,
     SuperGrok,
+    RoderCloud,
 }
 
 fn auth_provider_kind(provider: &str) -> anyhow::Result<AuthProviderKind> {
@@ -2926,6 +3004,9 @@ fn auth_provider_kind(provider: &str) -> anyhow::Result<AuthProviderKind> {
         "codex" => Ok(AuthProviderKind::Codex),
         "supergrok" | "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
             Ok(AuthProviderKind::SuperGrok)
+        }
+        "roder-cloud" | "roder_cloud" | "rodercloud" | "roder.cloud" => {
+            Ok(AuthProviderKind::RoderCloud)
         }
         provider => anyhow::bail!("unsupported auth provider {provider:?}"),
     }
@@ -2997,6 +3078,7 @@ fn provider_can_be_registered(
         | PROVIDER_OPENCODE
         | PROVIDER_OPENCODE_GO
         | PROVIDER_OPENROUTER
+        | PROVIDER_RODER_CLOUD
         | PROVIDER_POOLSIDE
         | PROVIDER_XIAOMI_MIMO
         | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => true,
@@ -3045,6 +3127,9 @@ mod tests {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            roder_cloud: None,
+            roder_cloud_base_url: None,
+            roder_cloud_web_url: None,
             poolside: None,
             poolside_base_url: None,
             cursor: None,

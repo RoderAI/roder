@@ -6,8 +6,8 @@ use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
     PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_MOCK,
     PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
-    PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
-    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
+    PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI,
+    PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
 use roder_api::embeddings::EmbeddingProvider;
 use roder_api::extension::{
@@ -40,6 +40,7 @@ use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension};
+use roder_ext_roder_cloud::{RoderCloudConfig, RoderCloudExtension};
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
 use roder_ext_postgres_session::{
     PostgresSessionConfig, PostgresSessionExtension, redact_database_url,
@@ -124,6 +125,9 @@ pub struct DefaultRegistryConfig {
     pub openrouter_base_url: Option<String>,
     pub openrouter_http_referer: Option<String>,
     pub openrouter_app_title: Option<String>,
+    pub roder_cloud_api_key: Option<String>,
+    pub roder_cloud_base_url: Option<String>,
+    pub roder_cloud_web_url: Option<String>,
     pub poolside_api_key: Option<String>,
     pub poolside_base_url: Option<String>,
     pub cursor_api_key: Option<String>,
@@ -237,6 +241,9 @@ impl Default for DefaultRegistryConfig {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            roder_cloud_api_key: None,
+            roder_cloud_base_url: None,
+            roder_cloud_web_url: None,
             poolside_api_key: None,
             poolside_base_url: None,
             cursor_api_key: None,
@@ -395,6 +402,11 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         base_url: config.openrouter_base_url,
         http_referer: config.openrouter_http_referer,
         app_title: config.openrouter_app_title,
+    }))?;
+    builder.install(RoderCloudExtension::new(RoderCloudConfig {
+        api_key: config.roder_cloud_api_key,
+        base_url: config.roder_cloud_base_url,
+        web_url: config.roder_cloud_web_url,
     }))?;
     builder.install(PoolsideExtension::new(PoolsideConfig {
         api_key: config.poolside_api_key,
@@ -585,6 +597,7 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_OPENCODE_GO
             | PROVIDER_OPENROUTER
+            | PROVIDER_RODER_CLOUD
             | PROVIDER_POOLSIDE
             | PROVIDER_CURSOR
             | PROVIDER_XIAOMI_MIMO
@@ -1455,6 +1468,9 @@ mod tests {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            roder_cloud_api_key: Some("roder_test".to_string()),
+            roder_cloud_base_url: None,
+            roder_cloud_web_url: None,
             poolside_api_key: Some("poolside".to_string()),
             poolside_base_url: None,
             cursor_api_key: Some("cursor".to_string()),
@@ -1497,6 +1513,7 @@ mod tests {
             PROVIDER_OPENCODE,
             PROVIDER_OPENCODE_GO,
             PROVIDER_OPENROUTER,
+            PROVIDER_RODER_CLOUD,
             PROVIDER_POOLSIDE,
             PROVIDER_CURSOR,
             PROVIDER_XIAOMI_MIMO,

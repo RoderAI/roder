@@ -23,6 +23,7 @@ pub const PROVIDER_SUPERGROK: &str = "supergrok";
 pub const PROVIDER_OPENCODE: &str = "opencode";
 pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
 pub const PROVIDER_OPENROUTER: &str = "openrouter";
+pub const PROVIDER_RODER_CLOUD: &str = "roder-cloud";
 pub const PROVIDER_POOLSIDE: &str = "poolside";
 pub const PROVIDER_CURSOR: &str = "cursor";
 pub const PROVIDER_XIAOMI_MIMO: &str = "xiaomi-mimo";
@@ -38,6 +39,7 @@ pub const PROVIDER_KIND_VERTEX: &str = "vertex";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
 pub const PROVIDER_KIND_OPENROUTER: &str = "openrouter";
+pub const PROVIDER_KIND_RODER_CLOUD: &str = "roder_cloud";
 pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
 pub const PROVIDER_KIND_CURSOR: &str = "cursor";
 pub const PROVIDER_KIND_XIAOMI_MIMO: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
@@ -291,6 +293,17 @@ pub const OPENROUTER_REASONING: &[ReasoningOption] = &[
     },
 ];
 
+/**
+ * The roder.cloud Responses-subset edge is synchronous text-only today: it
+ * does not stream SSE and drops function-call payloads from upstream output,
+ * so hosted models advertise no tool/image/structured support until the edge
+ * grows those surfaces.
+ */
+pub const RODER_CLOUD_REASONING: &[ReasoningOption] = &[ReasoningOption {
+    effort: REASONING_NONE,
+    description: "roder.cloud forwards no reasoning controls",
+}];
+
 pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     ProviderCatalogEntry {
         id: PROVIDER_MOCK,
@@ -421,6 +434,20 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         base_url: Some("https://openrouter.ai/api/v1"),
         env_key: Some("OPENROUTER_API_KEY"),
         env_aliases: &["RODER_OPENROUTER_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_RODER_CLOUD,
+        name: "Roder Cloud",
+        kind: PROVIDER_KIND_RODER_CLOUD,
+        default_model: "roder.cloud/free",
+        // The production inference edge hostname is deploy-specific; clients
+        // must configure base_url (or RODER_CLOUD_BASE_URL) until it is
+        // stable. Local dev: http://127.0.0.1:8080/v1.
+        base_url: None,
+        env_key: Some("RODER_CLOUD_API_KEY"),
+        env_aliases: &["RODER_CLOUD_TOKEN"],
         requires_auth: true,
         supports_websockets: false,
     },
@@ -859,6 +886,30 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         edit_tool: Some(EDIT_TOOL_PATCH),
         hidden: false,
     },
+    roder_cloud_model(
+        "roder.cloud/free",
+        "Roder Free",
+        "Free hosted model on roder.cloud.",
+        32_768,
+    ),
+    roder_cloud_model(
+        "roder.cloud/openai/gpt-5.5",
+        "GPT-5.5 (Roder Cloud)",
+        "roder.cloud hosted route for OpenAI GPT-5.5.",
+        400_000,
+    ),
+    roder_cloud_model(
+        "roder.cloud/anthropic/claude-opus-4-7",
+        "Claude Opus 4.7 (Roder Cloud)",
+        "roder.cloud hosted route for Anthropic Claude Opus 4.7.",
+        200_000,
+    ),
+    roder_cloud_model(
+        "roder.cloud/google/gemini-3.1-pro-preview",
+        "Gemini 3.1 Pro (Roder Cloud)",
+        "roder.cloud hosted route for Google Gemini 3.1 Pro Preview.",
+        200_000,
+    ),
     poolside_model(
         "poolside/laguna-m.1",
         "Laguna M.1",
@@ -1196,6 +1247,31 @@ const fn opencode_model(
     }
 }
 
+const fn roder_cloud_model(
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    context_window: u32,
+) -> ModelCatalogEntry {
+    ModelCatalogEntry {
+        id,
+        display_name,
+        description,
+        provider: PROVIDER_RODER_CLOUD,
+        default_reasoning: REASONING_NONE,
+        supported_reasoning: RODER_CLOUD_REASONING,
+        context_window,
+        max_context_window: context_window,
+        auto_compact_token_limit: 0,
+        supports_compaction: false,
+        supports_images: false,
+        supports_tools: false,
+        supports_structured: false,
+        edit_tool: None,
+        hidden: false,
+    }
+}
+
 const fn poolside_model(
     id: &'static str,
     display_name: &'static str,
@@ -1337,10 +1413,13 @@ fn model_harness_profile_from_catalog(model: &ModelCatalogEntry) -> ModelHarness
             verification: Some(model.default_reasoning.to_string()),
             recovery: Some(model.default_reasoning.to_string()),
         },
-        parallel_tool_calls: Some(matches!(
-            provider_family,
-            ProviderFamily::OpenAi | ProviderFamily::Xai | ProviderFamily::Opencode
-        )),
+        parallel_tool_calls: Some(
+            model.supports_tools
+                && matches!(
+                    provider_family,
+                    ProviderFamily::OpenAi | ProviderFamily::Xai | ProviderFamily::Opencode
+                ),
+        ),
         auto_compact_token_limit: (model.auto_compact_token_limit > 0)
             .then_some(model.auto_compact_token_limit),
     }
@@ -1353,7 +1432,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_GEMINI | PROVIDER_VERTEX => ProviderFamily::Gemini,
         PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
-        PROVIDER_OPENROUTER => ProviderFamily::OpenAi,
+        PROVIDER_OPENROUTER | PROVIDER_RODER_CLOUD => ProviderFamily::OpenAi,
         PROVIDER_POOLSIDE => ProviderFamily::Poolside,
         PROVIDER_CURSOR => ProviderFamily::Cursor,
         PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
@@ -1410,6 +1489,9 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "opencode" => PROVIDER_OPENCODE.to_string(),
         "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
         "openrouter" => PROVIDER_OPENROUTER.to_string(),
+        "roder-cloud" | "roder_cloud" | "rodercloud" | "roder.cloud" => {
+            PROVIDER_RODER_CLOUD.to_string()
+        }
         "laguna" | "poolside" => PROVIDER_POOLSIDE.to_string(),
         "composer" | "cursor-composer" => PROVIDER_CURSOR.to_string(),
         "claude_code" | "claudecode" => PROVIDER_CLAUDE_CODE.to_string(),
@@ -1463,6 +1545,7 @@ mod tests {
                 "opencode",
                 "opencode-go",
                 "openrouter",
+                "roder-cloud",
                 "poolside",
                 "cursor",
                 "xiaomi-mimo",
@@ -1575,6 +1658,10 @@ mod tests {
                 "glm-5.1",
                 "deepseek-v4-flash",
                 "x-ai/grok-build-0.1",
+                "roder.cloud/free",
+                "roder.cloud/openai/gpt-5.5",
+                "roder.cloud/anthropic/claude-opus-4-7",
+                "roder.cloud/google/gemini-3.1-pro-preview",
                 "poolside/laguna-m.1",
                 "poolside/laguna-xs.2",
                 "mimo-v2.5-pro",
@@ -1610,6 +1697,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
+        assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);

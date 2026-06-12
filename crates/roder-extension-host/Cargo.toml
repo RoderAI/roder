@@ -33,6 +33,7 @@ roder-ext-openai-embeddings.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-openai-speech.workspace = true
 roder-ext-openrouter.workspace = true
+roder-ext-roder-cloud.workspace = true
 roder-ext-google-speech.workspace = true
 roder-ext-opencode.workspace = true
 roder-ext-postgres-session.workspace = true
