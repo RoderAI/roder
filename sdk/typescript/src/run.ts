@@ -13,6 +13,19 @@ export interface RoderRunOptions {
   notifications?: AsyncIterable<JsonRpcNotification>;
 }
 
+/** Options for consuming a run's event stream. */
+export interface RoderStreamOptions {
+  /**
+   * Aborts stream consumption. The notification subscription parks
+   * indefinitely when the app-server goes quiet, so without this a wedged
+   * connection hangs the iterator forever. An aborted signal rejects the
+   * pending read with an AbortError and tears the subscription down. Build
+   * inactivity/deadline policy from this with `AbortSignal.timeout(ms)` and
+   * `AbortSignal.any([...])`.
+   */
+  signal?: AbortSignal;
+}
+
 export class RoderRun {
   private eagerNotifications: AsyncIterable<JsonRpcNotification> | undefined;
 
@@ -25,9 +38,10 @@ export class RoderRun {
     this.eagerNotifications = options.notifications;
   }
 
-  async *stream(): AsyncIterable<RoderSdkEvent> {
-    const source = this.eagerNotifications ?? this.client.notifications();
+  async *stream(options: RoderStreamOptions = {}): AsyncIterable<RoderSdkEvent> {
+    const base = this.eagerNotifications ?? this.client.notifications();
     this.eagerNotifications = undefined;
+    const source = options.signal ? withSignal(base, options.signal) : base;
     for await (const notification of source) {
       const event = normalizeNotification(notification, this.options.eventMode ?? "permissive");
       if (event) {
@@ -43,8 +57,8 @@ export class RoderRun {
     return this.client.notifications();
   }
 
-  async wait(): Promise<TurnCompletedEvent | undefined> {
-    for await (const event of this.stream()) {
+  async wait(options: RoderStreamOptions = {}): Promise<TurnCompletedEvent | undefined> {
+    for await (const event of this.stream(options)) {
       if (this.isOwnTurnCompleted(event)) {
         return event;
       }
@@ -76,4 +90,53 @@ export class RoderRun {
   async result(): Promise<unknown> {
     return this.client.call("thread/read", { threadId: this.threadId });
   }
+}
+
+function abortError(): DOMException {
+  return new DOMException("Stream aborted", "AbortError");
+}
+
+/**
+ * Races each read against the signal. On abort the read rejects and the
+ * `finally` closes the source iterator, which unsubscribes the notification
+ * queue and drains its parked waiter — so no event is left for a later,
+ * orphaned read to swallow. The abort listener is removed when each read
+ * settles, so a long stream does not accumulate listeners on the signal.
+ */
+async function* withSignal<T>(
+  source: AsyncIterable<T>,
+  signal: AbortSignal,
+): AsyncIterable<T> {
+  const iterator = source[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      if (signal.aborted) {
+        throw abortError();
+      }
+      const result = await raceAbort(iterator.next(), signal);
+      if (result.done) {
+        return;
+      }
+      yield result.value;
+    }
+  } finally {
+    await iterator.return?.();
+  }
+}
+
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }

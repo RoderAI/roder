@@ -60,7 +60,7 @@ export {
   RoderTransportError,
   type RoderErrorCategory,
 } from "./errors.js";
-export { RoderRun, type RoderRunOptions } from "./run.js";
+export { RoderRun, type RoderRunOptions, type RoderStreamOptions } from "./run.js";
 export {
   InMemoryTransport,
   LocalProcessTransport,
