@@ -16,7 +16,12 @@ pub async fn run_skills_cli(args: &[String]) -> anyhow::Result<()> {
     ));
     match args.first().map(String::as_str) {
         Some("list") | None => {
-            let result = skills_request::<SkillsListResult>(&client, "skills/list", None).await?;
+            let result = skills_request::<SkillsListResult>(
+                &client,
+                "skills/list",
+                Some(serde_json::json!({})),
+            )
+            .await?;
             for skill in result.skills {
                 println!(
                     "{}\t{}\t{}\t{}\t{}\t{}",
