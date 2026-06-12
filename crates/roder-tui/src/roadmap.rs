@@ -377,6 +377,8 @@ impl RoadmapModeState {
         let mut context = String::from(
             "Roadmapping mode is active. Treat the selected roadmap document as primary state.\n",
         );
+        context.push_str(roder_roadmap::ORCHESTRATOR_RULES);
+        context.push('\n');
         if let Some(path) = self.selected_plan.as_deref() {
             context.push_str(&format!("Selected roadmap: {path}\n"));
         }
@@ -386,9 +388,34 @@ impl RoadmapModeState {
         if let Some(heading) = self.focused_task_heading() {
             context.push_str(&format!("Focused task heading: {heading}\n"));
         }
+        let workers = self.attached_threads.len();
+        if workers > 0 {
+            context.push_str(&format!("Active workers: {workers}\n"));
+        }
         context.push_str("User request:\n");
         context.push_str(input);
         context
+    }
+
+    /// Unchecked tasks without an attached worker, in document order, capped
+    /// at `limit`. These are the targets for a fan-out spawn.
+    pub fn fan_out_task_ids(&self, limit: usize) -> Vec<String> {
+        let Some(document) = self.selected_document.as_ref() else {
+            return Vec::new();
+        };
+        document
+            .tasks
+            .iter()
+            .filter(|task| !task.checked)
+            .filter(|task| {
+                !self
+                    .attached_threads
+                    .iter()
+                    .any(|thread| thread.task_id.as_deref() == Some(task.id.as_str()))
+            })
+            .take(limit)
+            .map(|task| task.id.clone())
+            .collect()
     }
 
     pub fn render_text(&self) -> Text<'static> {
@@ -480,13 +507,49 @@ mod tests {
     fn roadmap_prompt_context_keeps_document_primary() {
         let mut state = RoadmapModeState::new(Some("roadmap/20-roadmapping-mode.md".to_string()));
         state.focused_task_id = Some("task-a".to_string());
+        state.attach_thread("thread-a");
 
         let prompt = state.prompt_context("continue");
 
         assert!(prompt.contains("Roadmapping mode is active"));
+        assert!(prompt.contains("Orchestrator contract:"));
+        assert!(prompt.contains("roadmap_thread_spawn"));
+        assert!(prompt.contains("Do not implement tasks in this thread."));
         assert!(prompt.contains("Selected roadmap: roadmap/20-roadmapping-mode.md"));
         assert!(prompt.contains("Focused task: task-a"));
+        assert!(prompt.contains("Active workers: 1"));
         assert!(prompt.ends_with("continue"));
+    }
+
+    #[test]
+    fn roadmap_fan_out_targets_unchecked_unassigned_tasks_in_order() {
+        let workspace = temp_workspace();
+        fs::write(
+            workspace.join("roadmap/30-fan-out.md"),
+            "# Fan Out Plan\n\n**Goal:** Fan out workers.\n**Architecture:** Documents are primary state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Modify: `crates/roder-roadmap/src/lib.rs`\n\n## Tasks\n\n- [x] Done task\n- [ ] First open task\n- [ ] Second open task\n- [ ] Third open task\n\nRun:\n\n```sh\ncargo test -p roder-roadmap\n```\n\nAcceptance:\n- Workers fan out.\n\n## Phase Acceptance\n\n- [ ] Works.\n",
+        )
+        .unwrap();
+        let mut state =
+            RoadmapModeState::load(&workspace, Some("30-fan-out.md".to_string())).unwrap();
+
+        let all = state.fan_out_task_ids(8);
+        assert_eq!(
+            all,
+            vec![
+                "task-first-open-task".to_string(),
+                "task-second-open-task".to_string(),
+                "task-third-open-task".to_string(),
+            ]
+        );
+
+        // A worker on a task removes it from fan-out targets; the cap bounds
+        // how many tasks a single fan-out can claim.
+        state.focused_task_id = Some("task-first-open-task".to_string());
+        state.attach_thread("thread-a");
+        assert_eq!(
+            state.fan_out_task_ids(1),
+            vec!["task-second-open-task".to_string()]
+        );
     }
 
     #[test]

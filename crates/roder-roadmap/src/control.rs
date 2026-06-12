@@ -121,7 +121,8 @@ fn dispatch_prompt_with_path(document: &Document, task: &Task, path_label: &str)
         }
     }
     prompt.push_str(
-        "\nCompletion rule: only mark the task done after the stated acceptance criteria and run commands are satisfied, then record evidence.",
+        "\nCompletion rule: only mark the task done after the stated acceptance criteria and run commands are satisfied, then record evidence.\n\
+         Report back: end with a concise summary of what changed, run command outcomes, and acceptance evidence so the orchestrator can verify without redoing the work.",
     );
     prompt
 }

@@ -1,5 +1,18 @@
 use crate::{DiagnosticSeverity, Document, Task, ValidationResult};
 
+/// Delegation contract injected into every orchestrator-facing roadmap prompt.
+///
+/// The orchestrator coordinates many workers; it never implements tasks in its
+/// own thread. Tool names must match the specs in `tools.rs`.
+pub const ORCHESTRATOR_RULES: &str = "Orchestrator contract:\n\
+- You are the roadmap orchestrator: triage tasks, delegate work, verify evidence, and keep the document current. Do not implement tasks in this thread.\n\
+- Fan out: spawn one worker per independent unchecked task with roadmap_thread_spawn, one call per task. Spawning several workers in a single turn is expected.\n\
+- Check roadmap_thread_list before spawning so a task does not get duplicate workers unless the user asks for redundancy.\n\
+- Parallelize tasks whose owned paths do not overlap; stagger tasks that share files.\n\
+- Keep roughly four workers active unless the user raises or lowers the budget.\n\
+- Steer or respawn a blocked worker instead of doing its work yourself.\n\
+- Mark a task done only through roadmap_set_task_state with non-empty evidence after its run commands and acceptance criteria pass.";
+
 #[derive(Debug, Clone)]
 pub struct RoadmapPromptInput<'a> {
     pub document: &'a Document,
@@ -11,6 +24,7 @@ pub struct RoadmapPromptInput<'a> {
 pub fn roadmap_context_prompt(input: RoadmapPromptInput<'_>) -> String {
     let mut sections = vec![
         "You are in Roder roadmapping mode. Treat the roadmap Markdown document as the primary state; thread transcripts are supporting evidence.".to_string(),
+        ORCHESTRATOR_RULES.to_string(),
         format!("Document: {}", input.document.title),
         format!("Path: {}", input.document.path.display()),
         format!("Goal: {}", input.document.goal),

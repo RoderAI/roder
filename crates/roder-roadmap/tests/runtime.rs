@@ -113,6 +113,12 @@ fn roadmap_prompt_includes_document_task_validation_and_skill_body() {
     });
 
     assert!(prompt.contains("roadmapping mode"));
+    assert!(prompt.contains("Orchestrator contract:"));
+    assert!(
+        prompt
+            .contains("spawn one worker per independent unchecked task with roadmap_thread_spawn")
+    );
+    assert!(prompt.contains("Do not implement tasks in this thread."));
     assert!(prompt.contains("Document: Roadmapping Mode Implementation Plan"));
     assert!(prompt.contains("Focused task: Add runtime tests [open]"));
     assert!(prompt.contains("Validation: no diagnostics."));
