@@ -66,6 +66,12 @@ export interface RoderThreadRunner {
   config?: Record<string, unknown>;
   /** Absolute path on the runner used as the thread's coding-tool workspace root. */
   workspace: string;
+  /**
+   * Extra absolute runner paths file reads may resolve under, beyond
+   * `workspace`. Writes and the working directory stay confined to
+   * `workspace`.
+   */
+  readRoots?: string[];
 }
 
 export interface RoderExternalToolCall {
