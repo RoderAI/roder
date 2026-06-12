@@ -16,6 +16,7 @@ use sqlx_mysql::MySql;
 use time::OffsetDateTime;
 
 use crate::artifacts::MysqlArtifactStore;
+use crate::executor::DbExecutor;
 use crate::schema;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,40 +97,48 @@ pub(crate) fn unix_micros_now() -> i64 {
 
 #[derive(Clone)]
 pub struct MysqlSessionStore {
+    executor: Arc<DbExecutor>,
     pool: Pool<MySql>,
     tenant_id: String,
 }
 
 impl MysqlSessionStore {
     pub async fn connect(config: &MysqlSessionConfig) -> anyhow::Result<Self> {
-        config.validate()?;
-        let pool = sqlx_mysql::MySqlPoolOptions::new()
-            .max_connections(config.max_connections.unwrap_or(5))
-            .connect(&config.database_url)
-            .await
-            .with_context(|| {
-                format!(
-                    "connect to MySQL session store at {}",
-                    config.redacted_database_url()
-                )
-            })?;
-        schema::migrate(&pool).await.with_context(|| {
-            format!(
-                "migrate MySQL session store at {}",
-                config.redacted_database_url()
-            )
-        })?;
+        let executor = DbExecutor::new()?;
+        Self::connect_on(executor, config.clone()).await
+    }
+
+    /// Synchronous connect for sync factory contexts; the work still runs on
+    /// the store's dedicated runtime.
+    pub fn connect_blocking(config: &MysqlSessionConfig) -> anyhow::Result<Self> {
+        let executor = DbExecutor::new()?;
+        let config = config.clone();
+        let pool = executor.run_blocking(open_pool(config.clone()))?;
         Ok(Self {
+            executor,
             pool,
-            tenant_id: config.tenant_id.clone(),
+            tenant_id: config.tenant_id,
         })
     }
 
-    /// Derives a tenant-scoped handle sharing this store's pool, mirroring
-    /// the PostgreSQL store's hosted-tenancy contract.
+    async fn connect_on(
+        executor: Arc<DbExecutor>,
+        config: MysqlSessionConfig,
+    ) -> anyhow::Result<Self> {
+        let pool = executor.run(open_pool(config.clone())).await?;
+        Ok(Self {
+            executor,
+            pool,
+            tenant_id: config.tenant_id,
+        })
+    }
+
+    /// Derives a tenant-scoped handle sharing this store's pool and runtime,
+    /// mirroring the PostgreSQL store's hosted-tenancy contract.
     pub fn for_tenant(&self, tenant_id: &str) -> anyhow::Result<Self> {
         let tenant_id = validate_tenant_id(tenant_id)?;
         Ok(Self {
+            executor: self.executor.clone(),
             pool: self.pool.clone(),
             tenant_id,
         })
@@ -142,6 +151,7 @@ impl MysqlSessionStore {
 
     fn artifact_store(&self) -> ContextArtifactStore {
         ContextArtifactStore::new(Arc::new(MysqlArtifactStore {
+            executor: self.executor.clone(),
             pool: self.pool.clone(),
             tenant_id: self.tenant_id.clone(),
         }))
@@ -177,14 +187,48 @@ impl MysqlSessionStore {
     }
 
     async fn load_metadata(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadMetadata>> {
-        let row = sqlx_core::query::query::<MySql>("SELECT metadata FROM roder_sessions WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
-            .bind(&self.tenant_id).bind(thread_id).fetch_optional(&self.pool).await?;
-        row.map(|row| {
-            let json: sqlx_core::types::Json<ThreadMetadata> = row.try_get("metadata")?;
-            Ok(json.0)
-        })
-        .transpose()
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let thread_id = thread_id.clone();
+        self.executor
+            .run(async move { load_metadata_on(&pool, &tenant_id, &thread_id).await })
+            .await
     }
+}
+
+async fn open_pool(config: MysqlSessionConfig) -> anyhow::Result<Pool<MySql>> {
+    config.validate()?;
+    let pool = sqlx_mysql::MySqlPoolOptions::new()
+        .max_connections(config.max_connections.unwrap_or(5))
+        .connect(&config.database_url)
+        .await
+        .with_context(|| {
+            format!(
+                "connect to MySQL session store at {}",
+                config.redacted_database_url()
+            )
+        })?;
+    schema::migrate(&pool).await.with_context(|| {
+        format!(
+            "migrate MySQL session store at {}",
+            config.redacted_database_url()
+        )
+    })?;
+    Ok(pool)
+}
+
+async fn load_metadata_on(
+    pool: &Pool<MySql>,
+    tenant_id: &str,
+    thread_id: &str,
+) -> anyhow::Result<Option<ThreadMetadata>> {
+    let row = sqlx_core::query::query::<MySql>("SELECT metadata FROM roder_sessions WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
+        .bind(tenant_id).bind(thread_id).fetch_optional(pool).await?;
+    row.map(|row| {
+        let json: sqlx_core::types::Json<ThreadMetadata> = row.try_get("metadata")?;
+        Ok(json.0)
+    })
+    .transpose()
 }
 
 #[async_trait::async_trait]
@@ -199,17 +243,25 @@ impl ThreadStore for MysqlSessionStore {
 
     async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
         validate_thread_workspace(&metadata.workspace)?;
-        sqlx_core::query::query::<MySql>(
-            "INSERT INTO roder_sessions (tenant_id, thread_id, metadata, archived, created_at, updated_at) VALUES (?,?,?,FALSE,?,?) \
-             ON DUPLICATE KEY UPDATE metadata = VALUES(metadata), archived = FALSE, updated_at = VALUES(updated_at)",
-        )
-        .bind(&self.tenant_id)
-        .bind(&metadata.thread_id)
-        .bind(sqlx_core::types::Json(&metadata))
-        .bind(unix_micros(metadata.created_at))
-        .bind(unix_micros(metadata.updated_at))
-        .execute(&self.pool)
-        .await?;
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let row_metadata = metadata.clone();
+        self.executor
+            .run(async move {
+                sqlx_core::query::query::<MySql>(
+                    "INSERT INTO roder_sessions (tenant_id, thread_id, metadata, archived, created_at, updated_at) VALUES (?,?,?,FALSE,?,?) \
+                     ON DUPLICATE KEY UPDATE metadata = VALUES(metadata), archived = FALSE, updated_at = VALUES(updated_at)",
+                )
+                .bind(&tenant_id)
+                .bind(&row_metadata.thread_id)
+                .bind(sqlx_core::types::Json(&row_metadata))
+                .bind(unix_micros(row_metadata.created_at))
+                .bind(unix_micros(row_metadata.updated_at))
+                .execute(&pool)
+                .await?;
+                Ok(())
+            })
+            .await?;
         Ok(metadata)
     }
 
@@ -218,12 +270,20 @@ impl ThreadStore for MysqlSessionStore {
         metadata: ThreadMetadata,
     ) -> anyhow::Result<ThreadMetadata> {
         validate_thread_workspace(&metadata.workspace)?;
-        sqlx_core::query::query::<MySql>("UPDATE roder_sessions SET metadata = ?, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
-            .bind(sqlx_core::types::Json(&metadata))
-            .bind(unix_micros(metadata.updated_at))
-            .bind(&self.tenant_id)
-            .bind(&metadata.thread_id)
-            .execute(&self.pool)
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let row_metadata = metadata.clone();
+        self.executor
+            .run(async move {
+                sqlx_core::query::query::<MySql>("UPDATE roder_sessions SET metadata = ?, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
+                    .bind(sqlx_core::types::Json(&row_metadata))
+                    .bind(unix_micros(row_metadata.updated_at))
+                    .bind(&tenant_id)
+                    .bind(&row_metadata.thread_id)
+                    .execute(&pool)
+                    .await?;
+                Ok(())
+            })
             .await?;
         Ok(metadata)
     }
@@ -245,25 +305,29 @@ impl ThreadStore for MysqlSessionStore {
             .and_then(|cursor| cursor.parse::<i64>().ok())
             .unwrap_or(0)
             .max(0);
-        // MySQL LIMIT cannot be i64::MAX + 1 via saturating math alone; cap
-        // generously when unlimited.
         let limit = options
             .limit
             .map(|limit| limit as i64)
             .unwrap_or(i64::MAX - 1);
-        let rows = sqlx_core::query::query::<MySql>("SELECT metadata FROM roder_sessions WHERE tenant_id = ? AND archived = FALSE ORDER BY updated_at DESC LIMIT ? OFFSET ?")
-            .bind(&self.tenant_id)
-            .bind(limit.saturating_add(1))
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-        let mut threads = rows
-            .into_iter()
-            .map(|row| {
-                let json: sqlx_core::types::Json<ThreadMetadata> = row.try_get("metadata")?;
-                Ok(json.0)
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let mut threads = self
+            .executor
+            .run(async move {
+                let rows = sqlx_core::query::query::<MySql>("SELECT metadata FROM roder_sessions WHERE tenant_id = ? AND archived = FALSE ORDER BY updated_at DESC LIMIT ? OFFSET ?")
+                    .bind(&tenant_id)
+                    .bind(limit.saturating_add(1))
+                    .bind(offset)
+                    .fetch_all(&pool)
+                    .await?;
+                rows.into_iter()
+                    .map(|row| {
+                        let json: sqlx_core::types::Json<ThreadMetadata> = row.try_get("metadata")?;
+                        Ok(json.0)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .await?;
         let has_more = options.limit.is_some_and(|limit| threads.len() > limit);
         if let Some(limit) = options.limit {
             threads.truncate(limit);
@@ -276,44 +340,51 @@ impl ThreadStore for MysqlSessionStore {
     }
 
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
-        let Some(metadata) = self.load_metadata(thread_id).await? else {
-            return Ok(None);
-        };
-        let event_rows = sqlx_core::query::query::<MySql>("SELECT event FROM roder_session_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
-            .bind(&self.tenant_id).bind(thread_id).fetch_all(&self.pool).await?;
-        let events = event_rows
-            .into_iter()
-            .map(|row| {
-                let json: sqlx_core::types::Json<EventEnvelope> = row.try_get("event")?;
-                Ok(json.0)
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let thread_id = thread_id.clone();
+        self.executor
+            .run(async move {
+                let Some(metadata) = load_metadata_on(&pool, &tenant_id, &thread_id).await? else {
+                    return Ok(None);
+                };
+                let event_rows = sqlx_core::query::query::<MySql>("SELECT event FROM roder_session_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
+                    .bind(&tenant_id).bind(&thread_id).fetch_all(&pool).await?;
+                let events = event_rows
+                    .into_iter()
+                    .map(|row| {
+                        let json: sqlx_core::types::Json<EventEnvelope> = row.try_get("event")?;
+                        Ok(json.0)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let turns = project_turns_from_events(&thread_id, &events);
+                let item_rows = sqlx_core::query::query::<MySql>("SELECT item_event FROM roder_session_item_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
+                    .bind(&tenant_id).bind(&thread_id).fetch_all(&pool).await?;
+                let item_events = item_rows
+                    .into_iter()
+                    .map(|row| {
+                        let json: sqlx_core::types::Json<ThreadItemEvent> = row.try_get("item_event")?;
+                        Ok(json.0)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let state_rows = sqlx_core::query::query::<MySql>("SELECT record FROM roder_session_extension_state WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
+                    .bind(&tenant_id).bind(&thread_id).fetch_all(&pool).await?;
+                let extension_states = state_rows
+                    .into_iter()
+                    .map(|row| {
+                        let json: sqlx_core::types::Json<ExtensionStateRecord> = row.try_get("record")?;
+                        Ok(json.0)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                Ok(Some(ThreadSnapshot {
+                    metadata: Some(metadata),
+                    events,
+                    turns,
+                    item_events,
+                    extension_states,
+                }))
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let turns = project_turns_from_events(thread_id, &events);
-        let item_rows = sqlx_core::query::query::<MySql>("SELECT item_event FROM roder_session_item_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
-            .bind(&self.tenant_id).bind(thread_id).fetch_all(&self.pool).await?;
-        let item_events = item_rows
-            .into_iter()
-            .map(|row| {
-                let json: sqlx_core::types::Json<ThreadItemEvent> = row.try_get("item_event")?;
-                Ok(json.0)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let state_rows = sqlx_core::query::query::<MySql>("SELECT record FROM roder_session_extension_state WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
-            .bind(&self.tenant_id).bind(thread_id).fetch_all(&self.pool).await?;
-        let extension_states = state_rows
-            .into_iter()
-            .map(|row| {
-                let json: sqlx_core::types::Json<ExtensionStateRecord> = row.try_get("record")?;
-                Ok(json.0)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(Some(ThreadSnapshot {
-            metadata: Some(metadata),
-            events,
-            turns,
-            item_events,
-            extension_states,
-        }))
+            .await
     }
 
     async fn load_thread_metadata(
@@ -324,13 +395,20 @@ impl ThreadStore for MysqlSessionStore {
     }
 
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
-        let result = sqlx_core::query::query::<MySql>("UPDATE roder_sessions SET archived = TRUE, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
-            .bind(unix_micros_now())
-            .bind(&self.tenant_id)
-            .bind(thread_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() > 0)
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let thread_id = thread_id.clone();
+        self.executor
+            .run(async move {
+                let result = sqlx_core::query::query::<MySql>("UPDATE roder_sessions SET archived = TRUE, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
+                    .bind(unix_micros_now())
+                    .bind(&tenant_id)
+                    .bind(&thread_id)
+                    .execute(&pool)
+                    .await?;
+                Ok(result.rows_affected() > 0)
+            })
+            .await
     }
 
     async fn append_event(
@@ -338,19 +416,26 @@ impl ThreadStore for MysqlSessionStore {
         thread_id: &ThreadId,
         envelope: &EventEnvelope,
     ) -> anyhow::Result<()> {
-        let mut tx = self.pool.begin().await?;
-        sqlx_core::query::query::<MySql>(
-            "INSERT INTO roder_session_events (tenant_id, thread_id, seq, event, created_at) VALUES (?,?,?,?,?) \
-             ON DUPLICATE KEY UPDATE event = VALUES(event)",
-        )
-        .bind(&self.tenant_id)
-        .bind(thread_id)
-        .bind(envelope.seq as i64)
-        .bind(sqlx_core::types::Json(envelope))
-        .bind(unix_micros_now())
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let row_thread_id = thread_id.clone();
+        let row_envelope = envelope.clone();
+        self.executor
+            .run(async move {
+                sqlx_core::query::query::<MySql>(
+                    "INSERT INTO roder_session_events (tenant_id, thread_id, seq, event, created_at) VALUES (?,?,?,?,?) \
+                     ON DUPLICATE KEY UPDATE event = VALUES(event)",
+                )
+                .bind(&tenant_id)
+                .bind(&row_thread_id)
+                .bind(row_envelope.seq as i64)
+                .bind(sqlx_core::types::Json(&row_envelope))
+                .bind(unix_micros_now())
+                .execute(&pool)
+                .await?;
+                Ok(())
+            })
+            .await?;
         if let RoderEvent::TranscriptItemAppended(event) = &envelope.event
             && let Some(item) = &event.item
         {
@@ -364,18 +449,26 @@ impl ThreadStore for MysqlSessionStore {
         thread_id: &ThreadId,
         item_event: &ThreadItemEvent,
     ) -> anyhow::Result<()> {
-        sqlx_core::query::query::<MySql>(
-            "INSERT INTO roder_session_item_events (tenant_id, thread_id, seq, item_event, created_at) VALUES (?,?,?,?,?) \
-             ON DUPLICATE KEY UPDATE item_event = VALUES(item_event)",
-        )
-        .bind(&self.tenant_id)
-        .bind(thread_id)
-        .bind(item_event.seq as i64)
-        .bind(sqlx_core::types::Json(item_event))
-        .bind(unix_micros_now())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let thread_id = thread_id.clone();
+        let item_event = item_event.clone();
+        self.executor
+            .run(async move {
+                sqlx_core::query::query::<MySql>(
+                    "INSERT INTO roder_session_item_events (tenant_id, thread_id, seq, item_event, created_at) VALUES (?,?,?,?,?) \
+                     ON DUPLICATE KEY UPDATE item_event = VALUES(item_event)",
+                )
+                .bind(&tenant_id)
+                .bind(&thread_id)
+                .bind(item_event.seq as i64)
+                .bind(sqlx_core::types::Json(&item_event))
+                .bind(unix_micros_now())
+                .execute(&pool)
+                .await?;
+                Ok(())
+            })
+            .await
     }
 
     async fn append_extension_state(
@@ -383,14 +476,22 @@ impl ThreadStore for MysqlSessionStore {
         thread_id: &ThreadId,
         record: &ExtensionStateRecord,
     ) -> anyhow::Result<()> {
-        sqlx_core::query::query::<MySql>("INSERT INTO roder_session_extension_state (tenant_id, thread_id, record, created_at) VALUES (?,?,?,?)")
-            .bind(&self.tenant_id)
-            .bind(thread_id)
-            .bind(sqlx_core::types::Json(record))
-            .bind(unix_micros_now())
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let thread_id = thread_id.clone();
+        let record = record.clone();
+        self.executor
+            .run(async move {
+                sqlx_core::query::query::<MySql>("INSERT INTO roder_session_extension_state (tenant_id, thread_id, record, created_at) VALUES (?,?,?,?)")
+                    .bind(&tenant_id)
+                    .bind(&thread_id)
+                    .bind(sqlx_core::types::Json(&record))
+                    .bind(unix_micros_now())
+                    .execute(&pool)
+                    .await?;
+                Ok(())
+            })
+            .await
     }
 }
 
@@ -403,12 +504,8 @@ impl ThreadStoreFactory for MysqlSessionStoreFactory {
         "mysql-session".to_string()
     }
     fn create(&self) -> Arc<dyn ThreadStore> {
-        let config = self.config.clone();
-        let store = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(async move { MysqlSessionStore::connect(&config).await })
-        })
-        .unwrap_or_else(|err| panic!("failed to initialize MySQL session store: {}", err));
+        let store = MysqlSessionStore::connect_blocking(&self.config)
+            .unwrap_or_else(|err| panic!("failed to initialize MySQL session store: {}", err));
         Arc::new(store)
     }
 }

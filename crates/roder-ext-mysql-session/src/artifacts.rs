@@ -2,12 +2,15 @@ use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifact, ContextArtifactAccess,
     ContextArtifactId, CreateArtifactRequest,
 };
+use std::sync::Arc;
+
 use roder_api::events::ThreadId;
 use sqlx_core::pool::Pool;
 use sqlx_core::row::Row;
 use sqlx_mysql::MySql;
 use time::OffsetDateTime;
 
+use crate::executor::DbExecutor;
 use crate::store::{unix_micros, unix_micros_now};
 
 const DEFAULT_PAGE_LINES: usize = 200;
@@ -15,6 +18,7 @@ const MAX_PAGE_LINES: usize = 200;
 
 #[derive(Clone)]
 pub struct MysqlArtifactStore {
+    pub(crate) executor: Arc<DbExecutor>,
     pub(crate) pool: Pool<MySql>,
     pub(crate) tenant_id: String,
 }
@@ -46,22 +50,21 @@ impl ContextArtifactAccess for MysqlArtifactStore {
         let pool = self.pool.clone();
         let tenant_id = self.tenant_id.clone();
         let artifact_for_db = artifact.clone();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                sqlx_core::query::query::<MySql>(
-                    "INSERT INTO roder_context_artifacts (tenant_id, thread_id, artifact_id, turn_id, metadata, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-                )
-                .bind(&tenant_id)
-                .bind(&artifact_for_db.thread_id)
-                .bind(&artifact_for_db.id)
-                .bind(&artifact_for_db.turn_id)
-                .bind(sqlx_core::types::Json(&artifact_for_db))
-                .bind(bytes)
-                .bind(unix_micros(artifact_for_db.created_at))
-                .bind(unix_micros(artifact_for_db.created_at))
-                .execute(&pool)
-                .await
-            })
+        self.executor.run_blocking(async move {
+            sqlx_core::query::query::<MySql>(
+                "INSERT INTO roder_context_artifacts (tenant_id, thread_id, artifact_id, turn_id, metadata, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            )
+            .bind(&tenant_id)
+            .bind(&artifact_for_db.thread_id)
+            .bind(&artifact_for_db.id)
+            .bind(&artifact_for_db.turn_id)
+            .bind(sqlx_core::types::Json(&artifact_for_db))
+            .bind(bytes)
+            .bind(unix_micros(artifact_for_db.created_at))
+            .bind(unix_micros(artifact_for_db.created_at))
+            .execute(&pool)
+            .await?;
+            Ok(())
         })?;
         Ok(artifact)
     }
@@ -79,20 +82,19 @@ impl ContextArtifactAccess for MysqlArtifactStore {
         let pool = self.pool.clone();
         let tenant_id = self.tenant_id.clone();
         let artifact_for_db = artifact.clone();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                sqlx_core::query::query::<MySql>(
-                    "UPDATE roder_context_artifacts SET metadata = ?, body = ?, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?",
-                )
-                .bind(sqlx_core::types::Json(&artifact_for_db))
-                .bind(body)
-                .bind(unix_micros_now())
-                .bind(&tenant_id)
-                .bind(&artifact_for_db.thread_id)
-                .bind(&artifact_for_db.id)
-                .execute(&pool)
-                .await
-            })
+        self.executor.run_blocking(async move {
+            sqlx_core::query::query::<MySql>(
+                "UPDATE roder_context_artifacts SET metadata = ?, body = ?, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?",
+            )
+            .bind(sqlx_core::types::Json(&artifact_for_db))
+            .bind(body)
+            .bind(unix_micros_now())
+            .bind(&tenant_id)
+            .bind(&artifact_for_db.thread_id)
+            .bind(&artifact_for_db.id)
+            .execute(&pool)
+            .await?;
+            Ok(())
         })?;
         Ok(artifact)
     }
@@ -101,21 +103,19 @@ impl ContextArtifactAccess for MysqlArtifactStore {
         let pool = self.pool.clone();
         let tenant_id = self.tenant_id.clone();
         let thread_id = thread_id.clone();
-        let rows = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                sqlx_core::query::query::<MySql>("SELECT metadata FROM roder_context_artifacts WHERE tenant_id = ? AND thread_id = ? ORDER BY created_at ASC, artifact_id ASC")
-                    .bind(&tenant_id)
-                    .bind(&thread_id)
-                    .fetch_all(&pool)
-                    .await
-            })
-        })?;
-        rows.into_iter()
-            .map(|row| {
-                let json: sqlx_core::types::Json<ContextArtifact> = row.try_get("metadata")?;
-                Ok(json.0)
-            })
-            .collect()
+        self.executor.run_blocking(async move {
+            let rows = sqlx_core::query::query::<MySql>("SELECT metadata FROM roder_context_artifacts WHERE tenant_id = ? AND thread_id = ? ORDER BY created_at ASC, artifact_id ASC")
+                .bind(&tenant_id)
+                .bind(&thread_id)
+                .fetch_all(&pool)
+                .await?;
+            rows.into_iter()
+                .map(|row| {
+                    let json: sqlx_core::types::Json<ContextArtifact> = row.try_get("metadata")?;
+                    Ok(json.0)
+                })
+                .collect()
+        })
     }
 
     fn read_artifact(
@@ -211,13 +211,11 @@ impl ContextArtifactAccess for MysqlArtifactStore {
         let tenant_id = self.tenant_id.clone();
         let thread_id = thread_id.clone();
         let artifact_id = artifact_id.clone();
-        let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                sqlx_core::query::query::<MySql>("DELETE FROM roder_context_artifacts WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?")
-                    .bind(&tenant_id).bind(&thread_id).bind(&artifact_id).execute(&pool).await
-            })
-        })?;
-        Ok(result.rows_affected() > 0)
+        self.executor.run_blocking(async move {
+            let result = sqlx_core::query::query::<MySql>("DELETE FROM roder_context_artifacts WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?")
+                .bind(&tenant_id).bind(&thread_id).bind(&artifact_id).execute(&pool).await?;
+            Ok(result.rows_affected() > 0)
+        })
     }
 }
 
@@ -240,12 +238,13 @@ impl MysqlArtifactStore {
         let thread_id = thread_id.clone();
         let artifact_id = artifact_id.clone();
         let missing_artifact_id = artifact_id.clone();
-        let row = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                sqlx_core::query::query::<MySql>("SELECT metadata, body FROM roder_context_artifacts WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?")
-                    .bind(&tenant_id).bind(&thread_id).bind(&artifact_id).fetch_optional(&pool).await
-            })
-        })?.ok_or_else(|| anyhow::anyhow!("unknown artifact {missing_artifact_id}"))?;
+        let row = self
+            .executor
+            .run_blocking(async move {
+                Ok(sqlx_core::query::query::<MySql>("SELECT metadata, body FROM roder_context_artifacts WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?")
+                    .bind(&tenant_id).bind(&thread_id).bind(&artifact_id).fetch_optional(&pool).await?)
+            })?
+            .ok_or_else(|| anyhow::anyhow!("unknown artifact {missing_artifact_id}"))?;
         let artifact: sqlx_core::types::Json<ContextArtifact> = row.try_get("metadata")?;
         let body: Vec<u8> = row.try_get("body")?;
         Ok((artifact.0, body))
