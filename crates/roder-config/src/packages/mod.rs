@@ -1,4 +1,4 @@
-//! Roder package fetch/store/settings layer (roadmap phase 93).
+//! Roder package fetch/store/settings layer (roadmap phase 97).
 //!
 //! One `roder install <spec>` materializes an npm package, git clone, or
 //! local path into a per-scope store (`~/.roder/packages/` or

@@ -1,4 +1,4 @@
-//! `packages/*` JSON-RPC handlers (roadmap phase 93): install, list, and
+//! `packages/*` JSON-RPC handlers (roadmap phase 97): install, list, and
 //! manage Roder packages through the `roder_config::packages` ops layer.
 //! All methods operate on the server's configured workspace.
 

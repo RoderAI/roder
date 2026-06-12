@@ -1,5 +1,5 @@
 //! `roder install` / `roder remove` / `roder update` / `roder packages` CLI
-//! (roadmap phase 93), plus the ephemeral `-e <spec>` TUI launch support and
+//! (roadmap phase 97), plus the ephemeral `-e <spec>` TUI launch support and
 //! the package -> process-extension merge used by the runtime builder.
 //!
 //! These subcommands operate directly on the `roder_config::packages` ops

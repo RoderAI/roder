@@ -1,4 +1,4 @@
-//! "Packages" command palette source (roadmap phase 93).
+//! "Packages" command palette source (roadmap phase 97).
 //!
 //! Lists installed Roder packages from `packages/list` and seeds `/packages`
 //! slash commands into the composer, mirroring the marketplaces source: a

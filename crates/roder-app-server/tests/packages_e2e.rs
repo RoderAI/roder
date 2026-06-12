@@ -1,5 +1,5 @@
 //! App-server e2e coverage for the `packages/*` JSON-RPC surface (roadmap
-//! phase 93). Installs a local fixture package into an isolated
+//! phase 97). Installs a local fixture package into an isolated
 //! RODER_CONFIG_DIR, then drives list/toggle/approve/remove plus
 //! update/sync/filters over the protocol, asserting deterministic camelCase
 //! JSON fields.
