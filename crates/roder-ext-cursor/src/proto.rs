@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const CONNECT_COMPRESSED_FLAG: u8 = 1;
 const CONNECT_END_STREAM_FLAG: u8 = 2;
@@ -1355,7 +1355,11 @@ fn decode_fields(bytes: &[u8]) -> anyhow::Result<Vec<ProtoField>> {
             2 => {
                 let (len, next) = read_varint(bytes, offset)?;
                 offset = next;
-                let end = offset + len as usize;
+                let len = usize::try_from(len)
+                    .map_err(|_| anyhow::anyhow!("protobuf field length exceeds usize"))?;
+                let end = offset
+                    .checked_add(len)
+                    .ok_or_else(|| anyhow::anyhow!("protobuf length-delimited field overflows"))?;
                 if end > bytes.len() {
                     anyhow::bail!("protobuf length-delimited field exceeds payload size");
                 }
@@ -1365,8 +1369,22 @@ fn decode_fields(bytes: &[u8]) -> anyhow::Result<Vec<ProtoField>> {
                 });
                 offset = end;
             }
-            1 => offset += 8,
-            5 => offset += 4,
+            1 => {
+                offset = offset
+                    .checked_add(8)
+                    .filter(|next| *next <= bytes.len())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("protobuf fixed64 field exceeds payload size")
+                    })?;
+            }
+            5 => {
+                offset = offset
+                    .checked_add(4)
+                    .filter(|next| *next <= bytes.len())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("protobuf fixed32 field exceeds payload size")
+                    })?;
+            }
             other => anyhow::bail!("unsupported protobuf wire type {other}"),
         }
     }
@@ -1379,11 +1397,21 @@ fn read_varint(bytes: &[u8], mut offset: usize) -> anyhow::Result<(u64, usize)> 
     while offset < bytes.len() {
         let byte = bytes[offset];
         offset += 1;
-        value |= u64::from(byte & 0x7f) << shift;
+        if shift >= 64 {
+            anyhow::bail!("protobuf varint exceeds 64 bits");
+        }
+        let chunk = u64::from(byte & 0x7f);
+        if shift == 63 && chunk > 1 {
+            anyhow::bail!("protobuf varint exceeds 64 bits");
+        }
+        value |= chunk << shift;
         if byte & 0x80 == 0 {
             return Ok((value, offset));
         }
         shift += 7;
+        if shift >= 64 {
+            anyhow::bail!("protobuf varint exceeds 64 bits");
+        }
     }
     anyhow::bail!("unexpected end of protobuf varint")
 }
@@ -1422,6 +1450,24 @@ mod tests {
         let parsed = take_connect_frame(&mut frame).unwrap();
         assert_eq!(parsed, Some(ConnectFrame::Payload(b"abc".to_vec())));
         assert!(frame.is_empty());
+    }
+
+    #[test]
+    fn malformed_overlong_varints_decode_as_empty_message() {
+        let payload = vec![0x80; 11];
+
+        let decoded = decode_agent_server_message(&payload);
+
+        assert!(decoded.text.is_empty());
+        assert!(decoded.thinking.is_empty());
+        assert!(decoded.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn max_width_varint_still_decodes() {
+        let payload = proto_field_varint(1, u64::MAX);
+
+        assert_eq!(scalar_u64(&payload, 1), Some(u64::MAX));
     }
 
     #[test]
@@ -1527,11 +1573,9 @@ mod tests {
         assert_eq!(decoded.tool_calls.len(), 1);
         assert_eq!(decoded.tool_calls[0].id, "tool_unknown_123");
         assert_eq!(decoded.tool_calls[0].name, "cursor_unsupported_tool");
-        assert!(
-            decoded.tool_calls[0]
-                .arguments
-                .contains("unsupported_cursor_native_tool")
-        );
+        assert!(decoded.tool_calls[0]
+            .arguments
+            .contains("unsupported_cursor_native_tool"));
     }
 
     /// Build a server message carrying one Cursor `ClientSideToolV2` tool call,
