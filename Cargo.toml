@@ -33,7 +33,8 @@ semver = "1.0.28"
 serde = "1.0.228"
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 sqlite-vec = "0.1.9"
-sqlx-core = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid"] }
+sqlx-core = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid", "_rt-tokio", "_tls-rustls-ring-webpki"] }
+sqlx-mysql = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid"] }
 sqlx-postgres = { version = "0.8.6", default-features = false, features = ["json", "time", "uuid"] }
 serde_yaml = "0.9.34"
 sha2 = "0.11.0"
@@ -95,6 +96,7 @@ roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store" }
 roder-ext-knowledge-md = { path = "crates/roder-ext-knowledge-md" }
 roder-ext-mcp = { path = "crates/roder-ext-mcp" }
 roder-ext-memory = { path = "crates/roder-ext-memory" }
+roder-ext-mysql-session = { path = "crates/roder-ext-mysql-session" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop" }
 roder-ext-notify-terminal = { path = "crates/roder-ext-notify-terminal" }
 roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses" }

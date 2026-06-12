@@ -28,6 +28,7 @@ roder-ext-gemini.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
+roder-ext-mysql-session.workspace = true
 roder-ext-postgres-session.workspace = true
 roder-ext-roder-cloud.workspace = true
 roder-ext-subagents.workspace = true

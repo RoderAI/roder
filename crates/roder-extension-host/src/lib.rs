@@ -36,6 +36,7 @@ use roder_ext_inference_router::{
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_knowledge_md::KnowledgeMdExtension;
 use roder_ext_memory::MemoryExtension;
+use roder_ext_mysql_session::{MysqlSessionConfig, MysqlSessionExtension};
 use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use roder_ext_google_images::{GoogleImagesConfig, GoogleImagesExtension};
@@ -43,11 +44,11 @@ use roder_ext_openai_images::{OpenAiImagesConfig, OpenAiImagesExtension};
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension};
-use roder_ext_roder_cloud::{RoderCloudConfig, RoderCloudExtension};
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
 use roder_ext_postgres_session::{
     PostgresSessionConfig, PostgresSessionExtension, redact_database_url,
 };
+use roder_ext_roder_cloud::{RoderCloudConfig, RoderCloudExtension};
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
 use roder_ext_runner_cloudflare::CloudflareRunnerExtension;
 use roder_ext_runner_daytona::DaytonaRunnerExtension;
@@ -281,6 +282,7 @@ pub enum SessionStoreConfig {
     #[default]
     Jsonl,
     Postgres(PostgresSessionConfig),
+    Mysql(MysqlSessionConfig),
 }
 
 #[derive(Debug, Clone)]
@@ -510,6 +512,15 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
                 )
             })?;
             builder.install(PostgresSessionExtension::new(postgres))?;
+        }
+        SessionStoreConfig::Mysql(mysql) => {
+            mysql.validate().map_err(|err| {
+                anyhow::anyhow!(
+                    "invalid MySQL session store config for {}: {err}",
+                    roder_ext_mysql_session::redact_database_url(&mysql.database_url)
+                )
+            })?;
+            builder.install(MysqlSessionExtension::new(mysql))?;
         }
     }
     match selected_memory_backend().as_deref() {
