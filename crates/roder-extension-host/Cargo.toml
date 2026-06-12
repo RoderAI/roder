@@ -39,6 +39,7 @@ roder-ext-openrouter.workspace = true
 roder-ext-roder-cloud.workspace = true
 roder-ext-google-speech.workspace = true
 roder-ext-opencode.workspace = true
+roder-ext-mysql-session.workspace = true
 roder-ext-postgres-session.workspace = true
 roder-ext-parallel-search.workspace = true
 roder-ext-perplexity-search.workspace = true

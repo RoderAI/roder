@@ -1449,8 +1449,29 @@ fn resolve_session_store_config(
             resolved.max_connections = postgres.max_connections;
             Ok(SessionStoreConfig::Postgres(resolved))
         }
+        "mysql" | "mysql-session" => {
+            let mysql = config.mysql.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("[sessions.mysql] is required when sessions.store = 'mysql'")
+            })?;
+            let database_url = resolve_config_secret(
+                mysql.database_url.as_deref(),
+                mysql.database_url_env.as_deref(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("MySQL session database URL is required"))?;
+            let tenant_id = resolve_config_secret(
+                mysql.tenant_id.as_deref(),
+                mysql.tenant_id_env.as_deref(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("MySQL session tenant id is required"))?;
+            let mut resolved =
+                roder_ext_mysql_session::MysqlSessionConfig::new(database_url, tenant_id)?;
+            resolved.max_connections = mysql.max_connections;
+            Ok(SessionStoreConfig::Mysql(resolved))
+        }
         other => {
-            anyhow::bail!("unsupported sessions.store {other:?}; expected 'jsonl' or 'postgres'")
+            anyhow::bail!(
+                "unsupported sessions.store {other:?}; expected 'jsonl', 'postgres', or 'mysql'"
+            )
         }
     }
 }

@@ -159,6 +159,7 @@ pub struct SessionsConfig {
     #[serde(default = "default_session_store")]
     pub store: String,
     pub postgres: Option<PostgresSessionConfig>,
+    pub mysql: Option<MysqlSessionConfig>,
 }
 
 impl Default for SessionsConfig {
@@ -166,12 +167,22 @@ impl Default for SessionsConfig {
         Self {
             store: default_session_store(),
             postgres: None,
+            mysql: None,
         }
     }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PostgresSessionConfig {
+    pub database_url: Option<String>,
+    pub database_url_env: Option<String>,
+    pub tenant_id: Option<String>,
+    pub tenant_id_env: Option<String>,
+    pub max_connections: Option<u32>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MysqlSessionConfig {
     pub database_url: Option<String>,
     pub database_url_env: Option<String>,
     pub tenant_id: Option<String>,
@@ -1309,6 +1320,36 @@ fn apply_env_overrides_with(config: &mut Config, mut env: impl FnMut(&str) -> Op
             .get_or_insert_with(Default::default)
             .max_connections = Some(max);
     }
+    if let Some(url) = env("RODER_MYSQL_SESSION_URL")
+        && !url.trim().is_empty()
+    {
+        config
+            .sessions
+            .get_or_insert_with(Default::default)
+            .mysql
+            .get_or_insert_with(Default::default)
+            .database_url = Some(url);
+    }
+    if let Some(tenant) = env("RODER_MYSQL_SESSION_TENANT")
+        && !tenant.trim().is_empty()
+    {
+        config
+            .sessions
+            .get_or_insert_with(Default::default)
+            .mysql
+            .get_or_insert_with(Default::default)
+            .tenant_id = Some(tenant);
+    }
+    if let Some(max) = env("RODER_MYSQL_SESSION_MAX_CONNECTIONS")
+        && let Ok(max) = max.trim().parse::<u32>()
+    {
+        config
+            .sessions
+            .get_or_insert_with(Default::default)
+            .mysql
+            .get_or_insert_with(Default::default)
+            .max_connections = Some(max);
+    }
     if let Some(disabled) = env("RODER_DISABLE_CONTEXT_ARTIFACTS")
         && parse_bool(&disabled).unwrap_or(false)
     {
@@ -1736,10 +1777,7 @@ mod tests {
         assert!(!knowledge.recall);
         assert_eq!(knowledge.recall_limit, Some(7));
         assert_eq!(knowledge.backend.as_deref(), Some("markdown"));
-        assert_eq!(
-            knowledge.store_path,
-            Some(PathBuf::from("/tmp/knowledge"))
-        );
+        assert_eq!(knowledge.store_path, Some(PathBuf::from("/tmp/knowledge")));
     }
 
     #[test]
@@ -1790,7 +1828,10 @@ mod tests {
         assert_eq!(python.id, "python-chat-completions");
         assert!(python.enabled);
         assert_eq!(python.command, "python3");
-        assert_eq!(python.env.get("PYTHONUNBUFFERED").map(String::as_str), Some("1"));
+        assert_eq!(
+            python.env.get("PYTHONUNBUFFERED").map(String::as_str),
+            Some("1")
+        );
         assert!(python.event_filter.matches("turn.started"));
         assert!(!config.process_extensions[1].enabled);
 

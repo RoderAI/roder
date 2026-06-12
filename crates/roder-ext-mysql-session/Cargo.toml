@@ -1,0 +1,30 @@
+[package]
+name = "roder-ext-mysql-session"
+version = "0.1.0"
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "mysql-session"
+category = "thread-store"
+display_name = "MySQL Session Store"
+description = "Tenant-scoped MySQL thread and context artifact persistence."
+default_in_profiles = []
+required_env = ["RODER_MYSQL_SESSION_URL", "RODER_MYSQL_SESSION_TENANT"]
+optional_env = []
+conflicts_with = ["jsonl-thread-store", "postgres-session"]
+required_capabilities = ["network.mysql"]
+extension_path = "::MysqlSessionExtension::new"
+docs_url = "docs/roder-postgresql-session-store.md"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sqlx-core.workspace = true
+sqlx-mysql.workspace = true
+time = { workspace = true, features = ["serde-well-known"] }
+tokio.workspace = true
+uuid = { workspace = true, features = ["v4"] }
