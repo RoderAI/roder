@@ -8,6 +8,7 @@
 //! timezone pitfalls.
 
 pub mod artifacts;
+pub(crate) mod executor;
 pub mod extension;
 pub mod schema;
 pub mod store;
