@@ -1,0 +1,30 @@
+[package]
+name = "roder-ext-mcp"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "mcp-tools"
+category = "tool-provider"
+display_name = "MCP Tools"
+description = "Connects to MCP servers over streamable HTTP and exposes their tools to the agent."
+default_in_profiles = []
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["network.mcp"]
+extension_path = "::McpToolsExtension::discover"
+docs_url = "https://modelcontextprotocol.io"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
