@@ -242,6 +242,18 @@ impl WorkspaceSearcher {
                         None,
                     );
                 }
+                // Scopes inside skip-listed directories (node_modules, dist,
+                // ...) are never in the workspace index; scan them directly.
+                if index::scope_is_ignored(&self.root, &requested_scope) {
+                    return scan_search(
+                        &self.root,
+                        options,
+                        &query,
+                        start,
+                        SearchEngine::Scan,
+                        None,
+                    );
+                }
                 let should_warm = match self.index.as_ref() {
                     Some(index) => !requested_scope.starts_with(index.scope()),
                     None => true,
@@ -251,6 +263,19 @@ impl WorkspaceSearcher {
                 }
                 let index = self.index.as_ref().expect("index is initialized");
                 let stats = index.stats().clone();
+                // A scope the index holds no documents for (gitignored at build
+                // time, or created since) can't be answered from the index;
+                // scanning keeps explicitly targeted paths searchable.
+                if requested_scope != self.root && !index.has_documents_under(&requested_scope) {
+                    return scan_search(
+                        &self.root,
+                        options,
+                        &query,
+                        start,
+                        SearchEngine::Fallback,
+                        Some(&stats),
+                    );
+                }
                 let Some(candidate_ids) = index.candidate_file_ids(&query) else {
                     return scan_search(
                         &self.root,

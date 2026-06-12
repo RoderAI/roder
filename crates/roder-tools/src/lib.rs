@@ -147,8 +147,18 @@ impl ToolContributor for BuiltinCodingToolsContributor {
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
         files::register(registry, self.workspace.clone(), self.backend.clone())?;
         search::register(registry, self.workspace.clone(), self.backend.clone())?;
-        shell::register(registry, self.workspace.clone(), self.command_shell.clone())?;
-        exec::register(registry, self.workspace.clone(), self.command_shell.clone())?;
+        shell::register(
+            registry,
+            self.workspace.clone(),
+            self.command_shell.clone(),
+            Some(self.backend.clone()),
+        )?;
+        exec::register(
+            registry,
+            self.workspace.clone(),
+            self.command_shell.clone(),
+            Some(self.backend.clone()),
+        )?;
         registry.register(Arc::new(patch::ApplyPatchTool {
             workspace: self.workspace.clone(),
             backend: self.backend.clone(),

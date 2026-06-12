@@ -5,10 +5,28 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[test]
-fn wildcard_match_supports_star_and_question_mark() {
-    assert!(wildcard_match("src/*.rs", "src/main.rs"));
-    assert!(wildcard_match("src/??.rs", "src/io.rs"));
-    assert!(!wildcard_match("src/*.rs", "README.md"));
+fn compiled_globs_support_star_question_mark_braces_and_classes() {
+    let matches = |pattern: &str, text: &str| compile_glob(pattern).unwrap().is_match(text);
+    assert!(matches("src/*.rs", "src/main.rs"));
+    assert!(matches("src/??.rs", "src/io.rs"));
+    assert!(!matches("src/*.rs", "README.md"));
+    assert!(matches("**/*.{toml,json,md}", "docs/api.md"));
+    assert!(matches("**/*.{toml,json,md}", "Cargo.toml"));
+    assert!(!matches("**/*.{toml,json,md}", "src/main.rs"));
+    assert!(matches("src/[ab].rs", "src/a.rs"));
+    assert!(!matches("src/[ab].rs", "src/c.rs"));
+}
+
+#[test]
+fn prepare_glob_pattern_resolves_workspace_absolute_prefixes() {
+    let root = Path::new("/workspace/project");
+    assert_eq!(
+        prepare_glob_pattern(root, "/workspace/project/src/**/*.rs").unwrap(),
+        "src/**/*.rs"
+    );
+    assert_eq!(prepare_glob_pattern(root, "src/*.rs").unwrap(), "src/*.rs");
+    let err = prepare_glob_pattern(root, "/elsewhere/**/*.rs").unwrap_err();
+    assert!(err.to_string().contains("outside the workspace root"));
 }
 
 #[test]
@@ -196,6 +214,237 @@ async fn grep_and_glob_skip_gitignored_paths() {
     assert_eq!(scan.text, "src/lib.rs:1:needle kept");
     assert_eq!(indexed.text, scan.text);
     assert_eq!(glob.text, "src/lib.rs");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn grep_treats_query_as_regex_by_default() {
+    let root = test_workspace("grep-regex-default");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/a.rs"), "toolName here\ntool_name there\n").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GrepTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    let result = tool
+        .execute(
+            context(&root),
+            call("grep", json!({"query": "toolName|tool_name"})),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.text.contains("src/a.rs:1:toolName here"));
+    assert!(result.text.contains("src/a.rs:2:tool_name there"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn grep_invalid_regex_errors_with_literal_hint() {
+    let root = test_workspace("grep-invalid-regex");
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GrepTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    let err = tool
+        .execute(context(&root), call("grep", json!({"query": "fetch("})))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("invalid regex"));
+    assert!(err.contains("\"regex\": false"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn grep_zero_matches_explains_scope_and_literal_mode() {
+    let root = test_workspace("grep-zero-match");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/a.rs"), "toolName here\n").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GrepTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    let literal = tool
+        .execute(
+            context(&root),
+            call(
+                "grep",
+                json!({"query": "toolName|tool_name", "regex": false}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(literal.text.contains("No matches for"));
+    assert!(literal.text.contains("literal string"));
+    assert!(literal.text.contains("retry with \"regex\": true"));
+
+    let regex = tool
+        .execute(
+            context(&root),
+            call("grep", json!({"query": "definitely_absent_needle"})),
+        )
+        .await
+        .unwrap();
+    assert!(regex.text.contains("No matches for"));
+    assert!(!regex.text.contains("retry with"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn grep_searches_explicitly_scoped_ignored_directories() {
+    let root = test_workspace("grep-ignored-scope");
+    std::fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
+    std::fs::create_dir_all(root.join("node_modules/pkg/dist")).unwrap();
+    std::fs::write(
+        root.join("node_modules/pkg/dist/index.js"),
+        "export const syncApi = 1;\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "fn main() {}\n").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GrepTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    // A workspace-root search still skips ignored directories...
+    let from_root = tool
+        .execute(context(&root), call("grep", json!({"query": "syncApi"})))
+        .await
+        .unwrap();
+    assert!(from_root.text.contains("No matches for"));
+
+    // ...but explicitly scoping into one searches it.
+    for mode in ["auto", "scan", "indexed"] {
+        let scoped = tool
+            .execute(
+                context(&root),
+                call(
+                    "grep",
+                    json!({"query": "syncApi", "path": "node_modules/pkg/dist", "mode": mode}),
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(
+            scoped
+                .text
+                .contains("node_modules/pkg/dist/index.js:1:export const syncApi = 1;"),
+            "mode {mode}: {}",
+            scoped.text
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn grep_accepts_home_relative_paths() {
+    let root = test_workspace("grep-home-path");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("sub/notes.txt"), "needle here\n").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GrepTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    // An absolute path stands in for `~` expansion: both resolve through
+    // `resolve_existing`, which previously was discarded before searching.
+    let result = tool
+        .execute(
+            context(&root),
+            call(
+                "grep",
+                json!({"query": "needle", "path": root.join("sub").display().to_string()}),
+            ),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.text.contains("notes.txt:1:needle here"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn glob_supports_brace_patterns_and_explains_zero_matches() {
+    let root = test_workspace("glob-braces");
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("Cargo.toml"), "").unwrap();
+    std::fs::write(root.join("docs/api.md"), "").unwrap();
+    std::fs::write(root.join("main.rs"), "").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GlobTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    let braces = tool
+        .execute(
+            context(&root),
+            call("glob", json!({"pattern": "**/*.{toml,md}"})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(braces.text, "Cargo.toml\ndocs/api.md");
+
+    let empty = tool
+        .execute(
+            context(&root),
+            call("glob", json!({"pattern": "**/*.{py,ipynb}"})),
+        )
+        .await
+        .unwrap();
+    assert!(empty.text.contains("No files matched pattern"));
+    assert!(empty.text.contains("3 files considered"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn glob_rejects_patterns_outside_the_workspace() {
+    let root = test_workspace("glob-outside");
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GlobTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    let err = tool
+        .execute(
+            context(&root),
+            call("glob", json!({"pattern": "/somewhere/else/**/*.rs"})),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("outside the workspace root"));
+
+    let inside = tool
+        .execute(
+            context(&root),
+            call(
+                "glob",
+                json!({"pattern": format!("{}/**/*.rs", root.display())}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(inside.text.contains("No files matched pattern"));
 
     let _ = std::fs::remove_dir_all(root);
 }

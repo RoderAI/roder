@@ -50,9 +50,13 @@ pub(crate) trait WorkspaceBackend: Send + Sync + 'static {
         options: SearchOptions,
     ) -> anyhow::Result<(String, Vec<String>, SearchMetadata)>;
 
-    async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>>;
+    async fn glob(&self, pattern: &str) -> anyhow::Result<crate::search::GlobOutcome>;
 
     async fn apply_patch(&self, patch: &str) -> anyhow::Result<String>;
+
+    /// Called when something outside the file tools (a shell or exec command)
+    /// may have changed the workspace, so cached search state is rebuilt.
+    fn note_external_change(&self) {}
 }
 
 #[derive(Debug)]
@@ -241,6 +245,13 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         tokio::task::spawn_blocking(move || {
             let input_path = options.path.to_string_lossy().to_string();
             let start = workspace.resolve_existing(&input_path)?;
+            /*
+             * Hand the searcher the canonicalized path, not the raw input:
+             * scope filtering inside the index is lexical, so `~`, symlinks,
+             * or case differences in the raw path silently drop every match.
+             */
+            let mut options = options;
+            options.path = start.clone();
             let mut searcher = searcher
                 .lock()
                 .map_err(|_| anyhow::anyhow!("search index lock is poisoned"))?;
@@ -251,21 +262,27 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         .map_err(|err| anyhow::anyhow!("grep search task failed: {err}"))?
     }
 
-    async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>> {
+    async fn glob(&self, pattern: &str) -> anyhow::Result<crate::search::GlobOutcome> {
         let workspace = self.workspace.clone();
         let pattern = pattern.to_string();
         tokio::task::spawn_blocking(move || {
-            let pattern = crate::search::normalize_relative_pattern(&pattern);
+            let pattern = crate::search::prepare_glob_pattern(workspace.root(), &pattern)?;
+            let matcher = crate::search::compile_glob(&pattern)?;
             let mut matches = Vec::new();
+            let mut files_considered = 0usize;
             crate::search::visit_files(workspace.root(), &mut |path| {
+                files_considered += 1;
                 let rel = workspace.display(path);
-                if crate::search::wildcard_match(&pattern, &rel) {
+                if matcher.is_match(&rel) {
                     matches.push(rel);
                 }
                 Ok(())
             })?;
             matches.sort();
-            Ok(matches)
+            Ok(crate::search::GlobOutcome {
+                matches,
+                files_considered,
+            })
         })
         .await
         .map_err(|err| anyhow::anyhow!("glob task failed: {err}"))?
@@ -275,6 +292,10 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         let result = crate::patch::apply_patch_to_workspace(&self.workspace, patch).await?;
         self.invalidate_search_index()?;
         Ok(result)
+    }
+
+    fn note_external_change(&self) {
+        let _ = self.invalidate_search_index();
     }
 }
 
@@ -470,21 +491,27 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
         Ok((start, matches, metadata))
     }
 
-    async fn glob(&self, pattern: &str) -> anyhow::Result<Vec<String>> {
-        let pattern = crate::search::normalize_relative_pattern(pattern);
+    async fn glob(&self, pattern: &str) -> anyhow::Result<crate::search::GlobOutcome> {
+        let pattern = crate::search::prepare_glob_pattern(self.guard.root(), pattern)?;
+        let matcher = crate::search::compile_glob(&pattern)?;
         let output = self
             .run_shell(
                 "find . -type f ! -path './.git/*' ! -path './target/*' | sed 's#^./##'"
                     .to_string(),
             )
             .await?;
+        let mut files_considered = 0usize;
         let mut matches = output
             .lines()
-            .filter(|rel| crate::search::wildcard_match(&pattern, rel))
+            .inspect(|_| files_considered += 1)
+            .filter(|rel| matcher.is_match(rel))
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         matches.sort();
-        Ok(matches)
+        Ok(crate::search::GlobOutcome {
+            matches,
+            files_considered,
+        })
     }
 
     async fn apply_patch(&self, patch: &str) -> anyhow::Result<String> {
