@@ -1,0 +1,22 @@
+{
+  "name": "roder-cursor-sdk-agents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Roder process-hosted extension wrapping @cursor/sdk for remote Cursor cloud agents",
+  "type": "module",
+  "main": "dist/src/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@cursor/sdk": "1.0.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

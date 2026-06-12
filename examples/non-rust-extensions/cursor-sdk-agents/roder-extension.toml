@@ -1,0 +1,16 @@
+id = "roder-ext-cursor-sdk"
+name = "Cursor SDK Agents"
+version = "0.1.0"
+api_version = "^0.1"
+description = "Process-hosted TypeScript extension wrapping @cursor/sdk for remote Cursor cloud agents"
+
+provides = [
+  { type = "subagent_dispatcher", id = "cursor-cloud" },
+  { type = "task_executor", id = "cursor-cloud-agent" },
+]
+
+required_capabilities = [
+  "network.api.cursor.com",
+  "secret.read.CURSOR_API_KEY",
+  "events.emit.extension",
+]
