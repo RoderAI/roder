@@ -61,6 +61,7 @@ export {
   type RoderErrorCategory,
 } from "./errors.js";
 export { RoderRun, type RoderRunOptions, type RoderStreamOptions } from "./run.js";
+export { createPartTransformer, type AgentPart, type PartTransformer } from "./parts.js";
 export {
   InMemoryTransport,
   LocalProcessTransport,
