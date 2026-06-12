@@ -3494,6 +3494,10 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
             .contains("remote-secret-token")
     );
 
+    // A valid bearer is accepted regardless of Origin (see the
+    // `remote_auth_accepts_valid_bearer_from_any_origin` unit test); browser
+    // pages cannot set the Authorization header, so Origin-bearing requests
+    // with a valid token are app clients (e.g. Obsidian), not CSWSH.
     let mut origin_request = url.clone().into_client_request().unwrap();
     origin_request.headers_mut().insert(
         "Authorization",
@@ -3502,11 +3506,11 @@ async fn remote_websocket_requires_auth_and_serves_thread_turn_flow() {
     origin_request
         .headers_mut()
         .insert("Origin", "https://client.example".parse().unwrap());
-    assert!(
-        tokio_tungstenite::connect_async(origin_request)
-            .await
-            .is_err()
-    );
+    let (origin_websocket, _) = tokio_tungstenite::connect_async(origin_request)
+        .await
+        .expect("valid bearer with Origin header connects");
+    drop(origin_websocket);
+    wait_for_global_event(&mut events, "remote/clientConnected").await;
 
     let mut request = url.clone().into_client_request().unwrap();
     request.headers_mut().insert(
