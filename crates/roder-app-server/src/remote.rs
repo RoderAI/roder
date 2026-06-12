@@ -350,6 +350,29 @@ async fn spawn_remote_websocket(
                     }
                 });
 
+                // Forward app-server notifications (turn/item events, approval
+                // requests, ...) to the remote client, mirroring the stdio
+                // app-server loop. Without this, remote SDK clients can only
+                // poll thread/read for progress.
+                let mut notifications = app_server.subscribe_notifications();
+                let notification_tx = outbound_tx.clone();
+                let notification_forwarder = tokio::spawn(async move {
+                    loop {
+                        match notifications.recv().await {
+                            Ok(notification) => {
+                                let Ok(text) = serde_json::to_string(&notification) else {
+                                    continue;
+                                };
+                                if notification_tx.send(Message::Text(text.into())).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                });
+
                 let chrome_bridge = roder_api::chrome::bridge();
                 let mut chrome_client: Option<u64> = None;
 
@@ -422,6 +445,7 @@ async fn spawn_remote_websocket(
                 if let Some(client_id) = chrome_client {
                     chrome_bridge.unregister_client(client_id);
                 }
+                notification_forwarder.abort();
                 drop(outbound_tx);
                 let _ = writer.await;
                 app_server
