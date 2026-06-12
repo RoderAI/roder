@@ -296,24 +296,38 @@ fn write_result_frame_echoes_seq_path_lines_and_size() {
 
 #[test]
 fn shell_result_streams_start_stdout_and_exit_frames_with_one_seq() {
-    let frames = encode_exec_shell_results(43, "/repo", "ok\n");
+    // Shapes from an authoritative cursor-agent v2026.06.12 capture:
+    //   start  {1:seq, 14:{4:{1:{1:1}}}}
+    //   stdout {1:seq, 14:{1:{1:chunk}}}
+    //   exit   {1:seq, 14:{3:{2:cwd, 6:duration_ms}}}
+    let frames = encode_exec_shell_results(43, "/repo", "ok\n", 29);
     assert_eq!(frames.len(), 3, "start, stdout, exit");
     for frame in &frames {
         let exec = exec_client_body(frame);
         assert_eq!(scalar_u64(&exec, 1), Some(43));
         assert!(submessage(&exec, 14).is_some(), "shell result field");
     }
-    // stdout frame: 14:{ 1:{ 1:stdout } }
     let stdout_exec = exec_client_body(&frames[1]);
     let shell = submessage(&stdout_exec, 14).unwrap();
     let out = submessage(&shell, 1).expect("stdout body");
     assert_eq!(scalar_string(&out, 1).as_deref(), Some("ok\n"));
-    // exit frame: 14:{ 3:{ 2:cwd, 6:bytes } }
     let exit_exec = exec_client_body(&frames[2]);
     let shell = submessage(&exit_exec, 14).unwrap();
     let exit = submessage(&shell, 3).expect("exit body");
     assert_eq!(scalar_string(&exit, 2).as_deref(), Some("/repo"));
-    assert_eq!(scalar_u64(&exit, 6), Some(3));
+    assert_eq!(scalar_u64(&exit, 6), Some(29), "f6 is the duration in ms");
+}
+
+#[test]
+fn exec_control_ack_echoes_the_serviced_seq() {
+    // Capture: AgentClientMessage{5:{1:{1:seq}}} (hex 0a020801 for seq 1).
+    // An ack without the seq leaves streamed shell results looking unfinished
+    // and the server never resumes the model.
+    let ack = encode_exec_control(1);
+    let ctrl = submessage(&ack, 5).expect("exec_client_control_message");
+    let inner = submessage(&ctrl, 1).expect("ack body");
+    assert_eq!(scalar_u64(&inner, 1), Some(1));
+    assert_eq!(inner, vec![0x08, 0x01]);
 }
 
 #[test]
