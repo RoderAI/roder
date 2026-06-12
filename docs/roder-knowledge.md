@@ -10,7 +10,7 @@ document is a markdown file with YAML front matter, so the knowledge base is
 human-readable, diffable, and editable outside Roder. A future engine will
 add embedding-backed semantic recall and automatic knowledge reconciliation
 (duplicate merging, contradiction surfacing, staleness review) behind the same
-`KnowledgeStore` contract; see `roadmap/93-roder-project-knowledge-base.md`.
+`KnowledgeStore` contract; see `roadmap/94-roder-project-knowledge-base.md`.
 
 ## Storage layout
 
