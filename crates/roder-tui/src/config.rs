@@ -48,6 +48,7 @@ pub fn built_in_palette_sources() -> Vec<PaletteSourceDescriptor> {
         ("modes", "Modes", 60),
         ("settings", "Settings", 50),
         ("runners", "Runners", 45),
+        ("packages", "Packages", 44),
         ("marketplaces", "Marketplaces", 43),
         ("processes", "Processes", 42),
         ("themes", "Themes", 40),
@@ -85,6 +86,7 @@ mod tests {
         assert!(ids.contains("modes"));
         assert!(ids.contains("files"));
         assert!(ids.contains("settings"));
+        assert!(ids.contains("packages"));
         assert!(ids.contains("marketplaces"));
         assert!(ids.contains("processes"));
         assert!(ids.contains("skills"));
