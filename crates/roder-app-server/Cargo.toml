@@ -104,6 +104,7 @@ async-trait.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
 futures.workspace = true
+roder-ext-knowledge-md.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-google-embeddings.workspace = true
 roder-ext-openai-embeddings.workspace = true

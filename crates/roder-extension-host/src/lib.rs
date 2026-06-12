@@ -34,6 +34,7 @@ use roder_ext_inference_router::{
     LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
 };
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
+use roder_ext_knowledge_md::KnowledgeMdExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
@@ -517,6 +518,29 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         )?,
         Some(other) => {
             anyhow::bail!("unknown memory backend {other:?}; expected \"sqlite\" or \"honcho\"")
+        }
+    }
+    {
+        let knowledge = roder_config::load_config()
+            .ok()
+            .and_then(|config| config.knowledge)
+            .unwrap_or_default();
+        if knowledge.enabled {
+            match knowledge.backend.as_deref() {
+                None | Some("markdown") => {
+                    let base_path = knowledge
+                        .store_path
+                        .clone()
+                        .unwrap_or_else(|| roder_home.join("knowledge"));
+                    builder.install(
+                        KnowledgeMdExtension::new(base_path)
+                            .with_recall(knowledge.recall, knowledge.recall_limit.unwrap_or(4)),
+                    )?;
+                }
+                Some(other) => {
+                    anyhow::bail!("unknown knowledge backend {other:?}; expected \"markdown\"")
+                }
+            }
         }
     }
     if let Some(key) = openai_embedding_key {

@@ -1,0 +1,30 @@
+[package]
+name = "roder-ext-knowledge-md"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "knowledge-md"
+category = "knowledge-store"
+display_name = "Markdown Knowledge Base"
+description = "Markdown-file-based project knowledge base engine."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = []
+conflicts_with = []
+required_capabilities = ["fs.readwrite.roder-home"]
+extension_path = "::extension"
+docs_url = ""
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+time = { workspace = true, features = ["serde", "formatting", "parsing"] }
+tokio.workspace = true
+uuid = { workspace = true, features = ["v4"] }

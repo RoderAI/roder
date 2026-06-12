@@ -11,6 +11,7 @@ pub enum ContextBlockKind {
     Instruction,
     RepositoryFact,
     Memory,
+    Knowledge,
     RetrievedDocument,
     Environment,
     ToolAvailability,

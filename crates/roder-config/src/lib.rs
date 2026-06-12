@@ -45,6 +45,8 @@ pub struct Config {
     pub zerolang: Option<ZerolangConfig>,
     pub media: Option<MediaConfig>,
     pub memories: Option<MemoriesConfig>,
+    /// Project knowledge base (`[knowledge]`); markdown engine by default.
+    pub knowledge: Option<KnowledgeConfig>,
     #[serde(default)]
     pub embedding_providers: HashMap<String, EmbeddingProviderConfig>,
     pub agent_teams: Option<AgentTeamsConfig>,
@@ -600,6 +602,36 @@ impl Default for MemoriesConfig {
             global_enabled: false,
             include_global_with_project: false,
             honcho: None,
+        }
+    }
+}
+
+/// `[knowledge]` config block (roadmap phase 93). The markdown engine
+/// (`roder-ext-knowledge-md`) is the only backend today; future engines
+/// select through `backend`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnowledgeConfig {
+    /// Knowledge store backend: "markdown" (default).
+    pub backend: Option<String>,
+    /// Store base path; defaults to `<roder-home>/knowledge`.
+    pub store_path: Option<PathBuf>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Inject relevant knowledge into turns.
+    #[serde(default = "default_true")]
+    pub recall: bool,
+    /// Documents injected per turn at most.
+    pub recall_limit: Option<usize>,
+}
+
+impl Default for KnowledgeConfig {
+    fn default() -> Self {
+        Self {
+            backend: None,
+            store_path: None,
+            enabled: true,
+            recall: true,
+            recall_limit: None,
         }
     }
 }
@@ -1478,6 +1510,7 @@ mod tests {
             zerolang: None,
             media: None,
             memories: None,
+            knowledge: None,
             embedding_providers: HashMap::new(),
             agent_teams: None,
             skills: None,
@@ -1502,6 +1535,43 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn knowledge_config_deserializes_with_defaults() {
+        let config: Config = toml::from_str(
+            r#"
+            [knowledge]
+            "#,
+        )
+        .unwrap();
+        let knowledge = config.knowledge.unwrap();
+        assert!(knowledge.enabled);
+        assert!(knowledge.recall);
+        assert_eq!(knowledge.recall_limit, None);
+        assert_eq!(knowledge.backend, None);
+        assert_eq!(knowledge.store_path, None);
+
+        let config: Config = toml::from_str(
+            r#"
+            [knowledge]
+            enabled = false
+            recall = false
+            recall_limit = 7
+            backend = "markdown"
+            store_path = "/tmp/knowledge"
+            "#,
+        )
+        .unwrap();
+        let knowledge = config.knowledge.unwrap();
+        assert!(!knowledge.enabled);
+        assert!(!knowledge.recall);
+        assert_eq!(knowledge.recall_limit, Some(7));
+        assert_eq!(knowledge.backend.as_deref(), Some("markdown"));
+        assert_eq!(
+            knowledge.store_path,
+            Some(PathBuf::from("/tmp/knowledge"))
+        );
     }
 
     #[test]
