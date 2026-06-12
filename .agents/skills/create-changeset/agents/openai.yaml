@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create changeset"
+  short_description: "Add the .changeset file CI requires for changed packages."
+  default_prompt: "Use this skill to identify which knope packages this branch changed, write a valid .changeset/*.md file with correct bump types, verify with scripts/check-changesets.py, and commit it so changeset-gate CI passes."
