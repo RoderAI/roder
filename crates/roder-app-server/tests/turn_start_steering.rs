@@ -248,7 +248,6 @@ async fn turn_start_uses_protocol_thread_workspace_when_snapshot_metadata_missin
                 model: None,
                 reasoning: None,
                 policy_mode: None,
-                developer_context: None,
                 task_ledger_required: false,
             })
             .unwrap(),
@@ -312,7 +311,6 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
                 model: None,
                 reasoning: None,
                 policy_mode: None,
-                developer_context: None,
                 task_ledger_required: false,
             })
             .unwrap(),
@@ -335,7 +333,6 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
                 model: None,
                 reasoning: None,
                 policy_mode: None,
-                developer_context: None,
                 task_ledger_required: false,
             })
             .unwrap(),

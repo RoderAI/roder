@@ -241,9 +241,7 @@ async fn process_extension_python_provider_serves_a_full_turn() {
             model: None,
             reasoning: None,
             policy_mode: None,
-            developer_context: None,
             task_ledger_required: false,
-            developer_context: None,
         })
         .unwrap(),
     )
