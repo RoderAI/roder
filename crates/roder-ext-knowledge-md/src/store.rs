@@ -227,7 +227,7 @@ impl KnowledgeStore for MarkdownKnowledgeStore {
                 None => query.include_archived || doc.status != KnowledgeStatus::Archived,
             })
             .collect::<Vec<_>>();
-        docs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        docs.sort_by_key(|doc| std::cmp::Reverse(doc.updated_at));
         docs.truncate(query.limit.max(1));
         Ok(docs.iter().map(KnowledgeDocument::summary).collect())
     }
@@ -369,7 +369,7 @@ impl KnowledgeStore for MarkdownKnowledgeStore {
                 });
             }
         }
-        revisions.sort_by(|a, b| b.revision.cmp(&a.revision));
+        revisions.sort_by_key(|info| std::cmp::Reverse(info.revision));
         revisions.dedup_by_key(|info| info.revision);
         Ok(revisions)
     }
