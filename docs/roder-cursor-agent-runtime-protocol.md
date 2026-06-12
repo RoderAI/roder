@@ -120,6 +120,20 @@ building the client:
 - **SEARCH** (exec field 5) covers both glob (`files_with_matches`) and grep
   (`content`); the client walks the workspace and returns the result structures
   above. Verified live (glob + grep return correct counts, no loop).
+- **Unknown exec variants must still be answered.** The `ExecServerMessage`
+  oneof has more request slots than read/write/shell/search, and the server
+  blocks the turn until a result with the mirrored seq + field number arrives.
+  Silently dropping an unrecognized exec frame left the stream stalled until
+  the no-progress cap killed the turn ("stuck on tool calls", observed with
+  composer-2.5). The client now decodes any unhandled slot as an Unknown exec,
+  replies with a mirrored empty result (`{1: seq, <field>: {}}`) plus the usual
+  `exec_client_control_message` ack, and surfaces the call in Roder's timeline
+  as `cursor_unsupported_tool` so the request is visible (and capturable via
+  `RODER_CURSOR_CAPTURE_FRAMES`) instead of hanging.
+- **Exec results count as progress.** Servicing an exec (including a slow tool
+  run or a user approval wait) must reset the no-progress clock; otherwise a
+  tool that takes longer than the cap ends the turn right after its result is
+  sent, before the model can continue.
 - **Heartbeats.** Send `client_heartbeat` (`AgentClientMessage{7:<empty>}`)
   periodically; the server resets long turns without them.
 - **No overall request timeout.** A bidi turn can run for minutes; the client

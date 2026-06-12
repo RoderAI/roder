@@ -91,9 +91,9 @@ fn encode_agent_run_request(
     // `ConversationHistoryImageContent` when the client advertises support via
     // `AgentRunRequest.client_supports_inline_images` (field 19).
     let has_inline_images = !images.is_empty()
-        || history.iter().any(|item| {
-            matches!(item, CursorHistoryMessage::User { images, .. } if !images.is_empty())
-        });
+        || history.iter().any(
+            |item| matches!(item, CursorHistoryMessage::User { images, .. } if !images.is_empty()),
+        );
     let mut fields = vec![
         proto_field_bytes(1, Vec::new()),
         proto_field_bytes(
@@ -167,9 +167,7 @@ fn encode_protobuf_value(value: &serde_json::Value) -> Vec<u8> {
     match value {
         serde_json::Value::Null => proto_field_varint(1, 0),
         serde_json::Value::Bool(b) => proto_field_varint(4, u64::from(*b)),
-        serde_json::Value::Number(n) => {
-            proto_field_double(2, n.as_f64().unwrap_or(0.0))
-        }
+        serde_json::Value::Number(n) => proto_field_double(2, n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => proto_field_string(3, s),
         serde_json::Value::Object(_) => proto_field_bytes(5, encode_protobuf_struct(value)),
         serde_json::Value::Array(items) => {
@@ -733,6 +731,18 @@ pub(crate) enum CursorExecRequest {
     /// must respond with `encode_exec_request_context_result` to unblock the
     /// model.  `id` mirrors ExecServerMessage.f1 and must be echoed back.
     RequestContext { id: u64 },
+    /// An exec request variant Roder does not implement yet (the
+    /// `ExecServerMessage` oneof has many more slots than read/write/shell/
+    /// search). The server blocks the turn until *some* result with the
+    /// mirrored seq + field number arrives, so the client must still reply
+    /// (see `encode_exec_unknown_result`) instead of silently dropping the
+    /// frame — silence stalls the stream until the no-progress cap kills the
+    /// turn, which surfaced as "stuck on tool calls" with composer models.
+    Unknown {
+        seq: u64,
+        field_no: u32,
+        payload: Vec<u8>,
+    },
 }
 
 /// One grep match: a relative file path, a 1-based line number, and the line.
@@ -786,37 +796,60 @@ pub(crate) fn encode_kv_ack(seq: u64) -> Vec<u8> {
     )])
 }
 
+/// `ExecServerMessage` length-delimited fields that are envelope metadata, not
+/// the request oneof: f15 = message uuid, f19 = routing keys (f1 = seq is a
+/// varint and never matches the length-delimited scan).
+const EXEC_METADATA_FIELDS: [u32; 2] = [15, 19];
+
 fn decode_exec_server(bytes: &[u8]) -> Option<CursorExecRequest> {
     let seq = scalar_u64(bytes, 1).unwrap_or(0);
     if let Some(read) = submessage(bytes, 7) {
-        let path = scalar_string(&read, 1)?;
-        let tool_call_id = scalar_string(&read, 2).unwrap_or_default();
-        return Some(CursorExecRequest::Read {
+        if let Some(path) = scalar_string(&read, 1) {
+            let tool_call_id = scalar_string(&read, 2).unwrap_or_default();
+            return Some(CursorExecRequest::Read {
+                seq,
+                path,
+                tool_call_id,
+            });
+        }
+        return Some(CursorExecRequest::Unknown {
             seq,
-            path,
-            tool_call_id,
+            field_no: 7,
+            payload: read,
         });
     }
     if let Some(write) = submessage(bytes, 3) {
-        let path = scalar_string(&write, 1)?;
-        let content = submessage(&write, 2).unwrap_or_default();
-        let tool_call_id = scalar_string(&write, 3).unwrap_or_default();
-        return Some(CursorExecRequest::Write {
+        if let Some(path) = scalar_string(&write, 1) {
+            let content = submessage(&write, 2).unwrap_or_default();
+            let tool_call_id = scalar_string(&write, 3).unwrap_or_default();
+            return Some(CursorExecRequest::Write {
+                seq,
+                path,
+                content,
+                tool_call_id,
+            });
+        }
+        return Some(CursorExecRequest::Unknown {
             seq,
-            path,
-            content,
-            tool_call_id,
+            field_no: 3,
+            payload: write,
         });
     }
     if let Some(shell) = submessage(bytes, 14) {
-        let command = scalar_string(&shell, 1)?;
-        let cwd = scalar_string(&shell, 2).unwrap_or_default();
-        let tool_call_id = scalar_string(&shell, 4).unwrap_or_default();
-        return Some(CursorExecRequest::Shell {
+        if let Some(command) = scalar_string(&shell, 1) {
+            let cwd = scalar_string(&shell, 2).unwrap_or_default();
+            let tool_call_id = scalar_string(&shell, 4).unwrap_or_default();
+            return Some(CursorExecRequest::Shell {
+                seq,
+                command,
+                cwd,
+                tool_call_id,
+            });
+        }
+        return Some(CursorExecRequest::Unknown {
             seq,
-            command,
-            cwd,
-            tool_call_id,
+            field_no: 14,
+            payload: shell,
         });
     }
     if let Some(search) = submessage(bytes, 5) {
@@ -837,7 +870,22 @@ fn decode_exec_server(bytes: &[u8]) -> Option<CursorExecRequest> {
     if submessage(bytes, 10).is_some() {
         return Some(CursorExecRequest::RequestContext { id: seq });
     }
-    None
+    // Any other request slot in the oneof (delete, ls, todo, MCP state, ...)
+    // that Roder does not implement yet. Still surface it so the caller can
+    // reply and keep the stream moving.
+    decode_fields_safe(bytes).into_iter().find_map(|field| {
+        let ProtoValue::Bytes(payload) = field.value else {
+            return None;
+        };
+        if EXEC_METADATA_FIELDS.contains(&field.no) {
+            return None;
+        }
+        Some(CursorExecRequest::Unknown {
+            seq,
+            field_no: field.no,
+            payload,
+        })
+    })
 }
 
 fn wrap_exec_client(exec: Vec<u8>) -> Vec<u8> {
@@ -991,6 +1039,18 @@ pub(crate) fn encode_exec_grep_result(
     ]))
 }
 
+/// Result for an exec request variant Roder does not implement: mirror the
+/// seq and request field number with an empty result message, matching the
+/// seq-echo convention every implemented result uses. The server treats the
+/// call as answered (rather than waiting forever on a silent client), so the
+/// turn keeps streaming instead of hanging on the tool call.
+pub(crate) fn encode_exec_unknown_result(seq: u64, field_no: u32) -> Vec<u8> {
+    wrap_exec_client(proto_message(vec![
+        proto_field_varint(1, seq),
+        proto_field_bytes(field_no, Vec::new()),
+    ]))
+}
+
 /// REQUEST-CONTEXT result: responds to `request_context_args` (field 10 of
 /// `ExecServerMessage`).  The server requires this before it will start
 /// generating model output.
@@ -1008,8 +1068,8 @@ pub(crate) fn encode_exec_grep_result(
 pub(crate) fn encode_exec_request_context_result(id: u64, workspace_path: &str) -> Vec<u8> {
     let env = proto_message(vec![
         proto_field_string(1, "macOS"),
-        proto_field_string(2, workspace_path),   // workspace_paths[]
-        proto_field_string(11, workspace_path),  // project_folder
+        proto_field_string(2, workspace_path), // workspace_paths[]
+        proto_field_string(11, workspace_path), // project_folder
     ]);
     let context = proto_message(vec![proto_field_bytes(4, env)]);
     let success = proto_message(vec![proto_field_bytes(1, context)]);
@@ -1065,7 +1125,7 @@ pub(crate) fn encode_exec_control() -> Vec<u8> {
 }
 
 /// First length-delimited (sub-message / string) field with the given number.
-fn submessage(bytes: &[u8], no: u32) -> Option<Vec<u8>> {
+pub(crate) fn submessage(bytes: &[u8], no: u32) -> Option<Vec<u8>> {
     decode_fields_safe(bytes)
         .iter()
         .find_map(|field| bytes_field(field, no).cloned())
@@ -1087,7 +1147,7 @@ fn scalar_string(bytes: &[u8], no: u32) -> Option<String> {
 }
 
 /// Decode a scalar varint field.
-fn scalar_u64(bytes: &[u8], no: u32) -> Option<u64> {
+pub(crate) fn scalar_u64(bytes: &[u8], no: u32) -> Option<u64> {
     decode_fields_safe(bytes)
         .iter()
         .find_map(|field| match &field.value {
@@ -1176,6 +1236,16 @@ fn decode_usage(bytes: &[u8]) -> BTreeMap<u32, u64> {
             ProtoValue::Varint(value) => Some((field.no, value)),
             _ => None,
         })
+        .collect()
+}
+
+/// Printable strings found in a raw exec payload, used to label unsupported
+/// exec requests in the tool timeline (truncated to keep the record small).
+pub(crate) fn collect_payload_strings(payload: &[u8]) -> Vec<String> {
+    collect_utf8_strings(payload, 0)
+        .into_iter()
+        .take(8)
+        .map(|value| value.chars().take(200).collect())
         .collect()
 }
 
@@ -1330,7 +1400,10 @@ mod tests {
         let file_list = submessage(&l1, 1).expect("file_list");
         let file = submessage(&file_list, 2).expect("first file entry");
         assert_eq!(scalar_string(&file, 1).as_deref(), Some("AGENTS.md"));
-        assert_eq!(submessage(&file, 2).as_deref(), Some(b"file body".as_slice()));
+        assert_eq!(
+            submessage(&file, 2).as_deref(),
+            Some(b"file body".as_slice())
+        );
 
         // An empty file list still establishes the exec channel (no file entries).
         let empty = encode_exec_init(&[]);
@@ -1456,8 +1529,15 @@ mod tests {
     fn user_message_requests_agent_mode_not_ask() {
         // Regression: roder must send UserMessage.mode = AGENT_MODE_AGENT (1).
         // Sending 2 (AGENT_MODE_ASK) made Cursor run the model read-only.
-        let bytes =
-            encode_agent_client_message_with_history("hi", "claude-opus-4-8", "conv", "msg", &[], &[], &[]);
+        let bytes = encode_agent_client_message_with_history(
+            "hi",
+            "claude-opus-4-8",
+            "conv",
+            "msg",
+            &[],
+            &[],
+            &[],
+        );
         let run = submessage(&bytes, 1).expect("agent run request");
         let action = submessage(&run, 2).expect("conversation action");
         let user_message_action = submessage(&action, 1).expect("user message action");
@@ -1495,7 +1575,15 @@ mod tests {
                 is_error: false,
             },
         ];
-        let bytes = encode_agent_client_message_with_history("edit it", "m", "c", "mid", &history, &[], &[]);
+        let bytes = encode_agent_client_message_with_history(
+            "edit it",
+            "m",
+            "c",
+            "mid",
+            &history,
+            &[],
+            &[],
+        );
         // ConversationHistory lives at AgentRunRequest(1).action(2).user_message_action(1).conversation_history(7).
         let run = submessage(&bytes, 1).unwrap();
         let action = submessage(&run, 2).unwrap();
@@ -1550,9 +1638,7 @@ mod tests {
 
     #[test]
     fn omitting_tools_keeps_mcp_tools_message_empty() {
-        let bytes = encode_agent_client_message_with_history(
-            "hi", "m", "c", "mid", &[], &[], &[],
-        );
+        let bytes = encode_agent_client_message_with_history("hi", "m", "c", "mid", &[], &[], &[]);
         let run = submessage(&bytes, 1).unwrap();
         // mcp_tools(4) is present but its repeated definition list is empty.
         let mcp_tools = submessage(&run, 4).unwrap_or_default();
@@ -1594,8 +1680,14 @@ mod tests {
         let selected_context = submessage(&user_message, 3).expect("selected_context present");
         let selected_image = submessage(&selected_context, 1).expect("selected_image present");
         // SelectedImage { mime_type 7, data 8 }.
-        assert_eq!(scalar_string(&selected_image, 7).as_deref(), Some("image/png"));
-        assert_eq!(scalar_string(&selected_image, 8).as_deref(), Some("PNGDATA"));
+        assert_eq!(
+            scalar_string(&selected_image, 7).as_deref(),
+            Some("image/png")
+        );
+        assert_eq!(
+            scalar_string(&selected_image, 8).as_deref(),
+            Some("PNGDATA")
+        );
     }
 
     #[test]
@@ -1621,7 +1713,8 @@ mod tests {
             }],
         }];
         use base64::Engine as _;
-        let bytes = encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[], &[]);
+        let bytes =
+            encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[], &[]);
         let run = submessage(&bytes, 1).unwrap();
         // History images also require the inline-images capability flag.
         assert_eq!(scalar_u64(&run, 19), Some(1));
@@ -1633,7 +1726,10 @@ mod tests {
         // ConversationHistoryUserContent.image(2) -> ImageContent { data 1, mime_type 2 }.
         let image_content = submessage(&user, 2).expect("image content present");
         let encoded = base64::engine::general_purpose::STANDARD.encode(b"JPEGDATA");
-        assert_eq!(scalar_string(&image_content, 1).as_deref(), Some(encoded.as_str()));
+        assert_eq!(
+            scalar_string(&image_content, 1).as_deref(),
+            Some(encoded.as_str())
+        );
         assert_eq!(
             scalar_string(&image_content, 2).as_deref(),
             Some("image/jpeg")
