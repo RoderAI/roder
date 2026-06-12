@@ -15,9 +15,7 @@ use tokio::sync::mpsc;
 
 /// Fake HTTP server answering scripted (status, body) responses in order and
 /// capturing each raw request (headers + body).
-async fn spawn_server(
-    responses: Vec<(u16, &'static str)>,
-) -> (String, mpsc::Receiver<String>) {
+async fn spawn_server(responses: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
     let (tx, rx) = mpsc::channel(responses.len().max(1));
@@ -241,7 +239,10 @@ async fn unsupported_options_fail_before_any_network_call() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(unknown_model.contains("unknown OpenAI image model"), "{unknown_model}");
+    assert!(
+        unknown_model.contains("unknown OpenAI image model"),
+        "{unknown_model}"
+    );
     assert!(unknown_model.contains("gpt-image-2"), "{unknown_model}");
 
     let bad_size = provider
@@ -252,7 +253,10 @@ async fn unsupported_options_fail_before_any_network_call() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(bad_size.contains("not supported by gpt-image-2"), "{bad_size}");
+    assert!(
+        bad_size.contains("not supported by gpt-image-2"),
+        "{bad_size}"
+    );
 
     let bad_format = provider
         .generate_image(MediaGenerationRequest {
@@ -294,7 +298,10 @@ async fn unsupported_options_fail_before_any_network_call() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(bad_option.contains("unsupported OpenAI providerOptions"), "{bad_option}");
+    assert!(
+        bad_option.contains("unsupported OpenAI providerOptions"),
+        "{bad_option}"
+    );
 }
 
 #[tokio::test]
@@ -323,7 +330,10 @@ async fn auth_failures_are_redacted_and_never_echo_the_response_body() {
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("authentication failed (status 401)"), "{error}");
+    assert!(
+        error.contains("authentication failed (status 401)"),
+        "{error}"
+    );
     assert!(!error.contains("sk-leaky-secret"), "{error}");
 }
 

@@ -10,3 +10,5 @@ RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals \
 ```
 
 The report includes `Model Profile Deltas` rows keyed by fixture and profile. Treat those rows as recommendation evidence only when a profile improves a failure class or keeps quality equivalent while reducing wall time, model calls, or tool calls.
+
+Image generation models (OpenAI `gpt-image-*`, Google `gemini-*-image`) are not chat models: they live in the separate media image catalog, never appear in chat model pickers or harness profiles, and are configured through `[media.image_generation]` (see `docs/roder-image-generation-providers.md`).

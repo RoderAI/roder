@@ -214,7 +214,9 @@ impl OpenAiImagesProvider {
         for (index, image) in request.input_images.iter().enumerate() {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(&image.bytes_base64)
-                .map_err(|error| anyhow::anyhow!("input image {index} is not valid base64: {error}"))?;
+                .map_err(|error| {
+                    anyhow::anyhow!("input image {index} is not valid base64: {error}")
+                })?;
             let extension = match image.mime_type.as_str() {
                 "image/jpeg" => "jpg",
                 "image/webp" => "webp",
@@ -409,6 +411,9 @@ fn map_provider_error(status: u16, body: &str) -> anyhow::Error {
         .unwrap_or_else(|| body.chars().take(ERROR_EXCERPT_LIMIT).collect());
     anyhow::anyhow!(
         "OpenAI image generation failed (status {status}): {}",
-        message.chars().take(ERROR_EXCERPT_LIMIT).collect::<String>()
+        message
+            .chars()
+            .take(ERROR_EXCERPT_LIMIT)
+            .collect::<String>()
     )
 }

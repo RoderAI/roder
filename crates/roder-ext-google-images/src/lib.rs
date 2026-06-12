@@ -43,9 +43,7 @@ impl RoderExtension for GoogleImagesExtension {
             name: "Google Gemini Images".to_string(),
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
-            description: Some(
-                "Google Gemini Nano Banana image generation provider".to_string(),
-            ),
+            description: Some("Google Gemini Nano Banana image generation provider".to_string()),
             provides: vec![ProvidedService::MediaGenerator(
                 GOOGLE_IMAGES_PROVIDER_ID.to_string(),
             )],

@@ -17,7 +17,9 @@ async fn live_gemini_image_generation_smoke_is_explicitly_opt_in() {
     }
     let api_key = std::env::var("GEMINI_API_KEY")
         .or_else(|_| std::env::var("GEMINI_API_TOKEN"))
-        .expect("GEMINI_API_KEY or GEMINI_API_TOKEN must be set for the live Gemini image smoke test");
+        .expect(
+            "GEMINI_API_KEY or GEMINI_API_TOKEN must be set for the live Gemini image smoke test",
+        );
 
     let provider = GoogleImagesProvider::new(GoogleImagesConfig::new(Some(api_key)));
     let batch = provider
@@ -40,6 +42,10 @@ async fn live_gemini_image_generation_smoke_is_explicitly_opt_in() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("smoke.png");
     std::fs::write(&path, &bytes).unwrap();
-    eprintln!("live Gemini image written to {} ({} bytes)", path.display(), bytes.len());
+    eprintln!(
+        "live Gemini image written to {} ({} bytes)",
+        path.display(),
+        bytes.len()
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }

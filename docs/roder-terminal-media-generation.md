@@ -4,12 +4,12 @@ Roder models generated images and videos as provider-neutral media artifacts. Pr
 
 ## Tools
 
-- `media.generate_image`: create an image artifact.
-- `media.generate_video`: create a video artifact.
-- `media.describe`: inspect artifact metadata without reading bytes.
-- `media.attach`: convert artifact bytes into an attachment payload.
+- `media_generate_image`: create one or more image artifacts with the configured image provider (see `docs/roder-image-generation-providers.md`).
+- `media_generate_video`: create a video artifact (deterministic fake only).
+- `media_describe`: inspect artifact metadata without reading bytes.
+- `media_attach`: convert artifact bytes into an attachment payload.
 
-Normal tests use deterministic fake media tools. Live providers must be opt in behind `RODER_MEDIA_LIVE=1` and provider-specific credentials.
+`media_generate_image` routes through first-class image generation providers (`openai`, `google`) registered as extension-host media generators, falling back to the deterministic offline `fake` provider when nothing is configured. Live image generation requires per-provider API keys (`OPENAI_API_KEY`; `GEMINI_API_KEY` or `GEMINI_API_TOKEN`), and live tests stay opt-in behind `RODER_OPENAI_IMAGE_LIVE=1` / `RODER_GEMINI_IMAGE_LIVE=1`.
 
 ## Storage
 
@@ -24,6 +24,8 @@ The app-server refuses reads over the configured byte cap and only deletes Roder
 - `media/thumbnail`: return preview metadata.
 - `media/delete`: delete Roder-owned metadata and bytes.
 - `media/attachToTurn`: return a `MediaAttachment` and, for images, an `InputImage` data URL compatible with `turns/start` and `turns/steer`.
+- `media/image/providers/list`: list image generation providers and models.
+- `media/image/generate`: generate images directly into the artifact store.
 
 Events:
 

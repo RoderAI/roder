@@ -11,9 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-async fn spawn_server(
-    responses: Vec<(u16, &'static str)>,
-) -> (String, mpsc::Receiver<String>) {
+async fn spawn_server(responses: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
     let (tx, rx) = mpsc::channel(responses.len().max(1));
@@ -114,7 +112,10 @@ async fn nano_banana_2_sends_exact_generate_content_body() {
         "{raw}"
     );
     assert!(raw.contains("x-goog-api-key: test-secret"), "{raw}");
-    assert!(!raw.contains("key=test-secret"), "API key must not be in the URL: {raw}");
+    assert!(
+        !raw.contains("key=test-secret"),
+        "API key must not be in the URL: {raw}"
+    );
     let body = body_of(&raw);
     assert_eq!(
         body,
@@ -235,7 +236,10 @@ async fn model_specific_options_fail_before_any_network_call() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(bad_size_tier.contains("supported sizes: 1K, 2K, 4K"), "{bad_size_tier}");
+    assert!(
+        bad_size_tier.contains("supported sizes: 1K, 2K, 4K"),
+        "{bad_size_tier}"
+    );
 
     let bad_ratio = provider
         .generate_image(MediaGenerationRequest {
@@ -245,7 +249,10 @@ async fn model_specific_options_fail_before_any_network_call() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(bad_ratio.contains("aspect ratio \"7:3\" is not supported"), "{bad_ratio}");
+    assert!(
+        bad_ratio.contains("aspect ratio \"7:3\" is not supported"),
+        "{bad_ratio}"
+    );
 
     let unknown_model = provider
         .generate_image(MediaGenerationRequest {
@@ -255,7 +262,10 @@ async fn model_specific_options_fail_before_any_network_call() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(unknown_model.contains("unknown Gemini image model"), "{unknown_model}");
+    assert!(
+        unknown_model.contains("unknown Gemini image model"),
+        "{unknown_model}"
+    );
 
     let pixel_size = provider
         .generate_image(MediaGenerationRequest {
@@ -275,7 +285,10 @@ async fn model_specific_options_fail_before_any_network_call() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(multi_output.contains("one image per request"), "{multi_output}");
+    assert!(
+        multi_output.contains("one image per request"),
+        "{multi_output}"
+    );
 }
 
 #[tokio::test]
@@ -303,7 +316,10 @@ async fn auth_failures_are_redacted_and_blocked_prompts_surface_reason() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("authentication failed (status 403)"), "{error}");
+    assert!(
+        error.contains("authentication failed (status 403)"),
+        "{error}"
+    );
     assert!(!error.contains("AIza-leaky-secret"), "{error}");
 
     let (base_url, _captured) = spawn_server(vec![(
@@ -317,7 +333,10 @@ async fn auth_failures_are_redacted_and_blocked_prompts_surface_reason() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(blocked.contains("blocked the image generation prompt: SAFETY"), "{blocked}");
+    assert!(
+        blocked.contains("blocked the image generation prompt: SAFETY"),
+        "{blocked}"
+    );
 }
 
 #[tokio::test]

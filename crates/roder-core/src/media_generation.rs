@@ -259,8 +259,7 @@ impl MediaGenerationService {
 pub struct FakeImageProvider;
 
 /// 1x1 transparent PNG used by deterministic fake image generation.
-pub const FAKE_IMAGE_PNG_BASE64: &str =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+pub const FAKE_IMAGE_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 #[async_trait::async_trait]
 impl MediaGeneratorProvider for FakeImageProvider {
@@ -452,7 +451,12 @@ mod tests {
         assert_eq!(response.provider, FAKE_MEDIA_PROVIDER_ID);
         assert_eq!(response.outputs.len(), 2);
         for output in &response.outputs {
-            assert!(output.artifact.store_path.starts_with(&*dir.display().to_string()));
+            assert!(
+                output
+                    .artifact
+                    .store_path
+                    .starts_with(&*dir.display().to_string())
+            );
             assert!(output.artifact.roder_owned);
             assert_eq!(
                 output
