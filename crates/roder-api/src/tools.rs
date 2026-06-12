@@ -15,7 +15,6 @@ use crate::events::{ThreadId, TurnId};
 use crate::extension::ToolProviderId;
 use crate::goals::ThreadGoalController;
 use crate::inference::ModelSchemaPolicy;
-use crate::media::{MediaGenerationRequest, MediaGenerationResponse};
 use crate::policy_mode::PolicyMode;
 use crate::remote_runner::RemoteWorkspace;
 use crate::trace::SubagentTraceSink;
@@ -298,6 +297,13 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// Registers `tool`, replacing any executor already registered under the
+    /// same name. Used by the runtime to swap fake reference tools for fully
+    /// wired implementations.
+    pub fn replace(&mut self, tool: Arc<dyn ToolExecutor>) {
+        self.tools.insert(tool.spec().name, tool);
+    }
+
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools
             .values()
@@ -345,27 +351,6 @@ fn keep_tool_for_edit_tool(name: &str, edit_tool: Option<&str>) -> bool {
 pub trait ToolContributor: Send + Sync + 'static {
     fn id(&self) -> ToolProviderId;
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()>;
-}
-
-#[async_trait::async_trait]
-pub trait MediaGeneratorProvider: Send + Sync + 'static {
-    fn provider_id(&self) -> &str;
-    fn supports_images(&self) -> bool;
-    fn supports_videos(&self) -> bool;
-
-    async fn generate_image(
-        &self,
-        _request: MediaGenerationRequest,
-    ) -> anyhow::Result<MediaGenerationResponse> {
-        anyhow::bail!("image generation is not supported by this provider")
-    }
-
-    async fn generate_video(
-        &self,
-        _request: MediaGenerationRequest,
-    ) -> anyhow::Result<MediaGenerationResponse> {
-        anyhow::bail!("video generation is not supported by this provider")
-    }
 }
 
 #[cfg(test)]

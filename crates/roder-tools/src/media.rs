@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use roder_api::media::{
-    MediaArtifact, MediaDimensions, MediaGenerationRequest, MediaGenerationResponse, MediaKind,
+    MediaArtifact, MediaDimensions, MediaGenerationOutput, MediaGenerationResponse, MediaKind,
     data_url,
 };
 use roder_api::tools::{
@@ -216,11 +216,6 @@ fn fake_response(
     dimensions: Option<MediaDimensions>,
     duration_millis: Option<u64>,
 ) -> MediaGenerationResponse {
-    let request = MediaGenerationRequest {
-        prompt: prompt.to_string(),
-        model: model.map(str::to_string),
-        output_path: None,
-    };
     let artifact = MediaArtifact {
         id: format!("media-{}", stable_id(prompt, mime_type)),
         kind,
@@ -232,9 +227,10 @@ fn fake_response(
             .map(|bytes| bytes.len() as u64)
             .unwrap_or(0),
         provider: "fake-media".to_string(),
-        prompt_hash: stable_id(&request.prompt, mime_type),
+        prompt_hash: stable_id(prompt, mime_type),
         store_path: format!("memory://{}", stable_id(prompt, mime_type)),
         thumbnail_path: None,
+        generation: None,
         created_at: OffsetDateTime::UNIX_EPOCH,
         roder_owned: true,
     };
@@ -249,17 +245,47 @@ fn fake_response(
         fallback_label: format!("{} {}", artifact.provider, artifact.mime_type),
         warning: None,
     };
-    MediaGenerationResponse { artifact, preview }
+    MediaGenerationResponse {
+        provider: "fake-media".to_string(),
+        model: model.map(str::to_string),
+        outputs: vec![MediaGenerationOutput {
+            artifact,
+            preview,
+            revised_prompt: None,
+        }],
+        revised_prompt: None,
+        provider_response_id: None,
+        usage: None,
+        watermark: None,
+        safety: None,
+        output_errors: Vec::new(),
+    }
 }
 
 fn result(call: ToolCall, response: MediaGenerationResponse, text: &str) -> ToolResult {
+    let artifact_ids: Vec<&str> = response
+        .outputs
+        .iter()
+        .map(|output| output.artifact.id.as_str())
+        .collect();
+    let artifacts: Vec<&MediaArtifact> = response
+        .outputs
+        .iter()
+        .map(|output| &output.artifact)
+        .collect();
+    let previews: Vec<&roder_api::media::MediaPreview> = response
+        .outputs
+        .iter()
+        .map(|output| &output.preview)
+        .collect();
     ToolResult {
         id: call.id,
         name: call.name,
-        text: format!("{text}: {}", response.artifact.id),
+        text: format!("{text}: {}", artifact_ids.join(", ")),
         data: json!({
-            "mediaArtifact": response.artifact,
-            "mediaPreview": response.preview,
+            "mediaArtifacts": artifacts,
+            "mediaPreviews": previews,
+            "mediaGeneration": response,
         }),
         is_error: false,
     }
@@ -302,7 +328,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.data["mediaArtifact"]["kind"], "image");
-        assert_eq!(result.data["mediaPreview"]["strategy"], "inlineImage");
+        assert_eq!(result.data["mediaArtifacts"][0]["kind"], "image");
+        assert_eq!(result.data["mediaPreviews"][0]["strategy"], "inlineImage");
+        assert_eq!(result.data["mediaGeneration"]["provider"], "fake-media");
     }
 }

@@ -643,25 +643,30 @@ impl Runtime {
         turn_id: &TurnId,
         result: &ToolResult,
     ) {
-        let Some(value) = result.data.get("mediaArtifact") else {
+        let Some(value) = result.data.get("mediaArtifacts") else {
             return;
         };
-        let Ok(artifact) = serde_json::from_value::<roder_api::media::MediaArtifact>(value.clone())
+        let Ok(artifacts) =
+            serde_json::from_value::<Vec<roder_api::media::MediaArtifact>>(value.clone())
         else {
             return;
         };
-        self.emit(RoderEvent::MediaArtifactCreated(
-            roder_api::events::MediaArtifactCreated {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                artifact: artifact.clone(),
-                timestamp: OffsetDateTime::now_utc(),
-            },
-        ))
-        .await;
-        if let Ok(preview) = serde_json::from_value::<roder_api::media::MediaPreview>(
-            result.data.get("mediaPreview").cloned().unwrap_or_default(),
-        ) {
+        for artifact in artifacts {
+            self.emit(RoderEvent::MediaArtifactCreated(
+                roder_api::events::MediaArtifactCreated {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    artifact,
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
+        }
+        let previews = serde_json::from_value::<Vec<roder_api::media::MediaPreview>>(
+            result.data.get("mediaPreviews").cloned().unwrap_or_default(),
+        )
+        .unwrap_or_default();
+        for preview in previews {
             self.emit(RoderEvent::MediaPreviewReady(
                 roder_api::events::MediaPreviewReady {
                     thread_id: thread_id.clone(),

@@ -1,11 +1,24 @@
 use roder_api::media::{
-    MediaArtifact, MediaArtifactId, MediaDimensions, MediaGenerationRequest, MediaKind,
+    MediaArtifact, MediaArtifactId, MediaDimensions, MediaGenerationMetadata, MediaKind,
     MediaPreview, MediaPreviewStrategy,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
+
+/// One generated media output to persist as a Roder-owned artifact.
+#[derive(Debug, Clone)]
+pub struct GeneratedMediaSpec<'a> {
+    pub prompt: &'a str,
+    pub kind: MediaKind,
+    pub mime_type: &'a str,
+    pub provider: &'a str,
+    pub bytes: &'a [u8],
+    pub dimensions: Option<MediaDimensions>,
+    pub duration_millis: Option<u64>,
+    pub generation: Option<MediaGenerationMetadata>,
+}
 
 #[derive(Debug, Clone)]
 pub struct MediaArtifactStore {
@@ -30,33 +43,27 @@ impl MediaArtifactStore {
         &self.root
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn write_generated(
         &self,
-        request: &MediaGenerationRequest,
-        kind: MediaKind,
-        mime_type: &str,
-        provider: &str,
-        bytes: &[u8],
-        dimensions: Option<MediaDimensions>,
-        duration_millis: Option<u64>,
+        spec: &GeneratedMediaSpec<'_>,
     ) -> anyhow::Result<(MediaArtifact, MediaPreview)> {
         std::fs::create_dir_all(&self.root)?;
-        let ext = extension_for_mime(mime_type);
+        let ext = extension_for_mime(spec.mime_type);
         let id = format!("media-{}", uuid::Uuid::new_v4());
         let store_path = self.root.join(format!("{id}.{ext}"));
-        std::fs::write(&store_path, bytes)?;
+        std::fs::write(&store_path, spec.bytes)?;
         let artifact = MediaArtifact {
             id: id.clone(),
-            kind: kind.clone(),
-            mime_type: mime_type.to_string(),
-            dimensions,
-            duration_millis,
-            byte_size: bytes.len() as u64,
-            provider: provider.to_string(),
-            prompt_hash: prompt_hash(&request.prompt),
+            kind: spec.kind.clone(),
+            mime_type: spec.mime_type.to_string(),
+            dimensions: spec.dimensions.clone(),
+            duration_millis: spec.duration_millis,
+            byte_size: spec.bytes.len() as u64,
+            provider: spec.provider.to_string(),
+            prompt_hash: prompt_hash(spec.prompt),
             store_path: store_path.display().to_string(),
             thumbnail_path: Some(store_path.display().to_string()),
+            generation: spec.generation.clone(),
             created_at: OffsetDateTime::now_utc(),
             roder_owned: true,
         };
@@ -197,25 +204,21 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("roder-media-artifacts-{}", uuid::Uuid::new_v4()));
         let store = MediaArtifactStore::new(&root).with_max_read_bytes(1024);
-        let request = MediaGenerationRequest {
-            prompt: "tiny image".to_string(),
-            model: None,
-            output_path: None,
-        };
 
         let (artifact, preview) = store
-            .write_generated(
-                &request,
-                MediaKind::Image,
-                "image/png",
-                "fake",
-                b"abc",
-                Some(MediaDimensions {
+            .write_generated(&GeneratedMediaSpec {
+                prompt: "tiny image",
+                kind: MediaKind::Image,
+                mime_type: "image/png",
+                provider: "fake",
+                bytes: b"abc",
+                dimensions: Some(MediaDimensions {
                     width: 1,
                     height: 1,
                 }),
-                None,
-            )
+                duration_millis: None,
+                generation: None,
+            })
             .unwrap();
 
         assert!(
@@ -228,5 +231,41 @@ mod tests {
         assert_eq!(store.read(&artifact.id, None).unwrap().1, b"abc");
         assert!(store.delete(&artifact.id).unwrap());
         assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn media_artifact_store_persists_image_generation_metadata() {
+        let root = std::env::temp_dir().join(format!(
+            "roder-media-artifacts-meta-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = MediaArtifactStore::new(&root);
+
+        let (artifact, _) = store
+            .write_generated(&GeneratedMediaSpec {
+                prompt: "watermarked",
+                kind: MediaKind::Image,
+                mime_type: "image/png",
+                provider: "google",
+                bytes: b"abc",
+                dimensions: None,
+                duration_millis: None,
+                generation: Some(MediaGenerationMetadata {
+                    provider: "google".to_string(),
+                    model: Some("gemini-3.1-flash-image".to_string()),
+                    revised_prompt: None,
+                    watermark: Some("synthid".to_string()),
+                    safety: None,
+                    provider_response_id: None,
+                }),
+            })
+            .unwrap();
+
+        let reloaded = store.get(&artifact.id).unwrap();
+        let generation = reloaded.generation.expect("generation metadata persists");
+        assert_eq!(generation.model.as_deref(), Some("gemini-3.1-flash-image"));
+        assert_eq!(generation.watermark.as_deref(), Some("synthid"));
+
+        store.delete(&artifact.id).unwrap();
     }
 }

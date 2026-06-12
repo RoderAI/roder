@@ -17,6 +17,7 @@ pub type CheckpointStoreId = String;
 pub type MemoryStoreId = String;
 pub type KnowledgeStoreId = String;
 pub type EmbeddingProviderId = String;
+pub type MediaGeneratorProviderId = String;
 pub type ToolProviderId = String;
 pub type SubagentDispatcherId = String;
 pub type PolicyContributorId = String;
@@ -41,6 +42,7 @@ pub enum ProvidedService {
     MemoryStore(MemoryStoreId),
     KnowledgeStore(KnowledgeStoreId),
     EmbeddingProvider(EmbeddingProviderId),
+    MediaGenerator(MediaGeneratorProviderId),
     ToolProvider(ToolProviderId),
     SubagentDispatcher(SubagentDispatcherId),
     PolicyContributor(PolicyContributorId),
@@ -101,6 +103,7 @@ pub struct ExtensionRegistry {
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
     pub knowledge_stores: Vec<Arc<dyn crate::knowledge::KnowledgeStoreFactory>>,
     pub embedding_providers: Vec<Arc<dyn crate::embeddings::EmbeddingProvider>>,
+    pub media_generator_providers: Vec<Arc<dyn crate::media::MediaGeneratorProvider>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
@@ -119,6 +122,16 @@ pub struct ExtensionRegistry {
 }
 
 impl ExtensionRegistry {
+    pub fn media_generator(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn crate::media::MediaGeneratorProvider>> {
+        self.media_generator_providers
+            .iter()
+            .find(|provider| provider.provider_id() == id)
+            .cloned()
+    }
+
     pub fn inference_engine(&self, id: &str) -> Option<Arc<dyn crate::inference::InferenceEngine>> {
         self.inference_engines
             .iter()
@@ -224,6 +237,7 @@ pub struct ExtensionRegistryBuilder {
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
     pub knowledge_stores: Vec<Arc<dyn crate::knowledge::KnowledgeStoreFactory>>,
     pub embedding_providers: Vec<Arc<dyn crate::embeddings::EmbeddingProvider>>,
+    pub media_generator_providers: Vec<Arc<dyn crate::media::MediaGeneratorProvider>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
     pub policy_contributors: Vec<Arc<dyn crate::context::PolicyContributor>>,
@@ -262,6 +276,7 @@ impl ExtensionRegistryBuilder {
             memory_stores: Vec::new(),
             knowledge_stores: Vec::new(),
             embedding_providers: Vec::new(),
+            media_generator_providers: Vec::new(),
             tools: Vec::new(),
             subagent_dispatchers: Vec::new(),
             policy_contributors: Vec::new(),
@@ -325,6 +340,7 @@ impl ExtensionRegistryBuilder {
             memory_stores: self.memory_stores,
             knowledge_stores: self.knowledge_stores,
             embedding_providers: self.embedding_providers,
+            media_generator_providers: self.media_generator_providers,
             tools: self.tools,
             subagent_dispatchers: self.subagent_dispatchers,
             policy_contributors: self.policy_contributors,
@@ -407,6 +423,13 @@ impl ExtensionRegistryBuilder {
 
     pub fn embedding_provider(&mut self, provider: Arc<dyn crate::embeddings::EmbeddingProvider>) {
         self.embedding_providers.push(provider);
+    }
+
+    pub fn media_generator_provider(
+        &mut self,
+        provider: Arc<dyn crate::media::MediaGeneratorProvider>,
+    ) {
+        self.media_generator_providers.push(provider);
     }
 
     pub fn tool_contributor(&mut self, contributor: Arc<dyn crate::tools::ToolContributor>) {
@@ -655,6 +678,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     );
     services.extend(
         builder
+            .media_generator_providers
+            .iter()
+            .map(|service| ProvidedService::MediaGenerator(service.provider_id().to_string())),
+    );
+    services.extend(
+        builder
             .tools
             .iter()
             .map(|service| ProvidedService::ToolProvider(service.id())),
@@ -814,6 +843,7 @@ fn service_label(service: &ProvidedService) -> String {
         ProvidedService::MemoryStore(id) => format!("MemoryStore({id})"),
         ProvidedService::KnowledgeStore(id) => format!("KnowledgeStore({id})"),
         ProvidedService::EmbeddingProvider(id) => format!("EmbeddingProvider({id})"),
+        ProvidedService::MediaGenerator(id) => format!("MediaGenerator({id})"),
         ProvidedService::ToolProvider(id) => format!("ToolProvider({id})"),
         ProvidedService::SubagentDispatcher(id) => format!("SubagentDispatcher({id})"),
         ProvidedService::PolicyContributor(id) => format!("PolicyContributor({id})"),
@@ -884,6 +914,75 @@ mod tests {
         let decoded = serde_json::from_value::<ProvidedService>(encoded)
             .expect("deserialize palette source service");
         assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn provided_service_media_generator_round_trips_json() {
+        let service = ProvidedService::MediaGenerator("openai".to_string());
+        let encoded = serde_json::to_value(&service).expect("serialize media generator service");
+        assert_eq!(encoded, serde_json::json!({ "MediaGenerator": "openai" }));
+
+        let decoded = serde_json::from_value::<ProvidedService>(encoded)
+            .expect("deserialize media generator service");
+        assert_eq!(decoded, service);
+    }
+
+    #[test]
+    fn registering_media_generator_advertises_service_and_resolves_provider() {
+        struct FakeImageExtension;
+
+        struct FakeImageProvider;
+
+        #[async_trait::async_trait]
+        impl crate::media::MediaGeneratorProvider for FakeImageProvider {
+            fn provider_id(&self) -> &str {
+                "fake"
+            }
+
+            fn descriptor(&self) -> crate::media::MediaProviderDescriptor {
+                crate::media::MediaProviderDescriptor {
+                    id: "fake".to_string(),
+                    display_name: "Fake Image Provider".to_string(),
+                    supports_images: true,
+                    configured: true,
+                    ..crate::media::MediaProviderDescriptor::default()
+                }
+            }
+        }
+
+        impl RoderExtension for FakeImageExtension {
+            fn manifest(&self) -> ExtensionManifest {
+                ExtensionManifest {
+                    id: "fake-image-extension".to_string(),
+                    name: "Fake Image".to_string(),
+                    version: Version::new(0, 1, 0),
+                    api_version: SUPPORTED_EXTENSION_API_VERSION.to_string(),
+                    description: None,
+                    provides: vec![ProvidedService::MediaGenerator("fake".to_string())],
+                    required_capabilities: Vec::new(),
+                }
+            }
+
+            fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+                registry.media_generator_provider(Arc::new(FakeImageProvider));
+                Ok(())
+            }
+        }
+
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder
+            .install(FakeImageExtension)
+            .expect("install image extension");
+        let registry = builder.build().expect("build registry");
+
+        assert!(
+            registry
+                .provided_services()
+                .contains(&ProvidedService::MediaGenerator("fake".to_string()))
+        );
+        let provider = registry.media_generator("fake").expect("resolve provider");
+        assert!(provider.descriptor().supports_images);
+        assert!(registry.media_generator("missing").is_none());
     }
 
     #[test]

@@ -5,8 +5,14 @@ use crate::inference::{
     ModelSchemaPolicy, ProviderFamily, ReasoningEffortDescriptor,
 };
 
+pub mod image_models;
 mod xiaomi_mimo;
 
+pub use image_models::{
+    IMAGE_PROVIDER_GOOGLE, IMAGE_PROVIDER_OPENAI, ImageModelCatalogEntry,
+    ImageProviderCatalogEntry, built_in_image_providers, image_model_descriptors,
+    image_models_for_provider, lookup_image_model, lookup_image_provider,
+};
 pub use xiaomi_mimo::{XIAOMI_MIMO_ENV_ALIASES, XIAOMI_MIMO_TOKEN_PLAN_ENV_ALIASES};
 
 pub const PROVIDER_MOCK: &str = "mock";

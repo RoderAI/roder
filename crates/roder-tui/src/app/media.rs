@@ -84,6 +84,7 @@ mod tests {
             prompt_hash: "hash".to_string(),
             store_path: "/tmp/media.png".to_string(),
             thumbnail_path: None,
+            generation: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             roder_owned: true,
         };
