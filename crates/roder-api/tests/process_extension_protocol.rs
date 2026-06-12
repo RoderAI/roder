@@ -1,13 +1,14 @@
 //! Contract tests for the process-extension protocol DTOs (roadmap
-//! phase 64, Task 1): manifest round-trips, initialize-echo validation,
-//! and canonical JSON shapes for the stdio JSON-RPC payloads.
+//! phase 64 Task 1 and phase 93 Task 5): manifest round-trips,
+//! initialize-echo validation, tool-provider declarations, and canonical
+//! JSON shapes for the stdio JSON-RPC payloads.
 
 use roder_api::inference::{
     AgentInferenceRequest, InferenceEvent, InstructionBundle, MessageDelta, ModelDescriptor,
     ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
 };
 use roder_api::process_extension::*;
-use roder_api::tools::ToolChoice;
+use roder_api::tools::{ToolChoice, ToolSpec};
 
 fn sample_request() -> AgentInferenceRequest {
     AgentInferenceRequest {
@@ -62,6 +63,37 @@ required_capabilities = [
 
 fn manifest() -> ProcessExtensionManifest {
     toml::from_str(MANIFEST_TOML).unwrap()
+}
+
+const TOOLS_MANIFEST_TOML: &str = r#"
+id = "python-tools"
+name = "Python Tools"
+version = "0.1.0"
+api_version = "^0.1"
+description = "Process-hosted stdlib-only Python tool provider"
+
+[launch]
+command = "python3"
+args = ["main.py"]
+
+[[provides]]
+type = "tool_provider"
+id = "python-tools"
+tools = [
+  { name = "word_count", description = "Count whitespace-separated words.", parameters = { type = "object", properties = { text = { type = "string", description = "Text to count words in." } }, required = ["text"] } },
+]
+"#;
+
+fn tools_manifest() -> ProcessExtensionManifest {
+    toml::from_str(TOOLS_MANIFEST_TOML).unwrap()
+}
+
+fn word_count_spec() -> ToolSpec {
+    let manifest = tools_manifest();
+    let ProcessProvidedService::ToolProvider { tools, .. } = &manifest.provides[0] else {
+        panic!("tool provider expected");
+    };
+    tools[0].clone()
 }
 
 fn initialize_result() -> ProcessInitializeResult {
@@ -202,6 +234,140 @@ fn protocol_payloads_use_canonical_json_names() {
     };
     let json = serde_json::to_value(&models).unwrap();
     assert_eq!(json["models"][0]["id"], "gpt-5.5");
+}
+
+#[test]
+fn protocol_version_is_0_2_0_and_older_children_fail_closed() {
+    assert_eq!(PROCESS_EXTENSION_PROTOCOL_VERSION, "0.2.0");
+
+    let mut stale_child = initialize_result();
+    stale_child.protocol_version = "0.1.0".to_string();
+    let error = validate_initialize_echo(&manifest(), MANIFEST_TOML, &stale_child)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("speaks protocol"), "{error}");
+}
+
+#[test]
+fn tool_provider_manifest_toml_round_trips_with_json_schema_parameters() {
+    let manifest = tools_manifest();
+    validate_manifest(&manifest).unwrap();
+
+    // The TOML inline `parameters` table must convert into a JSON object.
+    let spec = word_count_spec();
+    assert_eq!(spec.name, "word_count");
+    assert_eq!(
+        spec.parameters,
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string", "description": "Text to count words in." }
+            },
+            "required": ["text"]
+        })
+    );
+
+    let services: Vec<roder_api::extension::ProvidedService> =
+        manifest.provides.iter().map(Into::into).collect();
+    assert_eq!(
+        services,
+        vec![roder_api::extension::ProvidedService::ToolProvider(
+            "python-tools".to_string()
+        )]
+    );
+    assert_eq!(manifest.provides[0].service_id(), "python-tools");
+
+    // The package launch declaration parses alongside the services.
+    let launch = manifest.launch.expect("launch declared");
+    assert_eq!(launch.command, "python3");
+    assert_eq!(launch.args, vec!["main.py".to_string()]);
+
+    // The declared services round-trip through the initialize echo JSON.
+    let echoed: Vec<ProcessProvidedService> =
+        serde_json::from_value(serde_json::to_value(&tools_manifest().provides).unwrap()).unwrap();
+    assert_eq!(echoed, tools_manifest().provides);
+}
+
+#[test]
+fn tool_provider_validation_rejects_bad_tool_declarations() {
+    let with_tools = |tools: Vec<ToolSpec>| {
+        let mut manifest = tools_manifest();
+        manifest.provides = vec![ProcessProvidedService::ToolProvider {
+            id: "python-tools".to_string(),
+            tools,
+        }];
+        manifest
+    };
+
+    let error = validate_manifest(&with_tools(Vec::new()))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("declares no tools"), "{error}");
+
+    let mut empty_name = word_count_spec();
+    empty_name.name = "  ".to_string();
+    let error = validate_manifest(&with_tools(vec![empty_name]))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("empty name"), "{error}");
+
+    let error = validate_manifest(&with_tools(vec![word_count_spec(), word_count_spec()]))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("more than once"), "{error}");
+
+    let mut bad_schema = word_count_spec();
+    bad_schema.parameters = serde_json::json!({ "type": "string" });
+    let error = validate_manifest(&with_tools(vec![bad_schema]))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("JSON schema object"), "{error}");
+
+    let mut not_an_object = word_count_spec();
+    not_an_object.parameters = serde_json::json!("free-form");
+    let error = validate_manifest(&with_tools(vec![not_an_object]))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("JSON schema object"), "{error}");
+}
+
+#[test]
+fn tools_call_payloads_use_canonical_json_names() {
+    let params = ProcessToolCallParams {
+        provider_id: "python-tools".to_string(),
+        tool_name: "word_count".to_string(),
+        call_id: "call-1".to_string(),
+        thread_id: "thread-1".to_string(),
+        turn_id: "turn-1".to_string(),
+        arguments: serde_json::json!({ "text": "one two three" }),
+    };
+    let json = serde_json::to_value(&params).unwrap();
+    assert_eq!(json["providerId"], "python-tools");
+    assert_eq!(json["toolName"], "word_count");
+    assert_eq!(json["callId"], "call-1");
+    assert_eq!(json["threadId"], "thread-1");
+    assert_eq!(json["turnId"], "turn-1");
+    assert_eq!(json["arguments"]["text"], "one two three");
+    let round_trip: ProcessToolCallParams = serde_json::from_value(json).unwrap();
+    assert_eq!(round_trip, params);
+
+    let result = ProcessToolCallResult {
+        content: "3 words".to_string(),
+        is_error: false,
+        data: serde_json::json!({ "wordCount": 3 }),
+    };
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["content"], "3 words");
+    assert_eq!(json["isError"], false);
+    assert_eq!(json["data"]["wordCount"], 3);
+    let round_trip: ProcessToolCallResult = serde_json::from_value(json).unwrap();
+    assert_eq!(round_trip, result);
+
+    // `data` is optional on the wire and defaults to null.
+    let minimal: ProcessToolCallResult =
+        serde_json::from_value(serde_json::json!({ "content": "ok", "isError": true })).unwrap();
+    assert!(minimal.is_error);
+    assert_eq!(minimal.data, serde_json::Value::Null);
 }
 
 #[test]

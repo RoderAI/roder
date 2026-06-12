@@ -1,0 +1,11 @@
+[package]
+id = "demo-pkg"
+name = "Demo Package"
+version = "0.1.0"
+description = "Fixture package exercising all four resource kinds."
+
+[resources]
+extensions = ["extensions/hello/roder-extension.toml"]
+skills = ["skills"]
+commands = ["commands"]
+themes = ["themes"]

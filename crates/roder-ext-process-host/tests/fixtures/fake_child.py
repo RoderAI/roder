@@ -3,10 +3,10 @@
 
 Implements the newline-delimited JSON-RPC process-extension protocol:
 initialize echo (manifest checksum via FNV-1a), model listing, a small
-streamed inference turn, a subagent dispatcher with streamed status
-events, a task executor with streamed output, cancellation, events/handle
-recording (reported back through an extension/event notification), and
-graceful shutdown.
+streamed inference turn, tools/call serving the declared word_count tool,
+a subagent dispatcher with streamed status events, a task executor with
+streamed output, cancellation, events/handle recording (reported back
+through an extension/event notification), and graceful shutdown.
 """
 
 import json
@@ -70,6 +70,21 @@ def main() -> None:
                     "services": [
                         {"type": "inference_engine", "id": "fake-process-engine"},
                         {"type": "event_sink", "id": "fake-process-events"},
+                        {
+                            "type": "tool_provider",
+                            "id": "fake-process-tools",
+                            "tools": [
+                                {
+                                    "name": "word_count",
+                                    "description": "Count whitespace-separated words.",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {"text": {"type": "string"}},
+                                        "required": ["text"],
+                                    },
+                                }
+                            ],
+                        },
                         {"type": "subagent_dispatcher", "id": "fake-process-dispatcher"},
                         {"type": "task_executor", "id": "fake-process-task"},
                     ],
@@ -265,6 +280,21 @@ def main() -> None:
         elif method == "tasks/cancel":
             cancellations.setdefault("tasks", []).append(params["executionId"])
             reply(msg_id, {})
+        elif method == "tools/call":
+            if os.environ.get("FAKE_CHILD_TOOL_ERROR"):
+                reply_error(msg_id, os.environ["FAKE_CHILD_TOOL_ERROR"])
+            elif params.get("toolName") == "word_count":
+                words = len(((params.get("arguments") or {}).get("text") or "").split())
+                reply(
+                    msg_id,
+                    {
+                        "content": f"{words} words",
+                        "isError": False,
+                        "data": {"wordCount": words, "callId": params.get("callId")},
+                    },
+                )
+            else:
+                reply_error(msg_id, f"unknown tool {params.get('toolName')}")
         elif method == "events/handle":
             handled_events.append(params["envelope"]["kind"])
             notify(

@@ -1,0 +1,9 @@
+id = "hello-tools"
+name = "Hello Tools"
+version = "0.1.0"
+api_version = "^0.1"
+provides = [{ type = "event_sink", id = "hello-sink" }]
+
+[launch]
+command = "python3"
+args = ["main.py"]
