@@ -313,6 +313,10 @@ fn agent_lanes(state: &RoadmapModeState, theme: Theme, area: Rect) -> List<'stat
                 Span::styled(" s ", theme.dialog_key()),
                 Span::styled(" delegates a task", theme.subtle()),
             ])),
+            ListItem::new(Line::from(vec![
+                Span::styled(" S ", theme.dialog_key()),
+                Span::styled(" fans out workers", theme.subtle()),
+            ])),
         ]
     } else {
         let selected = state

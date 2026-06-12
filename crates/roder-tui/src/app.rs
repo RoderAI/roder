@@ -3116,6 +3116,10 @@ where
                 let _ = self.spawn_roadmap_worker().await;
                 true
             }
+            KeyCode::Char('S') => {
+                self.fan_out_roadmap_workers().await;
+                true
+            }
             KeyCode::Enter | KeyCode::Char('e') => {
                 if self.roadmap_mode.as_ref().is_some_and(|roadmap| {
                     roadmap.focused_pane == crate::roadmap::RoadmapPaneFocus::Agents
@@ -3189,6 +3193,40 @@ where
             self.record_error("roadmap worker spawn needs a selected task".to_string());
             return None;
         };
+        let thread = self.spawn_worker_for_task(&path, &task_id).await?;
+        self.push_event(format!("spawned roadmap worker {}", thread.thread_id));
+        Some(thread)
+    }
+
+    /// Fan out workers across every unchecked task that has no worker yet,
+    /// bounded per keypress so one `S` cannot start an unreasonable fleet.
+    async fn fan_out_roadmap_workers(&mut self) {
+        const FAN_OUT_LIMIT: usize = 8;
+        let Some((path, task_ids)) = self.roadmap_mode.as_ref().and_then(|roadmap| {
+            let path = roadmap.selected_plan.clone()?;
+            Some((path, roadmap.fan_out_task_ids(FAN_OUT_LIMIT)))
+        }) else {
+            self.record_error("roadmap fan-out needs a selected plan".to_string());
+            return;
+        };
+        if task_ids.is_empty() {
+            self.push_event("roadmap fan-out: every unchecked task already has a worker".into());
+            return;
+        }
+        let mut spawned = 0usize;
+        for task_id in task_ids {
+            if self.spawn_worker_for_task(&path, &task_id).await.is_some() {
+                spawned += 1;
+            }
+        }
+        self.push_event(format!("fan-out spawned {spawned} roadmap workers"));
+    }
+
+    async fn spawn_worker_for_task(
+        &mut self,
+        path: &str,
+        task_id: &str,
+    ) -> Option<ThreadAttachment> {
         let res = self
             .client
             .send_request(JsonRpcRequest {
@@ -3207,10 +3245,6 @@ where
                     roadmap.selected_thread_id = Some(response.thread.thread_id.clone());
                     roadmap.attached_threads.push(response.thread.clone());
                 }
-                self.push_event(format!(
-                    "spawned roadmap worker {}",
-                    response.thread.thread_id
-                ));
                 Some(response.thread)
             }
             Err(err) => {
@@ -3229,7 +3263,7 @@ where
             .unwrap_or("focused roadmap task");
         let display = format!("Execute roadmap task: {task}");
         let message = roadmap.prompt_context(
-            "Execute or continue the focused roadmap task. Use the roadmap document as source of truth, steer attached workers if present, and update task state only with evidence.",
+            "Drive the focused roadmap task as the orchestrator. Delegate implementation to workers and spawn additional workers for independent ready tasks instead of doing the work in this thread. Steer attached workers, and update task state only with evidence.",
         );
         let pending = PendingPrompt::with_images(display, message, Vec::new());
         if self.active_turn_id.is_some() {

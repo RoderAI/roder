@@ -103,6 +103,7 @@ pub(super) fn footer(theme: Theme, width: u16) -> Paragraph<'static> {
         ("tab", "panes"),
         ("j/k", "move"),
         ("s", "spawn"),
+        ("S", "fan-out"),
         ("e", "exec"),
         ("v", "validate"),
         ("enter", "open"),
