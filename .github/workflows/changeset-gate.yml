@@ -1,8 +1,10 @@
 name: Changeset gate
 
+# Automatic PR checks disabled until GitHub Actions billing / paid runners are
+# available. Re-enable the pull_request trigger below when CI can run again.
+# Local gate: python3 scripts/check-changesets.py --base origin/master
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,10 +13,7 @@ jobs:
   changeset-gate:
     name: Require changesets for changed packages
     runs-on: ubuntu-latest
-    # Release PRs delete changesets by design; `skip-changeset` label bypasses.
-    if: >-
-      github.head_ref != 'knope/release' &&
-      !contains(github.event.pull_request.labels.*.name, 'skip-changeset')
+    if: false # keep job definition for manual re-enable; see on: above
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
