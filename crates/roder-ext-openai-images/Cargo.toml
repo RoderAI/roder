@@ -1,0 +1,31 @@
+[package]
+name = "roder-ext-openai-images"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "openai-images"
+category = "media-generator"
+display_name = "OpenAI GPT Image"
+description = "OpenAI GPT Image generation and editing through Roder's media artifact API."
+default_in_profiles = ["full", "openai-only"]
+required_env = ["OPENAI_API_KEY"]
+optional_env = ["OPENAI_BASE_URL", "RODER_OPENAI_IMAGES_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.api.openai.com", "secret.read.OPENAI_API_KEY"]
+extension_path = "::OpenAiImagesExtension::new"
+docs_url = "https://developers.openai.com/api/docs/guides/image-generation"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+reqwest = { workspace = true, features = ["json", "multipart"] }
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

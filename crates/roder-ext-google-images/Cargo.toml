@@ -1,0 +1,31 @@
+[package]
+name = "roder-ext-google-images"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "google-images"
+category = "media-generator"
+display_name = "Google Gemini Images"
+description = "Google Gemini Nano Banana image generation through Roder's media artifact API."
+default_in_profiles = ["full"]
+required_env = ["GEMINI_API_KEY"]
+optional_env = ["GEMINI_API_TOKEN", "GOOGLE_API_KEY", "RODER_GOOGLE_IMAGES_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.generativelanguage.googleapis.com", "secret.read.GEMINI_API_KEY"]
+extension_path = "::GoogleImagesExtension::new"
+docs_url = "https://ai.google.dev/gemini-api/docs/image-generation"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

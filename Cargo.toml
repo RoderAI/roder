@@ -88,6 +88,7 @@ roder-ext-gemini = { path = "crates/roder-ext-gemini" }
 roder-ext-firecrawl-search = { path = "crates/roder-ext-firecrawl-search" }
 roder-ext-git = { path = "crates/roder-ext-git" }
 roder-ext-google-embeddings = { path = "crates/roder-ext-google-embeddings" }
+roder-ext-google-images = { path = "crates/roder-ext-google-images" }
 roder-ext-honcho = { path = "crates/roder-ext-honcho" }
 roder-ext-inference-router = { path = "crates/roder-ext-inference-router" }
 roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store" }
@@ -99,6 +100,7 @@ roder-ext-notify-terminal = { path = "crates/roder-ext-notify-terminal" }
 roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses" }
 roder-ext-openai-chat-completions = { path = "crates/roder-ext-openai-chat-completions" }
 roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings" }
+roder-ext-openai-images = { path = "crates/roder-ext-openai-images" }
 roder-ext-openai-speech = { path = "crates/roder-ext-openai-speech" }
 roder-ext-openrouter = { path = "crates/roder-ext-openrouter" }
 roder-ext-zeroentropy-embeddings = { path = "crates/roder-ext-zeroentropy-embeddings" }
