@@ -385,6 +385,8 @@ Review, hunks, workflow imports, media, and memory:
 | `media/thumbnail` | Read an artifact preview. |
 | `media/delete` | Delete an artifact. |
 | `media/attachToTurn` | Convert an artifact to a turn attachment/image. |
+| `media/image/providers/list` | List image generation providers and models. |
+| `media/image/generate` | Generate images into the media artifact store. |
 | `artifact/list` | List thread-scoped file-backed context artifacts. |
 | `artifact/read` | Read a paged artifact line range. |
 | `artifact/grep` | Search an artifact with a literal query. |
@@ -4033,8 +4035,137 @@ Behavior:
 - `media/delete` emits `media/artifactDeleted` when deletion succeeds.
 - `media/attachToTurn` returns a `MediaAttachment` and an `InputImage` only for
   image artifacts.
-- The media store root comes from config, `RODER_MEDIA_ARTIFACT_DIR`, or the
-  default media artifact directory. Default max read size is 10 MiB.
+- The media store root comes from `[media].artifacts_dir` config,
+  `RODER_MEDIA_ARTIFACT_DIR`, or the default media artifact directory. Default
+  max read size is 10 MiB.
+
+### Media image generation methods
+
+Purpose: List image generation providers/models and generate images directly
+through the provider-neutral media service. Generated images are always
+persisted as Roder-owned media artifacts before they are returned.
+
+Examples:
+
+```json
+{
+  "method": "media/image/providers/list",
+  "params": null
+}
+```
+
+Response:
+
+```json
+{
+  "defaultProvider": "fake",
+  "providers": [
+    {
+      "id": "openai",
+      "displayName": "OpenAI GPT Image",
+      "supportsImages": true,
+      "supportsVideos": false,
+      "configured": true,
+      "defaultModel": "gpt-image-2",
+      "imageModels": [
+        {
+          "id": "gpt-image-2",
+          "displayName": "GPT Image 2",
+          "provider": "openai",
+          "isDefault": true,
+          "legacy": false,
+          "supportsEdit": true,
+          "supportsMultipleOutputs": true,
+          "supportedSizes": ["auto", "1024x1024", "1536x1024", "1024x1536"],
+          "supportsTransparentBackground": true,
+          "supportsPartialImages": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+```json
+{
+  "method": "media/image/generate",
+  "params": {
+    "prompt": "A polished product hero image",
+    "provider": "google",
+    "model": "gemini-3-pro-image",
+    "aspectRatio": "16:9",
+    "imageSize": "2K",
+    "threadId": "thread-123"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "response": {
+    "provider": "google",
+    "model": "gemini-3-pro-image",
+    "outputs": [
+      {
+        "artifact": {
+          "id": "media-7f9d...",
+          "kind": "image",
+          "mimeType": "image/png",
+          "byteSize": 1492330,
+          "provider": "google",
+          "storePath": "/home/user/.roder/artifacts/media-7f9d....png",
+          "generation": {
+            "provider": "google",
+            "model": "gemini-3-pro-image",
+            "watermark": "synthid"
+          },
+          "roderOwned": true
+        },
+        "preview": {
+          "artifactId": "media-7f9d...",
+          "strategy": "thumbnail",
+          "fallbackLabel": "google image/png (1492330 bytes)"
+        }
+      }
+    ],
+    "providerResponseId": "resp-google-1",
+    "usage": { "inputTokens": 12, "outputTokens": 1290, "totalTokens": 1302 },
+    "watermark": "synthid"
+  }
+}
+```
+
+Behavior:
+
+- `media/image/providers/list` returns every installed media generator,
+  including the deterministic offline `fake` provider, plus the configured
+  default provider id. `configured` reflects whether the provider has the
+  credentials it needs; listings never include secrets.
+- `media/image/generate` accepts the canonical provider-neutral request
+  (flattened into `params`) with optional `provider`, `model`, `action`
+  (`auto` | `generate` | `edit`), `inputArtifacts` (artifact ids resolved into
+  inline images before the provider call), `count`, `aspectRatio`, `size`,
+  `imageSize`, `quality`, `outputFormat`, `background`, `outputCompression`,
+  `moderation`, and bounded `providerOptions`.
+- Defaults come from `[media.image_generation]`; without configuration the
+  offline `fake` provider is used so the method works with no network access.
+- Each generated output is written to the media artifact store first, then
+  `media/artifactCreated` and `media/previewReady` notifications are emitted
+  (with `threadId` from params, or empty for unscoped generations; `turnId` is
+  empty for direct generations).
+- Unsupported provider/model option combinations (for example `imageSize` on
+  `gemini-2.5-flash-image`, or `aspectRatio` on OpenAI models) fail with code
+  `-32000` before any network call.
+- Missing provider credentials fail at call time with an actionable message
+  naming the env var (`OPENAI_API_KEY`, `GEMINI_API_KEY`/`GEMINI_API_TOKEN`);
+  auth failures from providers are redacted and never echo response bodies.
+- Partial-image streaming is not implemented yet: requests that set
+  `partialImages` are rejected by the first-party providers, and no partial
+  artifacts are ever stored.
+- Cancellation follows standard JSON-RPC request handling; there is no
+  provider-side cancellation, and only fully generated images are persisted.
 
 ### Context artifact methods
 

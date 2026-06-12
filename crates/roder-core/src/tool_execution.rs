@@ -663,7 +663,11 @@ impl Runtime {
             .await;
         }
         let previews = serde_json::from_value::<Vec<roder_api::media::MediaPreview>>(
-            result.data.get("mediaPreviews").cloned().unwrap_or_default(),
+            result
+                .data
+                .get("mediaPreviews")
+                .cloned()
+                .unwrap_or_default(),
         )
         .unwrap_or_default();
         for preview in previews {

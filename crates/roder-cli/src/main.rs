@@ -11,14 +11,15 @@ mod exec_events;
 mod exec_output;
 mod forks;
 mod knowledge;
-mod stats;
 mod marketplace;
+mod media;
 mod replay;
 mod resume_picker;
 mod roadmap_cli;
 mod sdk_schema;
 mod skills;
 mod speech;
+mod stats;
 #[cfg(test)]
 mod tui_config;
 mod webwright;
@@ -32,8 +33,8 @@ use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
     PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
     PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK,
-    PROVIDER_VERTEX, PROVIDER_XAI,
-    PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
+    PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
+    normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
@@ -157,6 +158,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("speech")) {
         return run_speech_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("media")) {
+        return media::run_media_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("team")) {
         return run_team_cli(&args[1..]).await;

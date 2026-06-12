@@ -40,6 +40,10 @@ async fn live_openai_image_generation_smoke_is_explicitly_opt_in() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("smoke.png");
     std::fs::write(&path, &bytes).unwrap();
-    eprintln!("live OpenAI image written to {} ({} bytes)", path.display(), bytes.len());
+    eprintln!(
+        "live OpenAI image written to {} ({} bytes)",
+        path.display(),
+        bytes.len()
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }

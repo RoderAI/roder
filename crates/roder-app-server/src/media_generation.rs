@@ -3,8 +3,7 @@
 
 use roder_api::events::RoderEvent;
 use roder_protocol::{
-    JsonRpcError, MediaImageGenerateParams, MediaImageGenerateResult,
-    MediaImageProvidersListResult,
+    JsonRpcError, MediaImageGenerateParams, MediaImageGenerateResult, MediaImageProvidersListResult,
 };
 
 use crate::server::{AppServer, internal_error};

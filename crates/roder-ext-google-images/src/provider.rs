@@ -339,6 +339,9 @@ fn map_provider_error(status: u16, body: &str) -> anyhow::Error {
         .unwrap_or_else(|| body.chars().take(ERROR_EXCERPT_LIMIT).collect());
     anyhow::anyhow!(
         "Gemini image generation failed (status {status}): {}",
-        message.chars().take(ERROR_EXCERPT_LIMIT).collect::<String>()
+        message
+            .chars()
+            .take(ERROR_EXCERPT_LIMIT)
+            .collect::<String>()
     )
 }

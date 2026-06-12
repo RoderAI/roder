@@ -387,44 +387,68 @@ pub fn marketplace_source(marketplaces: &[MarketplaceDescriptor]) -> StaticPalet
 }
 
 pub fn media_source() -> StaticPaletteSource {
-    StaticPaletteSource::new(
-        "media",
-        "Media",
-        vec![
-            (
-                PaletteItem {
-                    id: "media-image".to_string(),
-                    title: "Generate image".to_string(),
-                    subtitle: Some(
-                        "Use media_generate_image and save a Roder artifact".to_string(),
-                    ),
-                    keywords: vec![
-                        "media".to_string(),
-                        "imagegen".to_string(),
-                        "artifact".to_string(),
-                    ],
-                    icon: Some('I'),
-                },
-                PaletteAction::InsertComposerText("/imagegen ".to_string()),
-            ),
-            (
-                PaletteItem {
-                    id: "media-video".to_string(),
-                    title: "Generate video".to_string(),
-                    subtitle: Some(
-                        "Use media_generate_video and save a Roder artifact".to_string(),
-                    ),
-                    keywords: vec![
-                        "media".to_string(),
-                        "videogen".to_string(),
-                        "artifact".to_string(),
-                    ],
-                    icon: Some('V'),
-                },
-                PaletteAction::InsertComposerText("/videogen ".to_string()),
-            ),
-        ],
-    )
+    let mut entries = vec![
+        (
+            PaletteItem {
+                id: "media-image".to_string(),
+                title: "Generate image".to_string(),
+                subtitle: Some(
+                    "Use media_generate_image with the configured image provider".to_string(),
+                ),
+                keywords: vec![
+                    "media".to_string(),
+                    "imagegen".to_string(),
+                    "artifact".to_string(),
+                ],
+                icon: Some('I'),
+            },
+            PaletteAction::InsertComposerText("/imagegen ".to_string()),
+        ),
+        (
+            PaletteItem {
+                id: "media-video".to_string(),
+                title: "Generate video".to_string(),
+                subtitle: Some("Use media_generate_video and save a Roder artifact".to_string()),
+                keywords: vec![
+                    "media".to_string(),
+                    "videogen".to_string(),
+                    "artifact".to_string(),
+                ],
+                icon: Some('V'),
+            },
+            PaletteAction::InsertComposerText("/videogen ".to_string()),
+        ),
+    ];
+    for provider in roder_api::catalog::built_in_image_providers() {
+        let default_model =
+            roder_api::catalog::lookup_image_model(provider.id, provider.default_model);
+        let model_label = default_model
+            .map(|model| format!("{} ({})", model.display_name, model.id))
+            .unwrap_or_else(|| provider.default_model.to_string());
+        let mut keywords = vec![
+            "media".to_string(),
+            "imagegen".to_string(),
+            provider.id.to_string(),
+            provider.default_model.to_string(),
+        ];
+        if let Some(model) = default_model {
+            keywords.push(model.display_name.to_ascii_lowercase());
+        }
+        entries.push((
+            PaletteItem {
+                id: format!("media-image-{}", provider.id),
+                title: format!("Generate image: {}", provider.name),
+                subtitle: Some(format!("media_generate_image via {model_label}")),
+                keywords,
+                icon: Some('I'),
+            },
+            PaletteAction::InsertComposerText(format!(
+                "/imagegen --provider {} --model {} ",
+                provider.id, provider.default_model
+            )),
+        ));
+    }
+    StaticPaletteSource::new("media", "Media", entries)
 }
 
 pub fn memories_source() -> StaticPaletteSource {
@@ -1259,6 +1283,60 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn media_source_lists_image_providers_with_default_models() {
+        let source = media_source();
+        let entries = source.entries();
+
+        let generic = entries
+            .iter()
+            .find(|entry| entry.item.id == "media-image")
+            .expect("generic image entry");
+        assert_eq!(
+            generic.action,
+            PaletteAction::InsertComposerText("/imagegen ".to_string())
+        );
+
+        let openai = entries
+            .iter()
+            .find(|entry| entry.item.id == "media-image-openai")
+            .expect("openai image entry");
+        assert!(
+            openai
+                .item
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .contains("gpt-image-2")
+        );
+        assert_eq!(
+            openai.action,
+            PaletteAction::InsertComposerText(
+                "/imagegen --provider openai --model gpt-image-2 ".to_string()
+            )
+        );
+
+        let google = entries
+            .iter()
+            .find(|entry| entry.item.id == "media-image-google")
+            .expect("google image entry");
+        assert!(
+            google
+                .item
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .contains("Nano Banana 2")
+        );
+        assert!(
+            google
+                .item
+                .keywords
+                .iter()
+                .any(|keyword| keyword == "nano banana 2")
+        );
+    }
 
     #[test]
     fn command_source_runs_command_by_name() {
