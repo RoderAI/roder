@@ -22,9 +22,8 @@ use roder_protocol::{JsonRpcRequest, JsonRpcResponse};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-type Socket = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 fn temp_dir(label: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("roder-hosted-{label}-{}", uuid::Uuid::new_v4()));
@@ -128,7 +127,9 @@ async fn call(socket: &mut Socket, method: &str, params: serde_json::Value) -> J
         params: Some(params),
     };
     socket
-        .send(Message::Text(serde_json::to_string(&request).unwrap().into()))
+        .send(Message::Text(
+            serde_json::to_string(&request).unwrap().into(),
+        ))
         .await
         .unwrap();
     loop {
@@ -158,7 +159,9 @@ async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
     let request = query_url.into_client_request().unwrap();
     assert!(tokio_tungstenite::connect_async(request).await.is_err());
 
-    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
     let response = call(&mut socket, "initialize", serde_json::json!({})).await;
     assert!(response.error.is_none());
 
@@ -174,8 +177,14 @@ async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
         serde_json::json!({ "displayName": "ci" }),
     )
     .await;
-    let token = minted.result.as_ref().unwrap()["token"].as_str().unwrap().to_string();
-    let key_id = minted.result.as_ref().unwrap()["keyId"].as_str().unwrap().to_string();
+    let token = minted.result.as_ref().unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let key_id = minted.result.as_ref().unwrap()["keyId"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let mut sa_socket = connect(&fixture.url, &token).await.unwrap();
     let sa_whoami = call(&mut sa_socket, "hosted/whoami", serde_json::json!({})).await;
@@ -195,7 +204,10 @@ async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
     let records = serde_json::to_string(&audit.result.unwrap()).unwrap();
     assert!(records.contains("service_account_created"));
     assert!(records.contains("service_account_revoked"));
-    assert!(!records.contains(&token), "audit must never contain raw tokens");
+    assert!(
+        !records.contains(&token),
+        "audit must never contain raw tokens"
+    );
 
     let _ = fixture.authenticator;
     fixture.controller.stop().await.unwrap();
@@ -204,10 +216,19 @@ async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tenants_run_isolated_runtimes_with_isolated_stores_and_notifications() {
     let fixture = fixture("isolation", RateLimitConfig::default(), true).await;
-    let mut tenant_a = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
-    let mut tenant_b = connect(&fixture.url, "rk_test_tenant_b_writer").await.unwrap();
+    let mut tenant_a = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
+    let mut tenant_b = connect(&fixture.url, "rk_test_tenant_b_writer")
+        .await
+        .unwrap();
     for socket in [&mut tenant_a, &mut tenant_b] {
-        assert!(call(socket, "initialize", serde_json::json!({})).await.error.is_none());
+        assert!(
+            call(socket, "initialize", serde_json::json!({}))
+                .await
+                .error
+                .is_none()
+        );
     }
 
     let workspace = temp_dir("isolation-ws");
@@ -236,7 +257,10 @@ async fn tenants_run_isolated_runtimes_with_isolated_stores_and_notifications() 
     )
     .await;
     assert!(started.error.is_none(), "{:?}", started.error);
-    let thread_id = started.result.unwrap()["thread"]["id"].as_str().unwrap().to_string();
+    let thread_id = started.result.unwrap()["thread"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Tenant B's runtime has never seen the thread: list is empty and reads
     // fail — isolation by construction, not by request filtering.
@@ -303,12 +327,17 @@ async fn tenants_run_isolated_runtimes_with_isolated_stores_and_notifications() 
             Err(_) => break,
         }
     }
-    assert!(a_saw_notification, "owner tenant must receive thread notifications");
+    assert!(
+        a_saw_notification,
+        "owner tenant must receive thread notifications"
+    );
 
     // Tenant B's socket stays silent (its runtime emitted nothing).
-    let quiet =
-        tokio::time::timeout(std::time::Duration::from_millis(500), tenant_b.next()).await;
-    assert!(quiet.is_err(), "tenant B must not receive tenant A notifications");
+    let quiet = tokio::time::timeout(std::time::Duration::from_millis(500), tenant_b.next()).await;
+    assert!(
+        quiet.is_err(),
+        "tenant B must not receive tenant A notifications"
+    );
 
     fixture.controller.stop().await.unwrap();
 }
@@ -336,8 +365,15 @@ async fn gateway_dispatches_tenant_hooks_on_thread_start() {
     });
 
     let fixture = fixture("hooks-e2e", RateLimitConfig::default(), true).await;
-    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
-    assert!(call(&mut socket, "initialize", serde_json::json!({})).await.error.is_none());
+    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
+    assert!(
+        call(&mut socket, "initialize", serde_json::json!({}))
+            .await
+            .error
+            .is_none()
+    );
 
     let created = call(
         &mut socket,
@@ -355,7 +391,10 @@ async fn gateway_dispatches_tenant_hooks_on_thread_start() {
     .await;
     assert!(created.error.is_none(), "{:?}", created.error);
     let listed = call(&mut socket, "hosted/hooks/list", serde_json::json!({})).await;
-    assert_eq!(listed.result.unwrap()["hooks"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        listed.result.unwrap()["hooks"].as_array().map(Vec::len),
+        Some(1)
+    );
 
     let workspace = temp_dir("hooks-ws");
     let created = call(
@@ -400,7 +439,9 @@ async fn gateway_dispatches_tenant_hooks_on_thread_start() {
 #[tokio::test(flavor = "multi_thread")]
 async fn hosted_profile_denies_local_workspaces_by_default() {
     let fixture = fixture("no-local-ws", RateLimitConfig::default(), false).await;
-    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
 
     let denied = call(
         &mut socket,
@@ -413,7 +454,11 @@ async fn hosted_profile_denies_local_workspaces_by_default() {
     )
     .await;
     let error = denied.error.expect("workspace/create must be denied");
-    assert!(error.message.contains("local_workspace_disabled"), "{}", error.message);
+    assert!(
+        error.message.contains("local_workspace_disabled"),
+        "{}",
+        error.message
+    );
 
     let denied = call(
         &mut socket,
@@ -422,7 +467,11 @@ async fn hosted_profile_denies_local_workspaces_by_default() {
     )
     .await;
     let error = denied.error.expect("thread/start with cwd must be denied");
-    assert!(error.message.contains("local_workspace_disabled"), "{}", error.message);
+    assert!(
+        error.message.contains("local_workspace_disabled"),
+        "{}",
+        error.message
+    );
 
     fixture.controller.stop().await.unwrap();
 }
@@ -488,7 +537,9 @@ async fn rate_and_size_limits_fail_requests_deterministically() {
         true,
     )
     .await;
-    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
 
     let mut limited = false;
     for _ in 0..5 {

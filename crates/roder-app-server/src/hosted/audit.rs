@@ -51,7 +51,10 @@ impl AuditLog {
     pub fn record(&self, record: AuditRecord) {
         if let (Some(path), Ok(line)) = (&self.jsonl_path, serde_json::to_string(&record)) {
             use std::io::Write;
-            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
             {
                 let _ = writeln!(file, "{line}");
             }

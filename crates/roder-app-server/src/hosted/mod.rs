@@ -21,7 +21,9 @@ pub use audit::{AuditLog, AuditRecord};
 pub use auth::{HostedAuthError, HostedAuthenticator, ServiceAccountKey};
 pub use authorization::authorize_method;
 pub use gateway::{HostedGatewayController, HostedGatewayOptions, serve_hosted_gateway};
-pub use hook_delivery::{HookDeliveryConfig, HookDeliveryService, HookFailureMode, SIGNATURE_HEADER};
+pub use hook_delivery::{
+    HookDeliveryConfig, HookDeliveryService, HookFailureMode, SIGNATURE_HEADER,
+};
 pub use hooks::HookStore;
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use runtime_pool::{HostedRuntimePool, HostedRuntimeProfile, TenantAppServerFactory};

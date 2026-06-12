@@ -12,7 +12,8 @@ use roder_core::{Runtime, RuntimeConfig};
 use roder_protocol::JsonRpcRequest;
 
 fn temp_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("roder-agent-node-{label}-{}", uuid::Uuid::new_v4()));
+    let dir =
+        std::env::temp_dir().join(format!("roder-agent-node-{label}-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -99,7 +100,10 @@ async fn enrolled_mtls_controller_connects_and_unenrolled_certs_fail() {
         pairing_token: None,
     })
     .await;
-    assert!(denied.is_err(), "wrong server fingerprint must fail TLS trust");
+    assert!(
+        denied.is_err(),
+        "wrong server fingerprint must fail TLS trust"
+    );
 
     node.stop().await.unwrap();
 }
@@ -173,11 +177,9 @@ async fn pairing_tokens_enroll_once_and_reject_reuse_expiry_and_query_strings() 
 
     // Query-string tokens are always rejected, even valid ones.
     let (query_token, _) = node.handle.tokens.mint(time::Duration::minutes(5));
-    let tls = roder_app_server::agent_node::client_tls_config(
-        &node.handle.fingerprint,
-        Some(&second),
-    )
-    .unwrap();
+    let tls =
+        roder_app_server::agent_node::client_tls_config(&node.handle.fingerprint, Some(&second))
+            .unwrap();
     let tcp = tokio::net::TcpStream::connect(&address).await.unwrap();
     let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(tls));
     let server_name = rustls::pki_types::ServerName::try_from("localhost".to_string()).unwrap();

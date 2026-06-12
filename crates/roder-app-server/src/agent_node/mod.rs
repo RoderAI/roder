@@ -9,7 +9,7 @@ pub mod tls;
 
 pub use auth::{ControllerTrust, DEFAULT_PAIRING_TTL, PairingTokens};
 pub use server::{
-    AGENT_NODE_PROTOCOL, AgentNodeController, AgentNodeHandle, AgentNodeOptions,
-    NODE_EVENT_METHOD, load_or_generate_identity, serve_agent_node,
+    AGENT_NODE_PROTOCOL, AgentNodeController, AgentNodeHandle, AgentNodeOptions, NODE_EVENT_METHOD,
+    load_or_generate_identity, serve_agent_node,
 };
 pub use tls::{TlsIdentity, client_tls_config, fingerprint_from_pem, generate_identity};

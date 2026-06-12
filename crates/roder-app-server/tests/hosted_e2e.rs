@@ -15,8 +15,7 @@ use roder_app_server::AppServer;
 use roder_app_server::hosted::auth::PrincipalSeed;
 use roder_app_server::hosted::{
     AuditLog, HookDeliveryService, HookStore, HostedAuthenticator, HostedGatewayOptions,
-    HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry,
-    serve_hosted_gateway,
+    HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry, serve_hosted_gateway,
 };
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};
@@ -25,9 +24,8 @@ use roder_protocol::{JsonRpcRequest, JsonRpcResponse};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-type Socket = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 fn temp_dir(label: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("roder-he2e-{label}-{}", uuid::Uuid::new_v4()));
@@ -158,7 +156,12 @@ async fn hosted_e2e_two_tenants_service_account_hooks_and_isolation() {
     let mut admin_a = connect(&url, "rk_test_tenant_a_admin").await.unwrap();
     let mut admin_b = connect(&url, "rk_test_tenant_b_admin").await.unwrap();
     for socket in [&mut admin_a, &mut admin_b] {
-        assert!(call(socket, "initialize", serde_json::json!({})).await.error.is_none());
+        assert!(
+            call(socket, "initialize", serde_json::json!({}))
+                .await
+                .error
+                .is_none()
+        );
     }
 
     // Tenant A registers a hook for thread lifecycle events.
@@ -179,7 +182,10 @@ async fn hosted_e2e_two_tenants_service_account_hooks_and_isolation() {
     assert!(created.error.is_none(), "{:?}", created.error);
     // Tenant B sees no hooks (tenant-scoped store).
     let b_hooks = call(&mut admin_b, "hosted/hooks/list", serde_json::json!({})).await;
-    assert_eq!(b_hooks.result.unwrap()["hooks"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        b_hooks.result.unwrap()["hooks"].as_array().map(Vec::len),
+        Some(0)
+    );
 
     // Tenant A mints a service account; it authenticates into tenant A.
     let minted = call(
@@ -188,13 +194,27 @@ async fn hosted_e2e_two_tenants_service_account_hooks_and_isolation() {
         serde_json::json!({ "displayName": "e2e-sa" }),
     )
     .await;
-    let sa_token = minted.result.unwrap()["token"].as_str().unwrap().to_string();
+    let sa_token = minted.result.unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let mut service_account = connect(&url, &sa_token).await.unwrap();
     let sa_whoami = call(&mut service_account, "hosted/whoami", serde_json::json!({})).await;
     assert_eq!(sa_whoami.result.unwrap()["tenant"]["tenantId"], "tenant-a");
     // The member service account cannot administer hooks.
-    let denied = call(&mut service_account, "hosted/hooks/list", serde_json::json!({})).await;
-    assert!(denied.error.unwrap().message.contains("tenant_admin_required"));
+    let denied = call(
+        &mut service_account,
+        "hosted/hooks/list",
+        serde_json::json!({}),
+    )
+    .await;
+    assert!(
+        denied
+            .error
+            .unwrap()
+            .message
+            .contains("tenant_admin_required")
+    );
 
     // Full thread + turn lifecycle on tenant A's runtime (fake engine =
     // the fake/local runner execution profile).
@@ -223,13 +243,22 @@ async fn hosted_e2e_two_tenants_service_account_hooks_and_isolation() {
     )
     .await;
     assert!(started.error.is_none(), "{:?}", started.error);
-    let thread_id = started.result.unwrap()["thread"]["id"].as_str().unwrap().to_string();
+    let thread_id = started.result.unwrap()["thread"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     // The service account (same tenant) can see the thread.
     let sa_list = call(&mut service_account, "thread/list", serde_json::json!({})).await;
-    assert_eq!(sa_list.result.unwrap()["data"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        sa_list.result.unwrap()["data"].as_array().map(Vec::len),
+        Some(1)
+    );
     // Tenant B cannot.
     let b_list = call(&mut admin_b, "thread/list", serde_json::json!({})).await;
-    assert_eq!(b_list.result.unwrap()["data"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        b_list.result.unwrap()["data"].as_array().map(Vec::len),
+        Some(0)
+    );
 
     let turn = call(
         &mut admin_a,
@@ -257,8 +286,7 @@ async fn hosted_e2e_two_tenants_service_account_hooks_and_isolation() {
         }
     }
     assert!(a_notified);
-    let b_quiet =
-        tokio::time::timeout(std::time::Duration::from_millis(400), admin_b.next()).await;
+    let b_quiet = tokio::time::timeout(std::time::Duration::from_millis(400), admin_b.next()).await;
     assert!(b_quiet.is_err(), "tenant B must observe nothing");
 
     // Hook deliveries fired for tenant A's thread/turn lifecycle.

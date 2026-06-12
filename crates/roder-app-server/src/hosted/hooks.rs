@@ -40,10 +40,10 @@ impl HookStore {
         let now = OffsetDateTime::now_utc();
         definition.created_at = now;
         definition.updated_at = now;
-        self.hooks
-            .write()
-            .unwrap()
-            .insert((tenant_id.to_string(), definition.id.clone()), definition.clone());
+        self.hooks.write().unwrap().insert(
+            (tenant_id.to_string(), definition.id.clone()),
+            definition.clone(),
+        );
         Ok(definition)
     }
 

@@ -96,11 +96,7 @@ async fn request<T: serde::de::DeserializeOwned>(
     serde_json::from_value(response.result.unwrap()).unwrap()
 }
 
-async fn request_error(
-    client: &LocalAppClient,
-    method: &str,
-    params: serde_json::Value,
-) -> String {
+async fn request_error(client: &LocalAppClient, method: &str, params: serde_json::Value) -> String {
     let response = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -178,7 +174,10 @@ async fn fork_worktree_lifecycle_works_over_public_json_rpc() {
         Some(parent_id.as_str())
     );
     assert_eq!(forked.fork.status, ForkStatus::Active);
-    assert_eq!(forked.thread.cwd, forked.fork.workspace.display().to_string());
+    assert_eq!(
+        forked.thread.cwd,
+        forked.fork.workspace.display().to_string()
+    );
     assert_ne!(forked.thread.cwd, repo.display().to_string());
     assert!(Path::new(&forked.thread.cwd).join("README.md").exists());
 
@@ -354,7 +353,10 @@ async fn fork_worktree_fails_closed_for_dirty_parents_and_missing_worktrees() {
         .unwrap(),
     )
     .await;
-    assert!(status.workspace_missing, "missing worktree must be reported");
+    assert!(
+        status.workspace_missing,
+        "missing worktree must be reported"
+    );
 
     let _ = std::fs::remove_dir_all(&repo);
 }

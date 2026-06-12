@@ -400,21 +400,24 @@ impl AppServer {
                 .await
             }
             "forks/create" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_forks_create(p).await
-                })
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_forks_create(p).await },
+                )
                 .await
             }
             "forks/remove" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_forks_remove(p).await
-                })
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_forks_remove(p).await },
+                )
                 .await
             }
             "stats/summary" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_stats_summary(p).await
-                })
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_stats_summary(p).await },
+                )
                 .await
             }
             "stats/tools" => {
@@ -425,9 +428,10 @@ impl AppServer {
                 .await
             }
             "stats/tokens" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_stats_tokens(p).await
-                })
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_stats_tokens(p).await },
+                )
                 .await
             }
             "stats/sessions" => {
@@ -443,9 +447,10 @@ impl AppServer {
                 .await
             }
             "stats/export" => {
-                self.decode_and(req.params, |p| async move {
-                    self.handle_stats_export(p).await
-                })
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_stats_export(p).await },
+                )
                 .await
             }
             "roadmap/list" => self.handle_roadmap_list().await,

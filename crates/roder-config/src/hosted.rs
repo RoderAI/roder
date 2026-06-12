@@ -123,8 +123,14 @@ impl HostedConfig {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(!self.data_root.trim().is_empty(), "hosted.data_root is required");
-        anyhow::ensure!(!self.tenants.is_empty(), "at least one [[hosted.tenants]] is required");
+        anyhow::ensure!(
+            !self.data_root.trim().is_empty(),
+            "hosted.data_root is required"
+        );
+        anyhow::ensure!(
+            !self.tenants.is_empty(),
+            "at least one [[hosted.tenants]] is required"
+        );
         for key in &self.static_keys {
             anyhow::ensure!(
                 !key.token_env.starts_with("rk_"),
@@ -137,7 +143,10 @@ impl HostedConfig {
                 key.tenant
             );
             anyhow::ensure!(
-                matches!(key.role.as_str(), "member" | "tenant_admin" | "system_admin"),
+                matches!(
+                    key.role.as_str(),
+                    "member" | "tenant_admin" | "system_admin"
+                ),
                 "unknown hosted role {:?}",
                 key.role
             );
@@ -158,7 +167,11 @@ impl HostedConfig {
             self.listen,
             self.tenants.len(),
             self.static_keys.len(),
-            if self.allow_local_workspaces { "ALLOWED" } else { "disabled" },
+            if self.allow_local_workspaces {
+                "ALLOWED"
+            } else {
+                "disabled"
+            },
         )
     }
 }
@@ -192,25 +205,49 @@ mod tests {
     fn hosted_config_parses_validates_and_redacts() {
         let config = sample();
         config.validate().unwrap();
-        assert!(!config.allow_local_workspaces, "hosted default is locked down");
+        assert!(
+            !config.allow_local_workspaces,
+            "hosted default is locked down"
+        );
         assert_eq!(config.rate_limit.burst, 60);
         let summary = config.redacted_summary();
         assert!(summary.contains("1 tenant(s)"));
-        assert!(!summary.contains("RODER_HOSTED_KEY"), "no env names in summaries");
+        assert!(
+            !summary.contains("RODER_HOSTED_KEY"),
+            "no env names in summaries"
+        );
     }
 
     #[test]
     fn hosted_config_rejects_raw_keys_and_unknown_references() {
         let mut config = sample();
         config.static_keys[0].token_env = "rk_test_raw_key_inline".to_string();
-        assert!(config.validate().unwrap_err().to_string().contains("never accepted"));
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("never accepted")
+        );
 
         let mut config = sample();
         config.static_keys[0].tenant = "ghost".to_string();
-        assert!(config.validate().unwrap_err().to_string().contains("unknown tenant"));
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("unknown tenant")
+        );
 
         let mut config = sample();
         config.static_keys[0].scopes = vec!["root".to_string()];
-        assert!(config.validate().unwrap_err().to_string().contains("unknown hosted scope"));
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("unknown hosted scope")
+        );
     }
 }
