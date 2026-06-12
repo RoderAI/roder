@@ -7010,7 +7010,8 @@ async fn skills_manager_can_disable_commit_and_update_exposure() {
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
 
-    let listed: SkillsListResult = request(&client, "skills/list", None).await;
+    let listed: SkillsListResult =
+        request(&client, "skills/list", Some(serde_json::json!({}))).await;
     let snapshot = listed
         .skills
         .iter()

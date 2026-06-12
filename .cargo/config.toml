@@ -1,6 +1,12 @@
 [build]
 incremental = true
 
+[env]
+# The dynamic-workflow JS interpreter needs more than the default test stack
+# (workflows_methods_plan_approve_control_save_and_deny overflows otherwise).
+# Does not override an externally set RUST_MIN_STACK.
+RUST_MIN_STACK = "16777216"
+
 [term]
 color = "auto"
 
