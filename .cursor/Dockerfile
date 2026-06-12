@@ -11,7 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     lld \
     pkg-config \
+    python3 \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# uv for Python e2e tests (tuiwright from PyPI).
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
 
 # Rust toolchain (version also pinned via rust-toolchain.toml in the repo).
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \

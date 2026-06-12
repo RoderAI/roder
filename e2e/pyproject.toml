@@ -4,12 +4,8 @@ version = "0.1.0"
 description = "End-to-end TUI tests for Roder, driven by tuiwright."
 requires-python = ">=3.11"
 dependencies = [
-    # Local path during development; switch to `tuiwright>=0.1` once published.
-    "tuiwright",
+    "tuiwright>=0.2.1",
 ]
-
-[tool.uv.sources]
-tuiwright = { path = "../../tuiwright", editable = true }
 
 [dependency-groups]
 dev = [

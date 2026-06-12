@@ -25,6 +25,14 @@ ensure_nextest() {
   cargo install cargo-nextest --locked
 }
 
+ensure_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    return 0
+  fi
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="${HOME}/.local/bin:${PATH}"
+}
+
 echo "==> Ensuring Rust 1.95.0"
 ensure_rust
 rustc --version
@@ -38,5 +46,11 @@ ensure_nextest || echo "warning: cargo-nextest install failed; make test will fa
 
 echo "==> Building roder CLI"
 make build
+
+echo "==> Installing Python e2e dependencies (tuiwright from PyPI)"
+ensure_uv
+export PATH="${HOME}/.local/bin:${PATH}"
+uv python install 3.12
+(cd e2e && uv sync --group dev)
 
 echo "==> Cloud agent setup complete"
