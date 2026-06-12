@@ -34,6 +34,11 @@ path = "tests/process_extension_python_provider.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
+name = "process_extension_cursor_sdk"
+path = "tests/process_extension_cursor_sdk.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
 name = "hosted_auth"
 path = "tests/hosted_auth.rs"
 
