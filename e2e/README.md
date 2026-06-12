@@ -2,7 +2,7 @@
 
 Black-box tests that spawn the real `roder` binary under a pseudo-terminal
 and drive it like a human would — typing, clicking, pasting, resizing.
-Powered by [`tuiwright`](https://github.com/pandelisz/tuiwright).
+Powered by [`tuiwright`](https://github.com/pandelisz/tuiwright) (installed from PyPI via `uv sync`).
 
 ## Setup
 
