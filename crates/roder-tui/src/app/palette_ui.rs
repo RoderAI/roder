@@ -8,7 +8,8 @@ use crate::palette::{
     skills::skill_source,
     sources::{
         agent_source, chrome_source, command_source, file_source, marketplace_source, media_source,
-        memories_source, mode_source, model_source, remote_source, roadmap_source, runner_source,
+        knowledge_source, memories_source, mode_source, model_source, remote_source,
+        roadmap_source, runner_source,
         settings_source, theme_source, thread_source, workflow_import_source,
     },
 };
@@ -176,6 +177,9 @@ where
         }
         if self.palette_source_enabled("memories") {
             sources.push(memories_source());
+        }
+        if self.palette_source_enabled("knowledge") {
+            sources.push(knowledge_source());
         }
         if self.palette_source_enabled("processes")
             && let Some(processes) = processes.as_ref()
