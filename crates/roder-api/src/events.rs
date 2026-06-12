@@ -31,6 +31,7 @@ use crate::inference::{
 };
 use crate::inference_routing::InferenceRoutingDecision;
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
+use crate::knowledge::{KnowledgeDocId, KnowledgeDocSummary, KnowledgeLinkType};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
 use crate::plan_review::{
     HunkId, HunkRecord, PlanComment, PlanReview, PlanReviewId, PlanReviewStatus, PlanRewrite,
@@ -1128,6 +1129,37 @@ pub struct MemoryObservationRecorded {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeSaved {
+    pub document: KnowledgeDocSummary,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeUpdated {
+    pub document: KnowledgeDocSummary,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeArchived {
+    pub doc_id: KnowledgeDocId,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeLinked {
+    pub from: KnowledgeDocId,
+    pub to: KnowledgeDocId,
+    pub link_type: KnowledgeLinkType,
+    pub removed: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteServerStarted {
     pub listen_addr: String,
     pub connect_urls: Vec<String>,
@@ -1304,6 +1336,10 @@ pub enum RoderEvent {
     MemoryReembedQueued(MemoryReembedQueued),
     MemoryProviderChanged(MemoryProviderChanged),
     MemoryObservationRecorded(MemoryObservationRecorded),
+    KnowledgeSaved(KnowledgeSaved),
+    KnowledgeUpdated(KnowledgeUpdated),
+    KnowledgeArchived(KnowledgeArchived),
+    KnowledgeLinked(KnowledgeLinked),
     RemoteServerStarted(RemoteServerStarted),
     RemoteServerStopped(RemoteServerStopped),
     RemoteAuthFailed(RemoteAuthFailed),
@@ -1496,6 +1532,10 @@ impl RoderEvent {
             RoderEvent::MemoryReembedQueued(_) => "memory/reembedQueued",
             RoderEvent::MemoryProviderChanged(_) => "memory/providerChanged",
             RoderEvent::MemoryObservationRecorded(_) => "memory/observationRecorded",
+            RoderEvent::KnowledgeSaved(_) => "knowledge/saved",
+            RoderEvent::KnowledgeUpdated(_) => "knowledge/updated",
+            RoderEvent::KnowledgeArchived(_) => "knowledge/archived",
+            RoderEvent::KnowledgeLinked(_) => "knowledge/linked",
             RoderEvent::RemoteServerStarted(_) => "remote/serverStarted",
             RoderEvent::RemoteServerStopped(_) => "remote/serverStopped",
             RoderEvent::RemoteAuthFailed(_) => "remote/authFailed",
@@ -1822,6 +1862,10 @@ impl RoderEvent {
             | RoderEvent::MemoryQueried(_)
             | RoderEvent::MemoryReembedQueued(_)
             | RoderEvent::MemoryProviderChanged(_)
+            | RoderEvent::KnowledgeSaved(_)
+            | RoderEvent::KnowledgeUpdated(_)
+            | RoderEvent::KnowledgeArchived(_)
+            | RoderEvent::KnowledgeLinked(_)
             | RoderEvent::RemoteServerStarted(_)
             | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)
@@ -2004,6 +2048,10 @@ impl RoderEvent {
             | RoderEvent::MemoryQueried(_)
             | RoderEvent::MemoryReembedQueued(_)
             | RoderEvent::MemoryProviderChanged(_)
+            | RoderEvent::KnowledgeSaved(_)
+            | RoderEvent::KnowledgeUpdated(_)
+            | RoderEvent::KnowledgeArchived(_)
+            | RoderEvent::KnowledgeLinked(_)
             | RoderEvent::RemoteServerStarted(_)
             | RoderEvent::RemoteServerStopped(_)
             | RoderEvent::RemoteAuthFailed(_)

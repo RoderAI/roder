@@ -15,6 +15,7 @@ pub type ContextPlannerId = String;
 pub type ThreadStoreId = String;
 pub type CheckpointStoreId = String;
 pub type MemoryStoreId = String;
+pub type KnowledgeStoreId = String;
 pub type EmbeddingProviderId = String;
 pub type ToolProviderId = String;
 pub type SubagentDispatcherId = String;
@@ -38,6 +39,7 @@ pub enum ProvidedService {
     ThreadStore(ThreadStoreId),
     CheckpointStore(CheckpointStoreId),
     MemoryStore(MemoryStoreId),
+    KnowledgeStore(KnowledgeStoreId),
     EmbeddingProvider(EmbeddingProviderId),
     ToolProvider(ToolProviderId),
     SubagentDispatcher(SubagentDispatcherId),
@@ -97,6 +99,7 @@ pub struct ExtensionRegistry {
     pub thread_stores: Vec<Arc<dyn crate::thread::ThreadStoreFactory>>,
     pub checkpoint_stores: Vec<Arc<dyn crate::thread::CheckpointStoreFactory>>,
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
+    pub knowledge_stores: Vec<Arc<dyn crate::knowledge::KnowledgeStoreFactory>>,
     pub embedding_providers: Vec<Arc<dyn crate::embeddings::EmbeddingProvider>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
@@ -219,6 +222,7 @@ pub struct ExtensionRegistryBuilder {
     pub thread_stores: Vec<Arc<dyn crate::thread::ThreadStoreFactory>>,
     pub checkpoint_stores: Vec<Arc<dyn crate::thread::CheckpointStoreFactory>>,
     pub memory_stores: Vec<Arc<dyn crate::memory::MemoryStoreFactory>>,
+    pub knowledge_stores: Vec<Arc<dyn crate::knowledge::KnowledgeStoreFactory>>,
     pub embedding_providers: Vec<Arc<dyn crate::embeddings::EmbeddingProvider>>,
     pub tools: Vec<Arc<dyn crate::tools::ToolContributor>>,
     pub subagent_dispatchers: Vec<Arc<dyn crate::subagents::SubagentDispatcher>>,
@@ -256,6 +260,7 @@ impl ExtensionRegistryBuilder {
             thread_stores: Vec::new(),
             checkpoint_stores: Vec::new(),
             memory_stores: Vec::new(),
+            knowledge_stores: Vec::new(),
             embedding_providers: Vec::new(),
             tools: Vec::new(),
             subagent_dispatchers: Vec::new(),
@@ -318,6 +323,7 @@ impl ExtensionRegistryBuilder {
             thread_stores: self.thread_stores,
             checkpoint_stores: self.checkpoint_stores,
             memory_stores: self.memory_stores,
+            knowledge_stores: self.knowledge_stores,
             embedding_providers: self.embedding_providers,
             tools: self.tools,
             subagent_dispatchers: self.subagent_dispatchers,
@@ -390,6 +396,13 @@ impl ExtensionRegistryBuilder {
 
     pub fn memory_store_factory(&mut self, store: Arc<dyn crate::memory::MemoryStoreFactory>) {
         self.memory_stores.push(store);
+    }
+
+    pub fn knowledge_store_factory(
+        &mut self,
+        store: Arc<dyn crate::knowledge::KnowledgeStoreFactory>,
+    ) {
+        self.knowledge_stores.push(store);
     }
 
     pub fn embedding_provider(&mut self, provider: Arc<dyn crate::embeddings::EmbeddingProvider>) {
@@ -630,6 +643,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     );
     services.extend(
         builder
+            .knowledge_stores
+            .iter()
+            .map(|service| ProvidedService::KnowledgeStore(service.id())),
+    );
+    services.extend(
+        builder
             .embedding_providers
             .iter()
             .map(|service| ProvidedService::EmbeddingProvider(service.descriptor().id)),
@@ -793,6 +812,7 @@ fn service_label(service: &ProvidedService) -> String {
         ProvidedService::ThreadStore(id) => format!("ThreadStore({id})"),
         ProvidedService::CheckpointStore(id) => format!("CheckpointStore({id})"),
         ProvidedService::MemoryStore(id) => format!("MemoryStore({id})"),
+        ProvidedService::KnowledgeStore(id) => format!("KnowledgeStore({id})"),
         ProvidedService::EmbeddingProvider(id) => format!("EmbeddingProvider({id})"),
         ProvidedService::ToolProvider(id) => format!("ToolProvider({id})"),
         ProvidedService::SubagentDispatcher(id) => format!("SubagentDispatcher({id})"),

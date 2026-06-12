@@ -1417,6 +1417,54 @@ impl AppServer {
                 })
                 .await
             }
+            "knowledge/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_list(p).await
+                })
+                .await
+            }
+            "knowledge/read" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_read(p).await
+                })
+                .await
+            }
+            "knowledge/save" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_save(p).await
+                })
+                .await
+            }
+            "knowledge/update" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_update(p).await
+                })
+                .await
+            }
+            "knowledge/delete" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_delete(p).await
+                })
+                .await
+            }
+            "knowledge/search" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_search(p).await
+                })
+                .await
+            }
+            "knowledge/links/set" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_links_set(p).await
+                })
+                .await
+            }
+            "knowledge/revisions/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_knowledge_revisions_list(p).await
+                })
+                .await
+            }
             "memory/list" => {
                 self.decode_and(
                     req.params,

@@ -52,6 +52,7 @@ use roder_core::{
 };
 use roder_ext_google_embeddings::GoogleEmbeddingsExtension;
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
+use roder_ext_knowledge_md::KnowledgeMdExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_openai_embeddings::OpenAiEmbeddingsExtension;
 use roder_ext_subagents::{
@@ -83,7 +84,11 @@ use roder_protocol::{
     MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
     MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
     MediaListParams, MediaListResult, MediaReadParams, MediaReadResult, MediaThumbnailParams,
-    MediaThumbnailResult, MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
+    MediaThumbnailResult, KnowledgeDeleteParams, KnowledgeDeleteResult, KnowledgeLinkSetParams,
+    KnowledgeListParams, KnowledgeListResult, KnowledgeReadParams, KnowledgeReadResult,
+    KnowledgeRevisionsParams, KnowledgeRevisionsResult, KnowledgeSaveParams, KnowledgeSaveResult,
+    KnowledgeSearchParams, KnowledgeSearchResults, KnowledgeUpdateParams,
+    MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
     MemoryListResult, MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult,
     MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult,
     MemorySaveParams, MemorySaveResult, MemoryUpdateParams, ModelSelectChoice, ModelSelectParams,
@@ -3135,6 +3140,199 @@ async fn memory_methods_save_query_read_update_delete_and_preview() {
     )
     .await;
     assert!(deleted.deleted);
+}
+
+#[tokio::test]
+async fn knowledge_methods_cover_document_lifecycle_links_and_revisions() {
+    let root = std::env::temp_dir().join(format!("roder-knowledge-e2e-{}", uuid::Uuid::new_v4()));
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.install(KnowledgeMdExtension::new(root)).unwrap();
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
+
+    let scope = MemoryScope::Project("gode".to_string());
+    let saved: KnowledgeSaveResult = request(
+        &client,
+        "knowledge/save",
+        Some(
+            serde_json::to_value(KnowledgeSaveParams {
+                scope: scope.clone(),
+                kind: roder_api::knowledge::KnowledgeKind::Decision,
+                title: "Adopt markdown knowledge engine".to_string(),
+                tags: vec!["adr".to_string()],
+                body: "Knowledge lives in markdown files; codeword kestrel.".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let doc_id = saved.document.id.clone();
+    assert_eq!(saved.document.revision, 1);
+
+    let second: KnowledgeSaveResult = request(
+        &client,
+        "knowledge/save",
+        Some(
+            serde_json::to_value(KnowledgeSaveParams {
+                scope: scope.clone(),
+                kind: roder_api::knowledge::KnowledgeKind::Note,
+                title: "Older note".to_string(),
+                tags: Vec::new(),
+                body: "Superseded soon.".to_string(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let listed: KnowledgeListResult = request(
+        &client,
+        "knowledge/list",
+        Some(
+            serde_json::to_value(KnowledgeListParams {
+                scope: Some(scope.clone()),
+                kind: None,
+                tag: None,
+                status: None,
+                include_archived: false,
+                limit: Some(10),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(listed.documents.len(), 2);
+
+    let searched: KnowledgeSearchResults = request(
+        &client,
+        "knowledge/search",
+        Some(
+            serde_json::to_value(KnowledgeSearchParams {
+                scope: Some(scope.clone()),
+                text: "kestrel".to_string(),
+                kind: None,
+                limit: Some(5),
+                include_global: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(searched.results.len(), 1);
+    assert_eq!(searched.results[0].document.id, doc_id);
+    assert!(searched.results[0].citation.snippet.contains("kestrel"));
+
+    let updated: KnowledgeSaveResult = request(
+        &client,
+        "knowledge/update",
+        Some(
+            serde_json::to_value(KnowledgeUpdateParams {
+                doc_id: doc_id.clone(),
+                title: None,
+                body: Some("Knowledge lives in markdown files; updated body.".to_string()),
+                status: None,
+                tags: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(updated.document.revision, 2);
+
+    let original: KnowledgeReadResult = request(
+        &client,
+        "knowledge/read",
+        Some(
+            serde_json::to_value(KnowledgeReadParams {
+                doc_id: doc_id.clone(),
+                revision: Some(1),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(original.document.unwrap().body.contains("kestrel"));
+
+    let linked: KnowledgeSaveResult = request(
+        &client,
+        "knowledge/links/set",
+        Some(
+            serde_json::to_value(KnowledgeLinkSetParams {
+                from: doc_id.clone(),
+                to: second.document.id.clone(),
+                link_type: roder_api::knowledge::KnowledgeLinkType::Supersedes,
+                remove: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(linked.document.links.len(), 1);
+    assert_eq!(linked.document.links[0].to, second.document.id);
+
+    let revisions: KnowledgeRevisionsResult = request(
+        &client,
+        "knowledge/revisions/list",
+        Some(
+            serde_json::to_value(KnowledgeRevisionsParams {
+                doc_id: doc_id.clone(),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        revisions
+            .revisions
+            .iter()
+            .map(|info| info.revision)
+            .collect::<Vec<_>>(),
+        vec![3, 2, 1]
+    );
+
+    let deleted: KnowledgeDeleteResult = request(
+        &client,
+        "knowledge/delete",
+        Some(serde_json::to_value(KnowledgeDeleteParams { doc_id: doc_id.clone() }).unwrap()),
+    )
+    .await;
+    assert!(deleted.archived);
+
+    let after_delete: KnowledgeListResult = request(
+        &client,
+        "knowledge/list",
+        Some(
+            serde_json::to_value(KnowledgeListParams {
+                scope: Some(scope),
+                kind: None,
+                tag: None,
+                status: None,
+                include_archived: false,
+                limit: Some(10),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(after_delete.documents.len(), 1);
+
+    let still_readable: KnowledgeReadResult = request(
+        &client,
+        "knowledge/read",
+        Some(
+            serde_json::to_value(KnowledgeReadParams {
+                doc_id,
+                revision: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        still_readable.document.unwrap().status,
+        roder_api::knowledge::KnowledgeStatus::Archived
+    );
 }
 
 #[tokio::test]

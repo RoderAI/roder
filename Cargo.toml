@@ -92,6 +92,7 @@ roder-ext-google-embeddings = { path = "crates/roder-ext-google-embeddings" }
 roder-ext-honcho = { path = "crates/roder-ext-honcho" }
 roder-ext-inference-router = { path = "crates/roder-ext-inference-router" }
 roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store" }
+roder-ext-knowledge-md = { path = "crates/roder-ext-knowledge-md" }
 roder-ext-mcp = { path = "crates/roder-ext-mcp" }
 roder-ext-memory = { path = "crates/roder-ext-memory" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop" }

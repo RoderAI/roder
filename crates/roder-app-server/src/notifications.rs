@@ -693,6 +693,18 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 event.clone(),
             )]
         }
+        RoderEvent::KnowledgeSaved(event) => {
+            vec![protocol_notification("knowledge/saved", event.clone())]
+        }
+        RoderEvent::KnowledgeUpdated(event) => {
+            vec![protocol_notification("knowledge/updated", event.clone())]
+        }
+        RoderEvent::KnowledgeArchived(event) => {
+            vec![protocol_notification("knowledge/archived", event.clone())]
+        }
+        RoderEvent::KnowledgeLinked(event) => {
+            vec![protocol_notification("knowledge/linked", event.clone())]
+        }
         _ => Vec::new(),
     }
 }

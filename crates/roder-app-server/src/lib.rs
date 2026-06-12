@@ -14,6 +14,7 @@ mod fs;
 mod goals;
 mod inference_routing;
 mod item_stream;
+mod knowledge;
 mod marketplaces;
 #[cfg(test)]
 mod method_manifest;

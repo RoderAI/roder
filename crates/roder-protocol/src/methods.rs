@@ -337,6 +337,24 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         Idempotent
     ),
     method_spec!("initialize", "app", ReadOnly, Idempotent),
+    method_spec!("knowledge/delete", "knowledge", LocalState, NonIdempotent),
+    method_spec!(
+        "knowledge/links/set",
+        "knowledge",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!("knowledge/list", "knowledge", ReadOnly, Idempotent),
+    method_spec!("knowledge/read", "knowledge", ReadOnly, Idempotent),
+    method_spec!(
+        "knowledge/revisions/list",
+        "knowledge",
+        ReadOnly,
+        Idempotent
+    ),
+    method_spec!("knowledge/save", "knowledge", LocalState, NonIdempotent),
+    method_spec!("knowledge/search", "knowledge", ReadOnly, Idempotent),
+    method_spec!("knowledge/update", "knowledge", LocalState, NonIdempotent),
     method_spec!(
         "marketplaces/add",
         "marketplaces",

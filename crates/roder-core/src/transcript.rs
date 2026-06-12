@@ -25,6 +25,7 @@ impl Runtime {
                 block.kind,
                 ContextBlockKind::Instruction
                     | ContextBlockKind::Memory
+                    | ContextBlockKind::Knowledge
                     | ContextBlockKind::RepositoryFact
                     | ContextBlockKind::RetrievedDocument
                     | ContextBlockKind::PriorSummary

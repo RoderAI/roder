@@ -41,6 +41,10 @@ use roder_api::marketplace::{
     MarketplaceDescriptor, MarketplaceKind, MarketplacePluginEntry, MarketplaceSource,
 };
 use roder_api::media::{MediaArtifact, MediaArtifactId, MediaAttachment, MediaPreview};
+use roder_api::knowledge::{
+    KnowledgeDocId, KnowledgeDocSummary, KnowledgeDocument, KnowledgeKind, KnowledgeLinkType,
+    KnowledgeRevisionInfo, KnowledgeSearchResult as KnowledgeSearchMatch, KnowledgeStatus,
+};
 use roder_api::memory::{
     MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope, MemorySearchResult,
 };
@@ -1081,6 +1085,125 @@ pub struct MemoryRecallPreviewParams {
 pub struct MemoryRecallPreviewResult {
     pub citations: Vec<roder_api::memory::MemoryCitation>,
     pub results: Vec<MemorySearchResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeListParams {
+    pub scope: Option<MemoryScope>,
+    #[serde(default)]
+    pub kind: Option<KnowledgeKind>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    #[serde(default)]
+    pub status: Option<KnowledgeStatus>,
+    #[serde(default)]
+    pub include_archived: bool,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeListResult {
+    pub documents: Vec<KnowledgeDocSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeReadParams {
+    pub doc_id: KnowledgeDocId,
+    #[serde(default)]
+    pub revision: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeReadResult {
+    pub document: Option<KnowledgeDocument>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSaveParams {
+    pub scope: MemoryScope,
+    pub kind: KnowledgeKind,
+    pub title: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSaveResult {
+    pub document: KnowledgeDocument,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeUpdateParams {
+    pub doc_id: KnowledgeDocId,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub status: Option<KnowledgeStatus>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeDeleteParams {
+    pub doc_id: KnowledgeDocId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeDeleteResult {
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSearchParams {
+    pub scope: Option<MemoryScope>,
+    pub text: String,
+    #[serde(default)]
+    pub kind: Option<KnowledgeKind>,
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub include_global: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSearchResults {
+    pub results: Vec<KnowledgeSearchMatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeLinkSetParams {
+    pub from: KnowledgeDocId,
+    pub to: KnowledgeDocId,
+    #[serde(rename = "type")]
+    pub link_type: KnowledgeLinkType,
+    #[serde(default)]
+    pub remove: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeRevisionsParams {
+    pub doc_id: KnowledgeDocId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeRevisionsResult {
+    pub revisions: Vec<KnowledgeRevisionInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
