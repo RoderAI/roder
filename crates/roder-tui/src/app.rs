@@ -12,7 +12,6 @@ mod media;
 mod memories;
 mod mention;
 mod palette_ui;
-mod remote_node;
 #[cfg(test)]
 mod plan_hunk_tests;
 mod plan_panel;
@@ -22,6 +21,7 @@ mod processes;
 mod progress;
 #[allow(dead_code)]
 mod remote;
+mod remote_node;
 mod roadmap_workspace;
 mod runner;
 mod scroll_accel;
@@ -2903,8 +2903,8 @@ where
         let model = args.trim();
         if model.is_empty() {
             self.timeline.push_system(format!(
-                "Active model: {}/{}. Opening model settings.",
-                self.provider, self.model
+                "Active model: {}. Opening model settings.",
+                provider_model_label(&self.provider, &self.model)
             ));
             self.open_provider_popup().await;
             self.push_event("slash command: /model".to_string());
@@ -4059,7 +4059,7 @@ where
     }
 
     fn header(&self, width: u16) -> Paragraph<'static> {
-        let model_label = format!("{}/{}", self.provider, self.model);
+        let model_label = provider_model_label(&self.provider, &self.model);
         let left = vec![
             Span::styled(" roder", self.theme.accent()),
             Span::styled(format!("  {model_label}"), self.theme.text()),
@@ -4226,12 +4226,12 @@ where
         f.render_widget(self.queued_prompt_bar(), area);
         self.last_queued_prompt_buttons = queued_prompt_buttons(area, self.queued_prompts.len());
         for button in &self.last_queued_prompt_buttons {
-            let hovered = self.hovered_queued_prompt_button
-                == Some((button.index, button.action));
+            let hovered = self.hovered_queued_prompt_button == Some((button.index, button.action));
             f.render_widget(Clear, button.area);
             f.render_widget(
-                Paragraph::new(queued_prompt_action_label(button.action))
-                    .style(queued_prompt_action_style(button.action, self.theme, hovered)),
+                Paragraph::new(queued_prompt_action_label(button.action)).style(
+                    queued_prompt_action_style(button.action, self.theme, hovered),
+                ),
                 button.area,
             );
         }
@@ -7822,8 +7822,28 @@ fn provider_options_from_list(list: &ProvidersListResult) -> Vec<ProviderOption>
     options
 }
 
+/**
+ * Label for a provider/model pair. When the model id already carries the
+ * provider as its first segment (modulo `-`/`.`/`_` spelling, e.g. provider
+ * `roder-cloud` with model `roder.cloud/free`), the provider prefix is
+ * dropped so the label reads `roder.cloud/free` rather than
+ * `roder-cloud/roder.cloud/free`.
+ */
 fn provider_model_label(provider_id: &str, model_name: &str) -> String {
-    if model_name.starts_with(&format!("{provider_id}/")) {
+    let fold = |value: &str| {
+        value
+            .chars()
+            .map(|c| match c {
+                '.' | '_' => '-',
+                c => c.to_ascii_lowercase(),
+            })
+            .collect::<String>()
+    };
+    let model_prefix = model_name.split('/').next().unwrap_or_default();
+    if !model_prefix.is_empty()
+        && model_prefix.len() < model_name.len()
+        && fold(model_prefix) == fold(provider_id)
+    {
         model_name.to_string()
     } else {
         format!("{provider_id}/{model_name}")
@@ -9250,6 +9270,20 @@ mod tests {
             Runtime::fake().expect("fake runtime"),
         )));
         test_app_with_client(LocalAppClient::new(server.clone()), server)
+    }
+
+    #[test]
+    fn provider_model_label_drops_redundant_provider_prefix() {
+        assert_eq!(
+            provider_model_label("roder-cloud", "roder.cloud/free"),
+            "roder.cloud/free"
+        );
+        assert_eq!(
+            provider_model_label("openrouter", "x-ai/grok-build-0.1"),
+            "openrouter/x-ai/grok-build-0.1"
+        );
+        assert_eq!(provider_model_label("codex", "gpt-5.5"), "codex/gpt-5.5");
+        assert_eq!(provider_model_label("mock", "mock"), "mock/mock");
     }
 
     fn test_app_with_client<C: AppClient>(client: C, server: Arc<AppServer>) -> TuiApp<C> {
