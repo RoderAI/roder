@@ -174,6 +174,51 @@ fn gitignored_paths_are_skipped_in_scan_and_index() {
 }
 
 #[test]
+fn explicitly_scoped_ignored_dirs_are_searched() {
+    let workspace = TempWorkspace::new();
+    workspace.write(".gitignore", "node_modules/\n");
+    workspace.write("node_modules/pkg/dist/index.js", "needle inside\n");
+    workspace.write("src/lib.rs", "fn main() {}\n");
+
+    for mode in [SearchMode::Auto, SearchMode::Indexed, SearchMode::Scan] {
+        let results = search_workspace(
+            &workspace.root,
+            &SearchOptions::new("needle")
+                .with_path("node_modules/pkg/dist")
+                .with_mode(mode),
+        )
+        .unwrap();
+        assert_eq!(
+            results.lines,
+            vec!["node_modules/pkg/dist/index.js:1:needle inside"],
+            "mode {mode:?}"
+        );
+    }
+
+    // Root searches still skip the ignored directory.
+    let from_root = search_workspace(&workspace.root, &SearchOptions::new("needle")).unwrap();
+    assert!(from_root.lines.is_empty());
+}
+
+#[test]
+fn gitignored_scopes_fall_back_to_scan_after_indexing() {
+    let workspace = TempWorkspace::new();
+    workspace.write(".gitignore", "generated/\n");
+    workspace.write("generated/output.ts", "needle generated\n");
+    workspace.write("src/lib.rs", "fn main() {}\n");
+
+    // Warm the index at the root first so the scoped query hits the cached,
+    // gitignore-filtered index rather than warming over the scope.
+    let mut searcher = WorkspaceSearcher::new(&workspace.root);
+    let _ = searcher.search(&SearchOptions::new("needle")).unwrap();
+    let results = searcher
+        .search(&SearchOptions::new("needle").with_path("generated"))
+        .unwrap();
+
+    assert_eq!(results.lines, vec!["generated/output.ts:1:needle generated"]);
+}
+
+#[test]
 fn indexed_and_scan_modes_are_equivalent() {
     let workspace = TempWorkspace::new();
     workspace.write("a.txt", "alpha\nbeta\n");

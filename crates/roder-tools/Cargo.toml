@@ -8,6 +8,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 dirs.workspace = true
+globset.workspace = true
 ignore.workspace = true
 roder-api.workspace = true
 roder-edit-core.workspace = true
