@@ -21,7 +21,8 @@ use roder_config::packages::{
     InstallOptions, PackagePaths, RODER_EPHEMERAL_APPROVE_ENV, RODER_EPHEMERAL_PACKAGES_ENV,
     SyncStatus, UpdateStatus, approve_extensions, enumerate_resources, install_package,
     list_packages, load_package_manifest, package_process_extensions, remove_package,
-    set_package_enabled, set_resource_enabled, sync_project_packages, update_packages,
+    set_filters, set_package_enabled, set_resource_enabled, sync_project_packages,
+    update_packages,
 };
 
 pub(crate) const PACKAGES_HELP: &str = "\
@@ -49,6 +50,9 @@ usage:
       (<package-id>:<kind>/<name>).
   roder packages approve|revoke <package-id>
       Allow (or forbid) a package's process extensions to launch.
+  roder packages filter <package-id> <kind> [--clear|--none|<pattern>...]
+      Narrow which resources of one kind load: include globs, !excludes,
+      +path/-path exact forces. --clear loads all, --none loads nothing.
   roder packages sync
       Materialize missing project-scope package stores (e.g. after cloning
       a repo with a committed .roder/packages.json).
@@ -218,6 +222,7 @@ pub(crate) fn run_packages_cli(args: &[String]) -> anyhow::Result<()> {
         Some("disable") => set_enabled_cli(args.get(1), false),
         Some("approve") => approve_cli(args.get(1), true),
         Some("revoke") => approve_cli(args.get(1), false),
+        Some("filter") => filter_cli(&args[1..]),
         Some("sync") => sync_cli(),
         Some("init") => {
             let Some(dir) = args.get(1) else {
@@ -230,9 +235,45 @@ pub(crate) fn run_packages_cli(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         _ => anyhow::bail!(
-            "usage: roder packages <list|resources|enable|disable|approve|revoke|sync|init|help>"
+            "usage: roder packages \
+             <list|resources|enable|disable|approve|revoke|filter|sync|init|help>"
         ),
     }
+}
+
+/// `roder packages filter <package-id> <kind> [--clear|--none|<pattern>...]`.
+fn filter_cli(args: &[String]) -> anyhow::Result<()> {
+    let (Some(id), Some(kind_arg)) = (args.first(), args.get(1)) else {
+        anyhow::bail!(
+            "usage: roder packages filter <package-id> \
+             <extensions|skills|commands|themes> [--clear|--none|<pattern>...]"
+        );
+    };
+    let kind: PackageResourceKind = kind_arg.parse()?;
+    let rest = &args[2..];
+    let patterns = match rest.first().map(String::as_str) {
+        None | Some("--clear") => None,
+        Some("--none") => Some(Vec::new()),
+        _ => Some(rest.to_vec()),
+    };
+    let paths = standard_paths();
+    let record = find_record(&paths, id)?;
+    let mut filters = record.filters.clone();
+    filters.set_for_kind(kind, patterns.clone());
+    let record = set_filters(&paths, id, filters)?;
+    match patterns {
+        None => println!("cleared {kind} filter for {} (loads all)", record.package_id),
+        Some(patterns) if patterns.is_empty() => println!(
+            "set {kind} filter for {} to load nothing (use +<path> entries to force-include)",
+            record.package_id
+        ),
+        Some(patterns) => println!(
+            "set {kind} filter for {}: {}",
+            record.package_id,
+            patterns.join(" ")
+        ),
+    }
+    print_package_resources(&record.package_id)
 }
 
 fn print_packages_list() -> anyhow::Result<()> {

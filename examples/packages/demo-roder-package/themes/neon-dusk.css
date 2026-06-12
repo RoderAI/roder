@@ -1,0 +1,12 @@
+/* Demo package theme: violet accents on a dusk background. */
+:root {
+  --accent: #b48cff;
+  --accent-dim: #7a5cc4;
+  --background: #14111f;
+  --surface: #1d1830;
+  --text: #e6e1f5;
+  --muted: #8d86a8;
+  --success: #6fe3a5;
+  --warning: #ffd479;
+  --error: #ff7a93;
+}
