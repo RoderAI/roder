@@ -338,8 +338,7 @@ mod tests {
         let runtime = Arc::new(Runtime::new(registry, RuntimeConfig::default()).unwrap());
         let server = AppServer::new(runtime);
 
-        let audio_base64 =
-            base64::engine::general_purpose::STANDARD.encode(b"hello roder speech");
+        let audio_base64 = base64::engine::general_purpose::STANDARD.encode(b"hello roder speech");
         let response = server
             .handle_request(JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
@@ -367,7 +366,10 @@ mod tests {
         assert_eq!(result.duration_millis, Some(400));
         assert_eq!(result.segments.len(), 1);
         assert_eq!(result.segments[0].confidence, Some(0.99));
-        assert_eq!(result.provider_response_id.as_deref(), Some("fake-response-1"));
+        assert_eq!(
+            result.provider_response_id.as_deref(),
+            Some("fake-response-1")
+        );
     }
 
     #[tokio::test]

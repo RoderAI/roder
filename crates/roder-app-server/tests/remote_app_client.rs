@@ -11,9 +11,7 @@ use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::thread::ThreadStoreFactory;
 use roder_app_server::agent_node::{AgentNodeOptions, serve_agent_node};
 use roder_app_server::client::{AppClient, AppEventReceiver};
-use roder_app_server::{
-    AppServer, AppServerFeatureConfig, RemoteAppClient, RemoteNodeConnection,
-};
+use roder_app_server::{AppServer, AppServerFeatureConfig, RemoteAppClient, RemoteNodeConnection};
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
@@ -276,7 +274,10 @@ async fn reconnect_fails_pending_requests_explicitly_then_recovers() {
         }
     })
     .await;
-    assert!(recovered.is_ok(), "client must reconnect after node restart");
+    assert!(
+        recovered.is_ok(),
+        "client must reconnect after node restart"
+    );
 
     restarted.stop().await.unwrap();
 }

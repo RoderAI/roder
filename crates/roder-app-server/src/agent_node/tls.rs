@@ -11,9 +11,9 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, SignatureScheme};
 use sha2::{Digest, Sha256};
 

@@ -248,7 +248,12 @@ async fn serve_connection(
             _ => continue,
         };
         if text.len() > limiter.max_request_bytes() {
-            send_error(&outbound_tx, serde_json::Value::Null, -32600, "request too large");
+            send_error(
+                &outbound_tx,
+                serde_json::Value::Null,
+                -32600,
+                "request too large",
+            );
             continue;
         }
         let Ok(request) = serde_json::from_str::<JsonRpcRequest>(&text) else {
@@ -531,7 +536,11 @@ fn handle_hosted_method(
             }
             ok(serde_json::json!({ "deleted": deleted }))
         }
-        other => error_response(id, -32601, &format!("hosted method {other} is not implemented yet")),
+        other => error_response(
+            id,
+            -32601,
+            &format!("hosted method {other} is not implemented yet"),
+        ),
     }
 }
 

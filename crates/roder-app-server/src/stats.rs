@@ -34,8 +34,7 @@ fn open_store() -> Result<Arc<AnalyticsStore>, JsonRpcError> {
     let analytics = roder_config::load_config()
         .map(|config| config.analytics.unwrap_or_default())
         .unwrap_or_default();
-    let mode =
-        WorkspaceLabelMode::parse(&analytics.workspace_labels).map_err(internal_error)?;
+    let mode = WorkspaceLabelMode::parse(&analytics.workspace_labels).map_err(internal_error)?;
     let base = stats_data_dir();
     let path = analytics
         .store
@@ -91,11 +90,13 @@ impl AppServer {
         params: StatsTokensParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let store = open_store()?;
-        let group = TokenGroup::parse(params.group.as_deref().unwrap_or("day"))
-            .map_err(|error| JsonRpcError {
-                code: -32602,
-                message: error.to_string(),
-                data: None,
+        let group =
+            TokenGroup::parse(params.group.as_deref().unwrap_or("day")).map_err(|error| {
+                JsonRpcError {
+                    code: -32602,
+                    message: error.to_string(),
+                    data: None,
+                }
             })?;
         let rows = store
             .token_summaries(group, &bounded(params.filter)?)
@@ -189,10 +190,8 @@ mod tests {
     use crate::{AppServer, LocalAppClient};
 
     fn seeded_data_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "roder-app-server-stats-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("roder-app-server-stats-{}", uuid::Uuid::new_v4()));
         let store = AnalyticsStore::open(
             &AnalyticsStore::default_path(&dir),
             WorkspaceLabelMode::FullPath,
@@ -249,8 +248,7 @@ mod tests {
         let client = client();
         let response = call(&client, "stats/tools", serde_json::json!({})).await;
         assert!(response.error.is_none(), "{:?}", response.error);
-        let result: StatsToolsResult =
-            serde_json::from_value(response.result.unwrap()).unwrap();
+        let result: StatsToolsResult = serde_json::from_value(response.result.unwrap()).unwrap();
         assert_eq!(result.tools.len(), 1);
         assert_eq!(result.tools[0].tool_name, "read_file");
         assert_eq!(result.tools[0].call_count, 20);
@@ -267,8 +265,7 @@ mod tests {
 
         let response = call(&client, "stats/summary", serde_json::json!({})).await;
         assert!(response.error.is_none());
-        let summary: StatsSummaryResult =
-            serde_json::from_value(response.result.unwrap()).unwrap();
+        let summary: StatsSummaryResult = serde_json::from_value(response.result.unwrap()).unwrap();
         assert_eq!(summary.summary.tool_call_count, 20);
 
         // Oversized limits are a typed validation error.
@@ -291,8 +288,7 @@ mod tests {
         )
         .await;
         assert!(response.error.is_none(), "{:?}", response.error);
-        let result: StatsExportResult =
-            serde_json::from_value(response.result.unwrap()).unwrap();
+        let result: StatsExportResult = serde_json::from_value(response.result.unwrap()).unwrap();
         assert_eq!(result.records, 20);
         let exported = std::fs::read_to_string(&export_path).unwrap();
         assert!(exported.contains("\"kind\":\"tool_call\""));

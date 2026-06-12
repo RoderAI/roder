@@ -5,16 +5,14 @@
 
 use std::path::PathBuf;
 
-use roder_api::forks::{
-    ForkPolicy, ForkReason, ForkRequest, ForkStatus, RemoveForkPolicy,
-};
+use roder_api::forks::{ForkPolicy, ForkReason, ForkRequest, ForkStatus, RemoveForkPolicy};
 use roder_core::conversation_forks::ForkThreadRequest;
 use roder_core::forks::DEFAULT_FORK_PROVIDER;
 use roder_protocol::{
     ForksCreateParams, ForksCreateResult, ForksListParams, ForksListResult,
-    ForksProvidersListResult, ForksRemoveParams, ForksRemoveResult, JsonRpcError,
-    ThreadForkParams, ThreadForkResult, ThreadForkStatusParams, ThreadForkStatusResult,
-    ThreadRemoveForkParams, ThreadRemoveForkResult,
+    ForksProvidersListResult, ForksRemoveParams, ForksRemoveResult, JsonRpcError, ThreadForkParams,
+    ThreadForkResult, ThreadForkStatusParams, ThreadForkStatusResult, ThreadRemoveForkParams,
+    ThreadRemoveForkResult,
 };
 
 use crate::protocol_contract::{idle_thread_status, protocol_thread_from_metadata};
@@ -71,8 +69,7 @@ impl AppServer {
             .map_err(internal_error)?
             .ok_or_else(|| fork_not_found(format!("thread {} was not found", params.thread_id)))?;
         let workspace_missing = metadata.workspace_fork.as_ref().is_some_and(|fork| {
-            fork.status == ForkStatus::Active
-                && !std::path::Path::new(&metadata.workspace).is_dir()
+            fork.status == ForkStatus::Active && !std::path::Path::new(&metadata.workspace).is_dir()
         });
         serde_json::to_value(ThreadForkStatusResult {
             thread_id: metadata.thread_id,

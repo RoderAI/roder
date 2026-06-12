@@ -56,11 +56,7 @@ impl Default for HostedRuntimeProfile {
 
 /// Builds a tenant's app-server given `(tenant_id, tenant_data_dir)`.
 pub type TenantAppServerFactory = Arc<
-    dyn Fn(
-            String,
-            PathBuf,
-        )
-            -> Pin<Box<dyn Future<Output = anyhow::Result<Arc<AppServer>>> + Send>>
+    dyn Fn(String, PathBuf) -> Pin<Box<dyn Future<Output = anyhow::Result<Arc<AppServer>>> + Send>>
         + Send
         + Sync,
 >;

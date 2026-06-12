@@ -21,9 +21,8 @@ use crate::client::{AppClient, AppEventReceiver, AppNotificationReceiver};
  * methods), so transcripts stay shareable for debugging.
  */
 fn redact_recorded_value(mut value: Value) -> Value {
-    let redactor = TranscriptRedactor::new(vec![RedactionRule::SensitiveKey(
-        "bytesBase64".to_string(),
-    )]);
+    let redactor =
+        TranscriptRedactor::new(vec![RedactionRule::SensitiveKey("bytesBase64".to_string())]);
     redactor.redact_value(&mut value);
     value
 }

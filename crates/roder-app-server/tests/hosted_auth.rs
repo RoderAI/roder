@@ -5,7 +5,9 @@ use roder_api::identity::{
     AuthorizationDecision, HostedRole, HostedScope, PrincipalContext, TenantContext,
 };
 use roder_app_server::hosted::auth::PrincipalSeed;
-use roder_app_server::hosted::{HostedAuthError, HostedAuthenticator, TenantRegistry, authorize_method};
+use roder_app_server::hosted::{
+    HostedAuthError, HostedAuthenticator, TenantRegistry, authorize_method,
+};
 use time::OffsetDateTime;
 
 fn registry_with(tenant_id: &str) -> TenantRegistry {
@@ -56,11 +58,11 @@ fn static_keys_and_service_account_keys_authenticate() {
         Some(now + time::Duration::hours(1)),
     );
     let context = auth.authenticate(&key.token, &tenants, now).unwrap();
-    assert!(matches!(
-        context.principal,
-        PrincipalContext::User { .. }
-    ));
-    assert_eq!(context.credential_id.as_deref(), Some(&*format!("sa:{}", key.key_id)));
+    assert!(matches!(context.principal, PrincipalContext::User { .. }));
+    assert_eq!(
+        context.credential_id.as_deref(),
+        Some(&*format!("sa:{}", key.key_id))
+    );
 }
 
 #[test]
@@ -84,7 +86,10 @@ fn invalid_expired_and_revoked_credentials_fail() {
     );
     // Wrong secret with a valid key id.
     let wrong = format!("{}.deadbeef", key.token.rsplit_once('.').unwrap().0);
-    assert_eq!(auth.authenticate(&wrong, &tenants, now), Err(HostedAuthError::Invalid));
+    assert_eq!(
+        auth.authenticate(&wrong, &tenants, now),
+        Err(HostedAuthError::Invalid)
+    );
     // Expired.
     assert_eq!(
         auth.authenticate(&key.token, &tenants, now + time::Duration::minutes(6)),
@@ -92,7 +97,10 @@ fn invalid_expired_and_revoked_credentials_fail() {
     );
     // Revoked.
     assert!(auth.revoke_service_account_key(&key.key_id));
-    assert_eq!(auth.authenticate(&key.token, &tenants, now), Err(HostedAuthError::Revoked));
+    assert_eq!(
+        auth.authenticate(&key.token, &tenants, now),
+        Err(HostedAuthError::Revoked)
+    );
 
     // Unknown tenant fails even with a valid credential.
     auth.register_static_key(
@@ -128,19 +136,35 @@ fn authorization_maps_scopes_roles_and_methods() {
     .unwrap();
     auth.register_static_key(
         "rk_test_tadmin_001",
-        seed("tenant-a", HostedRole::TenantAdmin, vec![HostedScope::Admin]),
+        seed(
+            "tenant-a",
+            HostedRole::TenantAdmin,
+            vec![HostedScope::Admin],
+        ),
     )
     .unwrap();
     auth.register_static_key(
         "rk_test_sadmin_001",
-        seed("tenant-a", HostedRole::SystemAdmin, vec![HostedScope::Admin]),
+        seed(
+            "tenant-a",
+            HostedRole::SystemAdmin,
+            vec![HostedScope::Admin],
+        ),
     )
     .unwrap();
 
-    let reader = auth.authenticate("rk_test_reader_001", &tenants, now).unwrap();
-    let writer = auth.authenticate("rk_test_writer_001", &tenants, now).unwrap();
-    let tenant_admin = auth.authenticate("rk_test_tadmin_001", &tenants, now).unwrap();
-    let system_admin = auth.authenticate("rk_test_sadmin_001", &tenants, now).unwrap();
+    let reader = auth
+        .authenticate("rk_test_reader_001", &tenants, now)
+        .unwrap();
+    let writer = auth
+        .authenticate("rk_test_writer_001", &tenants, now)
+        .unwrap();
+    let tenant_admin = auth
+        .authenticate("rk_test_tadmin_001", &tenants, now)
+        .unwrap();
+    let system_admin = auth
+        .authenticate("rk_test_sadmin_001", &tenants, now)
+        .unwrap();
 
     // Everyone may ask who they are.
     assert!(authorize_method(&reader, "hosted/whoami").is_allowed());

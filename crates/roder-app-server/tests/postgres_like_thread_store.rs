@@ -159,10 +159,12 @@ fn tenant_client(tenant_id: &str, database: &SharedDatabase) -> LocalAppClient {
     }));
     let runtime =
         Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
-    let feature_config =
-        AppServerFeatureConfig::default().with_workspace_registry_path(std::env::temp_dir().join(
-            format!("roder-pg-like-workspaces-{tenant_id}-{}.json", uuid::Uuid::new_v4()),
-        ));
+    let feature_config = AppServerFeatureConfig::default().with_workspace_registry_path(
+        std::env::temp_dir().join(format!(
+            "roder-pg-like-workspaces-{tenant_id}-{}.json",
+            uuid::Uuid::new_v4()
+        )),
+    );
     LocalAppClient::new(Arc::new(AppServer::with_feature_config(
         runtime,
         feature_config,
@@ -288,10 +290,8 @@ async fn postgres_like_store_keeps_thread_lifecycle_and_tenant_isolation() {
     let database = SharedDatabase::default();
     let tenant_a = tenant_client("tenant-a", &database);
     let tenant_b = tenant_client("tenant-b", &database);
-    let workspace_dir = std::env::temp_dir().join(format!(
-        "roder-pg-like-workspace-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let workspace_dir =
+        std::env::temp_dir().join(format!("roder-pg-like-workspace-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace_dir).unwrap();
 
     // Tenant A: full lifecycle through public JSON-RPC paths.
@@ -320,7 +320,13 @@ async fn postgres_like_store_keeps_thread_lifecycle_and_tenant_isolation() {
     let list_a: ThreadListResult = request(
         &tenant_a,
         "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: Some(10), cursor: None }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: Some(10),
+                cursor: None,
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(
@@ -332,7 +338,13 @@ async fn postgres_like_store_keeps_thread_lifecycle_and_tenant_isolation() {
     let list_b: ThreadListResult = request(
         &tenant_b,
         "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: Some(10), cursor: None }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: Some(10),
+                cursor: None,
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(
@@ -360,7 +372,12 @@ async fn postgres_like_store_keeps_thread_lifecycle_and_tenant_isolation() {
     let archive_b: ThreadArchiveResult = request(
         &tenant_b,
         "thread/archive",
-        Some(serde_json::to_value(ThreadArchiveParams { thread_id: thread_a.clone() }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadArchiveParams {
+                thread_id: thread_a.clone(),
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(
@@ -373,7 +390,12 @@ async fn postgres_like_store_keeps_thread_lifecycle_and_tenant_isolation() {
     let archive_a: ThreadArchiveResult = request(
         &tenant_a,
         "thread/archive",
-        Some(serde_json::to_value(ThreadArchiveParams { thread_id: thread_a.clone() }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadArchiveParams {
+                thread_id: thread_a.clone(),
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(archive_a.archived, "owning tenant archives its thread");
@@ -381,7 +403,13 @@ async fn postgres_like_store_keeps_thread_lifecycle_and_tenant_isolation() {
     let list_after: ThreadListResult = request(
         &tenant_a,
         "thread/list",
-        Some(serde_json::to_value(ThreadListParams { limit: Some(10), cursor: None }).unwrap()),
+        Some(
+            serde_json::to_value(ThreadListParams {
+                limit: Some(10),
+                cursor: None,
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(

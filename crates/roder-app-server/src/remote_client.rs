@@ -59,7 +59,10 @@ impl std::fmt::Debug for RemoteNodeConnection {
         f.debug_struct("RemoteNodeConnection")
             .field("address", &self.address)
             .field("server_fingerprint", &self.server_fingerprint)
-            .field("pairing_token", &self.pairing_token.as_ref().map(|_| "<redacted>"))
+            .field(
+                "pairing_token",
+                &self.pairing_token.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -186,8 +189,7 @@ impl AppClient for RemoteAppClient {
     }
 }
 
-type SecureSocket =
-    tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
+type SecureSocket = tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
 
 async fn open_socket(connection: &RemoteNodeConnection) -> anyhow::Result<SecureSocket> {
     let tls = client_tls_config(
@@ -319,11 +321,7 @@ async fn reconnect_loop(inner: Arc<Inner>) {
     }
 }
 
-fn error_response(
-    id: Option<serde_json::Value>,
-    code: i32,
-    message: String,
-) -> JsonRpcResponse {
+fn error_response(id: Option<serde_json::Value>, code: i32, message: String) -> JsonRpcResponse {
     JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         id,

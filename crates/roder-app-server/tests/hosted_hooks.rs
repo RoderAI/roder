@@ -6,7 +6,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use roder_api::hosted_hooks::{HookDeliveryStatus, HookRetryPolicy, HookScope, HostedHookDefinition};
+use roder_api::hosted_hooks::{
+    HookDeliveryStatus, HookRetryPolicy, HookScope, HostedHookDefinition,
+};
 use roder_app_server::hosted::hook_delivery::hmac_sha256_hex;
 use roder_app_server::hosted::{HookDeliveryConfig, HookDeliveryService, HookStore};
 use time::OffsetDateTime;
@@ -55,10 +57,11 @@ async fn fake_target(plan: Vec<Plan>) -> FakeTarget {
                 read += n;
                 let text = String::from_utf8_lossy(&buffer[..read]).to_string();
                 if let Some(headers_end) = text.find("\r\n\r\n") {
-                    let content_length = text
-                        .lines()
-                        .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:")
-                            .map(|v| v.trim().parse::<usize>().unwrap_or(0)));
+                    let content_length = text.lines().find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                    });
                     let body_len = read - (headers_end + 4);
                     if body_len >= content_length.unwrap_or(0) {
                         break text;
@@ -80,10 +83,11 @@ async fn fake_target(plan: Vec<Plan>) -> FakeTarget {
                     .split_once("\r\n\r\n")
                     .map(|(_, body)| body.to_string())
                     .unwrap_or_default();
-                task_captures
-                    .lock()
-                    .unwrap()
-                    .push((header("x-roder-event"), header("x-roder-signature"), body));
+                task_captures.lock().unwrap().push((
+                    header("x-roder-event"),
+                    header("x-roder-signature"),
+                    body,
+                ));
             }
             match step {
                 Plan::Ok => {
@@ -93,7 +97,9 @@ async fn fake_target(plan: Vec<Plan>) -> FakeTarget {
                 }
                 Plan::ServerError => {
                     let _ = stream
-                        .write_all(b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n")
+                        .write_all(
+                            b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n",
+                        )
                         .await;
                 }
                 Plan::Hang => {
@@ -102,7 +108,11 @@ async fn fake_target(plan: Vec<Plan>) -> FakeTarget {
             }
         }
     });
-    FakeTarget { url, hits, captures }
+    FakeTarget {
+        url,
+        hits,
+        captures,
+    }
 }
 
 fn hook(url: &str) -> HostedHookDefinition {
@@ -151,7 +161,10 @@ async fn deliveries_are_signed_and_receivers_can_verify() {
     let (event, signature, body) = captures.first().expect("captured request").clone();
     assert_eq!(event, "turn.started");
     // Receiver-side verification: recompute the HMAC over the raw body.
-    let expected = format!("sha256={}", hmac_sha256_hex(SECRET.as_bytes(), body.as_bytes()));
+    let expected = format!(
+        "sha256={}",
+        hmac_sha256_hex(SECRET.as_bytes(), body.as_bytes())
+    );
     assert_eq!(signature, expected);
     assert!(body.contains("turn.started"));
 }
@@ -159,16 +172,29 @@ async fn deliveries_are_signed_and_receivers_can_verify() {
 #[tokio::test(flavor = "multi_thread")]
 async fn failed_deliveries_retry_then_dead_letter_with_redacted_records() {
     unsafe { std::env::set_var(SECRET_ENV, SECRET) };
-    let target = fake_target(vec![Plan::ServerError, Plan::ServerError, Plan::ServerError]).await;
+    let target = fake_target(vec![
+        Plan::ServerError,
+        Plan::ServerError,
+        Plan::ServerError,
+    ])
+    .await;
     let service = HookDeliveryService::new(fast_config());
 
     let delivery = service
-        .deliver(&hook(&target.url), "turn.started", &serde_json::json!({"secretish": "payload"}))
+        .deliver(
+            &hook(&target.url),
+            "turn.started",
+            &serde_json::json!({"secretish": "payload"}),
+        )
         .await;
     assert_eq!(delivery.status, HookDeliveryStatus::Dead);
     assert_eq!(delivery.attempts, 3);
     assert_eq!(delivery.last_error.as_deref(), Some("http_5xx"));
-    assert_eq!(target.hits.load(Ordering::SeqCst), 3, "5xx responses are retried");
+    assert_eq!(
+        target.hits.load(Ordering::SeqCst),
+        3,
+        "5xx responses are retried"
+    );
 
     let dead = service.dead_letters();
     assert_eq!(dead.len(), 1);
@@ -181,22 +207,36 @@ async fn failed_deliveries_retry_then_dead_letter_with_redacted_records() {
 #[tokio::test(flavor = "multi_thread")]
 async fn timeouts_are_classed_and_circuit_breaker_fails_fast() {
     unsafe { std::env::set_var(SECRET_ENV, SECRET) };
-    let target = fake_target(vec![Plan::Hang, Plan::Hang, Plan::Hang, Plan::Hang, Plan::Hang, Plan::Hang]).await;
+    let target = fake_target(vec![
+        Plan::Hang,
+        Plan::Hang,
+        Plan::Hang,
+        Plan::Hang,
+        Plan::Hang,
+        Plan::Hang,
+    ])
+    .await;
     let mut config = fast_config();
     config.retry.max_attempts = 2;
     let service = HookDeliveryService::new(config);
     let hook = hook(&target.url);
 
-    let delivery = service.deliver(&hook, "turn.started", &serde_json::json!({})).await;
+    let delivery = service
+        .deliver(&hook, "turn.started", &serde_json::json!({}))
+        .await;
     assert_eq!(delivery.status, HookDeliveryStatus::Dead);
     assert_eq!(delivery.last_error.as_deref(), Some("timeout"));
 
     // A second terminal failure reaches the breaker threshold (2); the
     // next delivery fails fast without touching the network.
-    let second = service.deliver(&hook, "turn.started", &serde_json::json!({})).await;
+    let second = service
+        .deliver(&hook, "turn.started", &serde_json::json!({}))
+        .await;
     assert_eq!(second.last_error.as_deref(), Some("timeout"));
     let hits_before = target.hits.load(Ordering::SeqCst);
-    let fast_fail = service.deliver(&hook, "turn.started", &serde_json::json!({})).await;
+    let fast_fail = service
+        .deliver(&hook, "turn.started", &serde_json::json!({}))
+        .await;
     assert_eq!(fast_fail.last_error.as_deref(), Some("circuit_open"));
     assert_eq!(fast_fail.attempts, 0);
     assert_eq!(target.hits.load(Ordering::SeqCst), hits_before);
@@ -209,10 +249,16 @@ async fn unresolvable_secrets_fail_closed_without_sending() {
     let mut hook = hook(&target.url);
     hook.signing_secret_ref = Some("env:RODER_DEFINITELY_UNSET_SECRET_72".to_string());
 
-    let delivery = service.deliver(&hook, "turn.started", &serde_json::json!({})).await;
+    let delivery = service
+        .deliver(&hook, "turn.started", &serde_json::json!({}))
+        .await;
     assert_eq!(delivery.status, HookDeliveryStatus::Failed);
     assert_eq!(delivery.last_error.as_deref(), Some("secret_unresolvable"));
-    assert_eq!(target.hits.load(Ordering::SeqCst), 0, "nothing must be sent unsigned");
+    assert_eq!(
+        target.hits.load(Ordering::SeqCst),
+        0,
+        "nothing must be sent unsigned"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -220,9 +266,7 @@ async fn hook_store_test_delivery_round_trips() {
     unsafe { std::env::set_var(SECRET_ENV, SECRET) };
     let target = fake_target(vec![Plan::Ok]).await;
     let store = HookStore::default();
-    let created = store
-        .create("tenant-a", hook(&target.url))
-        .unwrap();
+    let created = store.create("tenant-a", hook(&target.url)).unwrap();
 
     // Matching is tenant- and kind-scoped.
     assert_eq!(store.matching("tenant-a", "turn.completed").len(), 1);
@@ -231,7 +275,11 @@ async fn hook_store_test_delivery_round_trips() {
 
     let service = HookDeliveryService::new(fast_config());
     let delivery = service
-        .deliver(&created, "turn.completed", &serde_json::json!({ "test": true }))
+        .deliver(
+            &created,
+            "turn.completed",
+            &serde_json::json!({ "test": true }),
+        )
         .await;
     assert_eq!(delivery.status, HookDeliveryStatus::Delivered);
 }

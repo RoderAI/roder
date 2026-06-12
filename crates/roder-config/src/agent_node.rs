@@ -47,7 +47,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(doc.agent_nodes.len(), 2);
-        assert_eq!(doc.agent_nodes[0].token_env.as_deref(), Some("RODER_STUDIO_TOKEN"));
+        assert_eq!(
+            doc.agent_nodes[0].token_env.as_deref(),
+            Some("RODER_STUDIO_TOKEN")
+        );
         assert!(doc.agent_nodes[1].token_env.is_none());
     }
 }

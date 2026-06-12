@@ -174,7 +174,10 @@ mod tests {
     fn pairing_tokens_are_single_use_and_expire() {
         let tokens = PairingTokens::default();
         let (secret, preview) = tokens.mint(time::Duration::minutes(5));
-        assert!(preview.chars().count() <= 8, "preview stays short: {preview}");
+        assert!(
+            preview.chars().count() <= 8,
+            "preview stays short: {preview}"
+        );
 
         // Wrong token fails.
         assert!(tokens.redeem("wrong-token").is_err());
@@ -207,7 +210,10 @@ mod tests {
         assert!(trust.revoke(&fingerprint).unwrap());
         assert!(!trust.is_trusted(&fingerprint));
         // Revoked fingerprints cannot re-enroll.
-        let error = trust.enroll(&fingerprint, "laptop").unwrap_err().to_string();
+        let error = trust
+            .enroll(&fingerprint, "laptop")
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("revoked"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
