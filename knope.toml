@@ -221,6 +221,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-jsonl-thread-store/CHANGELOG.md"
 
+[packages."roder-ext-knowledge-md"]
+versioned_files = [
+    "crates/roder-ext-knowledge-md/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-knowledge-md/CHANGELOG.md"
+
 [packages."roder-ext-mcp"]
 versioned_files = [
     "crates/roder-ext-mcp/Cargo.toml",
