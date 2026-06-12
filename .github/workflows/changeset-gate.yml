@@ -1,0 +1,29 @@
+name: Changeset gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changeset-gate:
+    name: Require changesets for changed packages
+    runs-on: ubuntu-latest
+    # Release PRs delete changesets by design; `skip-changeset` label bypasses.
+    if: >-
+      github.head_ref != 'knope/release' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-changeset')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check knope.toml is up to date
+        run: python3 scripts/generate-knope-config.py --check
+
+      - name: Check changesets cover changed packages
+        run: python3 scripts/check-changesets.py --base "origin/${{ github.base_ref }}"

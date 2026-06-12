@@ -1,70 +1,122 @@
 # Roder Releases
 
-Roder releases are managed by release-plz.
+Releases are managed by [knope](https://knope.tech) using **changesets** with
+**per-package versioning**. Every Cargo workspace crate and every SDK package
+(`sdk/typescript`, `sdk/python`, `packages/edit-tools`) is versioned
+independently. Versions only move when a changeset says so — commit messages
+never drive version bumps (`[changes] ignore_conventional_commits = true`).
 
-The workspace currently runs release-plz in git-only mode. That means
-release-plz opens version-bump release PRs and creates git tags/GitHub releases,
-but it does not publish crates to crates.io.
+Releases are git-only for now: knope bumps versions, updates per-package
+changelogs, and creates git tags (`<package>/v<version>`) plus GitHub
+releases. Nothing is published to crates.io, npm, or PyPI.
 
-## Workflow
+## Documenting a change (required for every PR that touches a package)
 
-The `.github/workflows/release-plz.yml` workflow runs after pushes to `main` or
-`master`, and can also be started manually from GitHub Actions:
+Add a change file under `.changeset/` describing which packages your PR
+changes and how their versions should bump:
 
-1. `release-plz release` runs first. With `release_always = false`, it only
-   releases when the pushed commit came from a release-plz release PR.
-2. `release-plz release-pr` then opens or updates the release PR for unreleased
-   Cargo workspace changes.
+```markdown
+---
+roder-core: minor
+roder-cli: patch
+---
 
-Normal feature PRs do not need manual version edits. After they merge,
-release-plz prepares the version bump in its own PR. Merging that release PR is
-the release gate.
+# Short summary of the change
+
+Optional longer description in Markdown.
+```
+
+- File name: anything ending in `.md`, e.g. `.changeset/fix_cheese_distribution.md`.
+- Package names are the keys in `knope.toml` (crate names for Rust;
+  `roder-sdk-typescript`, `roder-sdk-python`, `roder-edit-tools` for the SDKs).
+- Bump types: `major`, `minor`, or `patch`.
+- The summary becomes the changelog / release-notes entry.
+- Interactive alternative: install knope and run `knope document-change`.
+- Do **not** put non-changeset files (e.g. a README) in `.changeset/` — knope
+  treats every `.md` file there as a change file.
+
+## Versioning gate (CI)
+
+`.github/workflows/changeset-gate.yml` fails a PR when:
+
+- a file under a released package's directory changed but no changeset added
+  in the PR names that package;
+- any pending changeset is malformed, names an unknown package, or uses an
+  invalid bump type;
+- `knope.toml` is stale (see "Adding a package").
+
+Bypasses:
+
+- Apply the `skip-changeset` PR label for changes that shouldn't be released
+  (e.g. test-only or comment-only changes inside a crate).
+- Changes outside package directories (docs, scripts, workflows, roadmap)
+  never require a changeset.
+- The knope release PR (branch `knope/release`) is exempt because it deletes
+  changesets by design.
+
+## Release flow
+
+1. PRs merge to `master`, each carrying changesets.
+2. `prepare-release.yml` runs on every push to `master`: knope combines all
+   pending changesets, bumps each affected package's version (crate
+   `Cargo.toml` + `Cargo.lock`, `package.json` + `package-lock.json`,
+   `pyproject.toml`), writes per-package `CHANGELOG.md` entries, deletes the
+   consumed changesets, and force-pushes the `knope/release` branch with an
+   open release preview PR.
+3. Merging that release PR is the release gate. `release.yml` then runs
+   `knope release`, tagging each released package (`<name>/v<version>`) and
+   creating a GitHub release per package with its release notes.
+
+Unchanged packages are untouched: no version bump, no tag, no release.
 
 ## Configuration
 
-The repository-level config is `release-plz.toml`:
+- `knope.toml` is **generated** — never edit it by hand. Regenerate with
+  `python3 scripts/generate-knope-config.py` (CI verifies with `--check`).
+- The generator scans `crates/*/Cargo.toml` and adds the SDK packages listed
+  in its `EXTRA_PACKAGES` table.
+- `scripts/check-changesets.py` implements the CI gate; it derives package
+  directories from `knope.toml`.
 
-- `git_only = true` keeps releases tag-based until crates.io publication is
-  ready.
-- `release_always = false` prevents every merge to `main` from immediately
-  publishing a release.
-- `version_group = "roder"` keeps first-party workspace crates on one shared
-  version line.
-- `changelog_update = false` avoids creating per-crate changelog files for the
-  large internal workspace.
-- `semver_check = false` avoids cargo-semver-checks while the crates are still
-  unpublished and pre-1.0.
+## Adding a package
 
-When adding a first-party crate, add a matching `[[package]]` entry with
-`version_group = "roder"` so release-plz keeps it on the shared workspace
-version line.
+1. Create the crate with an explicit `version = "0.1.0"` in its `Cargo.toml`
+   (crates do **not** use `version.workspace = true`; the workspace has no
+   shared version).
+2. Run `python3 scripts/generate-knope-config.py` and commit `knope.toml`.
+3. For non-Rust packages, add an entry to `EXTRA_PACKAGES` in
+   `scripts/generate-knope-config.py` first.
+4. Optionally run the "Baseline release tags" workflow (or
+   `python3 scripts/init-release-tags.py --push`) to tag the package's
+   current version so it isn't released before its first real change.
 
-## GitHub Setup
+## One-time setup after adopting knope
 
-The repository must allow GitHub Actions to create pull requests:
+Run the **Baseline release tags** workflow (Actions → "Baseline release
+tags" → Run workflow). It tags every package at its current version so the
+first `knope release` only releases packages with real changes.
 
-Settings -> Actions -> General -> Workflow permissions -> Read and write
-permissions, with pull request creation enabled.
+## GitHub setup
 
-The workflow uses only `GITHUB_TOKEN` while `git_only = true`. Do not add a
-`CARGO_REGISTRY_TOKEN` until crates.io publication is intentionally enabled.
+GitHub Actions must be allowed to create pull requests: Settings → Actions →
+General → Workflow permissions → Read and write permissions, with pull
+request creation enabled. The workflows only use `GITHUB_TOKEN`.
 
-## Crates.io Readiness
+Note: because the release preview PR is created with `GITHUB_TOKEN`, other
+workflows (CI) don't run on it. If you later make the changeset gate or other
+checks required for merging, switch `prepare-release.yml` to a PAT.
 
-Before enabling crates.io publication:
+## Registry publication readiness
 
-1. Add publish metadata to crates that should be public: description, license or
-   license file, repository, and README policy.
-2. Add registry versions to internal workspace dependencies, for example:
+Before publishing crates to crates.io later:
 
-   ```toml
-   roder-api = { path = "crates/roder-api", version = "0.1.0" }
-   ```
-
+1. Add publish metadata (description, license, repository) to public crates.
+2. Add registry versions to internal workspace dependencies, for example
+   `roder-api = { path = "crates/roder-api", version = "0.1.0" }`, and
+   extend the knope config generator to keep those dependency versions
+   updated (`{ path = "Cargo.toml", dependency = "roder-api" }`).
 3. Mark private crates with `publish = false`.
-4. Enable release-plz publishing and registry authentication.
-5. Revisit `semver_check` package by package once public API compatibility is a
-   release blocker.
+4. Add a publish step to `release.yml` gated on a `CARGO_REGISTRY_TOKEN`.
 
 ## Homebrew
 
