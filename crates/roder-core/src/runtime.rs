@@ -121,6 +121,7 @@ pub struct RuntimeConfig {
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
     pub roadmap_data_dir: Option<PathBuf>,
+    pub media_generation: crate::media_generation::RuntimeMediaGenerationConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -152,6 +153,7 @@ impl Default for RuntimeConfig {
             remote_runner_destination: None,
             team_data_dir: None,
             roadmap_data_dir: None,
+            media_generation: crate::media_generation::RuntimeMediaGenerationConfig::default(),
         }
     }
 }
@@ -332,6 +334,7 @@ pub struct Runtime {
     pub(crate) thread_store: Option<Arc<dyn ThreadStore>>,
     thread_item_cache: Mutex<ThreadItemCache>,
     pub(crate) tool_registry: ToolRegistry,
+    media_generation: Arc<crate::media_generation::MediaGenerationService>,
     pub(crate) skills: RwLock<SkillRegistry>,
     /// Lazily-started bounded dispatch of emitted events to registry
     /// `EventSink`s (process extensions etc.); see `event_sink_dispatch`.
@@ -358,6 +361,14 @@ impl Runtime {
                 .with_context(|| format!("tool contributor {} failed", contributor.id()))?;
         }
         crate::agent_control_tools::contribute_agent_control_tools(&mut tool_registry)?;
+
+        let media_generation = Arc::new(crate::media_generation::MediaGenerationService::new(
+            registry.media_generator_providers.clone(),
+            config.media_generation.clone(),
+        ));
+        tool_registry.replace(Arc::new(
+            crate::media_generation::MediaGenerateImageTool::new(media_generation.clone()),
+        ));
 
         let team_data_dir = config.team_data_dir.clone();
         let workspace = config
@@ -407,6 +418,7 @@ impl Runtime {
             thread_store,
             thread_item_cache: Mutex::new(ThreadItemCache::default()),
             tool_registry,
+            media_generation,
             skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
                 PathBuf::new(),
             ))),
@@ -442,6 +454,10 @@ impl Runtime {
 
     pub fn registry(&self) -> &ExtensionRegistry {
         &self.registry
+    }
+
+    pub fn media_generation(&self) -> Arc<crate::media_generation::MediaGenerationService> {
+        self.media_generation.clone()
     }
 
     pub fn context_artifacts(&self) -> roder_api::artifacts::ContextArtifactStore {

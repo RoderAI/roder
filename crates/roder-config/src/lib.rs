@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -573,6 +574,85 @@ pub struct ZerolangConfig {
 pub struct MediaConfig {
     pub artifacts_dir: Option<PathBuf>,
     pub max_read_bytes: Option<u64>,
+    pub image_generation: Option<ImageGenerationConfig>,
+}
+
+/// `[media.image_generation]` settings for first-party image providers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImageGenerationConfig {
+    pub default_provider: Option<String>,
+    pub default_model: Option<String>,
+    pub max_outputs: Option<u32>,
+    pub max_input_images: Option<u32>,
+    #[serde(default)]
+    pub providers: BTreeMap<String, ImageProviderConfig>,
+}
+
+/// `[media.image_generation.providers.<id>]` overrides for one provider.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImageProviderConfig {
+    pub enabled: Option<bool>,
+    pub api_key_env: Option<String>,
+    pub base_url: Option<String>,
+    pub default_model: Option<String>,
+}
+
+pub fn validate_media_config(config: &Config) -> anyhow::Result<()> {
+    let Some(image_generation) = config
+        .media
+        .as_ref()
+        .and_then(|media| media.image_generation.as_ref())
+    else {
+        return Ok(());
+    };
+    if let Some(max_outputs) = image_generation.max_outputs
+        && max_outputs == 0
+    {
+        anyhow::bail!("media.image_generation.max_outputs must be at least 1");
+    }
+    if let Some(provider) = image_generation.default_provider.as_deref()
+        && provider.trim().is_empty()
+    {
+        anyhow::bail!("media.image_generation.default_provider must not be empty");
+    }
+    for (provider_id, provider) in &image_generation.providers {
+        if provider_id.trim().is_empty() {
+            anyhow::bail!("media.image_generation.providers keys must not be empty");
+        }
+        if let Some(api_key_env) = provider.api_key_env.as_deref()
+            && api_key_env.trim().is_empty()
+        {
+            anyhow::bail!(
+                "media.image_generation.providers.{provider_id}.api_key_env must not be empty"
+            );
+        }
+        // Validate model ids for the built-in catalog providers; custom
+        // providers may register models Roder does not know about.
+        if let Some(model) = provider.default_model.as_deref()
+            && roder_api::catalog::lookup_image_provider(provider_id).is_some()
+            && roder_api::catalog::lookup_image_model(provider_id, model).is_none()
+        {
+            anyhow::bail!(
+                "media.image_generation.providers.{provider_id}.default_model {model:?} is not a known image model; known models: {}",
+                roder_api::catalog::image_models_for_provider(provider_id)
+                    .iter()
+                    .map(|entry| entry.id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    if let (Some(provider_id), Some(model)) = (
+        image_generation.default_provider.as_deref(),
+        image_generation.default_model.as_deref(),
+    ) && roder_api::catalog::lookup_image_provider(provider_id).is_some()
+        && roder_api::catalog::lookup_image_model(provider_id, model).is_none()
+    {
+        anyhow::bail!(
+            "media.image_generation.default_model {model:?} is not a known {provider_id} image model"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -681,6 +761,7 @@ impl Default for MediaConfig {
         Self {
             artifacts_dir: None,
             max_read_bytes: Some(10 * 1024 * 1024),
+            image_generation: None,
         }
     }
 }
@@ -781,6 +862,7 @@ pub fn load_config() -> anyhow::Result<Config> {
     let mut config = load_config_file()?;
     apply_env_overrides(&mut config);
     dynamic_workflows::validate_config(&config)?;
+    validate_media_config(&config)?;
     Ok(config)
 }
 
@@ -1535,6 +1617,92 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn media_image_generation_config_deserializes_from_toml() {
+        let config: Config = toml::from_str(
+            r#"
+            [media]
+            artifacts_dir = "/tmp/artifacts"
+
+            [media.image_generation]
+            default_provider = "openai"
+            default_model = "gpt-image-2"
+            max_outputs = 4
+            max_input_images = 16
+
+            [media.image_generation.providers.openai]
+            enabled = true
+            api_key_env = "OPENAI_API_KEY"
+            base_url = "https://api.openai.com/v1"
+
+            [media.image_generation.providers.google]
+            enabled = true
+            api_key_env = "GEMINI_API_KEY"
+            default_model = "gemini-3.1-flash-image"
+            "#,
+        )
+        .unwrap();
+
+        let media = config.media.clone().unwrap();
+        let image_generation = media.image_generation.unwrap();
+        assert_eq!(image_generation.default_provider.as_deref(), Some("openai"));
+        assert_eq!(image_generation.default_model.as_deref(), Some("gpt-image-2"));
+        assert_eq!(image_generation.max_outputs, Some(4));
+        assert_eq!(image_generation.max_input_images, Some(16));
+        let google = image_generation.providers.get("google").unwrap();
+        assert_eq!(google.enabled, Some(true));
+        assert_eq!(google.api_key_env.as_deref(), Some("GEMINI_API_KEY"));
+        assert_eq!(
+            google.default_model.as_deref(),
+            Some("gemini-3.1-flash-image")
+        );
+        validate_media_config(&config).unwrap();
+    }
+
+    #[test]
+    fn media_image_generation_config_validation_rejects_bad_limits_and_models() {
+        let config: Config = toml::from_str(
+            r#"
+            [media.image_generation]
+            max_outputs = 0
+            "#,
+        )
+        .unwrap();
+        let error = validate_media_config(&config).unwrap_err();
+        assert!(error.to_string().contains("max_outputs"));
+
+        let config: Config = toml::from_str(
+            r#"
+            [media.image_generation]
+            default_provider = "google"
+            default_model = "gpt-image-2"
+            "#,
+        )
+        .unwrap();
+        let error = validate_media_config(&config).unwrap_err();
+        assert!(error.to_string().contains("not a known google image model"));
+
+        let config: Config = toml::from_str(
+            r#"
+            [media.image_generation.providers.openai]
+            default_model = "dall-e-1"
+            "#,
+        )
+        .unwrap();
+        let error = validate_media_config(&config).unwrap_err();
+        assert!(error.to_string().contains("known models: gpt-image-2"));
+
+        // Unknown custom providers may declare models Roder does not know.
+        let config: Config = toml::from_str(
+            r#"
+            [media.image_generation.providers.custom]
+            default_model = "my-image-model"
+            "#,
+        )
+        .unwrap();
+        validate_media_config(&config).unwrap();
     }
 
     #[test]

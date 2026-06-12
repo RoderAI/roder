@@ -12,6 +12,7 @@ mod goals;
 pub mod inference_routing;
 mod instructions;
 pub mod media_artifacts;
+pub mod media_generation;
 pub mod model_profiles;
 mod plan_review;
 pub mod policy_gate;

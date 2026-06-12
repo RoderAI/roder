@@ -1234,6 +1234,7 @@ pub(crate) async fn build_runtime_from_config(
             remote_runner_destination,
             team_data_dir: Some(config_dir.join("teams")),
             roadmap_data_dir: Some(config_dir.clone()),
+            media_generation: resolve_media_generation_config(cfg.media.as_ref()),
         },
     )?);
     let skills_registry = roder_config::build_skills_registry(
@@ -1253,6 +1254,28 @@ fn resolve_zerolang_config(
         timeout_seconds: cfg.timeout_seconds,
         artifact_dir: cfg.artifact_dir.clone(),
     })
+}
+
+fn resolve_media_generation_config(
+    media: Option<&roder_config::MediaConfig>,
+) -> roder_core::media_generation::RuntimeMediaGenerationConfig {
+    let mut resolved = roder_core::media_generation::RuntimeMediaGenerationConfig::default();
+    let Some(media) = media else {
+        return resolved;
+    };
+    resolved.artifacts_dir = media.artifacts_dir.clone();
+    resolved.max_read_bytes = media.max_read_bytes;
+    if let Some(image_generation) = media.image_generation.as_ref() {
+        resolved.default_provider = image_generation.default_provider.clone();
+        resolved.default_model = image_generation.default_model.clone();
+        if let Some(max_outputs) = image_generation.max_outputs {
+            resolved.max_outputs = max_outputs;
+        }
+        if let Some(max_input_images) = image_generation.max_input_images {
+            resolved.max_input_images = max_input_images;
+        }
+    }
+    resolved
 }
 
 fn resolve_tool_search_config(

@@ -521,6 +521,7 @@ mod tests {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                media_generation: Default::default(),
             },
         )
         .unwrap();
@@ -636,6 +637,7 @@ mod tests {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 roadmap_data_dir: None,
+                media_generation: Default::default(),
             },
         )
         .unwrap();
@@ -857,6 +859,7 @@ mod tests {
                 turn_deadline_seconds: None,
                 remote_runner_destination: None,
                 team_data_dir: None,
+                media_generation: Default::default(),
             },
         )
         .unwrap();
