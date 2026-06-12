@@ -27,6 +27,7 @@ use roder_api::discovery::{
 };
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::extension::{ExtensionId, ExtensionManifest};
+pub use roder_api::forks::WorkspaceFork;
 pub use roder_api::goals::{ThreadGoal, ThreadGoalStatus};
 use roder_api::inference::{
     HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ModelSelection, ProviderAuthType,
@@ -64,7 +65,6 @@ use roder_api::teams::{
     TeamMemberStatus, TeamTaskDescriptor,
 };
 use roder_api::thread::ThreadUsageMetadata;
-pub use roder_api::forks::WorkspaceFork;
 use roder_api::tools::ToolSpec;
 use roder_api::trace::{SubagentTraceDelta, SubagentTraceId, SubagentTraceSummary};
 use roder_api::transcript::InputImage;

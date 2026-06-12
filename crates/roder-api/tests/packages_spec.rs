@@ -16,7 +16,11 @@ fn npm_specs_parse_and_round_trip() {
         ("npm:left-pad", "left-pad", None),
         ("npm:left-pad@1.3.0", "left-pad", Some("1.3.0")),
         ("npm:@scope/pkg", "@scope/pkg", None),
-        ("npm:@scope/pkg@2.0.0-rc.1", "@scope/pkg", Some("2.0.0-rc.1")),
+        (
+            "npm:@scope/pkg@2.0.0-rc.1",
+            "@scope/pkg",
+            Some("2.0.0-rc.1"),
+        ),
     ];
     for (spec, name, version) in cases {
         let source = parse(spec);
@@ -181,8 +185,14 @@ fn identity_is_stable_across_refs_and_versions() {
 fn glob_match_supports_segments_and_depth() {
     assert!(glob_match("skills", "skills/changelog/SKILL.md"));
     assert!(glob_match("extensions/*.toml", "extensions/hello.toml"));
-    assert!(!glob_match("extensions/*.toml", "extensions/nested/hello.toml"));
-    assert!(glob_match("extensions/**/*.toml", "extensions/nested/hello.toml"));
+    assert!(!glob_match(
+        "extensions/*.toml",
+        "extensions/nested/hello.toml"
+    ));
+    assert!(glob_match(
+        "extensions/**/*.toml",
+        "extensions/nested/hello.toml"
+    ));
     assert!(glob_match("**/SKILL.md", "skills/a/b/SKILL.md"));
     assert!(glob_match("**", "anything/at/all"));
     assert!(glob_match("themes/*.css", "themes/midnight.css"));
@@ -299,16 +309,17 @@ fn manifest_spec_parses_from_toml_shape() {
     // The shape `roder.toml` uses at a package root (under [package] /
     // [resources] tables it is flattened by the config layer; this checks the
     // canonical struct itself).
-    let spec: roder_api::packages::PackageManifestSpec = serde_json::from_value(serde_json::json!({
-        "id": "pr-helper",
-        "name": "PR Helper",
-        "version": "0.1.0",
-        "extensions": ["extensions/hello/roder-extension.toml"],
-        "skills": ["skills"],
-        "commands": ["commands"],
-        "themes": ["themes"],
-    }))
-    .unwrap();
+    let spec: roder_api::packages::PackageManifestSpec =
+        serde_json::from_value(serde_json::json!({
+            "id": "pr-helper",
+            "name": "PR Helper",
+            "version": "0.1.0",
+            "extensions": ["extensions/hello/roder-extension.toml"],
+            "skills": ["skills"],
+            "commands": ["commands"],
+            "themes": ["themes"],
+        }))
+        .unwrap();
     assert_eq!(spec.id, "pr-helper");
     assert_eq!(spec.extensions.len(), 1);
 }

@@ -87,10 +87,14 @@ pub enum CommandSource {
     BuiltIn,
     User,
     Workspace,
-    Extension { extension_id: String },
+    Extension {
+        extension_id: String,
+    },
     /// Installed Roder package (phase 93). Names load flat (no forced
     /// namespace); user and workspace commands shadow package commands.
-    Package { package_id: String },
+    Package {
+        package_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

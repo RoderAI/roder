@@ -49,7 +49,9 @@ pub enum PackageSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ref_name: Option<String>,
     },
-    LocalPath { path: String },
+    LocalPath {
+        path: String,
+    },
 }
 
 impl PackageSource {
@@ -244,7 +246,9 @@ pub fn parse_package_resource_id(
     id: &str,
 ) -> Result<(String, PackageResourceKind, String), PackageError> {
     let (package_id, rest) = id.split_once(':').ok_or_else(|| invalid_resource_id(id))?;
-    let (kind, name) = rest.split_once('/').ok_or_else(|| invalid_resource_id(id))?;
+    let (kind, name) = rest
+        .split_once('/')
+        .ok_or_else(|| invalid_resource_id(id))?;
     if package_id.is_empty() || name.is_empty() {
         return Err(invalid_resource_id(id));
     }
@@ -664,7 +668,10 @@ impl fmt::Display for PackageError {
                 "invalid resource id {id:?}: expected <package-id>:<kind>/<name>"
             ),
             PackageError::DuplicatePackage { identity, scope } => {
-                write!(f, "package {identity} is already installed in {scope} scope")
+                write!(
+                    f,
+                    "package {identity} is already installed in {scope} scope"
+                )
             }
             PackageError::PackageNotFound { spec } => {
                 write!(f, "package {spec} is not installed")

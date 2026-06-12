@@ -188,10 +188,7 @@ impl CommandsRegistry {
             return Ok(());
         }
         let package_yields_to_new = matches!(existing.source, CommandSource::Package { .. })
-            && matches!(
-                spec.source,
-                CommandSource::User | CommandSource::Workspace
-            );
+            && matches!(spec.source, CommandSource::User | CommandSource::Workspace);
         if package_yields_to_new {
             self.override_audits.push(CommandOverrideAudit {
                 name: name.clone(),

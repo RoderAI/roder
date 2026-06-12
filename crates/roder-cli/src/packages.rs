@@ -20,9 +20,8 @@ use roder_api::process_extension::ProcessExtensionConfig;
 use roder_config::packages::{
     InstallOptions, PackagePaths, RODER_EPHEMERAL_APPROVE_ENV, RODER_EPHEMERAL_PACKAGES_ENV,
     SyncStatus, UpdateStatus, approve_extensions, enumerate_resources, install_package,
-    list_packages, load_package_manifest, package_process_extensions, remove_package,
-    set_filters, set_package_enabled, set_resource_enabled, sync_project_packages,
-    update_packages,
+    list_packages, load_package_manifest, package_process_extensions, remove_package, set_filters,
+    set_package_enabled, set_resource_enabled, sync_project_packages, update_packages,
 };
 
 pub(crate) const PACKAGES_HELP: &str = "\
@@ -262,7 +261,10 @@ fn filter_cli(args: &[String]) -> anyhow::Result<()> {
     filters.set_for_kind(kind, patterns.clone());
     let record = set_filters(&paths, id, filters)?;
     match patterns {
-        None => println!("cleared {kind} filter for {} (loads all)", record.package_id),
+        None => println!(
+            "cleared {kind} filter for {} (loads all)",
+            record.package_id
+        ),
         Some(patterns) if patterns.is_empty() => println!(
             "set {kind} filter for {} to load nothing (use +<path> entries to force-include)",
             record.package_id
