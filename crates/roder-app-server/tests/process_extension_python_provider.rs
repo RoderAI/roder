@@ -236,6 +236,7 @@ async fn process_extension_python_provider_serves_a_full_turn() {
             thread_id: started.thread.id.clone(),
             input: Vec::new(),
             prompt: Some("say hello".to_string()),
+            developer_context: None,
             model_provider: None,
             model: None,
             reasoning: None,

@@ -166,10 +166,7 @@ async fn update(client: &LocalAppClient, args: &[String]) -> anyhow::Result<()> 
     let Some(doc_id) = positional(args, 1) else {
         anyhow::bail!("usage: roder knowledge update ID [--title TITLE] [--status STATUS] [BODY]");
     };
-    let body = match body_arg(args, 2) {
-        Ok(body) => Some(body),
-        Err(_) => None,
-    };
+    let body = body_arg(args, 2).ok();
     let tags = flag_values(args, "--tag");
     let result: KnowledgeSaveResult = call(
         client,

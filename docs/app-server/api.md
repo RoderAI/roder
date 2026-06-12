@@ -411,6 +411,14 @@ Review, hunks, workflow imports, media, and memory:
 | `memory/provider/list` | List embedding providers and selected provider. |
 | `memory/provider/set` | Persist the embedding provider/model. |
 | `memory/recall/preview` | Preview recall citations/results for a turn. |
+| `knowledge/list` | List knowledge documents (filter by kind/tag/status). |
+| `knowledge/read` | Read one knowledge document head or a prior revision. |
+| `knowledge/save` | Save a new knowledge document. |
+| `knowledge/update` | Revise a knowledge document (writes a new revision). |
+| `knowledge/delete` | Archive a knowledge document (soft delete). |
+| `knowledge/search` | Search knowledge documents with scored snippets. |
+| `knowledge/links/set` | Add or remove a typed link between documents. |
+| `knowledge/revisions/list` | List revisions for a knowledge document. |
 
 ## Detailed Method Reference
 
@@ -4846,6 +4854,90 @@ Behavior:
   embedding-provider descriptors, writes config, and emits
   `memory/providerChanged`.
 
+### Knowledge methods
+
+Purpose: Manage the project knowledge base (requirements, decisions, research,
+runbooks, memory narratives, artifact references, notes) through the
+registered knowledge store. The default engine (`roder-ext-knowledge-md`)
+stores documents as markdown files with YAML front matter under
+`~/.roder/knowledge/<scope-dir>/docs/<kind>/<slug>.md`, with immutable prior
+revisions under `revisions/<docId>/<rev>.md`. Writes through this surface are
+attributed to source `user`; agent writes go through the `knowledge_*` tools.
+
+Examples:
+
+```json
+{
+  "method": "knowledge/save",
+  "params": {
+    "scope": { "Project": "gode" },
+    "kind": "decision",
+    "title": "Adopt markdown knowledge engine",
+    "tags": ["adr"],
+    "body": "Knowledge documents live in markdown files with YAML front matter."
+  }
+}
+```
+
+```json
+{
+  "method": "knowledge/search",
+  "params": {
+    "scope": { "Project": "gode" },
+    "text": "markdown engine",
+    "limit": 5,
+    "includeGlobal": true
+  }
+}
+```
+
+```json
+{
+  "method": "knowledge/links/set",
+  "params": {
+    "from": "kn-928fdb4644d2",
+    "to": "kn-319951392051",
+    "type": "supersedes",
+    "remove": false
+  }
+}
+```
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `knowledge/list` | `{ scope?, kind?, tag?, status?, includeArchived?, limit? }` | `{ documents: [KnowledgeDocSummary] }` |
+| `knowledge/read` | `{ docId, revision? }` | `{ document: KnowledgeDocument \| null }` |
+| `knowledge/save` | `{ scope, kind, title, tags?, body }` | `{ document: KnowledgeDocument }` |
+| `knowledge/update` | `{ docId, title?, body?, status?, tags? }` | `{ document: KnowledgeDocument }` |
+| `knowledge/delete` | `{ docId }` | `{ archived: bool }` |
+| `knowledge/search` | `{ scope?, text, kind?, limit?, includeGlobal? }` | `{ results: [{ document, score, snippet, citation }] }` |
+| `knowledge/links/set` | `{ from, to, type, remove? }` | `{ document: KnowledgeDocument }` |
+| `knowledge/revisions/list` | `{ docId }` | `{ revisions: [{ revision, contentHash, createdAt }] }` |
+
+Behavior:
+
+- `kind` is an open string; well-known kinds are `memory`, `requirement`,
+  `decision`, `research`, `runbook`, `artifact`, and `note`.
+- `status` is one of `active`, `draft`, `superseded`, `archived`. New
+  documents start `active` at revision 1.
+- Link `type` is one of `relates_to`, `supersedes`, `derived_from`,
+  `contradicts`, `duplicates`. Setting a link fails with `-32000` when the
+  target document does not exist; removing never fails for missing links.
+- Every `knowledge/update` and `knowledge/links/set` snapshots the prior
+  head into the revision history and bumps `revision`.
+- `knowledge/delete` archives (soft delete): the document leaves default
+  lists and search but stays readable by id; deleting an already archived
+  document returns `archived: false`.
+- `knowledge/list` defaults `limit` to 50; `knowledge/search` defaults to 10
+  and excludes archived documents.
+- Search is lexical in the markdown engine; scope filtering folds in `Global`
+  documents when `includeGlobal` is true.
+- Save/update/delete/link emit `knowledge/saved`, `knowledge/updated`,
+  `knowledge/archived`, and `knowledge/linked` notifications.
+- If no knowledge store is registered (`[knowledge] enabled = false`),
+  knowledge methods return code `-32000` and message
+  `No knowledge store is registered`.
+
 ## Chrome browser methods
 
 Purpose: bridge JSON-RPC clients to a connected Manifest V3 browser extension.
@@ -5174,6 +5266,8 @@ notifications:
 - Memory: `memory/saved`, `memory/updated`, `memory/deleted`,
   `memory/queried`, `memory/recallReady`, `memory/reembedQueued`,
   `memory/providerChanged`, `memory/observationRecorded`.
+- Knowledge: `knowledge/saved`, `knowledge/updated`, `knowledge/archived`,
+  `knowledge/linked`.
 - Indexes: `search_index/statusChanged` and `index/statusChanged`.
 
 Payloads for these notifications are the corresponding `roder-api` event
