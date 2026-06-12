@@ -294,7 +294,10 @@ async fn request_on(
     response.map_err(|message| anyhow::anyhow!("{method} failed: {message}"))
 }
 
-async fn write_message(child: &Arc<RunningChild>, message: serde_json::Value) -> anyhow::Result<()> {
+async fn write_message(
+    child: &Arc<RunningChild>,
+    message: serde_json::Value,
+) -> anyhow::Result<()> {
     let mut line = serde_json::to_string(&message)?;
     line.push('\n');
     let mut stdin = child.stdin.lock().await;
@@ -369,7 +372,10 @@ async fn dispatch_message(child: &Arc<RunningChild>, message: serde_json::Value)
                 .unwrap_or("unknown process extension error")
                 .to_string())
         } else {
-            Ok(message.get("result").cloned().unwrap_or(serde_json::Value::Null))
+            Ok(message
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null))
         };
         if let Some(tx) = child.pending.lock().await.remove(&id) {
             let _ = tx.send(outcome);
@@ -379,7 +385,10 @@ async fn dispatch_message(child: &Arc<RunningChild>, message: serde_json::Value)
     let Some(method) = message.get("method").and_then(serde_json::Value::as_str) else {
         return;
     };
-    let params = message.get("params").cloned().unwrap_or(serde_json::Value::Null);
+    let params = message
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     match method {
         roder_api::process_extension::METHOD_INFERENCE_EVENT => {
             let Ok(notification) =

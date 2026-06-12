@@ -128,15 +128,15 @@ async fn process_extension_python_provider_serves_a_full_turn() {
         enabled: true,
         manifest: example.join("roder-extension.toml").display().to_string(),
         command: "python3".to_string(),
-        args: vec![
-            "-m".to_string(),
-            "roder_python_chat_provider".to_string(),
-        ],
+        args: vec!["-m".to_string(), "roder_python_chat_provider".to_string()],
         cwd: Some(example.display().to_string()),
         env: BTreeMap::from([
             ("PYTHONPATH".to_string(), "src".to_string()),
             ("PYTHONUNBUFFERED".to_string(), "1".to_string()),
-            ("PY_CHAT_COMPLETIONS_API_KEY".to_string(), "test-key".to_string()),
+            (
+                "PY_CHAT_COMPLETIONS_API_KEY".to_string(),
+                "test-key".to_string(),
+            ),
             ("PY_CHAT_COMPLETIONS_BASE_URL".to_string(), base_url),
         ]),
         startup_timeout_ms: 20_000,

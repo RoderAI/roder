@@ -15,9 +15,9 @@ use roder_api::inference::{
     RuntimeHints,
 };
 use roder_api::process_extension::{ProcessEventFilter, ProcessExtensionConfig};
-use roder_api::tools::ToolChoice;
 use roder_api::subagents::SubagentDispatcher as _;
 use roder_api::tasks::TaskExecutor as _;
+use roder_api::tools::ToolChoice;
 use roder_ext_process_host::{
     ProcessEventSink, ProcessHost, ProcessHostExtension, ProcessInferenceEngine,
     ProcessSubagentDispatcher, ProcessTaskExecutor, load_process_extension,
@@ -311,10 +311,7 @@ async fn subagent_dispatcher_streams_status_and_returns_result() {
     let statuses = trace.statuses.lock().unwrap().clone();
     assert_eq!(
         statuses,
-        vec![
-            "CREATING: provisioning".to_string(),
-            "RUNNING".to_string()
-        ],
+        vec!["CREATING: provisioning".to_string(), "RUNNING".to_string()],
         "child status events must surface through the trace sink"
     );
     host.shutdown().await;

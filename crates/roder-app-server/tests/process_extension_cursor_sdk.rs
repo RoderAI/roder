@@ -1,4 +1,4 @@
-//! End-to-end proof for roadmap phase 93: the Cursor SDK TypeScript
+//! End-to-end proof for roadmap phase 95: the Cursor SDK TypeScript
 //! extension registers through the process-extension host and drives
 //! remote-cloud-agent dispatch and resume through the public app-server
 //! JSON-RPC task surfaces. Offline — the child is the real compiled
@@ -271,7 +271,9 @@ async fn cursor_sdk_extension_dispatches_and_resumes_cloud_agents() {
         "https://github.com/example-org/example-repo/pull/7"
     );
     assert!(
-        payload["requestId"].as_str().is_some_and(|id| !id.is_empty()),
+        payload["requestId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()),
         "{payload}"
     );
 
@@ -336,7 +338,11 @@ async fn cursor_sdk_extension_dispatches_and_resumes_cloud_agents() {
         if let roder_api::events::RoderEvent::TaskFailed(event) = &envelope.event
             && event.task_id == submitted.task.task_id
         {
-            assert!(event.error.contains("repoUrl is required"), "{}", event.error);
+            assert!(
+                event.error.contains("repoUrl is required"),
+                "{}",
+                event.error
+            );
             break;
         }
     }

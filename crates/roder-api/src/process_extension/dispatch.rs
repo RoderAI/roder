@@ -1,5 +1,5 @@
 //! Subagent-dispatcher and task-executor payloads for the process-extension
-//! protocol (roadmap phase 93).
+//! protocol (roadmap phase 95).
 //!
 //! These mirror the canonical [`crate::subagents`] and [`crate::tasks`]
 //! contracts so any-language children can dispatch long-running work (for
@@ -67,7 +67,7 @@ pub enum ProcessSubagentEvent {
         detail: Option<String>,
     },
     Completed {
-        result: SubagentResult,
+        result: Box<SubagentResult>,
     },
     Failed {
         error: String,
