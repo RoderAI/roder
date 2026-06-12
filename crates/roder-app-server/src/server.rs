@@ -1355,6 +1355,44 @@ impl AppServer {
                 })
                 .await
             }
+            "packages/list" => self.handle_packages_list().await,
+            "packages/install" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_packages_install(p).await
+                })
+                .await
+            }
+            "packages/remove" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_packages_remove(p).await
+                })
+                .await
+            }
+            "packages/update" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_packages_update(p).await
+                })
+                .await
+            }
+            "packages/sync" => self.handle_packages_sync().await,
+            "packages/set_enabled" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_packages_set_enabled(p).await
+                })
+                .await
+            }
+            "packages/approve_extensions" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_packages_approve_extensions(p).await
+                })
+                .await
+            }
+            "packages/set_filters" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_packages_set_filters(p).await
+                })
+                .await
+            }
             "media/list" => {
                 self.decode_and(
                     req.params,
@@ -3773,7 +3811,18 @@ impl AppServer {
         );
         let user_workflow_dir = Some(workflow_dirs.user);
         let workspace_workflow_dir = Some(workflow_dirs.workspace);
-        let command_dirs = command_registry_directories(user_dir, workspace_dir);
+        // Package command dirs load first; user/workspace commands shadow
+        // package commands regardless of insert order (registry semantics).
+        let package_paths = roder_config::packages::PackagePaths::standard(workspace.as_deref());
+        let mut command_dirs: Vec<CommandDirectory> =
+            roder_config::packages::package_command_dirs(&package_paths)
+                .into_iter()
+                .map(|(package_id, root)| CommandDirectory {
+                    root,
+                    source: CommandSource::Package { package_id },
+                })
+                .collect();
+        command_dirs.extend(command_registry_directories(user_dir, workspace_dir));
         let workflow_dirs =
             workflow_registry_directories(user_workflow_dir, workspace_workflow_dir);
         CommandsRegistry::from_directories_with_workflows(

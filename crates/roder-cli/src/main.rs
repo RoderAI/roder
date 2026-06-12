@@ -13,6 +13,7 @@ mod forks;
 mod knowledge;
 mod marketplace;
 mod media;
+mod packages;
 mod replay;
 mod resume_picker;
 mod roadmap_cli;
@@ -150,6 +151,21 @@ async fn main() -> anyhow::Result<()> {
     if matches!(args.first().map(String::as_str), Some("setup")) {
         return run_setup_cli(&args[1..]).await;
     }
+    if matches!(args.first().map(String::as_str), Some("install")) {
+        return packages::run_install_cli(&args[1..]);
+    }
+    if matches!(args.first().map(String::as_str), Some("remove")) {
+        return packages::run_remove_cli(&args[1..]);
+    }
+    if matches!(args.first().map(String::as_str), Some("update")) {
+        return packages::run_update_cli(&args[1..]);
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("packages" | "package")
+    ) {
+        return packages::run_packages_cli(&args[1..]);
+    }
     if matches!(args.first().map(String::as_str), Some("memory")) {
         return run_memory_cli(&args[1..]).await;
     }
@@ -184,6 +200,9 @@ async fn main() -> anyhow::Result<()> {
         return replay::run_replay_cli(&args[1..]).await;
     }
 
+    // Ephemeral `-e <spec>` packages must export their env vars before the
+    // registry/config below is built.
+    let args = packages::apply_ephemeral_package_args(&args)?;
     let cli_options = parse_cli_options(&args)?;
     let mut startup = cli_options.startup.clone();
     let record_api_transcript = cli_options.record_api_transcript.clone();
@@ -1199,7 +1218,10 @@ pub(crate) async fn build_runtime_from_config(
         remote_runner_destination: remote_runner_destination.clone(),
         inference_router: cfg.inference_router.clone(),
         extra_extensions,
-        process_extensions: cfg.process_extensions.clone(),
+        process_extensions: packages::merged_process_extensions(
+            cfg.process_extensions.clone(),
+            workspace.as_deref(),
+        ),
     })?;
 
     let runtime = Arc::new(Runtime::new(

@@ -97,6 +97,11 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Use the Roder plugin marketplace app-server methods to preview installs, install selected plugin variants, install all de-duplicated variants, list installed variants, disable an installed variant, or uninstall by variant key. Interpret arguments as a plugin command, for example: preview <marketplace-id> <plugin-id>, install <marketplace-id> <plugin-id> [--all-variants], install-all <marketplace-id> <plugin-id>, list, disable <variant-key>, or uninstall <variant-key>.",
         ),
         (
+            "packages",
+            "Install and manage Roder packages (extensions, skills, commands, themes).",
+            "Use the Roder packages app-server methods, which mirror the `roder install`/`roder packages` CLI, to install packages from npm, git, or local paths and manage their bundled process extensions, skills, slash commands, and themes. Interpret arguments as a package command, for example: list, install <spec> [user|project], remove <spec-or-id>, update [<spec-or-id>], enable <package-id-or-resource-id>, disable <package-id-or-resource-id>, approve <package-id>, or sync. Process extensions never launch until approved.",
+        ),
+        (
             "remote",
             "Open the remote app-server pairing panel.",
             "Open or manage the remote app-server pairing panel.",
@@ -132,6 +137,9 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             ),
             "plugin" => {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
+            }
+            "packages" => {
+                Some("list|install|remove|update|enable|disable|approve|sync [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),

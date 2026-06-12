@@ -1205,6 +1205,7 @@ async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
                 reasoning: None,
                 policy_mode: None,
                 task_ledger_required: false,
+                developer_context: None,
             })
             .unwrap(),
         ),
@@ -10408,6 +10409,7 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 reasoning: None,
                 policy_mode: None,
                 task_ledger_required: false,
+                developer_context: None,
             })
             .unwrap(),
         ),

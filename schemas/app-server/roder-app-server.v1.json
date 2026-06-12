@@ -1131,6 +1131,78 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "packages/approve_extensions",
+      "paramsType": "PackagesApproveExtensionsParams",
+      "resultType": "PackagesApproveExtensionsResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/install",
+      "paramsType": "PackagesInstallParams",
+      "resultType": "PackagesInstallResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "packages/list",
+      "paramsType": "PackagesListParams",
+      "resultType": "PackagesListResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "packages/remove",
+      "paramsType": "PackagesRemoveParams",
+      "resultType": "PackagesRemoveResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/set_enabled",
+      "paramsType": "PackagesSetEnabledParams",
+      "resultType": "PackagesSetEnabledResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/set_filters",
+      "paramsType": "PackagesSetFiltersParams",
+      "resultType": "PackagesSetFiltersResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "packages/sync",
+      "paramsType": "PackagesSyncParams",
+      "resultType": "PackagesSyncResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "packages/update",
+      "paramsType": "PackagesUpdateParams",
+      "resultType": "PackagesUpdateResult",
+      "stability": "stable",
+      "featureGroup": "packages",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "plan/review/approve",
       "paramsType": "PlanReviewApproveParams",
       "resultType": "PlanReviewApproveResult",
