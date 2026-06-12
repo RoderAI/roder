@@ -119,11 +119,11 @@ use roder_protocol::{
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
     ToolCallResult, ToolsListResult, ToolsResolveParams, ToolsResolveResult, TurnInputItem,
-    TurnInterruptParams, TurnInterruptResult,
-    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult, WebwrightArtifactsResult,
-    WebwrightExportParams, WebwrightExportResult, WebwrightLatestRunResult, WebwrightPrepareParams,
-    WebwrightPrepareResult, WebwrightReportResult, WebwrightRerunParams, WebwrightRerunResult,
-    WebwrightSetupParams, WebwrightSetupResult, WebwrightVerifyResult, WebwrightVisualJudgeParams,
+    TurnInterruptParams, TurnInterruptResult, TurnStartParams, TurnStartResult, TurnSteerParams,
+    TurnSteerResult, WebwrightArtifactsResult, WebwrightExportParams, WebwrightExportResult,
+    WebwrightLatestRunResult, WebwrightPrepareParams, WebwrightPrepareResult,
+    WebwrightReportResult, WebwrightRerunParams, WebwrightRerunResult, WebwrightSetupParams,
+    WebwrightSetupResult, WebwrightVerifyResult, WebwrightVisualJudgeParams,
     WebwrightVisualJudgeResult, WebwrightWorkspaceParams, WorkflowEnableParams,
     WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
     WorkflowScanResult, WorkspaceChangesListParams, WorkspaceChangesListResult,
@@ -1191,6 +1191,7 @@ async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
                 thread_id: thread_start.thread.id.clone(),
                 input: text_input("find refactor opportunities"),
                 prompt: None,
+                developer_context: None,
                 model_provider: None,
                 model: None,
                 reasoning: None,
@@ -3559,6 +3560,30 @@ async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
             .models
             .iter()
             .any(|model| model.id == "x-ai/grok-build-0.1")
+    );
+}
+
+#[tokio::test]
+async fn providers_list_exposes_roder_cloud_free_model_without_auth() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let roder_cloud = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == roder_api::catalog::PROVIDER_RODER_CLOUD)
+        .expect("roder-cloud provider should be listed");
+    assert_eq!(roder_cloud.auth_type, ProviderAuthType::ApiKey);
+    assert!(!roder_cloud.authenticated);
+    assert!(
+        roder_cloud
+            .models
+            .iter()
+            .any(|model| model.id == "roder.cloud/free")
     );
 }
 
@@ -8080,7 +8105,10 @@ async fn external_tool_call_round_trips_through_tools_resolve() {
         .to_string();
     assert_eq!(requested.params["call"]["id"], "fake-external-tool");
     assert_eq!(requested.params["call"]["name"], "acme_lookup");
-    assert_eq!(requested.params["call"]["arguments"]["query"], "thread status");
+    assert_eq!(
+        requested.params["call"]["arguments"]["query"],
+        "thread status"
+    );
 
     let resolved: ToolsResolveResult = request(
         &client,
@@ -8190,7 +8218,10 @@ async fn external_tool_call_times_out_into_error_result() {
             _ => {}
         }
     }
-    assert!(saw_timeout_result, "timeout did not produce an error result");
+    assert!(
+        saw_timeout_result,
+        "timeout did not produce an error result"
+    );
     assert!(saw_turn_completed, "turn did not continue after timeout");
 
     let late: ToolsResolveResult = request(
@@ -10053,6 +10084,7 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 thread_id: thread_id.to_string(),
                 input: text_input(text),
                 prompt: None,
+                developer_context: None,
                 model_provider: None,
                 model: None,
                 reasoning: None,

@@ -1,0 +1,32 @@
+[package]
+name = "roder-ext-roder-cloud"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.roder.distribution]
+id = "roder-cloud"
+category = "inference-engine"
+display_name = "Roder Cloud"
+description = "roder.cloud hosted inference provider (roder_ API key with short-lived JWT exchange)."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = ["RODER_CLOUD_API_KEY", "RODER_CLOUD_TOKEN", "RODER_CLOUD_BASE_URL", "RODER_CLOUD_WEB_URL"]
+conflicts_with = []
+required_capabilities = ["network.roder.cloud"]
+extension_path = "::RoderCloudExtension::new"
+docs_url = "https://roder.cloud"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+roder-api.workspace = true
+roder-ext-openai-responses.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
