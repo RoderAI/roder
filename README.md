@@ -350,6 +350,60 @@ A more complete quick-start (configuration, providers, thread resume, app-server
 
 ---
 
+## Agent Client Protocol
+
+`roder acp` starts a stdio Agent Client Protocol endpoint backed by the Roder
+app-server runtime. The adapter targets the latest stable ACP v1 wire schema
+from `agent-client-protocol-schema` 0.13.6.
+
+Implemented agent methods:
+
+- `initialize`
+- `session/new`
+- `session/prompt`
+- `session/cancel`
+
+Roder advertises only baseline session support. `session/load`,
+`session/list`, `session/delete`, `session/resume`, `session/close`,
+`additionalDirectories`, and MCP-over-ACP are not advertised; calls to
+unsupported optional methods return JSON-RPC method-not-found.
+
+Example initialize request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "init",
+  "method": "initialize",
+  "params": {
+    "protocolVersion": 1,
+    "clientCapabilities": {}
+  }
+}
+```
+
+Example prompt turn:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "prompt-1",
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "thread-id",
+    "prompt": [{ "type": "text", "text": "inspect this repo" }]
+  }
+}
+```
+
+During `session/prompt`, Roder streams `session/update` notifications for
+assistant text, reasoning text, and tool-call lifecycle updates. Protected tool
+calls are bridged to ACP `session/request_permission` client requests with
+`allow_once` and `reject_once` options, then resolved back through Roder's
+canonical approval path.
+
+---
+
 ## Chrome browser integration
 
 Roder can drive a user's real, logged-in Chrome session through a Manifest V3

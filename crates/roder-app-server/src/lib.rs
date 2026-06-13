@@ -1,3 +1,4 @@
+pub mod acp;
 pub mod agent_node;
 mod artifact;
 mod automation_worker;

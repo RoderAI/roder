@@ -1,0 +1,170 @@
+use std::sync::Arc;
+
+use agent_client_protocol_schema as acp;
+use async_trait::async_trait;
+use roder_app_server::acp::{AcpAdapter, AcpClientPeer};
+use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
+use roder_core::Runtime;
+use roder_protocol::{JsonRpcNotification, JsonRpcRequest};
+use tokio::sync::Mutex;
+
+#[derive(Clone, Default)]
+struct RecordingPeer {
+    notifications: Arc<Mutex<Vec<JsonRpcNotification>>>,
+}
+
+#[async_trait]
+impl AcpClientPeer for RecordingPeer {
+    async fn send_notification(&self, notification: JsonRpcNotification) -> anyhow::Result<()> {
+        self.notifications.lock().await.push(notification);
+        Ok(())
+    }
+
+    async fn request_permission(
+        &self,
+        _request: acp::RequestPermissionRequest,
+    ) -> anyhow::Result<acp::RequestPermissionResponse> {
+        Ok(acp::RequestPermissionResponse::new(
+            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
+                "allow_once",
+            )),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn acp_initialize_advertises_stable_v1_without_optional_capabilities() {
+    let adapter = test_adapter();
+    let peer = RecordingPeer::default();
+
+    let response = adapter
+        .handle_request(
+            JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("init")),
+                method: "initialize".to_string(),
+                params: Some(serde_json::json!({
+                    "protocolVersion": 1,
+                    "clientCapabilities": {}
+                })),
+            },
+            &peer,
+        )
+        .await
+        .unwrap()
+        .expect("initialize response");
+
+    let result = response.result.expect("initialize result");
+    assert_eq!(result["protocolVersion"], 1);
+    assert_eq!(result["agentCapabilities"]["loadSession"], false);
+    assert!(
+        result["agentCapabilities"]["sessionCapabilities"]
+            .get("list")
+            .is_none()
+    );
+    assert_eq!(
+        result["agentCapabilities"]["promptCapabilities"],
+        serde_json::json!({
+            "image": false,
+            "audio": false,
+            "embeddedContext": false
+        })
+    );
+}
+
+#[tokio::test]
+async fn acp_session_new_and_prompt_stream_session_updates() {
+    let adapter = test_adapter();
+    let peer = RecordingPeer::default();
+    let cwd = std::env::current_dir().unwrap();
+
+    let session = adapter
+        .handle_request(
+            JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("new")),
+                method: "session/new".to_string(),
+                params: Some(serde_json::to_value(acp::NewSessionRequest::new(cwd)).unwrap()),
+            },
+            &peer,
+        )
+        .await
+        .unwrap()
+        .expect("session/new response");
+    let session_id = session
+        .result
+        .as_ref()
+        .and_then(|value| value.get("sessionId"))
+        .and_then(serde_json::Value::as_str)
+        .expect("session id")
+        .to_string();
+
+    let prompt = acp::PromptRequest::new(
+        session_id.clone(),
+        vec![acp::ContentBlock::Text(acp::TextContent::new("hello"))],
+    );
+    let response = adapter
+        .handle_request(
+            JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("prompt")),
+                method: "session/prompt".to_string(),
+                params: Some(serde_json::to_value(prompt).unwrap()),
+            },
+            &peer,
+        )
+        .await
+        .unwrap()
+        .expect("session/prompt response");
+
+    assert_eq!(
+        response.result.expect("prompt result")["stopReason"],
+        "end_turn"
+    );
+    let notifications = peer.notifications.lock().await;
+    assert!(
+        notifications
+            .iter()
+            .any(|notification| notification.method == "session/update"
+                && notification.params["sessionId"] == session_id
+                && notification.params["update"]["sessionUpdate"] == "agent_message_chunk"
+                && notification.params["update"]["content"]["type"] == "text"),
+        "missing ACP agent_message_chunk update: {notifications:?}"
+    );
+}
+
+#[tokio::test]
+async fn acp_rejects_unadvertised_optional_methods() {
+    let adapter = test_adapter();
+    let peer = RecordingPeer::default();
+
+    let response = adapter
+        .handle_request(
+            JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("list")),
+                method: "session/list".to_string(),
+                params: Some(serde_json::json!({})),
+            },
+            &peer,
+        )
+        .await
+        .unwrap()
+        .expect("session/list error response");
+
+    let error = response.error.expect("method-not-found error");
+    assert_eq!(error.code, -32601);
+}
+
+fn test_adapter() -> AcpAdapter<LocalAppClient> {
+    let registry_path = std::env::temp_dir().join(format!(
+        "roder-acp-workspaces-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(AppServer::with_feature_config(
+        runtime,
+        AppServerFeatureConfig::default().with_workspace_registry_path(registry_path),
+    ));
+    AcpAdapter::new(LocalAppClient::new(server))
+}

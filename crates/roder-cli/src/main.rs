@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod acp;
 mod agent_node;
 mod automations;
 mod chrome;
@@ -95,6 +96,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("app-server")) {
         return run_app_server_on_large_stack(args[1..].to_vec());
+    }
+    if matches!(args.first().map(String::as_str), Some("acp")) {
+        return acp::run_acp_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("exec")) {
         return exec::run_exec_cli(&args[1..]).await;
