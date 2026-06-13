@@ -5,6 +5,7 @@
 .gode/
 .roder/
 .roder-harness/
+/dream/
 /roadmap/
 __pycache__/
 .pytest_cache/
