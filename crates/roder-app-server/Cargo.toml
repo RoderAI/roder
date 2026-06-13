@@ -64,10 +64,16 @@ name = "agent_node_security"
 path = "tests/agent_node_security.rs"
 
 [[test]]
+name = "acp"
+path = "tests/acp.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
 name = "remote_app_client"
 path = "tests/remote_app_client.rs"
 
 [dependencies]
+agent-client-protocol-schema.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
