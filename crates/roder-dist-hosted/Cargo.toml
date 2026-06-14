@@ -5,7 +5,7 @@ edition = "2024"
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-readme.workspace = true
+readme = "README.md"
 description = "First-party hosted multi-tenant Roder service distribution (roadmap phase 72)"
 
 [[bin]]

@@ -123,11 +123,11 @@ python3 scripts/generate-knope-config.py --check
 
 README requirements:
 
-- Cargo crates inherit the workspace `README.md` with `readme.workspace = true`.
-  Keep that field on every public crate so crates.io renders useful project
-  documentation.
+- Every Cargo crate must have its own package-local `README.md` and
+  `readme = "README.md"` in `Cargo.toml`.
 - npm packages must include `README.md` in `package.json` `files`.
 - PyPI packages must keep `[project] readme = "README.md"` in `pyproject.toml`.
+- Every package README must link to `https://roder.sh`.
 
 Cargo packages publish in dependency order and crates.io may rate-limit new
 crate creation. Use `cargo metadata` to derive the workspace order and include

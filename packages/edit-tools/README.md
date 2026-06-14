@@ -2,6 +2,8 @@
 
 Roder-grade file editing tools for JavaScript agent runtimes.
 
+Roder website: https://roder.sh
+
 Use this package when you want Roder's edit semantics without adopting the full Roder app-server, TUI, or agent loop. `@roderai/sdk` controls Roder app-server sessions; `@roderai/edit-tools` only edits files in a workspace you provide.
 
 ```ts
