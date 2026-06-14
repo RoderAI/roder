@@ -1,7 +1,12 @@
 [package]
-name = "roder-cli"
+name = "roder"
 version = "0.1.0"
 edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
 
 [[bin]]
 name = "roder"

@@ -6,9 +6,9 @@ Releases are managed by [knope](https://knope.tech) using **changesets** with
 independently. Versions only move when a changeset says so — commit messages
 never drive version bumps (`[changes] ignore_conventional_commits = true`).
 
-Releases are git-only for now: knope bumps versions, updates per-package
-changelogs, and creates git tags (`<package>/v<version>`) plus GitHub
-releases. Nothing is published to crates.io, npm, or PyPI.
+knope owns version bumps, per-package changelogs, git tags
+(`<package>/v<version>`), and GitHub releases. Registry publication is a
+separate explicit step for crates.io, npm, PyPI, and Homebrew.
 
 ## Documenting a change (required for every PR that touches a package)
 
@@ -18,7 +18,7 @@ changes and how their versions should bump:
 ```markdown
 ---
 roder-core: minor
-roder-cli: patch
+roder: patch
 ---
 
 # Short summary of the change
@@ -54,7 +54,7 @@ Bypasses:
 - The knope release PR (branch `knope/release`) is exempt because it deletes
   changesets by design.
 
-## Release flow
+## Release Flow
 
 1. PRs merge to `master`, each carrying changesets.
 2. `prepare-release.yml` runs on every push to `master`: knope combines all
@@ -66,6 +66,12 @@ Bypasses:
 3. Merging that release PR is the release gate. `release.yml` then runs
    `knope release`, tagging each released package (`<name>/v<version>`) and
    creating a GitHub release per package with its release notes.
+4. Registry publication is manual today. Before publishing, run the registry
+   README gate:
+
+   ```sh
+   make registry-readmes
+   ```
 
 Unchanged packages are untouched: no version bump, no tag, no release.
 
@@ -106,7 +112,64 @@ Note: because the release preview PR is created with `GITHUB_TOKEN`, other
 workflows (CI) don't run on it. If you later make the changeset gate or other
 checks required for merging, switch `prepare-release.yml` to a PAT.
 
-## Registry publication readiness
+## Registry Publication
+
+Before any registry publish:
+
+```sh
+make registry-readmes
+python3 scripts/generate-knope-config.py --check
+```
+
+README requirements:
+
+- Cargo crates inherit the workspace `README.md` with `readme.workspace = true`.
+  Keep that field on every public crate so crates.io renders useful project
+  documentation.
+- npm packages must include `README.md` in `package.json` `files`.
+- PyPI packages must keep `[project] readme = "README.md"` in `pyproject.toml`.
+
+Cargo packages publish in dependency order and crates.io may rate-limit new
+crate creation. Use `cargo metadata` to derive the workspace order and include
+dev-dependencies in the ordering because `cargo publish` verifies package
+tarballs with dev-dependencies resolvable from the registry.
+
+For npm:
+
+```sh
+cd sdk/typescript
+pnpm pack --dry-run
+npm publish --access public --registry=https://registry.npmjs.org/
+
+cd ../../packages/edit-tools
+pnpm pack --dry-run
+npm publish --access public --registry=https://registry.npmjs.org/
+```
+
+For PyPI:
+
+```sh
+cd sdk/python
+uv build
+uv publish
+```
+
+For Homebrew, update `RoderAI/homebrew-tap` after the crates.io `roder` crate is
+visible. The formula should point at the immutable crates.io source archive:
+
+```ruby
+url "https://static.crates.io/crates/roder/roder-<version>.crate"
+```
+
+Then validate:
+
+```sh
+brew audit --strict --online --new RoderAI/tap/roder
+brew reinstall --build-from-source RoderAI/tap/roder
+brew test RoderAI/tap/roder
+```
+
+## Registry Publication Readiness
 
 Before publishing crates to crates.io later:
 

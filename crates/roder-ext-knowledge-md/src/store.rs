@@ -246,8 +246,7 @@ impl KnowledgeStore for MarkdownKnowledgeStore {
                     .is_none_or(|kind| doc.kind.as_str() == kind.as_str())
             })
             .filter_map(|doc| {
-                let haystack =
-                    format!("{}\n{}\n{}", doc.title, doc.tags.join(" "), doc.body);
+                let haystack = format!("{}\n{}\n{}", doc.title, doc.tags.join(" "), doc.body);
                 let score = lexical_score(&query.text, &haystack);
                 if score <= 0.0 {
                     return None;
@@ -319,10 +318,7 @@ impl KnowledgeStore for MarkdownKnowledgeStore {
         Ok(true)
     }
 
-    async fn set_link(
-        &self,
-        request: KnowledgeLinkRequest,
-    ) -> anyhow::Result<KnowledgeDocument> {
+    async fn set_link(&self, request: KnowledgeLinkRequest) -> anyhow::Result<KnowledgeDocument> {
         let (path, doc) = self
             .find_by_id(&request.from)?
             .ok_or_else(|| anyhow::anyhow!("knowledge document not found: {}", request.from))?;
@@ -341,10 +337,7 @@ impl KnowledgeStore for MarkdownKnowledgeStore {
         })
     }
 
-    async fn revisions(
-        &self,
-        id: &KnowledgeDocId,
-    ) -> anyhow::Result<Vec<KnowledgeRevisionInfo>> {
+    async fn revisions(&self, id: &KnowledgeDocId) -> anyhow::Result<Vec<KnowledgeRevisionInfo>> {
         let Some((_, head)) = self.find_by_id(id)? else {
             return Ok(Vec::new());
         };
@@ -400,7 +393,10 @@ fn validate_title(title: &str) -> anyhow::Result<()> {
         anyhow::bail!("knowledge title must not be empty");
     }
     if title.len() > MAX_TITLE_BYTES {
-        anyhow::bail!("knowledge title is {} bytes; the limit is {MAX_TITLE_BYTES}", title.len());
+        anyhow::bail!(
+            "knowledge title is {} bytes; the limit is {MAX_TITLE_BYTES}",
+            title.len()
+        );
     }
     if title.contains('\n') {
         anyhow::bail!("knowledge title must be a single line");
@@ -425,9 +421,7 @@ fn matches_scope(
 ) -> bool {
     match scope {
         None => true,
-        Some(scope) => {
-            doc.scope == *scope || (include_global && doc.scope == MemoryScope::Global)
-        }
+        Some(scope) => doc.scope == *scope || (include_global && doc.scope == MemoryScope::Global),
     }
 }
 
@@ -457,7 +451,10 @@ fn snippet_around_match(body: &str, query: &str) -> Option<String> {
     while end < body.len() && !body.is_char_boundary(end) {
         end += 1;
     }
-    let mut snippet = body[start..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut snippet = body[start..end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if start > 0 {
         snippet = format!("...{snippet}");
     }
@@ -487,7 +484,11 @@ fn sanitize_component(value: &str) -> String {
             out.push('-');
         }
     }
-    if out.is_empty() { "default".to_string() } else { out }
+    if out.is_empty() {
+        "default".to_string()
+    } else {
+        out
+    }
 }
 
 fn parse_scope_dir(dir: &str) -> MemoryScope {

@@ -130,7 +130,10 @@ async fn v2_recognize_request_maps_config_content_and_response_fields() {
         raw.starts_with("POST /v2/projects/test-project/locations/global/recognizers/_:recognize"),
         "{raw}"
     );
-    assert!(raw.contains("authorization: Bearer test-oauth-token"), "{raw}");
+    assert!(
+        raw.contains("authorization: Bearer test-oauth-token"),
+        "{raw}"
+    );
     let body_start = raw.find("\r\n\r\n").unwrap() + 4;
     let body: serde_json::Value = serde_json::from_str(&raw[body_start..]).unwrap();
     assert_eq!(body["config"]["model"], "latest_short");

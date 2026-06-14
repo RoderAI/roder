@@ -19,7 +19,7 @@ Run the focused Terminal-Bench diagnostic loop before another Harbor full run:
 
 ```sh
 RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals-tbench-diagnostics \
-  cargo run -p roder-cli -- eval run evals/fixtures/tbench-diagnostics --offline --profile eval
+  cargo run -p roder -- eval run evals/fixtures/tbench-diagnostics --offline --profile eval
 ```
 
 This suite covers exact required output files, JSON array serialization, bounded

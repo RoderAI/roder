@@ -1,9 +1,9 @@
-# @roder/sdk
+# @roderai/sdk
 
 TypeScript SDK for the Roder app-server JSON-RPC API.
 
 ```ts
-import { RoderAgent } from "@roder/sdk";
+import { RoderAgent } from "@roderai/sdk";
 ```
 
 Normal tests use in-memory fake transports. Live local and remote smoke checks are opt-in with `RODER_SDK_LIVE=1`.
@@ -24,3 +24,16 @@ pnpm run typecheck
 pnpm test -- fixtures
 pnpm pack --dry-run
 ```
+
+## Publishing
+
+Publish from this directory after the release version is already reflected in
+`package.json`, `CHANGELOG.md`, and the generated `dist/` files:
+
+```sh
+pnpm pack --dry-run
+npm publish --access public --registry=https://registry.npmjs.org/
+```
+
+The package is published as `@roderai/sdk`; keep `README.md` in the
+`package.json` `files` list so npm shows this page on the registry.

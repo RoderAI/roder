@@ -198,7 +198,10 @@ fn stats_backfill(args: &[String]) -> anyhow::Result<()> {
         rolled
     );
     for error in &report.parse_errors {
-        eprintln!("warning: skipped {}:{}: {}", error.path, error.line, error.message);
+        eprintln!(
+            "warning: skipped {}:{}: {}",
+            error.path, error.line, error.message
+        );
     }
     Ok(())
 }
@@ -238,7 +241,10 @@ fn stats_tools(args: &[String]) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&summaries)?);
         return Ok(());
     }
-    println!("{:<24} {:>7} {:>7} {:>9} {:>9} {:>9}", "tool", "calls", "errors", "p50ms", "p95ms", "p99ms");
+    println!(
+        "{:<24} {:>7} {:>7} {:>9} {:>9} {:>9}",
+        "tool", "calls", "errors", "p50ms", "p95ms", "p99ms"
+    );
     for tool in summaries {
         println!(
             "{:<24} {:>7} {:>7} {:>9} {:>9} {:>9}",
@@ -261,7 +267,10 @@ fn stats_tokens(args: &[String]) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
-    println!("{:<36} {:>10} {:>10} {:>10} {:>6}", "group", "prompt", "completion", "total", "turns");
+    println!(
+        "{:<36} {:>10} {:>10} {:>10} {:>6}",
+        "group", "prompt", "completion", "total", "turns"
+    );
     for row in rows {
         println!(
             "{:<36} {:>10} {:>10} {:>10} {:>6}",
@@ -278,7 +287,10 @@ fn stats_sessions(args: &[String]) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&sessions)?);
         return Ok(());
     }
-    println!("{:<38} {:>7} {:>7} {:>8} {:>10}", "thread", "turns", "tools", "errors", "tokens");
+    println!(
+        "{:<38} {:>7} {:>7} {:>8} {:>10}",
+        "thread", "turns", "tools", "errors", "tokens"
+    );
     for session in sessions {
         println!(
             "{:<38} {:>7} {:>7} {:>8} {:>10}",
@@ -305,7 +317,10 @@ fn stats_export(args: &[String]) -> anyhow::Result<()> {
         }
         None => store.export_jsonl(&mut std::io::stdout().lock())?,
     };
-    anyhow::ensure!(written > 0 || store.counts()?.turns == 0, "export wrote nothing");
+    anyhow::ensure!(
+        written > 0 || store.counts()?.turns == 0,
+        "export wrote nothing"
+    );
     Ok(())
 }
 

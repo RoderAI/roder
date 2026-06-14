@@ -403,9 +403,7 @@ pub fn cursor_request_parts(
 
 /// Decode Roder `InputImage` data URLs into Cursor inline images, dropping any
 /// that are not base64 `data:` URLs (Cursor's inline path needs raw bytes).
-fn cursor_images_from_inputs(
-    images: &[roder_api::transcript::InputImage],
-) -> Vec<CursorImage> {
+fn cursor_images_from_inputs(images: &[roder_api::transcript::InputImage]) -> Vec<CursorImage> {
     images
         .iter()
         .filter_map(|image| CursorImage::from_data_url(&image.image_url))

@@ -240,7 +240,10 @@ mod tests {
 
     #[test]
     fn slugify_normalizes_titles() {
-        assert_eq!(slugify("Use SQLite for analytics!"), "use-sqlite-for-analytics");
+        assert_eq!(
+            slugify("Use SQLite for analytics!"),
+            "use-sqlite-for-analytics"
+        );
         assert_eq!(slugify("  ---  "), "untitled");
         assert_eq!(slugify("Üñïcode Heavy"), "code-heavy");
     }

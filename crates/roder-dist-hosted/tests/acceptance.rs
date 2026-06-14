@@ -93,14 +93,11 @@ async fn hosted_service_launches_with_fake_auth_and_answers_initialize() {
             .await
             .unwrap();
         let response = loop {
-            let message = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                socket.next(),
-            )
-            .await
-            .expect("timeout")
-            .expect("closed")
-            .unwrap();
+            let message = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
+                .await
+                .expect("timeout")
+                .expect("closed")
+                .unwrap();
             if let Message::Text(text) = message {
                 let value: serde_json::Value = serde_json::from_str(&text).unwrap();
                 if value.get("id").is_some_and(|id| !id.is_null()) {

@@ -333,10 +333,8 @@ pub trait KnowledgeStore: Send + Sync {
     async fn update(&self, request: KnowledgeUpdateRequest) -> anyhow::Result<KnowledgeDocument>;
     /// Soft-delete: the document leaves default lists but stays readable by id.
     async fn archive(&self, id: &KnowledgeDocId) -> anyhow::Result<bool>;
-    async fn set_link(&self, request: KnowledgeLinkRequest)
-    -> anyhow::Result<KnowledgeDocument>;
-    async fn revisions(&self, id: &KnowledgeDocId)
-    -> anyhow::Result<Vec<KnowledgeRevisionInfo>>;
+    async fn set_link(&self, request: KnowledgeLinkRequest) -> anyhow::Result<KnowledgeDocument>;
+    async fn revisions(&self, id: &KnowledgeDocId) -> anyhow::Result<Vec<KnowledgeRevisionInfo>>;
 }
 
 pub trait KnowledgeStoreFactory: Send + Sync + 'static {

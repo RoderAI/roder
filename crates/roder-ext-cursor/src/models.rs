@@ -218,14 +218,7 @@ fn is_appendable_base_id(base: &str) -> bool {
 /// model reads cleanly (e.g. "Opus 4.8 Extra High Fast" -> "Opus 4.8").
 fn clean_display_name(name: &str) -> String {
     let drop = [
-        "Fast",
-        "Thinking",
-        "Max",
-        "High",
-        "Extra",
-        "Medium",
-        "Low",
-        "None",
+        "Fast", "Thinking", "Max", "High", "Extra", "Medium", "Low", "None",
     ];
     let mut words: Vec<&str> = name.split_whitespace().collect();
     while let Some(last) = words.last() {
@@ -250,14 +243,11 @@ fn context_window_from_text(text: &str) -> Option<u32> {
     // Walk back from "context window" over an optional space, a `k`/`m` unit,
     // and the contiguous digits before it.
     let prefix = text[..pos].trim_end();
-    let (unit_idx, mult) = prefix
-        .char_indices()
-        .rev()
-        .find_map(|(idx, c)| match c {
-            'k' | 'K' => Some((idx, 1_000u64)),
-            'm' | 'M' => Some((idx, 1_000_000u64)),
-            _ => None,
-        })?;
+    let (unit_idx, mult) = prefix.char_indices().rev().find_map(|(idx, c)| match c {
+        'k' | 'K' => Some((idx, 1_000u64)),
+        'm' | 'M' => Some((idx, 1_000_000u64)),
+        _ => None,
+    })?;
     let digits: String = prefix[..unit_idx]
         .chars()
         .rev()
@@ -398,7 +388,9 @@ mod tests {
         assert!(is_appendable_base_id("gpt-5.5"));
         assert!(!is_appendable_base_id("auto"));
         assert!(!is_appendable_base_id("default"));
-        assert!(!is_appendable_base_id("accounts/fireworks/models/kimi-k2p5"));
+        assert!(!is_appendable_base_id(
+            "accounts/fireworks/models/kimi-k2p5"
+        ));
         assert!(!is_appendable_base_id(""));
     }
 

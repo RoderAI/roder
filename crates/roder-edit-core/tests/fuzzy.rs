@@ -97,8 +97,7 @@ fn omitted_indentation_is_restored_when_reindent_is_enabled() {
     .unwrap();
 
     assert_eq!(
-        updated,
-        "fn main() {\n    let a = 1;\n    if a > 0 {\n        use_it(a);\n    }\n}\n",
+        updated, "fn main() {\n    let a = 1;\n    if a > 0 {\n        use_it(a);\n    }\n}\n",
         "relative indentation inside the inserted block must be preserved"
     );
 }

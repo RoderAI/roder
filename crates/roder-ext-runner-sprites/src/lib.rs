@@ -24,8 +24,6 @@ pub use client::{
     SpriteService, SpriteServiceState, SpritesAppServerDeployment, SpritesClient,
     SpritesCommandResponse, SpritesHttpError,
 };
-pub use filesystem::SpriteFsEntry;
-pub use ws::{WsExecOutcome, WsExecRequest};
 pub use config::{
     BASE_URL_ENV, CleanupMode, DEFAULT_APP_SERVER_TOKEN_ENV, DEFAULT_BASE_URL,
     DEFAULT_REMOTE_RODER_BASE_URL, DEFAULT_REMOTE_RODER_BINARY, LIVE_ENV, PROVIDER_ID,
@@ -33,8 +31,10 @@ pub use config::{
     SpritesConfig, TOKEN_ENV,
 };
 pub use exec_ws::{ExecFrame, decode_non_tty_frame};
+pub use filesystem::SpriteFsEntry;
 pub use filesystem::normalize_workspace_path;
 pub use session::SpritesRunnerSession;
+pub use ws::{WsExecOutcome, WsExecRequest};
 
 #[derive(Debug, Default)]
 pub struct SpritesRunnerExtension;
@@ -119,7 +119,9 @@ impl RemoteRunnerProvider for SpritesRunnerProvider {
         // Restore happens first so manifests/app-server bootstrap overlay the
         // restored filesystem rather than the other way around.
         if let Some(checkpoint_id) = &config.restore_checkpoint_id {
-            client.restore_checkpoint(&sprite.name, checkpoint_id).await?;
+            client
+                .restore_checkpoint(&sprite.name, checkpoint_id)
+                .await?;
         }
         policies::apply_configured_policies(&client, &sprite.name, &config).await?;
         client.ensure_working_dir(&sprite.name).await?;

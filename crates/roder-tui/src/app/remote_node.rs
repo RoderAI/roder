@@ -36,7 +36,11 @@ where
             return None;
         }
         let node = status.node?;
-        let label = format!("{} ({})", node.name, &node.node_id[..node.node_id.len().min(12)]);
+        let label = format!(
+            "{} ({})",
+            node.name,
+            &node.node_id[..node.node_id.len().min(12)]
+        );
         let mut lines = vec![format!(
             "Remote agent node: {label} — turns, tools, and files run on the node, not this \
              terminal."
@@ -60,7 +64,11 @@ fn short_fingerprint(fingerprint: &str) -> String {
     if fingerprint.len() <= 16 {
         fingerprint.to_string()
     } else {
-        format!("{}…{}", &fingerprint[..8], &fingerprint[fingerprint.len() - 8..])
+        format!(
+            "{}…{}",
+            &fingerprint[..8],
+            &fingerprint[fingerprint.len() - 8..]
+        )
     }
 }
 

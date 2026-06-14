@@ -7,9 +7,7 @@ mod fake_server;
 use std::path::Path;
 
 use roder_api::remote_runner::{RemoteRunnerProvider, RunnerDestination, RunnerManifest};
-use roder_ext_runner_sprites::{
-    PROVIDER_ID, SpritesClient, SpritesConfig, SpritesRunnerProvider,
-};
+use roder_ext_runner_sprites::{PROVIDER_ID, SpritesClient, SpritesConfig, SpritesRunnerProvider};
 
 use fake_server::FakeSpritesServer;
 
@@ -103,10 +101,7 @@ async fn filesystem_operations_map_to_fs_endpoints_with_scoped_paths() {
     assert!(firsts[4].starts_with("POST /v1/sprites/roder-test/fs/chmod?path=run.sh&mode=755&"));
     // The exec route is never used by filesystem operations.
     assert_eq!(
-        firsts
-            .iter()
-            .filter(|first| first.contains("/fs/"))
-            .count(),
+        firsts.iter().filter(|first| first.contains("/fs/")).count(),
         5
     );
 }

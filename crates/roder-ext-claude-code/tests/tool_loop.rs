@@ -226,5 +226,8 @@ async fn unmanaged_and_unadvertised_tools_stay_denied_by_can_use_tool() {
         )
         .await
         .unwrap();
-    assert!(matches!(result, PermissionResult::Allow { .. }), "{result:?}");
+    assert!(
+        matches!(result, PermissionResult::Allow { .. }),
+        "{result:?}"
+    );
 }

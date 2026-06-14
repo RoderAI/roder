@@ -215,7 +215,10 @@ fn gitignored_scopes_fall_back_to_scan_after_indexing() {
         .search(&SearchOptions::new("needle").with_path("generated"))
         .unwrap();
 
-    assert_eq!(results.lines, vec!["generated/output.ts:1:needle generated"]);
+    assert_eq!(
+        results.lines,
+        vec!["generated/output.ts:1:needle generated"]
+    );
 }
 
 #[test]

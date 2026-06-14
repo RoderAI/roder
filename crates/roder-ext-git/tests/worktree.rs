@@ -164,7 +164,15 @@ fn removal_only_deletes_registered_roder_worktrees() {
 #[test]
 fn unsafe_fork_names_are_rejected() {
     let root = temp_repo("names");
-    for name in ["", "  ", "-leading-dash", ".hidden", "a/b", "a b", "x".repeat(65).as_str()] {
+    for name in [
+        "",
+        "  ",
+        "-leading-dash",
+        ".hidden",
+        "a/b",
+        "a b",
+        "x".repeat(65).as_str(),
+    ] {
         let error = create_worktree_fork(&request(&root, name))
             .unwrap_err()
             .to_string();

@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 use roder_api::knowledge::{
     KnowledgeKind, KnowledgeLinkRequest, KnowledgeLinkType, KnowledgeListQuery, KnowledgeQuery,
-    KnowledgeSaveRequest, KnowledgeSource, KnowledgeStatus, KnowledgeStore,
-    KnowledgeUpdateRequest,
+    KnowledgeSaveRequest, KnowledgeSource, KnowledgeStatus, KnowledgeStore, KnowledgeUpdateRequest,
 };
 use roder_api::memory::MemoryScope;
 use roder_ext_knowledge_md::MarkdownKnowledgeStore;
@@ -104,7 +103,10 @@ async fn update_writes_revision_and_preserves_history() {
 
     let revisions = store.revisions(&doc.id).await.unwrap();
     assert_eq!(
-        revisions.iter().map(|info| info.revision).collect::<Vec<_>>(),
+        revisions
+            .iter()
+            .map(|info| info.revision)
+            .collect::<Vec<_>>(),
         vec![2, 1]
     );
 }

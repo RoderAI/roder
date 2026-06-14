@@ -59,11 +59,7 @@ impl InferenceEngine for CaptureEngine {
 async fn saved_knowledge_is_recalled_into_provider_requests() {
     let workspace = std::env::temp_dir().join(format!("knowledge-recall-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace).unwrap();
-    let project_key = workspace
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+    let project_key = workspace.file_name().unwrap().to_string_lossy().to_string();
     let knowledge_base =
         std::env::temp_dir().join(format!("knowledge-base-{}", uuid::Uuid::new_v4()));
 
@@ -90,9 +86,8 @@ async fn saved_knowledge_is_recalled_into_provider_requests() {
     builder
         .install(KnowledgeMdExtension::new(knowledge_base))
         .unwrap();
-    let runtime = Arc::new(
-        Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap(),
-    );
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
     let mut events = runtime.subscribe_events();
 
     runtime
@@ -122,8 +117,7 @@ async fn saved_knowledge_is_recalled_into_provider_requests() {
         {
             saw_knowledge_block_event = true;
         }
-        if event.kind == "turn.completed"
-            && event.thread_id.as_deref() == Some("thread_knowledge")
+        if event.kind == "turn.completed" && event.thread_id.as_deref() == Some("thread_knowledge")
         {
             break;
         }

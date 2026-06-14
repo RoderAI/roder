@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use roder_api::forks::{
-    ForkCapabilities, ForkId, ForkProvider, ForkProviderDescriptor, ForkProvenance, ForkRequest,
+    ForkCapabilities, ForkId, ForkProvenance, ForkProvider, ForkProviderDescriptor, ForkRequest,
     ForkStatus, RemoveForkPolicy, RemoveForkResult, WorkspaceFork,
 };
 use time::OffsetDateTime;
@@ -25,13 +25,10 @@ pub struct GitWorktreeForkProvider;
 
 impl GitWorktreeForkProvider {
     fn fork_from_worktree(root: &Path, worktree: &Path) -> WorkspaceFork {
-        let branch = run_git(
-            worktree,
-            &["branch", "--show-current"],
-        )
-        .ok()
-        .map(|branch| branch.trim().to_string())
-        .filter(|branch| !branch.is_empty());
+        let branch = run_git(worktree, &["branch", "--show-current"])
+            .ok()
+            .map(|branch| branch.trim().to_string())
+            .filter(|branch| !branch.is_empty());
         let commit = run_git(worktree, &["rev-parse", "HEAD"])
             .ok()
             .map(|commit| commit.trim().to_string());
@@ -67,9 +64,7 @@ fn source_root_for_worktree(worktree: &Path) -> anyhow::Result<PathBuf> {
     let root = common
         .parent()
         .ok_or_else(|| anyhow::anyhow!("cannot resolve repository root for the fork"))?;
-    Ok(root
-        .canonicalize()
-        .unwrap_or_else(|_| root.to_path_buf()))
+    Ok(root.canonicalize().unwrap_or_else(|_| root.to_path_buf()))
 }
 
 #[async_trait::async_trait]
@@ -106,10 +101,9 @@ impl ForkProvider for GitWorktreeForkProvider {
             fork_name: request.name.clone().unwrap_or_else(|| "fork".to_string()),
             base_dir,
         };
-        let created =
-            tokio::task::spawn_blocking(move || create_worktree_fork(&worktree_request))
-                .await
-                .map_err(|err| anyhow::anyhow!("worktree fork task panicked: {err}"))??;
+        let created = tokio::task::spawn_blocking(move || create_worktree_fork(&worktree_request))
+            .await
+            .map_err(|err| anyhow::anyhow!("worktree fork task panicked: {err}"))??;
         Ok(WorkspaceFork {
             id: created.worktree_path.display().to_string(),
             provider_id: GIT_WORKTREE_FORK_PROVIDER_ID.to_string(),

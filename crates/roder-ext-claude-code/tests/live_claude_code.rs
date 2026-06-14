@@ -26,8 +26,7 @@ async fn live_claude_code_short_text_turn_completes() {
     let request = AgentInferenceRequest {
         model: ModelSelection {
             provider: "claude-code".to_string(),
-            model: std::env::var("RODER_CLAUDE_CODE_MODEL")
-                .unwrap_or_else(|_| "haiku".to_string()),
+            model: std::env::var("RODER_CLAUDE_CODE_MODEL").unwrap_or_else(|_| "haiku".to_string()),
         },
         instructions: InstructionBundle {
             system: Some("Answer in one short sentence.".to_string()),

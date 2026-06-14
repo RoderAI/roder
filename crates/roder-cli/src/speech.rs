@@ -144,7 +144,10 @@ async fn run_speech_transcribe(args: &[String]) -> anyhow::Result<()> {
                 })
                 .await,
         )?;
-        eprintln!("started turn {} on thread {thread_id} from the transcript", started.turn_id);
+        eprintln!(
+            "started turn {} on thread {thread_id} from the transcript",
+            started.turn_id
+        );
     }
     Ok(())
 }

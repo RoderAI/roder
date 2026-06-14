@@ -516,8 +516,14 @@ mod tests {
         assert_eq!(options.resume.as_deref(), Some("session-123"));
 
         // Blank/whitespace ids never resume a session.
-        let options =
-            build_options(&ClaudeCodeConfig::default(), &request, None, None, Some("  ")).unwrap();
+        let options = build_options(
+            &ClaudeCodeConfig::default(),
+            &request,
+            None,
+            None,
+            Some("  "),
+        )
+        .unwrap();
         assert!(options.resume.is_none());
     }
 

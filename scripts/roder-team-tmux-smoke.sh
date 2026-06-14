@@ -16,7 +16,7 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 mkdir -p "$out_dir"
-cargo build -p roder-cli --bin roder
+cargo build -p roder --bin roder
 
 team_json="$(mktemp)"
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"team/start","params":{"displayMode":"in_process","members":[{"name":"Builder"},{"name":"Reviewer"}]}}' \

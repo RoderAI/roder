@@ -38,7 +38,10 @@ fn tool_search_fixture_matrix_covers_required_cases() {
         "search-selection-unknown-tool",
         "catalog-redaction",
     ] {
-        assert!(ids.contains(&required), "missing required fixture {required}");
+        assert!(
+            ids.contains(&required),
+            "missing required fixture {required}"
+        );
     }
     let providers_with_native: Vec<&str> = fixtures
         .iter()
@@ -108,17 +111,20 @@ fn explicit_and_native_bodies_differ_only_in_tool_search_shape() {
 
     let explicit_outcome = run_tool_search_fixture(explicit).unwrap();
     let native_outcome = run_tool_search_fixture(native).unwrap();
-    let (ToolSearchOutcome::RequestMapped {
-        body: explicit_body,
-        deferred_tools: explicit_deferred,
-        native_tool_search_entry: explicit_entry,
-        ..
-    }, ToolSearchOutcome::RequestMapped {
-        body: native_body,
-        deferred_tools: native_deferred,
-        native_tool_search_entry: native_entry,
-        ..
-    }) = (&explicit_outcome, &native_outcome)
+    let (
+        ToolSearchOutcome::RequestMapped {
+            body: explicit_body,
+            deferred_tools: explicit_deferred,
+            native_tool_search_entry: explicit_entry,
+            ..
+        },
+        ToolSearchOutcome::RequestMapped {
+            body: native_body,
+            deferred_tools: native_deferred,
+            native_tool_search_entry: native_entry,
+            ..
+        },
+    ) = (&explicit_outcome, &native_outcome)
     else {
         panic!("expected mapped requests, got {explicit_outcome:?} / {native_outcome:?}");
     };
@@ -179,7 +185,13 @@ fn catalog_adapter_fixture_is_stable_redacted_and_searchable() {
     let sources: Vec<String> = catalog
         .items
         .iter()
-        .map(|item| serde_json::to_value(item.source).unwrap().as_str().unwrap().to_string())
+        .map(|item| {
+            serde_json::to_value(item.source)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
     assert_eq!(sources, fixture.expected.sources);
 

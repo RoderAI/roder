@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantContext};
 use roder_app_server::hosted::auth::PrincipalSeed;
+use roder_app_server::hosted::runtime_pool::TenantAppServerFactory;
 use roder_app_server::hosted::{
     AuditLog, HookDeliveryService, HookStore, HostedAuthenticator, HostedGatewayController,
-    HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig,
-    TenantRegistry, serve_hosted_gateway,
+    HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry,
+    serve_hosted_gateway,
 };
-use roder_app_server::hosted::runtime_pool::TenantAppServerFactory;
 use roder_config::hosted::HostedConfig;
 
 /// Builds the authenticator and tenant registry from config; static-key

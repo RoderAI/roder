@@ -95,12 +95,22 @@ async fn service_account_keys_are_rejected_with_guidance() {
         r#"{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----"}"#,
     )
     .unwrap();
-    let source = AdcTokenSource::new(Some(path), "http://127.0.0.1:1/token", "/nonexistent/gcloud");
+    let source = AdcTokenSource::new(
+        Some(path),
+        "http://127.0.0.1:1/token",
+        "/nonexistent/gcloud",
+    );
 
     let error = source.access_token().await.unwrap_err().to_string();
     assert!(error.contains("RS256"), "{error}");
-    assert!(error.contains("gcloud auth application-default login"), "{error}");
-    assert!(!error.contains("BEGIN PRIVATE KEY"), "errors never echo key material");
+    assert!(
+        error.contains("gcloud auth application-default login"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("BEGIN PRIVATE KEY"),
+        "errors never echo key material"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -126,5 +136,8 @@ async fn gcloud_cli_fallback_uses_the_configured_binary() {
 async fn unavailable_adc_fails_with_actionable_setup_guidance() {
     let source = AdcTokenSource::new(None, "http://127.0.0.1:1/token", "/nonexistent/gcloud");
     let error = source.access_token().await.unwrap_err().to_string();
-    assert!(error.contains("gcloud auth application-default login"), "{error}");
+    assert!(
+        error.contains("gcloud auth application-default login"),
+        "{error}"
+    );
 }

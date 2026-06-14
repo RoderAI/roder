@@ -146,14 +146,12 @@ impl AnalyticsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ToolCallRecord, TokenUsageRecord, TurnRecord, WorkspaceLabelMode};
+    use crate::model::{TokenUsageRecord, ToolCallRecord, TurnRecord, WorkspaceLabelMode};
 
     #[test]
     fn jsonl_export_is_schema_versioned_and_body_free() {
-        let dir = std::env::temp_dir().join(format!(
-            "roder-analytics-jsonl-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("roder-analytics-jsonl-{}", uuid::Uuid::new_v4()));
         let store = AnalyticsStore::open(
             &AnalyticsStore::default_path(&dir),
             WorkspaceLabelMode::FullPath,

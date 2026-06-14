@@ -168,7 +168,9 @@ async fn ws_proxy_relays_tcp_bytes_after_init_message() {
         .unwrap();
 
     let mut tcp = tokio::net::TcpStream::connect(local_addr).await.unwrap();
-    tcp.write_all(b"ping through the sprite proxy").await.unwrap();
+    tcp.write_all(b"ping through the sprite proxy")
+        .await
+        .unwrap();
     let mut echoed = vec![0_u8; 29];
     tcp.read_exact(&mut echoed).await.unwrap();
     assert_eq!(&echoed, b"ping through the sprite proxy");

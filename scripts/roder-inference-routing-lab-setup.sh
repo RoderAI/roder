@@ -118,7 +118,7 @@ Prepared inference-routing lab config:
   $config_path
 
 Run the TUI:
-  cargo run -p roder-cli -- --config-dir "$lab_dir"
+  cargo run -p roder -- --config-dir "$lab_dir"
 
 In another terminal, watch routing decisions:
   scripts/roder-inference-routing-lab-tail.sh "$lab_dir" --follow

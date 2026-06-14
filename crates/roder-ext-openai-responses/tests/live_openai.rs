@@ -38,14 +38,12 @@ async fn live_openai_tool_search_smoke_is_explicitly_opt_in() {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .expect("live OpenAI tool-search smoke tests require OPENAI_API_KEY");
-    let model = std::env::var("RODER_OPENAI_TOOL_SEARCH_MODEL")
-        .unwrap_or_else(|_| "gpt-5.5".to_string());
+    let model =
+        std::env::var("RODER_OPENAI_TOOL_SEARCH_MODEL").unwrap_or_else(|_| "gpt-5.5".to_string());
 
     let mut request = tool_search_request(&model);
-    request.runtime.tool_search =
-        roder_api::inference::ToolSearchConfig::provider_native();
-    let mut body =
-        roder_ext_openai_responses::OpenAiResponsesEngine::map_request(&request);
+    request.runtime.tool_search = roder_api::inference::ToolSearchConfig::provider_native();
+    let mut body = roder_ext_openai_responses::OpenAiResponsesEngine::map_request(&request);
     assert_eq!(
         body["tools"].as_array().map(Vec::len),
         Some(3),

@@ -26,7 +26,7 @@ Launch `roder`, press `Ctrl+P`, choose **Themes**, select `my-theme`. The active
 You can also pin a theme without the menu:
 
 ```sh
-ROADER_THEME=midnight cargo run -p roder-cli
+ROADER_THEME=midnight cargo run -p roder
 ```
 
 ---

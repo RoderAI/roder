@@ -51,7 +51,11 @@ pub struct PostEditOutcome {
  * path. Formatter failures become diagnostics and leave content unchanged;
  * validator behavior follows each validator's policy.
  */
-pub fn run_post_edit_hooks(path: &str, content: &str, hooks: &PostEditHooks<'_>) -> PostEditOutcome {
+pub fn run_post_edit_hooks(
+    path: &str,
+    content: &str,
+    hooks: &PostEditHooks<'_>,
+) -> PostEditOutcome {
     let mut diagnostics = Vec::new();
     let mut formatted = false;
     let mut current = content.to_string();

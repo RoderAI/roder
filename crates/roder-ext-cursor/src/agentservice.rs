@@ -8,8 +8,7 @@ use uuid::Uuid;
 
 use crate::proto::{
     ConnectFrame, CursorExecRequest, CursorHistoryMessage, CursorImage, CursorMcpTool,
-    CursorToolCall,
-    decode_agent_server_message, decode_server_frame,
+    CursorToolCall, decode_agent_server_message, decode_server_frame,
     encode_agent_client_message_with_history, encode_cli_stream_control_frames,
     encode_connect_frame, encode_exec_request_context_result, take_connect_frame,
 };

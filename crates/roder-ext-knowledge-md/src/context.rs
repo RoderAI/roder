@@ -93,15 +93,11 @@ fn project_scope(workspace: Option<&str>) -> MemoryScope {
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
     });
-    MemoryScope::Project(
-        from_workspace.unwrap_or_else(crate::tools::default_project_key),
-    )
+    MemoryScope::Project(from_workspace.unwrap_or_else(crate::tools::default_project_key))
 }
 
 fn block_text(title: &str, kind: &str, id: &str, snippet: &str) -> String {
-    let mut text = format!(
-        "Project knowledge ({kind}) \"{title}\" [{id}]: {snippet}"
-    );
+    let mut text = format!("Project knowledge ({kind}) \"{title}\" [{id}]: {snippet}");
     if text.len() > MAX_BLOCK_TEXT_BYTES {
         let mut end = MAX_BLOCK_TEXT_BYTES;
         while end > 0 && !text.is_char_boundary(end) {
@@ -120,10 +116,9 @@ fn block_text(title: &str, kind: &str, id: &str, snippet: &str) -> String {
 mod tests {
     use roder_api::extension::KnowledgeStoreId;
     use roder_api::knowledge::{
-        KnowledgeCitation, KnowledgeDocId, KnowledgeDocSummary, KnowledgeDocument,
-        KnowledgeKind, KnowledgeLinkRequest, KnowledgeListQuery, KnowledgeRevisionInfo,
-        KnowledgeSaveRequest, KnowledgeSearchResult, KnowledgeSource, KnowledgeStatus,
-        KnowledgeUpdateRequest,
+        KnowledgeCitation, KnowledgeDocId, KnowledgeDocSummary, KnowledgeDocument, KnowledgeKind,
+        KnowledgeLinkRequest, KnowledgeListQuery, KnowledgeRevisionInfo, KnowledgeSaveRequest,
+        KnowledgeSearchResult, KnowledgeSource, KnowledgeStatus, KnowledgeUpdateRequest,
     };
     use time::OffsetDateTime;
 
@@ -151,16 +146,10 @@ mod tests {
         ) -> anyhow::Result<Option<KnowledgeDocument>> {
             Ok(None)
         }
-        async fn list(
-            &self,
-            _: KnowledgeListQuery,
-        ) -> anyhow::Result<Vec<KnowledgeDocSummary>> {
+        async fn list(&self, _: KnowledgeListQuery) -> anyhow::Result<Vec<KnowledgeDocSummary>> {
             Ok(Vec::new())
         }
-        async fn search(
-            &self,
-            _: KnowledgeQuery,
-        ) -> anyhow::Result<Vec<KnowledgeSearchResult>> {
+        async fn search(&self, _: KnowledgeQuery) -> anyhow::Result<Vec<KnowledgeSearchResult>> {
             match &self.results {
                 Ok(results) => Ok(results.clone()),
                 Err(error) => Err(anyhow::anyhow!("{error}")),
@@ -172,10 +161,7 @@ mod tests {
         async fn archive(&self, _: &KnowledgeDocId) -> anyhow::Result<bool> {
             Ok(false)
         }
-        async fn set_link(
-            &self,
-            _: KnowledgeLinkRequest,
-        ) -> anyhow::Result<KnowledgeDocument> {
+        async fn set_link(&self, _: KnowledgeLinkRequest) -> anyhow::Result<KnowledgeDocument> {
             unimplemented!()
         }
         async fn revisions(

@@ -1,7 +1,7 @@
 ---
 roder-api: minor
 roder-app-server: minor
-roder-cli: minor
+roder: minor
 roder-commands: minor
 roder-config: minor
 roder-ext-process-host: minor

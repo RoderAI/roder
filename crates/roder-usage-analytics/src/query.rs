@@ -394,7 +394,9 @@ pub fn sort_tool_summaries(summaries: &mut [ToolSummary], sort: &str) {
     }
 }
 
-pub(crate) fn _connection_for_tests(store: &AnalyticsStore) -> std::sync::MutexGuard<'_, Connection> {
+pub(crate) fn _connection_for_tests(
+    store: &AnalyticsStore,
+) -> std::sync::MutexGuard<'_, Connection> {
     store.conn.lock().unwrap()
 }
 
@@ -404,10 +406,8 @@ mod tests {
     use crate::model::{TokenUsageRecord, ToolCallRecord, TurnRecord, WorkspaceLabelMode};
 
     fn temp_store() -> (AnalyticsStore, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "roder-analytics-query-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("roder-analytics-query-{}", uuid::Uuid::new_v4()));
         let store = AnalyticsStore::open(
             &AnalyticsStore::default_path(&dir),
             WorkspaceLabelMode::FullPath,

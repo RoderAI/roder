@@ -116,7 +116,10 @@ async fn create_list_resume_remove_through_the_fake_binary() {
     // Command construction: init then create with --dest.
     let recorded = calls(&harness);
     assert_eq!(recorded[0], "init");
-    assert!(recorded[1].starts_with("create lane-a --dest "), "{recorded:?}");
+    assert!(
+        recorded[1].starts_with("create lane-a --dest "),
+        "{recorded:?}"
+    );
 
     let listed = harness.provider.list_forks(&harness.source).await.unwrap();
     assert_eq!(listed.len(), 1);
@@ -152,7 +155,14 @@ async fn create_list_resume_remove_through_the_fake_binary() {
         .unwrap();
     assert!(removed.removed);
     assert!(!fork.workspace.exists());
-    assert!(harness.provider.list_forks(&harness.source).await.unwrap().is_empty());
+    assert!(
+        harness
+            .provider
+            .list_forks(&harness.source)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     // Resuming the removed fork reports Missing.
     let resumed = harness.provider.resume_fork(&fork.id).await.unwrap();

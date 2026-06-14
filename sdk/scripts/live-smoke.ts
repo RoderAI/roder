@@ -10,7 +10,7 @@ if (process.env.RODER_SDK_LIVE !== "1") {
 const command = process.env.RODER_BIN ?? "cargo";
 const args = process.env.RODER_BIN
   ? ["app-server", "--listen", "stdio://"]
-  : ["run", "-p", "roder-cli", "--bin", "roder", "--", "app-server", "--listen", "stdio://"];
+  : ["run", "-p", "roder", "--bin", "roder", "--", "app-server", "--listen", "stdio://"];
 
 if (process.env.RODER_REMOTE_URL && process.env.RODER_REMOTE_TOKEN) {
   const response = await remoteCall(process.env.RODER_REMOTE_URL, process.env.RODER_REMOTE_TOKEN, {

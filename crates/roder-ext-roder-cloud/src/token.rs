@@ -121,7 +121,10 @@ impl RoderCloudTokenSource {
             anyhow::bail!("roder.cloud token exchange returned an empty token");
         }
         let ttl = Duration::from_secs(parsed.expires_in.max(1));
-        let expires_at = Instant::now() + ttl.saturating_sub(EXPIRY_MARGIN).max(Duration::from_secs(1));
+        let expires_at = Instant::now()
+            + ttl
+                .saturating_sub(EXPIRY_MARGIN)
+                .max(Duration::from_secs(1));
         Ok(CachedToken {
             token: parsed.token,
             expires_at,

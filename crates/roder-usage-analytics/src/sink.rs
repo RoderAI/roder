@@ -64,8 +64,7 @@ impl RoderExtension for UsageAnalyticsExtension {
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
             description: Some(
-                "Projects local runtime events into the SQLite usage-analytics store."
-                    .to_string(),
+                "Projects local runtime events into the SQLite usage-analytics store.".to_string(),
             ),
             provides: vec![ProvidedService::EventSink(ANALYTICS_SINK_ID.to_string())],
             required_capabilities: vec![CapabilityRequest::new("events.read.all")],

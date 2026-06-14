@@ -6,7 +6,9 @@ use regex::RegexBuilder;
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
 };
-use roder_search::{DEFAULT_MAX_FILE_SIZE, SearchEngine, SearchMetadata, SearchMode, SearchOptions};
+use roder_search::{
+    DEFAULT_MAX_FILE_SIZE, SearchEngine, SearchMetadata, SearchMode, SearchOptions,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -443,10 +445,7 @@ pub(crate) fn prepare_glob_pattern(root: &Path, pattern: &str) -> anyhow::Result
     let mut literal_parts = Vec::new();
     let mut wildcard_parts = Vec::new();
     for part in normalized.split('/') {
-        if !wildcard_parts.is_empty()
-            || part
-                .chars()
-                .any(|ch| matches!(ch, '*' | '?' | '[' | '{'))
+        if !wildcard_parts.is_empty() || part.chars().any(|ch| matches!(ch, '*' | '?' | '[' | '{'))
         {
             wildcard_parts.push(part);
         } else {

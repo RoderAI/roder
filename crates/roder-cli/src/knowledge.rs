@@ -232,7 +232,10 @@ async fn revisions(client: &LocalAppClient, args: &[String]) -> anyhow::Result<(
     )
     .await?;
     for info in result.revisions {
-        println!("rev {}\t{}\t{}", info.revision, info.created_at, info.content_hash);
+        println!(
+            "rev {}\t{}\t{}",
+            info.revision, info.created_at, info.content_hash
+        );
     }
     Ok(())
 }

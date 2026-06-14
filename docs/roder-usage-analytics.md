@@ -82,7 +82,7 @@ server-side artifact rather than streaming an unbounded payload.
 ```sh
 cargo test -p roder-usage-analytics
 cargo test -p roder-core --test usage_analytics
-cargo test -p roder-cli --bin roder stats
+cargo test -p roder --bin roder stats
 cargo test -p roder-app-server stats
 ```
 

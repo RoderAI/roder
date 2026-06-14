@@ -37,15 +37,15 @@ use roder_api::inference_routing::{
     InferenceRoutingCostDelta, InferenceRoutingDecision, InferenceRoutingOptionDescriptor,
     InferenceRoutingOutcome, ModelSelectionMode,
 };
+use roder_api::knowledge::{
+    KnowledgeDocId, KnowledgeDocSummary, KnowledgeDocument, KnowledgeKind, KnowledgeLinkType,
+    KnowledgeRevisionInfo, KnowledgeSearchResult as KnowledgeSearchMatch, KnowledgeStatus,
+};
 use roder_api::marketplace::{
     DedupedMarketplacePlugin, DefaultMarketplaceSelection, InstalledPluginRecord,
     MarketplaceDescriptor, MarketplaceKind, MarketplacePluginEntry, MarketplaceSource,
 };
 use roder_api::media::{MediaArtifact, MediaArtifactId, MediaAttachment, MediaPreview};
-use roder_api::knowledge::{
-    KnowledgeDocId, KnowledgeDocSummary, KnowledgeDocument, KnowledgeKind, KnowledgeLinkType,
-    KnowledgeRevisionInfo, KnowledgeSearchResult as KnowledgeSearchMatch, KnowledgeStatus,
-};
 use roder_api::memory::{
     MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope, MemorySearchResult,
 };

@@ -129,7 +129,8 @@ where
             Ok(removed) => {
                 self.timeline.push_system(format!(
                     "Removed fork workspace {} ({} provenance kept).",
-                    removed.fork.workspace.display(), removed.fork.provenance.branch.as_deref().unwrap_or("-")
+                    removed.fork.workspace.display(),
+                    removed.fork.provenance.branch.as_deref().unwrap_or("-")
                 ));
             }
             Err(err) => self.record_error(format!("thread/remove_fork failed: {err}")),

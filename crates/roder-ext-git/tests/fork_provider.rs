@@ -58,7 +58,10 @@ async fn create_list_resume_remove_round_trip() {
     assert!(descriptor.capabilities.create && descriptor.capabilities.remove);
     assert!(!descriptor.capabilities.remote_compute);
 
-    let fork = provider.create_fork(request(&repo, "parser-fix")).await.unwrap();
+    let fork = provider
+        .create_fork(request(&repo, "parser-fix"))
+        .await
+        .unwrap();
     assert_eq!(fork.status, ForkStatus::Active);
     assert_eq!(fork.provider_id, "git-worktree");
     assert_eq!(fork.source_workspace, repo);
@@ -164,8 +167,14 @@ async fn two_forks_have_isolated_write_sets() {
     let repo = temp_repo("isolation");
     let provider = GitWorktreeForkProvider;
 
-    let fork_a = provider.create_fork(request(&repo, "lane-a")).await.unwrap();
-    let fork_b = provider.create_fork(request(&repo, "lane-b")).await.unwrap();
+    let fork_a = provider
+        .create_fork(request(&repo, "lane-a"))
+        .await
+        .unwrap();
+    let fork_b = provider
+        .create_fork(request(&repo, "lane-b"))
+        .await
+        .unwrap();
     assert_ne!(fork_a.workspace, fork_b.workspace);
 
     std::fs::write(fork_a.workspace.join("a.txt"), "from lane a").unwrap();

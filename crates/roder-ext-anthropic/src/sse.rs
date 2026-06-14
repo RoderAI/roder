@@ -319,10 +319,12 @@ impl AnthropicStreamState {
                         partial_json: String::new(),
                     },
                 );
-                vec![InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
-                    id,
-                    name: "tool_search".to_string(),
-                })]
+                vec![InferenceEvent::HostedToolCallStarted(
+                    HostedToolCallStarted {
+                        id,
+                        name: "tool_search".to_string(),
+                    },
+                )]
             }
             _ => {
                 self.blocks.insert(
@@ -475,10 +477,7 @@ impl AnthropicStreamState {
                     name: "tool_search".to_string(),
                     arguments: input.to_string(),
                 };
-                (
-                    value,
-                    vec![InferenceEvent::HostedToolCallCompleted(call)],
-                )
+                (value, vec![InferenceEvent::HostedToolCallCompleted(call)])
             }
             ContentBlock::Other {
                 mut value,

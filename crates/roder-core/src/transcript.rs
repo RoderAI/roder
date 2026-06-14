@@ -367,7 +367,9 @@ mod tests {
     use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions, SkillRoot};
 
     use crate::fake_provider::FakeInferenceEngine;
-    use crate::runtime::{DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS, Runtime, RuntimeConfig, StartTurnRequest};
+    use crate::runtime::{
+        DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS, Runtime, RuntimeConfig, StartTurnRequest,
+    };
 
     use super::*;
 

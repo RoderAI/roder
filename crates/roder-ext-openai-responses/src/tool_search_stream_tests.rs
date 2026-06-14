@@ -32,10 +32,12 @@ fn maps_tool_search_call_items_to_hosted_tool_lifecycle() {
     );
     assert_eq!(
         events_from_sse_event(&added, &mut state),
-        vec![InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
-            id: "ts_1".to_string(),
-            name: "tool_search".to_string(),
-        })]
+        vec![InferenceEvent::HostedToolCallStarted(
+            HostedToolCallStarted {
+                id: "ts_1".to_string(),
+                name: "tool_search".to_string(),
+            }
+        )]
     );
 
     let done = sse(
@@ -63,7 +65,10 @@ fn maps_tool_search_call_items_to_hosted_tool_lifecycle() {
     assert_eq!(completed.name, "tool_search");
     let arguments: Value = serde_json::from_str(&completed.arguments).unwrap();
     assert_eq!(arguments["query"], "edit files");
-    assert_eq!(arguments["selected_tools"], json!(["edit_file", "read_file"]));
+    assert_eq!(
+        arguments["selected_tools"],
+        json!(["edit_file", "read_file"])
+    );
 }
 
 #[test]
@@ -191,10 +196,12 @@ fn client_executed_tool_search_items_pend_without_completing() {
     let events = events_from_sse_event(&done, &mut state);
     assert_eq!(
         events,
-        vec![InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
-            id: "ts_7".to_string(),
-            name: "tool_search".to_string(),
-        })],
+        vec![InferenceEvent::HostedToolCallStarted(
+            HostedToolCallStarted {
+                id: "ts_7".to_string(),
+                name: "tool_search".to_string(),
+            }
+        )],
         "no completion is emitted before the local search runs"
     );
     assert_eq!(state.pending_client_tool_searches.len(), 1);

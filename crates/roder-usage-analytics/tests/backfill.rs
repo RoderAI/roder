@@ -142,8 +142,8 @@ async fn analytics_backfill_is_idempotent_and_enriches_sessions() {
     let fixture = fixture("clean");
     let store = open_store(&fixture, WorkspaceLabelMode::BasenameOnly);
 
-    let first = backfill_analytics(&fixture.thread_root, &store, BackfillOptions::default())
-        .unwrap();
+    let first =
+        backfill_analytics(&fixture.thread_root, &store, BackfillOptions::default()).unwrap();
     assert_eq!(first.files_scanned, 1);
     assert_eq!(first.lines_ingested, 5);
     assert_eq!(first.sessions_enriched, 1);
@@ -154,8 +154,8 @@ async fn analytics_backfill_is_idempotent_and_enriches_sessions() {
     assert_eq!(counts_first.token_usage, 1);
 
     // Second run: offsets skip every line; aggregates unchanged.
-    let second = backfill_analytics(&fixture.thread_root, &store, BackfillOptions::default())
-        .unwrap();
+    let second =
+        backfill_analytics(&fixture.thread_root, &store, BackfillOptions::default()).unwrap();
     assert_eq!(second.lines_ingested, 0);
     assert_eq!(second.lines_skipped_by_offset, 5);
     assert_eq!(store.counts().unwrap(), counts_first);
@@ -235,7 +235,10 @@ async fn rebuild_produces_the_same_aggregates_as_a_first_import() {
     .unwrap();
     assert_eq!(rebuilt.lines_ingested, 5, "rebuild replays everything");
     assert_eq!(store.counts().unwrap(), first_counts);
-    assert_eq!(store.usage_summary(&StatsFilter::default()).unwrap(), first_summary);
+    assert_eq!(
+        store.usage_summary(&StatsFilter::default()).unwrap(),
+        first_summary
+    );
 
     // Hashed mode never exposes the raw path.
     let sessions = store.session_summaries(&StatsFilter::default()).unwrap();

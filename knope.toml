@@ -32,7 +32,7 @@ versioned_files = [
 ]
 changelog = "crates/roder-automations/CHANGELOG.md"
 
-[packages."roder-cli"]
+[packages."roder"]
 versioned_files = [
     "crates/roder-cli/Cargo.toml",
     "Cargo.lock",
@@ -248,6 +248,13 @@ versioned_files = [
     "Cargo.lock",
 ]
 changelog = "crates/roder-ext-memory/CHANGELOG.md"
+
+[packages."roder-ext-mysql-session"]
+versioned_files = [
+    "crates/roder-ext-mysql-session/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-mysql-session/CHANGELOG.md"
 
 [packages."roder-ext-notify-desktop"]
 versioned_files = [

@@ -125,10 +125,8 @@ mod tests {
 
     #[test]
     fn schema_migrations_apply_once_and_reopen_safely() {
-        let dir = std::env::temp_dir().join(format!(
-            "roder-analytics-schema-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("roder-analytics-schema-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("usage.sqlite3");
 

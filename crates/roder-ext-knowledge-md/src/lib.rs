@@ -62,9 +62,7 @@ impl RoderExtension for KnowledgeMdExtension {
             name: "Markdown Knowledge Base".to_string(),
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
-            description: Some(
-                "Markdown-file-based project knowledge base engine".to_string(),
-            ),
+            description: Some("Markdown-file-based project knowledge base engine".to_string()),
             provides,
             required_capabilities: vec![CapabilityRequest::new("fs.readwrite.roder-home")],
         }

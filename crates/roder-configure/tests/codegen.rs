@@ -16,7 +16,7 @@ fn codegen_renders_openai_only_distribution_deterministically() {
     let cargo_toml = file(&first, "Cargo.toml");
     assert!(cargo_toml.contains("[workspace]"));
     assert!(cargo_toml.contains("roder-ext-openai-responses"));
-    assert!(cargo_toml.contains("roder-cli"));
+    assert!(cargo_toml.contains("roder"));
     let readme = file(&first, "README.md");
     assert!(readme.contains("openai-responses"));
     assert!(readme.contains("OPENAI_API_KEY"));
@@ -51,7 +51,7 @@ fn codegen_renders_remote_app_server_without_cli_or_tui() {
     assert!(cargo_toml.contains("roder-app-server"));
     assert!(cargo_toml.contains("roder-core"));
     assert!(cargo_toml.contains("roder-extension-host"));
-    assert!(!cargo_toml.contains("roder-cli"));
+    assert!(!cargo_toml.contains("roder"));
     assert!(!cargo_toml.contains("roder-tui"));
 
     let main_rs = file(&files, "src/main.rs");

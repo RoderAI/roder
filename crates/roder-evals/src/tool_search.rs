@@ -206,7 +206,10 @@ pub fn build_provider_safe_catalog(catalog: &ToolSearchCatalogFixture) -> Vec<To
         for index in 0..generated.count {
             tools.push(ToolSearchCatalogTool {
                 name: format!("{}_{index:04}", generated.name_prefix),
-                description: format!("Generated catalog tool {index} for {}", generated.name_prefix),
+                description: format!(
+                    "Generated catalog tool {index} for {}",
+                    generated.name_prefix
+                ),
                 parameters: None,
                 internal_metadata: BTreeMap::new(),
             });
@@ -229,7 +232,9 @@ pub fn build_provider_safe_catalog(catalog: &ToolSearchCatalogFixture) -> Vec<To
         .collect()
 }
 
-pub fn run_tool_search_fixture(fixture: &ToolSearchEvalFixture) -> anyhow::Result<ToolSearchOutcome> {
+pub fn run_tool_search_fixture(
+    fixture: &ToolSearchEvalFixture,
+) -> anyhow::Result<ToolSearchOutcome> {
     let catalog = build_provider_safe_catalog(&fixture.catalog);
     let config = ToolSearchConfig {
         mode: fixture.mode,
@@ -381,9 +386,8 @@ pub fn assert_tool_search_fixture(fixture: &ToolSearchEvalFixture) -> anyhow::Re
     let outcome = run_tool_search_fixture(fixture)?;
     let expected = &fixture.expected;
     let body = match &outcome {
-        ToolSearchOutcome::RequestMapped { body, .. } | ToolSearchOutcome::Executed { body, .. } => {
-            Some(body.clone())
-        }
+        ToolSearchOutcome::RequestMapped { body, .. }
+        | ToolSearchOutcome::Executed { body, .. } => Some(body.clone()),
         ToolSearchOutcome::FailClosed { .. } => None,
     };
 
@@ -419,7 +423,10 @@ pub fn assert_tool_search_fixture(fixture: &ToolSearchEvalFixture) -> anyhow::Re
                 );
             }
         }
-        (ToolSearchExpectedOutcome::Executed, ToolSearchOutcome::Executed { executed_tools, .. }) => {
+        (
+            ToolSearchExpectedOutcome::Executed,
+            ToolSearchOutcome::Executed { executed_tools, .. },
+        ) => {
             anyhow::ensure!(
                 *executed_tools == expected.executed_tools,
                 "{}: expected executed tools {:?}, got {executed_tools:?}",

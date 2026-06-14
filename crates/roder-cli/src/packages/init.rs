@@ -11,8 +11,7 @@ use roder_api::packages::{PACKAGE_MANIFEST_FILE, PackageSource, derive_package_i
 
 /// Verbatim copy of the example tool-provider extension entrypoint; it reads
 /// the manifest next to it, so it works unchanged under any package id.
-const EXAMPLE_EXTENSION_MAIN: &str =
-    include_str!("../../../../examples/non-rust-extensions/python-tools/main.py");
+const EXAMPLE_EXTENSION_MAIN: &str = include_str!("templates/python_tools_main.py");
 
 pub(super) fn run_packages_init(dir: &str) -> anyhow::Result<()> {
     let root = Path::new(dir);

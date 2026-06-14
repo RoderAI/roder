@@ -466,7 +466,10 @@ async fn service_exec(
                 })
                 .await
                 .unwrap_or_default();
-                Some((vec![encode_exec_glob_result(seq, &path, &root, &rel)], Some(seq)))
+                Some((
+                    vec![encode_exec_glob_result(seq, &path, &root, &rel)],
+                    Some(seq),
+                ))
             }
         }
         CursorExecRequest::Unknown {
@@ -762,7 +765,11 @@ mod tests {
         .await
         .expect("unknown exec must produce a reply");
 
-        assert_eq!(ack, Some(51), "unknown exec follows the request/result/ack cycle");
+        assert_eq!(
+            ack,
+            Some(51),
+            "unknown exec follows the request/result/ack cycle"
+        );
         assert_eq!(frames.len(), 1);
         let calls = executor.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);

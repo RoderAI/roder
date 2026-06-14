@@ -28,7 +28,10 @@ fn reindent_is_noop_for_unindented_context_or_mixed_tabs() {
     assert_eq!(normalize_inserted_indentation("top()", "next()"), "next()");
     // Mixed tab/space context is not comparable and must not be touched.
     let mixed_old = "\tone()\n    two()";
-    assert_eq!(normalize_inserted_indentation(mixed_old, "three()"), "three()");
+    assert_eq!(
+        normalize_inserted_indentation(mixed_old, "three()"),
+        "three()"
+    );
 }
 
 #[test]
@@ -59,7 +62,10 @@ fn formatter_hook_rewrites_content_and_reports_failures() {
         validators: Vec::new(),
     };
     let outcome = run_post_edit_hooks("src/a.ts", "let x = 1;", &hooks);
-    assert_eq!(outcome.content, "let x = 1;", "failed formatter must not mutate");
+    assert_eq!(
+        outcome.content, "let x = 1;",
+        "failed formatter must not mutate"
+    );
     assert!(!outcome.formatted);
     assert_eq!(outcome.diagnostics.len(), 1);
     assert_eq!(outcome.diagnostics[0].kind, "formatter_failed");

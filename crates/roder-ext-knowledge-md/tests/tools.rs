@@ -174,7 +174,12 @@ async fn update_link_and_delete_through_tools() {
     let deleted = execute(&registry, "knowledge_delete", json!({ "id": first_id })).await;
     assert!(deleted.data["archived"].as_bool().unwrap());
 
-    let listed = execute(&registry, "knowledge_list", json!({ "scope": "project:demo" })).await;
+    let listed = execute(
+        &registry,
+        "knowledge_list",
+        json!({ "scope": "project:demo" }),
+    )
+    .await;
     assert!(!listed.text.contains(&first_id));
     assert!(listed.text.contains(&second_id));
 }

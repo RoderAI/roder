@@ -26,7 +26,7 @@ Without `RODER_SDK_LIVE=1`, examples and tests use fake transports.
 ## TypeScript Quickstart
 
 ```ts
-import { InMemoryTransport, RoderAgent } from "@roder/sdk";
+import { InMemoryTransport, RoderAgent } from "@roderai/sdk";
 
 const transport = new InMemoryTransport((request) => {
   if (request.method === "thread/start") {

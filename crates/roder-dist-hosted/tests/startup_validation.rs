@@ -27,11 +27,8 @@ async fn hosted_startup_validation_fails_closed_on_missing_auth_env() {
     let config: HostedConfig =
         toml::from_str(&base_config(&data_root.display().to_string())).unwrap();
     // The referenced env var is deliberately unset.
-    let error = match roder_dist_hosted::launch(
-        config,
-        roder_dist_hosted::default_tenant_factory(),
-    )
-    .await
+    let error = match roder_dist_hosted::launch(config, roder_dist_hosted::default_tenant_factory())
+        .await
     {
         Ok(_) => panic!("launch must fail closed on a missing auth env var"),
         Err(error) => error.to_string(),
@@ -50,7 +47,13 @@ fn hosted_startup_validation_rejects_bad_configs() {
         "#,
     )
     .unwrap();
-    assert!(config.validate().unwrap_err().to_string().contains("tenants"));
+    assert!(
+        config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("tenants")
+    );
 
     // Empty data root.
     let config: HostedConfig = toml::from_str(
@@ -61,7 +64,13 @@ fn hosted_startup_validation_rejects_bad_configs() {
         "#,
     )
     .unwrap();
-    assert!(config.validate().unwrap_err().to_string().contains("data_root"));
+    assert!(
+        config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("data_root")
+    );
 
     // Raw inline key material.
     let config: HostedConfig = toml::from_str(
@@ -130,5 +139,8 @@ async fn hosted_live_smoke() {
         }
     };
     assert!(response.get("error").is_none(), "{response}");
-    eprintln!("hosted live smoke ok: {}", response["result"]["tenant"]["tenantId"]);
+    eprintln!(
+        "hosted live smoke ok: {}",
+        response["result"]["tenant"]["tenantId"]
+    );
 }

@@ -134,7 +134,7 @@ Local tests do not require provider credentials:
 
 ```sh
 cargo test -p roder-ext-subagents
-cargo test -p roder-extension-host -p roder-cli subagents
+cargo test -p roder-extension-host -p roder subagents
 cargo test -p roder-core -p roder-app-server task
 cargo test -p roder-app-server agents
 ```

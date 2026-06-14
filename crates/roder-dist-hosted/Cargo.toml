@@ -2,6 +2,10 @@
 name = "roder-dist-hosted"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
 description = "First-party hosted multi-tenant Roder service distribution (roadmap phase 72)"
 
 [[bin]]

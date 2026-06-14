@@ -23,3 +23,16 @@ Before building:
 uv run pytest tests
 uv run pyright src
 ```
+
+## Publishing
+
+Publish from this directory after the release version is already reflected in
+`pyproject.toml`, `CHANGELOG.md`, and `uv.lock`:
+
+```sh
+uv build
+uv publish
+```
+
+The package is published as `roder-sdk`; keep `readme = "README.md"` in
+`pyproject.toml` so PyPI shows this page on the project page.

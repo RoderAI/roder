@@ -8,10 +8,10 @@ use crate::palette::{
     render::palette_list,
     skills::skill_source,
     sources::{
-        agent_source, chrome_source, command_source, file_source, marketplace_source, media_source,
-        knowledge_source, memories_source, mode_source, model_source, remote_source,
-        roadmap_source, runner_source,
-        settings_source, theme_source, thread_source, workflow_import_source,
+        agent_source, chrome_source, command_source, file_source, knowledge_source,
+        marketplace_source, media_source, memories_source, mode_source, model_source,
+        remote_source, roadmap_source, runner_source, settings_source, theme_source, thread_source,
+        workflow_import_source,
     },
 };
 use crate::theme::{discover_themes, discovery::default_directories};
