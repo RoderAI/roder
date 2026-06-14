@@ -6,7 +6,7 @@ description.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 [package.metadata.roder.distribution]
 id = "parallel-search"

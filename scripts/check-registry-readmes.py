@@ -18,6 +18,7 @@ NPM_PACKAGES = [
 PYPI_PACKAGES = [
     REPO_ROOT / "sdk/python/pyproject.toml",
 ]
+RODER_SITE = "https://roder.sh"
 
 
 def fail(message: str) -> None:
@@ -39,6 +40,8 @@ def check_cargo_readmes() -> None:
     workspace_members = set(metadata["workspace_members"])
     missing = []
     missing_files = []
+    non_local = []
+    missing_site_link = []
 
     for package in metadata["packages"]:
         if package["id"] not in workspace_members:
@@ -51,13 +54,23 @@ def check_cargo_readmes() -> None:
         if not readme_path.is_absolute():
             manifest_dir = Path(package["manifest_path"]).parent
             readme_path = manifest_dir / readme_path
+        expected_readme = Path(package["manifest_path"]).parent / "README.md"
+        if readme_path != expected_readme:
+            non_local.append(f"{package['name']}: {readme_path}")
         if not readme_path.exists():
             missing_files.append(f"{package['name']}: {readme_path}")
+            continue
+        if RODER_SITE not in readme_path.read_text():
+            missing_site_link.append(package["name"])
 
     if missing:
         fail("Cargo packages missing readme metadata: " + ", ".join(sorted(missing)))
     if missing_files:
         fail("Cargo package readme files do not exist: " + "; ".join(sorted(missing_files)))
+    if non_local:
+        fail("Cargo packages must use package-local README.md files: " + "; ".join(sorted(non_local)))
+    if missing_site_link:
+        fail("Cargo package READMEs missing https://roder.sh: " + ", ".join(sorted(missing_site_link)))
 
 
 def check_npm_readmes() -> None:
@@ -67,6 +80,8 @@ def check_npm_readmes() -> None:
         readme = package_dir / "README.md"
         if not readme.exists():
             fail(f"{package_json.relative_to(REPO_ROOT)} has no README.md")
+        if RODER_SITE not in readme.read_text():
+            fail(f"{readme.relative_to(REPO_ROOT)} is missing {RODER_SITE}")
         files = data.get("files", [])
         if "README.md" not in files:
             fail(f"{package_json.relative_to(REPO_ROOT)} does not include README.md in files")
@@ -84,13 +99,15 @@ def check_pypi_readmes() -> None:
             readme_path = pyproject.parent / readme
             if not readme_path.exists():
                 fail(f"{pyproject.relative_to(REPO_ROOT)} readme does not exist: {readme}")
+            if RODER_SITE not in readme_path.read_text():
+                fail(f"{readme_path.relative_to(REPO_ROOT)} is missing {RODER_SITE}")
 
 
 def main() -> int:
     check_cargo_readmes()
     check_npm_readmes()
     check_pypi_readmes()
-    print("registry-readmes: Cargo, npm, and PyPI README metadata present.")
+    print("registry-readmes: Cargo, npm, and PyPI package READMEs are present and link https://roder.sh.")
     return 0
 
 

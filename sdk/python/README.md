@@ -2,6 +2,8 @@
 
 Python SDK for the Roder app-server JSON-RPC API.
 
+Roder website: https://roder.sh
+
 ```py
 from roder_sdk import RoderAgent
 ```

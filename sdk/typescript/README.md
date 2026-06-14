@@ -2,6 +2,8 @@
 
 TypeScript SDK for the Roder app-server JSON-RPC API.
 
+Roder website: https://roder.sh
+
 ```ts
 import { RoderAgent } from "@roderai/sdk";
 ```
