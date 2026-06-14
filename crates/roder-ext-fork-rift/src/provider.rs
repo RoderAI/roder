@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use roder_api::forks::{
-    ForkCapabilities, ForkId, ForkProvider, ForkProviderDescriptor, ForkProvenance, ForkRequest,
+    ForkCapabilities, ForkId, ForkProvenance, ForkProvider, ForkProviderDescriptor, ForkRequest,
     ForkStatus, RemoveForkPolicy, RemoveForkResult, WorkspaceFork,
 };
 use time::OffsetDateTime;
@@ -86,12 +86,7 @@ impl ForkProvider for RiftForkProvider {
 
         run_rift(&self.config, &source, &["init"]).await?;
         let dest = dest_base.display().to_string();
-        let output = run_rift(
-            &self.config,
-            &source,
-            &["create", &name, "--dest", &dest],
-        )
-        .await?;
+        let output = run_rift(&self.config, &source, &["create", &name, "--dest", &dest]).await?;
         let created = parse_created_path(&output)?;
         Ok(self.fork(&source, &name, created, ForkStatus::Active))
     }

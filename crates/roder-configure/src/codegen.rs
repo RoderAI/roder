@@ -134,7 +134,7 @@ fn cargo_dependencies(
     let mut lines = vec!["anyhow = \"1\"".to_string()];
     if manifest.include_cli {
         lines.push(format!(
-            "roder-cli = {{ path = {:?} }}",
+            "roder = {{ path = {:?} }}",
             workspace.join("crates/roder-cli").display().to_string()
         ));
     }

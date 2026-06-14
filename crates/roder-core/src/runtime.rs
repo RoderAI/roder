@@ -6111,10 +6111,8 @@ mod tests {
     #[tokio::test]
     async fn route_tool_call_denies_tools_outside_allowlists() {
         let requests = Arc::new(StdMutex::new(Vec::new()));
-        let thread_root = std::env::temp_dir().join(format!(
-            "roder-allowlist-dispatch-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-allowlist-dispatch-{}", uuid::Uuid::new_v4()));
         let runtime = runtime_with_edit_allowlist(&requests, &thread_root);
         let thread_id = runtime
             .create_thread_with(CreateThreadRequest {
@@ -6152,7 +6150,9 @@ mod tests {
 
         assert!(result.is_error);
         assert!(
-            result.result.contains("not permitted by the tool allowlist"),
+            result
+                .result
+                .contains("not permitted by the tool allowlist"),
             "unexpected result: {}",
             result.result
         );
@@ -6259,13 +6259,7 @@ mod tests {
         .await
         .expect("turn failure must resolve pending external tool calls");
         assert_eq!(outcome, ExternalToolCallOutcome::Cancelled);
-        assert!(
-            runtime
-                .pending_external_tool_calls
-                .lock()
-                .await
-                .is_empty()
-        );
+        assert!(runtime.pending_external_tool_calls.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -6345,14 +6339,9 @@ mod tests {
                 parameters: serde_json::json!({ "type": "object" }),
             },
         ];
-        let request = captured_thread_override_request(
-            &runtime,
-            &requests,
-            Vec::new(),
-            None,
-            external_tools,
-        )
-        .await;
+        let request =
+            captured_thread_override_request(&runtime, &requests, Vec::new(), None, external_tools)
+                .await;
 
         let acme = request
             .tools

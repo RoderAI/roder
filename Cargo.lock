@@ -3342,6 +3342,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "anyhow",
+ "async-trait",
+ "base64",
+ "crossterm",
+ "ratatui",
+ "roder-api",
+ "roder-api-transcript",
+ "roder-app-server",
+ "roder-codex-auth",
+ "roder-commands",
+ "roder-config",
+ "roder-core",
+ "roder-evals",
+ "roder-ext-anthropic",
+ "roder-ext-disk-context",
+ "roder-ext-gemini",
+ "roder-ext-jsonl-thread-store",
+ "roder-ext-memory",
+ "roder-ext-mysql-session",
+ "roder-ext-openai-responses",
+ "roder-ext-postgres-session",
+ "roder-ext-roder-cloud",
+ "roder-ext-subagents",
+ "roder-ext-zerolang",
+ "roder-extension-host",
+ "roder-protocol",
+ "roder-roadmap",
+ "roder-search",
+ "roder-skills",
+ "roder-supergrok-auth",
+ "roder-tools",
+ "roder-tui",
+ "roder-usage-analytics",
+ "roder-web-search",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "roder-api"
 version = "0.1.0"
 dependencies = [
@@ -3436,51 +3481,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "time",
- "tokio",
-]
-
-[[package]]
-name = "roder-cli"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol-schema",
- "anyhow",
- "async-trait",
- "base64",
- "crossterm",
- "ratatui",
- "roder-api",
- "roder-api-transcript",
- "roder-app-server",
- "roder-codex-auth",
- "roder-commands",
- "roder-config",
- "roder-core",
- "roder-evals",
- "roder-ext-anthropic",
- "roder-ext-disk-context",
- "roder-ext-gemini",
- "roder-ext-jsonl-thread-store",
- "roder-ext-memory",
- "roder-ext-mysql-session",
- "roder-ext-openai-responses",
- "roder-ext-postgres-session",
- "roder-ext-roder-cloud",
- "roder-ext-subagents",
- "roder-ext-zerolang",
- "roder-extension-host",
- "roder-protocol",
- "roder-roadmap",
- "roder-search",
- "roder-skills",
- "roder-supergrok-auth",
- "roder-tools",
- "roder-tui",
- "roder-usage-analytics",
- "roder-web-search",
- "serde",
- "serde_json",
  "time",
  "tokio",
 ]

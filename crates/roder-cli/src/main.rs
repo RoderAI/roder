@@ -1484,11 +1484,9 @@ fn resolve_session_store_config(
                 mysql.database_url_env.as_deref(),
             )
             .ok_or_else(|| anyhow::anyhow!("MySQL session database URL is required"))?;
-            let tenant_id = resolve_config_secret(
-                mysql.tenant_id.as_deref(),
-                mysql.tenant_id_env.as_deref(),
-            )
-            .ok_or_else(|| anyhow::anyhow!("MySQL session tenant id is required"))?;
+            let tenant_id =
+                resolve_config_secret(mysql.tenant_id.as_deref(), mysql.tenant_id_env.as_deref())
+                    .ok_or_else(|| anyhow::anyhow!("MySQL session tenant id is required"))?;
             let mut resolved =
                 roder_ext_mysql_session::MysqlSessionConfig::new(database_url, tenant_id)?;
             resolved.max_connections = mysql.max_connections;

@@ -83,7 +83,7 @@ Both SDKs connect to hosted Roder with the normal app-server protocol plus
 hosted helpers — no separate protocol:
 
 ```ts
-import { HostedClient } from "@roder/sdk";
+import { HostedClient } from "@roderai/sdk";
 const hosted = await HostedClient.connect({ url, token }); // or tokenProvider / headers
 await hosted.whoami();
 const key = await hosted.createServiceAccount("ci"); // token shown once

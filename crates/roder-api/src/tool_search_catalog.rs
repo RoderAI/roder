@@ -135,7 +135,11 @@ impl ToolSearchCatalog {
                 .then(b.1.cmp(&a.1))
                 .then(a.2.name.cmp(&b.2.name))
         });
-        scored.into_iter().take(limit).map(|(_, _, item)| item).collect()
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, item)| item)
+            .collect()
     }
 }
 
@@ -153,8 +157,16 @@ fn classify_source(name: &str) -> ToolCatalogSource {
 fn is_credential_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     [
-        "api_key", "apikey", "token", "secret", "password", "authorization", "auth_header",
-        "bearer", "credential", "private_key",
+        "api_key",
+        "apikey",
+        "token",
+        "secret",
+        "password",
+        "authorization",
+        "auth_header",
+        "bearer",
+        "credential",
+        "private_key",
     ]
     .iter()
     .any(|needle| key.contains(needle))
@@ -193,7 +205,9 @@ fn redact_text(text: &str) -> String {
 /// Redacts a schema for catalog payloads; oversized schemas are dropped.
 fn redact_schema(schema: &serde_json::Value) -> Option<serde_json::Value> {
     let redacted = redact_value(schema);
-    let size = serde_json::to_vec(&redacted).map(|bytes| bytes.len()).unwrap_or(usize::MAX);
+    let size = serde_json::to_vec(&redacted)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
     (size <= MAX_SCHEMA_BYTES).then_some(redacted)
 }
 
@@ -259,19 +273,31 @@ mod tests {
 
     fn sample_tools() -> Vec<ToolSpec> {
         vec![
-            spec("read_file", "Read a file from the workspace", serde_json::json!({
-                "type": "object",
-                "properties": { "path": { "type": "string" } }
-            })),
-            spec("mcp__github__search", "Search GitHub issues", serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string" },
-                    "api_key": { "type": "string", "default": "sk-secret-default" }
-                },
-                "x-roder-internal": { "registry": "/Users/someone/.roder/mcp" }
-            })),
-            spec("skill__deploy", "Deploy the app per the deploy skill at /Users/me/skills", serde_json::json!({})),
+            spec(
+                "read_file",
+                "Read a file from the workspace",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } }
+                }),
+            ),
+            spec(
+                "mcp__github__search",
+                "Search GitHub issues",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string" },
+                        "api_key": { "type": "string", "default": "sk-secret-default" }
+                    },
+                    "x-roder-internal": { "registry": "/Users/someone/.roder/mcp" }
+                }),
+            ),
+            spec(
+                "skill__deploy",
+                "Deploy the app per the deploy skill at /Users/me/skills",
+                serde_json::json!({}),
+            ),
             spec("edit_file", "Edit a file", serde_json::json!({})),
             spec("edit_file", "Duplicate-named tool", serde_json::json!({})),
         ]
@@ -323,7 +349,12 @@ mod tests {
             ..ToolSearchConfig::default()
         };
         let catalog = ToolSearchCatalog::build(&tools, &config);
-        assert!(catalog.items.iter().all(|item| item.source == ToolCatalogSource::Builtin));
+        assert!(
+            catalog
+                .items
+                .iter()
+                .all(|item| item.source == ToolCatalogSource::Builtin)
+        );
 
         let config = ToolSearchConfig {
             max_catalog_items: Some(2),
@@ -350,8 +381,13 @@ mod tests {
             "Tool with oversized schema",
             serde_json::json!({ "blob": "x".repeat(20_000) }),
         );
-        let catalog =
-            ToolSearchCatalog::build(std::slice::from_ref(&oversized), &ToolSearchConfig::default());
-        assert!(catalog.items[0].parameters.is_none(), "oversized schemas are dropped");
+        let catalog = ToolSearchCatalog::build(
+            std::slice::from_ref(&oversized),
+            &ToolSearchConfig::default(),
+        );
+        assert!(
+            catalog.items[0].parameters.is_none(),
+            "oversized schemas are dropped"
+        );
     }
 }

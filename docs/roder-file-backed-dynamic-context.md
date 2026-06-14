@@ -105,7 +105,7 @@ evals/fixtures/context/file-backed/
 Run the local offline evaluator with:
 
 ```sh
-RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals cargo run -p roder-cli -- eval run evals/fixtures/context/file-backed --offline
+RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals cargo run -p roder -- eval run evals/fixtures/context/file-backed --offline
 ```
 
 The report is written to `file-backed-context-report.json` in the output directory and records artifact read/grep/tail counts, estimated inline tokens saved, and answer correctness for each fixture.

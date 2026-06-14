@@ -134,7 +134,12 @@ fn exec_process_smoke_default_mode_prints_only_final_message() {
     );
     // The offline fake provider always answers with a fixed message; default
     // stdout must contain only that final assistant message.
-    assert_eq!(run.stdout.trim(), "hello from roder", "stdout: {:?}", run.stdout);
+    assert_eq!(
+        run.stdout.trim(),
+        "hello from roder",
+        "stdout: {:?}",
+        run.stdout
+    );
     let written = std::fs::read_to_string(&last_message).expect("last message file");
     assert_eq!(written.trim(), "hello from roder");
 
@@ -185,7 +190,10 @@ fn exec_process_smoke_records_api_transcript_for_debugging() {
             .is_some_and(|features| features.iter().any(|value| value == "exec")),
         "header must mark the exec feature: {header}"
     );
-    assert!(raw.contains("turn/start"), "transcript must capture turn/start");
+    assert!(
+        raw.contains("turn/start"),
+        "transcript must capture turn/start"
+    );
     assert!(
         raw.contains("thread/start"),
         "transcript must capture thread/start"

@@ -704,8 +704,8 @@ impl InferenceEngine for OpenAiResponsesEngine {
         })?;
         // Provider-native tool search may require client-executed searches
         // against the runtime catalog within the same turn.
-        let continuation = openai_provider_native_tool_search(&request).then(|| {
-            ClientToolSearchContext {
+        let continuation =
+            openai_provider_native_tool_search(&request).then(|| ClientToolSearchContext {
                 base_url: self.base_url.clone(),
                 api_key: api_key.clone(),
                 headers: self.headers.clone(),
@@ -717,8 +717,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
                     &request.tools,
                     &request.runtime.tool_search,
                 ),
-            }
-        });
+            });
         Ok(stream_responses_sse_with_client_tool_search(
             response.response,
             tool_name_map.api_name_to_tool_name,
@@ -1198,10 +1197,7 @@ struct ResponsesStreamState {
 fn is_client_executed_tool_search(item: &Value) -> bool {
     item.get("type").and_then(Value::as_str) == Some("tool_search_call")
         && item.get("results").is_none()
-        && item
-            .get("query")
-            .or_else(|| item.get("queries"))
-            .is_some()
+        && item.get("query").or_else(|| item.get("queries")).is_some()
         && item.get("status").and_then(Value::as_str) != Some("failed")
 }
 
@@ -2391,7 +2387,10 @@ mod tests {
 
         let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
         let base_url = spawn_recording_server(
-            vec![("/responses", 200, FIRST_SSE), ("/responses", 200, SECOND_SSE)],
+            vec![
+                ("/responses", 200, FIRST_SSE),
+                ("/responses", 200, SECOND_SSE),
+            ],
             Arc::clone(&bodies),
         )
         .await;
@@ -2448,7 +2447,10 @@ mod tests {
             })
             .collect();
         assert_eq!(completions.len(), 1, "{events:?}");
-        assert_eq!(completions[0].provider_response_id.as_deref(), Some("resp_2"));
+        assert_eq!(
+            completions[0].provider_response_id.as_deref(),
+            Some("resp_2")
+        );
 
         // The locally-executed search surfaces through the canonical hosted
         // lifecycle with searched tool ids preserved.
@@ -2555,7 +2557,12 @@ mod tests {
         .await
         .unwrap();
 
-        let mut stream = stream_responses_sse_with_client_tool_search(response.response, HashMap::new(), Vec::new(), None);
+        let mut stream = stream_responses_sse_with_client_tool_search(
+            response.response,
+            HashMap::new(),
+            Vec::new(),
+            None,
+        );
         let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .expect("silent responses stream should surface an idle timeout");

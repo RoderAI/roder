@@ -32,7 +32,7 @@ async def main() -> None:
             "cargo",
             "run",
             "-p",
-            "roder-cli",
+            "roder",
             "--bin",
             "roder",
             "--",

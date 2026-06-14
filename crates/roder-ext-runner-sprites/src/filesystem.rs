@@ -88,12 +88,7 @@ impl SpritesClient {
         self.decode_empty(response, "rename path").await
     }
 
-    pub async fn copy_path(
-        &self,
-        sprite_name: &str,
-        from: &Path,
-        to: &Path,
-    ) -> anyhow::Result<()> {
+    pub async fn copy_path(&self, sprite_name: &str, from: &Path, to: &Path) -> anyhow::Result<()> {
         let from = normalize_workspace_path(from)?;
         let to = normalize_workspace_path(to)?;
         let response = self

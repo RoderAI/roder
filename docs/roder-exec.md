@@ -89,5 +89,5 @@ A process-level offline smoke covers this contract end to end against the
 fake provider (no TTY, no network):
 
 ```sh
-cargo test -p roder-cli --test exec_process_smoke
+cargo test -p roder --test exec_process_smoke
 ```

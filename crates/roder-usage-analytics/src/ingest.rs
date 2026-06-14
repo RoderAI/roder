@@ -208,10 +208,8 @@ mod tests {
     }
 
     fn temp_store() -> (AnalyticsStore, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "roder-analytics-ingest-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("roder-analytics-ingest-{}", uuid::Uuid::new_v4()));
         let store = AnalyticsStore::open(
             &AnalyticsStore::default_path(&dir),
             WorkspaceLabelMode::FullPath,
@@ -220,7 +218,11 @@ mod tests {
         (store, dir)
     }
 
-    pub(crate) fn fake_turn_events(thread_id: &str, turn_id: &str, base_ms: i64) -> Vec<EventEnvelope> {
+    pub(crate) fn fake_turn_events(
+        thread_id: &str,
+        turn_id: &str,
+        base_ms: i64,
+    ) -> Vec<EventEnvelope> {
         vec![
             envelope(
                 1,

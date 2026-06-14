@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use roder_api::forks::{
-    ForkCapabilities, ForkId, ForkProvider, ForkProviderDescriptor, ForkProvenance, ForkRequest,
+    ForkCapabilities, ForkId, ForkProvenance, ForkProvider, ForkProviderDescriptor, ForkRequest,
     ForkStatus, RemoveForkPolicy, RemoveForkResult, WorkspaceFork,
 };
 use roder_api::remote_runner::{RemoteRunnerProvider, RemoteRunnerSession, RunnerDestination};
@@ -43,7 +43,11 @@ impl Runtime {
                 .join(", ");
             anyhow::anyhow!(
                 "fork provider {provider_id:?} is not installed (available: {})",
-                if available.is_empty() { "none" } else { &available }
+                if available.is_empty() {
+                    "none"
+                } else {
+                    &available
+                }
             )
         })
     }
@@ -99,7 +103,9 @@ impl Runtime {
         id: &ForkId,
         policy: RemoveForkPolicy,
     ) -> anyhow::Result<RemoveForkResult> {
-        self.fork_provider(provider_id)?.remove_fork(id, policy).await
+        self.fork_provider(provider_id)?
+            .remove_fork(id, policy)
+            .await
     }
 }
 
@@ -197,7 +203,10 @@ impl ForkProvider for RemoteRunnerForkAdapter {
             "remote-runner forks always start from the destination's own state; \
              allow_dirty_source has no meaning here and must stay false"
         );
-        let session = self.provider.create_session(self.destination.clone()).await?;
+        let session = self
+            .provider
+            .create_session(self.destination.clone())
+            .await?;
         let fork = self.fork_for(&session);
         self.sessions.lock().await.insert(fork.id.clone(), session);
         Ok(fork)
@@ -207,7 +216,10 @@ impl ForkProvider for RemoteRunnerForkAdapter {
         // Runner providers own session listing; the adapter only tracks the
         // sessions it created in this process.
         let sessions = self.sessions.lock().await;
-        Ok(sessions.values().map(|session| self.fork_for(session)).collect())
+        Ok(sessions
+            .values()
+            .map(|session| self.fork_for(session))
+            .collect())
     }
 
     async fn resume_fork(&self, id: &ForkId) -> anyhow::Result<WorkspaceFork> {

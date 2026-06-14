@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use roder_api::knowledge::{
     KnowledgeKind, KnowledgeLinkRequest, KnowledgeLinkType, KnowledgeListQuery, KnowledgeQuery,
-    KnowledgeSaveRequest, KnowledgeSource, KnowledgeStatus, KnowledgeStore,
-    KnowledgeUpdateRequest,
+    KnowledgeSaveRequest, KnowledgeSource, KnowledgeStatus, KnowledgeStore, KnowledgeUpdateRequest,
 };
 use roder_api::memory::MemoryScope;
 use roder_api::tools::{
@@ -500,7 +499,10 @@ impl ToolExecutor for KnowledgeUpdateTool {
             .await?;
         Ok(result(
             call,
-            format!("updated knowledge document {} to revision {}", doc.id, doc.revision),
+            format!(
+                "updated knowledge document {} to revision {}",
+                doc.id, doc.revision
+            ),
             json!({ "document": doc.summary() }),
         ))
     }
@@ -545,7 +547,8 @@ impl ToolExecutor for KnowledgeLinkTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "knowledge_link".to_string(),
-            description: "Adds or removes a typed link between two knowledge documents.".to_string(),
+            description: "Adds or removes a typed link between two knowledge documents."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {

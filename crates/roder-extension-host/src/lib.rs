@@ -28,6 +28,7 @@ use roder_ext_google_embeddings::{
     DEFAULT_ENDPOINT as GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT, GoogleEmbeddingProvider,
     GoogleEmbeddingsConfig, GoogleEmbeddingsExtension,
 };
+use roder_ext_google_images::{GoogleImagesConfig, GoogleImagesExtension};
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_honcho::{HonchoMemoryConfig, HonchoMemoryExtension};
 use roder_ext_inference_router::{
@@ -38,9 +39,8 @@ use roder_ext_knowledge_md::KnowledgeMdExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_mysql_session::{MysqlSessionConfig, MysqlSessionExtension};
 use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
-use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
-use roder_ext_google_images::{GoogleImagesConfig, GoogleImagesExtension};
 use roder_ext_openai_images::{OpenAiImagesConfig, OpenAiImagesExtension};
+use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
 use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension};

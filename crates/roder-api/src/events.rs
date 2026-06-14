@@ -30,8 +30,8 @@ use crate::inference::{
     TokenUsage,
 };
 use crate::inference_routing::InferenceRoutingDecision;
-use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::knowledge::{KnowledgeDocId, KnowledgeDocSummary, KnowledgeLinkType};
+use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
 use crate::plan_review::{
     HunkId, HunkRecord, PlanComment, PlanReview, PlanReviewId, PlanReviewStatus, PlanRewrite,

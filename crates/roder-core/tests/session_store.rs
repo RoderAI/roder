@@ -116,8 +116,7 @@ impl ContextArtifactAccess for InMemoryArtifactAccess {
             limit,
             shown: shown.len(),
             total_lines: lines.len(),
-            next_start_line: (start + shown.len() < lines.len())
-                .then(|| start + shown.len() + 1),
+            next_start_line: (start + shown.len() < lines.len()).then(|| start + shown.len() + 1),
             truncated: start + shown.len() < lines.len(),
         })
     }
@@ -264,8 +263,7 @@ async fn runtime_routes_context_artifacts_through_non_filesystem_session_store()
     builder.thread_store_factory(Arc::new(NonFilesystemThreadStoreFactory {
         artifacts: artifacts.clone(),
     }));
-    let runtime =
-        Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap();
+    let runtime = Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap();
 
     let store = runtime.context_artifacts();
     let thread_id = "thread-pg-like".to_string();
@@ -300,5 +298,9 @@ async fn runtime_routes_context_artifacts_through_non_filesystem_session_store()
     // scoping rule of the PostgreSQL store.
     let other_thread = "thread-other".to_string();
     assert!(store.list_artifacts(&other_thread).unwrap().is_empty());
-    assert!(store.read_artifact(&other_thread, &created.id, 1, 10).is_err());
+    assert!(
+        store
+            .read_artifact(&other_thread, &created.id, 1, 10)
+            .is_err()
+    );
 }

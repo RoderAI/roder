@@ -54,9 +54,8 @@ fn state_dir() -> PathBuf {
 
 async fn serve(args: &[String]) -> anyhow::Result<()> {
     let listen = value_of(args, "--listen").unwrap_or_else(|| "127.0.0.1:7878".to_string());
-    let node_name = value_of(args, "--name").unwrap_or_else(|| {
-        std::env::var("HOSTNAME").unwrap_or_else(|_| "roder-node".to_string())
-    });
+    let node_name = value_of(args, "--name")
+        .unwrap_or_else(|| std::env::var("HOSTNAME").unwrap_or_else(|_| "roder-node".to_string()));
     let (runtime, _) = build_runtime_from_config(CliOptions::default()).await?;
     let workspace = std::env::current_dir()
         .ok()
@@ -74,7 +73,10 @@ async fn serve(args: &[String]) -> anyhow::Result<()> {
     .await?;
     let (pairing_token, preview) = controller.handle.tokens.mint(DEFAULT_PAIRING_TTL);
 
-    println!("agent node listening on wss://{}", controller.handle.listen_addr);
+    println!(
+        "agent node listening on wss://{}",
+        controller.handle.listen_addr
+    );
     println!("node id          {}", controller.handle.node_id);
     println!("node name        {node_name}");
     println!("cert fingerprint {}", controller.handle.fingerprint);
@@ -176,7 +178,10 @@ async fn connect_check(args: &[String]) -> anyhow::Result<()> {
                     .and_then(serde_json::Value::as_array)
                     .map(Vec::len)
             });
-            println!("thread/list ok ({} thread(s) on the node)", count.unwrap_or(0));
+            println!(
+                "thread/list ok ({} thread(s) on the node)",
+                count.unwrap_or(0)
+            );
         }
         Some(error) => anyhow::bail!("thread/list failed: {}", error.message),
     }
@@ -232,7 +237,9 @@ fn profile_named(name: &str) -> anyhow::Result<roder_config::agent_node::AgentNo
 /// Connects to a configured node profile and runs the full TUI against it.
 async fn connect(args: &[String]) -> anyhow::Result<()> {
     let Some(name) = args.first().filter(|arg| !arg.starts_with('-')) else {
-        anyhow::bail!("usage: roder agent-node connect <profile> (see `roder agent-node profiles`)");
+        anyhow::bail!(
+            "usage: roder agent-node connect <profile> (see `roder agent-node profiles`)"
+        );
     };
     let profile = profile_named(name)?;
     let pairing_token = profile
@@ -345,7 +352,10 @@ mod tests {
             "127.0.0.1:7878".to_string(),
             "--fingerprint=abc123".to_string(),
         ];
-        assert_eq!(value_of(&args, "--address").as_deref(), Some("127.0.0.1:7878"));
+        assert_eq!(
+            value_of(&args, "--address").as_deref(),
+            Some("127.0.0.1:7878")
+        );
         assert_eq!(value_of(&args, "--fingerprint").as_deref(), Some("abc123"));
         assert_eq!(value_of(&args, "--token"), None);
     }

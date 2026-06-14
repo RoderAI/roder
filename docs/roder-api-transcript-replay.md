@@ -24,7 +24,7 @@ Each line is one JSON record:
 
 ```sh
 sed -n '1,20p' .roder/transcripts/bug.jsonl
-cargo run -p roder-cli -- replay .roder/transcripts/bug.jsonl --headless
+cargo run -p roder -- replay .roder/transcripts/bug.jsonl --headless
 ```
 
 Headless replay is offline and side-effect-free by default. It must not call providers, install plugins, execute tools, or contact remote app-servers.
@@ -64,7 +64,7 @@ printf '%s' 'normalized text' | shasum -a 256
 3. Replay it locally:
 
 ```sh
-cargo run -p roder-cli -- replay tests/fixtures/api-transcripts/startup.jsonl --headless
+cargo run -p roder -- replay tests/fixtures/api-transcripts/startup.jsonl --headless
 ```
 
 4. Add or update focused tests in `roder-cli` or `roder-tui` when the fixture covers a new behavior.

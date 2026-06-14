@@ -10,8 +10,7 @@ use roder_protocol::{
 
 use super::{TuiApp, decode_response};
 
-const USAGE: &str =
-    "usage: /knowledge [list [kind]|search <text>|read <id>] — manage documents with knowledge_* tools or `roder knowledge`";
+const USAGE: &str = "usage: /knowledge [list [kind]|search <text>|read <id>] — manage documents with knowledge_* tools or `roder knowledge`";
 
 /// Cap on the body text shown inline for `/knowledge read`.
 const READ_PREVIEW_BYTES: usize = 4096;
@@ -34,14 +33,17 @@ where
                 self.timeline.push_system(USAGE);
             }
         }
-        self.push_event(format!("slash command: /knowledge {args}").trim().to_string());
+        self.push_event(
+            format!("slash command: /knowledge {args}")
+                .trim()
+                .to_string(),
+        );
     }
 
     async fn knowledge_list(&mut self, kind: &str) {
         let params = KnowledgeListParams {
             scope: Some(default_project_scope()),
-            kind: (!kind.is_empty())
-                .then(|| roder_api::knowledge::KnowledgeKind::parse(kind)),
+            kind: (!kind.is_empty()).then(|| roder_api::knowledge::KnowledgeKind::parse(kind)),
             tag: None,
             status: None,
             include_archived: false,
@@ -82,8 +84,7 @@ where
             limit: Some(8),
             include_global: true,
         };
-        match request::<_, KnowledgeSearchResults>(&self.client, "knowledge/search", params).await
-        {
+        match request::<_, KnowledgeSearchResults>(&self.client, "knowledge/search", params).await {
             Ok(result) if result.results.is_empty() => {
                 self.timeline
                     .push_system(format!("No knowledge documents match {text:?}."));
@@ -116,31 +117,33 @@ where
             revision: None,
         };
         match request::<_, KnowledgeReadResult>(&self.client, "knowledge/read", params).await {
-            Ok(result) => match result.document {
-                Some(doc) => {
-                    let mut body = doc.body;
-                    if body.len() > READ_PREVIEW_BYTES {
-                        let mut end = READ_PREVIEW_BYTES;
-                        while end > 0 && !body.is_char_boundary(end) {
-                            end -= 1;
+            Ok(result) => {
+                match result.document {
+                    Some(doc) => {
+                        let mut body = doc.body;
+                        if body.len() > READ_PREVIEW_BYTES {
+                            let mut end = READ_PREVIEW_BYTES;
+                            while end > 0 && !body.is_char_boundary(end) {
+                                end -= 1;
+                            }
+                            body.truncate(end);
+                            body.push_str("\n... [truncated; see `roder knowledge read` for the full document]");
                         }
-                        body.truncate(end);
-                        body.push_str("\n... [truncated; see `roder knowledge read` for the full document]");
+                        self.timeline.push_system(format!(
+                            "# {} ({}, {}, rev {})\n\n{}",
+                            doc.title,
+                            doc.kind,
+                            doc.status.as_str(),
+                            doc.revision,
+                            body
+                        ));
                     }
-                    self.timeline.push_system(format!(
-                        "# {} ({}, {}, rev {})\n\n{}",
-                        doc.title,
-                        doc.kind,
-                        doc.status.as_str(),
-                        doc.revision,
-                        body
-                    ));
+                    None => {
+                        self.timeline
+                            .push_system(format!("Knowledge document not found: {doc_id}"));
+                    }
                 }
-                None => {
-                    self.timeline
-                        .push_system(format!("Knowledge document not found: {doc_id}"));
-                }
-            },
+            }
             Err(err) => self.record_error(format!("knowledge/read failed: {err}")),
         }
     }

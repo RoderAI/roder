@@ -173,10 +173,7 @@ impl ExtensionRegistry {
             .cloned()
     }
 
-    pub fn fork_provider(
-        &self,
-        id: &str,
-    ) -> Option<Arc<dyn crate::forks::ForkProvider>> {
+    pub fn fork_provider(&self, id: &str) -> Option<Arc<dyn crate::forks::ForkProvider>> {
         self.fork_providers
             .iter()
             .find(|provider| provider.descriptor().id == id)

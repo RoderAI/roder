@@ -166,7 +166,7 @@ touching `~/.roder`:
 
 ```sh
 scripts/roder-inference-routing-lab-setup.sh
-cargo run -p roder-cli -- --config-dir /tmp/roder-routing-lab
+cargo run -p roder -- --config-dir /tmp/roder-routing-lab
 ```
 
 In the TUI, open the model picker and select `Auto: Coding`. Manual model

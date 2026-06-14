@@ -166,7 +166,9 @@ fn error_kind(error: &EditApplyError) -> (&'static str, usize) {
 fn run_fixture(fixture: &Fixture, metrics: &mut Metrics) {
     metrics.total += 1;
     let fail = |message: String, metrics: &mut Metrics| {
-        metrics.failures.push(format!("{}: {message}", fixture.name));
+        metrics
+            .failures
+            .push(format!("{}: {message}", fixture.name));
     };
 
     match &fixture.operation {
@@ -215,7 +217,9 @@ fn run_fixture(fixture: &Fixture, metrics: &mut Metrics) {
                     } else {
                         metrics.wrong_edits += 1;
                         fail(
-                            format!("result mismatch:\n--- got ---\n{updated}\n--- want ---\n{expected}"),
+                            format!(
+                                "result mismatch:\n--- got ---\n{updated}\n--- want ---\n{expected}"
+                            ),
                             metrics,
                         );
                     }
@@ -271,13 +275,16 @@ fn run_fixture(fixture: &Fixture, metrics: &mut Metrics) {
                 Ok(_) => {
                     if fixture.expect_error.is_some() {
                         metrics.patch_failures += 1;
-                        fail("expected patch failure but patch applied".to_string(), metrics);
+                        fail(
+                            "expected patch failure but patch applied".to_string(),
+                            metrics,
+                        );
                     } else {
                         metrics.patch_successes += 1;
                         let mut ok = true;
                         if let Some(expected) = &fixture.expected {
-                            let got =
-                                std::fs::read_to_string(root.join("fixture.txt")).unwrap_or_default();
+                            let got = std::fs::read_to_string(root.join("fixture.txt"))
+                                .unwrap_or_default();
                             if &got != expected {
                                 ok = false;
                                 fail(format!("patched fixture.txt mismatch: {got:?}"), metrics);
@@ -343,7 +350,10 @@ fn run_fixture(fixture: &Fixture, metrics: &mut Metrics) {
             let shown = page.lines().count();
             if shown > *limit {
                 ok = false;
-                fail(format!("read returned {shown} lines, limit was {limit}"), metrics);
+                fail(
+                    format!("read returned {shown} lines, limit was {limit}"),
+                    metrics,
+                );
             }
             if ok {
                 metrics.first_attempt_success += 1;

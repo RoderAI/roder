@@ -117,7 +117,9 @@ impl AnalyticsStore {
                    completion_tokens = excluded.completion_tokens,
                    total_tokens = excluded.total_tokens,
                    cached_prompt_tokens = excluded.cached_prompt_tokens",
-                params![day, workspace, provider, model, prompt, completion, total, cached],
+                params![
+                    day, workspace, provider, model, prompt, completion, total, cached
+                ],
             )?;
             written += 1;
         }
@@ -163,10 +165,8 @@ mod tests {
 
     #[test]
     fn rollup_refresh_is_deterministic_and_idempotent() {
-        let dir = std::env::temp_dir().join(format!(
-            "roder-analytics-rollup-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("roder-analytics-rollup-{}", uuid::Uuid::new_v4()));
         let store = AnalyticsStore::open(
             &AnalyticsStore::default_path(&dir),
             WorkspaceLabelMode::FullPath,

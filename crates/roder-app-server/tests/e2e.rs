@@ -81,21 +81,21 @@ use roder_protocol::{
     DiscoveryReadParams, DiscoveryReadResult, DiscoveryRefreshResult, DiscoverySearchParams,
     DiscoverySearchResult, ExtensionsListResult, HunkListParams, HunkListResult, HunkReadParams,
     HunkReadResult, HunkRollbackParams, HunkRollbackResult, InitializeResult, Item, JsonRpcError,
-    JsonRpcRequest, MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
-    MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
-    MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
-    MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
-    MediaImageGenerateResult, MediaImageProvidersListResult, MediaListParams, MediaListResult,
-    MediaReadParams, MediaReadResult, MediaThumbnailParams,
-    MediaThumbnailResult, KnowledgeDeleteParams, KnowledgeDeleteResult, KnowledgeLinkSetParams,
+    JsonRpcRequest, KnowledgeDeleteParams, KnowledgeDeleteResult, KnowledgeLinkSetParams,
     KnowledgeListParams, KnowledgeListResult, KnowledgeReadParams, KnowledgeReadResult,
     KnowledgeRevisionsParams, KnowledgeRevisionsResult, KnowledgeSaveParams, KnowledgeSaveResult,
-    KnowledgeSearchParams, KnowledgeSearchResults, KnowledgeUpdateParams,
-    MemoryDeleteParams, MemoryDeleteResult, MemoryListParams,
-    MemoryListResult, MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult,
-    MemoryReadParams, MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult,
-    MemorySaveParams, MemorySaveResult, MemoryUpdateParams, ModelSelectChoice, ModelSelectParams,
-    ModelSelectResult, PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
+    KnowledgeSearchParams, KnowledgeSearchResults, KnowledgeUpdateParams, MarketplacesAddParams,
+    MarketplacesAddResult, MarketplacesListResult, MarketplacesRefreshParams,
+    MarketplacesRefreshResult, MarketplacesRemoveParams, MarketplacesRemoveResult,
+    MarketplacesSearchParams, MarketplacesSearchResult, MediaAttachToTurnParams,
+    MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult, MediaImageGenerateResult,
+    MediaImageProvidersListResult, MediaListParams, MediaListResult, MediaReadParams,
+    MediaReadResult, MediaThumbnailParams, MediaThumbnailResult, MemoryDeleteParams,
+    MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProviderListResult,
+    MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult,
+    MemoryRecallPreviewParams, MemoryRecallPreviewResult, MemorySaveParams, MemorySaveResult,
+    MemoryUpdateParams, ModelSelectChoice, ModelSelectParams, ModelSelectResult,
+    PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
     PlanReviewReadParams, PlanReviewReadResult, PluginDisableParams, PluginDisableResult,
     PluginInstallAllVariantsParams, PluginInstallAllVariantsResult, PluginInstallParams,
     PluginInstallResult, PluginListInstalledResult, PluginPreviewInstallParams,
@@ -3001,7 +3001,8 @@ async fn media_methods_read_thumbnail_attach_and_delete_artifacts() {
 
 #[tokio::test]
 async fn media_image_generation_lists_providers_generates_reads_and_attaches() {
-    let root = std::env::temp_dir().join(format!("roder-media-imagegen-e2e-{}", uuid::Uuid::new_v4()));
+    let root =
+        std::env::temp_dir().join(format!("roder-media-imagegen-e2e-{}", uuid::Uuid::new_v4()));
     let runtime = Arc::new(
         Runtime::new(
             build_default_registry(isolated_default_registry_config()).unwrap(),
@@ -3057,7 +3058,11 @@ async fn media_image_generation_lists_providers_generates_reads_and_attaches() {
     assert_eq!(generated.response.outputs.len(), 2);
     let artifact = generated.response.outputs[0].artifact.clone();
     assert!(artifact.roder_owned);
-    assert!(artifact.store_path.starts_with(&*root.display().to_string()));
+    assert!(
+        artifact
+            .store_path
+            .starts_with(&*root.display().to_string())
+    );
 
     // Generated artifacts are readable and attachable through public methods.
     let read: MediaReadResult = request(
@@ -3075,7 +3080,12 @@ async fn media_image_generation_lists_providers_generates_reads_and_attaches() {
         Some(serde_json::json!({ "artifactId": artifact.id })),
     )
     .await;
-    assert!(attach.attachment.data_url.starts_with("data:image/png;base64,"));
+    assert!(
+        attach
+            .attachment
+            .data_url
+            .starts_with("data:image/png;base64,")
+    );
     assert!(attach.image.is_some());
 
     // Unsupported options fail with clear errors.
@@ -3085,7 +3095,11 @@ async fn media_image_generation_lists_providers_generates_reads_and_attaches() {
         Some(serde_json::json!({ "prompt": "too many", "count": 99 })),
     )
     .await;
-    assert!(too_many.message.contains("configured limit"), "{}", too_many.message);
+    assert!(
+        too_many.message.contains("configured limit"),
+        "{}",
+        too_many.message
+    );
 
     let missing_provider = request_error(
         &client,
@@ -3418,7 +3432,12 @@ async fn knowledge_methods_cover_document_lifecycle_links_and_revisions() {
     let deleted: KnowledgeDeleteResult = request(
         &client,
         "knowledge/delete",
-        Some(serde_json::to_value(KnowledgeDeleteParams { doc_id: doc_id.clone() }).unwrap()),
+        Some(
+            serde_json::to_value(KnowledgeDeleteParams {
+                doc_id: doc_id.clone(),
+            })
+            .unwrap(),
+        ),
     )
     .await;
     assert!(deleted.archived);

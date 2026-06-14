@@ -50,10 +50,7 @@ pub fn normalized_unique_match_range(
     haystack: &str,
     needle: &str,
 ) -> Option<std::ops::Range<usize>> {
-    let needle_lines: Vec<String> = needle
-        .split('\n')
-        .map(normalize_line_for_match)
-        .collect();
+    let needle_lines: Vec<String> = needle.split('\n').map(normalize_line_for_match).collect();
     if needle_lines.is_empty() || needle_lines.iter().all(|line| line.is_empty()) {
         return None;
     }

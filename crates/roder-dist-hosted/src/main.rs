@@ -20,12 +20,15 @@ async fn main() -> anyhow::Result<()> {
     };
     let text = std::fs::read_to_string(&config_path)
         .map_err(|error| anyhow::anyhow!("read {config_path}: {error}"))?;
-    let config: HostedConfig = toml::from_str(&text)
-        .map_err(|error| anyhow::anyhow!("parse {config_path}: {error}"))?;
+    let config: HostedConfig =
+        toml::from_str(&text).map_err(|error| anyhow::anyhow!("parse {config_path}: {error}"))?;
 
     let controller =
         roder_dist_hosted::launch(config, roder_dist_hosted::default_tenant_factory()).await?;
-    eprintln!("hosted gateway listening on ws://{}", controller.listen_addr);
+    eprintln!(
+        "hosted gateway listening on ws://{}",
+        controller.listen_addr
+    );
     tokio::signal::ctrl_c().await?;
     controller.stop().await
 }

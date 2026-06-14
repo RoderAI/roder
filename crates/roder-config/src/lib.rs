@@ -1701,7 +1701,10 @@ mod tests {
         let media = config.media.clone().unwrap();
         let image_generation = media.image_generation.unwrap();
         assert_eq!(image_generation.default_provider.as_deref(), Some("openai"));
-        assert_eq!(image_generation.default_model.as_deref(), Some("gpt-image-2"));
+        assert_eq!(
+            image_generation.default_model.as_deref(),
+            Some("gpt-image-2")
+        );
         assert_eq!(image_generation.max_outputs, Some(4));
         assert_eq!(image_generation.max_input_images, Some(16));
         let google = image_generation.providers.get("google").unwrap();

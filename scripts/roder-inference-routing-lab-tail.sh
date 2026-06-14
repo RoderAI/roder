@@ -26,7 +26,7 @@ No Roder event log found under:
   $lab_dir/threads
 
 Start a TUI turn first:
-  cargo run -p roder-cli -- --config-dir "$lab_dir"
+  cargo run -p roder -- --config-dir "$lab_dir"
 EOF
   exit 1
 fi

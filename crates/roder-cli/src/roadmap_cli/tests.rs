@@ -201,7 +201,7 @@ fn temp_workspace() -> PathBuf {
 }
 
 fn fixture() -> String {
-    "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add a document-first roadmapping mode.\n**Architecture:** Roadmap Markdown documents are primary state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Create: `crates/roder-cli/src/roadmap_cli.rs`\n\n## Tasks\n\n- [ ] Add CLI tests\n\nRun:\n\n```sh\ncargo test -p roder-cli roadmap_cli\n```\n\nAcceptance:\n- CLI behavior is covered.\n\n## Phase Acceptance\n\n- [ ] CLI works.\n".to_string()
+    "# Roadmapping Mode Implementation Plan\n\n**Goal:** Add a document-first roadmapping mode.\n**Architecture:** Roadmap Markdown documents are primary state.\n**Tech Stack:** Rust.\n\n## Owned Paths\n\n- Create: `crates/roder-cli/src/roadmap_cli.rs`\n\n## Tasks\n\n- [ ] Add CLI tests\n\nRun:\n\n```sh\ncargo test -p roder roadmap_cli\n```\n\nAcceptance:\n- CLI behavior is covered.\n\n## Phase Acceptance\n\n- [ ] CLI works.\n".to_string()
 }
 
 fn index() -> String {

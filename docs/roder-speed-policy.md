@@ -7,13 +7,13 @@ Roder's speed policy is an eval/headless runtime policy for reducing wall-clock 
 Run the canonical offline speed suite with speed policy enabled:
 
 ```sh
-RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals cargo run -p roder-cli -- eval run evals/fixtures/speed --offline --speed-policy on
+RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals cargo run -p roder -- eval run evals/fixtures/speed --offline --speed-policy on
 ```
 
 Run baseline and speed policy in one report:
 
 ```sh
-RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals-speed-both cargo run -p roder-cli -- eval run evals/fixtures/speed --offline --speed-policy both
+RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals-speed-both cargo run -p roder -- eval run evals/fixtures/speed --offline --speed-policy both
 ```
 
 The generated `eval-report.md` includes:

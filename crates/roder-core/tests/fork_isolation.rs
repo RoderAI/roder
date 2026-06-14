@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::forks::{
-    ForkCapabilities, ForkId, ForkPolicy, ForkProvider, ForkProviderDescriptor, ForkProvenance,
+    ForkCapabilities, ForkId, ForkPolicy, ForkProvenance, ForkProvider, ForkProviderDescriptor,
     ForkReason, ForkRequest, ForkStatus, RemoveForkPolicy, RemoveForkResult, WorkspaceFork,
 };
 use roder_api::remote_runner::{RemoteRunnerProvider, RunnerDestination, RunnerManifest};
@@ -83,12 +83,18 @@ impl ForkProvider for CopyDirForkProvider {
 }
 
 fn git(root: &Path, args: &[&str]) {
-    let output = Command::new("git").arg("-C").arg(root).args(args).output().unwrap();
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap();
     assert!(output.status.success(), "git {args:?} failed");
 }
 
 fn temp_repo(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("roder-fork-iso-{label}-{}", uuid::Uuid::new_v4()));
+    let root =
+        std::env::temp_dir().join(format!("roder-fork-iso-{label}-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     git(&root, &["init", "--initial-branch", "main"]);
     git(&root, &["config", "user.email", "t@t"]);
@@ -152,7 +158,10 @@ async fn runtime_fork_manager_rejects_unknown_providers_and_bad_requests() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("not installed"), "{error}");
-    assert!(error.contains("fake-copy") && error.contains("git-worktree"), "{error}");
+    assert!(
+        error.contains("fake-copy") && error.contains("git-worktree"),
+        "{error}"
+    );
 
     let error = runtime
         .create_workspace_fork("fake-copy", request(Path::new("relative/path"), "x"))
@@ -164,7 +173,8 @@ async fn runtime_fork_manager_rejects_unknown_providers_and_bad_requests() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn remote_runner_sessions_are_representable_as_forks() {
-    let workspace = std::env::temp_dir().join(format!("roder-runner-fork-{}", uuid::Uuid::new_v4()));
+    let workspace =
+        std::env::temp_dir().join(format!("roder-runner-fork-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace).unwrap();
     let destination = RunnerDestination {
         id: "local-dest".to_string(),

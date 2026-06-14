@@ -30,7 +30,7 @@ elif [[ -x target/release/roder ]]; then
 elif [[ -x target/debug/roder ]]; then
   RUN=(target/debug/roder)
 else
-  RUN=(cargo run -q -p roder-cli --)
+  RUN=(cargo run -q -p roder --)
 fi
 
 echo "starting app-server: ${RUN[*]} app-server --remote --listen $LISTEN"

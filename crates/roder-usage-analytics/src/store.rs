@@ -271,9 +271,11 @@ impl AnalyticsStore {
     pub fn counts(&self) -> anyhow::Result<StoreCounts> {
         let conn = self.conn.lock().unwrap();
         let count = |table: &str| -> anyhow::Result<u64> {
-            Ok(conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                row.get::<_, i64>(0)
-            })? as u64)
+            Ok(
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })? as u64,
+            )
         };
         Ok(StoreCounts {
             sessions: count("sessions")?,
@@ -297,10 +299,8 @@ mod tests {
     use super::*;
 
     fn temp_store() -> (AnalyticsStore, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "roder-analytics-store-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("roder-analytics-store-{}", uuid::Uuid::new_v4()));
         let store = AnalyticsStore::open(
             &AnalyticsStore::default_path(&dir),
             WorkspaceLabelMode::FullPath,

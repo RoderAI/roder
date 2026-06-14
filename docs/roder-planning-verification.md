@@ -10,7 +10,7 @@ Run the local verification suite with:
 
 ```sh
 RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals \
-  cargo run -p roder-cli -- eval run evals/fixtures/verification --offline --profile eval
+  cargo run -p roder -- eval run evals/fixtures/verification --offline --profile eval
 ```
 
 The report includes task-ledger and verification tables. Verification fields show whether the gate was required, completed, failed, skipped, and whether any open gaps remain.

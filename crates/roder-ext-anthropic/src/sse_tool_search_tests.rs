@@ -61,15 +61,19 @@ fn tool_search_selection_executes_through_canonical_tool_call_lifecycle() {
         }
     )));
     // Discovered tool selection flows through the normal tool-call lifecycle.
-    assert!(events.contains(&InferenceEvent::ToolCallStarted(ToolCallStarted {
-        id: "toolu_sel".to_string(),
-        name: "edit_file".to_string(),
-    })));
-    assert!(events.contains(&InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-        id: "toolu_sel".to_string(),
-        name: "edit_file".to_string(),
-        arguments: r#"{"path":"a.txt"}"#.to_string(),
-    })));
+    assert!(
+        events.contains(&InferenceEvent::ToolCallStarted(ToolCallStarted {
+            id: "toolu_sel".to_string(),
+            name: "edit_file".to_string(),
+        }))
+    );
+    assert!(
+        events.contains(&InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+            id: "toolu_sel".to_string(),
+            name: "edit_file".to_string(),
+            arguments: r#"{"path":"a.txt"}"#.to_string(),
+        }))
+    );
     assert!(matches!(
         events.last(),
         Some(InferenceEvent::Completed(CompletionMetadata {

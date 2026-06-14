@@ -537,8 +537,14 @@ fn user_prompt_long_line_wraps_instead_of_truncating() {
     );
     // Entire message content should be visible across wrapped rows, not cut off.
     let combined: String = rows.iter().map(|r| r.trim()).collect::<Vec<_>>().join(" ");
-    assert!(!combined.contains("..."), "text should wrap, not truncate with ...");
-    assert!(combined.contains("lazy dog"), "wrapped content should contain full message");
+    assert!(
+        !combined.contains("..."),
+        "text should wrap, not truncate with ..."
+    );
+    assert!(
+        combined.contains("lazy dog"),
+        "wrapped content should contain full message"
+    );
 }
 
 #[test]

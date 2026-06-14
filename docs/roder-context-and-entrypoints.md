@@ -32,5 +32,5 @@ Run focused context checks with:
 ```sh
 cargo test -p roder-core context
 cargo test -p roder-evals context
-RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals cargo run -p roder-cli -- eval run evals/fixtures/context --offline
+RODER_EVAL_OUTPUT_DIR=/tmp/roder-evals cargo run -p roder -- eval run evals/fixtures/context --offline
 ```

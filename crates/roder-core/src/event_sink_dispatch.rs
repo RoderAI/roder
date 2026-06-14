@@ -52,10 +52,9 @@ impl EventSinkDispatcher {
                         let failure = match outcome {
                             Ok(Ok(())) => None,
                             Ok(Err(error)) => Some(truncate_message(&error.to_string())),
-                            Err(_) => Some(format!(
-                                "timed out after {}ms",
-                                HANDLE_TIMEOUT.as_millis()
-                            )),
+                            Err(_) => {
+                                Some(format!("timed out after {}ms", HANDLE_TIMEOUT.as_millis()))
+                            }
                         };
                         if let Some(message) = failure {
                             worker_bus.emit(RoderEvent::EventSinkFailed(EventSinkFailed {

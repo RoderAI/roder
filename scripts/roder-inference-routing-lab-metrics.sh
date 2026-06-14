@@ -49,4 +49,4 @@ printf 'Inspecting thread=%s turn=%s\n\n' "$thread_id" "$turn_id" >&2
 {
   printf '{"jsonrpc":"2.0","id":1,"method":"inference/routing/status","params":{"threadId":"%s","turnId":"%s"}}\n' "$thread_id" "$turn_id"
   printf '{"jsonrpc":"2.0","id":2,"method":"inference/routing/metrics","params":{"threadId":"%s","turnId":"%s","limit":20}}\n' "$thread_id" "$turn_id"
-} | cargo run -p roder-cli -- app-server --config-dir "$lab_dir" --listen stdio:// | jq .
+} | cargo run -p roder -- app-server --config-dir "$lab_dir" --listen stdio:// | jq .

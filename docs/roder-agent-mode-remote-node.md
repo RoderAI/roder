@@ -123,7 +123,7 @@ methods.
 ```sh
 cargo test -p roder-app-server --test agent_node_security
 cargo test -p roder-app-server --test remote_app_client
-cargo test -p roder-cli --bin roder agent_node
+cargo test -p roder --bin roder agent_node
 ```
 
 Security tests prove: enrolled mTLS connects; missing/unenrolled/revoked

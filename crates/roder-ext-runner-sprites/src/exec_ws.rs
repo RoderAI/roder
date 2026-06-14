@@ -86,7 +86,10 @@ mod tests {
             ExecFrame::Stderr(b"e".to_vec())
         );
         assert_eq!(decode_non_tty_frame(&[3, 7]).unwrap(), ExecFrame::Exit(7));
-        assert_eq!(decode_non_tty_frame(&[0, b'x']).unwrap(), ExecFrame::Stdin(b"x".to_vec()));
+        assert_eq!(
+            decode_non_tty_frame(&[0, b'x']).unwrap(),
+            ExecFrame::Stdin(b"x".to_vec())
+        );
         assert_eq!(decode_non_tty_frame(&[4]).unwrap(), ExecFrame::StdinEof);
     }
 

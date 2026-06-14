@@ -161,7 +161,10 @@ async fn turns_complete_while_a_sink_hangs() {
 
     // A full fake-provider turn must complete even though one sink hangs on
     // every event it receives.
-    let metadata = runtime.create_thread(Some("sinks".to_string())).await.unwrap();
+    let metadata = runtime
+        .create_thread(Some("sinks".to_string()))
+        .await
+        .unwrap();
     let mut events = runtime.bus.subscribe();
     let turn_id = runtime
         .start_turn(roder_core::StartTurnRequest {
@@ -190,7 +193,10 @@ async fn turns_complete_while_a_sink_hangs() {
         }
     })
     .await;
-    assert!(completed.is_ok(), "turn must complete despite a hanging sink");
+    assert!(
+        completed.is_ok(),
+        "turn must complete despite a hanging sink"
+    );
     assert!(
         received.load(Ordering::SeqCst),
         "healthy sinks keep receiving events"

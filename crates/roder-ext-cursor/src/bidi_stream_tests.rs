@@ -12,15 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::StreamExt;
-use roder_api::inference::{
-    InferenceEvent, ToolCallCompleted, TurnToolExecutor, TurnToolOutcome,
-};
+use roder_api::inference::{InferenceEvent, ToolCallCompleted, TurnToolExecutor, TurnToolOutcome};
 
 use crate::agentservice::AgentServiceConfig;
 use crate::bidi::{BidiRequest, run_bidi_turn};
 use crate::proto::{
-    encode_connect_frame, proto_field_bytes, proto_field_string, proto_field_varint,
-    proto_message,
+    encode_connect_frame, proto_field_bytes, proto_field_string, proto_field_varint, proto_message,
 };
 
 const UNKNOWN_EXEC_FIELD: u32 = 21;
@@ -129,7 +126,9 @@ async fn run_mock_agent_service(listener: tokio::net::TcpListener) {
         .header("content-type", "application/connect+proto")
         .body(())
         .expect("response");
-    let mut send = respond.send_response(response, false).expect("send headers");
+    let mut send = respond
+        .send_response(response, false)
+        .expect("send headers");
 
     send.send_data(unknown_exec_request_frame().into(), false)
         .expect("send exec request");
@@ -199,9 +198,11 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
     assert_eq!(calls.len(), 1, "unknown exec surfaces one timeline entry");
     assert_eq!(calls[0].name, "cursor_unsupported_tool");
 
-    assert!(events.iter().any(
-        |event| matches!(event, InferenceEvent::MessageDelta(delta) if delta.text == "done")
-    ));
+    assert!(
+        events.iter().any(
+            |event| matches!(event, InferenceEvent::MessageDelta(delta) if delta.text == "done")
+        )
+    );
     assert!(matches!(
         events.last(),
         Some(InferenceEvent::Completed(metadata))

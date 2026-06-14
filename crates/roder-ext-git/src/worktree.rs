@@ -205,7 +205,10 @@ fn unique_fork_branch(root: &Path, dir_name: &str) -> anyhow::Result<String> {
     let mut suffix = 1u32;
     while branch_exists(root, &branch)? {
         suffix += 1;
-        ensure!(suffix <= 1000, "too many existing fork branches for {dir_name}");
+        ensure!(
+            suffix <= 1000,
+            "too many existing fork branches for {dir_name}"
+        );
         branch = format!("roder/fork/{dir_name}-b{suffix}");
     }
     Ok(branch)
@@ -215,7 +218,12 @@ fn branch_exists(root: &Path, branch: &str) -> anyhow::Result<bool> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")])
+        .args([
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ])
         .output()
         .context("run git rev-parse --verify")?;
     Ok(output.status.success())

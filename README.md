@@ -129,7 +129,7 @@ The Rust binary is the primary entry point.
 
 ```sh
 cargo build --workspace
-cargo run -p roder-cli --bin roder -- auth status
+cargo run -p roder --bin roder -- auth status
 cargo test --workspace
 ```
 
@@ -268,7 +268,7 @@ Sprites destinations can also bootstrap a durable remote app-server service by d
 For local testing, override the selected destination without editing the file:
 
 ```sh
-RODER_REMOTE_RUNNER=unix-local cargo run -p roder-cli --bin roder
+RODER_REMOTE_RUNNER=unix-local cargo run -p roder --bin roder
 ```
 
 The app-server exposes `runners/list`, `runners/select`, `runners/session`, `runners/snapshot`, `runners/delete`, and `runners/ports`. The TUI exposes runner selection from the `Ctrl+P` menu and shows the active runner in the status surface. Runner sessions own files, commands, ports, snapshots, mounts, artifacts, and provider state; Roder orchestrates and persists the selected destination/session boundary.
@@ -496,7 +496,7 @@ The roadmap files are the working contract for in-flight changes. New ideas that
 
 ## License
 
-To be announced. Roder is intended to ship under a permissive open-source license once a `LICENSE` file lands at the repo root.
+Roder is licensed under the MIT License. See [`LICENCE`](./LICENCE).
 
 ### PostgreSQL session storage
 

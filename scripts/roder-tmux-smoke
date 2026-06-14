@@ -29,7 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$TMUX" start -s "$SESSION" -- cargo run -p roder-cli -- --record-api-transcript "$TRANSCRIPT" --record-ui-frames
+"$TMUX" start -s "$SESSION" -- cargo run -p roder -- --record-api-transcript "$TRANSCRIPT" --record-ui-frames
 sleep 4
 "$TMUX" keys -s "$SESSION" C-c y Enter || true
 sleep 3
@@ -37,5 +37,5 @@ sleep 3
 cleanup
 
 test -s "$TRANSCRIPT"
-cargo run -p roder-cli -- replay "$TRANSCRIPT" --headless
+cargo run -p roder -- replay "$TRANSCRIPT" --headless
 echo "api transcript record/replay smoke ok: $TRANSCRIPT"

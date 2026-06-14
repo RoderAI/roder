@@ -75,9 +75,7 @@ fn fixture(label: &str) -> Fixture {
     builder.tool_contributor(
         roder_tools::builtin_coding_tools_contributor(&repo).expect("coding tools"),
     );
-    builder.fork_provider(std::sync::Arc::new(
-        roder_ext_git::GitWorktreeForkProvider,
-    ));
+    builder.fork_provider(std::sync::Arc::new(roder_ext_git::GitWorktreeForkProvider));
     // Bypass tool approvals so the offline fake-provider write turn can
     // complete without an interactive approval client.
     let runtime = Arc::new(
@@ -318,10 +316,7 @@ async fn conversation_fork_truncates_at_requested_turn() {
         .await
         .unwrap();
 
-    assert_eq!(
-        outcome.child.forked_from_turn_id.as_deref(),
-        Some("turn-1")
-    );
+    assert_eq!(outcome.child.forked_from_turn_id.as_deref(), Some("turn-1"));
     let snapshot = fixture
         .runtime
         .load_thread(&outcome.child.thread_id)
@@ -431,7 +426,10 @@ async fn conversation_fork_removal_is_path_confirmed_and_missing_worktrees_fail_
         .workspace_for_thread(&second.child.thread_id)
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("missing its workspace"), "{error}");
+    assert!(
+        error.to_string().contains("missing its workspace"),
+        "{error}"
+    );
     assert!(
         error
             .to_string()

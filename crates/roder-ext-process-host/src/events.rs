@@ -45,14 +45,17 @@ impl EventSink for ProcessEventSink {
         let params = serde_json::to_value(ProcessEventsHandleNotification {
             envelope: envelope.clone(),
         })?;
-        tokio::time::timeout(FORWARD_TIMEOUT, self.host.notify(METHOD_EVENTS_HANDLE, params))
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "event sink {} timed out forwarding {}",
-                    self.sink_id,
-                    envelope.kind
-                )
-            })?
+        tokio::time::timeout(
+            FORWARD_TIMEOUT,
+            self.host.notify(METHOD_EVENTS_HANDLE, params),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "event sink {} timed out forwarding {}",
+                self.sink_id,
+                envelope.kind
+            )
+        })?
     }
 }

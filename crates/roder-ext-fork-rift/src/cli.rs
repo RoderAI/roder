@@ -20,11 +20,7 @@ use crate::errors::RiftError;
 
 const MAX_STDERR: usize = 400;
 
-pub async fn run_rift(
-    config: &RiftConfig,
-    cwd: &Path,
-    args: &[&str],
-) -> Result<String, RiftError> {
+pub async fn run_rift(config: &RiftConfig, cwd: &Path, args: &[&str]) -> Result<String, RiftError> {
     let output = Command::new(&config.rift_bin)
         .args(args)
         .current_dir(cwd)
@@ -46,7 +42,11 @@ pub async fn run_rift(
         return Err(RiftError::new(
             "command_failed",
             Some(cwd.display().to_string()),
-            format!("rift {} exited with {}: {stderr}", args.join(" "), output.status),
+            format!(
+                "rift {} exited with {}: {stderr}",
+                args.join(" "),
+                output.status
+            ),
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -60,8 +60,7 @@ pub fn parse_list(output: &str) -> Vec<(String, String)> {
             let (name, path) = line.split_once('\t')?;
             let name = name.trim();
             let path = path.trim();
-            (!name.is_empty() && !path.is_empty())
-                .then(|| (name.to_string(), path.to_string()))
+            (!name.is_empty() && !path.is_empty()).then(|| (name.to_string(), path.to_string()))
         })
         .collect()
 }

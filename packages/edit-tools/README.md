@@ -26,3 +26,16 @@ Line numbers in `read_file` output are for orientation only. Do not include them
 ## Security
 
 Paths are resolved under the configured workspace root. Traversal outside the root is rejected. The package does not start Roder, shell out to providers, run the TUI, or publish anything to npm during tests.
+
+## Publishing
+
+Publish from this directory after the release version is already reflected in
+`package.json`, `CHANGELOG.md`, and the generated `dist/` files:
+
+```sh
+pnpm pack --dry-run
+npm publish --access public --registry=https://registry.npmjs.org/
+```
+
+The package is published as `@roderai/edit-tools`; keep `README.md` in the
+`package.json` `files` list so npm shows this page on the registry.

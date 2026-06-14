@@ -844,9 +844,7 @@ mod tests {
     /// second store instance over the same files reloads the full provenance.
     #[tokio::test]
     async fn fork_metadata_round_trips_across_store_instances() {
-        use roder_api::forks::{
-            ForkCleanupPolicy, ForkProvenance, ForkStatus, WorkspaceFork,
-        };
+        use roder_api::forks::{ForkCleanupPolicy, ForkProvenance, ForkStatus, WorkspaceFork};
 
         let base_path = std::env::temp_dir().join(format!(
             "roder-jsonl-fork-roundtrip-{}",

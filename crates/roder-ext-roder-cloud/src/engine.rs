@@ -104,11 +104,7 @@ pub struct RoderCloudEngine {
 }
 
 impl RoderCloudEngine {
-    pub fn new(
-        api_key: Option<String>,
-        base_url: Option<String>,
-        web_url: Option<String>,
-    ) -> Self {
+    pub fn new(api_key: Option<String>, base_url: Option<String>, web_url: Option<String>) -> Self {
         let web_url = nonempty(web_url).unwrap_or_else(|| DEFAULT_WEB_URL.to_string());
         let token_source = nonempty(api_key)
             .map(|api_key| Arc::new(RoderCloudTokenSource::new(web_url.clone(), api_key)));
@@ -160,10 +156,7 @@ impl RoderCloudEngine {
         body
     }
 
-    async fn send_turn(
-        &self,
-        body: &Value,
-    ) -> anyhow::Result<ResponsesPayload> {
+    async fn send_turn(&self, body: &Value) -> anyhow::Result<ResponsesPayload> {
         let base_url = self.require_base_url()?;
         let token_source = self.require_token_source()?;
         let url = format!("{base_url}/responses");
@@ -236,9 +229,7 @@ fn flatten_input(request: &AgentInferenceRequest) -> String {
         .iter()
         .filter_map(|item| match item {
             TranscriptItem::UserMessage(message) => Some(("user", message.text.as_str())),
-            TranscriptItem::AssistantMessage(message) => {
-                Some(("assistant", message.text.as_str()))
-            }
+            TranscriptItem::AssistantMessage(message) => Some(("assistant", message.text.as_str())),
             TranscriptItem::ContextCompaction(compaction) => {
                 Some(("summary", compaction.summary.as_str()))
             }

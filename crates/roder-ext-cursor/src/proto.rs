@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const CONNECT_COMPRESSED_FLAG: u8 = 1;
 const CONNECT_END_STREAM_FLAG: u8 = 2;
@@ -1573,9 +1573,11 @@ mod tests {
         assert_eq!(decoded.tool_calls.len(), 1);
         assert_eq!(decoded.tool_calls[0].id, "tool_unknown_123");
         assert_eq!(decoded.tool_calls[0].name, "cursor_unsupported_tool");
-        assert!(decoded.tool_calls[0]
-            .arguments
-            .contains("unsupported_cursor_native_tool"));
+        assert!(
+            decoded.tool_calls[0]
+                .arguments
+                .contains("unsupported_cursor_native_tool")
+        );
     }
 
     /// Build a server message carrying one Cursor `ClientSideToolV2` tool call,

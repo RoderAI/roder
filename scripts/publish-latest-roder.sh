@@ -32,7 +32,7 @@ cargo run -p roder-configure -- generate \
 
 for target in $targets; do
   echo "publish: building roder for $target"
-  "${cargo_build[@]}" --release -p roder-cli --bin roder --target "$target"
+  "${cargo_build[@]}" --release -p roder --bin roder --target "$target"
 
   echo "publish: building remote-roder for $target"
   (
