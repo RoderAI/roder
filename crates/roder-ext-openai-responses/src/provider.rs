@@ -158,7 +158,7 @@ impl OpenAiResponsesEngine {
         request: &AgentInferenceRequest,
         options: RequestMappingOptions<'_>,
     ) -> (Value, ResponsesToolNameMap) {
-        let (tools, tool_name_map) = responses_tools(request);
+        let (tools, tool_name_map) = responses_tools(request, options.profile);
         let input = response_input_items_with_options(request, &tool_name_map, options.profile);
         let mut body = json!({
             "model": request.model.model,
@@ -312,13 +312,13 @@ fn xai_supports_reasoning(model: &str) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-struct ModelsResponse {
+pub struct ModelsResponse {
     #[serde(default)]
     data: Vec<ModelEntry>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ModelEntry {
+pub struct ModelEntry {
     id: String,
     #[serde(default)]
     name: Option<String>,
@@ -333,14 +333,14 @@ struct ModelsCacheFile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CachedProviderModels {
-    fetched_at: u64,
-    base_url: String,
-    models: Vec<ModelDescriptor>,
+pub struct CachedProviderModels {
+    pub fetched_at: u64,
+    pub base_url: String,
+    pub models: Vec<ModelDescriptor>,
 }
 
 impl CachedProviderModels {
-    fn is_stale(&self, ttl: Duration) -> bool {
+    pub fn is_stale(&self, ttl: Duration) -> bool {
         ttl.is_zero()
             || now_unix_secs()
                 .saturating_sub(self.fetched_at)
@@ -348,7 +348,7 @@ impl CachedProviderModels {
     }
 }
 
-async fn discover_models(
+pub async fn discover_models(
     base_url: &str,
     api_key: Option<&str>,
 ) -> anyhow::Result<Vec<ModelDescriptor>> {
@@ -407,7 +407,7 @@ fn models_from_response(body: ModelsResponse) -> Vec<ModelDescriptor> {
         .collect()
 }
 
-fn cached_models(provider_id: &str, base_url: &str) -> anyhow::Result<CachedProviderModels> {
+pub fn cached_models(provider_id: &str, base_url: &str) -> anyhow::Result<CachedProviderModels> {
     let cache: ModelsCacheFile = serde_json::from_str(&fs::read_to_string(cache_path())?)?;
     cache
         .providers
@@ -417,7 +417,7 @@ fn cached_models(provider_id: &str, base_url: &str) -> anyhow::Result<CachedProv
         .ok_or_else(|| anyhow::anyhow!("no cached models for {provider_id}"))
 }
 
-fn save_cached_models(
+pub fn save_cached_models(
     provider_id: &str,
     base_url: &str,
     models: &[ModelDescriptor],
@@ -460,7 +460,7 @@ fn roder_data_dir() -> PathBuf {
         })
 }
 
-fn cache_ttl() -> Duration {
+pub fn cache_ttl() -> Duration {
     env_nonempty("RODER_MODELS_CACHE_TTL_SECONDS")
         .or_else(|| env_nonempty("RODER_OPENCODE_MODELS_CACHE_TTL_SECONDS"))
         .and_then(|value| value.parse::<u64>().ok())
@@ -468,7 +468,7 @@ fn cache_ttl() -> Duration {
         .unwrap_or(DEFAULT_MODELS_CACHE_TTL)
 }
 
-fn force_refresh_requested() -> bool {
+pub fn force_refresh_requested() -> bool {
     env_nonempty("RODER_MODELS_REFRESH")
         .or_else(|| env_nonempty("RODER_OPENCODE_MODELS_REFRESH"))
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
@@ -489,20 +489,29 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
-fn responses_tools(request: &AgentInferenceRequest) -> (Vec<Value>, ResponsesToolNameMap) {
+fn responses_tools(
+    request: &AgentInferenceRequest,
+    profile: ResponsesProviderProfile,
+) -> (Vec<Value>, ResponsesToolNameMap) {
     let mut tools = Vec::new();
     let mut used_tool_names = HashSet::new();
     let mut tool_name_map = ResponsesToolNameMap::default();
     match request.runtime.hosted_web_search.mode {
         HostedWebSearchMode::Disabled => {}
-        HostedWebSearchMode::Cached => tools.push(json!({
-            "type": "web_search",
-            "external_web_access": false,
-        })),
-        HostedWebSearchMode::Live => tools.push(json!({
-            "type": "web_search",
-            "external_web_access": true,
-        })),
+        HostedWebSearchMode::Cached => {
+            let mut tool = json!({ "type": "web_search" });
+            if profile != ResponsesProviderProfile::Xai {
+                tool["external_web_access"] = json!(false);
+            }
+            tools.push(tool);
+        }
+        HostedWebSearchMode::Live => {
+            let mut tool = json!({ "type": "web_search" });
+            if profile != ResponsesProviderProfile::Xai {
+                tool["external_web_access"] = json!(true);
+            }
+            tools.push(tool);
+        }
     }
     for tool in &request.tools {
         let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
@@ -2259,7 +2268,7 @@ mod tests {
     }
 
     fn input_items(request: &AgentInferenceRequest) -> Vec<Value> {
-        let (_, tool_name_map) = responses_tools(request);
+        let (_, tool_name_map) = responses_tools(request, ResponsesProviderProfile::OpenAi);
         response_input_items(request, &tool_name_map)
     }
 
@@ -3217,6 +3226,8 @@ mod tests {
         request.model.provider = PROVIDER_XAI.to_string();
         request.model.model = "grok-4.3".to_string();
         request.runtime.prompt_cache_key = Some("openai-cache".to_string());
+        request.runtime.hosted_web_search =
+            roder_api::inference::HostedWebSearchConfig::cached();
 
         let (body, _) = OpenAiResponsesEngine::map_request_with_options(
             &request,
@@ -3229,6 +3240,18 @@ mod tests {
         assert_eq!(body["prompt_cache_key"], "thread-123");
         assert_eq!(body["reasoning"], json!({ "effort": "medium" }));
         assert!(body.get("include").is_none());
+
+        // For Xai profile (direct xAI and SuperGrok), the web_search tool must
+        // not include the "external_web_access" key — xAI rejects it with 400.
+        let tools = body["tools"].as_array().expect("tools present");
+        let ws = tools
+            .iter()
+            .find(|t| t.get("type").and_then(|v| v.as_str()) == Some("web_search"))
+            .expect("web_search tool present");
+        assert!(
+            ws.get("external_web_access").is_none(),
+            "xAI must not receive external_web_access"
+        );
     }
 
     #[test]

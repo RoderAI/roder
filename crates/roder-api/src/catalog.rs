@@ -403,7 +403,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_SUPERGROK,
         name: "SuperGrok",
         kind: PROVIDER_KIND_XAI,
-        default_model: "grok-4.3",
+        default_model: "grok-build-0.1",
         base_url: Some("https://api.x.ai/v1"),
         env_key: None,
         env_aliases: &[],
@@ -784,6 +784,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_NONE,
         XAI_NO_REASONING,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-build-0.1",
+        "Grok Build 0.1",
+        "SuperGrok OAuth access to xAI Grok Build, optimized for agentic coding and software engineering workflows.",
+        256_000,
+        REASONING_LOW,
+        XAI_CONFIGURABLE_REASONING,
     ),
     opencode_model(
         PROVIDER_OPENCODE,
@@ -1653,6 +1662,7 @@ mod tests {
                 "grok-4.20-multi-agent-0309",
                 "grok-4.20-0309-reasoning",
                 "grok-4.20-0309-non-reasoning",
+                "grok-build-0.1",
                 "gpt-5.5",
                 "gpt-5.3-codex-spark",
                 "big-pickle",
@@ -1699,7 +1709,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
-        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);

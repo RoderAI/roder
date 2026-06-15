@@ -2970,12 +2970,11 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     }
                 }
                 AuthProviderKind::SuperGrok => {
-                    eprintln!("Opening browser for SuperGrok sign-in...");
-                    let tokens = roder_supergrok_auth::login().await?;
-                    if tokens.email.is_empty() {
-                        eprintln!("Signed in with SuperGrok");
+                    let (_tokens, maybe_email) = roder_supergrok_auth::device_flow().await?;
+                    if let Some(email) = maybe_email {
+                        eprintln!("Signed in with SuperGrok account {email}");
                     } else {
-                        eprintln!("Signed in with SuperGrok account {}", tokens.email);
+                        eprintln!("Signed in with SuperGrok");
                     }
                 }
                 AuthProviderKind::RoderCloud => {

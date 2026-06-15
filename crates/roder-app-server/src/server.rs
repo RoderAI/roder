@@ -2310,7 +2310,7 @@ impl AppServer {
                 "supergrok auth persistence is disabled for this app-server",
             ));
         }
-        let tokens = roder_supergrok_auth::login()
+        let (tokens, _email) = roder_supergrok_auth::device_flow()
             .await
             .map_err(internal_error)?;
         Ok(serde_json::to_value(ProviderAuthResult {

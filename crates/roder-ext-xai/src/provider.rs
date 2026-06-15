@@ -5,7 +5,10 @@ use roder_api::inference::{
     InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, ModelDescriptor,
     ProviderAuthType,
 };
-use roder_ext_openai_responses::OpenAiResponsesEngine;
+use roder_ext_openai_responses::{
+    cached_models, discover_models, force_refresh_requested, save_cached_models, OpenAiResponsesEngine,
+    cache_ttl,
+};
 
 const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
 
@@ -47,6 +50,37 @@ impl InferenceEngine for SuperGrokEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        // When SuperGrok OAuth is configured, plug into the /models (and /v1/models)
+        // endpoint (via the shared OpenAI-compatible discover logic) so Roder can
+        // fetch the latest models and capabilities from xAI without a new release.
+        // Falls back to the static catalog (now seeded with grok-build-0.1 etc) on
+        // missing auth or error. Caching + background refresh matches other providers.
+        if let Ok(Some(token)) = roder_supergrok_auth::access_token().await {
+            let base = DEFAULT_XAI_BASE_URL;
+            let pid = PROVIDER_SUPERGROK;
+            let cached = cached_models(pid, base).ok();
+            let should_refresh = force_refresh_requested()
+                || cached
+                    .as_ref()
+                    .map(|entry| entry.is_stale(cache_ttl()))
+                    .unwrap_or(true);
+            if should_refresh {
+                let base_for_refresh = base.to_string();
+                let token_for_refresh = token.clone();
+                tokio::spawn(async move {
+                    if let Ok(models) =
+                        discover_models(&base_for_refresh, Some(&token_for_refresh)).await
+                    {
+                        let _ = save_cached_models(pid, &base_for_refresh, &models);
+                    }
+                });
+            }
+            if let Some(entry) = cached {
+                if !entry.models.is_empty() {
+                    return Ok(entry.models);
+                }
+            }
+        }
         Ok(models_for_provider(PROVIDER_SUPERGROK, false))
     }
 
@@ -90,6 +124,8 @@ mod tests {
                 .iter()
                 .any(|model| model.id == "grok-4.20-0309-reasoning")
         );
+        // Newer models via catalog update + /models discovery for supergrok
+        assert!(models.iter().any(|model| model.id == "grok-build-0.1"));
     }
 
     #[test]
