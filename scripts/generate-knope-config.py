@@ -13,7 +13,10 @@ Usage:
 from __future__ import annotations
 
 import sys
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -94,7 +97,7 @@ type = "Release"
 
 [github]
 owner = "PandelisZ"
-repo = "gode"
+repo = "roder"
 """
 
 
