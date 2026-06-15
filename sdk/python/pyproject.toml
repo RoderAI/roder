@@ -1,6 +1,6 @@
 [project]
 name = "roder-sdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python SDK for the Roder app-server JSON-RPC API"
 readme = "README.md"
 requires-python = ">=3.10"
