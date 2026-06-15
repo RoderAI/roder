@@ -277,7 +277,7 @@ See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts,
 
 OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
-xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or select `supergrok/grok-4.3` in the TUI to start SuperGrok OAuth.
+xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or select `supergrok/grok-build-0.1` (or `supergrok/grok-4.3`) in the TUI to start SuperGrok OAuth. Models for SuperGrok are kept up-to-date by querying the xAI `/models` endpoint over the OAuth session (with disk cache).
 
 OpenRouter provider setup is documented in [`docs/roder-openrouter-provider.md`](./docs/roder-openrouter-provider.md). Use `openrouter/x-ai/grok-build-0.1` with `OPENROUTER_API_KEY`; direct xAI uses `grok-build-0.1`, while OpenRouter uses the `x-ai/grok-build-0.1` slug.
 
