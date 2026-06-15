@@ -1,6 +1,6 @@
 {
   "name": "@roderai/edit-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Roder-grade edit tools for JavaScript agent runtimes",
   "type": "module",
   "packageManager": "pnpm@10.33.2",
