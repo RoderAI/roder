@@ -12,11 +12,19 @@ Usage:
 
 from __future__ import annotations
 
+import subprocess
 import sys
 try:
     import tomllib
 except ImportError:
-    import tomli as tomllib
+    try:
+        import tomli as tomllib
+    except ImportError:
+        # Auto-install tomli for Python < 3.11 (e.g. system python3 on older macOS).
+        # This keeps the release scripts runnable with plain `python3` without
+        # requiring a prior `pip install tomli` or mise/uv env.
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "tomli"])
+        import tomli as tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
