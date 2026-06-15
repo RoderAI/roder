@@ -5,7 +5,7 @@ Roder exposes Grok models through two provider ids:
 - `xai`: direct xAI API-key auth with `XAI_API_KEY`.
 - `supergrok`: SuperGrok subscription OAuth with `roder auth login supergrok`.
 
-Both providers use `provider/model` labels such as `xai/grok-4.3` and `supergrok/grok-4.20-0309-reasoning`.
+Both providers use `provider/model` labels such as `xai/grok-4.3`, `supergrok/grok-build-0.1`, and `supergrok/grok-4.3`. SuperGrok now dynamically queries the xAI `/models` (and `/v1/models`) endpoint (with caching + background refresh, using the SuperGrok OAuth token) to surface the latest models and basic capabilities from xAI. Static catalog entries (including grok-build-0.1) act as the curated fallback.
 
 ## Direct xAI API Key
 
@@ -27,7 +27,7 @@ api_key = "..."
 
 ## SuperGrok OAuth
 
-SuperGrok uses a PKCE loopback OAuth flow and stores tokens under:
+SuperGrok uses the OAuth 2.0 Device Authorization Grant (device flow) for robust CLI / TUI login (with browser-assisted user code entry) and stores tokens under:
 
 ```text
 $HOME/.roder/auth/supergrok.json
@@ -49,7 +49,8 @@ OAuth aliases `grok-oauth`, `xai-oauth`, `x-ai-oauth`, and `xai-grok-oauth` norm
 
 Current visible Grok entries:
 
-- `grok-4.3`: 1,000,000 token context, 900,000 token auto-compaction threshold.
+- `grok-4.3`: 1,000,000 token context (legacy via static catalog).
+- `grok-build-0.1`: Grok Build (xAI's agentic coding model); ~256k context. Primary default for SuperGrok; fetched live via `/models` when signed in.
 - `grok-4.20-multi-agent-0309`: 2,000,000 token context, 1,800,000 token auto-compaction threshold.
 - `grok-4.20-0309-reasoning`: 2,000,000 token context, 1,800,000 token auto-compaction threshold.
 - `grok-4.20-0309-non-reasoning`: 2,000,000 token context, 1,800,000 token auto-compaction threshold.

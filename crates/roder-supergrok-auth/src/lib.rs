@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use rand::RngExt;
@@ -18,6 +18,13 @@ const CALLBACK_PORT: u16 = 56121;
 const CALLBACK_HOST: &str = "127.0.0.1";
 const CALLBACK_PATH: &str = "/callback";
 const REFRESH_EXPIRY_SKEW_MILLIS: i64 = 3 * 60 * 1000;
+
+fn auth_client() -> Client {
+    Client::builder()
+        .user_agent("Roder/1.0 (+https://roder.sh)")
+        .build()
+        .expect("failed to construct reqwest client for xAI SuperGrok auth")
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Tokens {
@@ -40,6 +47,7 @@ struct DiscoveryDocument {
     issuer: String,
     authorization_endpoint: String,
     token_endpoint: String,
+    device_authorization_endpoint: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -54,6 +62,22 @@ struct TokenResponse {
     expires_in: i64,
     #[serde(default)]
     token_type: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DeviceAuthorizationResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    verification_uri_complete: Option<String>,
+    expires_in: u64,
+    interval: u64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DeviceTokenErrorResponse {
+    error: String,
+    error_description: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -181,6 +205,116 @@ pub async fn login() -> anyhow::Result<Tokens> {
     Ok(tokens)
 }
 
+pub async fn device_flow() -> anyhow::Result<(Tokens, Option<String>)> {
+    let discovery = discover().await?;
+    let device_endpoint = discovery
+        .device_authorization_endpoint
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("supergrok device authorization endpoint not available in discovery"))?;
+    validate_xai_https_endpoint(&device_endpoint)?;
+
+    let client = auth_client();
+    let params = [
+        ("client_id", CLIENT_ID),
+        ("scope", SCOPE),
+    ];
+    let response = client
+        .post(&device_endpoint)
+        .form(&params)
+        .send()
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("supergrok device authorization request failed: {status} {}", text.trim());
+    }
+    let device_auth: DeviceAuthorizationResponse = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("supergrok device authorization response was not valid JSON: {e}
+{text}"))?;
+
+    let verification_uri = device_auth.verification_uri_complete.as_ref()
+        .unwrap_or(&device_auth.verification_uri);
+    eprintln!("SuperGrok device sign-in");
+    eprintln!("User code: {}", device_auth.user_code);
+    eprintln!("Open: {verification_uri}");
+    open_browser(verification_uri).or_else(|err| {
+        eprintln!("Could not open browser automatically: {err}");
+        Ok::<(), anyhow::Error>(())
+    })?;
+
+    let token = poll_device_token(
+        &discovery.token_endpoint,
+        &device_auth.device_code,
+        device_auth.interval,
+        device_auth.expires_in,
+    )
+    .await?;
+    Store::new().save(token.clone())?;
+    let email = if token.email.trim().is_empty() {
+        None
+    } else {
+        Some(token.email.clone())
+    };
+    Ok((token, email))
+}
+
+async fn poll_device_token(
+    token_endpoint: &str,
+    device_code: &str,
+    mut interval: u64,
+    expires_in: u64,
+) -> anyhow::Result<Tokens> {
+    let max_interval = 60;
+    if interval == 0 {
+        interval = 5;
+    }
+    let expires_at = Instant::now() + Duration::from_secs(expires_in);
+    let client = auth_client();
+    loop {
+        if Instant::now() >= expires_at {
+            anyhow::bail!("supergrok device sign-in expired");
+        }
+        let params = [
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", device_code),
+            ("client_id", CLIENT_ID),
+        ];
+        let response = client
+            .post(token_endpoint)
+            .form(&params)
+            .send()
+            .await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if status.is_success() {
+            let token_response = parse_token_response(&text)?;
+            return Ok(tokens_from_response(token_response)?);
+        }
+        let error: DeviceTokenErrorResponse = match serde_json::from_str(&text) {
+            Ok(e) => e,
+            Err(_) => {
+                anyhow::bail!("supergrok device token request failed: {status} {}", text.trim());
+            }
+        };
+        match error.error.as_str() {
+            "authorization_pending" => {
+                tokio::time::sleep(Duration::from_secs(interval)).await;
+            }
+            "slow_down" => {
+                interval = (interval + 5).min(max_interval);
+                tokio::time::sleep(Duration::from_secs(interval)).await;
+            }
+            "expired_token" => {
+                anyhow::bail!("supergrok device sign-in expired (expired_token)");
+            }
+            other => {
+                let desc = error.error_description.as_deref().unwrap_or(other);
+                anyhow::bail!("supergrok device sign-in error: {desc}");
+            }
+        }
+    }
+}
+
 pub async fn status() -> anyhow::Result<Option<Tokens>> {
     let tokens = Store::new().load()?;
     Ok((!tokens.refresh.trim().is_empty()).then_some(tokens))
@@ -191,7 +325,7 @@ pub fn logout() -> anyhow::Result<()> {
 }
 
 async fn discover() -> anyhow::Result<DiscoveryDocument> {
-    let response = Client::new().get(DISCOVERY_URL).send().await?;
+    let response = auth_client().get(DISCOVERY_URL).send().await?;
     let status = response.status();
     let text = response.text().await?;
     if !status.is_success() {
@@ -208,6 +342,9 @@ fn validate_discovery(discovery: &DiscoveryDocument) -> anyhow::Result<()> {
     }
     validate_xai_https_endpoint(&discovery.authorization_endpoint)?;
     validate_xai_https_endpoint(&discovery.token_endpoint)?;
+    if let Some(ref device_ep) = discovery.device_authorization_endpoint {
+        validate_xai_https_endpoint(device_ep)?;
+    }
     Ok(())
 }
 
@@ -264,7 +401,7 @@ async fn exchange_code(
 
 async fn token_request(token_endpoint: &str, params: &[(&str, &str)]) -> anyhow::Result<Tokens> {
     validate_xai_https_endpoint(token_endpoint)?;
-    let response = Client::new()
+    let response = auth_client()
         .post(token_endpoint)
         .form(params)
         .send()
@@ -359,7 +496,7 @@ fn authorize_url(
     nonce: &str,
 ) -> String {
     format!(
-        "{authorization_endpoint}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}&nonce={}&plan=generic&referrer=roder",
+        "{authorization_endpoint}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}&nonce={}&plan=premium&referrer=roder",
         urlencoding::encode(CLIENT_ID),
         urlencoding::encode(redirect_uri),
         urlencoding::encode(SCOPE),
@@ -527,7 +664,7 @@ mod tests {
         assert!(url.contains("scope=openid%20profile%20email%20offline_access"));
         assert!(url.contains("grok-cli%3Aaccess"));
         assert!(url.contains("api%3Aaccess"));
-        assert!(url.contains("plan=generic"));
+        assert!(url.contains("plan=premium"));
         assert!(url.contains("referrer=roder"));
         assert!(url.contains("nonce=nonce"));
         assert!(url.contains("code_challenge_method=S256"));
@@ -553,6 +690,7 @@ mod tests {
             issuer: ISSUER.to_string(),
             authorization_endpoint: "https://auth.x.ai/oauth/authorize".to_string(),
             token_endpoint: "https://auth.x.ai/oauth/token".to_string(),
+            device_authorization_endpoint: None,
         })
         .unwrap();
 
@@ -560,6 +698,7 @@ mod tests {
             issuer: ISSUER.to_string(),
             authorization_endpoint: "https://example.com/oauth/authorize".to_string(),
             token_endpoint: "https://auth.x.ai/oauth/token".to_string(),
+            device_authorization_endpoint: None,
         })
         .unwrap_err()
         .to_string();
