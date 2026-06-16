@@ -29,6 +29,10 @@ pub struct ChatCompletionsRequestConfig {
     pub headers: Vec<(String, String)>,
     pub max_tokens_field: MaxTokensField,
     pub thinking_disabled: bool,
+    /// When false, omit `stream_options` (some providers reject it on managed APIs).
+    pub include_stream_usage: bool,
+    /// When false, omit `parallel_tool_calls` even when tools are present.
+    pub include_parallel_tool_calls: bool,
 }
 
 impl ChatCompletionsRequestConfig {
@@ -44,6 +48,8 @@ impl ChatCompletionsRequestConfig {
             headers: Vec::new(),
             max_tokens_field: MaxTokensField::MaxTokens,
             thinking_disabled: false,
+            include_stream_usage: true,
+            include_parallel_tool_calls: true,
         }
     }
 
@@ -62,6 +68,8 @@ impl ChatCompletionsRequestConfig {
             headers: Vec::new(),
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             thinking_disabled: true,
+            include_stream_usage: true,
+            include_parallel_tool_calls: true,
         }
     }
 }
@@ -75,15 +83,20 @@ pub async fn stream_chat_completions(
         "model": request.model.model,
         "messages": chat_messages(&request, &tool_name_map),
         "stream": true,
-        "stream_options": { "include_usage": true },
     });
+    if config.include_stream_usage {
+        body["stream_options"] = json!({ "include_usage": true });
+    }
     if config.thinking_disabled {
         body["thinking"] = json!({ "type": "disabled" });
     }
     if !tools.is_empty() {
         body["tools"] = json!(tools);
         body["tool_choice"] = chat_tool_choice(&request.tool_choice, &tool_name_map);
-        body["parallel_tool_calls"] = json!(request.runtime.parallel_tool_calls.unwrap_or(true));
+        if config.include_parallel_tool_calls {
+            body["parallel_tool_calls"] =
+                json!(request.runtime.parallel_tool_calls.unwrap_or(true));
+        }
     }
     if let Some(max_tokens) = request.output.max_tokens {
         match config.max_tokens_field {
@@ -332,6 +345,48 @@ mod tests {
         assert_eq!(body["max_completion_tokens"], 32);
         assert_eq!(body["thinking"], json!({ "type": "disabled" }));
         assert_eq!(body["tools"][0]["function"]["name"], "run_command");
+    }
+
+    #[tokio::test]
+    async fn stream_chat_completions_can_omit_stream_options_and_parallel_tool_calls() {
+        let server = spawn_chat_server(
+            "/chat/completions",
+            "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+        )
+        .await;
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "kimi-code".to_string(),
+                model: "kimi-for-coding".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hello"))],
+            tools: vec![ToolSpec {
+                name: "read_file".to_string(),
+                description: "Read".to_string(),
+                parameters: json!({ "type": "object", "properties": {} }),
+            }],
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints {
+                parallel_tool_calls: Some(true),
+                ..RuntimeHints::default()
+            },
+            metadata: json!({}),
+        };
+
+        let mut config = ChatCompletionsRequestConfig::bearer("Kimi Code", server.base_url.clone(), "token");
+        config.include_stream_usage = false;
+        config.include_parallel_tool_calls = false;
+
+        let mut stream = stream_chat_completions(config, request).await.unwrap();
+        while stream.next().await.is_some() {}
+        let (_, body) = server.request.await.unwrap();
+
+        assert!(body.get("stream_options").is_none());
+        assert!(body.get("parallel_tool_calls").is_none());
+        assert_eq!(body["tools"][0]["function"]["name"], "read_file");
     }
 
     #[tokio::test]

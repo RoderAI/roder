@@ -8,7 +8,7 @@ use roder_ext_openai_chat_completions::{ChatCompletionsRequestConfig, stream_cha
 
 use crate::auth::{
     DEFAULT_MANAGED_BASE_URL, DEFAULT_OPEN_PLATFORM_BASE_URL, access_token, has_stored_tokens,
-    inference_headers, managed_base_url,
+    inference_headers,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -81,7 +81,7 @@ impl KimiCodeInferenceEngine {
     fn base_url_for(&self, auth: &KimiAuth) -> String {
         self.configured_base_url().unwrap_or_else(|| match auth {
             KimiAuth::ApiKey { .. } => self.spec.default_open_platform_base_url.to_string(),
-            KimiAuth::OAuth { .. } => managed_base_url(),
+            KimiAuth::OAuth { .. } => self.spec.default_managed_base_url.to_string(),
         })
     }
 
@@ -176,6 +176,9 @@ impl InferenceEngine for KimiCodeInferenceEngine {
         };
         if matches!(auth, KimiAuth::OAuth { .. }) {
             config.headers = inference_headers()?;
+            // Kimi managed coding API rejects some OpenAI-compat fields (e.g. stream_options).
+            config.include_stream_usage = false;
+            config.include_parallel_tool_calls = false;
         }
         stream_chat_completions(config, request).await
     }
