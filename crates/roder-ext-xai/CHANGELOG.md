@@ -1,3 +1,9 @@
+## 0.1.2 (2026-06-16)
+
+### Fixes
+
+- SuperGrok now lists only Grok Build 0.1 (500k context) and Grok Composer 2.5 Fast (200k context), with curated catalog metadata instead of raw xAI /models discovery.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
