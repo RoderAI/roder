@@ -6,7 +6,10 @@ use roder_api::inference::{
 };
 use roder_ext_openai_chat_completions::{ChatCompletionsRequestConfig, stream_chat_completions};
 
-use crate::auth::{access_token, has_stored_tokens};
+use crate::auth::{
+    DEFAULT_MANAGED_BASE_URL, DEFAULT_OPEN_PLATFORM_BASE_URL, access_token, has_stored_tokens,
+    inference_headers, managed_base_url,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct KimiCodeConfig {
@@ -19,7 +22,8 @@ pub struct KimiCodeProviderSpec {
     pub provider_id: &'static str,
     pub name: &'static str,
     pub description: &'static str,
-    pub default_base_url: &'static str,
+    pub default_managed_base_url: &'static str,
+    pub default_open_platform_base_url: &'static str,
     pub sort_order: i32,
     pub api_key_env: &'static str,
     pub api_key_aliases: &'static [&'static str],
@@ -32,8 +36,9 @@ impl Default for KimiCodeProviderSpec {
         Self {
             provider_id: PROVIDER_KIMI_CODE,
             name: "Kimi Code",
-            description: "Kimi Code (Moonshot AI) subscription inference (direct Moonshot route).",
-            default_base_url: "https://api.moonshot.ai/v1",
+            description: "Kimi Code (Moonshot AI) subscription inference (direct Kimi Code route).",
+            default_managed_base_url: DEFAULT_MANAGED_BASE_URL,
+            default_open_platform_base_url: DEFAULT_OPEN_PLATFORM_BASE_URL,
             sort_order: 25,
             api_key_env: "KIMI_CODE_API_KEY",
             api_key_aliases: &["RODER_KIMI_CODE_API_KEY"],
@@ -41,6 +46,11 @@ impl Default for KimiCodeProviderSpec {
             base_url_aliases: &["KIMI_CODE_BASE_URL"],
         }
     }
+}
+
+enum KimiAuth {
+    ApiKey { key: String },
+    OAuth { token: String },
 }
 
 pub struct KimiCodeInferenceEngine {
@@ -53,7 +63,7 @@ impl KimiCodeInferenceEngine {
         Self { config, spec }
     }
 
-    fn base_url(&self) -> String {
+    fn configured_base_url(&self) -> Option<String> {
         self.config
             .base_url
             .clone()
@@ -66,7 +76,13 @@ impl KimiCodeInferenceEngine {
                 }
                 None
             })
-            .unwrap_or_else(|| self.spec.default_base_url.to_string())
+    }
+
+    fn base_url_for(&self, auth: &KimiAuth) -> String {
+        self.configured_base_url().unwrap_or_else(|| match auth {
+            KimiAuth::ApiKey { .. } => self.spec.default_open_platform_base_url.to_string(),
+            KimiAuth::OAuth { .. } => managed_base_url(),
+        })
     }
 
     fn api_key(&self) -> Option<String> {
@@ -84,12 +100,12 @@ impl KimiCodeInferenceEngine {
             })
     }
 
-    async fn resolve_bearer(&self) -> anyhow::Result<String> {
+    async fn resolve_auth(&self) -> anyhow::Result<KimiAuth> {
         if let Some(api_key) = self.api_key() {
-            return Ok(api_key);
+            return Ok(KimiAuth::ApiKey { key: api_key });
         }
         if let Some(access_token) = access_token().await? {
-            return Ok(access_token);
+            return Ok(KimiAuth::OAuth { token: access_token });
         }
         anyhow::bail!(
             "{} auth is missing; run `roder auth login kimi-code` or set {} / {}",
@@ -148,13 +164,20 @@ impl InferenceEngine for KimiCodeInferenceEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let bearer = self.resolve_bearer().await?;
-        let base_url = self.base_url();
-        stream_chat_completions(
-            ChatCompletionsRequestConfig::bearer(self.spec.name.to_string(), base_url, bearer),
-            request,
-        )
-        .await
+        let auth = self.resolve_auth().await?;
+        let base_url = self.base_url_for(&auth);
+        let mut config = match &auth {
+            KimiAuth::ApiKey { key } => {
+                ChatCompletionsRequestConfig::bearer(self.spec.name.to_string(), base_url, key)
+            }
+            KimiAuth::OAuth { token } => {
+                ChatCompletionsRequestConfig::bearer(self.spec.name.to_string(), base_url, token)
+            }
+        };
+        if matches!(auth, KimiAuth::OAuth { .. }) {
+            config.headers = inference_headers()?;
+        }
+        stream_chat_completions(config, request).await
     }
 }
 
@@ -174,5 +197,23 @@ mod tests {
         let metadata = engine.metadata();
         assert_eq!(metadata.auth_type, ProviderAuthType::OAuth);
         assert_eq!(metadata.auth_configured, Some(true));
+    }
+
+    #[test]
+    fn oauth_uses_managed_base_url_by_default() {
+        let engine = KimiCodeInferenceEngine::new(KimiCodeConfig::default(), KimiCodeProviderSpec::default());
+        let base_url = engine.base_url_for(&KimiAuth::OAuth {
+            token: "token".to_string(),
+        });
+        assert_eq!(base_url, DEFAULT_MANAGED_BASE_URL);
+    }
+
+    #[test]
+    fn api_key_uses_open_platform_base_url_by_default() {
+        let engine = KimiCodeInferenceEngine::new(KimiCodeConfig::default(), KimiCodeProviderSpec::default());
+        let base_url = engine.base_url_for(&KimiAuth::ApiKey {
+            key: "key".to_string(),
+        });
+        assert_eq!(base_url, DEFAULT_OPEN_PLATFORM_BASE_URL);
     }
 }

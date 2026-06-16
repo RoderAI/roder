@@ -2,6 +2,9 @@ mod auth;
 mod extension;
 mod provider;
 
-pub use auth::{access_token, device_flow, has_stored_tokens, logout, oauth_host, status, Tokens};
+pub use auth::{
+    DEFAULT_MANAGED_BASE_URL, DEFAULT_OPEN_PLATFORM_BASE_URL, access_token, device_flow,
+    has_stored_tokens, inference_headers, logout, managed_base_url, oauth_host, status, Tokens,
+};
 pub use extension::*;
 pub use provider::KimiCodeConfig;

@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const DEFAULT_OAUTH_HOST: &str = "https://auth.kimi.com";
+pub const DEFAULT_MANAGED_BASE_URL: &str = "https://api.kimi.com/coding/v1";
+pub const DEFAULT_OPEN_PLATFORM_BASE_URL: &str = "https://api.moonshot.ai/v1";
 const CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const KIMI_CODE_PLATFORM: &str = "kimi_code_cli";
+const KIMI_CODE_USER_AGENT_PRODUCT: &str = "kimi-code-cli";
 const REFRESH_EXPIRY_SKEW_MILLIS: i64 = 3 * 60 * 1000;
 const RODER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -111,6 +114,27 @@ impl Store {
     fn device_id_path(&self) -> PathBuf {
         self.data_dir.join("auth").join("kimi-code-device-id")
     }
+}
+
+pub fn managed_base_url() -> String {
+    std::env::var("KIMI_CODE_BASE_URL")
+        .ok()
+        .or_else(|| std::env::var("RODER_KIMI_CODE_BASE_URL").ok())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MANAGED_BASE_URL.to_string())
+}
+
+pub fn inference_headers() -> anyhow::Result<Vec<(String, String)>> {
+    let mut headers = device_headers()?
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect::<Vec<_>>();
+    headers.push(("User-Agent".to_string(), kimi_code_user_agent()));
+    Ok(headers)
+}
+
+fn kimi_code_user_agent() -> String {
+    format!("{KIMI_CODE_USER_AGENT_PRODUCT}/{RODER_VERSION} (roder)")
 }
 
 pub fn oauth_host() -> String {
@@ -651,6 +675,22 @@ mod tests {
             .map(|(_, value)| value.as_str());
         assert_eq!(platform, Some(KIMI_CODE_PLATFORM));
         assert_eq!(version, Some(RODER_VERSION));
+    }
+
+    #[test]
+    fn inference_headers_include_kimi_code_cli_user_agent() {
+        let headers = inference_headers().unwrap();
+        let user_agent = headers
+            .iter()
+            .find(|(name, _)| name == "User-Agent")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(user_agent, Some(kimi_code_user_agent().as_str()));
+        assert!(headers.iter().any(|(name, _)| name == "X-Msh-Device-Id"));
+    }
+
+    #[test]
+    fn managed_base_url_defaults_to_kimi_coding_api() {
+        assert_eq!(managed_base_url(), DEFAULT_MANAGED_BASE_URL);
     }
 
     #[test]
