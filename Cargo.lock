@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3389,7 +3389,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3414,7 +3414,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3577,7 +3577,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3784,7 +3784,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-fireworks"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3933,7 +3933,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-kimi-code"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4087,7 +4087,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-responses"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4537,7 +4537,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-xai"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4598,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4699,7 +4699,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4829,7 +4829,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
