@@ -4,10 +4,9 @@ use std::sync::{Arc, OnceLock};
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
-    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_MOCK,
-    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
-    PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK,
-    PROVIDER_VERTEX, PROVIDER_XAI,
+    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_FIREWORKS, PROVIDER_GEMINI,
+    PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
+    PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI,
     PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
 use roder_api::embeddings::EmbeddingProvider;
@@ -23,6 +22,7 @@ use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_chrome::ChromeExtension;
 use roder_ext_claude_code::{ClaudeCodeConfig, ClaudeCodeExtension};
 use roder_ext_cursor::{CursorConfig, CursorExtension};
+use roder_ext_fireworks::{FireworksConfig, FireworksExtension};
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
 use roder_ext_google_embeddings::{
@@ -132,6 +132,8 @@ pub struct DefaultRegistryConfig {
     pub openrouter_base_url: Option<String>,
     pub openrouter_http_referer: Option<String>,
     pub openrouter_app_title: Option<String>,
+    pub fireworks_api_key: Option<String>,
+    pub fireworks_base_url: Option<String>,
     pub roder_cloud_api_key: Option<String>,
     pub roder_cloud_base_url: Option<String>,
     pub roder_cloud_web_url: Option<String>,
@@ -250,6 +252,8 @@ impl Default for DefaultRegistryConfig {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            fireworks_api_key: None,
+            fireworks_base_url: None,
             roder_cloud_api_key: None,
             roder_cloud_base_url: None,
             roder_cloud_web_url: None,
@@ -414,6 +418,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         base_url: config.openrouter_base_url,
         http_referer: config.openrouter_http_referer,
         app_title: config.openrouter_app_title,
+    }))?;
+    builder.install(FireworksExtension::new(FireworksConfig {
+        api_key: config.fireworks_api_key,
+        base_url: config.fireworks_base_url,
     }))?;
     builder.install(RoderCloudExtension::new(RoderCloudConfig {
         api_key: config.roder_cloud_api_key,
@@ -657,6 +665,7 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_OPENCODE_GO
             | PROVIDER_OPENROUTER
+            | PROVIDER_FIREWORKS
             | PROVIDER_RODER_CLOUD
             | PROVIDER_POOLSIDE
             | PROVIDER_CURSOR
@@ -1622,6 +1631,8 @@ mod tests {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            fireworks_api_key: Some("fireworks".to_string()),
+            fireworks_base_url: None,
             roder_cloud_api_key: Some("roder_test".to_string()),
             roder_cloud_base_url: None,
             roder_cloud_web_url: None,
@@ -1669,6 +1680,7 @@ mod tests {
             PROVIDER_OPENCODE,
             PROVIDER_OPENCODE_GO,
             PROVIDER_OPENROUTER,
+            PROVIDER_FIREWORKS,
             PROVIDER_RODER_CLOUD,
             PROVIDER_POOLSIDE,
             PROVIDER_CURSOR,
@@ -1736,6 +1748,20 @@ mod tests {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
 
         assert!(registry.inference_engine(PROVIDER_KIMI_CODE).is_some());
+    }
+
+    #[test]
+    fn default_registry_exposes_fireworks_without_api_key() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let engine = registry
+            .inference_engine(PROVIDER_FIREWORKS)
+            .expect("fireworks provider should be registered offline");
+
+        assert_eq!(engine.metadata().auth_configured, Some(false));
+        assert_eq!(
+            engine.metadata().auth_label.as_deref(),
+            Some("FIREWORKS_API_KEY")
+        );
     }
 
     #[test]
