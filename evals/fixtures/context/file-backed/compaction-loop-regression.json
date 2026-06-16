@@ -1,0 +1,9 @@
+{
+  "id": "compaction-loop-regression",
+  "title": "Avoid repeated auto-compaction within one Grok-style tool-heavy turn",
+  "prompt": "Resume work on the thread. Use tools heavily but stay on task.",
+  "tags": ["file-backed-context", "compaction", "grok-regression"],
+  "expectedAnswerContains": "continuing",
+  "maxAutoCompactionsPerTurn": 1,
+  "expectedCompactionSkippedReasons": ["prune_sufficient", "hysteresis"]
+}

@@ -1,0 +1,35 @@
+[package]
+name = "roder-ext-kimi-code"
+version = "0.1.0"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[package.metadata.roder.distribution]
+id = "kimi-code"
+category = "inference-engine"
+display_name = "Kimi Code"
+description = "Kimi Code (Moonshot AI) subscription inference via direct Moonshot API + device OAuth."
+default_in_profiles = ["full", "research-headless"]
+required_env = []
+optional_env = ["KIMI_CODE_API_KEY", "RODER_KIMI_CODE_API_KEY", "KIMI_CODE_BASE_URL", "RODER_KIMI_CODE_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.kimi.com"]
+extension_path = "::KimiCodeExtension::new"
+docs_url = "https://kimi.com/code"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+dirs.workspace = true
+roder-ext-openai-chat-completions = { path = "../roder-ext-openai-chat-completions", version = "0.1.1" }
+reqwest = { workspace = true, features = ["json", "stream"] }
+roder-api.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time"] }
+uuid = { workspace = true, features = ["v4"] }

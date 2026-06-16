@@ -46,6 +46,7 @@ use roder_skills::{SkillRegistry, SkillRegistryOptions};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
+
 use crate::artifacts::{
     ContextArtifactStore as FilesystemContextArtifactStore, default_context_artifact_dir,
 };
@@ -339,6 +340,7 @@ pub struct Runtime {
     /// Lazily-started bounded dispatch of emitted events to registry
     /// `EventSink`s (process extensions etc.); see `event_sink_dispatch`.
     event_sink_dispatcher: tokio::sync::OnceCell<crate::event_sink_dispatch::EventSinkDispatcher>,
+    pub(crate) compaction_hysteresis: std::sync::Mutex<HashMap<ThreadId, u32>>,
 }
 
 impl Runtime {
@@ -423,6 +425,7 @@ impl Runtime {
                 PathBuf::new(),
             ))),
             event_sink_dispatcher: tokio::sync::OnceCell::new(),
+            compaction_hysteresis: crate::compaction_runtime::compaction_hysteresis_state(),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -2067,6 +2070,9 @@ impl Runtime {
         let mut model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
         let workspace = req.workspace.clone();
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
+        let mut compacted_this_turn = transcript
+            .iter()
+            .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
         let thread_overrides = self.thread_turn_overrides(&req.thread_id).await?;
@@ -2272,8 +2278,19 @@ impl Runtime {
                 return Ok(TurnRunOutcome::Stopped);
             }
             transcript = self
-                .compact_transcript_if_needed(&req.thread_id, &turn_id, &model, transcript)
+                .compact_transcript_if_needed(
+                    &req.thread_id,
+                    &turn_id,
+                    &provider,
+                    &model,
+                    transcript,
+                    self.compaction_options_for_turn(&req.thread_id, !compacted_this_turn),
+                )
                 .await?;
+            compacted_this_turn = compacted_this_turn
+                || transcript
+                    .iter()
+                    .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
 
             let speed_policy_decision =
                 speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);
@@ -2897,8 +2914,19 @@ impl Runtime {
                 .await?;
             }
             transcript = self
-                .compact_transcript_if_needed(&req.thread_id, &turn_id, &model, transcript)
+                .compact_transcript_if_needed(
+                    &req.thread_id,
+                    &turn_id,
+                    &provider,
+                    &model,
+                    transcript,
+                    self.compaction_options_for_turn(&req.thread_id, !compacted_this_turn),
+                )
                 .await?;
+            compacted_this_turn = compacted_this_turn
+                || transcript
+                    .iter()
+                    .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
         }
 
         if exhausted_tool_rounds {
@@ -3282,7 +3310,7 @@ impl Runtime {
             .collect()
     }
 
-    fn engine_for(&self, provider: &str) -> anyhow::Result<Arc<dyn InferenceEngine>> {
+    pub(crate) fn engine_for(&self, provider: &str) -> anyhow::Result<Arc<dyn InferenceEngine>> {
         self.registry
             .inference_engine(provider)
             .or_else(|| {

@@ -40,6 +40,7 @@ roder-ext-postgres-session.workspace = true
 roder-ext-roder-cloud.workspace = true
 roder-ext-subagents.workspace = true
 roder-ext-zerolang.workspace = true
+roder-ext-kimi-code.workspace = true
 roder-extension-host.workspace = true
 roder-protocol.workspace = true
 roder-roadmap.workspace = true

@@ -6,7 +6,8 @@ use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
     PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_MOCK,
     PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
-    PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI,
+    PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK,
+    PROVIDER_VERTEX, PROVIDER_XAI,
     PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
 use roder_api::embeddings::EmbeddingProvider;
@@ -69,6 +70,7 @@ use roder_ext_zeroentropy_embeddings::{
     ZeroEntropyLatency,
 };
 use roder_ext_zerolang::{ZerolangConfig, ZerolangExtension};
+use roder_ext_kimi_code::{KimiCodeConfig, KimiCodeExtension};
 use semver::Version;
 
 mod context;
@@ -97,6 +99,7 @@ pub enum InferenceProviderSelection {
     Gemini,
     Vertex,
     Xai,
+    KimiCode,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +141,8 @@ pub struct DefaultRegistryConfig {
     pub cursor_access_token: Option<String>,
     pub cursor_agent_service_url: Option<String>,
     pub cursor_backend_base_url: Option<String>,
+    pub kimi_code_api_key: Option<String>,
+    pub kimi_code_base_url: Option<String>,
     pub xiaomi_mimo_api_key: Option<String>,
     pub xiaomi_mimo_base_url: Option<String>,
     pub xiaomi_mimo_token_plan_api_key: Option<String>,
@@ -258,6 +263,8 @@ impl Default for DefaultRegistryConfig {
             xiaomi_mimo_base_url: None,
             xiaomi_mimo_token_plan_api_key: None,
             xiaomi_mimo_token_plan_base_url: None,
+            kimi_code_api_key: None,
+            kimi_code_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -429,6 +436,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         base_url: config.xiaomi_mimo_base_url,
         token_plan_api_key: config.xiaomi_mimo_token_plan_api_key,
         token_plan_base_url: config.xiaomi_mimo_token_plan_base_url,
+    }))?;
+    builder.install(KimiCodeExtension::new(KimiCodeConfig {
+        api_key: config.kimi_code_api_key.clone(),
+        base_url: config.kimi_code_base_url.clone(),
     }))?;
     for provider in config.custom_inference_providers {
         if known_provider_id(&provider.id) {
@@ -1626,6 +1637,8 @@ mod tests {
             xiaomi_mimo_token_plan_base_url: Some(
                 "https://token-plan-cn.xiaomimimo.com/v1".to_string(),
             ),
+            kimi_code_api_key: None,
+            kimi_code_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -1714,6 +1727,15 @@ mod tests {
 
         assert!(registry.inference_engine(PROVIDER_SUPERGROK).is_some());
         assert!(registry.inference_engine(PROVIDER_XAI).is_none());
+    }
+
+    #[test]
+    fn default_registry_exposes_kimi_code_without_api_key() {
+        use roder_api::catalog::PROVIDER_KIMI_CODE;
+
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+
+        assert!(registry.inference_engine(PROVIDER_KIMI_CODE).is_some());
     }
 
     #[test]

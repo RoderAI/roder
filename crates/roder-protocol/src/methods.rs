@@ -161,6 +161,14 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("auth/supergrok/logout", "auth", LocalState, NonIdempotent),
     method_spec!("auth/supergrok/status", "auth", ReadOnly, Idempotent),
     method_spec!(
+        "auth/kimi-code/login",
+        "auth",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!("auth/kimi-code/logout", "auth", LocalState, NonIdempotent),
+    method_spec!("auth/kimi-code/status", "auth", ReadOnly, Idempotent),
+    method_spec!(
         "automations/cancelRun",
         "automations",
         LocalState,
@@ -643,6 +651,13 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent,
         ["thread/goal/updated"]
+    ),
+    method_spec!(
+        "thread/compact",
+        "thread",
+        LocalState,
+        NonIdempotent,
+        ["context.compaction_started", "context.compaction_recorded"]
     ),
     method_spec!("thread/list", "thread", ReadOnly, Idempotent),
     method_spec!("thread/read", "thread", ReadOnly, Idempotent),

@@ -1,4 +1,6 @@
 mod agent_control_tools;
+mod compaction;
+mod compaction_runtime;
 pub mod artifacts;
 pub mod bus;
 pub mod conversation_forks;
@@ -39,5 +41,6 @@ pub use dynamic_workflows::*;
 pub use goals::*;
 pub use instructions::*;
 pub use reliability::RuntimeReliabilityConfig;
+pub use compaction_runtime::ForceCompactOutcome;
 pub use runtime::*;
 pub use teams::*;

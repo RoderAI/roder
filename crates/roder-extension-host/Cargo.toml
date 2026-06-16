@@ -33,6 +33,7 @@ roder-ext-honcho.workspace = true
 roder-ext-inference-router.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
 roder-ext-knowledge-md.workspace = true
+roder-ext-kimi-code.workspace = true
 roder-ext-memory.workspace = true
 roder-ext-notify-desktop.workspace = true
 roder-ext-notify-terminal.workspace = true

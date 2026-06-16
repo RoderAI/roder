@@ -13,6 +13,7 @@ mod discovery;
 mod evals;
 mod forks;
 mod fs;
+mod compaction;
 mod goals;
 pub mod hosted;
 mod inference_routing;

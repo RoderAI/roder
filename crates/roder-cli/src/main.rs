@@ -34,8 +34,9 @@ use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
     PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
-    PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK,
-    PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
+    PROVIDER_KIMI_CODE, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD,
+    PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
+    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
     normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
@@ -1208,6 +1209,8 @@ pub(crate) async fn build_runtime_from_config(
         xiaomi_mimo_base_url: keys.xiaomi_mimo_base_url,
         xiaomi_mimo_token_plan_api_key: keys.xiaomi_mimo_token_plan,
         xiaomi_mimo_token_plan_base_url: keys.xiaomi_mimo_token_plan_base_url,
+        kimi_code_api_key: keys.kimi_code,
+        kimi_code_base_url: keys.kimi_code_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         thread_dir: None,
         session_store,
@@ -2380,6 +2383,8 @@ struct ProviderKeys {
     xiaomi_mimo_base_url: Option<String>,
     xiaomi_mimo_token_plan: Option<String>,
     xiaomi_mimo_token_plan_base_url: Option<String>,
+    kimi_code: Option<String>,
+    kimi_code_base_url: Option<String>,
 }
 
 /**
@@ -2410,6 +2415,13 @@ fn stock_inference_providers(
     }
     if keys.xai.is_some() {
         providers.push(InferenceProviderSelection::Xai);
+    }
+    if keys.kimi_code.is_some()
+        || std::env::var("KIMI_CODE_API_KEY").is_ok()
+        || std::env::var("RODER_KIMI_CODE_API_KEY").is_ok()
+        || roder_ext_kimi_code::has_stored_tokens()
+    {
+        providers.push(InferenceProviderSelection::KimiCode);
     }
     providers
 }
@@ -2722,6 +2734,17 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .or_else(|| std::env::var("MIMO_TOKEN_PLAN_BASE_URL").ok())
             .or_else(|| std::env::var("XIAOMI_MIMO_TOKEN_PLAN_BASE_URL").ok())
             .or_else(|| std::env::var("RODER_XIAOMI_MIMO_TOKEN_PLAN_BASE_URL").ok()),
+        kimi_code: std::env::var("KIMI_CODE_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_KIMI_CODE_API_KEY").ok())
+            .or_else(|| cfg.providers.get(PROVIDER_KIMI_CODE).and_then(|p| p.api_key.clone()))
+            .or_else(|| cfg.providers.get(PROVIDER_KIMI_CODE).and_then(|p| p.api_key_env.as_deref()).and_then(env_nonempty)),
+        kimi_code_base_url: cfg
+            .providers
+            .get(PROVIDER_KIMI_CODE)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_KIMI_CODE_BASE_URL").ok())
+            .or_else(|| std::env::var("KIMI_CODE_BASE_URL").ok()),
     }
 }
 
@@ -2980,6 +3003,10 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                 AuthProviderKind::RoderCloud => {
                     roder_cloud_login().await?;
                 }
+                AuthProviderKind::KimiCode => {
+                    roder_ext_kimi_code::device_flow().await?;
+                    eprintln!("Signed in with Kimi Code");
+                }
             }
             Ok(())
         }
@@ -2999,6 +3026,10 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     }
                     Some(_) => println!("supergrok: signed in"),
                     None => println!("supergrok: signed out"),
+                },
+                AuthProviderKind::KimiCode => match roder_ext_kimi_code::status().await? {
+                    Some(_) => println!("kimi-code: signed in"),
+                    None => println!("kimi-code: signed out"),
                 },
                 AuthProviderKind::RoderCloud => {
                     let configured = env_nonempty("RODER_CLOUD_API_KEY")
@@ -3025,6 +3056,10 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     roder_supergrok_auth::logout()?;
                     println!("supergrok: signed out");
                 }
+                AuthProviderKind::KimiCode => {
+                    roder_ext_kimi_code::logout()?;
+                    println!("kimi-code: signed out");
+                }
                 AuthProviderKind::RoderCloud => {
                     roder_config::delete_provider_api_key(PROVIDER_RODER_CLOUD)?;
                     println!("roder-cloud: API key removed from config");
@@ -3032,7 +3067,9 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        _ => anyhow::bail!("usage: roder auth login|status|logout [codex|supergrok|roder-cloud]"),
+        _ => anyhow::bail!(
+            "usage: roder auth login|status|logout [codex|supergrok|kimi-code|roder-cloud]"
+        ),
     }
 }
 
@@ -3071,6 +3108,7 @@ async fn roder_cloud_login() -> anyhow::Result<()> {
 enum AuthProviderKind {
     Codex,
     SuperGrok,
+    KimiCode,
     RoderCloud,
 }
 
@@ -3080,6 +3118,7 @@ fn auth_provider_kind(provider: &str) -> anyhow::Result<AuthProviderKind> {
         "supergrok" | "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
             Ok(AuthProviderKind::SuperGrok)
         }
+        "kimi-code" | "kimi_code" | "kimi" | "moonshot" => Ok(AuthProviderKind::KimiCode),
         "roder-cloud" | "roder_cloud" | "rodercloud" | "roder.cloud" => {
             Ok(AuthProviderKind::RoderCloud)
         }
@@ -3156,7 +3195,8 @@ fn provider_can_be_registered(
         | PROVIDER_RODER_CLOUD
         | PROVIDER_POOLSIDE
         | PROVIDER_XIAOMI_MIMO
-        | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => true,
+        | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
+        | PROVIDER_KIMI_CODE => true,
         PROVIDER_CURSOR => keys.cursor.is_some() || keys.cursor_access_token.is_some(),
         PROVIDER_OPENAI => keys.openai.is_some(),
         PROVIDER_ANTHROPIC => keys.anthropic.is_some(),
@@ -3215,6 +3255,8 @@ mod tests {
             xiaomi_mimo_base_url: None,
             xiaomi_mimo_token_plan: None,
             xiaomi_mimo_token_plan_base_url: None,
+            kimi_code: None,
+            kimi_code_base_url: None,
         }
     }
 
@@ -3229,6 +3271,7 @@ mod tests {
             openai: Some("openai-key".to_string()),
             vertex_credentials_json: Some("{}".to_string()),
             xai: Some("xai-key".to_string()),
+            kimi_code: Some("kimi-key".to_string()),
             ..provider_keys_for_test()
         });
         assert_eq!(
@@ -3238,6 +3281,7 @@ mod tests {
                 InferenceProviderSelection::OpenAi,
                 InferenceProviderSelection::Vertex,
                 InferenceProviderSelection::Xai,
+                InferenceProviderSelection::KimiCode,
             ]
         );
     }
@@ -3274,6 +3318,14 @@ mod tests {
         assert_eq!(
             auth_provider_kind("xai-oauth").unwrap(),
             AuthProviderKind::SuperGrok
+        );
+        assert_eq!(
+            auth_provider_kind("kimi-code").unwrap(),
+            AuthProviderKind::KimiCode
+        );
+        assert_eq!(
+            auth_provider_kind("moonshot").unwrap(),
+            AuthProviderKind::KimiCode
         );
         assert!(auth_provider_kind("xai").is_err());
     }

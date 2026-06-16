@@ -246,6 +246,24 @@ impl InferenceEngine for FakeInferenceEngine {
             ))]);
             return Ok(Box::pin(stream));
         }
+        if should_summarize_compaction(&request) {
+            let summary = if prompt_contains(&request, "Review the state snapshot") {
+                "<state_snapshot>goal: continue work\nprogress: fake compaction summary\nnext_steps: proceed</state_snapshot>"
+            } else {
+                "<state_snapshot>goal: continue work\nprogress: fake compaction summary\nnext_steps: proceed</state_snapshot>"
+            };
+            let stream = stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: summary.to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ]);
+            return Ok(Box::pin(stream));
+        }
         if verification_failed(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::Failed(InferenceFailure {
                 message: "verification gaps remain: tests not run".to_string(),
@@ -407,6 +425,11 @@ fn should_close_fake_agent(request: &AgentInferenceRequest) -> bool {
     prompt_contains(request, "FAKE_AGENT_CONTROL_SMOKE")
         && has_tool_result(request, "wait_agent")
         && !has_tool_result(request, "close_agent")
+}
+
+fn should_summarize_compaction(request: &AgentInferenceRequest) -> bool {
+    request.metadata.get("roderCompactionSummary") == Some(&serde_json::json!(true))
+        || prompt_contains(request, crate::compaction::COMPACTION_SUMMARY_PROMPT_MARKER)
 }
 
 fn should_complete_verification(request: &AgentInferenceRequest) -> bool {

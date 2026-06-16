@@ -891,6 +891,25 @@ pub struct ThreadGoalClearResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThreadCompactParams {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preserve_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadCompactResult {
+    pub compacted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub estimated_tokens_before: u32,
+    pub estimated_tokens_after: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TurnInputItem {
     #[serde(rename = "type")]
     pub kind: String,
