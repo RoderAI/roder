@@ -1,6 +1,6 @@
 use roder_api::catalog::{
     PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI,
-    models_for_provider,
+    lookup_model_for_provider, models_for_provider,
 };
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
@@ -176,7 +176,14 @@ impl OpenAiResponsesEngine {
         options: RequestMappingOptions<'_>,
     ) -> (Value, ResponsesToolNameMap) {
         let (tools, tool_name_map) = responses_tools(request, options.profile);
-        let input = response_input_items_with_options(request, &tool_name_map, options.profile);
+        let supports_images = if matches!(options.profile, ResponsesProviderProfile::Xai) {
+            lookup_model_for_provider(&request.model.provider, &request.model.model)
+                .map(|entry| entry.supports_images)
+                .unwrap_or(true)
+        } else {
+            true
+        };
+        let input = response_input_items_with_options(request, &tool_name_map, options.profile, supports_images);
         let mut body = json!({
             "model": request.model.model,
             "input": input,
@@ -1885,6 +1892,7 @@ fn response_input_items(
     request: &AgentInferenceRequest,
     tool_name_map: &ResponsesToolNameMap,
     profile: ResponsesProviderProfile,
+    supports_images: bool,
 ) -> Vec<Value> {
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
@@ -1896,7 +1904,7 @@ fn response_input_items(
             roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
                 "type": "message",
                 "role": "user",
-                "content": user_message_content(message)
+                "content": user_message_content(message, supports_images)
             })),
             roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
                 "type": "message",
@@ -2005,8 +2013,9 @@ fn response_input_items_with_options(
     request: &AgentInferenceRequest,
     tool_name_map: &ResponsesToolNameMap,
     profile: ResponsesProviderProfile,
+    supports_images: bool,
 ) -> Vec<Value> {
-    let mut items = response_input_items(request, tool_name_map, profile);
+    let mut items = response_input_items(request, tool_name_map, profile, supports_images);
     if matches!(
         profile,
         ResponsesProviderProfile::OpenRouter | ResponsesProviderProfile::Fireworks
@@ -2056,17 +2065,19 @@ fn system_input_message(text: &str) -> Value {
     })
 }
 
-fn user_message_content(message: &roder_api::transcript::UserMessage) -> Vec<Value> {
+fn user_message_content(message: &roder_api::transcript::UserMessage, supports_images: bool) -> Vec<Value> {
     let mut content = Vec::new();
     if !message.text.is_empty() {
         content.push(json!({ "type": "input_text", "text": message.text }));
     }
-    content.extend(message.images.iter().map(|image| {
-        json!({
-            "type": "input_image",
-            "image_url": image.image_url,
-        })
-    }));
+    if supports_images {
+        content.extend(message.images.iter().map(|image| {
+            json!({
+                "type": "input_image",
+                "image_url": image.image_url,
+            })
+        }));
+    }
     if content.is_empty() {
         content.push(json!({ "type": "input_text", "text": "" }));
     }
@@ -2366,7 +2377,7 @@ mod tests {
 
     fn input_items(request: &AgentInferenceRequest) -> Vec<Value> {
         let (_, tool_name_map) = responses_tools(request, ResponsesProviderProfile::OpenAi);
-        response_input_items(request, &tool_name_map, ResponsesProviderProfile::OpenAi)
+        response_input_items(request, &tool_name_map, ResponsesProviderProfile::OpenAi, true)
     }
 
     #[test]
@@ -3075,6 +3086,62 @@ mod tests {
         ))];
 
         let input = input_items(&request);
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[0]["content"][0]["text"], "what is shown?");
+        assert_eq!(input[0]["content"][1]["type"], "input_image");
+        assert_eq!(
+            input[0]["content"][1]["image_url"],
+            "data:image/png;base64,YWJj"
+        );
+    }
+
+    #[test]
+    fn xai_mapping_strips_images_for_composer_model() {
+        let mut request = request();
+        request.model.provider = PROVIDER_SUPERGROK.to_string();
+        request.model.model = "grok-composer-2.5-fast".to_string();
+        request.transcript = vec![TranscriptItem::UserMessage(UserMessage::with_images(
+            "what is shown?",
+            vec![InputImage {
+                image_url: "data:image/png;base64,YWJj".to_string(),
+            }],
+        ))];
+
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::Xai,
+                thread_id: None,
+            },
+        );
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"].as_array().unwrap().len(), 1);
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[0]["content"][0]["text"], "what is shown?");
+    }
+
+    #[test]
+    fn xai_mapping_keeps_images_for_vision_model() {
+        let mut request = request();
+        request.model.provider = PROVIDER_SUPERGROK.to_string();
+        request.model.model = "grok-4.3".to_string();
+        request.transcript = vec![TranscriptItem::UserMessage(UserMessage::with_images(
+            "what is shown?",
+            vec![InputImage {
+                image_url: "data:image/png;base64,YWJj".to_string(),
+            }],
+        ))];
+
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::Xai,
+                thread_id: None,
+            },
+        );
+        let input = body["input"].as_array().unwrap();
         assert_eq!(input[0]["role"], "user");
         assert_eq!(input[0]["content"][0]["type"], "input_text");
         assert_eq!(input[0]["content"][0]["text"], "what is shown?");
