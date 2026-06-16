@@ -3783,6 +3783,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-fireworks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-ext-openai-responses",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-fork-rift"
 version = "0.1.1"
 dependencies = [
@@ -4600,6 +4615,7 @@ dependencies = [
  "roder-ext-claude-code",
  "roder-ext-cursor",
  "roder-ext-firecrawl-search",
+ "roder-ext-fireworks",
  "roder-ext-fork-rift",
  "roder-ext-gemini",
  "roder-ext-git",

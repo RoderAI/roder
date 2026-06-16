@@ -33,11 +33,10 @@ use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
-    PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO,
-    PROVIDER_KIMI_CODE, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD,
-    PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
-    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
-    normalize_provider_id,
+    PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE,
+    PROVIDER_OPENCODE_GO, PROVIDER_KIMI_CODE, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
+    PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
+    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
@@ -1196,6 +1195,8 @@ pub(crate) async fn build_runtime_from_config(
         openrouter_base_url: keys.openrouter_base_url,
         openrouter_http_referer: keys.openrouter_http_referer,
         openrouter_app_title: keys.openrouter_app_title,
+        fireworks_api_key: keys.fireworks,
+        fireworks_base_url: keys.fireworks_base_url,
         roder_cloud_api_key: keys.roder_cloud,
         roder_cloud_base_url: keys.roder_cloud_base_url,
         roder_cloud_web_url: keys.roder_cloud_web_url,
@@ -2370,6 +2371,8 @@ struct ProviderKeys {
     openrouter_base_url: Option<String>,
     openrouter_http_referer: Option<String>,
     openrouter_app_title: Option<String>,
+    fireworks: Option<String>,
+    fireworks_base_url: Option<String>,
     roder_cloud: Option<String>,
     roder_cloud_base_url: Option<String>,
     roder_cloud_web_url: Option<String>,
@@ -2628,6 +2631,27 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.app_title.clone())
             .or_else(|| std::env::var("RODER_OPENROUTER_APP_TITLE").ok())
             .or_else(|| std::env::var("OPENROUTER_APP_TITLE").ok()),
+        fireworks: std::env::var("FIREWORKS_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_FIREWORKS_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_FIREWORKS)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_FIREWORKS)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        fireworks_base_url: cfg
+            .providers
+            .get(PROVIDER_FIREWORKS)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_FIREWORKS_BASE_URL").ok())
+            .or_else(|| std::env::var("FIREWORKS_API_BASE_URL").ok())
+            .or_else(|| std::env::var("FIREWORKS_BASE_URL").ok()),
         roder_cloud: std::env::var("RODER_CLOUD_API_KEY")
             .ok()
             .or_else(|| std::env::var("RODER_CLOUD_TOKEN").ok())
@@ -2786,6 +2810,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "opencode"
             | "opencode-go"
             | "openrouter"
+            | "fireworks"
             | "roder-cloud"
             | "poolside"
             | "cursor"
@@ -3192,6 +3217,7 @@ fn provider_can_be_registered(
         | PROVIDER_OPENCODE
         | PROVIDER_OPENCODE_GO
         | PROVIDER_OPENROUTER
+        | PROVIDER_FIREWORKS
         | PROVIDER_RODER_CLOUD
         | PROVIDER_POOLSIDE
         | PROVIDER_XIAOMI_MIMO
@@ -3242,6 +3268,8 @@ mod tests {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            fireworks: None,
+            fireworks_base_url: None,
             roder_cloud: None,
             roder_cloud_base_url: None,
             roder_cloud_web_url: None,
@@ -3291,6 +3319,20 @@ mod tests {
         let (provider, model) = resolve_provider_model(Some("codex/gpt-5.5".to_string()), None);
         assert_eq!(provider, "codex");
         assert_eq!(model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn fireworks_provider_slash_model_preserves_account_scoped_model_id() {
+        let (provider, model) = resolve_provider_model(
+            Some("fireworks/accounts/fireworks/models/qwen3-235b-a22b".to_string()),
+            None,
+        );
+
+        assert_eq!(provider, PROVIDER_FIREWORKS);
+        assert_eq!(
+            model.as_deref(),
+            Some("accounts/fireworks/models/qwen3-235b-a22b")
+        );
     }
 
     #[test]

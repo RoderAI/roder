@@ -7,9 +7,9 @@ use roder_api::automations::{
 };
 use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
-    PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_MOCK, PROVIDER_OPENCODE,
-    PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
-    REASONING_HIGH, REASONING_MEDIUM,
+    PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_FIREWORKS, PROVIDER_MOCK,
+    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
+    PROVIDER_SUPERGROK, PROVIDER_XAI, REASONING_HIGH, REASONING_MEDIUM,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -3914,6 +3914,32 @@ async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
 }
 
 #[tokio::test]
+async fn providers_list_exposes_fireworks_account_scoped_model_without_auth() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
+    let cache_path = std::env::temp_dir().join(format!(
+        "roder-fireworks-provider-list-e2e-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let _models_cache = EnvVarGuard::set("RODER_MODELS_CACHE_PATH", &cache_path);
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let fireworks = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_FIREWORKS)
+        .expect("fireworks provider should be listed");
+    assert_eq!(fireworks.auth_type, ProviderAuthType::ApiKey);
+    assert!(!fireworks.authenticated);
+    assert!(fireworks.models.iter().any(|model| {
+        model.id == "accounts/fireworks/models/qwen3-235b-a22b" && model.name == "Qwen3 235B A22B"
+    }));
+}
+
+#[tokio::test]
 async fn providers_list_exposes_roder_cloud_free_model_without_auth() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
     let registry = build_default_registry(isolated_default_registry_config()).unwrap();
@@ -3963,6 +3989,34 @@ async fn providers_select_preserves_openrouter_slash_bearing_model_id() {
     assert_eq!(selected.provider, PROVIDER_OPENROUTER);
     assert_eq!(selected.model, "x-ai/grok-build-0.1");
     assert_eq!(selected.reasoning, "low");
+}
+
+#[tokio::test]
+async fn providers_select_preserves_fireworks_account_scoped_model_id() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_FIREWORKS.to_string(),
+                model: Some("accounts/fireworks/models/qwen3-235b-a22b".to_string()),
+                reasoning: Some("none".to_string()),
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(selected.provider, PROVIDER_FIREWORKS);
+    assert_eq!(selected.model, "accounts/fireworks/models/qwen3-235b-a22b");
+    assert_eq!(selected.reasoning, "none");
 }
 
 #[tokio::test]

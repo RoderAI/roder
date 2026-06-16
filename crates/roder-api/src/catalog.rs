@@ -29,6 +29,7 @@ pub const PROVIDER_SUPERGROK: &str = "supergrok";
 pub const PROVIDER_OPENCODE: &str = "opencode";
 pub const PROVIDER_OPENCODE_GO: &str = "opencode-go";
 pub const PROVIDER_OPENROUTER: &str = "openrouter";
+pub const PROVIDER_FIREWORKS: &str = "fireworks";
 pub const PROVIDER_RODER_CLOUD: &str = "roder-cloud";
 pub const PROVIDER_POOLSIDE: &str = "poolside";
 pub const PROVIDER_CURSOR: &str = "cursor";
@@ -46,6 +47,7 @@ pub const PROVIDER_KIND_VERTEX: &str = "vertex";
 pub const PROVIDER_KIND_XAI: &str = "xai";
 pub const PROVIDER_KIND_OPENCODE: &str = "opencode";
 pub const PROVIDER_KIND_OPENROUTER: &str = "openrouter";
+pub const PROVIDER_KIND_FIREWORKS: &str = "fireworks";
 pub const PROVIDER_KIND_RODER_CLOUD: &str = "roder_cloud";
 pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
 pub const PROVIDER_KIND_CURSOR: &str = "cursor";
@@ -441,6 +443,17 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         base_url: Some("https://openrouter.ai/api/v1"),
         env_key: Some("OPENROUTER_API_KEY"),
         env_aliases: &["RODER_OPENROUTER_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
+    ProviderCatalogEntry {
+        id: PROVIDER_FIREWORKS,
+        name: "Fireworks AI",
+        kind: PROVIDER_KIND_FIREWORKS,
+        default_model: "accounts/fireworks/models/qwen3-235b-a22b",
+        base_url: Some("https://api.fireworks.ai/inference/v1"),
+        env_key: Some("FIREWORKS_API_KEY"),
+        env_aliases: &["RODER_FIREWORKS_API_KEY"],
         requires_auth: true,
         supports_websockets: false,
     },
@@ -936,6 +949,23 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         auto_compact_token_limit: 230_400,
         supports_compaction: true,
         supports_images: true,
+        supports_tools: true,
+        supports_structured: true,
+        edit_tool: Some(EDIT_TOOL_PATCH),
+        hidden: false,
+    },
+    ModelCatalogEntry {
+        id: "accounts/fireworks/models/qwen3-235b-a22b",
+        display_name: "Qwen3 235B A22B",
+        description: "Fireworks Responses-capable serverless model with client-executed function tool support.",
+        provider: PROVIDER_FIREWORKS,
+        default_reasoning: REASONING_NONE,
+        supported_reasoning: &[],
+        context_window: 131_072,
+        max_context_window: 131_072,
+        auto_compact_token_limit: 0,
+        supports_compaction: false,
+        supports_images: false,
         supports_tools: true,
         supports_structured: true,
         edit_tool: Some(EDIT_TOOL_PATCH),
@@ -1488,7 +1518,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_GEMINI | PROVIDER_VERTEX => ProviderFamily::Gemini,
         PROVIDER_XAI | PROVIDER_SUPERGROK => ProviderFamily::Xai,
         PROVIDER_OPENCODE | PROVIDER_OPENCODE_GO => ProviderFamily::Opencode,
-        PROVIDER_OPENROUTER | PROVIDER_RODER_CLOUD => ProviderFamily::OpenAi,
+        PROVIDER_OPENROUTER | PROVIDER_FIREWORKS | PROVIDER_RODER_CLOUD => ProviderFamily::OpenAi,
         PROVIDER_POOLSIDE => ProviderFamily::Poolside,
         PROVIDER_CURSOR => ProviderFamily::Cursor,
         PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
@@ -1546,6 +1576,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "opencode" => PROVIDER_OPENCODE.to_string(),
         "go" | "opencode_go" | "opencode-go" => PROVIDER_OPENCODE_GO.to_string(),
         "openrouter" => PROVIDER_OPENROUTER.to_string(),
+        "fireworks" | "fireworks-ai" | "fireworks_ai" => PROVIDER_FIREWORKS.to_string(),
         "roder-cloud" | "roder_cloud" | "rodercloud" | "roder.cloud" => {
             PROVIDER_RODER_CLOUD.to_string()
         }
@@ -1603,6 +1634,7 @@ mod tests {
                 "opencode",
                 "opencode-go",
                 "openrouter",
+                "fireworks",
                 "roder-cloud",
                 "poolside",
                 "cursor",
@@ -1716,6 +1748,7 @@ mod tests {
                 "deepseek-v4-flash",
                 "kimi-for-coding",
                 "x-ai/grok-build-0.1",
+                "accounts/fireworks/models/qwen3-235b-a22b",
                 "roder.cloud/free",
                 "roder.cloud/openai/gpt-5.5",
                 "roder.cloud/anthropic/claude-opus-4-7",
@@ -1755,6 +1788,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
+        assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 6);
@@ -1951,6 +1985,30 @@ mod tests {
         assert_eq!(normalize_provider_id("supergrok"), PROVIDER_SUPERGROK);
         assert_eq!(normalize_provider_id("laguna"), PROVIDER_POOLSIDE);
         assert_eq!(normalize_provider_id("composer"), PROVIDER_CURSOR);
+    }
+
+    #[test]
+    fn fireworks_catalog_preserves_account_scoped_default_model() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_FIREWORKS)
+            .unwrap();
+
+        assert_eq!(
+            provider.default_model,
+            "accounts/fireworks/models/qwen3-235b-a22b"
+        );
+        assert_eq!(provider.env_key, Some("FIREWORKS_API_KEY"));
+        assert_eq!(provider.env_aliases, &["RODER_FIREWORKS_API_KEY"]);
+
+        let model = lookup_model_for_provider(PROVIDER_FIREWORKS, provider.default_model).unwrap();
+        assert_eq!(model.provider, PROVIDER_FIREWORKS);
+        assert!(model.supports_tools);
+        assert!(model.supports_structured);
+        assert_eq!(
+            provider_family_for_provider(PROVIDER_FIREWORKS),
+            ProviderFamily::OpenAi
+        );
     }
 
     #[test]

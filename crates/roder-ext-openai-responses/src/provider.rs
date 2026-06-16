@@ -1,5 +1,6 @@
 use roder_api::catalog::{
-    PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI, models_for_provider,
+    PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI,
+    models_for_provider,
 };
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
@@ -44,6 +45,7 @@ enum ResponsesProviderProfile {
     OpenAi,
     Xai,
     OpenRouter,
+    Fireworks,
 }
 
 impl OpenAiResponsesEngine {
@@ -70,11 +72,13 @@ impl OpenAiResponsesEngine {
         let profile = match provider_id.as_str() {
             PROVIDER_XAI | PROVIDER_SUPERGROK => ResponsesProviderProfile::Xai,
             PROVIDER_OPENROUTER => ResponsesProviderProfile::OpenRouter,
+            PROVIDER_FIREWORKS => ResponsesProviderProfile::Fireworks,
             _ => ResponsesProviderProfile::OpenAi,
         };
         let display_name = match provider_id.as_str() {
             PROVIDER_XAI => "xAI".to_string(),
             PROVIDER_OPENROUTER => "OpenRouter".to_string(),
+            PROVIDER_FIREWORKS => "Fireworks AI".to_string(),
             _ => "OpenAI".to_string(),
         };
         Self {
@@ -101,6 +105,19 @@ impl OpenAiResponsesEngine {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             headers,
             profile: ResponsesProviderProfile::OpenRouter,
+            discover_models: true,
+            refresh_in_flight: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn new_fireworks_provider(api_key: Option<String>, base_url: impl Into<String>) -> Self {
+        Self {
+            api_key,
+            provider_id: PROVIDER_FIREWORKS.to_string(),
+            display_name: "Fireworks AI".to_string(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            headers: Vec::new(),
+            profile: ResponsesProviderProfile::Fireworks,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
         }
@@ -166,12 +183,14 @@ impl OpenAiResponsesEngine {
             "store": false,
             "stream": true,
         });
-        if options.profile != ResponsesProviderProfile::OpenRouter
-            && let Some(system) = request
-                .instructions
-                .system
-                .as_deref()
-                .filter(|s| !s.is_empty())
+        if !matches!(
+            options.profile,
+            ResponsesProviderProfile::OpenRouter | ResponsesProviderProfile::Fireworks
+        ) && let Some(system) = request
+            .instructions
+            .system
+            .as_deref()
+            .filter(|s| !s.is_empty())
         {
             body["instructions"] = json!(system);
         }
@@ -216,7 +235,7 @@ impl OpenAiResponsesEngine {
                     };
                     body["include"] = json!(["reasoning.encrypted_content"]);
                 }
-                ResponsesProviderProfile::Xai => {}
+                ResponsesProviderProfile::Xai | ResponsesProviderProfile::Fireworks => {}
             }
         }
         if !tools.is_empty() {
@@ -242,18 +261,23 @@ impl OpenAiResponsesEngine {
                     json!(request.runtime.parallel_tool_calls.unwrap_or(true));
             }
         }
-        let prompt_cache_key = if options.profile == ResponsesProviderProfile::Xai {
-            options.thread_id.filter(|thread_id| !thread_id.is_empty())
-        } else {
-            request.runtime.prompt_cache_key.as_deref()
+        let prompt_cache_key = match options.profile {
+            ResponsesProviderProfile::Xai => {
+                options.thread_id.filter(|thread_id| !thread_id.is_empty())
+            }
+            ResponsesProviderProfile::Fireworks => None,
+            ResponsesProviderProfile::OpenAi | ResponsesProviderProfile::OpenRouter => {
+                request.runtime.prompt_cache_key.as_deref()
+            }
         };
         if let Some(prompt_cache_key) = prompt_cache_key {
             body["prompt_cache_key"] = json!(prompt_cache_key);
         }
-        if let Some(threshold) = request
-            .runtime
-            .auto_compact_token_limit
-            .filter(|threshold| *threshold > 0)
+        if options.profile != ResponsesProviderProfile::Fireworks
+            && let Some(threshold) = request
+                .runtime
+                .auto_compact_token_limit
+                .filter(|threshold| *threshold > 0)
         {
             body["context_management"] =
                 json!([{ "type": "compaction", "compact_threshold": threshold }]);
@@ -628,6 +652,17 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 recommended: true,
                 sort_order: 18,
             },
+            PROVIDER_FIREWORKS => InferenceProviderMetadata {
+                name: "Fireworks AI".to_string(),
+                description: Some(
+                    "Fireworks AI API key provider for account-scoped models".to_string(),
+                ),
+                auth_type: ProviderAuthType::ApiKey,
+                auth_label: Some("FIREWORKS_API_KEY".to_string()),
+                auth_configured: Some(self.api_key.is_some()),
+                recommended: true,
+                sort_order: 19,
+            },
             _ => InferenceProviderMetadata {
                 name: self.display_name.clone(),
                 description: Some(format!("{} OpenAI-compatible provider", self.display_name)),
@@ -675,6 +710,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 PROVIDER_OPENAI => Some("OPENAI_API_KEY"),
                 PROVIDER_XAI => Some("XAI_API_KEY"),
                 PROVIDER_OPENROUTER => Some("OPENROUTER_API_KEY"),
+                PROVIDER_FIREWORKS => Some("FIREWORKS_API_KEY"),
                 _ => None,
             };
             match env_var {
@@ -708,6 +744,9 @@ impl InferenceEngine for OpenAiResponsesEngine {
             ResponsesProviderProfile::Xai => anyhow::anyhow!("xAI Responses error: {err}"),
             ResponsesProviderProfile::OpenRouter => {
                 anyhow::anyhow!("{}", openrouter_error_message(&err.to_string()))
+            }
+            ResponsesProviderProfile::Fireworks => {
+                anyhow::anyhow!("{}", fireworks_error_message(&err.to_string()))
             }
             ResponsesProviderProfile::OpenAi => err,
         })?;
@@ -969,6 +1008,46 @@ fn openrouter_error_message(error: &str) -> String {
         return format!("OpenRouter upstream provider unavailable: {detail}.");
     }
     format!("OpenRouter Responses error: {detail}")
+}
+
+fn fireworks_error_message(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    let detail = error_body_excerpt(error);
+    if lower.contains("401") || lower.contains("unauthorized") || lower.contains("403") {
+        return format!(
+            "Fireworks auth failed: {detail}. Check FIREWORKS_API_KEY or configure the provider API key."
+        );
+    }
+    if lower.contains("402") || lower.contains("payment") || lower.contains("billing") {
+        return format!("Fireworks billing or quota check failed: {detail}.");
+    }
+    if lower.contains("404") && lower.contains("model")
+        || lower.contains("not found") && lower.contains("model")
+        || lower.contains("not deployed")
+    {
+        return format!("Fireworks model unavailable: {detail}.");
+    }
+    if lower.contains("413") || lower.contains("payload too large") {
+        return format!("Fireworks payload too large: {detail}.");
+    }
+    if lower.contains("408") || lower.contains("timeout") {
+        return format!("Fireworks request timed out: {detail}.");
+    }
+    if lower.contains("429") || lower.contains("rate limit") || lower.contains("capacity") {
+        return format!("Fireworks rate limit or capacity reached: {detail}.");
+    }
+    if lower.contains("400") || lower.contains("invalid") || lower.contains("malformed") {
+        return format!("Fireworks rejected a request parameter: {detail}.");
+    }
+    if lower.contains("502")
+        || lower.contains("503")
+        || lower.contains("504")
+        || lower.contains("520")
+        || lower.contains("unavailable")
+    {
+        return format!("Fireworks upstream service unavailable: {detail}.");
+    }
+    format!("Fireworks Responses error: {detail}")
 }
 
 fn push_retry_event(
@@ -1805,6 +1884,7 @@ fn error_body_excerpt(body: &str) -> String {
 fn response_input_items(
     request: &AgentInferenceRequest,
     tool_name_map: &ResponsesToolNameMap,
+    profile: ResponsesProviderProfile,
 ) -> Vec<Value> {
     let mut items = Vec::new();
     let mut provider_output_call_ids = HashSet::new();
@@ -1869,6 +1949,7 @@ fn response_input_items(
                     &mut provider_output_call_ids,
                     &completed_tool_call_ids,
                     tool_name_map,
+                    profile,
                 );
                 None
             }
@@ -1925,8 +2006,11 @@ fn response_input_items_with_options(
     tool_name_map: &ResponsesToolNameMap,
     profile: ResponsesProviderProfile,
 ) -> Vec<Value> {
-    let mut items = response_input_items(request, tool_name_map);
-    if profile == ResponsesProviderProfile::OpenRouter {
+    let mut items = response_input_items(request, tool_name_map, profile);
+    if matches!(
+        profile,
+        ResponsesProviderProfile::OpenRouter | ResponsesProviderProfile::Fireworks
+    ) {
         let mut instruction_items = Vec::new();
         if let Some(system) = request
             .instructions
@@ -2005,6 +2089,7 @@ fn append_provider_output_items(
     provider_output_call_ids: &mut HashSet<String>,
     completed_tool_call_ids: &HashSet<String>,
     tool_name_map: &ResponsesToolNameMap,
+    profile: ResponsesProviderProfile,
 ) {
     let Some(output) = metadata.get("output").and_then(Value::as_array) else {
         return;
@@ -2026,11 +2111,23 @@ fn append_provider_output_items(
                 }
                 items.push(item);
             }
-            Some("reasoning") => items.push(item.clone()),
-            Some(kind) if is_compaction_type(kind) => items.push(item.clone()),
+            Some("reasoning") => items.push(replay_provider_output_item(item, profile)),
+            Some(kind) if is_compaction_type(kind) => {
+                items.push(replay_provider_output_item(item, profile))
+            }
             _ => {}
         }
     }
+}
+
+fn replay_provider_output_item(item: &Value, profile: ResponsesProviderProfile) -> Value {
+    let mut item = item.clone();
+    if profile == ResponsesProviderProfile::Fireworks
+        && let Some(object) = item.as_object_mut()
+    {
+        object.remove("encrypted_content");
+    }
+    item
 }
 
 fn is_compaction_item(item: &Value) -> bool {
@@ -2269,7 +2366,7 @@ mod tests {
 
     fn input_items(request: &AgentInferenceRequest) -> Vec<Value> {
         let (_, tool_name_map) = responses_tools(request, ResponsesProviderProfile::OpenAi);
-        response_input_items(request, &tool_name_map)
+        response_input_items(request, &tool_name_map, ResponsesProviderProfile::OpenAi)
     }
 
     #[test]
@@ -2297,6 +2394,35 @@ mod tests {
 
         assert_eq!(body["tools"].as_array().unwrap().len(), 1);
         assert!(body["tools"][0].get("defer_loading").is_none());
+    }
+
+    #[test]
+    fn maps_fireworks_request_without_openai_only_state_fields() {
+        let mut request = request();
+        request.model.provider = PROVIDER_FIREWORKS.to_string();
+        request.model.model = "accounts/fireworks/models/qwen3-235b-a22b".to_string();
+
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::Fireworks,
+                thread_id: Some("thread-a"),
+            },
+        );
+
+        assert_eq!(body["model"], "accounts/fireworks/models/qwen3-235b-a22b");
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tool_choice"], "auto");
+        assert!(body.get("instructions").is_none());
+        assert_eq!(body["input"][0]["role"], "system");
+        assert_eq!(body["input"][0]["content"][0]["text"], "be helpful");
+        assert!(body.get("include").is_none());
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("prompt_cache_key").is_none());
+        assert!(body.get("context_management").is_none());
+        assert!(body.get("previous_response_id").is_none());
     }
 
     #[tokio::test]
@@ -2348,6 +2474,23 @@ mod tests {
         assert_eq!(models[0].id, "x-ai/grok-build-0.1");
         assert_eq!(models[0].name, "Grok Build 0.1");
         assert_eq!(models[0].context_window, Some(256_000));
+    }
+
+    #[tokio::test]
+    async fn model_discovery_preserves_fireworks_account_scoped_ids() {
+        let base_url = spawn_models_server(vec![(
+            "/models",
+            200,
+            r#"{"data":[{"id":"accounts/fireworks/models/qwen3-235b-a22b","name":"Qwen3 235B A22B","context_length":131072}]}"#,
+        )])
+        .await;
+
+        let models = discover_models(&base_url, Some("secret")).await.unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "accounts/fireworks/models/qwen3-235b-a22b");
+        assert_eq!(models[0].name, "Qwen3 235B A22B");
+        assert_eq!(models[0].context_window, Some(131_072));
     }
 
     #[tokio::test]
@@ -3329,6 +3472,24 @@ mod tests {
     }
 
     #[test]
+    fn fireworks_errors_explain_common_provider_boundaries() {
+        let unauthorized =
+            fireworks_error_message("OpenAI Responses error 401 Unauthorized: invalid key");
+        assert!(unauthorized.contains("Fireworks auth failed"));
+        assert!(unauthorized.contains("FIREWORKS_API_KEY"));
+
+        let payment = fireworks_error_message("OpenAI Responses error 402: payment required");
+        assert!(payment.contains("billing or quota"));
+
+        let unavailable =
+            fireworks_error_message("OpenAI Responses error 404: model is not deployed");
+        assert!(unavailable.contains("model unavailable"));
+
+        let capacity = fireworks_error_message("OpenAI Responses error 429: capacity exceeded");
+        assert!(capacity.contains("rate limit or capacity"));
+    }
+
+    #[test]
     fn replays_provider_function_call_items_before_tool_outputs() {
         let mut request = request();
         request.transcript = vec![
@@ -3380,6 +3541,37 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn fireworks_replay_strips_encrypted_provider_reasoning() {
+        let mut request = request();
+        request.model.provider = PROVIDER_FIREWORKS.to_string();
+        request.model.model = "accounts/fireworks/models/qwen3-235b-a22b".to_string();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("Think briefly")),
+            TranscriptItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "id": "rs_1",
+                        "type": "reasoning",
+                        "encrypted_content": "encrypted-thinking",
+                        "summary": []
+                    }
+                ]
+            })),
+        ];
+
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::Fireworks,
+                thread_id: Some("thread-123"),
+            },
+        );
+
+        assert_eq!(body["input"][2]["type"], "reasoning");
+        assert!(body["input"][2].get("encrypted_content").is_none());
     }
 
     #[test]

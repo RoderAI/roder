@@ -93,6 +93,7 @@ roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.1.
 roder-ext-cursor = { path = "crates/roder-ext-cursor", version = "0.1.0" }
 roder-ext-disk-context = { path = "crates/roder-ext-disk-context", version = "0.1.0" }
 roder-ext-gemini = { path = "crates/roder-ext-gemini", version = "0.1.0" }
+roder-ext-fireworks = { path = "crates/roder-ext-fireworks", version = "0.1.0" }
 roder-ext-firecrawl-search = { path = "crates/roder-ext-firecrawl-search", version = "0.1.0" }
 roder-ext-git = { path = "crates/roder-ext-git", version = "0.1.0" }
 roder-ext-google-embeddings = { path = "crates/roder-ext-google-embeddings", version = "0.1.0" }

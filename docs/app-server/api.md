@@ -750,6 +750,9 @@ Behavior:
 - OpenRouter is exposed as provider `openrouter`; its built-in fallback model
   id is `x-ai/grok-build-0.1`, so clients should keep provider and model fields
   separate instead of splitting model ids on every slash.
+- Fireworks is exposed as provider `fireworks`; its model ids are account-scoped
+  strings such as `accounts/fireworks/models/qwen3-235b-a22b`, so clients must
+  preserve the full model string after the provider id.
 - Model listing failures for an individual provider are treated as an empty
   model list.
 
@@ -780,6 +783,9 @@ Behavior:
 - Requires the provider to be registered in the runtime inference registry.
 - OpenRouter API keys are configured with provider `openrouter`; optional
   attribution headers are read from config or environment, not from this method.
+- Fireworks API keys are configured with provider `fireworks`; environment and
+  config resolution use Fireworks-specific variables such as `FIREWORKS_API_KEY`
+  and never fall back to OpenAI credentials.
 - Writes the key to the user config only when the app-server was created with
   user-config persistence enabled.
 

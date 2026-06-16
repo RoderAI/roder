@@ -165,6 +165,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-firecrawl-search/CHANGELOG.md"
 
+[packages."roder-ext-fireworks"]
+versioned_files = [
+    "crates/roder-ext-fireworks/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-fireworks/CHANGELOG.md"
+
 [packages."roder-ext-fork-rift"]
 versioned_files = [
     "crates/roder-ext-fork-rift/Cargo.toml",
