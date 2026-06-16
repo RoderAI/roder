@@ -50,11 +50,9 @@ impl InferenceEngine for SuperGrokEngine {
         &self,
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        // When SuperGrok OAuth is configured, plug into the /models (and /v1/models)
-        // endpoint (via the shared OpenAI-compatible discover logic) so Roder can
-        // fetch the latest models and capabilities from xAI without a new release.
-        // Falls back to the static catalog (now seeded with grok-build-0.1 etc) on
-        // missing auth or error. Caching + background refresh matches other providers.
+        // Refresh the xAI /models cache in the background when OAuth is configured,
+        // but always return the curated SuperGrok catalog so users see the intended
+        // Grok Build / Composer options with hand-tuned context windows.
         if let Ok(Some(token)) = roder_supergrok_auth::access_token().await {
             let base = DEFAULT_XAI_BASE_URL;
             let pid = PROVIDER_SUPERGROK;
@@ -74,11 +72,6 @@ impl InferenceEngine for SuperGrokEngine {
                         let _ = save_cached_models(pid, &base_for_refresh, &models);
                     }
                 });
-            }
-            if let Some(entry) = cached {
-                if !entry.models.is_empty() {
-                    return Ok(entry.models);
-                }
             }
         }
         Ok(models_for_provider(PROVIDER_SUPERGROK, false))
@@ -118,14 +111,25 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(models.iter().any(|model| model.id == "grok-4.3"));
-        assert!(
-            models
-                .iter()
-                .any(|model| model.id == "grok-4.20-0309-reasoning")
-        );
-        // Newer models via catalog update + /models discovery for supergrok
-        assert!(models.iter().any(|model| model.id == "grok-build-0.1"));
+        let ids = models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["grok-build-0.1", "grok-composer-2.5-fast"]);
+
+        let build = models
+            .iter()
+            .find(|model| model.id == "grok-build-0.1")
+            .unwrap();
+        assert_eq!(build.name, "Grok Build 0.1");
+        assert_eq!(build.context_window, Some(500_000));
+
+        let composer = models
+            .iter()
+            .find(|model| model.id == "grok-composer-2.5-fast")
+            .unwrap();
+        assert_eq!(composer.name, "Grok Composer 2.5 Fast");
+        assert_eq!(composer.context_window, Some(200_000));
     }
 
     #[test]

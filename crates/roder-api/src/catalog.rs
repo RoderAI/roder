@@ -34,6 +34,7 @@ pub const PROVIDER_POOLSIDE: &str = "poolside";
 pub const PROVIDER_CURSOR: &str = "cursor";
 pub const PROVIDER_XIAOMI_MIMO: &str = "xiaomi-mimo";
 pub const PROVIDER_XIAOMI_MIMO_TOKEN_PLAN: &str = "xiaomi-mimo-token-plan";
+pub const PROVIDER_KIMI_CODE: &str = "kimi-code";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -481,6 +482,17 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     },
     xiaomi_mimo::PAY_AS_YOU_GO_PROVIDER,
     xiaomi_mimo::TOKEN_PLAN_PROVIDER,
+    ProviderCatalogEntry {
+        id: PROVIDER_KIMI_CODE,
+        name: "Kimi Code",
+        kind: PROVIDER_KIND_CHAT_COMPLETIONS,
+        default_model: "kimi-k2.6",
+        base_url: Some("https://api.moonshot.ai/v1"),
+        env_key: Some("KIMI_CODE_API_KEY"),
+        env_aliases: &["RODER_KIMI_CODE_API_KEY"],
+        requires_auth: true,
+        supports_websockets: false,
+    },
 ];
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
@@ -721,6 +733,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         1_000_000,
         REASONING_LOW,
         XAI_CONFIGURABLE_REASONING,
+        false,
     ),
     xai_model(
         PROVIDER_XAI,
@@ -730,6 +743,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_LOW,
         XAI_REASONING,
+        false,
     ),
     xai_model(
         PROVIDER_XAI,
@@ -739,6 +753,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_LOW,
         XAI_REASONING,
+        false,
     ),
     xai_model(
         PROVIDER_XAI,
@@ -748,6 +763,27 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_NONE,
         XAI_NO_REASONING,
+        false,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-build-0.1",
+        "Grok Build 0.1",
+        "SuperGrok OAuth access to xAI Grok Build, optimized for agentic coding and software engineering workflows.",
+        500_000,
+        REASONING_LOW,
+        XAI_CONFIGURABLE_REASONING,
+        false,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-composer-2.5-fast",
+        "Grok Composer 2.5 Fast",
+        "SuperGrok OAuth access to xAI Composer 2.5 Fast for lower-latency agentic coding.",
+        200_000,
+        REASONING_NONE,
+        &[],
+        false,
     ),
     xai_model(
         PROVIDER_SUPERGROK,
@@ -757,6 +793,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         1_000_000,
         REASONING_LOW,
         XAI_CONFIGURABLE_REASONING,
+        true,
     ),
     xai_model(
         PROVIDER_SUPERGROK,
@@ -766,6 +803,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_LOW,
         XAI_REASONING,
+        true,
     ),
     xai_model(
         PROVIDER_SUPERGROK,
@@ -775,6 +813,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_LOW,
         XAI_REASONING,
+        true,
     ),
     xai_model(
         PROVIDER_SUPERGROK,
@@ -784,15 +823,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_NONE,
         XAI_NO_REASONING,
-    ),
-    xai_model(
-        PROVIDER_SUPERGROK,
-        "grok-build-0.1",
-        "Grok Build 0.1",
-        "SuperGrok OAuth access to xAI Grok Build, optimized for agentic coding and software engineering workflows.",
-        256_000,
-        REASONING_LOW,
-        XAI_CONFIGURABLE_REASONING,
+        true,
     ),
     opencode_model(
         PROVIDER_OPENCODE,
@@ -881,6 +912,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "DeepSeek V4 Flash",
         "OpenCode Go DeepSeek coding model.",
         128_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_KIMI_CODE,
+        "kimi-k2.6",
+        "Kimi K2.6",
+        "Kimi Code direct Moonshot K2.6 coding model.",
+        256_000,
         REASONING_NONE,
         &[],
     ),
@@ -1214,6 +1254,7 @@ const fn xai_model(
     context_window: u32,
     default_reasoning: &'static str,
     supported_reasoning: &'static [ReasoningOption],
+    hidden: bool,
 ) -> ModelCatalogEntry {
     ModelCatalogEntry {
         id,
@@ -1230,7 +1271,7 @@ const fn xai_model(
         supports_tools: true,
         supports_structured: true,
         edit_tool: Some("edit"),
-        hidden: false,
+        hidden,
     }
 }
 
@@ -1451,6 +1492,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_POOLSIDE => ProviderFamily::Poolside,
         PROVIDER_CURSOR => ProviderFamily::Cursor,
         PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
+        PROVIDER_KIMI_CODE => ProviderFamily::OpenAi,
         _ => ProviderFamily::Mock,
     }
 }
@@ -1510,6 +1552,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "laguna" | "poolside" => PROVIDER_POOLSIDE.to_string(),
         "composer" | "cursor-composer" => PROVIDER_CURSOR.to_string(),
         "claude_code" | "claudecode" => PROVIDER_CLAUDE_CODE.to_string(),
+        "kimi" | "kimi-code" | "kimi_code" | "moonshot" => PROVIDER_KIMI_CODE.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -1564,7 +1607,8 @@ mod tests {
                 "poolside",
                 "cursor",
                 "xiaomi-mimo",
-                "xiaomi-mimo-token-plan"
+                "xiaomi-mimo-token-plan",
+                "kimi-code"
             ]
         );
     }
@@ -1658,11 +1702,8 @@ mod tests {
                 "grok-4.20-multi-agent-0309",
                 "grok-4.20-0309-reasoning",
                 "grok-4.20-0309-non-reasoning",
-                "grok-4.3",
-                "grok-4.20-multi-agent-0309",
-                "grok-4.20-0309-reasoning",
-                "grok-4.20-0309-non-reasoning",
                 "grok-build-0.1",
+                "grok-composer-2.5-fast",
                 "gpt-5.5",
                 "gpt-5.3-codex-spark",
                 "big-pickle",
@@ -1709,7 +1750,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
-        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 5);
+        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
@@ -1721,6 +1762,7 @@ mod tests {
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
             5
         );
+        assert_eq!(models_for_provider(PROVIDER_KIMI_CODE, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
     }
 
@@ -1841,6 +1883,33 @@ mod tests {
             ]
         );
         assert!(lookup_model("out-of-v2-flash").is_none());
+    }
+
+    #[test]
+    fn supergrok_catalog_exposes_build_and_composer_with_expected_context_windows() {
+        let build = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-build-0.1").unwrap();
+        assert_eq!(build.display_name, "Grok Build 0.1");
+        assert_eq!(build.context_window, 500_000);
+        assert_eq!(build.auto_compact_token_limit, 450_000);
+
+        let composer =
+            lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-composer-2.5-fast").unwrap();
+        assert_eq!(composer.display_name, "Grok Composer 2.5 Fast");
+        assert_eq!(composer.context_window, 200_000);
+        assert_eq!(composer.auto_compact_token_limit, 180_000);
+        assert!(composer.supported_reasoning.is_empty());
+
+        let visible = models_for_provider(PROVIDER_SUPERGROK, false)
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            visible,
+            vec![
+                "grok-build-0.1".to_string(),
+                "grok-composer-2.5-fast".to_string()
+            ]
+        );
     }
 
     #[test]

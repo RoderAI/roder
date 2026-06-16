@@ -104,6 +104,7 @@ rustls-pemfile.workspace = true
 roder-core.workspace = true
 roder-dynamic-workflows.workspace = true
 roder-evals.workspace = true
+roder-ext-kimi-code.workspace = true
 roder-extension-host.workspace = true
 roder-ext-webwright.workspace = true
 roder-protocol.workspace = true

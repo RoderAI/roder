@@ -1,13 +1,17 @@
 use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
-use roder_api::catalog::lookup_model;
 use roder_api::context::{ContextBlockKind, ContextPlan, ContextQuery};
 use roder_api::events::*;
 use roder_api::retrieval::{RetrievalRoutePlan, RetrievalRoutePlanned};
-use roder_api::transcript::{
-    ContextCompactionRecord, ToolResultRecord, TranscriptItem, UserMessage,
-};
+use roder_api::transcript::{TranscriptItem, UserMessage};
 use time::OffsetDateTime;
 
+use crate::compaction::{
+    CompactionOptions, CompactionSkipReason, build_compaction_record, compaction_skip_reason,
+    estimate_prompt_tokens, format_llm_compaction_summary, model_entry_for_compaction,
+    prune_avoids_full_compaction, prune_tool_outputs_in_transcript, select_compaction_suffix,
+    head_items_for_summary_prompt, split_transcript_for_summarization, summarize_transcript,
+    trim_to_last_compaction_boundary,
+};
 use crate::runtime::{Runtime, StartTurnRequest};
 use roder_api::artifacts::CreateArtifactRequest;
 
@@ -42,8 +46,20 @@ impl Runtime {
             text: req.message.clone(),
             images: req.images.clone(),
         }));
+        let cfg = self.status().await;
+        let provider = req
+            .provider_override
+            .as_deref()
+            .unwrap_or(cfg.default_provider.as_str());
         let transcript = self
-            .compact_transcript_if_needed(&req.thread_id, turn_id, model, transcript)
+            .compact_transcript_if_needed(
+                &req.thread_id,
+                turn_id,
+                provider,
+                model,
+                transcript,
+                CompactionOptions::default(),
+            )
             .await?;
         self.complete_context_assembly(req, turn_id, &transcript)
             .await;
@@ -178,36 +194,84 @@ impl Runtime {
             }
             out.extend(turn.items);
         }
-        Ok(out)
+        Ok(trim_to_last_compaction_boundary(out))
     }
 
     pub(crate) async fn compact_transcript_if_needed(
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
+        provider: &str,
         model: &str,
         transcript: Vec<TranscriptItem>,
+        options: CompactionOptions,
     ) -> anyhow::Result<Vec<TranscriptItem>> {
         let cfg = self.status().await;
-        let model_entry = lookup_model(model);
-        let estimated_tokens = estimate_tokens(&transcript);
-        let emergency_limit = model_entry
-            .and_then(|entry| (entry.context_window > 0).then_some(entry.context_window));
-        let threshold = cfg
-            .auto_compact_token_limit
-            .or_else(|| model_entry.map(|entry| entry.auto_compact_token_limit))
-            .unwrap_or(0);
-        let should_compact = if transcript_contains_context_limit_failure(&transcript) {
-            true
-        } else if model_entry.is_some_and(|entry| entry.supports_compaction) {
-            emergency_limit.is_some_and(|limit| estimated_tokens >= limit)
-        } else {
-            threshold > 0 && estimated_tokens >= threshold
-        };
-        if !should_compact {
+        let model_entry = model_entry_for_compaction(provider, model);
+        let threshold = cfg.auto_compact_token_limit;
+        if let Some(reason) =
+            compaction_skip_reason(&transcript, model_entry, threshold, &options)
+        {
+            self.emit_compaction_skipped(
+                thread_id,
+                turn_id,
+                reason,
+                estimate_prompt_tokens(&transcript),
+                threshold,
+                None,
+            )
+            .await;
             return Ok(transcript);
         }
-        let original_item_count = transcript.len() as u64;
+
+        let mut working = transcript;
+        let prune_result = prune_tool_outputs_in_transcript(&working);
+        let pruned_tool_count = prune_result.pruned_tool_count;
+        if pruned_tool_count > 0 {
+            let tokens_saved = prune_result.tokens_saved;
+            working = prune_result.items;
+            if !options.force
+                && tokens_saved >= crate::compaction::TOOL_OUTPUT_PRUNE_MIN_SAVINGS_TOKENS
+                && prune_avoids_full_compaction(
+                    &crate::compaction::ToolOutputPruneResult {
+                        items: working.clone(),
+                        pruned_tool_count,
+                        tokens_saved,
+                    },
+                    model_entry,
+                    threshold,
+                )
+            {
+                self.emit_compaction_skipped(
+                    thread_id,
+                    turn_id,
+                    CompactionSkipReason::PruneSufficient,
+                    estimate_prompt_tokens(&working),
+                    threshold,
+                    Some(pruned_tool_count),
+                )
+                .await;
+                return Ok(working);
+            }
+        }
+
+        if let Some(reason) =
+            compaction_skip_reason(&working, model_entry, threshold, &options)
+        {
+            self.emit_compaction_skipped(
+                thread_id,
+                turn_id,
+                reason,
+                estimate_prompt_tokens(&working),
+                threshold,
+                Some(pruned_tool_count),
+            )
+            .await;
+            return Ok(working);
+        }
+
+        let estimated_tokens = estimate_prompt_tokens(&working);
+        let original_item_count = working.len() as u64;
         let original_estimated_tokens = estimated_tokens;
         self.emit(RoderEvent::ContextCompactionStarted(
             ContextCompactionStarted {
@@ -219,13 +283,110 @@ impl Runtime {
             },
         ))
         .await;
-        let suffix = transcript
-            .last()
-            .cloned()
-            .into_iter()
-            .collect::<Vec<TranscriptItem>>();
-        let summary = if cfg.file_backed_dynamic_context {
-            let history_json = serde_json::to_vec_pretty(&transcript)?;
+
+        let split = split_transcript_for_summarization(&working);
+        let suffix = if split.tail.is_empty() {
+            select_compaction_suffix(&working)
+        } else {
+            split.tail
+        };
+        let summary_head = head_items_for_summary_prompt(&split.head);
+        let (summary, strategy) = self
+            .build_compaction_summary(
+                thread_id,
+                turn_id,
+                provider,
+                model,
+                &summary_head,
+                &working,
+                options.preserve_hint.as_deref(),
+                cfg.file_backed_dynamic_context,
+            )
+            .await?;
+        let compaction = build_compaction_record(summary);
+        self.persist_turn_item(thread_id, turn_id, &compaction)
+            .await?;
+        let mut compacted = vec![compaction];
+        compacted.extend(suffix);
+        self.record_compaction_hysteresis(thread_id, original_estimated_tokens);
+        self.emit(RoderEvent::ContextCompactionRecorded(
+            ContextCompactionRecorded {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                original_item_count,
+                original_estimated_tokens,
+                compacted_item_count: compacted.len() as u64,
+                compacted_estimated_tokens: estimate_prompt_tokens(&compacted),
+                file_backed: cfg.file_backed_dynamic_context,
+                strategy: Some(strategy),
+                pruned_tool_count: Some(pruned_tool_count),
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        Ok(compacted)
+    }
+
+    async fn emit_compaction_skipped(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        reason: CompactionSkipReason,
+        estimated_tokens: u32,
+        threshold: Option<u32>,
+        pruned_tool_count: Option<u32>,
+    ) {
+        if matches!(
+            reason,
+            CompactionSkipReason::BelowThreshold | CompactionSkipReason::AlreadyCompactedThisTurn
+        ) {
+            return;
+        }
+        self.emit(RoderEvent::ContextCompactionSkipped(
+            ContextCompactionSkipped {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                reason: reason.as_str().to_string(),
+                estimated_tokens,
+                threshold,
+                pruned_tool_count,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+    }
+
+    async fn build_compaction_summary(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        provider: &str,
+        model: &str,
+        head: &[TranscriptItem],
+        full_transcript: &[TranscriptItem],
+        preserve_hint: Option<&str>,
+        file_backed: bool,
+    ) -> anyhow::Result<(String, String)> {
+        let mut used_llm = false;
+        let mut summary = if head.is_empty() {
+            summarize_transcript(full_transcript)
+        } else if let Some(llm_summary) = self
+            .summarize_compaction_head(provider, model, head, preserve_hint)
+            .await?
+        {
+            used_llm = true;
+            format_llm_compaction_summary(&llm_summary)
+        } else {
+            summarize_transcript(full_transcript)
+        };
+        let mut strategy = if used_llm {
+            "llm".to_string()
+        } else {
+            "deterministic".to_string()
+        };
+
+        if file_backed {
+            let history_json = serde_json::to_vec_pretty(full_transcript)?;
             let artifact = self.context_artifacts().create(CreateArtifactRequest {
                 kind: ContextArtifactKind::ChatHistory,
                 thread_id,
@@ -242,43 +403,23 @@ impl Runtime {
             }))
             .await;
             let reference = format_artifact_reference(&artifact, "pre-compaction transcript");
-            format!("{}\n\n{}", summarize_transcript(&transcript), reference)
-        } else {
-            summarize_transcript(&transcript)
-        };
-        let compaction = TranscriptItem::ContextCompaction(ContextCompactionRecord { summary });
-        self.persist_turn_item(thread_id, turn_id, &compaction)
-            .await?;
-        let mut compacted = vec![compaction];
-        compacted.extend(suffix);
-        self.emit(RoderEvent::ContextCompactionRecorded(
-            ContextCompactionRecorded {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                original_item_count,
-                original_estimated_tokens,
-                compacted_item_count: compacted.len() as u64,
-                compacted_estimated_tokens: estimate_tokens(&compacted),
-                file_backed: cfg.file_backed_dynamic_context,
-                timestamp: OffsetDateTime::now_utc(),
-            },
-        ))
-        .await;
-        Ok(compacted)
+            summary = format!("{summary}\n\n{reference}");
+            if strategy == "llm" {
+                strategy = "llm_file_backed".to_string();
+            } else {
+                strategy = "deterministic_file_backed".to_string();
+            }
+        }
+        Ok((summary, strategy))
     }
 }
 
 fn estimate_tokens(items: &[TranscriptItem]) -> u32 {
-    let chars: usize = items.iter().map(item_text_len).sum();
-    chars_to_tokens(chars)
+    estimate_prompt_tokens(items)
 }
 
 fn estimate_text_tokens(text: &str) -> u32 {
-    chars_to_tokens(text.len())
-}
-
-fn chars_to_tokens(chars: usize) -> u32 {
-    u32::try_from(chars.div_ceil(4)).unwrap_or(u32::MAX)
+    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
 }
 
 fn item_text_len(item: &TranscriptItem) -> usize {
@@ -291,66 +432,7 @@ fn item_text_len(item: &TranscriptItem) -> usize {
         TranscriptItem::FileChange(change) => change.path.len() + change.change_type.len(),
         TranscriptItem::ContextCompaction(compaction) => compaction.summary.len(),
         TranscriptItem::Error(error) => error.message.len(),
-        TranscriptItem::ProviderMetadata(value) => value.to_string().len(),
-    }
-}
-
-fn transcript_contains_context_limit_failure(items: &[TranscriptItem]) -> bool {
-    items.iter().any(|item| {
-        let TranscriptItem::Error(error) = item else {
-            return false;
-        };
-        let message = error.message.to_ascii_lowercase();
-        message.contains("context window")
-            || message.contains("input exceeds")
-            || message.contains("response.incomplete")
-            // Anthropic / Claude Code surface oversized prompts as "Prompt is too
-            // long" (or "Prompt too long"). Match both so a context overflow on the
-            // claude-code provider forces a local compaction on the next turn.
-            || message.contains("prompt is too long")
-            || message.contains("prompt too long")
-    })
-}
-
-fn summarize_transcript(items: &[TranscriptItem]) -> String {
-    let mut lines = vec!["Previous transcript was compacted. Key retained facts:".to_string()];
-    for item in items.iter().take(items.len().saturating_sub(1)) {
-        match item {
-            TranscriptItem::UserMessage(message) => {
-                lines.push(format!("- user: {}", truncate(&message.text)));
-            }
-            TranscriptItem::AssistantMessage(message) => {
-                lines.push(format!("- assistant: {}", truncate(&message.text)));
-            }
-            TranscriptItem::ToolResult(ToolResultRecord { name, result, .. }) => {
-                let name = name.as_deref().unwrap_or("tool");
-                lines.push(format!("- {name} result: {}", truncate(result)));
-            }
-            TranscriptItem::ContextCompaction(compaction) => {
-                lines.push(format!(
-                    "- prior summary: {}",
-                    truncate(&compaction.summary)
-                ));
-            }
-            _ => {}
-        }
-    }
-    lines.join("\n")
-}
-
-fn truncate(text: &str) -> String {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    const LIMIT: usize = 240;
-    if normalized.len() <= LIMIT {
-        normalized
-    } else {
-        // Truncate on a UTF-8 char boundary at or below LIMIT so slicing never
-        // splits a multi-byte character (e.g. an em-dash spanning bytes 238..241).
-        let mut end = LIMIT;
-        while end > 0 && !normalized.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}...", &normalized[..end])
+        TranscriptItem::ProviderMetadata(_) => 0,
     }
 }
 
@@ -362,10 +444,16 @@ mod tests {
     use roder_api::catalog::PROVIDER_MOCK;
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::skills::{SkillExposure, SkillSelector};
-    use roder_api::transcript::{AssistantMessage, ErrorRecord, UserMessage};
+    use roder_api::transcript::{
+        AssistantMessage, ErrorRecord, ToolResultRecord, UserMessage,
+    };
     use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
     use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions, SkillRoot};
 
+    use crate::compaction::{
+        build_compaction_record, should_compact_transcript, truncate,
+        transcript_contains_context_limit_failure, CompactionOptions,
+    };
     use crate::fake_provider::FakeInferenceEngine;
     use crate::runtime::{
         DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS, Runtime, RuntimeConfig, StartTurnRequest,
@@ -537,6 +625,7 @@ mod tests {
             .compact_transcript_if_needed(
                 &thread_id,
                 &"turn".to_string(),
+                PROVIDER_MOCK,
                 "mock",
                 vec![
                     TranscriptItem::UserMessage(UserMessage {
@@ -552,6 +641,7 @@ mod tests {
                         images: Vec::new(),
                     }),
                 ],
+                CompactionOptions::default(),
             )
             .await
             .unwrap();
@@ -562,10 +652,10 @@ mod tests {
                 if summary.summary.contains("Previous transcript was compacted")
                     && summary.summary.contains("read_artifact")
         ));
-        assert!(matches!(
-            &compacted[1],
+        assert!(compacted.iter().any(|item| matches!(
+            item,
             TranscriptItem::UserMessage(message) if message.text == "current prompt"
-        ));
+        )));
         let artifacts = runtime
             .context_artifacts()
             .list_artifacts(&thread_id)
@@ -597,7 +687,7 @@ mod tests {
                 event,
                 RoderEvent::ContextCompactionRecorded(recorded)
                     if recorded.original_item_count == 3
-                        && recorded.compacted_item_count == 2
+                        && recorded.compacted_item_count >= 2
                         && recorded.original_estimated_tokens > 0
                         && recorded.compacted_estimated_tokens > 0
                         && recorded.file_backed
@@ -662,8 +752,10 @@ mod tests {
             .compact_transcript_if_needed(
                 &"thread".to_string(),
                 &"turn".to_string(),
+                PROVIDER_MOCK,
                 "gpt-5.5",
                 transcript.clone(),
+                CompactionOptions::default(),
             )
             .await
             .unwrap();
@@ -746,7 +838,14 @@ mod tests {
         ];
 
         let compacted = runtime
-            .compact_transcript_if_needed(&thread_id, &"turn".to_string(), "sonnet", transcript)
+            .compact_transcript_if_needed(
+                &thread_id,
+                &"turn".to_string(),
+                PROVIDER_MOCK,
+                "sonnet",
+                transcript,
+                CompactionOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -755,10 +854,10 @@ mod tests {
             TranscriptItem::ContextCompaction(summary)
                 if summary.summary.contains("Previous transcript was compacted")
         ));
-        assert!(matches!(
-            &compacted[1],
+        assert!(compacted.iter().any(|item| matches!(
+            item,
             TranscriptItem::UserMessage(message) if message.text == "current prompt"
-        ));
+        )));
         let _ = std::fs::remove_dir_all(thread_root);
     }
 
@@ -805,7 +904,14 @@ mod tests {
         ];
 
         let compacted = runtime
-            .compact_transcript_if_needed(&thread_id, &"turn".to_string(), "gpt-5.5", transcript)
+            .compact_transcript_if_needed(
+                &thread_id,
+                &"turn".to_string(),
+                PROVIDER_MOCK,
+                "gpt-5.5",
+                transcript,
+                CompactionOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -814,11 +920,137 @@ mod tests {
             TranscriptItem::ContextCompaction(summary)
                 if summary.summary.contains("Previous transcript was compacted")
         ));
-        assert!(matches!(
-            &compacted[1],
+        assert!(compacted.iter().any(|item| matches!(
+            item,
             TranscriptItem::UserMessage(message) if message.text == "continue"
-        ));
+        )));
         let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn prune_can_avoid_full_compaction_for_tool_heavy_transcript() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                auto_compact_token_limit: Some(50_000),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+        let mut events = runtime.subscribe_events();
+        let transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("start")),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "old".to_string(),
+                name: Some("grep".to_string()),
+                result: "x".repeat(120_000),
+                display_payload: None,
+                is_error: false,
+            }),
+            TranscriptItem::UserMessage(UserMessage::text("current")),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "recent-buffer".to_string(),
+                name: Some("read".to_string()),
+                result: "y".repeat(180_000),
+                display_payload: None,
+                is_error: false,
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "new".to_string(),
+                name: Some("read".to_string()),
+                result: "fresh".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+        let result = runtime
+            .compact_transcript_if_needed(
+                &"thread".to_string(),
+                &"turn".to_string(),
+                PROVIDER_MOCK,
+                "mock",
+                transcript,
+                CompactionOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert!(!result.iter().any(|item| {
+            matches!(item, TranscriptItem::ContextCompaction(_))
+        }));
+        let emitted = drain_events(&mut events);
+        assert!(emitted.iter().any(|event| matches!(
+            event,
+            RoderEvent::ContextCompactionSkipped(skipped)
+                if skipped.reason == "prune_sufficient"
+        )));
+    }
+
+    #[tokio::test]
+    async fn force_compact_uses_llm_snapshot_when_available() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-force-compact-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                auto_compact_token_limit: Some(1),
+                file_backed_dynamic_context: false,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+        let thread_id = runtime
+            .create_thread(Some("Force compact".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &"turn-1".to_string(),
+                &TranscriptItem::UserMessage(UserMessage::text("old".repeat(200))),
+            )
+            .await
+            .unwrap();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &"turn-1".to_string(),
+                &TranscriptItem::UserMessage(UserMessage::text("current")),
+            )
+            .await
+            .unwrap();
+        let outcome = runtime
+            .force_compact_thread(
+                &thread_id,
+                &"turn-1".to_string(),
+                Some("keep current prompt".to_string()),
+            )
+            .await
+            .unwrap();
+        assert!(outcome.compacted);
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn repeat_compaction_within_turn_is_blocked_after_first_summary() {
+        let items = vec![
+            build_compaction_record("summary".to_string()),
+            TranscriptItem::UserMessage(UserMessage::text("x".repeat(20_000))),
+        ];
+        let options = CompactionOptions {
+            allow_repeat: false,
+            ..CompactionOptions::default()
+        };
+        assert!(!should_compact_transcript(&items, None, Some(1), &options));
     }
 
     #[tokio::test]
@@ -875,6 +1107,7 @@ mod tests {
             .compact_transcript_if_needed(
                 &thread_id,
                 &"turn".to_string(),
+                PROVIDER_MOCK,
                 "mock",
                 vec![
                     TranscriptItem::UserMessage(UserMessage {
@@ -890,6 +1123,7 @@ mod tests {
                         images: Vec::new(),
                     }),
                 ],
+                CompactionOptions::default(),
             )
             .await
             .unwrap();

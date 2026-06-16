@@ -319,6 +319,9 @@ impl AppServer {
             "auth/supergrok/login" => self.handle_supergrok_auth_login().await,
             "auth/supergrok/status" => self.handle_supergrok_auth_status().await,
             "auth/supergrok/logout" => self.handle_supergrok_auth_logout().await,
+            "auth/kimi-code/login" => self.handle_kimi_code_auth_login().await,
+            "auth/kimi-code/status" => self.handle_kimi_code_auth_status().await,
+            "auth/kimi-code/logout" => self.handle_kimi_code_auth_logout().await,
             "thread/list" => {
                 self.decode_and(
                     req.params,
@@ -355,6 +358,12 @@ impl AppServer {
             "thread/goal/clear" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_goal_clear(p).await
+                })
+                .await
+            }
+            "thread/compact" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_compact(p).await
                 })
                 .await
             }
@@ -2338,6 +2347,47 @@ impl AppServer {
             ));
         }
         roder_supergrok_auth::logout().map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderAuthResult {
+            signed_in: false,
+            account_id: None,
+        })
+        .unwrap())
+    }
+
+    async fn handle_kimi_code_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "kimi-code auth persistence is disabled for this app-server",
+            ));
+        }
+        roder_ext_kimi_code::device_flow()
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderAuthResult {
+            signed_in: true,
+            account_id: None,
+        })
+        .unwrap())
+    }
+
+    async fn handle_kimi_code_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let signed_in = roder_ext_kimi_code::status()
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ProviderAuthResult {
+            signed_in: signed_in.is_some(),
+            account_id: None,
+        })
+        .unwrap())
+    }
+
+    async fn handle_kimi_code_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
+        if !self.persist_user_config {
+            return Err(internal_error(
+                "kimi-code auth persistence is disabled for this app-server",
+            ));
+        }
+        roder_ext_kimi_code::logout().map_err(internal_error)?;
         Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: false,
             account_id: None,
@@ -5671,6 +5721,15 @@ async fn provider_auth_status(
                 Ok(Some(tokens)) if !tokens.email.is_empty() => (true, Some(tokens.email)),
                 Ok(Some(_)) => (true, None),
                 Ok(None) | Err(_) => (false, None),
+            }
+        }
+        ProviderAuthType::OAuth if provider_id == roder_api::catalog::PROVIDER_KIMI_CODE => {
+            if metadata.auth_configured == Some(true) {
+                return (true, metadata.auth_label.clone());
+            }
+            match roder_ext_kimi_code::status().await {
+                Ok(Some(_)) => (true, metadata.auth_label.clone()),
+                Ok(None) | Err(_) => (false, metadata.auth_label.clone()),
             }
         }
         ProviderAuthType::OAuth => (false, metadata.auth_label.clone()),

@@ -101,6 +101,7 @@ roder-ext-honcho = { path = "crates/roder-ext-honcho", version = "0.1.0" }
 roder-ext-inference-router = { path = "crates/roder-ext-inference-router", version = "0.1.0" }
 roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store", version = "0.1.0" }
 roder-ext-knowledge-md = { path = "crates/roder-ext-knowledge-md", version = "0.1.0" }
+roder-ext-kimi-code = { path = "crates/roder-ext-kimi-code", version = "0.1.0" }
 roder-ext-mcp = { path = "crates/roder-ext-mcp", version = "0.1.0" }
 roder-ext-memory = { path = "crates/roder-ext-memory", version = "0.1.0" }
 roder-ext-mysql-session = { path = "crates/roder-ext-mysql-session", version = "0.1.0" }

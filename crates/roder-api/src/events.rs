@@ -258,6 +258,24 @@ pub struct ContextCompactionRecorded {
     pub compacted_item_count: u64,
     pub compacted_estimated_tokens: u32,
     pub file_backed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruned_tool_count: Option<u32>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextCompactionSkipped {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub reason: String,
+    pub estimated_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruned_tool_count: Option<u32>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1225,6 +1243,7 @@ pub enum RoderEvent {
     ContextEntrypointCandidatesInjected(ContextEntrypointCandidatesInjected),
     ContextCompactionStarted(ContextCompactionStarted),
     ContextCompactionRecorded(ContextCompactionRecorded),
+    ContextCompactionSkipped(ContextCompactionSkipped),
     InferenceRoutingDecision(InferenceRoutingDecisionEvent),
     InferenceStarted(InferenceStarted),
     InferenceEventReceived(InferenceEventReceived),
@@ -1419,6 +1438,7 @@ impl RoderEvent {
             }
             RoderEvent::ContextCompactionStarted(_) => "context.compaction_started",
             RoderEvent::ContextCompactionRecorded(_) => "context.compaction_recorded",
+            RoderEvent::ContextCompactionSkipped(_) => "context.compaction_skipped",
             RoderEvent::InferenceRoutingDecision(_) => "inference.routing_decision",
             RoderEvent::InferenceStarted(_) => "inference.started",
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
@@ -1742,6 +1762,7 @@ impl RoderEvent {
             RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.thread_id),
             RoderEvent::ContextCompactionStarted(e) => Some(&e.thread_id),
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.thread_id),
+            RoderEvent::ContextCompactionSkipped(e) => Some(&e.thread_id),
             RoderEvent::InferenceRoutingDecision(e) => Some(&e.thread_id),
             RoderEvent::InferenceStarted(e) => Some(&e.thread_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
@@ -1931,6 +1952,7 @@ impl RoderEvent {
             RoderEvent::ContextEntrypointCandidatesInjected(e) => Some(&e.turn_id),
             RoderEvent::ContextCompactionStarted(e) => Some(&e.turn_id),
             RoderEvent::ContextCompactionRecorded(e) => Some(&e.turn_id),
+            RoderEvent::ContextCompactionSkipped(e) => Some(&e.turn_id),
             RoderEvent::InferenceRoutingDecision(e) => Some(&e.turn_id),
             RoderEvent::InferenceStarted(e) => Some(&e.turn_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),

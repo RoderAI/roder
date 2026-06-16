@@ -3752,7 +3752,13 @@ async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
         supergrok
             .models
             .iter()
-            .any(|model| model.id == "grok-4.20-0309-reasoning")
+            .any(|model| model.id == "grok-build-0.1")
+    );
+    assert!(
+        supergrok
+            .models
+            .iter()
+            .any(|model| model.id == "grok-composer-2.5-fast")
     );
 }
 

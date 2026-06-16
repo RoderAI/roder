@@ -181,6 +181,12 @@ impl EvalTrajectoryEvent {
                 &e.turn_id,
                 e.timestamp,
             )),
+            RoderEvent::ContextCompactionSkipped(e) => Some(Self::basic(
+                "context_compaction_skipped",
+                &e.thread_id,
+                &e.turn_id,
+                e.timestamp,
+            )),
             RoderEvent::RetrievalRoutePlanned(e) => Some(Self::basic(
                 "retrieval_route_planned",
                 &e.plan.thread_id,

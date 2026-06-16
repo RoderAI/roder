@@ -5,6 +5,7 @@ mod commands;
 mod composer;
 mod dialog;
 mod forks;
+mod compact;
 mod goals;
 mod input_queue;
 mod knowledge;
@@ -697,6 +698,12 @@ impl ProviderAuthFlow {
                 display_name: "SuperGrok",
                 login_method: "auth/supergrok/login",
                 logout_method: "auth/supergrok/logout",
+            }),
+            "kimi-code" => Some(Self {
+                provider_id: "kimi-code",
+                display_name: "Kimi Code",
+                login_method: "auth/kimi-code/login",
+                logout_method: "auth/kimi-code/logout",
             }),
             _ => None,
         }
@@ -2797,6 +2804,9 @@ where
                 self.timeline = TimelineState::new(self.scroll_settings, self.timeline_settings);
                 self.timeline.push_system("Conversation display cleared.");
                 self.push_event("slash command: /clear".to_string());
+            }
+            "compact" => {
+                self.run_compact_slash_command(&args).await;
             }
             "help" => {
                 self.timeline
