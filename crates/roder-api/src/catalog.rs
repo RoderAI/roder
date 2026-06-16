@@ -746,6 +746,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         1_000_000,
         REASONING_LOW,
         XAI_CONFIGURABLE_REASONING,
+        true,
         false,
     ),
     xai_model(
@@ -756,6 +757,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_LOW,
         XAI_REASONING,
+        true,
         false,
     ),
     xai_model(
@@ -766,6 +768,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_LOW,
         XAI_REASONING,
+        true,
         false,
     ),
     xai_model(
@@ -776,6 +779,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_NONE,
         XAI_NO_REASONING,
+        true,
         false,
     ),
     xai_model(
@@ -786,6 +790,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         500_000,
         REASONING_LOW,
         XAI_CONFIGURABLE_REASONING,
+        true,
         false,
     ),
     xai_model(
@@ -797,6 +802,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_NONE,
         &[],
         false,
+        false,
     ),
     xai_model(
         PROVIDER_SUPERGROK,
@@ -806,6 +812,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         1_000_000,
         REASONING_LOW,
         XAI_CONFIGURABLE_REASONING,
+        true,
         true,
     ),
     xai_model(
@@ -817,6 +824,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_LOW,
         XAI_REASONING,
         true,
+        true,
     ),
     xai_model(
         PROVIDER_SUPERGROK,
@@ -827,6 +835,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_LOW,
         XAI_REASONING,
         true,
+        true,
     ),
     xai_model(
         PROVIDER_SUPERGROK,
@@ -836,6 +845,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_NONE,
         XAI_NO_REASONING,
+        true,
         true,
     ),
     opencode_model(
@@ -1284,6 +1294,7 @@ const fn xai_model(
     context_window: u32,
     default_reasoning: &'static str,
     supported_reasoning: &'static [ReasoningOption],
+    supports_images: bool,
     hidden: bool,
 ) -> ModelCatalogEntry {
     ModelCatalogEntry {
@@ -1297,7 +1308,7 @@ const fn xai_model(
         max_context_window: context_window,
         auto_compact_token_limit: context_window.saturating_mul(9) / 10,
         supports_compaction: false,
-        supports_images: true,
+        supports_images,
         supports_tools: true,
         supports_structured: true,
         edit_tool: Some("edit"),
@@ -1933,6 +1944,7 @@ mod tests {
         assert_eq!(composer.context_window, 200_000);
         assert_eq!(composer.auto_compact_token_limit, 180_000);
         assert!(composer.supported_reasoning.is_empty());
+        assert!(!composer.supports_images);
 
         let visible = models_for_provider(PROVIDER_SUPERGROK, false)
             .into_iter()
