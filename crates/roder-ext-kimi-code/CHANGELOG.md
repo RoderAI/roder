@@ -1,13 +1,8 @@
----
-roder-ext-kimi-code: minor
-roder: patch
-roder-api: patch
-roder-app-server: patch
-roder-protocol: patch
-roder-extension-host: patch
----
+## 0.1.1 (2026-06-16)
 
-Added first-class `kimi-code` (aliases: `kimi`, `moonshot`) inference provider and `roder-ext-kimi-code` crate.
+### Features
+
+#### Added first-class `kimi-code` (aliases: `kimi`, `moonshot`) inference provider and `roder-ext-kimi-code` crate.
 
 - Kimi Code subscription OAuth uses the managed API (`api.kimi.com/coding/v1`) with Kimi device headers and `kimi-code-cli` User-Agent; API keys still use Moonshot Open Platform (`api.moonshot.ai/v1`).
 - Catalog entry + `kimi-for-coding` model (K2.7 Code).
