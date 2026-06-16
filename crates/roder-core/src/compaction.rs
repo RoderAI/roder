@@ -97,6 +97,7 @@ pub(crate) fn compaction_skip_reason(
     None
 }
 
+#[cfg(test)]
 pub(crate) fn should_compact_transcript(
     items: &[TranscriptItem],
     model_entry: Option<&ModelCatalogEntry>,
