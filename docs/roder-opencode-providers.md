@@ -16,7 +16,7 @@ opencode-go/kimi-k2.6
 opencode-go/qwen3.6-plus
 ```
 
-Kimi K2 models are also available directly via the dedicated `kimi-code` provider (`kimi-code/kimi-k2.6`), which authenticates against your Kimi Code subscription through device OAuth or a Moonshot API key. See `docs/roder-kimi-code-provider.md`.
+Kimi K2 models are also available directly via the dedicated `kimi-code` provider (`kimi-code/kimi-for-coding`), which authenticates against your Kimi Code subscription through device OAuth (managed API) or a Moonshot Open Platform API key. See `docs/roder-kimi-code-provider.md`.
 
 ## API Key Setup
 
