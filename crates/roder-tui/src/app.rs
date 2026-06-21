@@ -2,10 +2,10 @@
 mod automations;
 mod chrome;
 mod commands;
+mod compact;
 mod composer;
 mod dialog;
 mod forks;
-mod compact;
 mod goals;
 mod input_queue;
 mod knowledge;
@@ -12174,7 +12174,11 @@ mod tests {
             Runtime::fake().expect("fake runtime"),
         )));
         let client = LocalAppClient::new(server.clone());
-        let (workspace_id, root_id) = create_single_root_workspace(&client, "/tmp").await.unwrap();
+        let workspace_root = std::env::temp_dir();
+        let workspace_root = workspace_root.to_string_lossy();
+        let (workspace_id, root_id) = create_single_root_workspace(&client, &workspace_root)
+            .await
+            .unwrap();
         let started: roder_protocol::ThreadStartResult = decode_response(
             client
                 .send_request(JsonRpcRequest {

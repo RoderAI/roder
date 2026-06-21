@@ -210,29 +210,32 @@ pub async fn device_flow() -> anyhow::Result<(Tokens, Option<String>)> {
     let device_endpoint = discovery
         .device_authorization_endpoint
         .clone()
-        .ok_or_else(|| anyhow::anyhow!("supergrok device authorization endpoint not available in discovery"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("supergrok device authorization endpoint not available in discovery")
+        })?;
     validate_xai_https_endpoint(&device_endpoint)?;
 
     let client = auth_client();
-    let params = [
-        ("client_id", CLIENT_ID),
-        ("scope", SCOPE),
-    ];
-    let response = client
-        .post(&device_endpoint)
-        .form(&params)
-        .send()
-        .await?;
+    let params = [("client_id", CLIENT_ID), ("scope", SCOPE)];
+    let response = client.post(&device_endpoint).form(&params).send().await?;
     let status = response.status();
     let text = response.text().await?;
     if !status.is_success() {
-        anyhow::bail!("supergrok device authorization request failed: {status} {}", text.trim());
+        anyhow::bail!(
+            "supergrok device authorization request failed: {status} {}",
+            text.trim()
+        );
     }
-    let device_auth: DeviceAuthorizationResponse = serde_json::from_str(&text)
-        .map_err(|e| anyhow::anyhow!("supergrok device authorization response was not valid JSON: {e}
-{text}"))?;
+    let device_auth: DeviceAuthorizationResponse = serde_json::from_str(&text).map_err(|e| {
+        anyhow::anyhow!(
+            "supergrok device authorization response was not valid JSON: {e}
+{text}"
+        )
+    })?;
 
-    let verification_uri = device_auth.verification_uri_complete.as_ref()
+    let verification_uri = device_auth
+        .verification_uri_complete
+        .as_ref()
         .unwrap_or(&device_auth.verification_uri);
     eprintln!("SuperGrok device sign-in");
     eprintln!("User code: {}", device_auth.user_code);
@@ -279,11 +282,7 @@ async fn poll_device_token(
             ("device_code", device_code),
             ("client_id", CLIENT_ID),
         ];
-        let response = client
-            .post(token_endpoint)
-            .form(&params)
-            .send()
-            .await?;
+        let response = client.post(token_endpoint).form(&params).send().await?;
         let status = response.status();
         let text = response.text().await?;
         if status.is_success() {
@@ -293,7 +292,10 @@ async fn poll_device_token(
         let error: DeviceTokenErrorResponse = match serde_json::from_str(&text) {
             Ok(e) => e,
             Err(_) => {
-                anyhow::bail!("supergrok device token request failed: {status} {}", text.trim());
+                anyhow::bail!(
+                    "supergrok device token request failed: {status} {}",
+                    text.trim()
+                );
             }
         };
         match error.error.as_str() {

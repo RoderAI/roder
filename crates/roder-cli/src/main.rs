@@ -33,8 +33,8 @@ use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
-    PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE,
-    PROVIDER_OPENCODE_GO, PROVIDER_KIMI_CODE, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
+    PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK, PROVIDER_OPENAI,
+    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
     PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
     PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
 };
@@ -84,8 +84,29 @@ use speech::run_speech_cli;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
+#[cfg(not(windows))]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    run_cli().await
+}
+
+#[cfg(windows)]
+fn main() -> anyhow::Result<()> {
+    std::thread::Builder::new()
+        .name("roder-main".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("roder main tokio runtime")
+                .block_on(run_cli())
+        })?
+        .join()
+        .map_err(|panic| anyhow::anyhow!("Roder main thread panicked: {panic:?}"))?
+}
+
+async fn run_cli() -> anyhow::Result<()> {
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     let (args, config_dir) = extract_global_config_dir(&raw_args)?;
     if let Some(config_dir) = config_dir.as_deref() {
@@ -2761,8 +2782,17 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
         kimi_code: std::env::var("KIMI_CODE_API_KEY")
             .ok()
             .or_else(|| std::env::var("RODER_KIMI_CODE_API_KEY").ok())
-            .or_else(|| cfg.providers.get(PROVIDER_KIMI_CODE).and_then(|p| p.api_key.clone()))
-            .or_else(|| cfg.providers.get(PROVIDER_KIMI_CODE).and_then(|p| p.api_key_env.as_deref()).and_then(env_nonempty)),
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_KIMI_CODE)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_KIMI_CODE)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
         kimi_code_base_url: cfg
             .providers
             .get(PROVIDER_KIMI_CODE)

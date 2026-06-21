@@ -46,7 +46,6 @@ use roder_skills::{SkillRegistry, SkillRegistryOptions};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
-
 use crate::artifacts::{
     ContextArtifactStore as FilesystemContextArtifactStore, default_context_artifact_dir,
 };

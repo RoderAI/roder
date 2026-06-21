@@ -26,10 +26,12 @@ impl RoderExtension for KimiCodeExtension {
             name: "Kimi Code Provider".to_string(),
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
-            description: Some("Kimi Code (Moonshot AI) direct subscription inference provider".to_string()),
-            provides: vec![
-                ProvidedService::InferenceEngine(PROVIDER_KIMI_CODE.to_string()),
-            ],
+            description: Some(
+                "Kimi Code (Moonshot AI) direct subscription inference provider".to_string(),
+            ),
+            provides: vec![ProvidedService::InferenceEngine(
+                PROVIDER_KIMI_CODE.to_string(),
+            )],
             required_capabilities: vec![CapabilityRequest::new("network.kimi.com")],
         }
     }
