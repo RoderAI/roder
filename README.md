@@ -92,7 +92,7 @@ the same provider contract without forking core runtime code.
 #### macOS / Linux install script
 
 ```sh
-curl -fsSL https://dl.roder.sh/latest/install.sh | sh
+curl -fsSL https://dl.roder.sh/install.sh | bash
 ```
 
 By default the installer writes `roder` to `~/.local/bin`. If that directory is
@@ -105,7 +105,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Override the install directory with:
 
 ```sh
-RODER_INSTALL_DIR=/usr/local/bin curl -fsSL https://dl.roder.sh/latest/install.sh | sh
+curl -fsSL https://dl.roder.sh/install.sh | RODER_INSTALL_DIR=/usr/local/bin bash
 ```
 
 #### Homebrew

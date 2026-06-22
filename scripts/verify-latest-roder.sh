@@ -32,35 +32,53 @@ artifacts = manifest.get("artifacts", [])
 
 errors = []
 by_name = {artifact.get("name"): artifact for artifact in artifacts}
-for target in targets:
-    name = f"remote-roder-{target}"
-    artifact = by_name.get(name)
-    if not artifact:
-        errors.append(f"manifest missing {name}")
-        continue
-    if artifact.get("distribution") != "remote-app-server":
-        errors.append(f"{name} distribution is {artifact.get('distribution')!r}")
-    expected_url = f"{base_url}/latest/{name}"
-    if artifact.get("url") != expected_url:
-        errors.append(f"{name} url is {artifact.get('url')!r}, expected {expected_url!r}")
-    if not artifact.get("sha256"):
-        errors.append(f"{name} missing sha256")
-    if not artifact.get("bytes"):
-        errors.append(f"{name} missing byte size")
 
-    for suffix in ("", ".sha256"):
-        url = f"{base_url}/latest/{name}{suffix}"
-        request = urllib.request.Request(
-            url,
-            headers={"User-Agent": "roder-publish-verify/1.0"},
-            method="HEAD",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                if response.status != 200:
-                    errors.append(f"{url} returned HTTP {response.status}")
-        except Exception as exc:
-            errors.append(f"{url} failed: {exc}")
+for install_url in [f"{base_url}/install.sh", f"{base_url}/latest/install.sh"]:
+    request = urllib.request.Request(
+        install_url,
+        headers={"User-Agent": "roder-publish-verify/1.0"},
+        method="HEAD",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status != 200:
+                errors.append(f"{install_url} returned HTTP {response.status}")
+    except Exception as exc:
+        errors.append(f"{install_url} failed: {exc}")
+
+for target in targets:
+    for distribution, prefix in [("default", "roder-"), ("remote-app-server", "remote-roder-")]:
+        for suffix, kind in [("", "binary"), (".tar.gz", "tar.gz"), (".zip", "zip")]:
+            name = f"{prefix}{target}{suffix}"
+            artifact = by_name.get(name)
+            if not artifact:
+                errors.append(f"manifest missing {name}")
+                continue
+            if artifact.get("distribution") != distribution:
+                errors.append(f"{name} distribution is {artifact.get('distribution')!r}")
+            if artifact.get("kind") != kind:
+                errors.append(f"{name} kind is {artifact.get('kind')!r}, expected {kind!r}")
+            expected_url = f"{base_url}/latest/{name}"
+            if artifact.get("url") != expected_url:
+                errors.append(f"{name} url is {artifact.get('url')!r}, expected {expected_url!r}")
+            if not artifact.get("sha256"):
+                errors.append(f"{name} missing sha256")
+            if not artifact.get("bytes"):
+                errors.append(f"{name} missing byte size")
+
+            for checksum_suffix in ("", ".sha256"):
+                url = f"{base_url}/latest/{name}{checksum_suffix}"
+                request = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "roder-publish-verify/1.0"},
+                    method="HEAD",
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=20) as response:
+                        if response.status != 200:
+                            errors.append(f"{url} returned HTTP {response.status}")
+                except Exception as exc:
+                    errors.append(f"{url} failed: {exc}")
 
 if errors:
     for error in errors:
@@ -68,7 +86,7 @@ if errors:
     sys.exit(1)
 
 print(
-    "publish-verify: remote-roder artifacts present for "
+    "publish-verify: roder/remote-roder binaries and archives present for "
     + ", ".join(targets)
 )
 PY
