@@ -43,6 +43,7 @@ package_binary() {
   local target="$3"
   local staging archive_base
   staging="$(mktemp -d)"
+  trap 'rm -rf "$staging"' RETURN
   archive_base="${binary_name}-${target}"
   mkdir -p "$staging/$archive_base"
   cp "$binary_path" "$staging/$archive_base/$binary_name"
@@ -58,9 +59,10 @@ README
     cd "$staging"
     zip -qr "$repo_root/$dist_dir/${archive_base}.zip" "$archive_base"
   )
-  rm -rf "$staging"
   write_checksum "$dist_dir/${archive_base}.tar.gz"
   write_checksum "$dist_dir/${archive_base}.zip"
+  rm -rf "$staging"
+  trap - RETURN
 }
 
 mkdir -p "$dist_dir"

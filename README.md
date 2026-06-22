@@ -89,14 +89,16 @@ the same provider contract without forking core runtime code.
 
 ### Install Roder
 
-#### macOS / Linux install script
+#### Linux install script
 
 ```sh
 curl -fsSL https://dl.roder.sh/install.sh | bash
 ```
 
-By default the installer writes `roder` to `~/.local/bin`. If that directory is
-not on your `PATH`, add it first:
+On Linux, the installer downloads the latest `roder-<target>.tar.gz` archive
+from `dl.roder.sh`, verifies its SHA-256 checksum, and writes `roder` to
+`~/.local/bin` by default. If that directory is not on your `PATH`, add it
+first:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -108,25 +110,27 @@ Override the install directory with:
 curl -fsSL https://dl.roder.sh/install.sh | RODER_INSTALL_DIR=/usr/local/bin bash
 ```
 
+The same script works on macOS by delegating to Homebrew. To force a direct
+archive install on macOS instead, set `RODER_FORCE_DIRECT_INSTALL=1`.
+
 #### Homebrew
 
-If you use Homebrew, install from the Roder tap:
+On macOS, install from the Roder Homebrew tap:
 
 ```sh
-brew tap RoderAI/tap
-brew install roder
+brew install RoderAI/tap/roder
 ```
 
 Upgrade later with:
 
 ```sh
 brew update
-brew upgrade roder
+brew upgrade RoderAI/tap/roder
 ```
 
 > Homebrew publication is updated after each tagged release. If the newest GitHub
-> release is not visible in Homebrew yet, use the install script above or build
-> from source.
+> release is not visible in Homebrew yet, set `RODER_FORCE_DIRECT_INSTALL=1` with
+> the install script above or build from source.
 
 #### Build from source
 

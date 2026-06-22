@@ -57,7 +57,7 @@ jobs:
       - name: Build Roder CLI
         shell: bash
         run: |
-          cargo build --release -p roder-cli --bin roder --target "${{ matrix.target }}"
+          cargo build --release -p roder --bin roder --target "${{ matrix.target }}"
 
       - name: Generate remote app-server distribution
         if: runner.os == 'Linux'
@@ -102,6 +102,7 @@ jobs:
             local target="$3"
             local staging archive_base
             staging="$(mktemp -d)"
+            trap 'rm -rf "$staging"' RETURN
             archive_base="${binary_name}-${target}"
             mkdir -p "$staging/$archive_base"
             cp "$binary_path" "$staging/$archive_base/$binary_name"
@@ -112,9 +113,10 @@ jobs:
               cd "$staging"
               zip -qr "$GITHUB_WORKSPACE/dist/latest/${archive_base}.zip" "$archive_base"
             )
-            rm -rf "$staging"
             write_checksum "dist/latest/${archive_base}.tar.gz"
             write_checksum "dist/latest/${archive_base}.zip"
+            rm -rf "$staging"
+            trap - RETURN
           }
 
           source_path="target/${{ matrix.target }}/release/roder"
