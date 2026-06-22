@@ -19,7 +19,7 @@ Usage:
   curl -fsSL https://dl.roder.sh/latest/install.sh | bash
 
 Behavior:
-  macOS: installs with Homebrew (`brew tap RoderAI/tap && brew install roder`).
+  macOS: installs with Homebrew (`brew install RoderAI/tap/roder`).
   Linux: downloads a verified archive from dl.roder.sh and installs `roder`.
 
 Environment:
@@ -30,7 +30,7 @@ Environment:
   RODER_ARCHIVE_FORMAT       tar.gz or zip, default: tar.gz
   RODER_FORCE_DIRECT_INSTALL set to 1 on macOS to skip Homebrew and download directly
   RODER_HOMEBREW_TAP         Homebrew tap, default: RoderAI/tap
-  RODER_HOMEBREW_FORMULA     Homebrew formula, default: roder
+  RODER_HOMEBREW_FORMULA     Homebrew formula, default: RoderAI/tap/roder
 USAGE
 }
 
@@ -94,15 +94,18 @@ normalize_target() {
 
 install_with_homebrew() {
   local tap="${RODER_HOMEBREW_TAP:-RoderAI/tap}"
-  local formula="${RODER_HOMEBREW_FORMULA:-roder}"
-  require_cmd brew
+  local formula="${RODER_HOMEBREW_FORMULA:-RoderAI/tap/roder}"
+  local formula_name="${formula##*/}"
+  if ! command -v brew >/dev/null 2>&1; then
+    fail "Homebrew is required on macOS. Install it from https://brew.sh, then run: brew install ${formula}. To force a direct archive install, set RODER_FORCE_DIRECT_INSTALL=1."
+  fi
 
-  if ! brew tap | grep -qx "$tap"; then
+  if [[ "$formula" != */* ]] && ! brew tap | grep -qx "$tap"; then
     log "tapping Homebrew repository $tap"
     brew tap "$tap"
   fi
 
-  if brew list --formula "$formula" >/dev/null 2>&1; then
+  if brew list --formula "$formula_name" >/dev/null 2>&1; then
     log "upgrading Homebrew formula $formula"
     brew upgrade "$formula" || brew reinstall "$formula"
   else
@@ -127,14 +130,19 @@ install_direct_archive() {
   local archive="roder-${target}.${archive_format}"
   local archive_url="${base_url%/}/${archive}"
   local checksum_url="${archive_url}.sha256"
-  local checksum expected actual extracted
+  local checksums_url="${base_url%/}/SHA256SUMS"
+  local expected actual extracted install_tmp
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/roder-install.XXXXXX")"
   cleanup() { rm -rf "${tmp_dir:-}"; }
   trap cleanup EXIT INT TERM
 
   log "downloading ${archive_url}"
   download "$archive_url" "$tmp_dir/$archive"
-  download "$checksum_url" "$tmp_dir/$archive.sha256"
+  if ! download "$checksum_url" "$tmp_dir/$archive.sha256"; then
+    log "per-archive checksum not found; falling back to SHA256SUMS"
+    download "$checksums_url" "$tmp_dir/SHA256SUMS"
+    awk -v name="$archive" '$2 == name { print; found = 1 } END { exit found ? 0 : 1 }' "$tmp_dir/SHA256SUMS" > "$tmp_dir/$archive.sha256" || fail "checksum not found for $archive"
+  fi
 
   expected="$(awk '{print $1}' "$tmp_dir/$archive.sha256")"
   actual="$(sha256_file "$tmp_dir/$archive")"
@@ -161,7 +169,9 @@ install_direct_archive() {
   [[ -n "$extracted" ]] || fail "archive did not contain a roder binary"
 
   mkdir -p "$install_dir"
-  install -m 0755 "$extracted" "$install_dir/$install_name"
+  install_tmp="$install_dir/.${install_name}.tmp.$$"
+  install -m 0755 "$extracted" "$install_tmp"
+  mv "$install_tmp" "$install_dir/$install_name"
 
   log "installed ${install_dir}/${install_name} (${version}, ${target})"
   case ":$PATH:" in
