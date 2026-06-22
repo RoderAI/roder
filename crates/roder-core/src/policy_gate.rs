@@ -68,9 +68,13 @@ impl PolicyGate for DefaultPolicyGate {
             };
         }
         if looks_like_side_effect(call) {
-            return PolicyDecision::RequiresApproval {
-                reason: Some("side-effecting tool call".to_string()),
-            };
+            if mode == PolicyMode::Plan && !looks_like_write(call) {
+                // Allowed process-like tools (that don't write/edit files) are fully allowed in Plan mode.
+            } else {
+                return PolicyDecision::RequiresApproval {
+                    reason: Some("side-effecting tool call".to_string()),
+                };
+            }
         }
         PolicyDecision::Allowed
     }
@@ -129,12 +133,59 @@ fn looks_like_write(call: &ToolCall) -> bool {
     ) {
         return true;
     }
-    tool_name_contains_any(
+    if tool_name_contains_any(
         call,
         &[
             "write", "edit", "patch", "delete", "mkdir", "move", "rename",
         ],
-    )
+    ) {
+        return true;
+    }
+
+    if is_shell_tool(&call.name) {
+        if let Some(cmd) = extract_command_string(call) {
+            if command_writes_or_edits_files(&cmd) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn is_shell_tool(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name == "shell" || name == "bash" || name == "exec" || name == "terminal" || name == "command"
+}
+
+fn extract_command_string(call: &ToolCall) -> Option<String> {
+    if let Some(cmd) = call.arguments.get("command").and_then(|v| v.as_str()) {
+        return Some(cmd.to_string());
+    }
+    if let Some(cmd) = call.arguments.get("cmd").and_then(|v| v.as_str()) {
+        return Some(cmd.to_string());
+    }
+    if !call.raw_arguments.is_empty() {
+        return Some(call.raw_arguments.clone());
+    }
+    None
+}
+
+fn command_writes_or_edits_files(cmd: &str) -> bool {
+    let cmd = cmd.to_ascii_lowercase();
+    let contains_redirect = cmd.contains('>') && {
+        let cleaned = cmd
+            .replace("2>&1", "")
+            .replace("1>&2", "")
+            .replace(">/dev/null", "")
+            .replace("> /dev/null", "");
+        cleaned.contains('>')
+    };
+
+    contains_redirect 
+        || cmd.contains("<<") 
+        || cmd.contains("sed -i") 
+        || cmd.contains("tee ")
 }
 
 fn looks_like_process(call: &ToolCall) -> bool {
@@ -209,14 +260,27 @@ mod tests {
     }
 
     #[test]
-    fn plan_mode_denies_shell_tool_name() {
-        let decision = DefaultPolicyGate::new().decide(
+    fn plan_mode_allows_safe_shell_tool_but_denies_write_shell_tool() {
+        let safe_decision = DefaultPolicyGate::new().decide(
             &call("shell", json!({ "command": "cargo test" })),
             PolicyMode::Plan,
             &context(),
         );
+        assert!(matches!(safe_decision, PolicyDecision::Allowed));
 
-        assert!(matches!(decision, PolicyDecision::Denied { .. }));
+        let unsafe_decision_1 = DefaultPolicyGate::new().decide(
+            &call("shell", json!({ "command": "cat << EOF > file.txt" })),
+            PolicyMode::Plan,
+            &context(),
+        );
+        assert!(matches!(unsafe_decision_1, PolicyDecision::Denied { .. }));
+
+        let unsafe_decision_2 = DefaultPolicyGate::new().decide(
+            &call("shell", json!({ "command": "echo foo >> config.json" })),
+            PolicyMode::Plan,
+            &context(),
+        );
+        assert!(matches!(unsafe_decision_2, PolicyDecision::Denied { .. }));
     }
 
     #[test]

@@ -55,14 +55,29 @@ fn plan_mode_denies_write_tool_name() {
 }
 
 #[test]
-fn plan_mode_denies_shell_tool_name() {
-    let decision = DefaultPolicyGate::new().decide(
+fn plan_mode_allows_safe_shell_tool_but_denies_write_shell_tool() {
+    // Safe shell command should be allowed
+    let safe_decision = DefaultPolicyGate::new().decide(
         &tool_call("shell", json!({ "command": "cargo test" })),
         PolicyMode::Plan,
         &context(PolicyMode::Plan),
     );
+    assert!(matches!(safe_decision, PolicyDecision::Allowed));
 
-    assert!(matches!(decision, PolicyDecision::Denied { .. }));
+    // Unsafe/write-like shell command should be denied
+    let unsafe_decision_1 = DefaultPolicyGate::new().decide(
+        &tool_call("shell", json!({ "command": "cat << EOF > file.txt" })),
+        PolicyMode::Plan,
+        &context(PolicyMode::Plan),
+    );
+    assert!(matches!(unsafe_decision_1, PolicyDecision::Denied { .. }));
+
+    let unsafe_decision_2 = DefaultPolicyGate::new().decide(
+        &tool_call("shell", json!({ "command": "echo foo >> config.json" })),
+        PolicyMode::Plan,
+        &context(PolicyMode::Plan),
+    );
+    assert!(matches!(unsafe_decision_2, PolicyDecision::Denied { .. }));
 }
 
 #[test]
