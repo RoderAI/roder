@@ -15,7 +15,6 @@ mod evals;
 mod forks;
 mod fs;
 mod goals;
-pub mod hosted;
 mod inference_routing;
 mod item_stream;
 mod knowledge;

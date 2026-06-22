@@ -4,8 +4,8 @@
 use roder_api::identity::{
     AuthorizationDecision, HostedRole, HostedScope, PrincipalContext, TenantContext,
 };
-use roder_app_server::hosted::auth::PrincipalSeed;
-use roder_app_server::hosted::{
+use roder_app_server_hosted::auth::PrincipalSeed;
+use roder_app_server_hosted::{
     HostedAuthError, HostedAuthenticator, TenantRegistry, authorize_method,
 };
 use time::OffsetDateTime;

@@ -10,8 +10,8 @@ use futures::{SinkExt, StreamExt};
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantContext};
 use roder_app_server::AppServer;
-use roder_app_server::hosted::auth::PrincipalSeed;
-use roder_app_server::hosted::{
+use roder_app_server_hosted::auth::PrincipalSeed;
+use roder_app_server_hosted::{
     AuditLog, HostedAuthenticator, HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile,
     RateLimitConfig, TenantRegistry, serve_hosted_gateway,
 };
@@ -58,7 +58,7 @@ fn tenant_pool(label: &str, allow_local_workspaces: bool) -> Arc<HostedRuntimePo
 }
 
 struct Fixture {
-    controller: roder_app_server::hosted::HostedGatewayController,
+    controller: roder_app_server_hosted::HostedGatewayController,
     authenticator: Arc<HostedAuthenticator>,
     url: String,
 }
@@ -94,8 +94,8 @@ async fn fixture(label: &str, limits: RateLimitConfig, allow_local_workspaces: b
             tenants,
             audit: Arc::new(AuditLog::default()),
             limits,
-            hooks: Arc::new(roder_app_server::hosted::HookStore::default()),
-            hook_delivery: Arc::new(roder_app_server::hosted::HookDeliveryService::new(
+            hooks: Arc::new(roder_app_server_hosted::HookStore::default()),
+            hook_delivery: Arc::new(roder_app_server_hosted::HookDeliveryService::new(
                 Default::default(),
             )),
         },

@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantContext};
-use roder_app_server::hosted::auth::PrincipalSeed;
-use roder_app_server::hosted::runtime_pool::TenantAppServerFactory;
-use roder_app_server::hosted::{
+use roder_app_server_hosted::auth::PrincipalSeed;
+use roder_app_server_hosted::runtime_pool::TenantAppServerFactory;
+use roder_app_server_hosted::{
     AuditLog, HookDeliveryService, HookStore, HostedAuthenticator, HostedGatewayController,
     HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry,
     serve_hosted_gateway,

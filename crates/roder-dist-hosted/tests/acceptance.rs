@@ -39,7 +39,7 @@ async fn hosted_service_launches_with_fake_auth_and_answers_initialize() {
 
     // Fake runner/runtime profile: mock engine, no providers, no stores
     // beyond the tenant dir.
-    let factory: roder_app_server::hosted::runtime_pool::TenantAppServerFactory =
+    let factory: roder_app_server_hosted::runtime_pool::TenantAppServerFactory =
         Arc::new(|_tenant, data_dir| {
             Box::pin(async move {
                 let mut builder = ExtensionRegistryBuilder::new();

@@ -3471,6 +3471,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-app-server-hosted"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-app-server",
+ "roder-core",
+ "roder-ext-jsonl-thread-store",
+ "roder-protocol",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "roder-automations"
 version = "0.1.1"
 dependencies = [
@@ -3613,6 +3634,7 @@ dependencies = [
  "futures",
  "roder-api",
  "roder-app-server",
+ "roder-app-server-hosted",
  "roder-config",
  "roder-core",
  "roder-ext-jsonl-thread-store",

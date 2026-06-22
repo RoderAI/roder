@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
 
-use crate::server::AppServer;
+use roder_app_server::AppServer;
 
 /// How a hosted deployment builds and guards tenant runtimes.
 #[derive(Clone)]

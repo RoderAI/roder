@@ -49,22 +49,6 @@ path = "tests/packages_e2e.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
-name = "hosted_auth"
-path = "tests/hosted_auth.rs"
-
-[[test]]
-name = "hosted_gateway"
-path = "tests/hosted_gateway.rs"
-
-[[test]]
-name = "hosted_hooks"
-path = "tests/hosted_hooks.rs"
-
-[[test]]
-name = "hosted_e2e"
-path = "tests/hosted_e2e.rs"
-
-[[test]]
 name = "agent_node_security"
 path = "tests/agent_node_security.rs"
 

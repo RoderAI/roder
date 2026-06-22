@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use roder_api::hosted_hooks::{
     HookDeliveryStatus, HookRetryPolicy, HookScope, HostedHookDefinition,
 };
-use roder_app_server::hosted::hook_delivery::hmac_sha256_hex;
-use roder_app_server::hosted::{HookDeliveryConfig, HookDeliveryService, HookStore};
+use roder_app_server_hosted::hook_delivery::hmac_sha256_hex;
+use roder_app_server_hosted::{HookDeliveryConfig, HookDeliveryService, HookStore};
 use time::OffsetDateTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

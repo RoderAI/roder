@@ -12,8 +12,8 @@ use futures::{SinkExt, StreamExt};
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantContext};
 use roder_app_server::AppServer;
-use roder_app_server::hosted::auth::PrincipalSeed;
-use roder_app_server::hosted::{
+use roder_app_server_hosted::auth::PrincipalSeed;
+use roder_app_server_hosted::{
     AuditLog, HookDeliveryService, HookStore, HostedAuthenticator, HostedGatewayOptions,
     HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry, serve_hosted_gateway,
 };

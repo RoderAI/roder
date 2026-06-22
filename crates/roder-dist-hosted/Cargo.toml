@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
+roder-app-server-hosted.workspace = true
 roder-config.workspace = true
 roder-core.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
