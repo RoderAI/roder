@@ -163,9 +163,24 @@ roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 [profile.dev]
 # Fast local builds: no debug info.
 debug = 0
+# Abort on panic instead of unwinding. Drops ~30MB of unwind/exception tables
+# (__eh_frame/__gcc_except_tab/__unwind_info) from the ~190MB dev binary, cutting
+# both codegen and the final link write. The codebase has no catch_unwind, so the
+# only behavioral delta is that a panic in a spawned task aborts the process
+# (fail-fast) rather than being isolated to that task.
+panic = "abort"
 split-debuginfo = "unpacked"
 
 [profile.test]
 inherits = "dev"
 # Keep test compilation fast; optimize only release builds.
 opt-level = 0
+# Note: the dev `panic = "abort"` does NOT reach tests/benches. Cargo always builds
+# the test/bench harness with unwind, so #[should_panic] and nextest keep working.
+
+[profile.release]
+# Ship the same fail-fast panic strategy as dev for a smaller binary. The release
+# `roder` binary can run the long-lived app-server; with abort, a panic in any
+# session/worker task takes down the whole process instead of being isolated, so
+# revisit this if per-session panic isolation becomes a requirement.
+panic = "abort"
