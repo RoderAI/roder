@@ -1146,6 +1146,17 @@ impl roder_api::inference::TurnToolExecutor for RuntimeTurnToolExecutor {
         &self,
         call: roder_api::inference::ToolCallCompleted,
     ) -> anyhow::Result<roder_api::inference::TurnToolOutcome> {
+        let tool_item = roder_api::transcript::TranscriptItem::ToolCall(
+            roder_api::transcript::ToolCallRecord {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            },
+        );
+        self.runtime
+            .persist_turn_item(&self.thread_id, &self.turn_id, &tool_item)
+            .await?;
+
         let record = self
             .runtime
             .route_tool_call(
@@ -1172,5 +1183,83 @@ mod tests {
         assert!(is_subagent_task_tool("task"));
         assert!(is_subagent_task_tool("task_explore"));
         assert!(!is_subagent_task_tool("task_ledger.update"));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_turn_tool_executor_persists_tool_call() {
+        use super::RuntimeTurnToolExecutor;
+        use roder_api::extension::ExtensionRegistryBuilder;
+        use roder_api::inference::{ToolCallCompleted, TurnToolExecutor, InferenceEngine, InferenceCapabilities, InferenceProviderContext, InferenceTurnContext, InferenceEventStream, ModelDescriptor};
+        use roder_api::transcript::TranscriptItem;
+        use std::sync::Arc;
+
+        struct MockInferenceEngine;
+
+        #[async_trait::async_trait]
+        impl InferenceEngine for MockInferenceEngine {
+            fn id(&self) -> roder_api::extension::InferenceEngineId {
+                "mock".to_string()
+            }
+
+            fn capabilities(&self) -> InferenceCapabilities {
+                InferenceCapabilities::coding_agent_default()
+            }
+
+            async fn list_models(
+                &self,
+                _ctx: InferenceProviderContext<'_>,
+            ) -> anyhow::Result<Vec<ModelDescriptor>> {
+                Ok(Vec::new())
+            }
+
+            async fn stream_turn(
+                &self,
+                _ctx: InferenceTurnContext<'_>,
+                _request: roder_api::inference::AgentInferenceRequest,
+            ) -> anyhow::Result<InferenceEventStream> {
+                Ok(Box::pin(futures::stream::empty()))
+            }
+        }
+
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(MockInferenceEngine));
+        let registry = builder.build().unwrap();
+        let runtime = Arc::new(crate::runtime::Runtime::new(registry, crate::runtime::RuntimeConfig::default()).unwrap());
+        let thread = runtime.create_thread(None).await.unwrap();
+        let thread_id = thread.thread_id;
+        let turn_id = "test_turn_1".to_string();
+
+        let executor = RuntimeTurnToolExecutor {
+            runtime: Arc::clone(&runtime),
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            workspace: None,
+            deadline: None,
+        };
+
+        let call = ToolCallCompleted {
+            id: "call_1".to_string(),
+            name: "test_tool".to_string(),
+            arguments: "{}".to_string(),
+        };
+
+        let mut events = runtime.subscribe_events();
+
+        // Note: the test_tool is not registered, so we expect route_tool_call to fail with tool not found / error
+        // but the ToolCall completed item itself MUST still be persisted beforehand!
+        let _ = executor.execute(call).await;
+
+        let mut found_tool_call = false;
+        while let Ok(envelope) = events.try_recv() {
+            if let roder_api::events::RoderEvent::TranscriptItemAppended(appended) = envelope.event {
+                if let Some(TranscriptItem::ToolCall(tc)) = appended.item {
+                    if tc.id == "call_1" && tc.name == "test_tool" {
+                        found_tool_call = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(found_tool_call, "The ToolCall record must be persisted and broadcast when execute() is called on RuntimeTurnToolExecutor");
     }
 }

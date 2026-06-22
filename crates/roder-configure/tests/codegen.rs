@@ -51,7 +51,7 @@ fn codegen_renders_remote_app_server_without_cli_or_tui() {
     assert!(cargo_toml.contains("roder-app-server"));
     assert!(cargo_toml.contains("roder-core"));
     assert!(cargo_toml.contains("roder-extension-host"));
-    assert!(!cargo_toml.contains("roder"));
+    assert!(!cargo_toml.contains("\nroder ="));
     assert!(!cargo_toml.contains("roder-tui"));
 
     let main_rs = file(&files, "src/main.rs");
