@@ -192,18 +192,9 @@ roder --config-dir /tmp/lab-roder app-server --listen stdio://
 
 ### Configure a model provider
 
-Roder can authenticate through provider-specific API keys or provider-native
-auth flows. Common environment variables:
-
-```sh
-export OPENAI_API_KEY=...
-export ANTHROPIC_API_KEY=...
-export GEMINI_API_KEY=...
-export SYNTHETIC_API_KEY=...
-```
-
-Then select a provider/model from the TUI provider menu, or configure defaults
-in `~/.roder/config.toml`:
+Roder model labels use `provider/model`, for example `openai/gpt-5.5` or
+`synthetic/syn:large:text`. Select a provider/model from the TUI provider menu,
+or set defaults in `~/.roder/config.toml`:
 
 ```toml
 provider = "synthetic"
@@ -214,6 +205,30 @@ api_key_env = "SYNTHETIC_API_KEY"
 base_url = "https://api.synthetic.new/openai/v1"
 ```
 
+Quickstart for bundled chat providers:
+
+| Provider | Setup | Example model |
+| --- | --- | --- |
+| OpenAI | `export OPENAI_API_KEY=...` | `openai/gpt-5.5` |
+| Codex | `export OPENAI_API_KEY=...` | `codex/gpt-5.5` |
+| Anthropic | `export ANTHROPIC_API_KEY=...` | `anthropic/claude-sonnet-4-6` |
+| Gemini | `export GEMINI_API_KEY=...` | `gemini/gemini-3.5-flash` |
+| Vertex AI | `export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json` | `vertex/gemini-3.5-flash` |
+| xAI | `export XAI_API_KEY=...` | `xai/grok-4.3` |
+| SuperGrok | `roder auth login supergrok` | `supergrok/grok-build-0.1` |
+| OpenCode Zen | `export OPENCODE_API_KEY=...` | `opencode/gpt-5.5` |
+| OpenCode Go | `export OPENCODE_GO_API_KEY=...` | `opencode-go/kimi-k2.6` |
+| OpenRouter | `export OPENROUTER_API_KEY=...` | `openrouter/x-ai/grok-build-0.1` |
+| Fireworks AI | `export FIREWORKS_API_KEY=...` | `fireworks/accounts/fireworks/models/qwen3-235b-a22b` |
+| Poolside | `export POOLSIDE_API_KEY=...` | `poolside/poolside/laguna-m.1` |
+| Cursor | `export CURSOR_API_KEY=...` | `cursor/composer-2.5` |
+| Claude Code | `export RODER_CLAUDE_CODE_CLI_PATH=claude` | `claude-code/sonnet` |
+| Kimi Code | `roder auth login kimi-code` or `export KIMI_CODE_API_KEY=...` | `kimi-code/kimi-for-coding` |
+| Xiaomi MiMo | `export MIMO_API_KEY=...` | `xiaomi-mimo/mimo-v2.5-pro` |
+| Xiaomi MiMo Token Plan | `export MIMO_TOKEN_PLAN_API_KEY=tp-...` | `xiaomi-mimo-token-plan/mimo-v2.5-pro` |
+| Roder Cloud | `export RODER_CLOUD_API_KEY=...` and configure a base URL if needed | `roder-cloud/roder.cloud/free` |
+| Synthetic | `export SYNTHETIC_API_KEY=...` | `synthetic/syn:large:text` |
+
 Useful commands:
 
 ```sh
@@ -221,6 +236,23 @@ roder auth status
 roder providers list
 roder app-server --listen 127.0.0.1:0
 ```
+
+Media and speech providers use their own commands:
+
+```sh
+roder media providers
+roder media generate "a tiny blue dot" --provider openai --model gpt-image-2 --size 1024x1024
+roder media generate "a product hero image" --provider google --model gemini-3.1-flash-image
+roder speech synthesize "Hello from MiMo" --provider xiaomi-mimo --model mimo-v2.5-tts --voice Chloe --output hello.wav
+```
+
+Detailed provider docs live in [`docs/roder-opencode-providers.md`](./docs/roder-opencode-providers.md),
+[`docs/roder-openrouter-provider.md`](./docs/roder-openrouter-provider.md),
+[`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md),
+[`docs/roder-kimi-code-provider.md`](./docs/roder-kimi-code-provider.md),
+[`docs/roder-xiaomi-mimo-providers.md`](./docs/roder-xiaomi-mimo-providers.md),
+[`docs/roder-synthetic-provider.md`](./docs/roder-synthetic-provider.md), and
+[`docs/roder-image-generation-providers.md`](./docs/roder-image-generation-providers.md).
 
 Release policy lives in [`docs/releases.md`](./docs/releases.md). Roder uses
 knope changesets for per-package versioning and git-only GitHub releases.
