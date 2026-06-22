@@ -1,3 +1,51 @@
+## 0.1.3 (2026-06-22)
+
+### Fixes
+
+- Stabilize Roder startup, streaming responses, and provider behavior
+
+#### Interleave in-stream reasoning/text with tool calls in the transcript
+
+Providers like `claude-code` run their entire tool loop inside a single
+`stream_turn`, streaming many assistant messages, thinking blocks, and tool
+calls before the turn completes. The turn loop previously coalesced every
+reasoning/text chunk into one trailing `ReasoningSummary` + `AssistantMessage`
+that was persisted only after all the in-stream tool calls (which the runtime
+tool executor persists in real time). The result was a transcript where every
+tool row appeared first and all the per-step thinking/narration collapsed into a
+single block at the end, so the activity between tool calls looked missing.
+
+The runtime now keeps a shared per-turn buffer of the reasoning + final-answer
+text streamed so far. `RuntimeTurnToolExecutor::execute` flushes that buffer as
+discrete `ReasoningSummary` + `AssistantMessage` items immediately before it
+persists each in-stream tool call, and the turn-end persistence writes only the
+remaining (post-last-tool) content. The persisted order is now
+`reasoning -> text -> tool -> reasoning -> text -> tool -> ... -> final answer`.
+This is gated to providers that execute tools in-stream (currently
+`claude-code`); all other providers are unchanged.
+
+#### Increase the runtime event-bus capacity so heavy turns stop dropping rows
+
+The runtime broadcasts every event (including a per-delta `InferenceEventReceived`
+firehose) through a single broadcast ring buffer. The TUI drains it on its render
+loop, which during an active turn only wakes at the ~6 FPS status-animation
+cadence — backend events do not wake the input poll, so up to ~166ms of events
+buffer between drains. A reasoning-high provider that runs its whole tool loop in
+one turn (e.g. `claude-code`) bursts far more than 1024 events into that window,
+overflowing the ring and silently dropping tool/thinking rows from the live view.
+
+The bus capacity is raised from 1024 to 16384 (`EVENT_BUS_CAPACITY`), giving ~16x
+headroom across streaming bursts and brief render stalls. The existing `Lagged`
+handling and stuck-turn watchdog still cover any pathological overflow, so the UI
+can never hang even if the buffer is exhausted.
+
+#### Kimi Code OAuth chat requests omit unsupported OpenAI-compat fields
+
+OAuth turns on `api.kimi.com/coding/v1` no longer send `stream_options` or
+`parallel_tool_calls`, which caused 400 responses on the managed Kimi Code API.
+Adds configurable flags on the shared chat-completions helper and gates
+`should_compact_transcript` to test builds only.
+
 ## 0.1.2 (2026-06-16)
 
 ### Fixes
