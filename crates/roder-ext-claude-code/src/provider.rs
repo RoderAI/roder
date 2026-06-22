@@ -115,7 +115,7 @@ impl InferenceEngine for ClaudeCodeEngine {
             parallel_tool_calls: false,
             reasoning_summaries: true,
             structured_output: false,
-            image_input: false,
+            image_input: true,
             prompt_cache: false,
             provider_metadata: true,
             tool_search: false,
@@ -1338,5 +1338,18 @@ mod tests {
         );
         // Full transcript replayed every turn.
         assert!(calls[1].1.contains("answer"));
+    }
+
+    #[test]
+    fn claude_code_engine_supports_images() {
+        let engine = ClaudeCodeEngine::new(ClaudeCodeConfig::default());
+        assert!(engine.capabilities().image_input);
+
+        let models = roder_api::catalog::models_for_provider(PROVIDER_CLAUDE_CODE, false);
+        assert!(!models.is_empty());
+        for model in models {
+            let entry = roder_api::catalog::lookup_model_for_provider(PROVIDER_CLAUDE_CODE, &model.id).unwrap();
+            assert!(entry.supports_images, "model {} must support images", model.id);
+        }
     }
 }

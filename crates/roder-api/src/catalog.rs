@@ -1252,7 +1252,7 @@ const fn claude_code_model(
         // transcript on the fly at `auto_compact_token_limit` instead of waiting
         // for the full context window (which overflows into "Prompt too long").
         supports_compaction: false,
-        supports_images: false,
+        supports_images: true,
         supports_tools: true,
         supports_structured: false,
         edit_tool: Some(EDIT_TOOL_EDIT),
