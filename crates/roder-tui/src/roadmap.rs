@@ -577,15 +577,21 @@ mod tests {
     }
 
     #[test]
-    fn roadmap_model_renders_repo_sized_state_without_stack_pressure() {
-        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|path| path.parent())
-            .expect("workspace root")
-            .to_path_buf();
+    fn roadmap_model_renders_large_workspace_without_stack_pressure() {
+        let workspace = temp_workspace();
+        for index in 0..100 {
+            fs::write(
+                workspace
+                    .join("roadmap")
+                    .join(format!("{index:03}-roadmap.md")),
+                fixture(),
+            )
+            .unwrap();
+        }
         let state = RoadmapModeState::load(&workspace, None).unwrap();
         let rendered = state.render_text();
 
+        assert_eq!(state.documents.len(), 100);
         assert!(
             rendered
                 .lines

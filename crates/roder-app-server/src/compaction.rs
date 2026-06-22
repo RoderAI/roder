@@ -9,11 +9,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let outcome = self
             .runtime
-            .force_compact_thread(
-                &params.thread_id,
-                &params.turn_id,
-                params.preserve_hint,
-            )
+            .force_compact_thread(&params.thread_id, &params.turn_id, params.preserve_hint)
             .await
             .map_err(internal_error)?;
         Ok(serde_json::to_value(ThreadCompactResult {

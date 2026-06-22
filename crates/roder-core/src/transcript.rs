@@ -7,9 +7,9 @@ use time::OffsetDateTime;
 
 use crate::compaction::{
     CompactionOptions, CompactionSkipReason, build_compaction_record, compaction_skip_reason,
-    estimate_prompt_tokens, format_llm_compaction_summary, model_entry_for_compaction,
-    prune_avoids_full_compaction, prune_tool_outputs_in_transcript, select_compaction_suffix,
-    head_items_for_summary_prompt, split_transcript_for_summarization, summarize_transcript,
+    estimate_prompt_tokens, format_llm_compaction_summary, head_items_for_summary_prompt,
+    model_entry_for_compaction, prune_avoids_full_compaction, prune_tool_outputs_in_transcript,
+    select_compaction_suffix, split_transcript_for_summarization, summarize_transcript,
     trim_to_last_compaction_boundary,
 };
 use crate::runtime::{Runtime, StartTurnRequest};
@@ -209,8 +209,7 @@ impl Runtime {
         let cfg = self.status().await;
         let model_entry = model_entry_for_compaction(provider, model);
         let threshold = cfg.auto_compact_token_limit;
-        if let Some(reason) =
-            compaction_skip_reason(&transcript, model_entry, threshold, &options)
+        if let Some(reason) = compaction_skip_reason(&transcript, model_entry, threshold, &options)
         {
             self.emit_compaction_skipped(
                 thread_id,
@@ -255,9 +254,7 @@ impl Runtime {
             }
         }
 
-        if let Some(reason) =
-            compaction_skip_reason(&working, model_entry, threshold, &options)
-        {
+        if let Some(reason) = compaction_skip_reason(&working, model_entry, threshold, &options) {
             self.emit_compaction_skipped(
                 thread_id,
                 turn_id,
@@ -444,15 +441,13 @@ mod tests {
     use roder_api::catalog::PROVIDER_MOCK;
     use roder_api::extension::ExtensionRegistryBuilder;
     use roder_api::skills::{SkillExposure, SkillSelector};
-    use roder_api::transcript::{
-        AssistantMessage, ErrorRecord, ToolResultRecord, UserMessage,
-    };
+    use roder_api::transcript::{AssistantMessage, ErrorRecord, ToolResultRecord, UserMessage};
     use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
     use roder_skills::{SkillConfigRule, SkillRegistry, SkillRegistryOptions, SkillRoot};
 
     use crate::compaction::{
-        build_compaction_record, should_compact_transcript, truncate,
-        transcript_contains_context_limit_failure, CompactionOptions,
+        CompactionOptions, build_compaction_record, should_compact_transcript,
+        transcript_contains_context_limit_failure, truncate,
     };
     use crate::fake_provider::FakeInferenceEngine;
     use crate::runtime::{
@@ -976,9 +971,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!result.iter().any(|item| {
-            matches!(item, TranscriptItem::ContextCompaction(_))
-        }));
+        assert!(
+            !result
+                .iter()
+                .any(|item| { matches!(item, TranscriptItem::ContextCompaction(_)) })
+        );
         let emitted = drain_events(&mut events);
         assert!(emitted.iter().any(|event| matches!(
             event,
@@ -991,10 +988,8 @@ mod tests {
     async fn force_compact_uses_llm_snapshot_when_available() {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(FakeInferenceEngine));
-        let thread_root = std::env::temp_dir().join(format!(
-            "roder-force-compact-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-force-compact-{}", uuid::Uuid::new_v4()));
         builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
             base_path: thread_root.clone(),
         }));
