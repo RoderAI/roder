@@ -36,6 +36,7 @@ use roder_ext_inference_router::{
     LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
 };
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
+use roder_ext_kimi_code::{KimiCodeConfig, KimiCodeExtension};
 use roder_ext_knowledge_md::KnowledgeMdExtension;
 use roder_ext_memory::MemoryExtension;
 use roder_ext_mysql_session::{MysqlSessionConfig, MysqlSessionExtension};
@@ -70,7 +71,6 @@ use roder_ext_zeroentropy_embeddings::{
     ZeroEntropyLatency,
 };
 use roder_ext_zerolang::{ZerolangConfig, ZerolangExtension};
-use roder_ext_kimi_code::{KimiCodeConfig, KimiCodeExtension};
 use semver::Version;
 
 mod context;

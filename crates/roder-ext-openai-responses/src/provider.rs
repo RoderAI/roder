@@ -183,7 +183,12 @@ impl OpenAiResponsesEngine {
         } else {
             true
         };
-        let input = response_input_items_with_options(request, &tool_name_map, options.profile, supports_images);
+        let input = response_input_items_with_options(
+            request,
+            &tool_name_map,
+            options.profile,
+            supports_images,
+        );
         let mut body = json!({
             "model": request.model.model,
             "input": input,
@@ -1749,6 +1754,9 @@ fn message_delta_from_done_item(
         .unwrap_or(FINAL_ANSWER_PHASE)
         .to_string();
     if is_final_answer_phase(&phase) {
+        if state.streamed_final_text {
+            return None;
+        }
         state.streamed_final_text = true;
     }
     if let Some(id) = id {
@@ -2065,7 +2073,10 @@ fn system_input_message(text: &str) -> Value {
     })
 }
 
-fn user_message_content(message: &roder_api::transcript::UserMessage, supports_images: bool) -> Vec<Value> {
+fn user_message_content(
+    message: &roder_api::transcript::UserMessage,
+    supports_images: bool,
+) -> Vec<Value> {
     let mut content = Vec::new();
     if !message.text.is_empty() {
         content.push(json!({ "type": "input_text", "text": message.text }));
@@ -2377,7 +2388,12 @@ mod tests {
 
     fn input_items(request: &AgentInferenceRequest) -> Vec<Value> {
         let (_, tool_name_map) = responses_tools(request, ResponsesProviderProfile::OpenAi);
-        response_input_items(request, &tool_name_map, ResponsesProviderProfile::OpenAi, true)
+        response_input_items(
+            request,
+            &tool_name_map,
+            ResponsesProviderProfile::OpenAi,
+            true,
+        )
     }
 
     #[test]
@@ -3436,8 +3452,7 @@ mod tests {
         request.model.provider = PROVIDER_XAI.to_string();
         request.model.model = "grok-4.3".to_string();
         request.runtime.prompt_cache_key = Some("openai-cache".to_string());
-        request.runtime.hosted_web_search =
-            roder_api::inference::HostedWebSearchConfig::cached();
+        request.runtime.hosted_web_search = roder_api::inference::HostedWebSearchConfig::cached();
 
         let (body, _) = OpenAiResponsesEngine::map_request_with_options(
             &request,
@@ -3993,6 +4008,43 @@ mod tests {
                 phase: Some("commentary".to_string()),
             })]
         );
+    }
+
+    #[test]
+    fn skips_done_final_message_after_idless_streamed_final_delta() {
+        let mut state = ResponsesStreamState::default();
+        let delta = SseEvent {
+            event: Some("response.output_text.delta".to_string()),
+            data: json!({
+                "type": "response.output_text.delta",
+                "delta": "Hello from the streamed response."
+            }),
+        };
+        assert_eq!(
+            events_from_sse_event(&delta, &mut state),
+            vec![InferenceEvent::MessageDelta(MessageDelta {
+                text: "Hello from the streamed response.".to_string(),
+                phase: None,
+            })]
+        );
+
+        let done = SseEvent {
+            event: Some("response.output_item.done".to_string()),
+            data: json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "id": "msg_final",
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "final_answer",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Hello from the streamed response."
+                    }]
+                }
+            }),
+        };
+        assert!(events_from_sse_event(&done, &mut state).is_empty());
     }
 
     #[test]

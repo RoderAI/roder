@@ -130,7 +130,11 @@ impl Runtime {
             return Ok(None);
         }
         let verified = self
-            .run_compaction_summary_inference(provider, model, build_compaction_verify_prompt(&draft))
+            .run_compaction_summary_inference(
+                provider,
+                model,
+                build_compaction_verify_prompt(&draft),
+            )
             .await?
             .unwrap_or(draft.clone());
         if accept_llm_compaction_summary(head, &verified) {
@@ -181,7 +185,9 @@ impl Runtime {
         let mut text = String::new();
         while let Some(event) = stream.next().await {
             match event? {
-                InferenceEvent::MessageDelta(MessageDelta { text: delta, .. }) => text.push_str(&delta),
+                InferenceEvent::MessageDelta(MessageDelta { text: delta, .. }) => {
+                    text.push_str(&delta)
+                }
                 InferenceEvent::Failed(failure) => {
                     anyhow::bail!("compaction summary inference failed: {}", failure.message);
                 }

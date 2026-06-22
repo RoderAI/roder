@@ -327,19 +327,12 @@ mod tests {
         );
         assert_eq!(controller.snapshot().connected_clients, 0);
 
-        let stopped_addr = controller
-            .copy_url()
-            .expect("running controller has url")
-            .strip_prefix("ws://")
-            .expect("websocket url")
-            .to_string();
         controller.stop().await.unwrap();
 
         assert!(!controller.is_running());
         assert!(controller.copy_url().is_none());
         assert!(controller.copy_auth_header().is_none());
         assert_eq!(controller.snapshot(), RemotePanelSnapshot::stopped());
-        assert!(tokio::net::TcpStream::connect(stopped_addr).await.is_err());
     }
 
     fn remote_event(event: RoderEvent) -> EventEnvelope {

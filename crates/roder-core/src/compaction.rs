@@ -7,8 +7,7 @@ pub(crate) const COMPACTION_HYSTERESIS_TOKENS: u32 = 5_000;
 pub(crate) const COMPACTION_HEAD_RATIO: f32 = 0.70;
 pub(crate) const COMPACTION_SUMMARY_PROMPT_MARKER: &str = "RODER_COMPACTION_STATE_SNAPSHOT";
 
-const PRUNED_TOOL_OUTPUT_NOTICE: &str =
-    "[tool output pruned from context to save tokens; rerun the tool with narrower scope if needed]";
+const PRUNED_TOOL_OUTPUT_NOTICE: &str = "[tool output pruned from context to save tokens; rerun the tool with narrower scope if needed]";
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompactionOptions {
@@ -286,7 +285,10 @@ fn render_transcript_for_summary(items: &[TranscriptItem]) -> String {
     for item in items {
         match item {
             TranscriptItem::UserMessage(message) => {
-                lines.push(format!("USER: {}", truncate_for_summary(&message.text, 2_000)));
+                lines.push(format!(
+                    "USER: {}",
+                    truncate_for_summary(&message.text, 2_000)
+                ));
             }
             TranscriptItem::AssistantMessage(message) => {
                 lines.push(format!(
@@ -328,8 +330,8 @@ fn meets_compaction_threshold(
     model_entry: Option<&ModelCatalogEntry>,
     threshold_override: Option<u32>,
 ) -> bool {
-    let emergency_limit = model_entry
-        .and_then(|entry| (entry.context_window > 0).then_some(entry.context_window));
+    let emergency_limit =
+        model_entry.and_then(|entry| (entry.context_window > 0).then_some(entry.context_window));
     let threshold = threshold_override
         .or_else(|| model_entry.map(|entry| entry.auto_compact_token_limit))
         .unwrap_or(0);
@@ -428,7 +430,10 @@ mod tests {
                 "output": "x".repeat(1_000_000)
             })),
         ];
-        assert_eq!(estimate_prompt_tokens(&items), chars_to_tokens("hello".len()));
+        assert_eq!(
+            estimate_prompt_tokens(&items),
+            chars_to_tokens("hello".len())
+        );
     }
 
     #[test]
@@ -606,8 +611,13 @@ mod tests {
 
     #[test]
     fn llm_summary_must_be_smaller_than_head() {
-        let head = vec![TranscriptItem::UserMessage(UserMessage::text("x".repeat(10_000)))];
-        assert!(!accept_llm_compaction_summary(&head, &"short".repeat(10_000)));
+        let head = vec![TranscriptItem::UserMessage(UserMessage::text(
+            "x".repeat(10_000),
+        ))];
+        assert!(!accept_llm_compaction_summary(
+            &head,
+            &"short".repeat(10_000)
+        ));
         assert!(accept_llm_compaction_summary(&head, "short snapshot"));
     }
 }

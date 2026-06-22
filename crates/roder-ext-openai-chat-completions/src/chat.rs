@@ -376,7 +376,8 @@ mod tests {
             metadata: json!({}),
         };
 
-        let mut config = ChatCompletionsRequestConfig::bearer("Kimi Code", server.base_url.clone(), "token");
+        let mut config =
+            ChatCompletionsRequestConfig::bearer("Kimi Code", server.base_url.clone(), "token");
         config.include_stream_usage = false;
         config.include_parallel_tool_calls = false;
 

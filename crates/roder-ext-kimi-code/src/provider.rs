@@ -1,8 +1,7 @@
 use roder_api::catalog::{PROVIDER_KIMI_CODE, models_for_provider};
 use roder_api::inference::{
     AgentInferenceRequest, InferenceCapabilities, InferenceEngine, InferenceEventStream,
-    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext,
-    ProviderAuthType,
+    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, ProviderAuthType,
 };
 use roder_ext_openai_chat_completions::{ChatCompletionsRequestConfig, stream_chat_completions};
 
@@ -105,7 +104,9 @@ impl KimiCodeInferenceEngine {
             return Ok(KimiAuth::ApiKey { key: api_key });
         }
         if let Some(access_token) = access_token().await? {
-            return Ok(KimiAuth::OAuth { token: access_token });
+            return Ok(KimiAuth::OAuth {
+                token: access_token,
+            });
         }
         anyhow::bail!(
             "{} auth is missing; run `roder auth login kimi-code` or set {} / {}",
@@ -204,7 +205,10 @@ mod tests {
 
     #[test]
     fn oauth_uses_managed_base_url_by_default() {
-        let engine = KimiCodeInferenceEngine::new(KimiCodeConfig::default(), KimiCodeProviderSpec::default());
+        let engine = KimiCodeInferenceEngine::new(
+            KimiCodeConfig::default(),
+            KimiCodeProviderSpec::default(),
+        );
         let base_url = engine.base_url_for(&KimiAuth::OAuth {
             token: "token".to_string(),
         });
@@ -213,7 +217,10 @@ mod tests {
 
     #[test]
     fn api_key_uses_open_platform_base_url_by_default() {
-        let engine = KimiCodeInferenceEngine::new(KimiCodeConfig::default(), KimiCodeProviderSpec::default());
+        let engine = KimiCodeInferenceEngine::new(
+            KimiCodeConfig::default(),
+            KimiCodeProviderSpec::default(),
+        );
         let base_url = engine.base_url_for(&KimiAuth::ApiKey {
             key: "key".to_string(),
         });

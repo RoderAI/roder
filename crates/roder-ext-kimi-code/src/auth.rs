@@ -149,9 +149,7 @@ pub fn has_stored_tokens() -> bool {
     Store::new()
         .load()
         .ok()
-        .is_some_and(|tokens| {
-            !tokens.refresh.trim().is_empty() || !tokens.access.trim().is_empty()
-        })
+        .is_some_and(|tokens| !tokens.refresh.trim().is_empty() || !tokens.access.trim().is_empty())
 }
 
 pub async fn access_token() -> anyhow::Result<Option<String>> {
@@ -200,9 +198,7 @@ pub async fn device_flow() -> anyhow::Result<Tokens> {
         );
     }
     let device_auth: DeviceAuthorizationResponse = serde_json::from_str(&text).map_err(|e| {
-        anyhow::anyhow!(
-            "kimi-code device authorization response was not valid JSON: {e}\n{text}"
-        )
+        anyhow::anyhow!("kimi-code device authorization response was not valid JSON: {e}\n{text}")
     })?;
 
     let verification_uri = device_auth
@@ -248,10 +244,7 @@ async fn poll_device_token(
             .post(token_endpoint)
             .headers(device_header_map()?)
             .form(&[
-                (
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                ),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
                 ("device_code", device_code),
                 ("client_id", CLIENT_ID),
             ])
@@ -266,7 +259,10 @@ async fn poll_device_token(
         let error: DeviceTokenErrorResponse = match serde_json::from_str(&text) {
             Ok(error) => error,
             Err(_) => {
-                anyhow::bail!("kimi-code device token request failed: {status} {}", text.trim());
+                anyhow::bail!(
+                    "kimi-code device token request failed: {status} {}",
+                    text.trim()
+                );
             }
         };
         match error.error.as_str() {
@@ -356,8 +352,9 @@ fn device_header_map() -> anyhow::Result<reqwest::header::HeaderMap> {
         headers.insert(
             reqwest::header::HeaderName::from_bytes(name.as_bytes())
                 .map_err(|err| anyhow::anyhow!("invalid kimi-code header name: {err}"))?,
-            reqwest::header::HeaderValue::from_str(&value)
-                .map_err(|err| anyhow::anyhow!("invalid kimi-code header value for {name}: {err}"))?,
+            reqwest::header::HeaderValue::from_str(&value).map_err(|err| {
+                anyhow::anyhow!("invalid kimi-code header value for {name}: {err}")
+            })?,
         );
     }
     Ok(headers)
@@ -369,7 +366,10 @@ fn device_headers() -> anyhow::Result<Vec<(&'static str, String)>> {
         ("X-Msh-Platform", KIMI_CODE_PLATFORM.to_string()),
         ("X-Msh-Version", RODER_VERSION.to_string()),
         ("X-Msh-Device-Name", ascii_header(hostname(), "unknown")),
-        ("X-Msh-Device-Model", ascii_header(device_model(), "unknown")),
+        (
+            "X-Msh-Device-Model",
+            ascii_header(device_model(), "unknown"),
+        ),
         ("X-Msh-Os-Version", ascii_header(os_version(), "unknown")),
         ("X-Msh-Device-Id", read_or_create_device_id(&store)?),
     ])
@@ -653,7 +653,8 @@ mod tests {
 
     #[test]
     fn token_response_parse_error_redacts_secret_material() {
-        let raw = r#"{"access_token":"secret-access","refresh_token":"secret-refresh"}{"extra":true}"#;
+        let raw =
+            r#"{"access_token":"secret-access","refresh_token":"secret-refresh"}{"extra":true}"#;
         let err = parse_token_response(raw).unwrap_err().to_string();
 
         assert!(err.contains("kimi-code token response was not valid JSON"));
