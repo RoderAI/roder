@@ -303,7 +303,7 @@ async fn connect(args: &[String]) -> anyhow::Result<()> {
         client,
         model,
         roder_tui::TuiStartup::NewThread,
-        panel_server,
+        crate::remote_panel::remote_panel_for(panel_server),
     )
     .await?;
     tui.announce_remote_node().await;

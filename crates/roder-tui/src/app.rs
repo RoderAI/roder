@@ -45,7 +45,6 @@ mod workflows;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -74,9 +73,6 @@ use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::skills::{SkillActivationState, SkillDescriptor};
 use roder_api::transcript::InputImage;
 use roder_api_transcript::ApiTranscriptRecord;
-use roder_app_server::{
-    AppServer, LocalAppClient,
-};
 use roder_app_server_core::{AppClient, AppEventReceiver, transcript::TranscriptRecorder};
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
@@ -120,7 +116,7 @@ use plan_panel::{
 };
 use plugin_browser::PluginBrowserState;
 use roder_tui_util::progress::{ProgressReporter, TerminalProgress};
-use remote::{RemotePanelController, render_remote_panel_lines};
+pub use remote::{RemotePanelHost, RemotePanelSnapshot, render_remote_panel_lines};
 use roadmap_workspace::{RoadmapWorkspaceMeta, render_roadmap_workspace};
 use roder_roadmap::ThreadAttachment;
 use roder_tui_util::scroll_accel::ScrollSettings;
@@ -1134,7 +1130,7 @@ impl ProviderChoice {
     }
 }
 
-pub struct TuiApp<C = LocalAppClient>
+pub struct TuiApp<C>
 where
     C: AppClient,
 {
@@ -1210,7 +1206,7 @@ where
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
     chrome_panel: Option<chrome::ChromePanelState>,
-    remote_panel: RemotePanelController,
+    remote_panel: Box<dyn RemotePanelHost>,
     roadmap_mode: Option<RoadmapModeState>,
     image_attachments: Vec<ImageAttachment>,
     last_image_attachment_remove_buttons: Vec<ImageAttachmentRemoveButton>,
@@ -1298,21 +1294,6 @@ struct RoadmapThreadResponse {
     thread: ThreadAttachment,
 }
 
-impl TuiApp<LocalAppClient> {
-    pub async fn new(client: LocalAppClient, model: String) -> anyhow::Result<Self> {
-        Self::new_with_startup(client, model, TuiStartup::NewThread).await
-    }
-
-    pub async fn new_with_startup(
-        client: LocalAppClient,
-        model: String,
-        startup: TuiStartup,
-    ) -> anyhow::Result<Self> {
-        let remote_panel_server = client.app_server();
-        TuiApp::new_with_startup_and_remote(client, model, startup, remote_panel_server).await
-    }
-}
-
 impl<C> TuiApp<C>
 where
     C: AppClient,
@@ -1321,7 +1302,7 @@ where
         client: C,
         model: String,
         startup: TuiStartup,
-        remote_panel_server: Arc<AppServer>,
+        remote_panel: Box<dyn RemotePanelHost>,
     ) -> anyhow::Result<Self> {
         if let TuiStartup::TeamAttach { team_id, member_id } = startup.clone() {
             let team = team_read(&client, &team_id)
@@ -1367,7 +1348,7 @@ where
                 .unwrap_or_default();
             let mut app = Self::from_thread_parts(
                 client,
-                remote_panel_server,
+                remote_panel,
                 ThreadParts {
                     thread_id: member.thread_id.clone(),
                     provider,
@@ -1418,7 +1399,7 @@ where
                 .unwrap_or_default();
             let mut app = Self::from_thread_parts(
                 client,
-                remote_panel_server,
+                remote_panel,
                 ThreadParts {
                     thread_id: thread_id.clone(),
                     provider,
@@ -1477,7 +1458,7 @@ where
         };
         let mut app = Self::from_thread_parts(
             client,
-            remote_panel_server,
+            remote_panel,
             ThreadParts {
                 thread_id: started.thread.id,
                 provider: started.model_provider,
@@ -1511,7 +1492,7 @@ where
 
     async fn from_thread_parts(
         client: C,
-        remote_panel_server: Arc<AppServer>,
+        remote_panel: Box<dyn RemotePanelHost>,
         parts: ThreadParts,
     ) -> anyhow::Result<Self> {
         let ThreadParts {
@@ -1526,12 +1507,6 @@ where
         let mut provider_state = ListState::default();
         provider_state.select(Some(0));
         let theme = Theme::for_terminal_themed();
-        let remote_panel = RemotePanelController::new(
-            remote_panel_server,
-            std::env::current_dir()
-                .ok()
-                .map(|path| path.display().to_string()),
-        );
         // Mirror the resolution that for_terminal_themed performed so the
         // palette's Themes source can flag the active row consistently. If
         // discovery yields nothing we leave this as `None` and the palette
@@ -9309,18 +9284,62 @@ mod tests {
 
     use ratatui::{Terminal, backend::TestBackend};
     use roder_api::teams::{TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus};
-    use roder_app_server::AppServer;
+    use async_trait::async_trait;
+    use roder_api::events::EventEnvelope;
+    use roder_app_server::{AppServer, LocalAppClient};
     use roder_core::Runtime;
+
+    use super::remote::{RemotePanelHost, RemotePanelSnapshot};
+
+    #[derive(Default)]
+    struct FakeRemotePanel {
+        running: bool,
+    }
+
+    #[async_trait]
+    impl RemotePanelHost for FakeRemotePanel {
+        fn is_running(&self) -> bool {
+            self.running
+        }
+
+        fn snapshot(&self) -> RemotePanelSnapshot {
+            if !self.running {
+                return RemotePanelSnapshot::stopped();
+            }
+            RemotePanelSnapshot {
+                running: true,
+                connect_urls: vec!["ws://127.0.0.1:4545".to_string()],
+                token_preview: Some("firs...oken".to_string()),
+                pairing_url: Some("roder://connect?payload=fake-fixture".to_string()),
+                pair_url: Some("http://127.0.0.1:4545/pair".to_string()),
+                pairing_qr: Some("roder://connect?payload=fake-fixture".to_string()),
+                connected_clients: 0,
+                tls_warning: None,
+            }
+        }
+
+        fn apply_event(&mut self, _envelope: &EventEnvelope) {}
+
+        async fn start(&mut self) -> anyhow::Result<()> {
+            self.running = true;
+            Ok(())
+        }
+
+        async fn stop(&mut self) -> anyhow::Result<()> {
+            self.running = false;
+            Ok(())
+        }
+    }
     use roder_protocol::{
         Item, ProviderDescriptor, ProvidersListResult, SpeechProvidersListResult, Thread,
         ThreadItemStatus, ThreadStatus, Turn,
     };
 
-    fn test_app() -> TuiApp {
+    fn test_app() -> TuiApp<LocalAppClient> {
         let server = Arc::new(AppServer::new(Arc::new(
             Runtime::fake().expect("fake runtime"),
         )));
-        test_app_with_client(LocalAppClient::new(server.clone()), server)
+        test_app_with_client(LocalAppClient::new(server))
     }
 
     #[test]
@@ -9337,7 +9356,7 @@ mod tests {
         assert_eq!(provider_model_label("mock", "mock"), "mock/mock");
     }
 
-    fn test_app_with_client<C: AppClient>(client: C, server: Arc<AppServer>) -> TuiApp<C> {
+    fn test_app_with_client<C: AppClient>(client: C) -> TuiApp<C> {
         let theme = Theme::for_dark_background(true);
         TuiApp {
             client,
@@ -9408,11 +9427,7 @@ mod tests {
             tool_detail_modal: None,
             plugin_browser: None,
             chrome_panel: None,
-            remote_panel: RemotePanelController::with_listen(
-                server,
-                "ws://127.0.0.1:0".to_string(),
-                Some("/tmp/gode".to_string()),
-            ),
+            remote_panel: Box::new(FakeRemotePanel::default()),
             roadmap_mode: None,
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
@@ -9608,10 +9623,7 @@ mod tests {
     #[tokio::test]
     async fn start_prepared_prompt_omits_model_fields_for_routeable_defaults() {
         let client = RecordingClient::new();
-        let server = Arc::new(AppServer::new(Arc::new(
-            Runtime::fake().expect("fake runtime"),
-        )));
-        let mut app = test_app_with_client(client.clone(), server);
+        let mut app = test_app_with_client(client.clone());
         app.provider = "mock".to_string();
         app.model = "gpt-5.5".to_string();
         app.reasoning_effort = "low".to_string();
@@ -9649,7 +9661,7 @@ mod tests {
         assert!(rendered.contains("Remote app-server: stopped"));
     }
 
-    fn rendered_timeline_text(app: &mut TuiApp) -> String {
+    fn rendered_timeline_text(app: &mut TuiApp<LocalAppClient>) -> String {
         let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 200));
         rendered_text_rows(&render.text, 100, 200, render.text_scroll)
             .into_iter()
@@ -10466,7 +10478,7 @@ mod tests {
         path
     }
 
-    async fn start_test_thread(app: &TuiApp) -> ThreadStartResult {
+    async fn start_test_thread(app: &TuiApp<LocalAppClient>) -> ThreadStartResult {
         let cwd = std::env::current_dir().unwrap().display().to_string();
         let (workspace_id, root_id) = create_single_root_workspace(&app.client, &cwd)
             .await

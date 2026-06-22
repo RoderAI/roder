@@ -15,6 +15,7 @@ mod knowledge;
 mod marketplace;
 mod media;
 mod packages;
+mod remote_panel;
 mod replay;
 mod resume_picker;
 mod roadmap_cli;
@@ -264,7 +265,7 @@ async fn run_cli() -> anyhow::Result<()> {
             recording_client,
             default_model,
             startup,
-            app_server,
+            remote_panel::remote_panel_for(app_server),
         )
         .await?;
         tui.run_with_options(TuiRunOptions {
@@ -276,7 +277,7 @@ async fn run_cli() -> anyhow::Result<()> {
         write_transcript(&path, &recorder)?;
         println!("Transcript: {}", path.display());
     } else {
-        let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
+        let mut tui = remote_panel::build_tui_app(client, default_model, startup).await?;
         tui.run().await?;
         print_tui_exit_summary(&tui);
     }
@@ -537,7 +538,7 @@ async fn run_roadmap_tui(plan: Option<String>) -> anyhow::Result<()> {
     let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
     let client = LocalAppClient::new(app_server);
     let mut tui = Box::new(
-        TuiApp::new_with_startup(
+        remote_panel::build_tui_app(
             client,
             default_model,
             TuiStartup::RoadmapOpen { path: plan },
@@ -986,7 +987,7 @@ async fn run_team_cli(args: &[String]) -> anyhow::Result<()> {
             let (runtime, default_model) = build_runtime_from_config(CliOptions::default()).await?;
             let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
             let client = LocalAppClient::new(app_server);
-            let mut tui = TuiApp::new_with_startup(
+            let mut tui = remote_panel::build_tui_app(
                 client,
                 default_model,
                 TuiStartup::TeamAttach { team_id, member_id },

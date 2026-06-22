@@ -19,7 +19,6 @@ ignore.workspace = true
 ratatui.workspace = true
 roder-api.workspace = true
 roder-api-transcript.workspace = true
-roder-app-server.workspace = true
 roder-app-server-core.workspace = true
 roder-config.workspace = true
 roder-protocol.workspace = true
@@ -38,4 +37,5 @@ toml.workspace = true
 tui-textarea = { version = "0.11.0", package = "tui-textarea-2" }
 
 [dev-dependencies]
+roder-app-server.workspace = true
 roder-core.workspace = true
