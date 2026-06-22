@@ -3354,6 +3354,7 @@ dependencies = [
  "roder-api",
  "roder-api-transcript",
  "roder-app-server",
+ "roder-app-server-core",
  "roder-app-server-node",
  "roder-codex-auth",
  "roder-commands",
@@ -3429,6 +3430,7 @@ dependencies = [
  "rand 0.10.1",
  "roder-api",
  "roder-api-transcript",
+ "roder-app-server-core",
  "roder-automations",
  "roder-code-index",
  "roder-codex-auth",
@@ -3467,6 +3469,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-app-server-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "roder-api-transcript",
+ "roder-protocol",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "roder-app-server-hosted"
 version = "0.1.0"
 dependencies = [
@@ -3499,6 +3516,7 @@ dependencies = [
  "rcgen",
  "roder-api",
  "roder-app-server",
+ "roder-app-server-core",
  "roder-core",
  "roder-ext-jsonl-thread-store",
  "roder-protocol",
@@ -4887,6 +4905,7 @@ dependencies = [
  "roder-api",
  "roder-api-transcript",
  "roder-app-server",
+ "roder-app-server-core",
  "roder-config",
  "roder-core",
  "roder-protocol",

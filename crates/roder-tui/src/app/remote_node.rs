@@ -5,7 +5,7 @@
 //! and files. `announce_remote_node` queries `node/status` once after
 //! startup and renders an authority banner so that stays unmistakable.
 
-use roder_app_server::AppClient;
+use roder_app_server_core::AppClient;
 use roder_protocol::JsonRpcRequest;
 use roder_protocol::agent_node::NodeStatusResult;
 

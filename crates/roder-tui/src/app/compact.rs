@@ -1,4 +1,4 @@
-use roder_app_server::AppClient;
+use roder_app_server_core::AppClient;
 use roder_protocol::{JsonRpcRequest, ThreadCompactParams, ThreadCompactResult};
 
 use super::{TuiApp, decode_response, slash_command_suffix};

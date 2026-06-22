@@ -26,6 +26,7 @@ rand.workspace = true
 rcgen.workspace = true
 roder-api.workspace = true
 roder-app-server.workspace = true
+roder-app-server-core.workspace = true
 roder-protocol.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true

@@ -2,7 +2,7 @@
 //! providers (roadmap phases 90 + 81; `git-worktree` by default) — these
 //! are Roder conversation/workspace forks, not GitHub repository forks.
 
-use roder_app_server::AppClient;
+use roder_app_server_core::AppClient;
 use roder_protocol::{
     JsonRpcRequest, ThreadForkParams, ThreadForkResult, ThreadForkStatusParams,
     ThreadForkStatusResult, ThreadRemoveForkParams, ThreadRemoveForkResult,

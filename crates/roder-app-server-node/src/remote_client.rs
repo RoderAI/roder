@@ -30,7 +30,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::agent_node::server::NODE_EVENT_METHOD;
 use crate::agent_node::tls::{TlsIdentity, client_tls_config};
-use roder_app_server::client::AppClient;
+use roder_app_server_core::AppClient;
 
 /// Maximum in-flight requests before callers receive an overload error.
 const MAX_IN_FLIGHT: usize = 256;

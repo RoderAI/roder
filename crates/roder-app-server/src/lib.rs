@@ -32,7 +32,6 @@ pub mod server;
 mod skills;
 mod speech;
 mod stats;
-pub mod transcript;
 mod vcs;
 mod webwright;
 mod workflows;

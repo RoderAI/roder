@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use roder_app_server::AppClient;
+use roder_app_server_core::AppClient;
 use roder_protocol::{
     JsonRpcRequest, SpeechAudioPayload, SpeechTranscribeParams, SpeechTranscribeResult,
 };

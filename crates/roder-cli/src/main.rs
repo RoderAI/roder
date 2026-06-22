@@ -46,10 +46,8 @@ use roder_api::remote_runner::{RunnerDestination, RunnerManifest};
 use roder_api_transcript::{
     ApiTranscriptHeader, ApiTranscriptRecord, RecordedTerminalSize, SUPPORTED_SCHEMA_VERSION,
 };
-use roder_app_server::{
-    AppServer, AppServerFeatureConfig, LocalAppClient,
-    transcript::{RecordingAppClient, TranscriptRecorder},
-};
+use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
+use roder_app_server_core::transcript::{RecordingAppClient, TranscriptRecorder};
 use roder_core::inference_routing::RuntimeInferenceRouterConfig;
 use roder_core::model_profiles::{
     ModelHarnessProfileOverride, ModelProfileOverrides, ModelProfileReasoningOverride,
@@ -1778,7 +1776,7 @@ fn write_transcript(path: &Path, recorder: &TranscriptRecorder) -> anyhow::Resul
 
 fn print_tui_exit_summary<C>(tui: &TuiApp<C>)
 where
-    C: roder_app_server::AppClient,
+    C: roder_app_server_core::AppClient,
 {
     let summary = tui.exit_summary();
     println!("Thread: {}", summary.title);

@@ -3,7 +3,7 @@ use roder_api::events::{EventEnvelope, EventSource, RoderEvent, RuntimeStarted};
 use roder_api_transcript::{
     ApiTranscriptRecord, RecordedFrame, RecordedTerminalSize, RecordedUiInput,
 };
-use roder_app_server::{AppClient, AppEventReceiver, AppNotificationReceiver};
+use roder_app_server_core::{AppClient, AppEventReceiver, AppNotificationReceiver};
 use roder_protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 use roder_tui::{
     frame_snapshot::frame_text_hash,

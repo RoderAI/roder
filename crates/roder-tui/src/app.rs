@@ -75,8 +75,9 @@ use roder_api::skills::{SkillActivationState, SkillDescriptor};
 use roder_api::transcript::InputImage;
 use roder_api_transcript::ApiTranscriptRecord;
 use roder_app_server::{
-    AppClient, AppEventReceiver, AppServer, LocalAppClient, transcript::TranscriptRecorder,
+    AppServer, LocalAppClient,
 };
+use roder_app_server_core::{AppClient, AppEventReceiver, transcript::TranscriptRecorder};
 use roder_protocol::{
     AgentsListResult, CommandDescriptor, CommandsExpandParams, CommandsExpandResult,
     CommandsListResult, Item, JsonRpcRequest, JsonRpcResponse, ModelSelectChoice,

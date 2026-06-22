@@ -9,7 +9,7 @@ use std::time::Duration;
 use roder_api::events::RoderEvent;
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::thread::ThreadStoreFactory;
-use roder_app_server::client::{AppClient, AppEventReceiver};
+use roder_app_server_core::{AppClient, AppEventReceiver};
 use roder_app_server::{AppServer, AppServerFeatureConfig};
 use roder_app_server_node::agent_node::{AgentNodeOptions, serve_agent_node};
 use roder_app_server_node::{RemoteAppClient, RemoteNodeConnection};

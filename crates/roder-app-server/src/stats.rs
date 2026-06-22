@@ -186,7 +186,7 @@ mod tests {
     use roder_usage_analytics::ToolCallRecord;
 
     use super::*;
-    use crate::client::AppClient;
+    use roder_app_server_core::AppClient;
     use crate::{AppServer, LocalAppClient};
 
     fn seeded_data_dir() -> std::path::PathBuf {

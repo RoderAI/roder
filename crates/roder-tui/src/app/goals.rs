@@ -1,4 +1,4 @@
-use roder_app_server::AppClient;
+use roder_app_server_core::AppClient;
 use roder_protocol::{
     JsonRpcRequest, ThreadGoal, ThreadGoalClearParams, ThreadGoalClearResult, ThreadGoalGetParams,
     ThreadGoalGetResult, ThreadGoalSetParams, ThreadGoalSetResult, ThreadGoalStatus,

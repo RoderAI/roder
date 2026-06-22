@@ -18,7 +18,7 @@ use roder_protocol::{
 };
 use tokio::sync::Mutex;
 
-use crate::client::{AppClient, AppNotificationReceiver};
+use roder_app_server_core::{AppClient, AppNotificationReceiver};
 
 #[derive(Clone)]
 pub struct AcpAdapter<C> {

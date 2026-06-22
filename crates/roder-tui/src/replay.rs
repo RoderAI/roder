@@ -15,7 +15,7 @@ use roder_api_transcript::{
     ApiTranscriptRecord, RecordedFrame, RecordedMouseButton, RecordedMouseEventKind,
     RecordedTerminalSize, RecordedUiInput,
 };
-use roder_app_server::{AppClient, AppEventReceiver, AppNotificationReceiver};
+use roder_app_server_core::{AppClient, AppEventReceiver, AppNotificationReceiver};
 use roder_protocol::{JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 use tokio::sync::broadcast;
 

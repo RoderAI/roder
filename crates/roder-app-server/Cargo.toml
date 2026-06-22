@@ -66,6 +66,7 @@ rand.workspace = true
 qrcode.workspace = true
 roder-api.workspace = true
 roder-api-transcript.workspace = true
+roder-app-server-core.workspace = true
 roder-automations.workspace = true
 roder-codex-auth.workspace = true
 roder-code-index.workspace = true

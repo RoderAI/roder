@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use roder_api_transcript::{ApiTranscriptHeader, ApiTranscriptRecord, SUPPORTED_SCHEMA_VERSION};
-use roder_app_server::transcript::{RecordingAppClient, TranscriptRecorder};
-use roder_app_server::{AppClient, AppNotificationReceiver, AppServer, LocalAppClient};
+use roder_app_server_core::transcript::{RecordingAppClient, TranscriptRecorder};
+use roder_app_server::{AppServer, LocalAppClient};
+use roder_app_server_core::{AppClient, AppNotificationReceiver};
 use roder_protocol::{
     JsonRpcRequest, ThreadListParams, ThreadListResult, ThreadReadParams, ThreadReadResult,
     ThreadStartParams, ThreadStartResult, TurnInputItem, TurnInterruptParams, TurnStartParams,

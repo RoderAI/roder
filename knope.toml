@@ -25,6 +25,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-app-server/CHANGELOG.md"
 
+[packages."roder-app-server-core"]
+versioned_files = [
+    "crates/roder-app-server-core/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-app-server-core/CHANGELOG.md"
+
 [packages."roder-app-server-hosted"]
 versioned_files = [
     "crates/roder-app-server-hosted/Cargo.toml",

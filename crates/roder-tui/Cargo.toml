@@ -20,6 +20,7 @@ ratatui.workspace = true
 roder-api.workspace = true
 roder-api-transcript.workspace = true
 roder-app-server.workspace = true
+roder-app-server-core.workspace = true
 roder-config.workspace = true
 roder-protocol.workspace = true
 roder-roadmap.workspace = true

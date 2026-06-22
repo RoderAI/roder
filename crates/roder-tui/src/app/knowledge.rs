@@ -2,7 +2,7 @@
 //! knowledge base from the TUI (roadmap phase 93).
 
 use roder_api::memory::MemoryScope;
-use roder_app_server::AppClient;
+use roder_app_server_core::AppClient;
 use roder_protocol::{
     JsonRpcRequest, KnowledgeListParams, KnowledgeListResult, KnowledgeReadParams,
     KnowledgeReadResult, KnowledgeSearchParams, KnowledgeSearchResults,
