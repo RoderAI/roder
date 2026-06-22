@@ -110,7 +110,7 @@ impl PolicyModeConfig {
             auto_approve: AutoApproveSet::empty(),
             denied_tools: Vec::new(),
             allow_writes: false,
-            allow_process: false,
+            allow_process: true,
             allow_network: true,
             requires_user_to_exit: false,
         }
