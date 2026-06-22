@@ -77,7 +77,7 @@ impl InferenceEngine for GeminiEngine {
 
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities {
-            streaming: false,
+            streaming: true,
             tool_calls: true,
             parallel_tool_calls: false,
             reasoning_summaries: false,
@@ -120,49 +120,198 @@ impl InferenceEngine for GeminiEngine {
         };
         let body = Self::map_request(&request)?;
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
             request.model.model, api_key
         );
-        let (value, retry_events) =
-            send_gemini_request(&url, &body, request.runtime.reliability.as_ref()).await?;
-        let text = extract_candidate_text(&value);
-        let reasoning = extract_candidate_thinking(&value);
-        let mut events = Vec::new();
-        if !reasoning.is_empty() {
-            events.push(Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
-                text: reasoning,
-            })));
-        }
-        if !text.is_empty() {
-            events.push(Ok(InferenceEvent::MessageDelta(MessageDelta {
-                text,
-                phase: None,
-            })));
-        }
-        for call in extract_tool_calls(&value) {
-            events.push(Ok(InferenceEvent::ToolCallCompleted(call)));
-        }
-        if let Some(usage) = extract_usage(&value) {
-            events.push(Ok(InferenceEvent::Usage(usage)));
-        }
-        for retry_event in retry_events {
-            events.push(Ok(InferenceEvent::ProviderMetadata(retry_event)));
-        }
-        events.push(Ok(InferenceEvent::ProviderMetadata(value.clone())));
-        events.push(Ok(InferenceEvent::Completed(CompletionMetadata {
-            stop_reason: value
-                .pointer("/candidates/0/finishReason")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-            provider_response_id: value
-                .get("responseId")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-        })));
-        Ok(Box::pin(futures::stream::iter(events)))
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let policy = request.runtime.reliability.as_ref().cloned();
+
+        tokio::spawn(async move {
+            if let Err(err) = handle_gemini_stream(url, body, policy, tx.clone()).await {
+                let _ = tx.send(Err(err));
+            }
+        });
+
+        let stream = futures::stream::unfold(rx, |mut rx| async move {
+            match rx.recv().await {
+                Some(val) => Some((val, rx)),
+                None => None,
+            }
+        });
+
+        Ok(Box::pin(stream))
     }
 }
 
+async fn handle_gemini_stream(
+    url: String,
+    body: Value,
+    policy: Option<ReliabilityRequestPolicy>,
+    tx: tokio::sync::mpsc::UnboundedSender<anyhow::Result<InferenceEvent>>,
+) -> anyhow::Result<()> {
+    let policy = policy.unwrap_or_default();
+    let attempts = policy.provider_retry_max_attempts.max(1);
+    let client = reqwest::Client::new();
+    let mut last_error = None;
+    let mut retry_events = Vec::new();
+
+    let mut response_opt = None;
+    for attempt in 1..=attempts {
+        let response = client.post(&url).json(&body).send().await;
+        match response {
+            Ok(res) if res.status().is_success() => {
+                response_opt = Some(res);
+                break;
+            }
+            Ok(res) => {
+                let status = res.status();
+                let text = res.text().await.unwrap_or_default();
+                let retryable = policy
+                    .provider_retry_status_codes
+                    .contains(&status.as_u16());
+                last_error = Some(format!("Gemini error {status}: {text}"));
+                if retryable && attempt < attempts {
+                    retry_events.push(provider_retry_metadata(attempt, &provider_retry_status_cause(status.as_u16()), &policy));
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+            Err(err) => {
+                last_error = Some(err.to_string());
+                if attempt < attempts {
+                    retry_events.push(provider_retry_metadata(attempt, "transport_error", &policy));
+                    retry_sleep(&policy, attempt).await;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+
+    let response = match response_opt {
+        Some(res) => res,
+        None => {
+            anyhow::bail!(last_error.unwrap_or_else(|| "Gemini stream connection failed".to_string()))
+        }
+    };
+
+    for retry_event in retry_events {
+        let _ = tx.send(Ok(InferenceEvent::ProviderMetadata(retry_event)));
+    }
+
+    use futures::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::new();
+    let mut last_response_id: Option<String> = None;
+    let mut last_finish_reason: Option<String> = None;
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result?;
+        buffer.extend_from_slice(&chunk);
+
+        while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+            let line_bytes = buffer.drain(..=pos).collect::<Vec<u8>>();
+            let line = String::from_utf8_lossy(&line_bytes);
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if let Some(data) = trimmed.strip_prefix("data:") {
+                let data_trimmed = data.trim();
+                if data_trimmed.is_empty() {
+                    continue;
+                }
+
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data_trimmed) {
+                    if let Some(id) = value.get("responseId").and_then(Value::as_str) {
+                        last_response_id = Some(id.to_string());
+                    }
+                    if let Some(reason) = value
+                        .pointer("/candidates/0/finishReason")
+                        .and_then(Value::as_str)
+                    {
+                        last_finish_reason = Some(reason.to_string());
+                    }
+
+                    let text = extract_candidate_text(&value);
+                    let thinking = extract_candidate_thinking(&value);
+                    
+                    if !thinking.is_empty() {
+                        let _ = tx.send(Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
+                            text: thinking,
+                        })));
+                    }
+                    if !text.is_empty() {
+                        let _ = tx.send(Ok(InferenceEvent::MessageDelta(MessageDelta {
+                            text,
+                            phase: None,
+                        })));
+                    }
+
+                    for call in extract_tool_calls(&value) {
+                        let _ = tx.send(Ok(InferenceEvent::ToolCallCompleted(call)));
+                    }
+
+                    if let Some(usage) = extract_usage(&value) {
+                        let _ = tx.send(Ok(InferenceEvent::Usage(usage)));
+                    }
+
+                    let _ = tx.send(Ok(InferenceEvent::ProviderMetadata(value)));
+                }
+            }
+        }
+    }
+
+    if !buffer.is_empty() {
+        let line = String::from_utf8_lossy(&buffer);
+        let trimmed = line.trim();
+        if let Some(data) = trimmed.strip_prefix("data:") {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) {
+                if let Some(id) = value.get("responseId").and_then(Value::as_str) {
+                    last_response_id = Some(id.to_string());
+                }
+                if let Some(reason) = value
+                    .pointer("/candidates/0/finishReason")
+                    .and_then(Value::as_str)
+                {
+                    last_finish_reason = Some(reason.to_string());
+                }
+
+                let text = extract_candidate_text(&value);
+                let thinking = extract_candidate_thinking(&value);
+                if !thinking.is_empty() {
+                    let _ = tx.send(Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
+                        text: thinking,
+                    })));
+                }
+                if !text.is_empty() {
+                    let _ = tx.send(Ok(InferenceEvent::MessageDelta(MessageDelta {
+                        text,
+                        phase: None,
+                    })));
+                }
+                for call in extract_tool_calls(&value) {
+                    let _ = tx.send(Ok(InferenceEvent::ToolCallCompleted(call)));
+                }
+                if let Some(usage) = extract_usage(&value) {
+                    let _ = tx.send(Ok(InferenceEvent::Usage(usage)));
+                }
+                let _ = tx.send(Ok(InferenceEvent::ProviderMetadata(value)));
+            }
+        }
+    }
+
+    let _ = tx.send(Ok(InferenceEvent::Completed(CompletionMetadata {
+        stop_reason: last_finish_reason,
+        provider_response_id: last_response_id,
+    })));
+
+    Ok(())
+}
+
+#[allow(dead_code)]
 async fn send_gemini_request(
     url: &str,
     body: &Value,
@@ -217,6 +366,7 @@ async fn send_gemini_request(
     anyhow::bail!(last_error.unwrap_or_else(|| "Gemini request failed".to_string()))
 }
 
+#[allow(dead_code)]
 fn push_retry_event(
     events: &mut Vec<Value>,
     attempt: u32,
