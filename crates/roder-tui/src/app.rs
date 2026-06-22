@@ -162,6 +162,13 @@ impl InlineCompletionItem {
     }
 }
 
+/// After the event broadcast channel drops events (`Lagged`) while a turn is
+/// active, the TUI may never see that turn's completion event. If no further
+/// events arrive for this long, assume the completion was dropped and recover
+/// the "working" UI locally. Kept generous so a genuinely long-running but
+/// briefly-quiet turn is not clobbered.
+const STUCK_TURN_RECOVERY_TIMEOUT: Duration = Duration::from_secs(30);
+
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
 const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
@@ -1732,6 +1739,7 @@ where
             let now = clock.now();
             advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
             self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
+            self.recover_stuck_turn_if_needed(now);
             self.stop_idle_voice_recording(now).await;
             self.finish_voice_transcription_if_ready().await;
             // Reflect the latest turn state onto the terminal's native progress
@@ -2474,6 +2482,37 @@ where
         } else {
             self.timeline.flush_streaming_animation();
         }
+    }
+
+    /// Recover the UI when a turn appears stuck because its completion event was
+    /// dropped by a broadcast-channel overflow. Only fires when a `Lagged` was
+    /// actually observed during the active turn and no event has arrived for
+    /// [`STUCK_TURN_RECOVERY_TIMEOUT`], so it cannot clobber a normal turn that
+    /// is simply quiet for a while. This only resets local UI state; it does not
+    /// interrupt the backend turn, which may still be running.
+    fn recover_stuck_turn_if_needed(&mut self, now: Instant) {
+        if self.active_turn_id.is_none() || !self.lagged_during_active_turn {
+            return;
+        }
+        if now.saturating_duration_since(self.last_event_at) < STUCK_TURN_RECOVERY_TIMEOUT {
+            return;
+        }
+        let thread_id = self.focused_thread_id().to_string();
+        self.flush_streaming_animation_for_thread(&thread_id);
+        self.active_turn_id = None;
+        self.lagged_during_active_turn = false;
+        self.active_turn_timer.reset();
+        self.progress.set(TerminalProgress::Idle);
+        self.current_turn_input_tokens = 0;
+        self.current_turn_output_tokens = 0;
+        self.current_turn_reasoning_tokens = None;
+        self.current_turn_total_tokens = 0;
+        self.compaction_active = false;
+        self.working_status_override = None;
+        self.timeline.push_system(
+            "recovered UI after a dropped turn-completion event (the backend turn may still be running)"
+                .to_string(),
+        );
     }
 
     fn tick_streaming_animations(&mut self, now: Instant, width: u16) -> bool {
@@ -9353,6 +9392,48 @@ mod tests {
             Runtime::fake().expect("fake runtime"),
         )));
         test_app_with_client(LocalAppClient::new(server.clone()), server)
+    }
+
+    #[test]
+    fn watchdog_recovers_stuck_turn_after_lag_and_quiet_gap() {
+        let mut app = test_app();
+        let now = Instant::now();
+        app.active_turn_id = Some("turn-1".to_string());
+        app.lagged_during_active_turn = true;
+        app.last_event_at = now - (STUCK_TURN_RECOVERY_TIMEOUT + Duration::from_secs(1));
+        app.recover_stuck_turn_if_needed(now);
+        assert!(app.active_turn_id.is_none(), "stuck turn should be cleared");
+        assert!(!app.lagged_during_active_turn);
+    }
+
+    #[test]
+    fn watchdog_keeps_turn_without_observed_lag() {
+        let mut app = test_app();
+        let now = Instant::now();
+        app.active_turn_id = Some("turn-1".to_string());
+        app.lagged_during_active_turn = false;
+        app.last_event_at = now - (STUCK_TURN_RECOVERY_TIMEOUT + Duration::from_secs(1));
+        app.recover_stuck_turn_if_needed(now);
+        assert_eq!(
+            app.active_turn_id.as_deref(),
+            Some("turn-1"),
+            "a quiet turn with no observed lag must not be cleared"
+        );
+    }
+
+    #[test]
+    fn watchdog_keeps_turn_with_recent_events() {
+        let mut app = test_app();
+        let now = Instant::now();
+        app.active_turn_id = Some("turn-1".to_string());
+        app.lagged_during_active_turn = true;
+        app.last_event_at = now;
+        app.recover_stuck_turn_if_needed(now);
+        assert_eq!(
+            app.active_turn_id.as_deref(),
+            Some("turn-1"),
+            "a turn that is still emitting events must not be cleared"
+        );
     }
 
     #[test]
