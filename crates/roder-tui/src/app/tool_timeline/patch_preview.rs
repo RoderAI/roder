@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::super::Theme;
 use super::ToolTimelineEntry;
-use crate::syntax::{SyntaxTheme, highlight_code, language_for_path};
+use roder_tui_syntax::{SyntaxTheme, highlight_code, language_for_path};
 
 const MAX_PATCH_PREVIEW_LINES: usize = 80;
 const LINE_NUMBER_WIDTH: usize = 4;
@@ -262,7 +262,7 @@ fn diff_line_row(
     before_line: &mut usize,
     after_line: &mut usize,
     theme: Theme,
-    language: Option<crate::syntax::SyntaxLanguage>,
+    language: Option<roder_tui_syntax::SyntaxLanguage>,
 ) -> Line<'static> {
     match line.kind {
         DiffPreviewLineKind::Hunk => Line::from(vec![
@@ -329,7 +329,7 @@ fn diff_content_line(
     gutter_style: Style,
     body_style: Style,
     theme: Theme,
-    language: Option<crate::syntax::SyntaxLanguage>,
+    language: Option<roder_tui_syntax::SyntaxLanguage>,
 ) -> Line<'static> {
     let mut spans = vec![
         Span::styled(

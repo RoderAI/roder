@@ -6,7 +6,7 @@ use ratatui::{
 
 use crate::diff::compute::{DiffLineKind, Hunk, HunkStatus};
 use crate::diff::{DiffViewMode, DiffViewerState};
-use crate::syntax::{SyntaxTheme, highlight_code, language_for_path, padded_highlighted_code};
+use roder_tui_syntax::{SyntaxTheme, highlight_code, language_for_path, padded_highlighted_code};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct DiffTheme {
@@ -133,7 +133,7 @@ fn hunk_header(index: usize, hunk: &Hunk, selected: bool, theme: DiffTheme) -> L
 fn unified_lines(
     hunk: &Hunk,
     theme: DiffTheme,
-    language: Option<crate::syntax::SyntaxLanguage>,
+    language: Option<roder_tui_syntax::SyntaxLanguage>,
 ) -> Vec<Line<'static>> {
     hunk.lines
         .iter()
@@ -158,7 +158,7 @@ fn unified_lines(
 fn side_by_side_lines(
     hunk: &Hunk,
     theme: DiffTheme,
-    language: Option<crate::syntax::SyntaxLanguage>,
+    language: Option<roder_tui_syntax::SyntaxLanguage>,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for line in &hunk.lines {
@@ -181,7 +181,7 @@ fn side_by_side_line(
     before: &str,
     after: &str,
     theme: DiffTheme,
-    language: Option<crate::syntax::SyntaxLanguage>,
+    language: Option<roder_tui_syntax::SyntaxLanguage>,
 ) -> Line<'static> {
     let before_text = truncate(before.trim_end_matches('\n'), 38);
     let after_text = truncate(after.trim_end_matches('\n'), 38);

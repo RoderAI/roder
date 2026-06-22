@@ -4848,6 +4848,7 @@ dependencies = [
  "roder-roadmap",
  "roder-skills",
  "roder-theme",
+ "roder-tui-syntax",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4856,6 +4857,13 @@ dependencies = [
  "tokio",
  "toml",
  "tui-textarea-2",
+]
+
+[[package]]
+name = "roder-tui-syntax"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum SyntaxKind {
+pub enum SyntaxKind {
     Plain,
     Keyword,
     String,
@@ -18,7 +18,7 @@ pub(crate) enum SyntaxKind {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum SyntaxLanguage {
+pub enum SyntaxLanguage {
     CLike,
     Rust,
     Python,
@@ -28,7 +28,7 @@ pub(crate) enum SyntaxLanguage {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) struct SyntaxTheme {
+pub struct SyntaxTheme {
     pub base: Color,
     pub keyword: Color,
     pub string: Color,
@@ -40,12 +40,12 @@ pub(crate) struct SyntaxTheme {
     pub bg: Option<Color>,
 }
 
-pub(crate) fn language_for_path(path: &Path) -> Option<SyntaxLanguage> {
+pub fn language_for_path(path: &Path) -> Option<SyntaxLanguage> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     language_for_extension(&extension)
 }
 
-pub(crate) fn language_for_extension(extension: &str) -> Option<SyntaxLanguage> {
+pub fn language_for_extension(extension: &str) -> Option<SyntaxLanguage> {
     match extension {
         "rs" => Some(SyntaxLanguage::Rust),
         "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" | "hxx" | "go" | "java" | "js" | "jsx" | "ts"
@@ -58,7 +58,7 @@ pub(crate) fn language_for_extension(extension: &str) -> Option<SyntaxLanguage> 
     }
 }
 
-pub(crate) fn highlight_code(
+pub fn highlight_code(
     text: &str,
     language: Option<SyntaxLanguage>,
     theme: SyntaxTheme,
@@ -75,7 +75,7 @@ pub(crate) fn highlight_code(
         .collect()
 }
 
-pub(crate) fn padded_highlighted_code(
+pub fn padded_highlighted_code(
     text: &str,
     width: usize,
     language: Option<SyntaxLanguage>,
