@@ -247,6 +247,13 @@ impl VoiceState {
         self.transcribing
     }
 
+    /// Whether voice capture or transcription is in flight. Used by the event
+    /// loop to keep repainting (and polling at the animation cadence) while the
+    /// voice indicator is animating.
+    pub(super) fn is_busy(&self) -> bool {
+        self.recording.is_some() || self.transcribing
+    }
+
     fn start_transcribing(&mut self, task: JoinHandle<anyhow::Result<String>>) {
         self.transcribing = true;
         self.transcription_task = Some(task);

@@ -169,6 +169,12 @@ impl InlineCompletionItem {
 /// briefly-quiet turn is not clobbered.
 const STUCK_TURN_RECOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Input poll timeout used when the UI is idle (no active turn, streaming, or
+/// voice activity). Long enough to stop the event loop from repainting at the
+/// status-animation cadence while idle, short enough that unsolicited backend
+/// events are still surfaced promptly.
+const IDLE_POLL_TIMEOUT: Duration = Duration::from_millis(250);
+
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
 const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
@@ -1735,28 +1741,54 @@ where
         let mut rx = self.client.subscribe_events();
         let mut next_animation_tick = clock.now() + top_status_animation_interval();
 
+        let mut needs_redraw = true;
         loop {
             let now = clock.now();
+            // Capture animated/active state before the per-iteration mutations
+            // so a transition that *ends* an animation (e.g. voice transcription
+            // finishing, or the watchdog clearing a stuck turn) still triggers
+            // one final redraw of the resulting state.
+            let live_before = self.is_ui_live();
             advance_top_status_animation(&mut self.animation_frame, &mut next_animation_tick, now);
-            self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
+            let anim_changed =
+                self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
             self.recover_stuck_turn_if_needed(now);
             self.stop_idle_voice_recording(now).await;
             self.finish_voice_transcription_if_ready().await;
             // Reflect the latest turn state onto the terminal's native progress
             // indicator (OSC 9;4). No-op when the state is unchanged.
             let _ = self.progress.flush(session.terminal_mut().backend_mut());
-            session.terminal_mut().draw(|f| {
-                self.render(f);
-                if options.record_ui_frames
-                    && let Some(recorder) = &options.transcript_recorder
-                {
-                    let frame = frame_snapshot::recorded_frame(f.buffer_mut(), true);
-                    let (seq, at_ms) = recorder.next_seq_at_ms();
-                    let _ = recorder.push(ApiTranscriptRecord::UiFrame { seq, at_ms, frame });
-                }
-            })?;
+            let live = self.is_ui_live();
+            // Only repaint when something changed or an animation is in flight.
+            // When fully idle this lets the loop stop repainting at the status
+            // animation cadence, which over a long idle period removes a
+            // continuous stream of full-frame renders. `record_ui_frames` forces
+            // a frame every iteration so transcript recordings stay complete.
+            if needs_redraw || live || live_before || anim_changed || options.record_ui_frames {
+                session.terminal_mut().draw(|f| {
+                    self.render(f);
+                    if options.record_ui_frames
+                        && let Some(recorder) = &options.transcript_recorder
+                    {
+                        let frame = frame_snapshot::recorded_frame(f.buffer_mut(), true);
+                        let (seq, at_ms) = recorder.next_seq_at_ms();
+                        let _ = recorder.push(ApiTranscriptRecord::UiFrame { seq, at_ms, frame });
+                    }
+                })?;
+                needs_redraw = false;
+            }
 
-            if input.poll(self.animation_poll_timeout(next_animation_tick, clock.now()))? {
+            // While anything is animating, poll at the animation cadence; when
+            // idle, block on input for longer instead of spinning. Backend
+            // events are still drained within this interval, and any keystroke
+            // wakes the poll immediately.
+            let poll_timeout = if live {
+                self.animation_poll_timeout(next_animation_tick, clock.now())
+            } else {
+                IDLE_POLL_TIMEOUT
+            };
+            if input.poll(poll_timeout)? {
+                needs_redraw = true;
                 match input.read()? {
                     Event::Key(key) => {
                         if self.handle_voice_key(key).await {
@@ -2062,6 +2094,7 @@ where
                     Err(_) => break,
                 };
                 self.last_event_at = clock.now();
+                needs_redraw = true;
                 self.push_event(format!("{} #{}", envelope.kind, envelope.seq));
                 self.remote_panel.apply_event(&envelope);
                 if let Some(event) = self.workflows.apply_event(&envelope.event) {
@@ -2535,6 +2568,13 @@ where
                 .team_timelines
                 .values()
                 .any(TimelineState::has_streaming_animation)
+    }
+
+    /// Whether the UI has anything live that requires continuous repainting:
+    /// an active turn (working spinner + elapsed timer), a streaming
+    /// reveal/sheen animation, or in-flight voice capture/transcription.
+    fn is_ui_live(&self) -> bool {
+        self.active_turn_id.is_some() || self.has_streaming_animation() || self.voice.is_busy()
     }
 
     fn animation_poll_timeout(&self, next_tick: Instant, now: Instant) -> Duration {
