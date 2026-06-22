@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use roder_api::extension::ExtensionRegistryBuilder;
-use roder_app_server::agent_node::{AgentNodeOptions, serve_agent_node};
-use roder_app_server::{AppServer, RemoteAppClient, RemoteNodeConnection};
+use roder_app_server::AppServer;
+use roder_app_server_node::agent_node::{AgentNodeOptions, serve_agent_node};
+use roder_app_server_node::{RemoteAppClient, RemoteNodeConnection};
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};
 use roder_protocol::JsonRpcRequest;
@@ -26,7 +27,7 @@ fn app_server() -> Arc<AppServer> {
     Arc::new(AppServer::new(runtime))
 }
 
-async fn start_node(label: &str) -> (roder_app_server::agent_node::AgentNodeController, PathBuf) {
+async fn start_node(label: &str) -> (roder_app_server_node::agent_node::AgentNodeController, PathBuf) {
     let state_dir = temp_dir(label);
     let controller = serve_agent_node(
         app_server(),
@@ -57,7 +58,7 @@ async fn enrolled_mtls_controller_connects_and_unenrolled_certs_fail() {
     let address = node.handle.listen_addr.to_string();
 
     // Out-of-band enrollment (operator pins the controller fingerprint).
-    let controller = roder_app_server::agent_node::generate_identity("controller").unwrap();
+    let controller = roder_app_server_node::agent_node::generate_identity("controller").unwrap();
     node.handle
         .trust
         .enroll(&controller.fingerprint, "test-controller")
@@ -80,7 +81,7 @@ async fn enrolled_mtls_controller_connects_and_unenrolled_certs_fail() {
 
     // An unenrolled certificate without a pairing token is rejected before
     // any request is handled.
-    let stranger = roder_app_server::agent_node::generate_identity("stranger").unwrap();
+    let stranger = roder_app_server_node::agent_node::generate_identity("stranger").unwrap();
     let denied = RemoteAppClient::connect(RemoteNodeConnection {
         address: address.clone(),
         server_fingerprint: node.handle.fingerprint.clone(),
@@ -92,7 +93,7 @@ async fn enrolled_mtls_controller_connects_and_unenrolled_certs_fail() {
 
     // A controller that does not trust the node's fingerprint refuses to
     // connect (server identity pinning).
-    let pinned_wrong = roder_app_server::agent_node::generate_identity("controller2").unwrap();
+    let pinned_wrong = roder_app_server_node::agent_node::generate_identity("controller2").unwrap();
     let denied = RemoteAppClient::connect(RemoteNodeConnection {
         address,
         server_fingerprint: "0".repeat(64),
@@ -115,7 +116,7 @@ async fn pairing_tokens_enroll_once_and_reject_reuse_expiry_and_query_strings() 
 
     // Valid token enrolls the connection's certificate.
     let (token, _preview) = node.handle.tokens.mint(time::Duration::minutes(5));
-    let controller = roder_app_server::agent_node::generate_identity("paired").unwrap();
+    let controller = roder_app_server_node::agent_node::generate_identity("paired").unwrap();
     let fingerprint = controller.fingerprint.clone();
     let client = RemoteAppClient::connect(RemoteNodeConnection {
         address: address.clone(),
@@ -144,7 +145,7 @@ async fn pairing_tokens_enroll_once_and_reject_reuse_expiry_and_query_strings() 
     assert!(reconnect.is_ok(), "enrolled cert reconnects without token");
 
     // Token reuse with a different certificate fails.
-    let second = roder_app_server::agent_node::generate_identity("second").unwrap();
+    let second = roder_app_server_node::agent_node::generate_identity("second").unwrap();
     let denied = RemoteAppClient::connect(RemoteNodeConnection {
         address: address.clone(),
         server_fingerprint: node.handle.fingerprint.clone(),
@@ -178,7 +179,7 @@ async fn pairing_tokens_enroll_once_and_reject_reuse_expiry_and_query_strings() 
     // Query-string tokens are always rejected, even valid ones.
     let (query_token, _) = node.handle.tokens.mint(time::Duration::minutes(5));
     let tls =
-        roder_app_server::agent_node::client_tls_config(&node.handle.fingerprint, Some(&second))
+        roder_app_server_node::agent_node::client_tls_config(&node.handle.fingerprint, Some(&second))
             .unwrap();
     let tcp = tokio::net::TcpStream::connect(&address).await.unwrap();
     let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(tls));
@@ -203,7 +204,7 @@ async fn pairing_tokens_enroll_once_and_reject_reuse_expiry_and_query_strings() 
 async fn revoked_controllers_are_rejected() {
     let (node, _state) = start_node("revoke").await;
     let address = node.handle.listen_addr.to_string();
-    let controller = roder_app_server::agent_node::generate_identity("revocable").unwrap();
+    let controller = roder_app_server_node::agent_node::generate_identity("revocable").unwrap();
     node.handle
         .trust
         .enroll(&controller.fingerprint, "soon-revoked")

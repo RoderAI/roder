@@ -9,9 +9,10 @@ use std::time::Duration;
 use roder_api::events::RoderEvent;
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::thread::ThreadStoreFactory;
-use roder_app_server::agent_node::{AgentNodeOptions, serve_agent_node};
 use roder_app_server::client::{AppClient, AppEventReceiver};
-use roder_app_server::{AppServer, AppServerFeatureConfig, RemoteAppClient, RemoteNodeConnection};
+use roder_app_server::{AppServer, AppServerFeatureConfig};
+use roder_app_server_node::agent_node::{AgentNodeOptions, serve_agent_node};
+use roder_app_server_node::{RemoteAppClient, RemoteNodeConnection};
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
@@ -77,7 +78,7 @@ async fn remote_controller_drives_a_full_turn_with_events_over_mtls() {
     )
     .await
     .unwrap();
-    let controller = roder_app_server::agent_node::generate_identity("controller").unwrap();
+    let controller = roder_app_server_node::agent_node::generate_identity("controller").unwrap();
     node.handle
         .trust
         .enroll(&controller.fingerprint, "test")
@@ -200,7 +201,7 @@ async fn reconnect_fails_pending_requests_explicitly_then_recovers() {
     .unwrap();
     let address = node.handle.listen_addr.to_string();
     let fingerprint = node.handle.fingerprint.clone();
-    let controller = roder_app_server::agent_node::generate_identity("controller").unwrap();
+    let controller = roder_app_server_node::agent_node::generate_identity("controller").unwrap();
     node.handle
         .trust
         .enroll(&controller.fingerprint, "test")

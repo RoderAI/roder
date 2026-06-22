@@ -1,0 +1,43 @@
+[package]
+name = "roder-app-server-node"
+version = "0.1.0"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+autotests = false
+
+[[test]]
+name = "agent_node_security"
+path = "tests/agent_node_security.rs"
+
+[[test]]
+name = "remote_app_client"
+path = "tests/remote_app_client.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+futures.workspace = true
+rand.workspace = true
+rcgen.workspace = true
+roder-api.workspace = true
+roder-app-server.workspace = true
+roder-protocol.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+roder-core.workspace = true
+roder-ext-jsonl-thread-store.workspace = true

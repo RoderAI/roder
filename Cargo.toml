@@ -76,6 +76,7 @@ roder-api = { path = "crates/roder-api", version = "0.1.0" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.1.0" }
 roder-app-server = { path = "crates/roder-app-server", version = "0.1.0" }
+roder-app-server-node = { path = "crates/roder-app-server-node", version = "0.1.0" }
 roder-app-server-hosted = { path = "crates/roder-app-server-hosted", version = "0.1.0" }
 roder-codex-auth = { path = "crates/roder-codex-auth", version = "0.1.0" }
 roder-commands = { path = "crates/roder-commands", version = "0.1.0" }

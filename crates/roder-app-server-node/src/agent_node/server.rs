@@ -36,7 +36,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
 
-use crate::AppServer;
+use roder_app_server::AppServer;
 use crate::agent_node::auth::{ControllerTrust, PairingTokens};
 use crate::agent_node::tls::{TlsIdentity, fingerprint_der, generate_identity, server_tls_config};
 

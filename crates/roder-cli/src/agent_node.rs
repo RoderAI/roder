@@ -11,10 +11,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use roder_app_server::agent_node::{
+use roder_app_server::AppServer;
+use roder_app_server_node::agent_node::{
     AgentNodeOptions, DEFAULT_PAIRING_TTL, generate_identity, serve_agent_node,
 };
-use roder_app_server::{AppServer, RemoteAppClient, RemoteNodeConnection};
+use roder_app_server_node::{RemoteAppClient, RemoteNodeConnection};
 use roder_protocol::JsonRpcRequest;
 
 use crate::{CliOptions, build_runtime_from_config};
@@ -99,7 +100,7 @@ async fn serve(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// Loads (or creates) the persistent controller identity.
-fn controller_identity() -> anyhow::Result<roder_app_server::agent_node::TlsIdentity> {
+fn controller_identity() -> anyhow::Result<roder_app_server_node::agent_node::TlsIdentity> {
     let dir = state_dir().join("controller");
     std::fs::create_dir_all(&dir)?;
     let cert_path = dir.join("controller-cert.pem");
@@ -107,8 +108,8 @@ fn controller_identity() -> anyhow::Result<roder_app_server::agent_node::TlsIden
     if cert_path.exists() && key_path.exists() {
         let cert_pem = std::fs::read_to_string(&cert_path)?;
         let key_pem = std::fs::read_to_string(&key_path)?;
-        let fingerprint = roder_app_server::agent_node::fingerprint_from_pem(&cert_pem)?;
-        return Ok(roder_app_server::agent_node::TlsIdentity {
+        let fingerprint = roder_app_server_node::agent_node::fingerprint_from_pem(&cert_pem)?;
+        return Ok(roder_app_server_node::agent_node::TlsIdentity {
             cert_pem,
             key_pem,
             fingerprint,
@@ -311,7 +312,7 @@ async fn connect(args: &[String]) -> anyhow::Result<()> {
 }
 
 async fn trust(args: &[String]) -> anyhow::Result<()> {
-    let trust = roder_app_server::agent_node::ControllerTrust::open(&state_dir())?;
+    let trust = roder_app_server_node::agent_node::ControllerTrust::open(&state_dir())?;
     match args.first().map(String::as_str) {
         Some("list") => {
             let controllers = trust.controllers();
