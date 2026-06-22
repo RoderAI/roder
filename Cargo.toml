@@ -158,6 +158,7 @@ roder-theme = { path = "crates/roder-theme", version = "0.1.0" }
 roder-tasks = { path = "crates/roder-tasks", version = "0.1.0" }
 roder-tools = { path = "crates/roder-tools", version = "0.1.0" }
 roder-tui = { path = "crates/roder-tui", version = "0.1.0" }
+roder-tui-diff = { path = "crates/roder-tui-diff", version = "0.1.0" }
 roder-tui-syntax = { path = "crates/roder-tui-syntax", version = "0.1.0" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 

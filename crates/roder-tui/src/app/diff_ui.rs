@@ -1,7 +1,7 @@
 use super::*;
-use crate::diff::DiffViewerState;
-use crate::diff::keys::{DiffKey, DiffKeyOutcome, apply_key};
-use crate::diff::render::diff_viewer_widget;
+use roder_tui_diff::DiffViewerState;
+use roder_tui_diff::keys::{DiffKey, DiffKeyOutcome, apply_key};
+use roder_tui_diff::render::diff_viewer_widget;
 
 impl<C> TuiApp<C>
 where

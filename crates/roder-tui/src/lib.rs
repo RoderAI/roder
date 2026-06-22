@@ -1,6 +1,5 @@
 pub mod app;
 pub mod config;
-pub mod diff;
 pub mod frame_snapshot;
 pub mod keymap;
 pub mod mouse;

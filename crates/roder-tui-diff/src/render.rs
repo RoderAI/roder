@@ -4,8 +4,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
 
-use crate::diff::compute::{DiffLineKind, Hunk, HunkStatus};
-use crate::diff::{DiffViewMode, DiffViewerState};
+use crate::compute::{DiffLineKind, Hunk, HunkStatus};
+use crate::{DiffViewMode, DiffViewerState};
 use roder_tui_syntax::{SyntaxTheme, highlight_code, language_for_path, padded_highlighted_code};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -243,8 +243,8 @@ fn mode_label(mode: DiffViewMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::compute::{HunkStatus, compute_diff};
-    use crate::diff::{DiffViewerState, FileDiff, PendingDiff};
+    use crate::compute::{HunkStatus, compute_diff};
+    use crate::{DiffViewerState, FileDiff, PendingDiff};
 
     #[test]
     fn diff_view_unified_render_includes_path_hunks_and_fallback_label() {

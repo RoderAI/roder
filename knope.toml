@@ -648,6 +648,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-tui/CHANGELOG.md"
 
+[packages."roder-tui-diff"]
+versioned_files = [
+    "crates/roder-tui-diff/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-tui-diff/CHANGELOG.md"
+
 [packages."roder-tui-syntax"]
 versioned_files = [
     "crates/roder-tui-syntax/Cargo.toml",

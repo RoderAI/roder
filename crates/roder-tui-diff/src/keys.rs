@@ -1,5 +1,5 @@
-use crate::diff::compute::HunkStatus;
-use crate::diff::{DiffResolution, DiffViewMode, DiffViewerState};
+use crate::compute::HunkStatus;
+use crate::{DiffResolution, DiffViewMode, DiffViewerState};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum DiffKey {
@@ -93,8 +93,8 @@ fn reject_whole(state: &mut DiffViewerState) -> DiffKeyOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::compute::compute_diff;
-    use crate::diff::{DiffViewerState, FileDiff, PendingDiff};
+    use crate::compute::compute_diff;
+    use crate::{DiffViewerState, FileDiff, PendingDiff};
 
     #[test]
     fn diff_view_hunk_navigation_clamps_at_edges() {
