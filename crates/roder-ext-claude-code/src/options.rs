@@ -2,7 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use claude_code_sdk_rust::mcp::{MCPContent, SdkMcpTool, SimpleMCPServer};
-use claude_code_sdk_rust::{ClaudeAgentOptions, PermissionMode, PermissionResult, SettingSource};
+use claude_code_sdk_rust::{
+    ClaudeAgentOptions, EffortLevel, PermissionMode, PermissionResult, SettingSource,
+};
 use roder_api::inference::{AgentInferenceRequest, ToolCallCompleted, TurnToolExecutor};
 use roder_api::tools::ToolChoice;
 
@@ -47,8 +49,9 @@ pub fn build_options(
     }
     if request.reasoning.enabled
         && let Some(level) = request.reasoning.level.as_deref()
+        && let Some(effort) = parse_effort_level(level)
     {
-        builder = builder.effort(level.to_string());
+        builder = builder.effort(effort);
     }
     if let Some(max_tokens) = request.output.max_tokens {
         let budget = i32::try_from(max_tokens).unwrap_or(i32::MAX);
@@ -305,6 +308,19 @@ fn merged_system_prompt(request: &AgentInferenceRequest) -> Option<String> {
     }
 }
 
+/// Maps a Roder reasoning level to the SDK's `EffortLevel`, returning `None`
+/// for unrecognized values so the `--effort` flag is simply omitted.
+fn parse_effort_level(value: &str) -> Option<EffortLevel> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "low" | "minimal" => Some(EffortLevel::Low),
+        "medium" => Some(EffortLevel::Medium),
+        "high" => Some(EffortLevel::High),
+        "xhigh" | "very-high" | "veryhigh" => Some(EffortLevel::Xhigh),
+        "max" | "maximum" => Some(EffortLevel::Max),
+        _ => None,
+    }
+}
+
 pub fn parse_permission_mode(value: &str) -> anyhow::Result<PermissionMode> {
     match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
         "default" => Ok(PermissionMode::Default),
@@ -403,7 +419,7 @@ mod tests {
             options.system_prompt.as_deref(),
             Some("system\n\ndeveloper")
         );
-        assert_eq!(options.effort.as_deref(), Some("medium"));
+        assert_eq!(options.effort.map(|effort| effort.as_cli()), Some("medium"));
         assert!(options.can_use_tool.is_some());
     }
 

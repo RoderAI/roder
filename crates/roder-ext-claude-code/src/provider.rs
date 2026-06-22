@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_stream::try_stream;
-use claude_code_sdk_rust::{ClaudeAgentClient, ClaudeAgentOptions, MessageResponse, StreamEvent};
+use claude_code_sdk_rust::{
+    ClaudeAgentClient, ClaudeAgentOptions, ImageSource, InputContentBlock, MessageResponse,
+    StreamEvent, UserMessageInput,
+};
 use roder_api::catalog::{PROVIDER_CLAUDE_CODE, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
@@ -43,7 +46,7 @@ pub trait ClaudeCodeRunner: Send + Sync {
     async fn stream(
         &self,
         options: ClaudeAgentOptions,
-        prompt: String,
+        content: UserMessageInput,
     ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>>;
 }
 
@@ -55,9 +58,9 @@ impl ClaudeCodeRunner for SdkClaudeCodeRunner {
     async fn stream(
         &self,
         options: ClaudeAgentOptions,
-        prompt: String,
+        content: UserMessageInput,
     ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>> {
-        Ok(ClaudeAgentClient::spawn_stream_message(options, prompt))
+        Ok(ClaudeAgentClient::spawn_stream_message(options, content))
     }
 }
 
@@ -161,7 +164,7 @@ impl InferenceEngine for ClaudeCodeEngine {
             cwd,
             plan.resume_session_id.as_deref(),
         )?;
-        let events = self.runner.stream(options, plan.prompt).await?;
+        let events = self.runner.stream(options, plan.content).await?;
         Ok(Box::pin(map_stream_events(
             events,
             Arc::clone(&self.continuity),
@@ -175,7 +178,7 @@ impl InferenceEngine for ClaudeCodeEngine {
 /// whole transcript).
 struct TurnPlan {
     resume_session_id: Option<String>,
-    prompt: String,
+    content: UserMessageInput,
     /// Fingerprint of the transcript prefix the session will be known to
     /// contain once this turn is sent. Committed to `SessionContinuity` only
     /// after the turn completes successfully.
@@ -199,10 +202,10 @@ impl ClaudeCodeEngine {
                 && boundary <= request.transcript.len();
             if can_resume {
                 let delta = prompt_from_delta(request, boundary);
-                if !delta.trim().is_empty() {
+                if input_has_content(&delta) {
                     return TurnPlan {
                         resume_session_id: state.session_id.clone(),
-                        prompt: delta,
+                        content: delta,
                         // After this resume the session covers the full current
                         // transcript (prior items + this new tail).
                         synced: fingerprints,
@@ -216,7 +219,7 @@ impl ClaudeCodeEngine {
         // resume from here.
         TurnPlan {
             resume_session_id: None,
-            prompt: prompt_from_request(request),
+            content: prompt_from_request(request),
             synced: fingerprints,
         }
     }
@@ -229,23 +232,45 @@ fn validate_request(request: &AgentInferenceRequest) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn prompt_from_request(request: &AgentInferenceRequest) -> String {
+fn prompt_from_request(request: &AgentInferenceRequest) -> UserMessageInput {
     prompt_from_items(request, &request.transcript)
 }
 
 /// Builds the prompt from only the transcript items at/after `boundary`, used
 /// when resuming a persisted CLI session that already holds the earlier items.
-fn prompt_from_delta(request: &AgentInferenceRequest, boundary: usize) -> String {
+fn prompt_from_delta(request: &AgentInferenceRequest, boundary: usize) -> UserMessageInput {
     let tail = request.transcript.get(boundary..).unwrap_or(&[]);
     prompt_from_items(request, tail)
 }
 
-fn prompt_from_items(request: &AgentInferenceRequest, items: &[TranscriptItem]) -> String {
+/// Renders the transcript `items` into a CLI prompt. Text is replayed as the
+/// Debug form of each item (the historical behavior); any images carried by
+/// user messages are decoded into real image content blocks so Claude actually
+/// receives the pixels instead of a base64 string dumped into the text.
+fn prompt_from_items(request: &AgentInferenceRequest, items: &[TranscriptItem]) -> UserMessageInput {
     let mut parts = Vec::new();
+    let mut images = Vec::new();
     for item in items {
         // Provider metadata (rate-limit blobs, tool-result echoes) is internal
         // bookkeeping, not conversational input. Never replay it as a prompt.
         if matches!(item, TranscriptItem::ProviderMetadata(_)) {
+            continue;
+        }
+        if let TranscriptItem::UserMessage(message) = item
+            && !message.images.is_empty()
+        {
+            for image in &message.images {
+                if let Some(block) = image_block_from_url(&image.image_url) {
+                    images.push(block);
+                }
+            }
+            // Replay only the text; embedding the raw base64 data URL as Debug
+            // text would balloon the prompt and duplicate the image bytes.
+            let text_only =
+                TranscriptItem::UserMessage(roder_api::transcript::UserMessage::text(
+                    message.text.clone(),
+                ));
+            parts.push(format!("{text_only:?}"));
             continue;
         }
         parts.push(format!("{item:?}"));
@@ -257,10 +282,44 @@ fn prompt_from_items(request: &AgentInferenceRequest, items: &[TranscriptItem]) 
     {
         parts.push(value.to_string());
     }
-    if parts.is_empty() {
+    let text = if parts.is_empty() {
         "Continue the current Roder turn.".to_string()
     } else {
         parts.join("\n\n")
+    };
+
+    if images.is_empty() {
+        UserMessageInput::Text(text)
+    } else {
+        let mut blocks = Vec::with_capacity(images.len() + 1);
+        blocks.push(InputContentBlock::text(text));
+        blocks.extend(images);
+        UserMessageInput::Blocks(blocks)
+    }
+}
+
+/// Converts a Roder `InputImage` URL into a Claude image content block.
+///
+/// `data:<mime>;base64,<payload>` URLs become base64 image sources; plain
+/// `http(s)` URLs become URL image sources. Anything else (e.g. an unsupported
+/// scheme) is skipped.
+fn image_block_from_url(url: &str) -> Option<InputContentBlock> {
+    if let Some(source) = ImageSource::from_data_url(url) {
+        return Some(InputContentBlock::image(source));
+    }
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return Some(InputContentBlock::image(ImageSource::Url {
+            url: url.to_string(),
+        }));
+    }
+    None
+}
+
+/// True when the input carries any text or image content worth sending.
+fn input_has_content(input: &UserMessageInput) -> bool {
+    match input {
+        UserMessageInput::Text(text) => !text.trim().is_empty(),
+        UserMessageInput::Blocks(blocks) => !blocks.is_empty(),
     }
 }
 
@@ -580,7 +639,7 @@ mod tests {
         async fn stream(
             &self,
             _options: ClaudeAgentOptions,
-            _prompt: String,
+            _content: UserMessageInput,
         ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>> {
             let (tx, rx) = mpsc::unbounded_channel();
             for event in self.events.clone() {
@@ -1136,6 +1195,22 @@ mod tests {
     /// `(resume_session_id, prompt)` captured for each CLI invocation.
     type RecordedCall = (Option<String>, String);
 
+    /// Flattens user-message input back into the text the assertions inspect:
+    /// the string for text input, or the concatenated text blocks otherwise.
+    fn capture_text(content: &UserMessageInput) -> String {
+        match content {
+            UserMessageInput::Text(text) => text.clone(),
+            UserMessageInput::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|block| match block {
+                    InputContentBlock::Text { text } => Some(text.clone()),
+                    InputContentBlock::Image { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        }
+    }
+
     /// Records the `resume` id and prompt of every CLI invocation and always
     /// completes the turn with the configured session id.
     #[derive(Default)]
@@ -1149,12 +1224,12 @@ mod tests {
         async fn stream(
             &self,
             options: ClaudeAgentOptions,
-            prompt: String,
+            content: UserMessageInput,
         ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>> {
             self.calls
                 .lock()
                 .unwrap()
-                .push((options.resume.clone(), prompt));
+                .push((options.resume.clone(), capture_text(&content)));
             let (tx, rx) = mpsc::unbounded_channel();
             tx.send(StreamEvent::Complete(MessageResponse {
                 content: "ok".to_string(),
@@ -1350,6 +1425,79 @@ mod tests {
         for model in models {
             let entry = roder_api::catalog::lookup_model_for_provider(PROVIDER_CLAUDE_CODE, &model.id).unwrap();
             assert!(entry.supports_images, "model {} must support images", model.id);
+        }
+    }
+
+    /// Captures the full [`UserMessageInput`] of each CLI invocation so image
+    /// delivery can be asserted on the structured content blocks.
+    #[derive(Default)]
+    struct ContentCapturingRunner {
+        contents: Arc<StdMutex<Vec<UserMessageInput>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ClaudeCodeRunner for ContentCapturingRunner {
+        async fn stream(
+            &self,
+            _options: ClaudeAgentOptions,
+            content: UserMessageInput,
+        ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>> {
+            self.contents.lock().unwrap().push(content);
+            let (tx, rx) = mpsc::unbounded_channel();
+            tx.send(StreamEvent::TurnComplete(MessageResponse {
+                content: String::new(),
+                blocks: Vec::new(),
+                model: String::new(),
+                stop_reason: Some("end_turn".to_string()),
+                session_id: "session-1".to_string(),
+                usage: None,
+            }))
+            .unwrap();
+            Ok(rx)
+        }
+    }
+
+    #[tokio::test]
+    async fn image_user_message_is_delivered_as_image_block() {
+        use roder_api::transcript::{InputImage, UserMessage};
+
+        let contents = Arc::new(StdMutex::new(Vec::new()));
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(ContentCapturingRunner {
+                contents: Arc::clone(&contents),
+            }),
+        );
+
+        drain(
+            &engine,
+            request_with_transcript(vec![TranscriptItem::UserMessage(UserMessage::with_images(
+                "describe this",
+                vec![InputImage {
+                    image_url: "data:image/png;base64,QUJD".to_string(),
+                }],
+            ))]),
+        )
+        .await;
+
+        let contents = contents.lock().unwrap();
+        let blocks = match &contents[0] {
+            UserMessageInput::Blocks(blocks) => blocks,
+            other => panic!("expected image content blocks, got {other:?}"),
+        };
+        // First a text block, then the decoded base64 image block.
+        assert!(matches!(blocks.first(), Some(InputContentBlock::Text { text }) if text.contains("describe this")));
+        assert!(blocks.iter().any(|block| matches!(
+            block,
+            InputContentBlock::Image {
+                source: ImageSource::Base64 { media_type, data }
+            } if media_type == "image/png" && data == "QUJD"
+        )));
+        // The raw base64 payload must NOT be dumped into the text prompt.
+        for block in blocks {
+            if let InputContentBlock::Text { text } = block {
+                assert!(!text.contains("QUJD"), "base64 leaked into text: {text}");
+            }
         }
     }
 }
