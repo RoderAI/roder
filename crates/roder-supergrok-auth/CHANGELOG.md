@@ -1,3 +1,9 @@
+## 0.1.2 (2026-06-22)
+
+### Fixes
+
+- Stabilize Roder startup, streaming responses, and provider behavior
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
