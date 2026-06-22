@@ -6,7 +6,7 @@ use roder_api::speech::{
     SpeechSynthesisModelDescriptor, SpeechSynthesisRequest, SpeechSynthesisResult,
     SpeechSynthesizer,
 };
-use roder_ext_openai_chat_completions::chat::redacted_provider_status_error;
+use roder_ext_openai_chat_completions::chat::provider_status_error_with_body;
 use serde_json::{Value, json};
 
 use crate::provider::{
@@ -108,15 +108,19 @@ impl SpeechSynthesizer for XiaomiMimoSpeechSynthesizer {
                 "{}/chat/completions",
                 base_url.trim_end_matches('/')
             ))
-            .header("api-key", api_key)
+            .header("api-key", &api_key)
             .json(&body)
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(redacted_provider_status_error(
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(provider_status_error_with_body(
                 self.spec.name,
                 "speech synthesis",
-                response.status(),
+                status,
+                &body,
+                Some(&api_key),
             ));
         }
         let value: Value = response.json().await?;

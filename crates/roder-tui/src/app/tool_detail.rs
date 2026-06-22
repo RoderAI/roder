@@ -121,13 +121,18 @@ pub(super) fn render_tool_detail_modal(
     } else {
         Borders::NONE
     };
+    let title = if modal.detail.failed && modal.detail.command.is_none() {
+        " error details  [x] "
+    } else {
+        " shell output  [x] "
+    };
     let block = Block::default()
         .borders(borders)
         .border_type(theme.border_type)
         .border_style(theme.dialog())
         .style(theme.dialog_surface())
         .padding(Padding::horizontal(2))
-        .title(Span::styled(" shell output  [x] ", theme.accent()));
+        .title(Span::styled(title, theme.accent()));
     let inner = block.inner(modal_area);
     f.render_widget(block, modal_area);
 
@@ -169,7 +174,9 @@ fn command_line(detail: &ToolDetail, theme: Theme) -> Paragraph<'static> {
 }
 
 fn context_line(detail: &ToolDetail, theme: Theme) -> Paragraph<'static> {
-    let status = if detail.failed {
+    let status = if detail.failed && detail.command.is_none() {
+        "error"
+    } else if detail.failed {
         "failed"
     } else if detail.running {
         "running"
@@ -208,7 +215,12 @@ fn detail_lines(detail: &ToolDetail, theme: Theme) -> Vec<Line<'static>> {
         lines.push(Line::raw(""));
     }
 
-    lines.push(Line::from(Span::styled("Output", theme.accent_soft())));
+    let output_label = if detail.failed && detail.command.is_none() {
+        "Response body"
+    } else {
+        "Output"
+    };
+    lines.push(Line::from(Span::styled(output_label, theme.accent_soft())));
     match detail
         .output
         .as_deref()

@@ -72,3 +72,62 @@ impl EventBus {
         envelope
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::events::{RoderEvent, TurnStarted};
+    use roder_api::inference::RuntimeProfile;
+
+    fn sample_event() -> RoderEvent {
+        RoderEvent::TurnStarted(TurnStarted {
+            thread_id: "thread".to_string(),
+            turn_id: "turn".to_string(),
+            runtime_profile: RuntimeProfile::Interactive,
+            timestamp: OffsetDateTime::now_utc(),
+        })
+    }
+
+    #[tokio::test]
+    async fn retains_burst_up_to_capacity_without_lagging() {
+        // A slow consumer (the TUI render loop only drains every ~166ms during
+        // an active turn) must be able to buffer a large burst of streaming
+        // events without the broadcast ring overflowing. This guards the
+        // capacity headroom that keeps tool/thinking rows from being dropped.
+        let capacity = 16_384;
+        let bus = EventBus::new(capacity);
+        let mut rx = bus.subscribe();
+
+        for _ in 0..capacity {
+            bus.emit(sample_event());
+        }
+
+        // Every buffered event is still readable; none were dropped.
+        for _ in 0..capacity {
+            assert!(rx.try_recv().is_ok());
+        }
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn overflow_beyond_capacity_surfaces_lagged() {
+        // When the buffer truly overflows the consumer must still observe a
+        // `Lagged` signal so the TUI can record the drop and run its stuck-turn
+        // recovery instead of hanging.
+        let capacity = 16usize;
+        let bus = EventBus::new(capacity);
+        let mut rx = bus.subscribe();
+
+        for _ in 0..(capacity + 8) {
+            bus.emit(sample_event());
+        }
+
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))
+        ));
+    }
+}

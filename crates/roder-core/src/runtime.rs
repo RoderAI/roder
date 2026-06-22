@@ -77,6 +77,16 @@ use crate::thread_item_cache::{ThreadItemCache, ThreadItemCacheEntry};
 use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
+/// Capacity of the runtime event broadcast ring buffer. The TUI drains this on
+/// its render loop, which during an active turn only wakes at the ~6 FPS status
+/// animation cadence (backend events do not wake the input poll), so up to
+/// ~166ms of events buffer between drains. A reasoning-high provider that runs
+/// its whole tool loop inside one turn (e.g. claude-code) streams a firehose of
+/// `InferenceEventReceived` deltas plus per-step tool/thinking events; the old
+/// 1024-slot buffer overflowed in those windows and silently dropped tool and
+/// thinking rows from the live view. Sized for generous headroom across bursts
+/// and brief render stalls.
+const EVENT_BUS_CAPACITY: usize = 16_384;
 const FINAL_ANSWER_PHASE: &str = "final_answer";
 pub(crate) const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
 const TASK_LEDGER_COMPLETION_REMINDER_LIMIT: u8 = 2;
@@ -350,7 +360,7 @@ impl Runtime {
         validate_runtime_config_reasoning(&config)?;
         validate_runtime_inference_router_config(&registry, &config)?;
 
-        let bus = EventBus::new(1024);
+        let bus = EventBus::new(EVENT_BUS_CAPACITY);
         let thread_store = registry
             .thread_stores
             .first()

@@ -1292,6 +1292,10 @@ impl TimelineState {
         let Some(index) = self.selected else {
             return;
         };
+        if let Some(detail) = self.detail_for_index(index) {
+            self.requested_detail = Some(detail);
+            return;
+        }
         if self.item_can_expand(index) {
             self.toggle_expansion(index);
         }
@@ -1415,6 +1419,17 @@ impl TimelineState {
                 arguments: String::new(),
                 output: self.shell_output_after(index),
                 failed: false,
+                running: false,
+            }),
+            TimelineItem {
+                kind: TimelineItemKind::Error(text),
+            } => Some(ToolDetail {
+                tool_id: None,
+                title: "Error".to_string(),
+                command: None,
+                arguments: String::new(),
+                output: Some(text.clone()),
+                failed: true,
                 running: false,
             }),
             _ => None,
@@ -1855,6 +1870,7 @@ fn item_is_non_message_selectable(item: &TimelineItem) -> bool {
             | TimelineItemKind::Shell(_)
             | TimelineItemKind::SubagentTrace(_)
             | TimelineItemKind::PlanReview(_)
+            | TimelineItemKind::Error(_)
     )
 }
 

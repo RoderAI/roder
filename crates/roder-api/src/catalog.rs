@@ -6,6 +6,7 @@ use crate::inference::{
 };
 
 pub mod image_models;
+mod synthetic;
 mod xiaomi_mimo;
 
 pub use image_models::{
@@ -13,6 +14,7 @@ pub use image_models::{
     ImageProviderCatalogEntry, built_in_image_providers, image_model_descriptors,
     image_models_for_provider, lookup_image_model, lookup_image_provider,
 };
+pub use synthetic::{SYNTHETIC_DEFAULT_BASE_URL, SYNTHETIC_DEFAULT_MODEL, SYNTHETIC_ENV_ALIASES};
 pub use xiaomi_mimo::{XIAOMI_MIMO_ENV_ALIASES, XIAOMI_MIMO_TOKEN_PLAN_ENV_ALIASES};
 
 pub const PROVIDER_MOCK: &str = "mock";
@@ -36,6 +38,7 @@ pub const PROVIDER_CURSOR: &str = "cursor";
 pub const PROVIDER_XIAOMI_MIMO: &str = "xiaomi-mimo";
 pub const PROVIDER_XIAOMI_MIMO_TOKEN_PLAN: &str = "xiaomi-mimo-token-plan";
 pub const PROVIDER_KIMI_CODE: &str = "kimi-code";
+pub const PROVIDER_SYNTHETIC: &str = "synthetic";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -52,6 +55,7 @@ pub const PROVIDER_KIND_RODER_CLOUD: &str = "roder_cloud";
 pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
 pub const PROVIDER_KIND_CURSOR: &str = "cursor";
 pub const PROVIDER_KIND_XIAOMI_MIMO: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
+pub const PROVIDER_KIND_SYNTHETIC: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -495,6 +499,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     },
     xiaomi_mimo::PAY_AS_YOU_GO_PROVIDER,
     xiaomi_mimo::TOKEN_PLAN_PROVIDER,
+    synthetic::SYNTHETIC_PROVIDER,
     ProviderCatalogEntry {
         id: PROVIDER_KIMI_CODE,
         name: "Kimi Code",
@@ -1027,6 +1032,20 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     xiaomi_mimo::TOKEN_PLAN_V25,
     xiaomi_mimo::TOKEN_PLAN_V2_OMNI,
     xiaomi_mimo::TOKEN_PLAN_V2_FLASH,
+    synthetic::SYN_LARGE_TEXT,
+    synthetic::SYN_SMALL_TEXT,
+    synthetic::SYN_LARGE_VISION,
+    synthetic::SYN_SMALL_VISION,
+    synthetic::HF_MINIMAX_M3,
+    synthetic::HF_QWEN3_6_27B,
+    synthetic::HF_KIMI_K2_6,
+    synthetic::HF_NEMOTRON_3_SUPER,
+    synthetic::HF_GLM_4_7,
+    synthetic::HF_GLM_4_7_FLASH,
+    synthetic::HF_GLM_5_1,
+    synthetic::HF_GLM_5_2,
+    synthetic::HF_GPT_OSS_120B,
+    synthetic::HF_QWEN3_5_397B_A17B,
     ModelCatalogEntry {
         id: "composer-2.5",
         display_name: "Composer 2.5",
@@ -1534,6 +1553,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_CURSOR => ProviderFamily::Cursor,
         PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
         PROVIDER_KIMI_CODE => ProviderFamily::OpenAi,
+        PROVIDER_SYNTHETIC => ProviderFamily::OpenAi,
         _ => ProviderFamily::Mock,
     }
 }
@@ -1595,6 +1615,9 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "composer" | "cursor-composer" => PROVIDER_CURSOR.to_string(),
         "claude_code" | "claudecode" => PROVIDER_CLAUDE_CODE.to_string(),
         "kimi" | "kimi-code" | "kimi_code" | "moonshot" => PROVIDER_KIMI_CODE.to_string(),
+        "synthetic" | "synthetic-ai" | "synthetic_ai" | "synthetic.new" => {
+            PROVIDER_SYNTHETIC.to_string()
+        }
         provider => provider.to_string(),
     }
 }
@@ -1651,6 +1674,7 @@ mod tests {
                 "cursor",
                 "xiaomi-mimo",
                 "xiaomi-mimo-token-plan",
+                "synthetic",
                 "kimi-code"
             ]
         );
@@ -1776,6 +1800,20 @@ mod tests {
                 "mimo-v2.5",
                 "mimo-v2-omni",
                 "mimo-v2-flash",
+                "syn:large:text",
+                "syn:small:text",
+                "syn:large:vision",
+                "syn:small:vision",
+                "hf:MiniMaxAI/MiniMax-M3",
+                "hf:Qwen/Qwen3.6-27B",
+                "hf:moonshotai/Kimi-K2.6",
+                "hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+                "hf:zai-org/GLM-4.7",
+                "hf:zai-org/GLM-4.7-Flash",
+                "hf:zai-org/GLM-5.1",
+                "hf:zai-org/GLM-5.2",
+                "hf:openai/gpt-oss-120b",
+                "hf:Qwen/Qwen3.5-397B-A17B",
                 "composer-2.5",
                 "claude-opus-4-8",
                 "claude-sonnet-4-6",
@@ -1809,7 +1847,107 @@ mod tests {
             5
         );
         assert_eq!(models_for_provider(PROVIDER_KIMI_CODE, false).len(), 1);
+        assert_eq!(models_for_provider(PROVIDER_SYNTHETIC, false).len(), 14);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn synthetic_catalog_defaults_to_large_text_alias() {
+        let provider = built_in_providers()
+            .iter()
+            .find(|provider| provider.id == PROVIDER_SYNTHETIC)
+            .expect("synthetic provider registered");
+        assert_eq!(provider.name, "Synthetic");
+        assert_eq!(provider.default_model, "syn:large:text");
+        assert_eq!(
+            provider.base_url,
+            Some("https://api.synthetic.new/openai/v1")
+        );
+        assert_eq!(provider.env_key, Some("SYNTHETIC_API_KEY"));
+        assert!(provider.env_aliases.contains(&"RODER_SYNTHETIC_API_KEY"));
+        assert!(!provider.supports_websockets);
+
+        let models = models_for_provider(PROVIDER_SYNTHETIC, false);
+        let default = models
+            .iter()
+            .find(|model| model.id == provider.default_model)
+            .expect("default synthetic model present");
+        assert_eq!(default.name, "Synthetic Large (Text)");
+        assert!(models.iter().any(|model| model.id == "syn:small:text"));
+        let vision = lookup_model_for_provider(PROVIDER_SYNTHETIC, "syn:large:vision")
+            .expect("vision alias present");
+        assert!(vision.supports_images);
+        assert_eq!(
+            provider_family_for_provider(PROVIDER_SYNTHETIC),
+            ProviderFamily::OpenAi
+        );
+    }
+
+    #[test]
+    fn synthetic_model_ids_preserve_alias_and_hf_segments() {
+        assert_eq!(normalize_provider_id("synthetic"), PROVIDER_SYNTHETIC);
+        assert_eq!(normalize_provider_id("synthetic.new"), PROVIDER_SYNTHETIC);
+        // syn: aliases keep their colon-delimited segments verbatim.
+        let alias = lookup_model_for_provider(PROVIDER_SYNTHETIC, "syn:large:text")
+            .expect("syn alias resolves");
+        assert_eq!(alias.id, "syn:large:text");
+        assert_eq!(alias.provider, PROVIDER_SYNTHETIC);
+        // hf: concrete ids are pinned in the catalog for the always-on models
+        // but must still keep their owner/model segments when prefixed and
+        // parsed by the provider.
+        let label = "synthetic/hf:zai-org/GLM-5.2";
+        let (provider, model) = label.split_once('/').unwrap();
+        assert_eq!(provider, PROVIDER_SYNTHETIC);
+        assert_eq!(model, "hf:zai-org/GLM-5.2");
+    }
+
+    #[test]
+    fn synthetic_always_on_models_are_pinned_with_documented_context_windows() {
+        let glm_5_2 = lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:zai-org/GLM-5.2")
+            .expect("GLM-5.2 pinned");
+        assert_eq!(glm_5_2.provider, PROVIDER_SYNTHETIC);
+        assert_eq!(glm_5_2.context_window, 524_288);
+        assert!(!glm_5_2.supports_images);
+
+        let minimax = lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:MiniMaxAI/MiniMax-M3")
+            .expect("MiniMax-M3 pinned");
+        assert_eq!(minimax.context_window, 524_288);
+
+        let glm_4_7 =
+            lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:zai-org/GLM-4.7").expect("GLM-4.7 pinned");
+        assert_eq!(glm_4_7.context_window, 202_752);
+
+        let gpt_oss = lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:openai/gpt-oss-120b")
+            .expect("gpt-oss-120b pinned");
+        assert_eq!(gpt_oss.context_window, 131_072);
+
+        let qwen_3_5 = lookup_model_for_provider(
+            PROVIDER_SYNTHETIC,
+            "hf:Qwen/Qwen3.5-397B-A17B",
+        )
+        .expect("Qwen3.5 397B pinned");
+        assert_eq!(qwen_3_5.context_window, 262_144);
+
+        // Every documented always-on id resolves to a catalog entry.
+        let always_on = [
+            "hf:MiniMaxAI/MiniMax-M3",
+            "hf:Qwen/Qwen3.6-27B",
+            "hf:moonshotai/Kimi-K2.6",
+            "hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+            "hf:zai-org/GLM-4.7",
+            "hf:zai-org/GLM-4.7-Flash",
+            "hf:zai-org/GLM-5.1",
+            "hf:zai-org/GLM-5.2",
+            "hf:openai/gpt-oss-120b",
+            "hf:Qwen/Qwen3.5-397B-A17B",
+        ];
+        for id in always_on {
+            let entry = lookup_model_for_provider(PROVIDER_SYNTHETIC, id)
+                .unwrap_or_else(|| panic!("{id} should be pinned in the synthetic catalog"));
+            assert_eq!(entry.provider, PROVIDER_SYNTHETIC);
+            assert!(entry.supports_tools);
+            assert!(entry.supports_structured);
+        }
     }
 
     #[test]

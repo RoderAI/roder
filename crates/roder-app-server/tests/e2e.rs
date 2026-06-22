@@ -9,7 +9,7 @@ use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
     PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_FIREWORKS, PROVIDER_MOCK,
     PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
-    PROVIDER_SUPERGROK, PROVIDER_XAI, REASONING_HIGH, REASONING_MEDIUM,
+    PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_XAI, REASONING_HIGH, REASONING_MEDIUM,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -4017,6 +4017,105 @@ async fn providers_select_preserves_fireworks_account_scoped_model_id() {
     assert_eq!(selected.provider, PROVIDER_FIREWORKS);
     assert_eq!(selected.model, "accounts/fireworks/models/qwen3-235b-a22b");
     assert_eq!(selected.reasoning, "none");
+}
+
+#[tokio::test]
+async fn providers_list_exposes_synthetic_alias_models_without_auth() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
+    let _config_guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "roder-synthetic-provider-list-e2e-config-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
+    let cache_path = std::env::temp_dir().join(format!(
+        "roder-synthetic-provider-list-e2e-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let _models_cache = EnvVarGuard::set("RODER_MODELS_CACHE_PATH", &cache_path);
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let synthetic = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_SYNTHETIC)
+        .expect("synthetic provider should be listed");
+    assert_eq!(synthetic.auth_type, ProviderAuthType::ApiKey);
+    assert!(!synthetic.authenticated);
+    assert!(
+        synthetic
+            .models
+            .iter()
+            .any(|model| model.id == "syn:large:text" && model.name == "Synthetic Large (Text)")
+    );
+    assert!(
+        synthetic
+            .models
+            .iter()
+            .any(|model| model.id == "syn:large:vision")
+    );
+    assert!(
+        synthetic
+            .models
+            .iter()
+            .any(|model| model.id == "hf:zai-org/GLM-5.2"),
+        "synthetic provider should list the always-on GLM-5.2 model"
+    );
+    assert!(
+        synthetic
+            .models
+            .iter()
+            .any(|model| model.id == "hf:MiniMaxAI/MiniMax-M3"),
+        "synthetic provider should list the always-on MiniMax-M3 model"
+    );
+}
+
+#[tokio::test]
+async fn providers_select_preserves_synthetic_model_ids() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let alias: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_SYNTHETIC.to_string(),
+                model: Some("syn:large:text".to_string()),
+                reasoning: Some("medium".to_string()),
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(alias.provider, PROVIDER_SYNTHETIC);
+    assert_eq!(alias.model, "syn:large:text");
+
+    let concrete: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_SYNTHETIC.to_string(),
+                model: Some("hf:zai-org/GLM-5.2".to_string()),
+                reasoning: Some("medium".to_string()),
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(concrete.provider, PROVIDER_SYNTHETIC);
+    assert_eq!(concrete.model, "hf:zai-org/GLM-5.2");
 }
 
 #[tokio::test]
