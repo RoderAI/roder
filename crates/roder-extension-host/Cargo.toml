@@ -63,6 +63,7 @@ roder-ext-runner-sprites.workspace = true
 roder-ext-runner-unix-local.workspace = true
 roder-ext-runner-vercel.workspace = true
 roder-ext-subagents.workspace = true
+roder-ext-synthetic.workspace = true
 roder-ext-task-ledger.workspace = true
 roder-ext-task-process.workspace = true
 roder-ext-verification.workspace = true

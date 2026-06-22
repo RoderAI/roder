@@ -4412,6 +4412,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-synthetic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-config",
+ "roder-ext-openai-chat-completions",
+ "roder-ext-openai-responses",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-task-ledger"
 version = "0.1.1"
 dependencies = [
@@ -4655,6 +4672,7 @@ dependencies = [
  "roder-ext-runner-unix-local",
  "roder-ext-runner-vercel",
  "roder-ext-subagents",
+ "roder-ext-synthetic",
  "roder-ext-task-ledger",
  "roder-ext-task-process",
  "roder-ext-tavily-search",

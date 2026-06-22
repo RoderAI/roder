@@ -61,6 +61,7 @@ use roder_ext_runner_runloop::RunloopRunnerExtension;
 use roder_ext_runner_sprites::SpritesRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
 use roder_ext_runner_vercel::VercelRunnerExtension;
+use roder_ext_synthetic::{SyntheticConfig, SyntheticExtension};
 use roder_ext_vertex::{VertexConfig, VertexExtension};
 use roder_ext_webwright::WebwrightExtension;
 use roder_ext_xai::{XaiConfig, XaiExtension};
@@ -145,6 +146,8 @@ pub struct DefaultRegistryConfig {
     pub cursor_backend_base_url: Option<String>,
     pub kimi_code_api_key: Option<String>,
     pub kimi_code_base_url: Option<String>,
+    pub synthetic_api_key: Option<String>,
+    pub synthetic_base_url: Option<String>,
     pub xiaomi_mimo_api_key: Option<String>,
     pub xiaomi_mimo_base_url: Option<String>,
     pub xiaomi_mimo_token_plan_api_key: Option<String>,
@@ -269,6 +272,8 @@ impl Default for DefaultRegistryConfig {
             xiaomi_mimo_token_plan_base_url: None,
             kimi_code_api_key: None,
             kimi_code_base_url: None,
+            synthetic_api_key: None,
+            synthetic_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -448,6 +453,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(KimiCodeExtension::new(KimiCodeConfig {
         api_key: config.kimi_code_api_key.clone(),
         base_url: config.kimi_code_base_url.clone(),
+    }))?;
+    builder.install(SyntheticExtension::new(SyntheticConfig {
+        api_key: config.synthetic_api_key.clone(),
+        base_url: config.synthetic_base_url.clone(),
     }))?;
     for provider in config.custom_inference_providers {
         if known_provider_id(&provider.id) {
@@ -1650,6 +1659,8 @@ mod tests {
             ),
             kimi_code_api_key: None,
             kimi_code_base_url: None,
+            synthetic_api_key: None,
+            synthetic_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -1762,6 +1773,47 @@ mod tests {
             engine.metadata().auth_label.as_deref(),
             Some("FIREWORKS_API_KEY")
         );
+    }
+
+    #[test]
+    fn default_registry_installs_synthetic_provider_without_credentials() {
+        use roder_api::catalog::PROVIDER_SYNTHETIC;
+        use std::sync::OnceLock;
+
+        static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
+        CONFIG_ISOLATION.get_or_init(|| {
+            let temp = std::env::temp_dir().join(format!(
+                "roder-extension-host-synthetic-tests-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&temp);
+            std::fs::create_dir_all(&temp).unwrap();
+            // SAFETY: set once before any test reads the config; all tests run
+            // in the same process and never restore a real config dir.
+            unsafe { std::env::set_var("RODER_CONFIG_DIR", &temp); }
+        });
+
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let engine = registry
+            .inference_engine(PROVIDER_SYNTHETIC)
+            .expect("synthetic provider registered without credentials");
+
+        let metadata = engine.metadata();
+        assert_eq!(metadata.name, "Synthetic");
+        assert_eq!(metadata.auth_configured, Some(false));
+    }
+
+    #[test]
+    fn default_registry_synthetic_provider_reports_configured_with_key() {
+        use roder_api::catalog::PROVIDER_SYNTHETIC;
+
+        let registry = build_default_registry(DefaultRegistryConfig {
+            synthetic_api_key: Some("syn-secret".to_string()),
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+        let engine = registry.inference_engine(PROVIDER_SYNTHETIC).unwrap();
+        assert_eq!(engine.metadata().auth_configured, Some(true));
     }
 
     #[test]

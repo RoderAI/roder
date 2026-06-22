@@ -1683,6 +1683,46 @@ fn clicking_non_shell_tool_does_not_request_detail_modal() {
 }
 
 #[test]
+fn clicking_error_row_requests_detail_modal_with_body() {
+    let mut timeline = TimelineState::default();
+    timeline.push_error(
+        "Synthetic Chat Completions error 502 Bad Gateway: provider server error\n\n--- response body ---\n{\"error\":\"upstream timeout\"}",
+    );
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 3, 100, 10));
+
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 2,
+        row: 3,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    };
+
+    assert!(timeline.handle_mouse(click));
+    let detail = timeline
+        .take_requested_detail()
+        .expect("error row click should request detail modal");
+    assert!(detail.failed);
+    assert!(detail.command.is_none());
+    assert!(detail.output.as_deref().unwrap().contains("502 Bad Gateway"));
+    assert!(detail.output.as_deref().unwrap().contains("upstream timeout"));
+}
+
+#[test]
+fn enter_on_selected_error_row_requests_detail_modal() {
+    let mut timeline = TimelineState::default();
+    timeline.push_error("Synthetic Chat Completions error 502: provider server error");
+    // Select the error row (it's the only non-message selectable item).
+    timeline.selected = Some(0);
+    timeline.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+    let detail = timeline
+        .take_requested_detail()
+        .expect("Enter on error row should request detail modal");
+    assert!(detail.failed);
+    assert!(detail.output.as_deref().unwrap().contains("502"));
+}
+
+#[test]
 fn mouse_hit_testing_accounts_for_wrapped_tool_rows() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(

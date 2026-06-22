@@ -90,6 +90,11 @@ pub async fn stream_chat_completions(
     if config.thinking_disabled {
         body["thinking"] = json!({ "type": "disabled" });
     }
+    if request.reasoning.enabled {
+        if let Some(level) = request.reasoning.level.as_deref() {
+            body["reasoning_effort"] = json!(level);
+        }
+    }
     if !tools.is_empty() {
         body["tools"] = json!(tools);
         body["tool_choice"] = chat_tool_choice(&request.tool_choice, &tool_name_map);
@@ -132,10 +137,14 @@ pub async fn stream_chat_completions(
     }
     let response = http.send().await?;
     if !response.status().is_success() {
-        return Err(redacted_provider_status_error(
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(provider_status_error_with_body(
             &config.provider_name,
             "Chat Completions",
-            response.status(),
+            status,
+            &body,
+            config_auth_secret(&config.auth),
         ));
     }
 
@@ -156,6 +165,7 @@ pub async fn stream_chat_completions(
     Ok(Box::pin(stream))
 }
 
+#[allow(dead_code)]
 pub fn redacted_provider_status_error(
     provider_name: &str,
     operation: &str,
@@ -167,14 +177,62 @@ pub fn redacted_provider_status_error(
     )
 }
 
+/// Build a provider error that includes the response body for the TUI detail
+/// popup. The auth credential (bearer token or header value) is scrubbed from
+/// the body so it is never surfaced in the timeline or popup.
+pub fn provider_status_error_with_body(
+    provider_name: &str,
+    operation: &str,
+    status: reqwest::StatusCode,
+    body: &str,
+    auth_secret: Option<&str>,
+) -> anyhow::Error {
+    let hint = provider_status_hint(status);
+    let scrubbed = scrub_secret(body, auth_secret);
+    let body_part = if scrubbed.trim().is_empty() {
+        "(empty response body)".to_string()
+    } else {
+        scrubbed
+    };
+    anyhow::anyhow!(
+        "{provider_name} {operation} error {status}: {hint}\n\n--- response body ---\n{body_part}"
+    )
+}
+
+/// Extract the secret value from a [`ChatAuth`] for scrubbing.
+fn config_auth_secret(auth: &ChatAuth) -> Option<&str> {
+    match auth {
+        ChatAuth::Bearer(token) => Some(token),
+        ChatAuth::Header { value, .. } => Some(value),
+    }
+}
+
+/// Remove the auth secret from the body text so it is never leaked into the
+/// error message. Also trims the result to a reasonable length.
+fn scrub_secret(body: &str, secret: Option<&str>) -> String {
+    let trimmed = body.trim();
+    let max = 4096;
+    let mut result = if trimmed.len() <= max {
+        trimmed.to_string()
+    } else {
+        format!("{}…(truncated, {total} bytes total)", &trimmed[..max], total = trimmed.len())
+    };
+    if let Some(secret) = secret
+        && !secret.is_empty()
+    {
+        result = result.replace(secret, "<redacted>");
+    }
+    result
+}
+
 fn provider_status_hint(status: reqwest::StatusCode) -> &'static str {
     match status.as_u16() {
-        400 => "invalid request, model, or provider configuration; response body redacted",
-        401 | 403 => "authentication or permission failed; response body redacted",
-        404 => "endpoint or model not found; response body redacted",
-        429 => "rate limited or quota exhausted; response body redacted",
-        code if (500..600).contains(&code) => "provider server error; response body redacted",
-        _ => "provider returned a non-success response; response body redacted",
+        400 => "invalid request, model, or provider configuration",
+        401 | 403 => "authentication or permission failed",
+        404 => "endpoint or model not found",
+        429 => "rate limited or quota exhausted",
+        code if (500..600).contains(&code) => "provider server error",
+        _ => "provider returned a non-success response",
     }
 }
 
@@ -391,7 +449,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_chat_completions_redacts_error_response_body() {
+    async fn stream_chat_completions_includes_but_scrubs_error_response_body() {
         let base_url = spawn_error_server(
             "HTTP/1.1 401 Unauthorized",
             "{\"error\":\"bad api-key tp-secret should not appear\"}",
@@ -424,8 +482,13 @@ mod tests {
 
         assert!(error.contains("401 Unauthorized"));
         assert!(error.contains("authentication or permission failed"));
-        assert!(!error.contains("tp-secret"));
-        assert!(!error.contains("api-key"));
+        // The auth credential must be scrubbed from the body.
+        assert!(!error.contains("tp-secret"), "leaked key: {error}");
+        // The response body is now included in the error (for the TUI popup).
+        assert!(
+            error.contains("bad api-key") || error.contains("<redacted>"),
+            "body should be included: {error}"
+        );
     }
 
     struct CapturedChatServer {
