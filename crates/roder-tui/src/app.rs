@@ -1151,6 +1151,14 @@ where
     thread_message_count: usize,
     active_turn_id: Option<String>,
     active_turn_timer: TurnTimer,
+    /// Wall-clock time of the most recently received backend event. Drives the
+    /// stuck-turn watchdog that recovers from dropped completion events.
+    last_event_at: Instant,
+    /// Set when the event broadcast channel reported lag (dropped events) while
+    /// a turn was active. The watchdog only force-recovers a stuck "working"
+    /// state when a lag actually dropped events, to avoid clobbering a genuinely
+    /// long-running turn.
+    lagged_during_active_turn: bool,
     /// Drives the terminal's native OSC 9;4 progress indicator from turn state.
     progress: ProgressReporter,
     working_status_override: Option<String>,
@@ -1588,6 +1596,8 @@ where
             thread_message_count,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            last_event_at: Instant::now(),
+            lagged_during_active_turn: false,
             progress: ProgressReporter::default(),
             working_status_override: None,
             current_turn_input_tokens: 0,
@@ -2026,7 +2036,24 @@ where
                 }
             }
 
-            while let Ok(envelope) = rx.try_recv() {
+            loop {
+                let envelope = match rx.try_recv() {
+                    Ok(envelope) => envelope,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                        // The broadcast ring buffer overflowed and silently
+                        // dropped `skipped` events. Keep draining so a later
+                        // `TurnCompleted`/`TurnInterrupted` still in the buffer
+                        // is processed instead of being lost with the rest.
+                        self.push_event(format!("event stream lagged; dropped {skipped} events"));
+                        if self.active_turn_id.is_some() {
+                            self.lagged_during_active_turn = true;
+                        }
+                        continue;
+                    }
+                    // Empty: nothing left to drain. Closed: producer gone.
+                    Err(_) => break,
+                };
+                self.last_event_at = clock.now();
                 self.push_event(format!("{} #{}", envelope.kind, envelope.seq));
                 self.remote_panel.apply_event(&envelope);
                 if let Some(event) = self.workflows.apply_event(&envelope.event) {
@@ -2036,6 +2063,7 @@ where
                 match envelope.event {
                     RoderEvent::TurnStarted(ev) => {
                         self.active_turn_id = Some(ev.turn_id);
+                        self.lagged_during_active_turn = false;
                         self.active_turn_timer.start(clock.now());
                         self.progress.set(TerminalProgress::Working);
                         self.current_turn_input_tokens = 0;
@@ -2052,6 +2080,7 @@ where
                         self.flush_streaming_animation_for_thread(&ev.thread_id);
                         let elapsed = self.active_turn_timer.finish(clock.now());
                         self.active_turn_id = None;
+                        self.lagged_during_active_turn = false;
                         self.progress.set(TerminalProgress::Idle);
                         self.timeline.push_turn_completed(TurnCompletedSummary {
                             elapsed,
@@ -2073,6 +2102,7 @@ where
                     {
                         self.flush_streaming_animation_for_thread(&ev.thread_id);
                         self.active_turn_id = None;
+                        self.lagged_during_active_turn = false;
                         self.active_turn_timer.reset();
                         self.progress.set(TerminalProgress::Idle);
                         self.current_turn_input_tokens = 0;
@@ -9350,6 +9380,8 @@ mod tests {
             thread_message_count: 0,
             active_turn_id: None,
             active_turn_timer: TurnTimer::default(),
+            last_event_at: Instant::now(),
+            lagged_during_active_turn: false,
             progress: ProgressReporter::default(),
             working_status_override: None,
             current_turn_input_tokens: 0,
