@@ -20,13 +20,11 @@ mod plan_panel;
 mod plan_review;
 mod plugin_browser;
 mod processes;
-mod progress;
 #[allow(dead_code)]
 mod remote;
 mod remote_node;
 mod roadmap_workspace;
 mod runner;
-mod scroll_accel;
 mod shortcuts;
 #[allow(dead_code)]
 mod skills;
@@ -40,7 +38,6 @@ mod team_ui;
 mod thread_resume;
 mod tool_detail;
 mod tool_timeline;
-mod turn_timer;
 mod voice;
 mod webwright;
 mod workflow_import;
@@ -121,11 +118,11 @@ use plan_panel::{
     PlanPanelState, plan_counter_area, plan_panel_height, render_plan_counter, render_plan_panel,
 };
 use plugin_browser::PluginBrowserState;
-use progress::{ProgressReporter, TerminalProgress};
+use roder_tui_util::progress::{ProgressReporter, TerminalProgress};
 use remote::{RemotePanelController, render_remote_panel_lines};
 use roadmap_workspace::{RoadmapWorkspaceMeta, render_roadmap_workspace};
 use roder_roadmap::ThreadAttachment;
-use scroll_accel::ScrollSettings;
+use roder_tui_util::scroll_accel::ScrollSettings;
 use shortcuts::FooterShortcutContext;
 use team_ui::{TeamUiState, is_team_focus_next_key, is_team_focus_previous_key};
 use tool_detail::{ToolDetailAction, ToolDetailModal, render_tool_detail_modal};
@@ -133,7 +130,7 @@ use tool_timeline::{
     TimelineFocus, TimelineSettings, TimelineState, ToolTimelineEntry, TurnCompletedSummary,
     fallback_entry,
 };
-use turn_timer::TurnTimer;
+use roder_tui_util::turn_timer::TurnTimer;
 use voice::{VoiceConfig, VoiceMode, VoiceState};
 
 #[derive(Debug, Clone, Eq, PartialEq)]

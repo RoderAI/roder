@@ -1,32 +1,32 @@
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Default)]
-pub(super) struct TurnTimer {
+pub struct TurnTimer {
     started_at: Option<Instant>,
     paused_for: Duration,
     pause_started_at: Option<Instant>,
 }
 
 impl TurnTimer {
-    pub(super) fn start(&mut self, now: Instant) {
+    pub fn start(&mut self, now: Instant) {
         self.started_at = Some(now);
         self.paused_for = Duration::ZERO;
         self.pause_started_at = None;
     }
 
-    pub(super) fn pause(&mut self, now: Instant) {
+    pub fn pause(&mut self, now: Instant) {
         if self.started_at.is_some() && self.pause_started_at.is_none() {
             self.pause_started_at = Some(now);
         }
     }
 
-    pub(super) fn resume(&mut self, now: Instant) {
+    pub fn resume(&mut self, now: Instant) {
         if let Some(paused_at) = self.pause_started_at.take() {
             self.paused_for += now.saturating_duration_since(paused_at);
         }
     }
 
-    pub(super) fn elapsed(&self, now: Instant) -> Duration {
+    pub fn elapsed(&self, now: Instant) -> Duration {
         let Some(started_at) = self.started_at else {
             return Duration::ZERO;
         };
@@ -38,13 +38,13 @@ impl TurnTimer {
             .saturating_sub(self.paused_for + current_pause)
     }
 
-    pub(super) fn finish(&mut self, now: Instant) -> Duration {
+    pub fn finish(&mut self, now: Instant) -> Duration {
         let elapsed = self.elapsed(now);
         self.reset();
         elapsed
     }
 
-    pub(super) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.started_at = None;
         self.paused_for = Duration::ZERO;
         self.pause_started_at = None;

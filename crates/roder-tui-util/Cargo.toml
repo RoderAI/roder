@@ -1,0 +1,11 @@
+[package]
+name = "roder-tui-util"
+version = "0.1.0"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[dependencies]

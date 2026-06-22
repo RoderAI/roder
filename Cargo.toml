@@ -160,6 +160,7 @@ roder-tools = { path = "crates/roder-tools", version = "0.1.0" }
 roder-tui = { path = "crates/roder-tui", version = "0.1.0" }
 roder-tui-diff = { path = "crates/roder-tui-diff", version = "0.1.0" }
 roder-tui-syntax = { path = "crates/roder-tui-syntax", version = "0.1.0" }
+roder-tui-util = { path = "crates/roder-tui-util", version = "0.1.0" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
 [profile.dev]

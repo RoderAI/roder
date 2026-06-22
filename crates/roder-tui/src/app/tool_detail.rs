@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
-use super::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
+use roder_tui_util::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
 use super::tool_timeline::ToolDetail;
 use super::{Theme, centered_rect};
 

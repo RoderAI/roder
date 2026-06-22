@@ -27,7 +27,7 @@ use roder_api::trace::{
 use serde_json::Value;
 
 use super::plan_review::PlanReviewRow;
-use super::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
+use roder_tui_util::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
 use super::stream_animation::StreamAnimator;
 use super::subagent_trace::SubagentTraceRow;
 use super::{Theme, short_id};

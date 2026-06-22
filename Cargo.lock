@@ -4850,6 +4850,7 @@ dependencies = [
  "roder-theme",
  "roder-tui-diff",
  "roder-tui-syntax",
+ "roder-tui-util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4875,6 +4876,10 @@ version = "0.1.0"
 dependencies = [
  "ratatui",
 ]
+
+[[package]]
+name = "roder-tui-util"
+version = "0.1.0"
 
 [[package]]
 name = "roder-usage-analytics"

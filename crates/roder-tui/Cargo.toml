@@ -27,6 +27,7 @@ roder-skills.workspace = true
 roder-theme.workspace = true
 roder-tui-diff.workspace = true
 roder-tui-syntax.workspace = true
+roder-tui-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true

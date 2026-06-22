@@ -15,7 +15,7 @@ use std::io::{self, Write};
 /// The progress state we want the terminal to display. Maps onto the OSC 9;4
 /// `state` parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum TerminalProgress {
+pub enum TerminalProgress {
     /// No active work — clears any existing indicator (state 0).
     #[default]
     Idle,
@@ -52,7 +52,7 @@ impl TerminalProgress {
 /// Tracks the desired terminal-progress state and emits an OSC 9;4 sequence
 /// only when it changes, so we never re-write the same state on every frame.
 #[derive(Debug, Default)]
-pub(super) struct ProgressReporter {
+pub struct ProgressReporter {
     desired: TerminalProgress,
     emitted: Option<TerminalProgress>,
 }
@@ -60,13 +60,13 @@ pub(super) struct ProgressReporter {
 impl ProgressReporter {
     /// Record the state we'd like the terminal to display. Cheap; the actual
     /// write happens in [`ProgressReporter::flush`].
-    pub(super) fn set(&mut self, state: TerminalProgress) {
+    pub fn set(&mut self, state: TerminalProgress) {
         self.desired = state;
     }
 
     /// Write the OSC sequence to `writer` if the desired state has changed
     /// since the last flush. Returns whether anything was written.
-    pub(super) fn flush<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
+    pub fn flush<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
         if self.emitted == Some(self.desired) {
             return Ok(false);
         }
@@ -78,7 +78,7 @@ impl ProgressReporter {
 
     /// Force the indicator to clear and flush it immediately, regardless of the
     /// current state. Used on shutdown so we never leave a stale loader behind.
-    pub(super) fn clear<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+    pub fn clear<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         self.set(TerminalProgress::Idle);
         self.flush(writer)?;
         Ok(())

@@ -1,13 +1,13 @@
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(super) enum ScrollDirection {
+pub enum ScrollDirection {
     Up,
     Down,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct ScrollSettings {
+pub struct ScrollSettings {
     pub acceleration_enabled: bool,
     pub fixed_rows_per_tick: f32,
 }
@@ -22,7 +22,7 @@ impl Default for ScrollSettings {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ScrollAccelState {
+pub struct ScrollAccelState {
     settings: ScrollSettings,
     last_tick: Option<Instant>,
     last_direction: Option<ScrollDirection>,
@@ -39,7 +39,7 @@ impl ScrollAccelState {
     const IDLE_RESET: Duration = Duration::from_millis(160);
     const MAX_MULTIPLIER: f32 = 2.4;
 
-    pub(super) fn new(settings: ScrollSettings) -> Self {
+    pub fn new(settings: ScrollSettings) -> Self {
         Self {
             settings,
             last_tick: None,
@@ -48,7 +48,7 @@ impl ScrollAccelState {
         }
     }
 
-    pub(super) fn tick(&mut self, direction: ScrollDirection, now: Instant) -> isize {
+    pub fn tick(&mut self, direction: ScrollDirection, now: Instant) -> isize {
         let rows = if self.settings.acceleration_enabled {
             self.accelerated_rows(direction, now)
         } else {
@@ -57,7 +57,7 @@ impl ScrollAccelState {
         rows.round().max(1.0).min(isize::MAX as f32) as isize
     }
 
-    pub(super) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.last_tick = None;
         self.last_direction = None;
         self.velocity = self.settings.fixed_rows_per_tick;
