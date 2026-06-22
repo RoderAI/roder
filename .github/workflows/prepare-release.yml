@@ -15,7 +15,7 @@ jobs:
     name: Open or update the release preview PR
     runs-on: ubuntu-latest
     if: >-
-      github.repository_owner == 'PandelisZ' &&
+      github.repository_owner == 'RoderAI' &&
       !contains(github.event.head_commit.message, 'chore: prepare release')
     permissions:
       contents: write

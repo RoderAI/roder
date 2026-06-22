@@ -10,7 +10,7 @@ REASONING ?=
 LISTEN ?= stdio://
 VERSION ?=
 
-.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish publish-verify release-brew clean clean-target cargo-unlock
+.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew clean clean-target cargo-unlock
 
 # Wipe the cargo target dir. Incremental builds accumulate session artifacts
 # unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
@@ -100,6 +100,9 @@ smoke: test
 
 registry-readmes:
 	python3 scripts/check-registry-readmes.py
+
+publish-crates:
+	python3 scripts/publish-crates.py
 
 publish:
 	./scripts/publish-latest-roder.sh

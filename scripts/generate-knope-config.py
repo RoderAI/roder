@@ -104,7 +104,7 @@ name = "release"
 type = "Release"
 
 [github]
-owner = "PandelisZ"
+owner = "RoderAI"
 repo = "roder"
 """
 
