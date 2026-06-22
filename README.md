@@ -6,7 +6,7 @@
 
 Roder is not just another coding agent. It is the substrate underneath them — a stable, strongly typed Rust runtime that handles inference orchestration, tool execution, capability-scoped filesystem and process access, context assembly, thread persistence, checkpointing, policy enforcement, event streaming, and replay, with extension points designed so that new model APIs, storage systems, context engines, sandbox backends, UIs, and training environments can be added without forking the core.
 
-The full mission, design philosophy, and architectural commitments live in [`WHITEPAPER.md`](./WHITEPAPER.md). The phased implementation plan lives in [`roadmap/`](./roadmap/), entry point [`roadmap/00-feature-inventory-and-sequencing.md`](./roadmap/00-feature-inventory-and-sequencing.md).
+The full mission, design philosophy, and architectural commitments live in [`WHITEPAPER.md`](./WHITEPAPER.md).
 
 ---
 
@@ -33,7 +33,7 @@ The whitepaper lays out the long-term aspiration in §27: a maintained, referenc
 
 ## Alpha status
 
-Roder is alpha software. The core types in `roder-api`, the protocol in `roder-protocol`, and the extension surfaces are stabilizing but not frozen. Expect breaking changes while the Rust runtime and extension APIs settle. The roadmap is the source of truth for what is built, what is in flight, and what is queued.
+Roder is alpha software. The core types in `roder-api`, the protocol in `roder-protocol`, and the extension surfaces are stabilizing but not frozen. Expect breaking changes while the Rust runtime and extension APIs settle.
 
 ---
 
@@ -85,55 +85,72 @@ the same provider contract without forking core runtime code.
 
 ---
 
-## The roadmap
-
-The roadmap lives in `roadmap/`. It is organized as phased implementation plans, each scoped tight enough to be assigned to a single agent. The index in [`roadmap/00-feature-inventory-and-sequencing.md`](./roadmap/00-feature-inventory-and-sequencing.md) lists every plan and its dependency gates.
-
-`roder roadmap` is the local control surface for that work. Use `roder roadmap board [plan]` to see plan progress, task readiness, validation state, and attached worker lanes; `roder roadmap dispatch <plan> [task-id]` to print the focused worker brief; and `roder roadmap spawn <plan> [task-id]` to allocate a tracked worker attachment before steering or attaching a live thread. Opening `roder roadmap` or `/roadmap` in the TUI shows the same plan-first operator surface.
-
-Foundational and architectural plans:
-
-- [`roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) — the overall Rust rewrite plan.
-- [`roder_extensibility_goals_and_foundations.md`](./roadmap/roder_extensibility_goals_and_foundations.md) — the doctrine extension authors must follow.
-
-Phased implementation plans (selected highlights — see the index for the full list):
-
-- 01: Config, provider, and model catalog.
-- 02: Thread and transcript store.
-- 03: Tool permissions and hooks.
-- 04: Context, skills, and commands.
-- 05: MCP and LSP capabilities.
-- 06: TUI chat product.
-- 07: App-server, headless, and remote.
-- 11: Disk threads and resume.
-- 12: OpenAI Responses with compaction.
-- 13: Anthropic Messages support.
-- 17: Chat Completions custom models.
-- 21: Native Gemini through Google GenAI SDK.
-- 22: Web search extensions (Firecrawl, Perplexity, Tavily, Parallel).
-- 23: Subagent dispatch (`task` tool, disk-defined agents).
-- 24: Plan mode and permission policy modes.
-- 25: Workspace checkpoint and undo.
-- 26: Custom slash commands.
-- 27: TUI status line, command palette, and diff viewer.
-- 28: Background tasks and notifications.
-- 29: TUI mouse interactions, hover, and clickable elements.
-
-Each plan carries a "Whitepaper Alignment" section mapping its work to the relevant whitepaper chapters and listing the invariants it preserves.
-
----
-
 ## Quick start
 
-The Rust binary is the primary entry point.
+### Install Roder
+
+#### macOS / Linux install script
+
+```sh
+curl -fsSL https://dl.roder.sh/latest/install.sh | sh
+```
+
+By default the installer writes `roder` to `~/.local/bin`. If that directory is
+not on your `PATH`, add it first:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Override the install directory with:
+
+```sh
+RODER_INSTALL_DIR=/usr/local/bin curl -fsSL https://dl.roder.sh/latest/install.sh | sh
+```
+
+#### Homebrew
+
+If you use Homebrew, install from the Roder tap:
+
+```sh
+brew tap RoderAI/tap
+brew install roder
+```
+
+Upgrade later with:
+
+```sh
+brew update
+brew upgrade roder
+```
+
+> Homebrew publication is updated after each tagged release. If the newest GitHub
+> release is not visible in Homebrew yet, use the install script above or build
+> from source.
+
+#### Build from source
+
+```sh
+git clone https://github.com/RoderAI/roder.git
+cd roder
+make install
+```
+
+The source install also writes to `~/.local/bin` by default. Override with:
+
+```sh
+BINDIR=/usr/local/bin make install
+```
+
+For development builds and tests:
 
 ```sh
 cargo build --workspace
-cargo run -p roder --bin roder -- auth status
+cargo run -p roder --bin roder -- --help
 cargo test --workspace
 ```
 
-This repo also includes a mise configuration for repeatable local tooling:
+This repo includes a mise configuration for repeatable local tooling:
 
 ```sh
 mise install
@@ -145,32 +162,64 @@ mise run ci
 Useful focused tasks include `mise run rust:fmt`, `mise run rust:clippy`,
 `mise run python:sync`, and `mise run python:test:startup`.
 
-Release policy lives in [`docs/releases.md`](./docs/releases.md). Release-plz
-opens the version-bump PR for Cargo workspace changes and creates git-only
-releases after that PR merges.
+### First run
 
-Install the standard Roder CLI locally with:
+Check that the binary is available:
 
 ```sh
-curl -fsSL https://dl.roder.sh/latest/install.sh | sh
+roder --version
+roder auth status
 ```
 
-For source builds:
+Start the terminal UI in your current project:
 
 ```sh
-make install
+cd /path/to/your/repo
+roder
 ```
 
-By default both installers write `roder` to `~/.local/bin`. Override the binary installer with `RODER_INSTALL_DIR=/path/to/bin`; override the source install target with `BINDIR=/path/to/bin make install`.
-
-Roder reads configuration and user state from `~/.roder` by default. Use the
-global `--config-dir <path>` flag before or after the subcommand to run against
-an alternate directory:
+Roder stores configuration and user state in `~/.roder` by default. Use
+`--config-dir <path>` to run against a separate profile:
 
 ```sh
 roder --config-dir /tmp/lab-roder auth status
-roder app-server --config-dir /tmp/lab-roder --listen stdio://
+roder --config-dir /tmp/lab-roder app-server --listen stdio://
 ```
+
+### Configure a model provider
+
+Roder can authenticate through provider-specific API keys or provider-native
+auth flows. Common environment variables:
+
+```sh
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
+export GEMINI_API_KEY=...
+export SYNTHETIC_API_KEY=...
+```
+
+Then select a provider/model from the TUI provider menu, or configure defaults
+in `~/.roder/config.toml`:
+
+```toml
+provider = "synthetic"
+model = "syn:large:text"
+
+[providers.synthetic]
+api_key_env = "SYNTHETIC_API_KEY"
+base_url = "https://api.synthetic.new/openai/v1"
+```
+
+Useful commands:
+
+```sh
+roder auth status
+roder providers list
+roder app-server --listen 127.0.0.1:0
+```
+
+Release policy lives in [`docs/releases.md`](./docs/releases.md). Roder uses
+knope changesets for per-package versioning and git-only GitHub releases.
 
 ## Roder distribution configurator
 
@@ -348,7 +397,6 @@ file_backed_dynamic_context = false
 
 The response is `{ "resolved": true }` when the request was pending. Roder then emits `thread/userInputResolved`, returns the answers to the model as the tool result, and continues the turn.
 
-A more complete quick-start (configuration, providers, thread resume, app-server transports, MCP) will land alongside the corresponding roadmap phases.
 
 ---
 
@@ -475,9 +523,7 @@ No fork is required. The lab or product builds its own distribution.
 
 This repository started as `gode`, a Go-native TUI coding agent and event-driven harness. That implementation proved the core behaviors Roder is built around: event-driven threads, provider abstraction, tool routing, thread storage, policy modes, and the app-server control plane.
 
-Roder is now the active implementation. The previous Go code has been removed from this repository; new work should land in `crates/roder-*`, `docs/`, `roadmap/`, or the Rust CLI/TUI surfaces.
-
-See [`roadmap/roder_rust_rewrite_plan.md`](./roadmap/roder_rust_rewrite_plan.md) for the historical rewrite sequence and the Rust crate mapping.
+Roder is now the active implementation. The previous Go code has been removed from this repository; new work should land in `crates/roder-*`, `docs/`, or the Rust CLI/TUI surfaces.
 
 ---
 
@@ -492,7 +538,6 @@ Roder is open source and forkable, but designed so that forking is rarely necess
 - capability-scoped brokers over raw filesystem/process access;
 - app-server methods over UI-only behavior.
 
-The roadmap files are the working contract for in-flight changes. New ideas that affect canonical types or the extension surface should land as a roadmap plan first so dependency gates and invariants are explicit before code moves.
 
 ---
 
