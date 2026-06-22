@@ -21,6 +21,48 @@ else
   cargo_build=(cargo build)
 fi
 
+checksum() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file"
+  else
+    shasum -a 256 "$file"
+  fi
+}
+
+write_checksum() {
+  local file="$1"
+  local name
+  name="$(basename "$file")"
+  (cd "$(dirname "$file")" && checksum "$name" > "$name.sha256")
+}
+
+package_binary() {
+  local binary_path="$1"
+  local binary_name="$2"
+  local target="$3"
+  local staging archive_base
+  staging="$(mktemp -d)"
+  archive_base="${binary_name}-${target}"
+  mkdir -p "$staging/$archive_base"
+  cp "$binary_path" "$staging/$archive_base/$binary_name"
+  chmod 0755 "$staging/$archive_base/$binary_name"
+  cat > "$staging/$archive_base/README.txt" <<README
+${binary_name} ${target}
+
+Install:
+  install -m 0755 ${binary_name} /usr/local/bin/${binary_name}
+README
+  tar -C "$staging" -czf "$dist_dir/${archive_base}.tar.gz" "$archive_base"
+  (
+    cd "$staging"
+    zip -qr "$repo_root/$dist_dir/${archive_base}.zip" "$archive_base"
+  )
+  rm -rf "$staging"
+  write_checksum "$dist_dir/${archive_base}.tar.gz"
+  write_checksum "$dist_dir/${archive_base}.zip"
+}
+
 mkdir -p "$dist_dir"
 rm -f "$dist_dir"/roder-* "$dist_dir"/remote-roder-* "$dist_dir"/SHA256SUMS "$dist_dir"/manifest.json "$dist_dir"/install.sh
 
@@ -46,14 +88,12 @@ for target in $targets; do
   cp "$remote_dist_dir/target/$target/release/remote-roder" "$remote_dest"
   strip "$roder_dest" 2>/dev/null || true
   strip "$remote_dest" 2>/dev/null || true
+  chmod 0755 "$roder_dest" "$remote_dest"
 
-  if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$dist_dir" && sha256sum "roder-$target" > "roder-$target.sha256")
-    (cd "$dist_dir" && sha256sum "remote-roder-$target" > "remote-roder-$target.sha256")
-  else
-    (cd "$dist_dir" && shasum -a 256 "roder-$target" > "roder-$target.sha256")
-    (cd "$dist_dir" && shasum -a 256 "remote-roder-$target" > "remote-roder-$target.sha256")
-  fi
+  write_checksum "$roder_dest"
+  write_checksum "$remote_dest"
+  package_binary "$roder_dest" roder "$target"
+  package_binary "$remote_dest" remote-roder "$target"
 done
 
 cp scripts/install-roder.sh "$dist_dir/install.sh"
@@ -62,16 +102,12 @@ chmod 0644 "$dist_dir/install.sh"
 (
   cd "$dist_dir"
   : > SHA256SUMS
-  for binary in roder-* remote-roder-*; do
-    case "$binary" in
+  for artifact in roder-* remote-roder-*; do
+    case "$artifact" in
       *.sha256) continue ;;
     esac
-    [[ -e "$binary" ]] || continue
-    if command -v sha256sum >/dev/null 2>&1; then
-      sha256sum "$binary" >> SHA256SUMS
-    else
-      shasum -a 256 "$binary" >> SHA256SUMS
-    fi
+    [[ -e "$artifact" ]] || continue
+    checksum "$artifact" >> SHA256SUMS
   done
 )
 
@@ -92,10 +128,20 @@ for path in sorted([*root.glob("roder-*"), *root.glob("remote-roder-*")]):
         continue
     digest = (root / f"{path.name}.sha256").read_text().split()[0]
     prefix = "remote-roder-" if path.name.startswith("remote-roder-") else "roder-"
+    distribution = "remote-app-server" if prefix == "remote-roder-" else "default"
+    target = path.name.removeprefix(prefix)
+    kind = "binary"
+    if target.endswith(".tar.gz"):
+        target = target.removesuffix(".tar.gz")
+        kind = "tar.gz"
+    elif target.endswith(".zip"):
+        target = target.removesuffix(".zip")
+        kind = "zip"
     artifacts.append({
         "name": path.name,
-        "target": path.name.removeprefix(prefix),
-        "distribution": "remote-app-server" if prefix == "remote-roder-" else "default",
+        "target": target,
+        "distribution": distribution,
+        "kind": kind,
         "url": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/{path.name}",
         "sha256": digest,
         "bytes": path.stat().st_size,
@@ -104,7 +150,8 @@ manifest = {
     "version": "latest",
     "commit": commit,
     "artifacts": artifacts,
-    "install": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/install.sh",
+    "install": f"{os.environ['R2_PUBLIC_BASE_URL']}/install.sh",
+    "install_latest": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/install.sh",
 }
 (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 PY
@@ -149,6 +196,7 @@ for path in "$dist_dir"/*; do
     install.sh) content_type="text/x-shellscript; charset=utf-8" ;;
     manifest.json) content_type="application/json; charset=utf-8" ;;
     SHA256SUMS|*.sha256) content_type="text/plain; charset=utf-8" ;;
+    *.tar.gz|*.zip) content_type="application/octet-stream" ;;
     *) content_type="application/octet-stream" ;;
   esac
   AWS_ACCESS_KEY_ID="$access_key_id" \
@@ -159,6 +207,17 @@ for path in "$dist_dir"/*; do
       --content-type "$content_type" \
       --cache-control "public, max-age=300" \
       --no-progress
+  if [[ "$name" == "install.sh" ]]; then
+    AWS_ACCESS_KEY_ID="$access_key_id" \
+    AWS_SECRET_ACCESS_KEY="$secret_access_key" \
+    AWS_DEFAULT_REGION=auto \
+      aws s3 cp "$path" "s3://${r2_bucket}/install.sh" \
+        --endpoint-url "$endpoint" \
+        --content-type "$content_type" \
+        --cache-control "public, max-age=300" \
+        --no-progress
+  fi
 done
 
 echo "publish: uploaded ${r2_public_base_url}/latest/manifest.json"
+echo "publish: uploaded ${r2_public_base_url}/install.sh"

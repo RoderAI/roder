@@ -77,29 +77,60 @@ jobs:
         run: |
           cargo build --release --target "${{ matrix.target }}"
 
-      - name: Package binary
+      - name: Package binary archives
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "dist/latest"
+          checksum() {
+            local file="$1"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$file"
+            else
+              shasum -a 256 "$file"
+            fi
+          }
+          write_checksum() {
+            local file="$1"
+            local name
+            name="$(basename "$file")"
+            (cd "$(dirname "$file")" && checksum "$name" > "$name.sha256")
+          }
+          package_binary() {
+            local binary_path="$1"
+            local binary_name="$2"
+            local target="$3"
+            local staging archive_base
+            staging="$(mktemp -d)"
+            archive_base="${binary_name}-${target}"
+            mkdir -p "$staging/$archive_base"
+            cp "$binary_path" "$staging/$archive_base/$binary_name"
+            chmod 0755 "$staging/$archive_base/$binary_name"
+            printf "%s %s\n\nInstall:\n  install -m 0755 %s /usr/local/bin/%s\n" "$binary_name" "$target" "$binary_name" "$binary_name" > "$staging/$archive_base/README.txt"
+            tar -C "$staging" -czf "dist/latest/${archive_base}.tar.gz" "$archive_base"
+            (
+              cd "$staging"
+              zip -qr "$GITHUB_WORKSPACE/dist/latest/${archive_base}.zip" "$archive_base"
+            )
+            rm -rf "$staging"
+            write_checksum "dist/latest/${archive_base}.tar.gz"
+            write_checksum "dist/latest/${archive_base}.zip"
+          }
+
           source_path="target/${{ matrix.target }}/release/roder"
           dest="dist/latest/roder-${{ matrix.target }}"
           cp "$source_path" "$dest"
           strip "$dest" 2>/dev/null || true
-          if command -v sha256sum >/dev/null 2>&1; then
-            (cd dist/latest && sha256sum "roder-${{ matrix.target }}" > "roder-${{ matrix.target }}.sha256")
-          else
-            (cd dist/latest && shasum -a 256 "roder-${{ matrix.target }}" > "roder-${{ matrix.target }}.sha256")
-          fi
+          chmod 0755 "$dest"
+          write_checksum "$dest"
+          package_binary "$dest" roder "${{ matrix.target }}"
           if [[ -f "dist/remote-roder/target/${{ matrix.target }}/release/remote-roder" ]]; then
             remote_dest="dist/latest/remote-roder-${{ matrix.target }}"
             cp "dist/remote-roder/target/${{ matrix.target }}/release/remote-roder" "$remote_dest"
             strip "$remote_dest" 2>/dev/null || true
-            if command -v sha256sum >/dev/null 2>&1; then
-              (cd dist/latest && sha256sum "remote-roder-${{ matrix.target }}" > "remote-roder-${{ matrix.target }}.sha256")
-            else
-              (cd dist/latest && shasum -a 256 "remote-roder-${{ matrix.target }}" > "remote-roder-${{ matrix.target }}.sha256")
-            fi
+            chmod 0755 "$remote_dest"
+            write_checksum "$remote_dest"
+            package_binary "$remote_dest" remote-roder "${{ matrix.target }}"
           fi
 
       - name: Upload build artifact
@@ -135,12 +166,12 @@ jobs:
           (
             cd dist/latest
             : > SHA256SUMS
-            for binary in roder-* remote-roder-*; do
-              case "$binary" in
+            for artifact in roder-* remote-roder-*; do
+              case "$artifact" in
                 *.sha256) continue ;;
               esac
-              [[ -e "$binary" ]] || continue
-              sha256sum "$binary" >> SHA256SUMS
+              [[ -e "$artifact" ]] || continue
+              sha256sum "$artifact" >> SHA256SUMS
             done
           )
           python3 - <<'PY'
@@ -155,10 +186,20 @@ jobs:
                   continue
               digest = (root / f"{path.name}.sha256").read_text().split()[0]
               prefix = "remote-roder-" if path.name.startswith("remote-roder-") else "roder-"
+              distribution = "remote-app-server" if prefix == "remote-roder-" else "default"
+              target = path.name.removeprefix(prefix)
+              kind = "binary"
+              if target.endswith(".tar.gz"):
+                  target = target.removesuffix(".tar.gz")
+                  kind = "tar.gz"
+              elif target.endswith(".zip"):
+                  target = target.removesuffix(".zip")
+                  kind = "zip"
               artifacts.append({
                   "name": path.name,
-                  "target": path.name.removeprefix(prefix),
-                  "distribution": "remote-app-server" if prefix == "remote-roder-" else "default",
+                  "target": target,
+                  "distribution": distribution,
+                  "kind": kind,
                   "url": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/{path.name}",
                   "sha256": digest,
                   "bytes": path.stat().st_size,
@@ -167,7 +208,8 @@ jobs:
               "version": "latest",
               "commit": os.environ["GITHUB_SHA"],
               "artifacts": artifacts,
-              "install": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/install.sh",
+              "install": f"{os.environ['R2_PUBLIC_BASE_URL']}/install.sh",
+              "install_latest": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/install.sh",
           }
           (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
           PY
@@ -217,6 +259,7 @@ jobs:
               install.sh) content_type="text/x-shellscript; charset=utf-8" ;;
               manifest.json) content_type="application/json; charset=utf-8" ;;
               SHA256SUMS|*.sha256) content_type="text/plain; charset=utf-8" ;;
+              *.tar.gz|*.zip) content_type="application/octet-stream" ;;
               *) content_type="application/octet-stream" ;;
             esac
             aws s3 cp "$path" "s3://${R2_BUCKET}/latest/${name}" \
@@ -224,12 +267,20 @@ jobs:
               --content-type "$content_type" \
               --cache-control "public, max-age=300" \
               --no-progress
+            if [[ "$name" == "install.sh" ]]; then
+              aws s3 cp "$path" "s3://${R2_BUCKET}/install.sh" \
+                --endpoint-url "$endpoint" \
+                --content-type "$content_type" \
+                --cache-control "public, max-age=300" \
+                --no-progress
+            fi
           done
 
       - name: Print URLs
         shell: bash
         run: |
-          echo "Install: ${R2_PUBLIC_BASE_URL}/latest/install.sh"
+          echo "Install: ${R2_PUBLIC_BASE_URL}/install.sh"
+          echo "Install (latest): ${R2_PUBLIC_BASE_URL}/latest/install.sh"
           echo "Manifest: ${R2_PUBLIC_BASE_URL}/latest/manifest.json"
 
       - name: Verify public remote distro artifacts
