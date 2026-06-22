@@ -11,7 +11,7 @@ jobs:
     name: Tag and publish GitHub releases
     runs-on: ubuntu-latest
     if: >-
-      github.repository_owner == 'PandelisZ' &&
+      github.repository_owner == 'RoderAI' &&
       github.head_ref == 'knope/release' &&
       github.event.pull_request.merged == true
     permissions:

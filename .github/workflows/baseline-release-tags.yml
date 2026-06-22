@@ -10,7 +10,7 @@ jobs:
   baseline-release-tags:
     name: Create missing baseline tags
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'PandelisZ'
+    if: github.repository_owner == 'RoderAI'
     permissions:
       contents: write
     steps:
