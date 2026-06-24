@@ -4,6 +4,12 @@ roder-protocol: minor
 roder-app-server: minor
 roder-tui: minor
 roder: minor
+roder-ext-synthetic-search: minor
+roder-ext-web-search: minor
+roder-web-search: minor
+roder-extension-host: minor
+roder-configure: patch
+roder-ext-synthetic: patch
 ---
 
 # Manage external web-search providers from the TUI
