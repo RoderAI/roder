@@ -282,6 +282,8 @@ pub struct WebSearchConfig {
     pub tavily: WebSearchProviderConfig,
     #[serde(default)]
     pub parallel: WebSearchProviderConfig,
+    #[serde(default)]
+    pub synthetic: WebSearchProviderConfig,
 }
 
 impl Default for WebSearchConfig {
@@ -298,6 +300,7 @@ impl Default for WebSearchConfig {
             perplexity: WebSearchProviderConfig::default(),
             tavily: WebSearchProviderConfig::default(),
             parallel: WebSearchProviderConfig::default(),
+            synthetic: WebSearchProviderConfig::default(),
         }
     }
 }
@@ -315,6 +318,222 @@ pub struct WebSearchProviderConfig {
     pub mode: Option<String>,
     #[serde(default)]
     pub debug_raw_response: bool,
+}
+
+/// External web-search providers supported by the provider router, in display
+/// order.
+pub const WEB_SEARCH_PROVIDERS: &[&str] =
+    &["firecrawl", "tavily", "perplexity", "parallel", "synthetic"];
+
+/// Canonical API-key environment variable for a built-in web-search provider,
+/// used when the provider config does not override `api_key_env`.
+pub fn default_web_search_api_key_env(provider: &str) -> Option<&'static str> {
+    match provider {
+        "firecrawl" => Some("FIRECRAWL_API_KEY"),
+        "tavily" => Some("TAVILY_API_KEY"),
+        "perplexity" => Some("PERPLEXITY_API_KEY"),
+        "parallel" => Some("PARALLEL_API_KEY"),
+        "synthetic" => Some("SYNTHETIC_API_KEY"),
+        _ => None,
+    }
+}
+
+impl WebSearchProviderConfig {
+    /// True when an API key is resolvable for this provider, either from an
+    /// inline `api_key`, an `api_key_env` indirection, or the provided
+    /// canonical fallback env var.
+    pub fn is_configured(&self, fallback_env: Option<&str>) -> bool {
+        let has_inline = self
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if has_inline {
+            return true;
+        }
+        let env_name = self.api_key_env.as_deref().or(fallback_env);
+        env_name
+            .and_then(|name| std::env::var(name).ok())
+            .map(|value| value.trim().to_string())
+            .is_some_and(|value| !value.is_empty())
+    }
+}
+
+impl WebSearchConfig {
+    pub fn provider_config(&self, provider: &str) -> Option<&WebSearchProviderConfig> {
+        match provider {
+            "firecrawl" => Some(&self.firecrawl),
+            "tavily" => Some(&self.tavily),
+            "perplexity" => Some(&self.perplexity),
+            "parallel" => Some(&self.parallel),
+            "synthetic" => Some(&self.synthetic),
+            _ => None,
+        }
+    }
+
+    pub fn provider_config_mut(&mut self, provider: &str) -> Option<&mut WebSearchProviderConfig> {
+        match provider {
+            "firecrawl" => Some(&mut self.firecrawl),
+            "tavily" => Some(&mut self.tavily),
+            "perplexity" => Some(&mut self.perplexity),
+            "parallel" => Some(&mut self.parallel),
+            "synthetic" => Some(&mut self.synthetic),
+            _ => None,
+        }
+    }
+
+    /// True when an API key is resolvable for the named provider.
+    pub fn provider_configured(&self, provider: &str) -> bool {
+        self.provider_config(provider)
+            .map(|cfg| cfg.is_configured(default_web_search_api_key_env(provider)))
+            .unwrap_or(false)
+    }
+
+    /// Build the external provider-router snapshot from this config: whether the
+    /// router is active, the active provider, and per-provider enabled/configured
+    /// status. Shared by the app-server `settings/get` response and the TUI
+    /// config-only fallback so both surfaces agree.
+    pub fn router_snapshot(&self) -> WebSearchRouterSnapshot {
+        let external_enabled = self.mode.as_deref() == Some("external");
+        let active_provider = self.provider.clone();
+        let providers = WEB_SEARCH_PROVIDERS
+            .iter()
+            .map(|id| WebSearchProviderStatusEntry {
+                id: (*id).to_string(),
+                enabled: self.provider_config(id).map(|c| c.enabled).unwrap_or(false),
+                configured: self.provider_configured(id),
+                active: external_enabled && active_provider.as_deref() == Some(*id),
+            })
+            .collect();
+        WebSearchRouterSnapshot {
+            external_enabled,
+            external_provider: external_enabled.then_some(active_provider).flatten(),
+            providers,
+        }
+    }
+}
+
+/// Provider-agnostic external web-search router snapshot. Mapped into the
+/// app-server protocol types and the TUI menu without coupling `roder-config`
+/// to `roder-protocol`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebSearchRouterSnapshot {
+    pub external_enabled: bool,
+    pub external_provider: Option<String>,
+    pub providers: Vec<WebSearchProviderStatusEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSearchProviderStatusEntry {
+    pub id: String,
+    pub enabled: bool,
+    pub configured: bool,
+    pub active: bool,
+}
+
+/// Load the external web-search router snapshot from user config, returning the
+/// default (all providers listed, none active) when config is missing or
+/// unreadable.
+///
+/// The synthetic web-search provider shares `SYNTHETIC_API_KEY` with the
+/// synthetic inference provider, so it reports as configured once the user has
+/// pasted their synthetic provider key (saved under `[providers.synthetic]`),
+/// even when `[web_search.synthetic]` carries no separate key.
+pub fn web_search_router_snapshot() -> WebSearchRouterSnapshot {
+    let config = load_config().ok();
+    let web = config
+        .as_ref()
+        .and_then(|config| config.web_search.clone())
+        .unwrap_or_default();
+    let mut snapshot = web.router_snapshot();
+    let borrows_synthetic_key = config
+        .as_ref()
+        .map(synthetic_provider_key_present)
+        .unwrap_or(false);
+    if borrows_synthetic_key
+        && let Some(entry) = snapshot.providers.iter_mut().find(|p| p.id == "synthetic")
+    {
+        entry.configured = true;
+    }
+    snapshot
+}
+
+/// True when the synthetic inference provider has a resolvable API key in the
+/// given config (inline `api_key` or `api_key_env` indirection, plus the
+/// canonical `SYNTHETIC_API_KEY` / `RODER_SYNTHETIC_API_KEY` env vars). Shared
+/// by the synthetic web-search provider so it auto-configures from the same
+/// credential.
+fn synthetic_provider_key_present(config: &Config) -> bool {
+    if let Some(entry) = config.providers.get("synthetic") {
+        let has_inline = entry
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if has_inline {
+            return true;
+        }
+        if let Some(env_name) = entry.api_key_env.as_deref()
+            && std::env::var(env_name)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .is_some_and(|value| !value.is_empty())
+        {
+            return true;
+        }
+    }
+    ["SYNTHETIC_API_KEY", "RODER_SYNTHETIC_API_KEY"]
+        .iter()
+        .any(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .is_some_and(|value| !value.is_empty())
+        })
+}
+
+/// API key the synthetic web-search provider can borrow from the synthetic
+/// inference provider, resolved at runtime so pasting the provider key is enough
+/// to enable synthetic web search without re-entering it under
+/// `[web_search.synthetic]`. Returns the stored `[providers.synthetic]` key when
+/// present, otherwise the canonical synthetic env vars.
+pub fn synthetic_web_search_borrowed_key() -> Option<String> {
+    if let Some(key) = provider_api_key("synthetic") {
+        return Some(key);
+    }
+    ["SYNTHETIC_API_KEY", "RODER_SYNTHETIC_API_KEY"]
+        .iter()
+        .find_map(|name| {
+            std::env::var(name).ok().and_then(|value| {
+                let value = value.trim();
+                (!value.is_empty()).then(|| value.to_string())
+            })
+        })
+}
+
+/// Enable a built-in web-search provider's sub-section in user config without
+/// changing the active router. Used to auto-set-up synthetic web search when the
+/// synthetic inference provider key is configured.
+pub fn save_web_search_provider_enabled(provider: &str, enabled: bool) -> anyhow::Result<()> {
+    save_web_search_provider_enabled_to_path(config_path(), provider, enabled)
+}
+
+pub fn save_web_search_provider_enabled_to_path(
+    path: impl AsRef<Path>,
+    provider: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    let provider = provider.trim();
+    if !WEB_SEARCH_PROVIDERS.contains(&provider) {
+        anyhow::bail!("unknown web search provider: {provider}");
+    }
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    let web_search = config.web_search.get_or_insert_with(Default::default);
+    if let Some(provider_config) = web_search.provider_config_mut(provider) {
+        provider_config.enabled = enabled;
+    }
+    save_config_file_to_path(path, &config)
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -990,6 +1209,33 @@ pub fn save_web_search_mode_to_path(path: impl AsRef<Path>, mode: &str) -> anyho
     let path = path.as_ref();
     let mut config = load_config_file_from_path(path)?;
     config.web_search.get_or_insert_with(Default::default).mode = Some(mode.to_string());
+    save_config_file_to_path(path, &config)
+}
+
+/// Activate an external web-search provider in user config: enable the
+/// `[web_search]` router, set `mode = "external"`, select `provider`, and
+/// enable that provider's sub-section. Returns an error for unknown providers.
+pub fn save_web_search_external_provider(provider: &str) -> anyhow::Result<()> {
+    save_web_search_external_provider_to_path(config_path(), provider)
+}
+
+pub fn save_web_search_external_provider_to_path(
+    path: impl AsRef<Path>,
+    provider: &str,
+) -> anyhow::Result<()> {
+    let provider = provider.trim();
+    if !WEB_SEARCH_PROVIDERS.contains(&provider) {
+        anyhow::bail!("unknown web search provider: {provider}");
+    }
+    let path = path.as_ref();
+    let mut config = load_config_file_from_path(path)?;
+    let web_search = config.web_search.get_or_insert_with(Default::default);
+    web_search.enabled = true;
+    web_search.mode = Some("external".to_string());
+    web_search.provider = Some(provider.to_string());
+    if let Some(provider_config) = web_search.provider_config_mut(provider) {
+        provider_config.enabled = true;
+    }
     save_config_file_to_path(path, &config)
 }
 
@@ -3021,6 +3267,107 @@ mod tests {
         let config = load_config_file_from_path(&path).unwrap();
         assert_eq!(config.web_search.unwrap().mode.as_deref(), Some("live"));
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_web_search_external_provider_enables_router_and_provider() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-config-web-search-external-{}.toml",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        save_web_search_external_provider_to_path(&path, "tavily").unwrap();
+
+        let web_search = load_config_file_from_path(&path).unwrap().web_search.unwrap();
+        assert!(web_search.enabled);
+        assert_eq!(web_search.mode.as_deref(), Some("external"));
+        assert_eq!(web_search.provider.as_deref(), Some("tavily"));
+        assert!(web_search.tavily.enabled);
+        let _ = fs::remove_file(&path);
+
+        assert!(save_web_search_external_provider_to_path(&path, "nope").is_err());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn web_search_router_snapshot_lists_all_providers_and_marks_active() {
+        let mut web_search = WebSearchConfig {
+            enabled: true,
+            mode: Some("external".to_string()),
+            provider: Some("tavily".to_string()),
+            ..Default::default()
+        };
+        web_search.tavily.enabled = true;
+        web_search.tavily.api_key = Some("secret".to_string());
+
+        let snapshot = web_search.router_snapshot();
+        assert!(snapshot.external_enabled);
+        assert_eq!(snapshot.external_provider.as_deref(), Some("tavily"));
+        let ids: Vec<&str> = snapshot.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, WEB_SEARCH_PROVIDERS.to_vec());
+        let tavily = snapshot
+            .providers
+            .iter()
+            .find(|p| p.id == "tavily")
+            .unwrap();
+        assert!(tavily.active && tavily.enabled && tavily.configured);
+
+        // A non-external mode lists providers but marks none active.
+        web_search.mode = Some("cached".to_string());
+        let snapshot = web_search.router_snapshot();
+        assert!(!snapshot.external_enabled);
+        assert!(snapshot.external_provider.is_none());
+        assert!(snapshot.providers.iter().all(|p| !p.active));
+    }
+
+    #[test]
+    fn save_web_search_provider_enabled_toggles_sub_section() {
+        let path = std::env::temp_dir().join(format!(
+            "roder-config-web-search-enable-{}.toml",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        save_web_search_provider_enabled_to_path(&path, "synthetic", true).unwrap();
+        let web_search = load_config_file_from_path(&path)
+            .unwrap()
+            .web_search
+            .unwrap();
+        assert!(web_search.synthetic.enabled);
+        // Enabling a provider does not switch the active router.
+        assert!(web_search.mode.is_none());
+        assert!(web_search.provider.is_none());
+
+        save_web_search_provider_enabled_to_path(&path, "synthetic", false).unwrap();
+        assert!(
+            !load_config_file_from_path(&path)
+                .unwrap()
+                .web_search
+                .unwrap()
+                .synthetic
+                .enabled
+        );
+        let _ = fs::remove_file(&path);
+
+        assert!(save_web_search_provider_enabled_to_path(&path, "nope", true).is_err());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn web_search_provider_is_configured_resolves_inline_then_env() {
+        // Inline key is sufficient regardless of env.
+        let mut provider = WebSearchProviderConfig {
+            api_key: Some("secret".to_string()),
+            ..Default::default()
+        };
+        assert!(provider.is_configured(None));
+
+        // Without inline key and with an env name that is unset, not configured.
+        provider.api_key = None;
+        provider.api_key_env = Some("RODER_TEST_DEFINITELY_UNSET_KEY_ENV".to_string());
+        assert!(!provider.is_configured(None));
+        assert!(!provider.is_configured(Some("RODER_TEST_DEFINITELY_UNSET_KEY_ENV")));
     }
 
     #[test]

@@ -82,6 +82,29 @@ fn codegen_renders_tavily_enabled_distribution() {
 }
 
 #[test]
+fn codegen_renders_synthetic_search_enabled_distribution() {
+    let catalog = Catalog::from_workspace(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let profile = built_in_profile("synthetic-search").unwrap().unwrap();
+    profile.validate(&catalog).unwrap();
+
+    let files = render(&profile.manifest, &catalog).unwrap();
+    let cargo_toml = file(&files, "Cargo.toml");
+    assert!(cargo_toml.contains("roder-ext-synthetic-search"));
+    assert!(cargo_toml.contains("roder-ext-web-search"));
+
+    let config = file(&files, "config.toml");
+    toml::from_str::<toml::Value>(&config).unwrap();
+    assert!(config.contains(r#""provider": "synthetic""#));
+    assert!(config.contains(r#""api_key_env": "SYNTHETIC_API_KEY""#));
+    assert!(config.contains("[web_search]"));
+    assert!(config.contains("provider = \"synthetic\""));
+
+    let readme = file(&files, "README.md");
+    assert!(readme.contains("synthetic-search"));
+    assert!(readme.contains("SYNTHETIC_API_KEY"));
+}
+
+#[test]
 fn codegen_renders_zero_coder_edits_distribution() {
     let catalog = Catalog::from_workspace(env!("CARGO_MANIFEST_DIR")).unwrap();
     let profile = built_in_profile("zero-coder-edits").unwrap().unwrap();

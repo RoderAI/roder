@@ -2306,7 +2306,30 @@ pub struct RunnersPortsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WebSearchSettings {
+    /// Hosted (OpenAI/Codex) web-search mode.
     pub mode: HostedWebSearchMode,
+    /// When true, the external provider router is the active web-search source
+    /// (`[web_search] mode = "external"`).
+    #[serde(default)]
+    pub external_enabled: bool,
+    /// Active external provider id when `external_enabled` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_provider: Option<String>,
+    /// Status of each built-in external web-search provider.
+    #[serde(default)]
+    pub providers: Vec<WebSearchProviderStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebSearchProviderStatus {
+    /// Provider id, e.g. `tavily`.
+    pub id: String,
+    /// Provider sub-section is enabled in config.
+    pub enabled: bool,
+    /// An API key is resolvable (inline, env indirection, or canonical env).
+    pub configured: bool,
+    /// This provider is the active external router selection.
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -3851,7 +3874,12 @@ pub struct SettingsGetResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSetWebSearchParams {
+    #[serde(default)]
     pub mode: HostedWebSearchMode,
+    /// When set, activate this external provider router instead of changing the
+    /// hosted mode. Persisted to config; takes effect on next start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

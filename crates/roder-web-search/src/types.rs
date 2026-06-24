@@ -11,6 +11,7 @@ pub enum WebSearchProviderKind {
     Perplexity,
     Tavily,
     Parallel,
+    Synthetic,
     Custom,
 }
 
@@ -21,6 +22,7 @@ impl WebSearchProviderKind {
             Self::Perplexity => "perplexity",
             Self::Tavily => "tavily",
             Self::Parallel => "parallel",
+            Self::Synthetic => "synthetic",
             Self::Custom => "custom",
         }
     }

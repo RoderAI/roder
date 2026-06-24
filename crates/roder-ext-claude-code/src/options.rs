@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use claude_code_sdk_rust::mcp::{MCPContent, SdkMcpTool, SimpleMCPServer};
 use claude_code_sdk_rust::{
@@ -137,6 +138,10 @@ fn roder_sdk_mcp_server(
     claude_code_sdk_rust::mcp::create_sdk_mcp_server("roder", tools)
 }
 
+/// Monotonic counter making every claude-code tool-call id unique across the
+/// process, so repeated calls of the same tool render as distinct rows.
+static NEXT_TOOL_CALL_SEQ: AtomicU64 = AtomicU64::new(0);
+
 fn sdk_tool_for_spec(
     claude_name: String,
     roder_name: String,
@@ -153,8 +158,13 @@ fn sdk_tool_for_spec(
         move |input| {
             let input =
                 repair_sdk_mcp_input_for_tool(input, &call_schema, &claude_name, &roder_name);
+            // Each invocation must carry a unique tool-call id. The TUI and
+            // runtime key tool-call rows by id, so reusing a name-derived id
+            // (e.g. `claude-code-Bash`) collapses every later call of the same
+            // tool into the first row and only the first one ever renders.
+            let seq = NEXT_TOOL_CALL_SEQ.fetch_add(1, Ordering::Relaxed);
             let call = ToolCallCompleted {
-                id: format!("claude-code-{claude_name}"),
+                id: format!("claude-code-{claude_name}-{seq}"),
                 name: roder_name.clone(),
                 arguments: input.to_string(),
             };

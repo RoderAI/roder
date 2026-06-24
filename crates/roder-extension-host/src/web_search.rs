@@ -2,6 +2,7 @@ use roder_api::extension::ExtensionRegistryBuilder;
 use roder_ext_firecrawl_search::{FirecrawlSearchConfig, FirecrawlSearchExtension};
 use roder_ext_parallel_search::{ParallelSearchConfig, ParallelSearchExtension};
 use roder_ext_perplexity_search::{PerplexitySearchConfig, PerplexitySearchExtension};
+use roder_ext_synthetic_search::{SyntheticSearchConfig, SyntheticSearchExtension};
 use roder_ext_tavily_search::{TavilySearchConfig, TavilySearchExtension};
 use roder_ext_web_search::{
     WebSearchRouterConfig, WebSearchRouterExtension, WebSearchRouterProvider,
@@ -19,6 +20,7 @@ pub struct DefaultWebSearchConfig {
     pub perplexity: DefaultWebSearchProviderConfig,
     pub tavily: DefaultWebSearchProviderConfig,
     pub parallel: DefaultWebSearchProviderConfig,
+    pub synthetic: DefaultWebSearchProviderConfig,
     pub timeout_seconds: Option<u64>,
     pub max_results: Option<u8>,
     pub namespaced_tools: bool,
@@ -76,6 +78,7 @@ fn resolve_selected_web_search_provider(
         WebSearchProviderKind::Perplexity,
         WebSearchProviderKind::Tavily,
         WebSearchProviderKind::Parallel,
+        WebSearchProviderKind::Synthetic,
     ]
     .into_iter()
     .filter_map(|provider| provider_from_config(config, provider))
@@ -99,6 +102,7 @@ fn install_namespaced_web_search_tools(
         WebSearchProviderKind::Perplexity,
         WebSearchProviderKind::Tavily,
         WebSearchProviderKind::Parallel,
+        WebSearchProviderKind::Synthetic,
     ] {
         match provider_from_config(config, kind) {
             Some(WebSearchRouterProvider::Firecrawl(provider_config)) => {
@@ -112,6 +116,9 @@ fn install_namespaced_web_search_tools(
             }
             Some(WebSearchRouterProvider::Parallel(provider_config)) => {
                 builder.install(ParallelSearchExtension::with_config(provider_config))?;
+            }
+            Some(WebSearchRouterProvider::Synthetic(provider_config)) => {
+                builder.install(SyntheticSearchExtension::with_config(provider_config))?;
             }
             None => {}
         }
@@ -128,6 +135,7 @@ fn provider_from_config(
         WebSearchProviderKind::Perplexity => &config.perplexity,
         WebSearchProviderKind::Tavily => &config.tavily,
         WebSearchProviderKind::Parallel => &config.parallel,
+        WebSearchProviderKind::Synthetic => &config.synthetic,
         WebSearchProviderKind::Custom => return None,
     };
     let api_key = provider_config.api_key.as_deref()?.trim();
@@ -177,6 +185,14 @@ fn provider_from_config(
             }
             cfg = cfg.with_debug_raw_response(provider_config.debug_raw_response);
             Some(WebSearchRouterProvider::Parallel(cfg))
+        }
+        WebSearchProviderKind::Synthetic => {
+            let mut cfg = SyntheticSearchConfig::new(api_key).with_timeout_seconds(timeout_seconds);
+            if let Some(base_url) = provider_config.base_url.as_deref() {
+                cfg = cfg.with_base_url(base_url);
+            }
+            cfg = cfg.with_debug_raw_response(provider_config.debug_raw_response);
+            Some(WebSearchRouterProvider::Synthetic(cfg))
         }
         WebSearchProviderKind::Custom => None,
     }
@@ -251,6 +267,43 @@ mod tests {
 
         assert!(names.contains(&"web_search".to_string()));
         assert!(names.contains(&"tavily_search".to_string()));
+    }
+
+    #[test]
+    fn default_registry_with_synthetic_search_installs_canonical_tool() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            web_search: Some(DefaultWebSearchConfig {
+                enabled: true,
+                provider: Some(WebSearchProviderKind::Synthetic),
+                synthetic: provider_with_key("synthetic-key"),
+                ..DefaultWebSearchConfig::default()
+            }),
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+        let names = contributed_tool_names(&registry).unwrap();
+
+        assert!(names.contains(&"web_search".to_string()));
+        assert!(!names.contains(&"synthetic_search".to_string()));
+    }
+
+    #[test]
+    fn synthetic_search_namespaced_tools_are_opt_in() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            web_search: Some(DefaultWebSearchConfig {
+                enabled: true,
+                provider: Some(WebSearchProviderKind::Synthetic),
+                synthetic: provider_with_key("synthetic-key"),
+                namespaced_tools: true,
+                ..DefaultWebSearchConfig::default()
+            }),
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+        let names = contributed_tool_names(&registry).unwrap();
+
+        assert!(names.contains(&"web_search".to_string()));
+        assert!(names.contains(&"synthetic_search".to_string()));
     }
 
     #[test]

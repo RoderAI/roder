@@ -5,7 +5,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
-use super::{ConfirmChoice, ConfirmDialog, ConfirmDialogState, Theme, centered_rect};
+use super::{
+    ConfirmChoice, ConfirmDialog, ConfirmDialogState, Theme, UserInputDialogState, centered_rect,
+};
 
 struct DialogCopy {
     title: String,

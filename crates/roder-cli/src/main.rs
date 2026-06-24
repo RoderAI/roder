@@ -2992,6 +2992,21 @@ fn resolve_external_web_search_config(
             "PARALLEL_BASE_URL",
             None,
         ),
+        synthetic: {
+            // Synthetic web search borrows the synthetic inference provider key
+            // (shared SYNTHETIC_API_KEY), so it works once the provider key is
+            // pasted, without a separate [web_search.synthetic] entry.
+            let mut resolved = resolve_web_search_provider_config(
+                &cfg.synthetic,
+                "SYNTHETIC_API_KEY",
+                "SYNTHETIC_BASE_URL",
+                None,
+            );
+            if resolved.api_key.is_none() {
+                resolved.api_key = roder_config::synthetic_web_search_borrowed_key();
+            }
+            resolved
+        },
         timeout_seconds: cfg.timeout_seconds,
         max_results: cfg.max_results,
         namespaced_tools: cfg.namespaced_tools,
@@ -3004,8 +3019,9 @@ fn parse_web_search_provider(provider: &str) -> anyhow::Result<WebSearchProvider
         "perplexity" => Ok(WebSearchProviderKind::Perplexity),
         "tavily" => Ok(WebSearchProviderKind::Tavily),
         "parallel" | "parallel.ai" | "parallel_ai" => Ok(WebSearchProviderKind::Parallel),
+        "synthetic" | "synthetic.new" | "synthetic_ai" => Ok(WebSearchProviderKind::Synthetic),
         _ => anyhow::bail!(
-            "unsupported web_search provider {provider:?}; expected firecrawl, perplexity, tavily, or parallel"
+            "unsupported web_search provider {provider:?}; expected firecrawl, perplexity, tavily, parallel, or synthetic"
         ),
     }
 }

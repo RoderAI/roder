@@ -25,6 +25,7 @@ extensions = [
   "perplexity-search",
   "plan-mode",
   "subagents",
+  "synthetic-search",
   "task-process",
   "task-subagent",
   "tavily-search",
