@@ -2137,6 +2137,12 @@ impl AppServer {
             ));
         }
         roder_config::save_provider_api_key(&provider, api_key).map_err(internal_error)?;
+        // Synthetic web search shares SYNTHETIC_API_KEY with the synthetic
+        // inference provider, so configuring the provider key auto-enables the
+        // synthetic web-search sub-section (without switching the active router).
+        if provider == "synthetic" {
+            let _ = roder_config::save_web_search_provider_enabled("synthetic", true);
+        }
         Ok(serde_json::to_value(ProviderConfigureResult {
             provider,
             authenticated: true,
@@ -2164,9 +2170,7 @@ impl AppServer {
     async fn handle_settings_get(&self) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self.runtime.status().await;
         Ok(serde_json::to_value(SettingsGetResult {
-            web_search: WebSearchSettings {
-                mode: cfg.hosted_web_search.mode,
-            },
+            web_search: web_search_settings(cfg.hosted_web_search.mode),
             search_index: SearchIndexSettings {
                 enabled: roder_search::search_index_enabled(),
             },
@@ -2184,6 +2188,24 @@ impl AppServer {
         &self,
         params: SettingsSetWebSearchParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        if let Some(provider) = params
+            .external_provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|provider| !provider.is_empty())
+        {
+            if !self.persist_user_config {
+                return Err(internal_error(
+                    "web search provider persistence is disabled for this app-server",
+                ));
+            }
+            roder_config::save_web_search_external_provider(provider).map_err(invalid_params)?;
+            let cfg = self.runtime.status().await;
+            return Ok(serde_json::to_value(SettingsSetWebSearchResult {
+                web_search: web_search_settings(cfg.hosted_web_search.mode),
+            })
+            .unwrap());
+        }
         let cfg = self
             .runtime
             .set_hosted_web_search(params.mode)
@@ -2196,9 +2218,7 @@ impl AppServer {
             .map_err(internal_error)?;
         }
         Ok(serde_json::to_value(SettingsSetWebSearchResult {
-            web_search: WebSearchSettings {
-                mode: cfg.hosted_web_search.mode,
-            },
+            web_search: web_search_settings(cfg.hosted_web_search.mode),
         })
         .unwrap())
     }
@@ -5536,6 +5556,27 @@ fn web_search_mode_config_value(mode: HostedWebSearchMode) -> &'static str {
         HostedWebSearchMode::Disabled => "disabled",
         HostedWebSearchMode::Cached => "cached",
         HostedWebSearchMode::Live => "live",
+    }
+}
+
+/// Build the full web-search settings snapshot from the hosted mode plus the
+/// external provider router state persisted in user config.
+fn web_search_settings(mode: HostedWebSearchMode) -> WebSearchSettings {
+    let snapshot = roder_config::web_search_router_snapshot();
+    WebSearchSettings {
+        mode,
+        external_enabled: snapshot.external_enabled,
+        external_provider: snapshot.external_provider,
+        providers: snapshot
+            .providers
+            .into_iter()
+            .map(|entry| WebSearchProviderStatus {
+                id: entry.id,
+                enabled: entry.enabled,
+                configured: entry.configured,
+                active: entry.active,
+            })
+            .collect(),
     }
 }
 

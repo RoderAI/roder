@@ -356,6 +356,9 @@ where
             PaletteAction::SetWebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
             }
+            PaletteAction::SetWebSearchProvider(provider) => {
+                self.set_web_search_external_provider(provider).await;
+            }
             PaletteAction::SetSearchIndexEnabled(enabled) => {
                 self.set_search_index_enabled(enabled).await;
             }

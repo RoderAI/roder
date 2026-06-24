@@ -28,7 +28,11 @@ roder-api.workspace = true
 roder-ext-firecrawl-search.workspace = true
 roder-ext-parallel-search.workspace = true
 roder-ext-perplexity-search.workspace = true
+roder-ext-synthetic-search.workspace = true
 roder-ext-tavily-search.workspace = true
 roder-web-search.workspace = true
 semver.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -1074,6 +1074,36 @@ pub fn settings_source(
                     PaletteAction::SetWebSearchMode(mode),
                 )
             }))
+            .chain(web_search.providers.iter().map(|status| {
+                let active_suffix = if status.active { " (active)" } else { "" };
+                let configured = if status.configured {
+                    "key configured"
+                } else {
+                    "no API key"
+                };
+                let mut name = status.id.clone();
+                if let Some(first) = name.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                (
+                    PaletteItem {
+                        id: format!("web_search_provider:{}", status.id),
+                        title: format!("Web search provider: {name} (external){active_suffix}"),
+                        subtitle: Some(format!(
+                            "Use the {name} provider router ({configured}); applies on restart"
+                        )),
+                        keywords: vec![
+                            "web".to_string(),
+                            "search".to_string(),
+                            "provider".to_string(),
+                            "external".to_string(),
+                            status.id.clone(),
+                        ],
+                        icon: Some('~'),
+                    },
+                    PaletteAction::SetWebSearchProvider(status.id.clone()),
+                )
+            }))
             .chain(shell.options.iter().cloned().map(|choice| {
                 let active_suffix = if choice == shell.shell {
                     " (active)"
@@ -1455,6 +1485,9 @@ mod tests {
         let source = settings_source(
             &WebSearchSettings {
                 mode: HostedWebSearchMode::Cached,
+                external_enabled: false,
+                external_provider: None,
+                providers: Vec::new(),
             },
             &SearchIndexSettings { enabled: true },
             &ShellSettings {
@@ -1515,10 +1548,64 @@ mod tests {
     }
 
     #[test]
+    fn settings_source_maps_external_web_search_providers_to_actions() {
+        let source = settings_source(
+            &WebSearchSettings {
+                mode: HostedWebSearchMode::Cached,
+                external_enabled: true,
+                external_provider: Some("tavily".to_string()),
+                providers: vec![
+                    roder_protocol::WebSearchProviderStatus {
+                        id: "tavily".to_string(),
+                        enabled: true,
+                        configured: true,
+                        active: true,
+                    },
+                    roder_protocol::WebSearchProviderStatus {
+                        id: "firecrawl".to_string(),
+                        enabled: false,
+                        configured: false,
+                        active: false,
+                    },
+                ],
+            },
+            &SearchIndexSettings { enabled: true },
+            &ShellSettings {
+                shell: "bash".to_string(),
+                options: vec!["bash".to_string()],
+            },
+            None,
+            None,
+            None,
+        );
+        let entries = source.entries();
+
+        let active = entries
+            .iter()
+            .find(|entry| {
+                entry.action == PaletteAction::SetWebSearchProvider("tavily".to_string())
+            })
+            .expect("tavily provider row");
+        assert!(active.item.title.contains("(active)"));
+        assert!(active.item.subtitle.as_deref().unwrap().contains("key configured"));
+
+        let firecrawl = entries
+            .iter()
+            .find(|entry| {
+                entry.action == PaletteAction::SetWebSearchProvider("firecrawl".to_string())
+            })
+            .expect("firecrawl provider row");
+        assert!(firecrawl.item.subtitle.as_deref().unwrap().contains("no API key"));
+    }
+
+    #[test]
     fn settings_source_maps_speech_models_to_voice_model_actions() {
         let source = settings_source(
             &WebSearchSettings {
                 mode: HostedWebSearchMode::Cached,
+                external_enabled: false,
+                external_provider: None,
+                providers: Vec::new(),
             },
             &SearchIndexSettings { enabled: true },
             &ShellSettings {
@@ -1570,6 +1657,9 @@ mod tests {
         let source = settings_source(
             &WebSearchSettings {
                 mode: HostedWebSearchMode::Cached,
+                external_enabled: false,
+                external_provider: None,
+                providers: Vec::new(),
             },
             &SearchIndexSettings { enabled: true },
             &ShellSettings {

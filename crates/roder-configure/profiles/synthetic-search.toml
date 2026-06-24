@@ -1,0 +1,33 @@
+id = "synthetic-search"
+description = "OpenAI Roder distribution with Synthetic web search enabled."
+
+[distribution]
+name = "synthetic-search-roder"
+version = "0.1.0"
+include_tui = true
+include_app_server = true
+include_cli = true
+extensions = [
+  "openai-responses",
+  "jsonl-thread-store",
+  "plan-mode",
+  "notify-terminal",
+  "web-search",
+  "synthetic-search",
+]
+default_provider = "openai-responses"
+default_thread_store = "jsonl-thread-store"
+
+[distribution.config_overrides.web_search]
+enabled = true
+mode = "external"
+provider = "synthetic"
+canonical_tool = true
+namespaced_tools = true
+max_results = 5
+timeout_seconds = 20
+
+[distribution.config_overrides.web_search.synthetic]
+enabled = true
+api_key_env = "SYNTHETIC_API_KEY"
+base_url = "https://api.synthetic.new"

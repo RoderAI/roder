@@ -29,6 +29,7 @@ pub enum PaletteAction {
     },
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),
+    SetWebSearchProvider(String),
     SetSearchIndexEnabled(bool),
     SetShell(String),
     SetVoiceModel {

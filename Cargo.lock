@@ -4429,6 +4429,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-synthetic-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "roder-web-search",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-task-ledger"
 version = "0.1.1"
 dependencies = [
@@ -4530,10 +4545,12 @@ dependencies = [
  "roder-ext-firecrawl-search",
  "roder-ext-parallel-search",
  "roder-ext-perplexity-search",
+ "roder-ext-synthetic-search",
  "roder-ext-tavily-search",
  "roder-web-search",
  "semver",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -4673,6 +4690,7 @@ dependencies = [
  "roder-ext-runner-vercel",
  "roder-ext-subagents",
  "roder-ext-synthetic",
+ "roder-ext-synthetic-search",
  "roder-ext-task-ledger",
  "roder-ext-task-process",
  "roder-ext-tavily-search",

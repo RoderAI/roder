@@ -8491,6 +8491,17 @@ async fn web_search_setting_can_be_set_and_observed() {
     assert_eq!(settings.web_search.mode, HostedWebSearchMode::Cached);
     assert_eq!(settings.default_mode, PolicyMode::Default);
     assert!(settings.file_backed_dynamic_context);
+    // External provider router snapshot exposes every built-in provider.
+    let provider_ids: Vec<&str> = settings
+        .web_search
+        .providers
+        .iter()
+        .map(|p| p.id.as_str())
+        .collect();
+    assert_eq!(
+        provider_ids,
+        vec!["firecrawl", "tavily", "perplexity", "parallel", "synthetic"]
+    );
 
     let changed: SettingsSetWebSearchResult = request(
         &client,
@@ -8498,6 +8509,7 @@ async fn web_search_setting_can_be_set_and_observed() {
         Some(
             serde_json::to_value(SettingsSetWebSearchParams {
                 mode: HostedWebSearchMode::Live,
+                external_provider: None,
             })
             .unwrap(),
         ),

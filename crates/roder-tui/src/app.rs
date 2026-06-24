@@ -91,9 +91,11 @@ use roder_protocol::{
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
     SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
     SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
-    SpeechProvidersListResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
+    SpeechProvidersListResult, WebSearchProviderStatus, WebSearchSettings, TasksGetParams,
+    TasksGetResult, TasksListResult, TeamReadParams,
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
-    ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadSetModeParams,
+    ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadResolveUserInputParams,
+    ThreadResolveUserInputResult, ThreadSetModeParams,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, Turn,
     TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WorkspaceCreateParams,
     WorkspaceCreateResult, WorkspaceRootInput,
@@ -879,6 +881,173 @@ enum ConfirmChoice {
     No,
 }
 
+/// One selectable answer for an interactive `request_user_input` question.
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct UserInputOption {
+    label: String,
+    description: String,
+}
+
+/// One question surfaced by the `request_user_input` tool.
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct UserInputQuestion {
+    id: String,
+    header: String,
+    question: String,
+    options: Vec<UserInputOption>,
+}
+
+/// Modal state for answering one or more `request_user_input` questions. The
+/// runtime blocks the tool call until the client resolves it, so the TUI must
+/// present the options and send `thread/resolve_user_input` with the chosen
+/// answers (keyed by question id).
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct UserInputDialogState {
+    request_id: String,
+    turn_id: String,
+    questions: Vec<UserInputQuestion>,
+    /// Index of the question currently being answered.
+    current: usize,
+    /// Highlighted option within the current question.
+    selected: usize,
+    /// Accumulated answers: question id -> chosen option label.
+    answers: serde_json::Map<String, serde_json::Value>,
+}
+
+impl UserInputDialogState {
+    /// Parses the raw `questions` payload from a `UserInputRequested` event.
+    /// Returns `None` when no answerable question (with options) is present.
+    fn from_event(request_id: String, turn_id: String, questions: &Value) -> Option<Self> {
+        let parsed: Vec<UserInputQuestion> = questions
+            .as_array()
+            .map(|items| items.iter().filter_map(parse_user_input_question).collect())
+            .unwrap_or_default();
+        if parsed.is_empty() {
+            return None;
+        }
+        Some(Self {
+            request_id,
+            turn_id,
+            questions: parsed,
+            current: 0,
+            selected: 0,
+            answers: serde_json::Map::new(),
+        })
+    }
+
+    fn current_question(&self) -> &UserInputQuestion {
+        &self.questions[self.current]
+    }
+
+    fn select_previous(&mut self) {
+        let len = self.current_question().options.len();
+        if len == 0 {
+            return;
+        }
+        self.selected = (self.selected + len - 1) % len;
+    }
+
+    fn select_next(&mut self) {
+        let len = self.current_question().options.len();
+        if len == 0 {
+            return;
+        }
+        self.selected = (self.selected + 1) % len;
+    }
+
+    /// Records the highlighted option as the answer to the current question and
+    /// advances. Returns `true` when every question has been answered, leaving
+    /// `answers` ready to send.
+    fn commit_current(&mut self) -> bool {
+        let question = &self.questions[self.current];
+        if let Some(option) = question.options.get(self.selected) {
+            self.answers.insert(
+                question.id.clone(),
+                Value::String(option.label.clone()),
+            );
+        }
+        if self.current + 1 < self.questions.len() {
+            self.current += 1;
+            self.selected = 0;
+            false
+        } else {
+            true
+        }
+    }
+}
+
+fn parse_user_input_question(value: &Value) -> Option<UserInputQuestion> {
+    let options: Vec<UserInputOption> = value
+        .get("options")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|option| {
+                    let label = option.get("label").and_then(Value::as_str)?.to_string();
+                    let description = option
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    Some(UserInputOption { label, description })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if options.is_empty() {
+        return None;
+    }
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("answer")
+        .to_string();
+    Some(UserInputQuestion {
+        id,
+        header: value
+            .get("header")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        question: value
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("Select an option")
+            .to_string(),
+        options,
+    })
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum UserInputKeyAction {
+    SelectPrevious,
+    SelectNext,
+    SelectIndex(usize),
+    Confirm,
+    Cancel,
+    Ignore,
+}
+
+fn user_input_action_for_key(key: KeyEvent) -> UserInputKeyAction {
+    match key.code {
+        KeyCode::Up => UserInputKeyAction::SelectPrevious,
+        KeyCode::Down => UserInputKeyAction::SelectNext,
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            UserInputKeyAction::SelectPrevious
+        }
+        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            UserInputKeyAction::SelectNext
+        }
+        KeyCode::Char(c @ '1'..='9') => {
+            UserInputKeyAction::SelectIndex((c as usize) - ('1' as usize))
+        }
+        KeyCode::Enter => UserInputKeyAction::Confirm,
+        KeyCode::Esc => UserInputKeyAction::Cancel,
+        _ => UserInputKeyAction::Ignore,
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ConfirmDialogState {
     dialog: ConfirmDialog,
@@ -977,6 +1146,7 @@ enum ProviderMenuItem {
     DefaultMode(PolicyMode),
     Spinner(WorkingSpinner),
     WebSearchMode(HostedWebSearchMode),
+    WebSearchProvider(WebSearchProviderStatus),
     VoiceModel(VoiceModelChoice),
     ShellChoice(String),
     Provider(ProviderChoice),
@@ -1062,6 +1232,7 @@ impl ProviderMenuItem {
             }
             Self::Spinner(spinner) => spinner.label().to_string(),
             Self::WebSearchMode(mode) => web_search_mode_label(*mode).to_string(),
+            Self::WebSearchProvider(status) => web_search_provider_label(status),
             Self::VoiceModel(choice) => choice.label.clone(),
             Self::ShellChoice(shell) => shell.clone(),
             Self::Provider(provider) => provider.label(),
@@ -1225,11 +1396,14 @@ where
     scroll_settings: ScrollSettings,
     timeline_settings: TimelineSettings,
     web_search_mode: HostedWebSearchMode,
+    web_search_external_provider: Option<String>,
+    web_search_providers: Vec<WebSearchProviderStatus>,
     search_index_enabled: bool,
     command_shell: String,
     command_shell_options: Vec<String>,
     file_backed_dynamic_context: bool,
     confirm_dialog: Option<ConfirmDialogState>,
+    user_input_dialog: Option<UserInputDialogState>,
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
     chrome_panel: Option<chrome::ChromePanelState>,
@@ -1666,6 +1840,13 @@ where
                 .as_ref()
                 .map(|settings| settings.web_search.mode)
                 .unwrap_or(HostedWebSearchMode::Cached),
+            web_search_external_provider: settings_state
+                .as_ref()
+                .and_then(|settings| settings.web_search.external_provider.clone()),
+            web_search_providers: settings_state
+                .as_ref()
+                .map(|settings| settings.web_search.providers.clone())
+                .unwrap_or_default(),
             search_index_enabled: settings_state
                 .as_ref()
                 .map(|settings| settings.search_index.enabled)
@@ -1676,6 +1857,7 @@ where
                 .map(|settings| settings.file_backed_dynamic_context)
                 .unwrap_or(true),
             confirm_dialog: None,
+            user_input_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
             chrome_panel: None,
@@ -1802,6 +1984,8 @@ where
                                 ToolDetailAction::Close => self.tool_detail_modal = None,
                                 ToolDetailAction::Handled => {}
                             }
+                        } else if self.user_input_dialog.is_some() {
+                            self.handle_user_input_key(key).await;
                         } else if self.confirm_dialog_allows_policy_switch()
                             && is_policy_mode_shortcut_key(key)
                         {
@@ -2304,12 +2488,48 @@ where
                             .unwrap_or("user input requested");
                         self.timeline
                             .push_system(format!("user input requested: {question}"));
+                        match UserInputDialogState::from_event(
+                            ev.request_id.clone(),
+                            ev.turn_id.clone(),
+                            &ev.questions,
+                        ) {
+                            Some(dialog) => {
+                                if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
+                                    self.active_turn_timer.pause(clock.now());
+                                    self.progress.set(TerminalProgress::Paused);
+                                }
+                                self.user_input_dialog = Some(dialog);
+                            }
+                            None => {
+                                // No answerable options: resolve immediately with
+                                // an empty object so the blocked tool call does
+                                // not hang the turn.
+                                self.resolve_user_input(
+                                    ev.request_id.clone(),
+                                    serde_json::json!({}),
+                                )
+                                .await;
+                            }
+                        }
                     }
                     RoderEvent::UserInputResolved(ev) => {
                         self.timeline.push_system(format!(
                             "user input resolved: {}",
                             short_id(&ev.request_id)
                         ));
+                        // Clear the dialog if it is still open (e.g. resolved by
+                        // another client) and resume the paused turn.
+                        if self
+                            .user_input_dialog
+                            .as_ref()
+                            .is_some_and(|dialog| dialog.request_id == ev.request_id)
+                        {
+                            self.user_input_dialog = None;
+                            if self.active_turn_id.as_deref() == Some(&ev.turn_id) {
+                                self.active_turn_timer.resume(clock.now());
+                                self.progress.set(TerminalProgress::Working);
+                            }
+                        }
                     }
                     RoderEvent::ToolCallCompleted(ev) => {
                         self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
@@ -2615,6 +2835,70 @@ where
                 TimelineState::new(self.scroll_settings, self.timeline_settings)
             }),
         )
+    }
+
+    async fn handle_user_input_key(&mut self, key: crossterm::event::KeyEvent) {
+        let Some(mut state) = self.user_input_dialog.clone() else {
+            return;
+        };
+        match user_input_action_for_key(key) {
+            UserInputKeyAction::SelectPrevious => {
+                state.select_previous();
+                self.user_input_dialog = Some(state);
+            }
+            UserInputKeyAction::SelectNext => {
+                state.select_next();
+                self.user_input_dialog = Some(state);
+            }
+            UserInputKeyAction::SelectIndex(index) => {
+                if index < state.current_question().options.len() {
+                    state.selected = index;
+                    self.user_input_dialog = Some(state);
+                }
+            }
+            UserInputKeyAction::Confirm => {
+                if state.commit_current() {
+                    let answers = Value::Object(state.answers.clone());
+                    self.user_input_dialog = None;
+                    self.resolve_user_input(state.request_id.clone(), answers)
+                        .await;
+                } else {
+                    self.user_input_dialog = Some(state);
+                }
+            }
+            UserInputKeyAction::Cancel => {
+                // Cancelling still resolves the blocked tool call (with whatever
+                // has been answered so far) so the turn never hangs.
+                let answers = Value::Object(state.answers.clone());
+                self.user_input_dialog = None;
+                self.resolve_user_input(state.request_id.clone(), answers)
+                    .await;
+            }
+            UserInputKeyAction::Ignore => {}
+        }
+    }
+
+    async fn resolve_user_input(&mut self, request_id: String, answers: Value) {
+        let params = ThreadResolveUserInputParams {
+            request_id: request_id.clone(),
+            answers,
+        };
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/resolve_user_input")),
+                method: "thread/resolve_user_input".to_string(),
+                params: Some(serde_json::to_value(params).unwrap()),
+            })
+            .await;
+        match decode_response::<ThreadResolveUserInputResult>(res) {
+            Ok(result) if result.resolved => {}
+            Ok(_) => {
+                self.record_error(format!("user input not pending: {}", short_id(&request_id)))
+            }
+            Err(err) => self.record_error(format!("thread/resolve_user_input failed: {err}")),
+        }
     }
 
     async fn resolve_tool_approval(&mut self, approval_id: String, approved: bool) {
@@ -4147,6 +4431,9 @@ where
         if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
         }
+        if let Some(dialog) = self.user_input_dialog.clone() {
+            dialog::render_user_input_dialog(f, area, &dialog, self.theme);
+        }
         if self.show_shortcuts_dialog {
             shortcuts::render_shortcuts_dialog(f, area, self.theme);
         }
@@ -4730,9 +5017,13 @@ where
                         ProviderMenuItem::Spinner(spinner) if *spinner == self.working_spinner => {
                             "✓ "
                         }
-                        ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode => {
+                        ProviderMenuItem::WebSearchMode(mode)
+                            if *mode == self.web_search_mode
+                                && self.web_search_external_provider.is_none() =>
+                        {
                             "✓ "
                         }
+                        ProviderMenuItem::WebSearchProvider(status) if status.active => "✓ ",
                         ProviderMenuItem::VoiceModel(choice)
                             if self.voice.provider() == Some(choice.provider_id.as_str())
                                 && self.voice.model() == Some(choice.model_id.as_str()) =>
@@ -5055,13 +5346,19 @@ where
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("settings/set_web_search")),
                 method: "settings/set_web_search".to_string(),
-                params: Some(serde_json::to_value(SettingsSetWebSearchParams { mode }).unwrap()),
+                params: Some(
+                    serde_json::to_value(SettingsSetWebSearchParams {
+                        mode,
+                        external_provider: None,
+                    })
+                    .unwrap(),
+                ),
             })
             .await;
 
         match decode_response::<SettingsSetWebSearchResult>(res) {
             Ok(result) => {
-                self.web_search_mode = result.web_search.mode;
+                self.apply_web_search_settings(&result.web_search);
                 let label = web_search_mode_label(result.web_search.mode);
                 self.timeline
                     .push_system(format!("web search provider set to {label}."));
@@ -5073,6 +5370,64 @@ where
                 self.show_provider_popup = false;
             }
         }
+    }
+
+    async fn set_web_search_external_provider(&mut self, provider: String) {
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("settings/set_web_search")),
+                method: "settings/set_web_search".to_string(),
+                params: Some(
+                    serde_json::to_value(SettingsSetWebSearchParams {
+                        mode: self.web_search_mode,
+                        external_provider: Some(provider.clone()),
+                    })
+                    .unwrap(),
+                ),
+            })
+            .await;
+
+        match decode_response::<SettingsSetWebSearchResult>(res) {
+            Ok(result) => {
+                self.apply_web_search_settings(&result.web_search);
+                self.timeline.push_system(format!(
+                    "web search provider set to {provider} (external). Restart Roder to apply."
+                ));
+                self.push_event(format!("web search provider selected: {provider} (external)"));
+                self.show_provider_popup = false;
+            }
+            Err(err) => {
+                self.record_error(format!("failed to set web search provider: {err}"));
+                self.show_provider_popup = false;
+            }
+        }
+    }
+
+    fn apply_web_search_settings(&mut self, settings: &WebSearchSettings) {
+        self.web_search_mode = settings.mode;
+        self.web_search_external_provider = settings.external_provider.clone();
+        self.web_search_providers = settings.providers.clone();
+    }
+
+    /// External web-search provider statuses for menus. Prefers the snapshot the
+    /// app-server reported; falls back to reading user config directly so the
+    /// providers still list when settings could not be fetched at startup.
+    fn web_search_provider_statuses(&self) -> Vec<WebSearchProviderStatus> {
+        if !self.web_search_providers.is_empty() {
+            return self.web_search_providers.clone();
+        }
+        roder_config::web_search_router_snapshot()
+            .providers
+            .into_iter()
+            .map(|entry| WebSearchProviderStatus {
+                id: entry.id,
+                enabled: entry.enabled,
+                configured: entry.configured,
+                active: entry.active,
+            })
+            .collect()
     }
 
     async fn set_search_index_enabled(&mut self, enabled: bool) {
@@ -5417,6 +5772,9 @@ where
             ProviderMenuItem::WebSearchMode(mode) => {
                 self.set_web_search_mode(mode).await;
             }
+            ProviderMenuItem::WebSearchProvider(status) => {
+                self.set_web_search_external_provider(status.id).await;
+            }
             ProviderMenuItem::VoiceModel(choice) => {
                 self.show_provider_popup = false;
                 self.set_voice_model(choice.provider_id, choice.model_id);
@@ -5557,19 +5915,38 @@ where
     fn open_web_search_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::WebSearch;
         self.provider_menu_filter.clear();
-        self.provider_menu_items = [
-            HostedWebSearchMode::Cached,
-            HostedWebSearchMode::Live,
-            HostedWebSearchMode::Disabled,
-        ]
-        .into_iter()
-        .map(ProviderMenuItem::WebSearchMode)
-        .chain(std::iter::once(ProviderMenuItem::Back))
-        .collect();
+        let mut items: Vec<ProviderMenuItem> = vec![ProviderMenuItem::Section(
+            "Hosted (OpenAI/Codex)".to_string(),
+        )];
+        items.extend(
+            [
+                HostedWebSearchMode::Cached,
+                HostedWebSearchMode::Live,
+                HostedWebSearchMode::Disabled,
+            ]
+            .into_iter()
+            .map(ProviderMenuItem::WebSearchMode),
+        );
+        let providers = self.web_search_provider_statuses();
+        if !providers.is_empty() {
+            items.push(ProviderMenuItem::Section(
+                "External providers (applies on restart)".to_string(),
+            ));
+            items.extend(providers.into_iter().map(ProviderMenuItem::WebSearchProvider));
+        }
+        items.push(ProviderMenuItem::Back);
+        self.provider_menu_items = items;
         let selected = self
             .provider_menu_items
             .iter()
-            .position(|item| matches!(item, ProviderMenuItem::WebSearchMode(mode) if *mode == self.web_search_mode))
+            .position(|item| match item {
+                ProviderMenuItem::WebSearchProvider(status) => status.active,
+                ProviderMenuItem::WebSearchMode(mode) => {
+                    self.web_search_external_provider.is_none() && *mode == self.web_search_mode
+                }
+                _ => false,
+            })
+            .or_else(|| first_selectable_provider_menu_index(&self.provider_menu_items))
             .unwrap_or(0);
         self.select_provider_menu_index(Some(selected));
     }
@@ -8671,6 +9048,24 @@ fn web_search_mode_label(mode: HostedWebSearchMode) -> &'static str {
     }
 }
 
+fn web_search_provider_label(status: &WebSearchProviderStatus) -> String {
+    let mut name = status.id.clone();
+    if let Some(first) = name.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    let badge = if status.configured {
+        "key configured"
+    } else {
+        "no API key"
+    };
+    let enabled = if status.enabled {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    format!("{name} - {enabled}, {badge}")
+}
+
 fn pretty_policy_mode_label(mode: PolicyMode) -> &'static str {
     match mode {
         PolicyMode::Default => "Default",
@@ -9555,11 +9950,14 @@ mod tests {
             scroll_settings: ScrollSettings::default(),
             timeline_settings: TimelineSettings::default(),
             web_search_mode: HostedWebSearchMode::Cached,
+            web_search_external_provider: None,
+            web_search_providers: Vec::new(),
             search_index_enabled: true,
             command_shell: "bash".to_string(),
             command_shell_options: vec!["zsh".to_string(), "bash".to_string()],
             file_backed_dynamic_context: true,
             confirm_dialog: None,
+            user_input_dialog: None,
             tool_detail_modal: None,
             plugin_browser: None,
             chrome_panel: None,

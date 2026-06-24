@@ -106,3 +106,6 @@ prompts, quota details, or provider request ids in test output or evidence.
 This phase is API-key Chat Completions inference only. Synthetic's
 Anthropic-compatible `/messages` transport, `/embeddings`, `/quotas` status,
 and `/search` web search are intentionally deferred to later plans.
+
+`/search` is now shipped through the `roder-ext-synthetic-search` provider;
+see [Web Search](./roder-web-search-extensions.md).

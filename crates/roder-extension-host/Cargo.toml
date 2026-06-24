@@ -50,6 +50,7 @@ roder-ext-mysql-session.workspace = true
 roder-ext-postgres-session.workspace = true
 roder-ext-parallel-search.workspace = true
 roder-ext-perplexity-search.workspace = true
+roder-ext-synthetic-search.workspace = true
 roder-ext-poolside.workspace = true
 roder-ext-plan-mode.workspace = true
 roder-ext-runner-blaxel.workspace = true

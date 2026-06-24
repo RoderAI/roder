@@ -12,3 +12,18 @@ using Synthetic's OpenAI-compatible Chat Completions API.
   `hf:{owner}/{model}` ids discovered from `GET <base_url>/models`.
 
 See `docs/roder-synthetic-provider.md` for setup and live-test details.
+
+## Links
+
+- Roder website: https://roder.sh
+- Repository: https://github.com/RoderAI/roder
+- Synthetic docs: https://dev.synthetic.new
+
+## Publishing
+
+This package is versioned and published with the Roder workspace. Before publishing, run:
+
+```sh
+make registry-readmes
+python3 scripts/generate-knope-config.py --check
+```

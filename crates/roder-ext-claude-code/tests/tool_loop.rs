@@ -39,6 +39,16 @@ impl TurnToolExecutor for RecordingExecutor {
         if call.name == "shell" {
             return Err(anyhow::anyhow!("executor rejected shell during shutdown"));
         }
+        if call.name == "request_user_input" {
+            // Mirror `Runtime::resolve_user_input_request`: the runtime executor
+            // blocks the survey tool until the client answers, then returns the
+            // resolved answers to the model. Here we stand in for that resolved
+            // outcome so the test exercises the claude-code SDK -> executor path.
+            return Ok(TurnToolOutcome {
+                result: "User input received:\n{\"release\":\"fix-first\"}".to_string(),
+                is_error: false,
+            });
+        }
         Ok(TurnToolOutcome {
             result: format!("executed {} with {}", call.name, call.arguments),
             is_error: false,
@@ -74,6 +84,49 @@ fn read_file_spec() -> ToolSpec {
             "type": "object",
             "properties": { "path": { "type": "string" } },
             "required": ["path"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn request_user_input_spec() -> ToolSpec {
+    ToolSpec {
+        name: "request_user_input".to_string(),
+        description:
+            "Request user input for one to three short questions and wait for the response."
+                .to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "header": { "type": "string" },
+                            "id": { "type": "string" },
+                            "question": { "type": "string" },
+                            "options": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": { "type": "string" },
+                                        "description": { "type": "string" }
+                                    },
+                                    "required": ["label", "description"],
+                                    "additionalProperties": false
+                                }
+                            }
+                        },
+                        "required": ["header", "id", "question", "options"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["questions"],
             "additionalProperties": false
         }),
     }
@@ -120,7 +173,38 @@ async fn claude_read_alias_executes_through_roder_executor_with_repaired_args() 
     let calls = executor.calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].name, "read_file");
-    assert_eq!(calls[0].id, "claude-code-Read");
+    assert!(
+        calls[0].id.starts_with("claude-code-Read-"),
+        "id should be name-prefixed and unique: {}",
+        calls[0].id
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repeated_calls_of_same_tool_get_unique_ids() {
+    let executor = Arc::new(RecordingExecutor::default());
+    let options = build_options(
+        &ClaudeCodeConfig::default(),
+        &request_with_tools(vec![read_file_spec()]),
+        Some(executor.clone()),
+        None,
+        None,
+    )
+    .unwrap();
+    let server = options.sdk_mcp_servers.get("roder").unwrap();
+
+    server
+        .call_tool("Read", json!({ "file_path": "README.md" }))
+        .expect("first Read alias executes");
+    server
+        .call_tool("Read", json!({ "file_path": "Cargo.toml" }))
+        .expect("second Read alias executes");
+
+    let calls = executor.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    // Distinct ids are required: the TUI/runtime key tool-call rows by id, so a
+    // reused id would collapse the second call into the first row.
+    assert_ne!(calls[0].id, calls[1].id, "repeated tool calls must have unique ids");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -230,4 +314,82 @@ async fn unmanaged_and_unadvertised_tools_stay_denied_by_can_use_tool() {
         matches!(result, PermissionResult::Allow { .. }),
         "{result:?}"
     );
+}
+
+/// The interactive survey tool must be available on the claude-code path: it is
+/// advertised as `mcp__roder__request_user_input`, the `can_use_tool` callback
+/// pre-authorizes it, and calling it routes through Roder's executor with the
+/// nested `questions` payload intact. The runtime executor blocks the call
+/// until the client answers and returns the resolved answers to the model;
+/// here a fake executor stands in for that resolved outcome.
+#[tokio::test(flavor = "multi_thread")]
+async fn request_user_input_is_advertised_and_routes_through_executor() {
+    let executor = Arc::new(RecordingExecutor::default());
+    let options = build_options(
+        &ClaudeCodeConfig::default(),
+        &request_with_tools(vec![request_user_input_spec()]),
+        Some(executor.clone()),
+        None,
+        None,
+    )
+    .unwrap();
+
+    // Advertised to the CLI under the canonical Roder MCP name (no alias).
+    assert!(
+        options
+            .allowed_tools
+            .iter()
+            .any(|name| name == "mcp__roder__request_user_input"),
+        "request_user_input must be advertised: {:?}",
+        options.allowed_tools
+    );
+
+    // The permission callback pre-authorizes the advertised survey tool.
+    let callback = options.can_use_tool.clone().expect("can_use_tool registered");
+    let permission = callback
+        .call(
+            "mcp__roder__request_user_input".to_string(),
+            serde_json::Map::new(),
+            ToolPermissionContext::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(permission, PermissionResult::Allow { .. }),
+        "{permission:?}"
+    );
+
+    // Calling it routes through Roder's executor with the questions preserved.
+    let server = options.sdk_mcp_servers.get("roder").unwrap();
+    let questions = json!({
+        "questions": [{
+            "header": "Failing e2e test before release",
+            "id": "release",
+            "question": "How do you want to handle it before releasing?",
+            "options": [
+                { "label": "fix-first", "description": "Fix the test before releasing." },
+                { "label": "ship-anyway", "description": "Release and follow up." }
+            ]
+        }]
+    });
+    let content = server
+        .call_tool("request_user_input", questions.clone())
+        .expect("request_user_input executes through the roder executor");
+    let text = match &content[0] {
+        claude_code_sdk_rust::mcp::MCPContent::Text { text } => text.clone(),
+        other => panic!("expected text content, got {other:?}"),
+    };
+    assert!(text.contains("User input received"), "{text}");
+
+    let calls = executor.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "request_user_input");
+    // The nested questions array must survive `retain_schema_properties` so the
+    // survey reaches the runtime tool intact rather than being flattened away.
+    let arguments: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+    assert_eq!(
+        arguments["questions"][0]["id"], "release",
+        "questions payload must be preserved: {arguments}"
+    );
+    assert_eq!(arguments["questions"][0]["options"][0]["label"], "fix-first");
 }

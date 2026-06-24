@@ -1,0 +1,35 @@
+[package]
+name = "roder-ext-synthetic-search"
+version = "0.1.0"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[package.metadata.roder.distribution]
+id = "synthetic-search"
+category = "tool-provider"
+display_name = "Synthetic Search"
+description = "Synthetic-backed web search tools."
+default_in_profiles = []
+required_env = ["SYNTHETIC_API_KEY"]
+optional_env = ["SYNTHETIC_BASE_URL", "RODER_SYNTHETIC_BASE_URL"]
+conflicts_with = []
+required_capabilities = ["network.api.synthetic.new", "secret.read.SYNTHETIC_API_KEY"]
+extension_path = "::SyntheticSearchExtension::new"
+docs_url = "https://dev.synthetic.new/docs/synthetic/search"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+roder-api.workspace = true
+roder-web-search.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -139,6 +139,7 @@ roder-ext-runner-unix-local = { path = "crates/roder-ext-runner-unix-local", ver
 roder-ext-runner-vercel = { path = "crates/roder-ext-runner-vercel", version = "0.1.0" }
 roder-ext-subagents = { path = "crates/roder-ext-subagents", version = "0.1.0" }
 roder-ext-synthetic = { path = "crates/roder-ext-synthetic", version = "0.1.0" }
+roder-ext-synthetic-search = { path = "crates/roder-ext-synthetic-search", version = "0.1.0" }
 roder-ext-task-ledger = { path = "crates/roder-ext-task-ledger", version = "0.1.0" }
 roder-ext-task-process = { path = "crates/roder-ext-task-process", version = "0.1.0" }
 roder-ext-verification = { path = "crates/roder-ext-verification", version = "0.1.0" }

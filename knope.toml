@@ -473,6 +473,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-synthetic/CHANGELOG.md"
 
+[packages."roder-ext-synthetic-search"]
+versioned_files = [
+    "crates/roder-ext-synthetic-search/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-synthetic-search/CHANGELOG.md"
+
 [packages."roder-ext-task-ledger"]
 versioned_files = [
     "crates/roder-ext-task-ledger/Cargo.toml",
