@@ -1,3 +1,29 @@
+## 0.1.3 (2026-06-24)
+
+### Fixes
+
+#### Lock in `request_user_input` support on the Claude Code path
+
+Add the regression coverage the changelog already promised but that was missing
+from the test suite. The new `tool_loop` test proves the interactive survey tool
+is fully wired on the Claude Code path: it is advertised to the CLI as
+`mcp__roder__request_user_input`, the `can_use_tool` callback pre-authorizes it,
+and calling it routes through Roder's `TurnToolExecutor` with the nested
+`questions` payload preserved through input repair (so the survey reaches the
+runtime tool intact instead of being flattened by `retain_schema_properties`).
+The runtime executor blocks the call until the client answers and returns the
+resolved answers to the model.
+
+#### Fix only the first claude-code tool call rendering in the TUI
+
+The claude-code provider derived each in-process tool-call id solely from the
+tool name (`claude-code-<Tool>`), so every later invocation of the same tool
+(e.g. repeated `Bash`/`Read` calls) reused one id. The TUI and runtime key
+tool-call rows by id, which collapsed all subsequent calls into the first
+row, making it look like only the first tool call ever ran. Tool-call ids are
+now made unique per invocation via a process-global counter
+(`claude-code-<Tool>-<seq>`), so each call renders as its own row.
+
 ## 0.1.2 (2026-06-22)
 
 ### Features
