@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3414,7 +3414,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3532,7 +3532,7 @@ dependencies = [
 
 [[package]]
 name = "roder-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -3550,7 +3550,7 @@ dependencies = [
 
 [[package]]
 name = "roder-configure"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -3720,7 +3720,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-claude-code"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4413,7 +4413,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-synthetic"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4430,7 +4430,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-synthetic-search"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4537,7 +4537,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-web-search"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4632,7 +4632,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4735,7 +4735,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4865,7 +4865,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4912,7 +4912,7 @@ dependencies = [
 
 [[package]]
 name = "roder-web-search"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "reqwest",
