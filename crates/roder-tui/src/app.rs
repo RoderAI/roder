@@ -100,6 +100,7 @@ use roder_protocol::{
     TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WorkspaceCreateParams,
     WorkspaceCreateResult, WorkspaceRootInput,
 };
+use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tui_textarea::TextArea;
@@ -11256,6 +11257,114 @@ mod tests {
 
         assert!(app.tool_detail_modal.is_some());
         assert!(app.mouse_selection.is_none());
+    }
+
+    fn sample_user_input_questions() -> Value {
+        serde_json::json!([
+            {
+                "header": "Failing e2e test before release",
+                "id": "release",
+                "question": "How do you want to handle it?",
+                "options": [
+                    { "label": "fix-first", "description": "Fix the test before releasing." },
+                    { "label": "ship-anyway", "description": "Release and follow up." }
+                ]
+            },
+            {
+                "header": "Scope",
+                "id": "scope",
+                "question": "Which path?",
+                "options": [
+                    { "label": "claude-code", "description": "Only the claude path." },
+                    { "label": "all", "description": "Every provider." }
+                ]
+            }
+        ])
+    }
+
+    #[test]
+    fn user_input_dialog_parses_questions_and_options() {
+        let state = UserInputDialogState::from_event(
+            "req-1".to_string(),
+            "turn-1".to_string(),
+            &sample_user_input_questions(),
+        )
+        .expect("dialog parses");
+        assert_eq!(state.questions.len(), 2);
+        assert_eq!(state.current_question().id, "release");
+        assert_eq!(state.current_question().options[0].label, "fix-first");
+        assert_eq!(
+            state.current_question().options[1].description,
+            "Release and follow up."
+        );
+    }
+
+    #[test]
+    fn user_input_dialog_ignores_questions_without_options() {
+        let state = UserInputDialogState::from_event(
+            "req-1".to_string(),
+            "turn-1".to_string(),
+            &serde_json::json!([{ "id": "free", "question": "Anything?" }]),
+        );
+        assert!(state.is_none(), "questions without options are not answerable");
+    }
+
+    #[test]
+    fn user_input_dialog_navigation_wraps() {
+        let mut state = UserInputDialogState::from_event(
+            "req-1".to_string(),
+            "turn-1".to_string(),
+            &sample_user_input_questions(),
+        )
+        .unwrap();
+        assert_eq!(state.selected, 0);
+        state.select_previous();
+        assert_eq!(state.selected, 1, "up from the first option wraps to the last");
+        state.select_next();
+        assert_eq!(state.selected, 0, "down wraps back to the first option");
+    }
+
+    #[test]
+    fn user_input_dialog_collects_answers_across_questions() {
+        let mut state = UserInputDialogState::from_event(
+            "req-1".to_string(),
+            "turn-1".to_string(),
+            &sample_user_input_questions(),
+        )
+        .unwrap();
+        // Answer the first question with its second option.
+        state.select_next();
+        assert!(!state.commit_current(), "more questions remain");
+        assert_eq!(state.current, 1);
+        assert_eq!(state.selected, 0, "selection resets for the next question");
+        // Answer the second question with its first option.
+        assert!(state.commit_current(), "all questions answered");
+        assert_eq!(state.answers["release"], "ship-anyway");
+        assert_eq!(state.answers["scope"], "claude-code");
+    }
+
+    #[test]
+    fn user_input_key_mapping_matches_navigation_and_selection() {
+        assert_eq!(
+            user_input_action_for_key(KeyEvent::from(KeyCode::Up)),
+            UserInputKeyAction::SelectPrevious
+        );
+        assert_eq!(
+            user_input_action_for_key(KeyEvent::from(KeyCode::Down)),
+            UserInputKeyAction::SelectNext
+        );
+        assert_eq!(
+            user_input_action_for_key(KeyEvent::from(KeyCode::Char('2'))),
+            UserInputKeyAction::SelectIndex(1)
+        );
+        assert_eq!(
+            user_input_action_for_key(KeyEvent::from(KeyCode::Enter)),
+            UserInputKeyAction::Confirm
+        );
+        assert_eq!(
+            user_input_action_for_key(KeyEvent::from(KeyCode::Esc)),
+            UserInputKeyAction::Cancel
+        );
     }
 
     #[test]

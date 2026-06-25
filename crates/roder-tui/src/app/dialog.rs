@@ -164,6 +164,107 @@ fn dialog_copy(dialog: &ConfirmDialog) -> DialogCopy {
     }
 }
 
+/// Renders the interactive `request_user_input` selection modal: the current
+/// question plus its options, with the highlighted option called out and a
+/// progress hint when more than one question is pending.
+pub(super) fn render_user_input_dialog(
+    f: &mut Frame<'_>,
+    area: Rect,
+    state: &UserInputDialogState,
+    theme: Theme,
+) {
+    let question = state.current_question();
+    // Each option occupies two lines (label + wrapped description); leave room
+    // for the context, heading, blank spacer, and controls lines plus borders.
+    let option_lines = question.options.len() as u16 * 2;
+    let desired = option_lines + 6;
+    let height = desired.min(area.height.saturating_sub(2)).max(7);
+    let dialog_area = centered_rect(area, dialog_width(area), height);
+    let shadow_area = shadow_rect(dialog_area, area);
+
+    f.render_widget(Clear, shadow_area);
+    f.render_widget(Paragraph::new("").style(theme.dialog_shadow()), shadow_area);
+    f.render_widget(Clear, dialog_area);
+
+    let borders = if theme.borders_visible {
+        Borders::ALL
+    } else {
+        Borders::NONE
+    };
+    let title = if state.questions.len() > 1 {
+        format!(
+            " Your input ({}/{}) ",
+            state.current + 1,
+            state.questions.len()
+        )
+    } else {
+        " Your input ".to_string()
+    };
+    let block = Block::default()
+        .borders(borders)
+        .border_type(theme.border_type)
+        .border_style(theme.dialog())
+        .style(theme.dialog_surface())
+        .padding(Padding::horizontal(2))
+        .title(Span::styled(title, theme.accent()));
+    let inner = block.inner(dialog_area);
+    f.render_widget(block, dialog_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let context = if question.header.trim().is_empty() {
+        "model needs your input".to_string()
+    } else {
+        question.header.clone()
+    };
+    f.render_widget(context_line(&context, theme), chunks[0]);
+    f.render_widget(heading_line(&question.question, theme), chunks[1]);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (index, option) in question.options.iter().enumerate() {
+        let selected = index == state.selected;
+        let marker = if selected { "›" } else { " " };
+        let label_style = if selected {
+            theme.accent()
+        } else {
+            theme.dialog_surface()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{marker} {}. ", index + 1), theme.accent_soft()),
+            Span::styled(option.label.clone(), label_style),
+        ]));
+        if !option.description.trim().is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("    {}", option.description),
+                theme.dialog_surface(),
+            )));
+        }
+    }
+    f.render_widget(
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: true })
+            .style(theme.dialog_surface()),
+        chunks[2],
+    );
+
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "↑/↓ move · 1-9 jump · Enter select · Esc skip".to_string(),
+            theme.muted(),
+        )))
+        .style(theme.dialog_surface()),
+        chunks[3],
+    );
+}
+
 fn dialog_width(area: Rect) -> u16 {
     let roomy_width = area.width.saturating_sub(4).min(64);
     roomy_width.max(area.width.min(44))
