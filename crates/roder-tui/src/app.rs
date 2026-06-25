@@ -2618,12 +2618,39 @@ where
             }
         }
 
+        // Best-effort: ask the backend to stop any in-flight turn before we tear
+        // the terminal down. Providers (e.g. Claude Code) spawn a CLI subprocess
+        // whose runtime tasks would otherwise keep the process alive after exit,
+        // forcing a second Ctrl+C. Sending `turn/interrupt` lets the runtime
+        // cancel the inference stream and drop the child's reader task.
+        self.shutdown_active_turn().await;
+
         // Clear the progress indicator before we tear down the terminal so we
         // never leave a stale loader in the tab bar / Dock after exit.
         let _ = self.progress.clear(session.terminal_mut().backend_mut());
         session.restore()?;
 
         Ok(())
+    }
+
+    /// On exit, interrupt the focused thread's active turn if one is running.
+    /// This is fire-and-forget: we do not surface timeline/system messages
+    /// because the UI is already being torn down. The bounded drain gives the
+    /// backend a brief window to act on the interrupt before the process exits.
+    async fn shutdown_active_turn(&mut self) {
+        let Some(turn_id) = self.active_turn_id.clone() else {
+            return;
+        };
+        let params = self.interrupt_params(turn_id);
+        let _ = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("interrupt-on-exit")),
+                method: "turn/interrupt".to_string(),
+                params: Some(serde_json::to_value(params).unwrap()),
+            })
+            .await;
     }
 
     async fn handle_confirm_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
