@@ -1144,8 +1144,33 @@ impl InferenceEngine for FakeInferenceEngine {
     async fn stream_turn(
         &self,
         _ctx: InferenceTurnContext<'_>,
-        _request: AgentInferenceRequest,
+        request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        // Demo/regression hook: when a user message contains the sentinel and the
+        // survey has not been answered yet, drive the interactive
+        // `request_user_input` tool so the TUI selection dialog can be exercised
+        // end to end with the local mock provider.
+        if mock_should_request_user_input(&request) {
+            return Ok(Box::pin(stream::iter(vec![Ok(
+                InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "mock-user-input".to_string(),
+                    name: "request_user_input".to_string(),
+                    arguments: serde_json::json!({
+                        "questions": [{
+                            "header": "Failing e2e test before release",
+                            "id": "release",
+                            "question": "How do you want to handle the failing e2e test before releasing?",
+                            "options": [
+                                { "label": "fix-first", "description": "Fix the api_key assertion before cutting the release." },
+                                { "label": "ship-anyway", "description": "Release now and fix the test in a follow-up." },
+                                { "label": "hold", "description": "Hold the release until we investigate further." }
+                            ]
+                        }]
+                    })
+                    .to_string(),
+                }),
+            )])));
+        }
         Ok(Box::pin(stream::iter(vec![
             Ok(InferenceEvent::MessageDelta(MessageDelta {
                 text: "hello".to_string(),
@@ -1165,6 +1190,25 @@ impl InferenceEngine for FakeInferenceEngine {
             })),
         ])))
     }
+}
+
+fn mock_should_request_user_input(request: &AgentInferenceRequest) -> bool {
+    use roder_api::transcript::TranscriptItem;
+    let asked = request.transcript.iter().any(|item| {
+        matches!(
+            item,
+            TranscriptItem::UserMessage(message)
+                if message.text.contains("FAKE_REQUEST_USER_INPUT")
+        )
+    });
+    let answered = request.transcript.iter().any(|item| {
+        matches!(
+            item,
+            TranscriptItem::ToolResult(result)
+                if result.name.as_deref() == Some("request_user_input")
+        )
+    });
+    asked && !answered
 }
 
 #[cfg(test)]
