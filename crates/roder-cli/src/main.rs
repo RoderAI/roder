@@ -283,7 +283,17 @@ async fn run_cli() -> anyhow::Result<()> {
         tui.run().await?;
         print_tui_exit_summary(&tui);
     }
-    Ok(())
+
+    // The TUI has returned: the terminal is restored, the exit summary (and any
+    // transcript path) is printed, and user config is persisted synchronously on
+    // change. In-process providers (e.g. Claude Code) can leave subprocess reader
+    // tasks alive that would otherwise block the multi-thread runtime's drop,
+    // requiring a second Ctrl+C. Flush stdout and exit immediately so a single
+    // Ctrl+C fully tears the process down.
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    std::process::exit(0);
 }
 
 async fn run_memory_cli(args: &[String]) -> anyhow::Result<()> {
