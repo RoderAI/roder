@@ -1,3 +1,9 @@
+## 0.1.2 (2026-06-26)
+
+### Fixes
+
+- Emit estimated token usage from Cursor bidirectional agent turns so the TUI thread token count updates after Cursor/Opus completions.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
