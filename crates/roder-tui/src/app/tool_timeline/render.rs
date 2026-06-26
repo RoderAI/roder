@@ -12,7 +12,7 @@ use super::super::stream_animation::{
 use super::is_shell_like_tool;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
-use super::preview::tool_title;
+use super::preview::{agent_swarm_result_summary, tool_title};
 use super::{
     MESSAGE_FOLD_LINE_LIMIT, RUNNING_SHELL_TAIL_ROWS, TimelineItem, TimelineItemKind,
     ToolTimelineStatus, ToolTimelineTool, reasoning_visible_body,
@@ -436,6 +436,36 @@ impl ToolTimelineTool {
         let diff_preview = tool_diff_preview(&self.entry);
         if let Some(preview) = diff_preview.as_ref() {
             lines.extend(tool_diff_preview_lines(preview, theme, width));
+        }
+
+        // Agent-swarm tool calls render a compact child grid (grouped under the
+        // tool call) instead of the raw <agent_swarm_result> block: a summary
+        // line always, and per-child outcome/item/agent-id rows when expanded.
+        if self.entry.name == roder_api::subagents::AGENT_SWARM_TOOL_NAME
+            && let Some(output) = self.output.as_deref()
+            && let Some(summary) = agent_swarm_result_summary(output)
+        {
+            lines.push(Line::from(vec![
+                Span::styled("  ↳ ", theme.subtle()),
+                Span::styled(
+                    format!("swarm: {}", summary.summary),
+                    theme.muted().add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            if expanded {
+                for child in &summary.children {
+                    let child_style = match child.outcome.as_str() {
+                        "completed" => theme.muted(),
+                        "failed" => theme.error(),
+                        _ => theme.subtle(),
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("    ", theme.subtle()),
+                        Span::styled(child.label(), child_style),
+                    ]));
+                }
+            }
+            return;
         }
 
         let shell_like = is_shell_like_tool(&self.entry.name);
