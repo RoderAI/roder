@@ -576,6 +576,12 @@ pub const RODER_AGENT_SWARM_LAUNCH_INTERVAL_MS_ENV: &str = "RODER_AGENT_SWARM_LA
 /// Env override for the swarm per-child timeout in seconds.
 pub const RODER_AGENT_SWARM_CHILD_TIMEOUT_SECONDS_ENV: &str =
     "RODER_AGENT_SWARM_CHILD_TIMEOUT_SECONDS";
+/// Env override for the number of rate-limit retries per swarm child.
+pub const RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_ENV: &str =
+    "RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES";
+/// Env override for the swarm rate-limit base backoff in milliseconds.
+pub const RODER_AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS_ENV: &str =
+    "RODER_AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS";
 
 /// `[agent_swarm]` config block (roadmap phase 104). All fields are optional;
 /// unset fields fall back to the bounded defaults in
@@ -587,6 +593,8 @@ pub struct AgentSwarmConfig {
     pub launch_interval_ms: Option<u64>,
     pub max_concurrency: Option<usize>,
     pub child_timeout_seconds: Option<u64>,
+    pub rate_limit_max_retries: Option<usize>,
+    pub rate_limit_base_backoff_ms: Option<u64>,
 }
 
 /// Resolve the effective swarm scheduler config: bounded defaults, overlaid by
@@ -621,6 +629,12 @@ pub fn resolve_agent_swarm_config_with(
         if config.child_timeout_seconds.is_some() {
             resolved.child_timeout_seconds = config.child_timeout_seconds;
         }
+        if let Some(value) = config.rate_limit_max_retries {
+            resolved.rate_limit_max_retries = value;
+        }
+        if let Some(value) = config.rate_limit_base_backoff_ms {
+            resolved.rate_limit_base_backoff_ms = value;
+        }
     }
 
     if let Some(value) = env(RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV).and_then(|v| v.trim().parse().ok())
@@ -646,6 +660,16 @@ pub fn resolve_agent_swarm_config_with(
         env(RODER_AGENT_SWARM_CHILD_TIMEOUT_SECONDS_ENV).and_then(|v| v.trim().parse().ok())
     {
         resolved.child_timeout_seconds = Some(value);
+    }
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.rate_limit_max_retries = value;
+    }
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.rate_limit_base_backoff_ms = value;
     }
 
     resolved.clamped()
@@ -2022,10 +2046,13 @@ mod tests {
             launch_interval_ms: Some(200),
             max_concurrency: Some(8),
             child_timeout_seconds: Some(45),
+            rate_limit_max_retries: Some(2),
+            rate_limit_base_backoff_ms: Some(1000),
         };
         let env: std::collections::HashMap<&str, &str> = [
             (RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV, "9001"),
             (RODER_AGENT_SWARM_MAX_CONCURRENCY_ENV, "2"),
+            (RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_ENV, "5"),
         ]
         .into_iter()
         .collect();
@@ -2041,6 +2068,10 @@ mod tests {
         assert_eq!(resolved.launch_interval_ms, 200);
         assert_eq!(resolved.max_concurrency, Some(2));
         assert_eq!(resolved.child_timeout_seconds, Some(45));
+        // env (5) overrode the block value (2) for rate-limit retries; the
+        // block value still drives the base backoff.
+        assert_eq!(resolved.rate_limit_max_retries, 5);
+        assert_eq!(resolved.rate_limit_base_backoff_ms, 1000);
     }
 
     #[test]
