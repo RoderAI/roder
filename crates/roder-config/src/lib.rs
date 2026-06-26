@@ -36,6 +36,8 @@ pub struct Config {
     pub context: Option<ContextConfig>,
     pub sessions: Option<SessionsConfig>,
     pub subagents: Option<SubagentsConfig>,
+    /// Agent-swarm scheduler tuning (`[agent_swarm]`, roadmap phase 104).
+    pub agent_swarm: Option<AgentSwarmConfig>,
     pub policy_modes: Option<PolicyModesConfig>,
     pub commands: Option<CommandsConfig>,
     pub tools: Option<ToolsConfig>,
@@ -560,6 +562,93 @@ pub struct SubagentsConfig {
 pub struct SubagentsDiskConfig {
     pub user_dir: Option<PathBuf>,
     pub workspace_dir: Option<PathBuf>,
+}
+
+/// Env override for the swarm subagent count cap.
+pub const RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV: &str = "RODER_AGENT_SWARM_MAX_SUBAGENTS";
+/// Env override for the swarm normal-phase concurrency cap.
+pub const RODER_AGENT_SWARM_MAX_CONCURRENCY_ENV: &str = "RODER_AGENT_SWARM_MAX_CONCURRENCY";
+/// Env override for the swarm initial-launch burst limit.
+pub const RODER_AGENT_SWARM_INITIAL_LAUNCH_LIMIT_ENV: &str =
+    "RODER_AGENT_SWARM_INITIAL_LAUNCH_LIMIT";
+/// Env override for the swarm pacing interval in milliseconds.
+pub const RODER_AGENT_SWARM_LAUNCH_INTERVAL_MS_ENV: &str = "RODER_AGENT_SWARM_LAUNCH_INTERVAL_MS";
+/// Env override for the swarm per-child timeout in seconds.
+pub const RODER_AGENT_SWARM_CHILD_TIMEOUT_SECONDS_ENV: &str =
+    "RODER_AGENT_SWARM_CHILD_TIMEOUT_SECONDS";
+
+/// `[agent_swarm]` config block (roadmap phase 104). All fields are optional;
+/// unset fields fall back to the bounded defaults in
+/// [`roder_api::subagents::AgentSwarmConfig`].
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSwarmConfig {
+    pub max_subagents: Option<usize>,
+    pub initial_launch_limit: Option<usize>,
+    pub launch_interval_ms: Option<u64>,
+    pub max_concurrency: Option<usize>,
+    pub child_timeout_seconds: Option<u64>,
+}
+
+/// Resolve the effective swarm scheduler config: bounded defaults, overlaid by
+/// `[agent_swarm]`, overlaid by `RODER_AGENT_SWARM_*` env, then clamped so no
+/// source can request unbounded fanout.
+pub fn resolve_agent_swarm_config(
+    config: Option<&AgentSwarmConfig>,
+) -> roder_api::subagents::AgentSwarmConfig {
+    resolve_agent_swarm_config_with(config, |key| std::env::var(key).ok())
+}
+
+/// Testable variant of [`resolve_agent_swarm_config`] with an injected env
+/// lookup.
+pub fn resolve_agent_swarm_config_with(
+    config: Option<&AgentSwarmConfig>,
+    env: impl Fn(&str) -> Option<String>,
+) -> roder_api::subagents::AgentSwarmConfig {
+    let mut resolved = roder_api::subagents::AgentSwarmConfig::default();
+    if let Some(config) = config {
+        if let Some(value) = config.max_subagents {
+            resolved.max_subagents = value;
+        }
+        if let Some(value) = config.initial_launch_limit {
+            resolved.initial_launch_limit = value;
+        }
+        if let Some(value) = config.launch_interval_ms {
+            resolved.launch_interval_ms = value;
+        }
+        if config.max_concurrency.is_some() {
+            resolved.max_concurrency = config.max_concurrency;
+        }
+        if config.child_timeout_seconds.is_some() {
+            resolved.child_timeout_seconds = config.child_timeout_seconds;
+        }
+    }
+
+    if let Some(value) = env(RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.max_subagents = value;
+    }
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_INITIAL_LAUNCH_LIMIT_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.initial_launch_limit = value;
+    }
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_LAUNCH_INTERVAL_MS_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.launch_interval_ms = value;
+    }
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_MAX_CONCURRENCY_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.max_concurrency = Some(value);
+    }
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_CHILD_TIMEOUT_SECONDS_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.child_timeout_seconds = Some(value);
+    }
+
+    resolved.clamped()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1879,6 +1968,7 @@ mod tests {
             context: None,
             sessions: None,
             subagents: None,
+            agent_swarm: None,
             policy_modes: None,
             commands: None,
             tools: None,
@@ -1916,6 +2006,61 @@ mod tests {
         assert!(encoded.contains("model = \"gpt-5.5\""));
         assert!(encoded.contains("[providers.openai]"));
         assert!(encoded.contains("api_key = \"key\""));
+    }
+
+    #[test]
+    fn agent_swarm_config_resolves_defaults_when_unset() {
+        let resolved = resolve_agent_swarm_config_with(None, |_| None);
+        assert_eq!(resolved, roder_api::subagents::AgentSwarmConfig::default());
+    }
+
+    #[test]
+    fn agent_swarm_config_overlays_block_then_env_then_clamps() {
+        let config = AgentSwarmConfig {
+            max_subagents: Some(64),
+            initial_launch_limit: Some(3),
+            launch_interval_ms: Some(200),
+            max_concurrency: Some(8),
+            child_timeout_seconds: Some(45),
+        };
+        let env: std::collections::HashMap<&str, &str> = [
+            (RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV, "9001"),
+            (RODER_AGENT_SWARM_MAX_CONCURRENCY_ENV, "2"),
+        ]
+        .into_iter()
+        .collect();
+        let resolved = resolve_agent_swarm_config_with(Some(&config), |key| {
+            env.get(key).map(|value| value.to_string())
+        });
+        // env beat the block value, then clamp held the hard cap.
+        assert_eq!(
+            resolved.max_subagents,
+            roder_api::subagents::AGENT_SWARM_MAX_SUBAGENTS
+        );
+        assert_eq!(resolved.initial_launch_limit, 3);
+        assert_eq!(resolved.launch_interval_ms, 200);
+        assert_eq!(resolved.max_concurrency, Some(2));
+        assert_eq!(resolved.child_timeout_seconds, Some(45));
+    }
+
+    #[test]
+    fn agent_swarm_config_deserializes_from_toml() {
+        let config: Config = toml::from_str(
+            r#"
+            [agent_swarm]
+            max_subagents = 32
+            max_concurrency = 4
+            launch_interval_ms = 250
+            "#,
+        )
+        .unwrap();
+        let block = config.agent_swarm.expect("agent_swarm block");
+        assert_eq!(block.max_subagents, Some(32));
+        assert_eq!(block.max_concurrency, Some(4));
+        assert_eq!(block.launch_interval_ms, Some(250));
+        let resolved = resolve_agent_swarm_config_with(Some(&block), |_| None);
+        assert_eq!(resolved.max_subagents, 32);
+        assert_eq!(resolved.max_concurrency, Some(4));
     }
 
     #[test]
