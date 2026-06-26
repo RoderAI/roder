@@ -565,6 +565,48 @@ mod tests {
         assert_eq!(*launcher.order.lock().unwrap(), vec![1, 2, 3, 4]);
     }
 
+    /// A launcher that proves true parallel overlap: every child must be
+    /// simultaneously active to clear the barrier, so the recorded peak equals
+    /// the expected concurrency. This is the offline evidence (roadmap 104,
+    /// Task 6) that the swarm scheduler runs independent children in parallel
+    /// rather than serially, with no flaky sleeps.
+    struct OverlapLauncher {
+        barrier: Arc<tokio::sync::Barrier>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentSwarmChildLauncher for OverlapLauncher {
+        async fn launch(&self, spec: AgentSwarmChildSpec) -> AgentSwarmChildRun {
+            // Blocks until `barrier` count children are concurrently here.
+            self.barrier.wait().await;
+            AgentSwarmChildRun {
+                agent_id: Some(format!("agent-{}", spec.index)),
+                outcome: AgentSwarmChildOutcome::Completed,
+                body: "done".to_string(),
+                usage: None,
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn independent_children_run_in_parallel() {
+        // Four children, initial burst of 5, no cap: all four must be active at
+        // once to pass a 4-way barrier — deterministic proof of overlap.
+        let launcher = Arc::new(OverlapLauncher {
+            barrier: Arc::new(tokio::sync::Barrier::new(4)),
+        });
+        let specs: Vec<_> = (1..=4)
+            .map(|i| spec(i, AgentSwarmChildKind::Spawn))
+            .collect();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_agent_swarm(launcher, specs, &fast_config(), AgentSwarmCancel::new()),
+        )
+        .await
+        .expect("parallel swarm should not deadlock");
+        assert_eq!(result.completed, 4);
+    }
+
     #[tokio::test]
     async fn cancellation_marks_unfinished_children_aborted() {
         let cancel = AgentSwarmCancel::new();
