@@ -3356,11 +3356,11 @@ where
     }
 
     /// Label for the active agent mode shown next to the policy/security mode
-    /// in the composer title (e.g. "Bypass - Swarm"). Returns `None` when no
-    /// agent mode is set. Review mode will add its branch when it lands.
+    /// in the composer title (e.g. "Bypass - Agent Swarm"). Returns `None` when
+    /// no agent mode is set. Review mode will add its branch when it lands.
     fn active_agent_mode_label(&self) -> Option<&'static str> {
         if self.swarm_mode {
-            Some("Swarm")
+            Some("Agent Swarm")
         } else {
             None
         }
@@ -10280,6 +10280,17 @@ mod tests {
         let pending = app.take_prepared_prompt().expect("prepared prompt");
         assert_eq!(pending.message, "hello world");
         assert!(!pending.message.contains("agent_swarm"));
+    }
+
+    #[test]
+    fn active_agent_mode_label_is_agent_swarm_when_on() {
+        let mut app = test_app();
+        assert_eq!(app.active_agent_mode_label(), None);
+        app.set_swarm_mode(true);
+        // Shown next to the policy/security mode, e.g. "Bypass - Agent Swarm".
+        assert_eq!(app.active_agent_mode_label(), Some("Agent Swarm"));
+        app.set_swarm_mode(false);
+        assert_eq!(app.active_agent_mode_label(), None);
     }
 
     #[tokio::test]
