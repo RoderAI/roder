@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::events::{ThreadId, TurnId};
@@ -199,6 +201,454 @@ pub trait SubagentDispatcher: Send + Sync + 'static {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Agent-swarm mode (roadmap phase 104)
+//
+// Swarm is a Roder-native composition over the canonical subagent dispatch
+// surface above. It lets a lead model (or `/agent-swarm` command) launch many
+// homogeneous child tasks from one prompt template, resume unfinished children,
+// and collect an ordered, machine-readable result. The types here are
+// provider-neutral and do not vendor any external implementation.
+// ---------------------------------------------------------------------------
+
+/// Literal placeholder replaced with each `agent_swarm` item value.
+pub const AGENT_SWARM_PROMPT_PLACEHOLDER: &str = "{{item}}";
+
+/// Default upper bound on swarm child count. Config may lower but not exceed it.
+pub const AGENT_SWARM_MAX_SUBAGENTS: usize = 128;
+/// Default number of children that may start immediately before pacing applies.
+pub const AGENT_SWARM_INITIAL_LAUNCH_LIMIT: usize = 5;
+/// Default pacing interval between additional child launches, in milliseconds.
+pub const AGENT_SWARM_LAUNCH_INTERVAL_MS: u64 = 700;
+
+/// How a swarm-mode session was entered.
+///
+/// `manual` is a persistent toggle (`/agent-swarm on`); `task` is a one-shot
+/// `/agent-swarm <prompt>`; `tool` is implicit entry from the `agent_swarm`
+/// tool call. Only `manual` stays active across turns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSwarmModeTrigger {
+    Manual,
+    Task,
+    Tool,
+}
+
+impl AgentSwarmModeTrigger {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Task => "task",
+            Self::Tool => "tool",
+        }
+    }
+
+    /// One-shot triggers auto-exit at the end of the relevant turn.
+    pub fn should_auto_exit(self) -> bool {
+        matches!(self, Self::Task | Self::Tool)
+    }
+}
+
+/// Whether a swarm child is a fresh spawn or a resume of an existing agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSwarmChildKind {
+    Spawn,
+    Resume,
+}
+
+impl AgentSwarmChildKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Spawn => "spawn",
+            Self::Resume => "resume",
+        }
+    }
+}
+
+/// Final outcome of a single swarm child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSwarmChildOutcome {
+    Completed,
+    Failed,
+    Aborted,
+}
+
+impl AgentSwarmChildOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Aborted => "aborted",
+        }
+    }
+}
+
+/// Whether an aborted child had started running before cancellation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSwarmChildState {
+    Started,
+    NotStarted,
+}
+
+impl AgentSwarmChildState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::NotStarted => "not_started",
+        }
+    }
+}
+
+/// Parsed `agent_swarm` tool input, before any child is dispatched.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentSwarmRequest {
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<String>,
+    /// Map of existing subagent agent_id to the prompt used to resume it.
+    /// Resumed children are dispatched before new item-based spawns.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resume_agent_ids: BTreeMap<String, String>,
+}
+
+/// One ordered child to dispatch as part of a swarm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSwarmChildSpec {
+    /// 1-based ordering index, stable across the whole swarm.
+    pub index: usize,
+    pub kind: AgentSwarmChildKind,
+    /// The item value (for spawns) used to render the prompt, when present.
+    pub item: Option<String>,
+    /// The fully-rendered prompt for this child.
+    pub prompt: String,
+    /// For resumes, the existing agent id to continue.
+    pub resume_agent_id: Option<String>,
+}
+
+/// Tunable scheduler/bounds for swarm fanout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSwarmConfig {
+    /// Hard upper bound on children per swarm. Never exceeds
+    /// [`AGENT_SWARM_MAX_SUBAGENTS`].
+    pub max_subagents: usize,
+    /// Children allowed to start immediately before pacing applies.
+    pub initial_launch_limit: usize,
+    /// Pacing interval between additional launches, in milliseconds.
+    pub launch_interval_ms: u64,
+    /// Optional cap on simultaneously-active children (normal phase).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrency: Option<usize>,
+    /// Optional per-child timeout override, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_timeout_seconds: Option<u64>,
+}
+
+impl Default for AgentSwarmConfig {
+    fn default() -> Self {
+        Self {
+            max_subagents: AGENT_SWARM_MAX_SUBAGENTS,
+            initial_launch_limit: AGENT_SWARM_INITIAL_LAUNCH_LIMIT,
+            launch_interval_ms: AGENT_SWARM_LAUNCH_INTERVAL_MS,
+            max_concurrency: None,
+            child_timeout_seconds: None,
+        }
+    }
+}
+
+impl AgentSwarmConfig {
+    /// Clamp config into a bounded, deterministic range so config (or env) can
+    /// never request unbounded fanout or a zero-sized ramp.
+    pub fn clamped(mut self) -> Self {
+        self.max_subagents = self.max_subagents.clamp(1, AGENT_SWARM_MAX_SUBAGENTS);
+        self.initial_launch_limit = self.initial_launch_limit.max(1);
+        if let Some(cap) = self.max_concurrency {
+            self.max_concurrency = Some(cap.max(1));
+        }
+        if let Some(timeout) = self.child_timeout_seconds {
+            self.child_timeout_seconds = Some(timeout.max(1));
+        }
+        self
+    }
+}
+
+/// Outcome of a single resolved swarm child entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentSwarmChildResult {
+    pub index: usize,
+    pub kind: AgentSwarmChildKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    pub outcome: AgentSwarmChildOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<AgentSwarmChildState>,
+    pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
+}
+
+/// Aggregated, ordered swarm result returned to the lead model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentSwarmResult {
+    pub completed: usize,
+    pub failed: usize,
+    pub aborted: usize,
+    pub children: Vec<AgentSwarmChildResult>,
+}
+
+impl AgentSwarmResult {
+    pub fn from_children(children: Vec<AgentSwarmChildResult>) -> Self {
+        let mut completed = 0;
+        let mut failed = 0;
+        let mut aborted = 0;
+        for child in &children {
+            match child.outcome {
+                AgentSwarmChildOutcome::Completed => completed += 1,
+                AgentSwarmChildOutcome::Failed => failed += 1,
+                AgentSwarmChildOutcome::Aborted => aborted += 1,
+            }
+        }
+        Self {
+            completed,
+            failed,
+            aborted,
+            children,
+        }
+    }
+
+    /// `completed: 2, failed: 1` style summary; omits zero buckets.
+    pub fn summary_line(&self) -> String {
+        let mut parts = Vec::new();
+        if self.completed > 0 {
+            parts.push(format!("completed: {}", self.completed));
+        }
+        if self.failed > 0 {
+            parts.push(format!("failed: {}", self.failed));
+        }
+        if self.aborted > 0 {
+            parts.push(format!("aborted: {}", self.aborted));
+        }
+        if parts.is_empty() {
+            "completed: 0".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
+
+    /// A resume hint is useful when unfinished children carry agent ids.
+    pub fn needs_resume_hint(&self) -> bool {
+        self.children.iter().any(|child| {
+            child.outcome != AgentSwarmChildOutcome::Completed && child.agent_id.is_some()
+        })
+    }
+
+    /// Render the durable, transcript-safe `<agent_swarm_result>` text block.
+    pub fn render_text(&self) -> String {
+        let mut lines = vec![
+            "<agent_swarm_result>".to_string(),
+            format!("<summary>{}</summary>", self.summary_line()),
+        ];
+        if self.needs_resume_hint() {
+            lines.push(
+                "<resume_hint>Call agent_swarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>"
+                    .to_string(),
+            );
+        }
+        for child in &self.children {
+            let mode = if child.kind == AgentSwarmChildKind::Resume {
+                " mode=\"resume\"".to_string()
+            } else {
+                String::new()
+            };
+            let agent_id = child
+                .agent_id
+                .as_deref()
+                .map(|id| format!(" agent_id=\"{}\"", escape_xml_attr(id)))
+                .unwrap_or_default();
+            let item = child
+                .item
+                .as_deref()
+                .map(|item| format!(" item=\"{}\"", escape_xml_attr(item)))
+                .unwrap_or_default();
+            let state = child
+                .state
+                .map(|state| format!(" state=\"{}\"", state.as_str()))
+                .unwrap_or_default();
+            lines.push(format!(
+                "<subagent{mode}{agent_id}{item}{state} outcome=\"{}\">{}</subagent>",
+                child.outcome.as_str(),
+                escape_xml_text(&child.body)
+            ));
+        }
+        lines.push("</agent_swarm_result>".to_string());
+        lines.join("\n")
+    }
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Validate an [`AgentSwarmRequest`] and build the ordered child specs.
+///
+/// Mirrors the documented contract: at least two `items` unless
+/// `resume_agent_ids` is present; `prompt_template` is required whenever
+/// `items` are present and must contain the `{{item}}` placeholder; filled
+/// prompts must be distinct; resumed children are ordered before spawns; and
+/// the total child count must not exceed `config.max_subagents`. No child is
+/// dispatched if validation fails.
+pub fn build_agent_swarm_specs(
+    request: &AgentSwarmRequest,
+    config: &AgentSwarmConfig,
+) -> Result<Vec<AgentSwarmChildSpec>, AgentSwarmValidationError> {
+    if request.description.trim().is_empty() {
+        return Err(AgentSwarmValidationError::EmptyDescription);
+    }
+
+    let items: Vec<String> = request.items.iter().map(|item| item.trim().to_string()).collect();
+    if items.iter().any(|item| item.is_empty()) {
+        return Err(AgentSwarmValidationError::EmptyItem);
+    }
+
+    let resume_entries: Vec<(String, String)> = request
+        .resume_agent_ids
+        .iter()
+        .map(|(id, prompt)| (id.trim().to_string(), prompt.trim().to_string()))
+        .collect();
+    if resume_entries
+        .iter()
+        .any(|(id, prompt)| id.is_empty() || prompt.is_empty())
+    {
+        return Err(AgentSwarmValidationError::EmptyResumeEntry);
+    }
+
+    let item_count = items.len();
+    let resume_count = resume_entries.len();
+    let total = item_count + resume_count;
+
+    if resume_count == 0 && item_count < 2 {
+        return Err(AgentSwarmValidationError::TooFewItems);
+    }
+    let max = config.max_subagents.clamp(1, AGENT_SWARM_MAX_SUBAGENTS);
+    if total > max {
+        return Err(AgentSwarmValidationError::TooManySubagents { total, max });
+    }
+
+    let prompt_template = request
+        .prompt_template
+        .as_ref()
+        .map(|template| template.trim().to_string())
+        .filter(|template| !template.is_empty());
+
+    if item_count > 0 {
+        let Some(template) = prompt_template.as_ref() else {
+            return Err(AgentSwarmValidationError::MissingPromptTemplate);
+        };
+        if !template.contains(AGENT_SWARM_PROMPT_PLACEHOLDER) {
+            return Err(AgentSwarmValidationError::MissingPlaceholder);
+        }
+    }
+
+    let mut specs = Vec::with_capacity(total);
+    for (agent_id, prompt) in &resume_entries {
+        specs.push(AgentSwarmChildSpec {
+            index: specs.len() + 1,
+            kind: AgentSwarmChildKind::Resume,
+            item: None,
+            prompt: prompt.clone(),
+            resume_agent_id: Some(agent_id.clone()),
+        });
+    }
+
+    if item_count > 0 {
+        let template = prompt_template.expect("prompt template validated above");
+        let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+        for (offset, item) in items.iter().enumerate() {
+            let prompt = template.replace(AGENT_SWARM_PROMPT_PLACEHOLDER, item);
+            if let Some(previous) = seen.get(&prompt) {
+                return Err(AgentSwarmValidationError::DuplicatePrompt {
+                    first: *previous,
+                    second: offset + 1,
+                });
+            }
+            seen.insert(prompt.clone(), offset + 1);
+            specs.push(AgentSwarmChildSpec {
+                index: specs.len() + 1,
+                kind: AgentSwarmChildKind::Spawn,
+                item: Some(item.clone()),
+                prompt,
+                resume_agent_id: None,
+            });
+        }
+    }
+
+    Ok(specs)
+}
+
+/// Reasons an `agent_swarm` request is rejected before any child starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentSwarmValidationError {
+    EmptyDescription,
+    EmptyItem,
+    EmptyResumeEntry,
+    TooFewItems,
+    TooManySubagents { total: usize, max: usize },
+    MissingPromptTemplate,
+    MissingPlaceholder,
+    DuplicatePrompt { first: usize, second: usize },
+}
+
+impl std::fmt::Display for AgentSwarmValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyDescription => write!(f, "description must not be empty"),
+            Self::EmptyItem => write!(f, "items must not contain empty values"),
+            Self::EmptyResumeEntry => {
+                write!(f, "resume_agent_ids entries must have non-empty ids and prompts")
+            }
+            Self::TooFewItems => write!(
+                f,
+                "agent_swarm requires at least 2 items unless resume_agent_ids is provided"
+            ),
+            Self::TooManySubagents { total, max } => {
+                write!(f, "agent_swarm supports at most {max} subagents (got {total})")
+            }
+            Self::MissingPromptTemplate => {
+                write!(f, "prompt_template is required when items are provided")
+            }
+            Self::MissingPlaceholder => write!(
+                f,
+                "prompt_template must include the {AGENT_SWARM_PROMPT_PLACEHOLDER} placeholder"
+            ),
+            Self::DuplicatePrompt { first, second } => write!(
+                f,
+                "duplicate subagent prompts from items {first} and {second}; agent_swarm requires distinct subagents"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AgentSwarmValidationError {}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -278,5 +728,158 @@ mod tests {
 
         assert_eq!(result.thread_id, "child-thread");
         assert_eq!(result.exit_reason, SubagentExitReason::Completed);
+    }
+
+    fn swarm_request(items: &[&str]) -> AgentSwarmRequest {
+        AgentSwarmRequest {
+            description: "inspect files".to_string(),
+            subagent_type: Some("explore".to_string()),
+            prompt_template: Some("Read {{item}} and report.".to_string()),
+            items: items.iter().map(|item| item.to_string()).collect(),
+            resume_agent_ids: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn agent_swarm_config_clamps_into_bounds() {
+        let clamped = AgentSwarmConfig {
+            max_subagents: 9001,
+            initial_launch_limit: 0,
+            launch_interval_ms: 700,
+            max_concurrency: Some(0),
+            child_timeout_seconds: Some(0),
+        }
+        .clamped();
+        assert_eq!(clamped.max_subagents, AGENT_SWARM_MAX_SUBAGENTS);
+        assert_eq!(clamped.initial_launch_limit, 1);
+        assert_eq!(clamped.max_concurrency, Some(1));
+        assert_eq!(clamped.child_timeout_seconds, Some(1));
+    }
+
+    #[test]
+    fn build_specs_expands_items_in_order() {
+        let specs =
+            build_agent_swarm_specs(&swarm_request(&["a.rs", "b.rs"]), &AgentSwarmConfig::default())
+                .unwrap();
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].index, 1);
+        assert_eq!(specs[0].kind, AgentSwarmChildKind::Spawn);
+        assert_eq!(specs[0].prompt, "Read a.rs and report.");
+        assert_eq!(specs[1].prompt, "Read b.rs and report.");
+    }
+
+    #[test]
+    fn build_specs_orders_resumes_before_spawns() {
+        let mut request = swarm_request(&["a.rs"]);
+        request
+            .resume_agent_ids
+            .insert("agent-9".to_string(), "continue".to_string());
+        let specs = build_agent_swarm_specs(&request, &AgentSwarmConfig::default()).unwrap();
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].kind, AgentSwarmChildKind::Resume);
+        assert_eq!(specs[0].resume_agent_id.as_deref(), Some("agent-9"));
+        assert_eq!(specs[1].kind, AgentSwarmChildKind::Spawn);
+        assert_eq!(specs[1].index, 2);
+    }
+
+    #[test]
+    fn build_specs_rejects_single_item_without_resume() {
+        let err = build_agent_swarm_specs(&swarm_request(&["only.rs"]), &AgentSwarmConfig::default())
+            .unwrap_err();
+        assert_eq!(err, AgentSwarmValidationError::TooFewItems);
+    }
+
+    #[test]
+    fn build_specs_rejects_missing_placeholder() {
+        let mut request = swarm_request(&["a.rs", "b.rs"]);
+        request.prompt_template = Some("no placeholder here".to_string());
+        let err = build_agent_swarm_specs(&request, &AgentSwarmConfig::default()).unwrap_err();
+        assert_eq!(err, AgentSwarmValidationError::MissingPlaceholder);
+    }
+
+    #[test]
+    fn build_specs_rejects_duplicate_prompts() {
+        let request = swarm_request(&["dup", "dup"]);
+        let err = build_agent_swarm_specs(&request, &AgentSwarmConfig::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            AgentSwarmValidationError::DuplicatePrompt { .. }
+        ));
+    }
+
+    #[test]
+    fn build_specs_enforces_max_subagents() {
+        let config = AgentSwarmConfig {
+            max_subagents: 2,
+            ..AgentSwarmConfig::default()
+        };
+        let err = build_agent_swarm_specs(&swarm_request(&["a", "b", "c"]), &config).unwrap_err();
+        assert_eq!(
+            err,
+            AgentSwarmValidationError::TooManySubagents { total: 3, max: 2 }
+        );
+    }
+
+    #[test]
+    fn agent_swarm_result_renders_summary_and_resume_hint() {
+        let result = AgentSwarmResult::from_children(vec![
+            AgentSwarmChildResult {
+                index: 1,
+                kind: AgentSwarmChildKind::Spawn,
+                item: Some("a.rs".to_string()),
+                agent_id: Some("agent-1".to_string()),
+                outcome: AgentSwarmChildOutcome::Completed,
+                state: None,
+                body: "ok".to_string(),
+                usage: None,
+            },
+            AgentSwarmChildResult {
+                index: 2,
+                kind: AgentSwarmChildKind::Spawn,
+                item: Some("b & c.rs".to_string()),
+                agent_id: Some("agent-2".to_string()),
+                outcome: AgentSwarmChildOutcome::Failed,
+                state: Some(AgentSwarmChildState::Started),
+                body: "boom <fatal>".to_string(),
+                usage: None,
+            },
+        ]);
+        assert_eq!(result.completed, 1);
+        assert_eq!(result.failed, 1);
+        assert!(result.needs_resume_hint());
+        let text = result.render_text();
+        assert!(text.contains("<summary>completed: 1, failed: 1</summary>"));
+        assert!(text.contains("<resume_hint>"));
+        assert!(text.contains("item=\"b &amp; c.rs\""));
+        assert!(text.contains("boom &lt;fatal&gt;"));
+        assert!(text.contains("outcome=\"failed\""));
+    }
+
+    #[test]
+    fn agent_swarm_dtos_round_trip_json() {
+        let result = AgentSwarmResult::from_children(vec![AgentSwarmChildResult {
+            index: 1,
+            kind: AgentSwarmChildKind::Resume,
+            item: None,
+            agent_id: Some("agent-1".to_string()),
+            outcome: AgentSwarmChildOutcome::Aborted,
+            state: Some(AgentSwarmChildState::NotStarted),
+            body: "cancelled".to_string(),
+            usage: None,
+        }]);
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["aborted"], 1);
+        assert_eq!(json["children"][0]["kind"], "resume");
+        assert_eq!(json["children"][0]["outcome"], "aborted");
+        assert_eq!(json["children"][0]["state"], "not_started");
+        let round: AgentSwarmResult = serde_json::from_value(json).unwrap();
+        assert_eq!(round, result);
+    }
+
+    #[test]
+    fn agent_swarm_trigger_auto_exit_rules() {
+        assert!(!AgentSwarmModeTrigger::Manual.should_auto_exit());
+        assert!(AgentSwarmModeTrigger::Task.should_auto_exit());
+        assert!(AgentSwarmModeTrigger::Tool.should_auto_exit());
     }
 }
