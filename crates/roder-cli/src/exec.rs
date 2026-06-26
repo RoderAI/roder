@@ -94,6 +94,7 @@ async fn run_exec_session<C: AppClient>(
                         tool_allowlist: None,
                         developer_instructions: None,
                         external_tools: None,
+                        mcp_auth_token: None,
                         runner: None,
                         ephemeral: options.ephemeral,
                     })?),

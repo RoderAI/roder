@@ -535,6 +535,13 @@ pub struct ThreadStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_tools: Option<Vec<ToolSpec>>,
     /**
+     * Per-thread MCP bearer token forwarded to the MCP servers for this thread's
+     * tool calls. Scopes the thread to a specific identity (for Vex: a per-user,
+     * per-organization capability token). Absent = use the process default.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_auth_token: Option<String>,
+    /**
      * Binds the thread's native coding tools to a remote-runner workspace.
      * Absent = local execution, even when a runtime-level runner destination
      * is selected via `runners/select`.

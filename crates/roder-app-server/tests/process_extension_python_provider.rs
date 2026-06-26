@@ -222,6 +222,7 @@ async fn process_extension_python_provider_serves_a_full_turn() {
             tool_allowlist: None,
             developer_instructions: None,
             external_tools: None,
+            mcp_auth_token: None,
             runner: None,
             ephemeral: false,
         })

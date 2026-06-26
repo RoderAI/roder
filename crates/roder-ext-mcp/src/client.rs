@@ -64,6 +64,21 @@ impl McpHttpClient {
         &self.config
     }
 
+    /// Returns a clone that authenticates with `token` instead of the
+    /// configured/env credential. A fresh session is used so the `initialize`
+    /// handshake runs under the override identity (the Vex MCP endpoint is
+    /// stateless, so re-initializing per scoped call is cheap and correct).
+    pub fn with_auth_token_override(&self, token: String) -> Self {
+        let mut config = self.config.clone();
+        config.auth_token = Some(token);
+        Self {
+            config,
+            http: self.http.clone(),
+            next_id: Arc::new(AtomicI64::new(1)),
+            session: Arc::new(Mutex::new(SessionState::default())),
+        }
+    }
+
     pub async fn list_tools(&self) -> anyhow::Result<Vec<McpToolDescriptor>> {
         let result = self
             .request("tools/list", serde_json::json!({}))

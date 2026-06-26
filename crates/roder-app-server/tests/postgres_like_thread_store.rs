@@ -224,6 +224,7 @@ async fn start_thread(client: &LocalAppClient, workspace_dir: &std::path::Path) 
                 tool_allowlist: None,
                 developer_instructions: None,
                 external_tools: None,
+                mcp_auth_token: None,
                 runner: None,
                 ephemeral: false,
             })

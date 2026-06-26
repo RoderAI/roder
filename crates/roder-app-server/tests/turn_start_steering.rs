@@ -227,6 +227,7 @@ async fn turn_start_uses_protocol_thread_workspace_when_snapshot_metadata_missin
                 tool_allowlist: None,
                 developer_instructions: None,
                 external_tools: None,
+                mcp_auth_token: None,
                 runner: None,
                 ephemeral: false,
             })
@@ -291,6 +292,7 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
                 tool_allowlist: None,
                 developer_instructions: None,
                 external_tools: None,
+                mcp_auth_token: None,
                 runner: None,
                 ephemeral: false,
             })
