@@ -42,6 +42,10 @@ pub struct AgentSwarmChildRun {
     pub outcome: AgentSwarmChildOutcome,
     pub body: String,
     pub usage: Option<TokenUsage>,
+    /// True when the child failed due to a provider rate limit. The scheduler
+    /// uses this to requeue the child with backoff instead of failing it
+    /// outright.
+    pub rate_limited: bool,
 }
 
 /// Launches a single swarm child. Implementations must be infallible: dispatch
@@ -155,6 +159,8 @@ pub async fn run_agent_swarm(
         })
     };
 
+    let max_retries = config.rate_limit_max_retries;
+    let base_backoff_ms = config.rate_limit_base_backoff_ms;
     let mut set: JoinSet<(usize, ChildRunOrAbort)> = JoinSet::new();
     for (pos, spec) in specs.iter().cloned().enumerate() {
         let launcher = launcher.clone();
@@ -177,13 +183,32 @@ pub async fn run_agent_swarm(
             if cancel.is_cancelled() {
                 return (pos, ChildRunOrAbort::NotStarted);
             }
-            tokio::select! {
-                // Prefer cancellation when both are ready so an in-flight child
-                // is reported aborted (started) rather than completing a turn
-                // the user already interrupted.
-                biased;
-                _ = cancel.cancelled() => (pos, ChildRunOrAbort::Started),
-                run = launcher.launch(spec) => (pos, ChildRunOrAbort::Run(run)),
+            // Launch the child, retrying with exponential backoff when the
+            // provider rate-limits it. The concurrency permit is held across the
+            // backoff so a rate-limited swarm naturally throttles instead of
+            // hammering the provider. `biased` cancellation wins ties so an
+            // in-flight or backing-off child is reported aborted (started)
+            // rather than completing a turn the user already interrupted.
+            let mut attempt = 0usize;
+            loop {
+                let run = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return (pos, ChildRunOrAbort::Started),
+                    run = launcher.launch(spec.clone()) => run,
+                };
+                if !run.rate_limited || attempt >= max_retries {
+                    return (pos, ChildRunOrAbort::Run(run));
+                }
+                // 3s, 6s, 12s, ... capped shift to avoid overflow.
+                let backoff = Duration::from_millis(
+                    base_backoff_ms.saturating_mul(1u64 << attempt.min(20)),
+                );
+                attempt += 1;
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return (pos, ChildRunOrAbort::Started),
+                    _ = tokio::time::sleep(backoff) => {}
+                }
             }
         });
     }
@@ -310,15 +335,32 @@ impl AgentSwarmChildLauncher for DispatcherChildLauncher {
                 outcome: outcome_for_exit(&result.exit_reason),
                 body: result.final_message,
                 usage: result.usage,
+                rate_limited: false,
             },
-            Err(err) => AgentSwarmChildRun {
-                agent_id: None,
-                outcome: AgentSwarmChildOutcome::Failed,
-                body: err.to_string(),
-                usage: None,
-            },
+            Err(err) => {
+                let message = err.to_string();
+                let rate_limited = is_rate_limit_error(&message);
+                AgentSwarmChildRun {
+                    agent_id: None,
+                    outcome: AgentSwarmChildOutcome::Failed,
+                    body: message,
+                    usage: None,
+                    rate_limited,
+                }
+            }
         }
     }
+}
+
+/// Heuristic classifier for provider rate-limit failures, so the swarm
+/// scheduler can requeue the child with backoff rather than failing it.
+fn is_rate_limit_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("rate limit")
+        || lower.contains("rate_limit")
+        || lower.contains("ratelimit")
+        || lower.contains("too many requests")
+        || lower.contains("429")
 }
 
 fn outcome_for_exit(exit: &SubagentExitReason) -> AgentSwarmChildOutcome {
@@ -483,6 +525,7 @@ mod tests {
                     outcome: AgentSwarmChildOutcome::Failed,
                     body: format!("child {} failed", spec.index),
                     usage: None,
+                    rate_limited: false,
                 }
             } else {
                 AgentSwarmChildRun {
@@ -490,6 +533,7 @@ mod tests {
                     outcome: AgentSwarmChildOutcome::Completed,
                     body: format!("child {} done", spec.index),
                     usage: None,
+                    rate_limited: false,
                 }
             }
         }
@@ -512,6 +556,7 @@ mod tests {
             launch_interval_ms: 0,
             max_concurrency: None,
             child_timeout_seconds: None,
+            ..AgentSwarmConfig::default()
         }
     }
 
@@ -584,8 +629,93 @@ mod tests {
                 outcome: AgentSwarmChildOutcome::Completed,
                 body: "done".to_string(),
                 usage: None,
+                rate_limited: false,
             }
         }
+    }
+
+    /// A launcher that rate-limits the first `rate_limit_attempts` launches of a
+    /// child, then completes. Records the total attempt count so a test can
+    /// prove the scheduler requeued rather than failing outright.
+    struct RateLimitLauncher {
+        attempts: Mutex<usize>,
+        rate_limit_attempts: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentSwarmChildLauncher for RateLimitLauncher {
+        async fn launch(&self, spec: AgentSwarmChildSpec) -> AgentSwarmChildRun {
+            let mut attempts = self.attempts.lock().unwrap();
+            *attempts += 1;
+            let this_attempt = *attempts;
+            drop(attempts);
+            if this_attempt <= self.rate_limit_attempts {
+                AgentSwarmChildRun {
+                    agent_id: Some(format!("agent-{}", spec.index)),
+                    outcome: AgentSwarmChildOutcome::Failed,
+                    body: "provider rate limit".to_string(),
+                    usage: None,
+                    rate_limited: true,
+                }
+            } else {
+                AgentSwarmChildRun {
+                    agent_id: Some(format!("agent-{}", spec.index)),
+                    outcome: AgentSwarmChildOutcome::Completed,
+                    body: "done after retry".to_string(),
+                    usage: None,
+                    rate_limited: false,
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_limited_child_is_retried_with_backoff_then_completes() {
+        // Two parallel children, each rate-limited twice then succeeding. Zero
+        // base backoff keeps the test instant while still exercising the retry
+        // loop deterministically.
+        let launcher = Arc::new(RateLimitLauncher {
+            attempts: Mutex::new(0),
+            rate_limit_attempts: 4, // 2 children x 2 rate limits each
+        });
+        let specs = vec![
+            spec(1, AgentSwarmChildKind::Spawn),
+            spec(2, AgentSwarmChildKind::Spawn),
+        ];
+        let config = AgentSwarmConfig {
+            rate_limit_max_retries: 4,
+            rate_limit_base_backoff_ms: 0,
+            ..fast_config()
+        };
+        let result = run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
+        assert_eq!(result.completed, 2, "both children recover after retries");
+        assert_eq!(result.failed, 0);
+        // 2 children x (2 rate-limited + 1 success) = 6 launches.
+        assert_eq!(*launcher.attempts.lock().unwrap(), 6);
+    }
+
+    #[tokio::test]
+    async fn rate_limited_child_fails_after_exhausting_retries() {
+        // One child that always rate-limits; with max_retries = 2 it is launched
+        // 3 times (initial + 2 retries) then reported failed (not aborted).
+        let launcher = Arc::new(RateLimitLauncher {
+            attempts: Mutex::new(0),
+            rate_limit_attempts: 100,
+        });
+        let specs = vec![
+            spec(1, AgentSwarmChildKind::Spawn),
+            spec(2, AgentSwarmChildKind::Spawn),
+        ];
+        let config = AgentSwarmConfig {
+            rate_limit_max_retries: 2,
+            rate_limit_base_backoff_ms: 0,
+            ..fast_config()
+        };
+        let result = run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
+        assert_eq!(result.failed, 2);
+        assert_eq!(result.completed, 0);
+        // 2 children x (1 + 2 retries) = 6 launches.
+        assert_eq!(*launcher.attempts.lock().unwrap(), 6);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

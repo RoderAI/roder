@@ -246,6 +246,23 @@ pub const AGENT_SWARM_MAX_SUBAGENTS: usize = 128;
 pub const AGENT_SWARM_INITIAL_LAUNCH_LIMIT: usize = 5;
 /// Default pacing interval between additional child launches, in milliseconds.
 pub const AGENT_SWARM_LAUNCH_INTERVAL_MS: u64 = 700;
+/// Default number of times a child is retried after a provider rate limit
+/// before it is reported as failed.
+pub const AGENT_SWARM_RATE_LIMIT_MAX_RETRIES: usize = 4;
+/// Default base backoff between rate-limit retries, in milliseconds (doubled
+/// each subsequent attempt: 3s, 6s, 12s, ...).
+pub const AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS: u64 = 3_000;
+/// Hard cap on rate-limit retries so config/env can never make a swarm wait
+/// unboundedly.
+pub const AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_CAP: usize = 8;
+
+fn default_rate_limit_max_retries() -> usize {
+    AGENT_SWARM_RATE_LIMIT_MAX_RETRIES
+}
+
+fn default_rate_limit_base_backoff_ms() -> u64 {
+    AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS
+}
 
 /// Canonical swarm-mode reminder injected into a turn's developer instructions
 /// (server-side) while agent-swarm mode is active, so the model reaches for the
@@ -462,6 +479,13 @@ pub struct AgentSwarmConfig {
     /// Optional per-child timeout override, in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_timeout_seconds: Option<u64>,
+    /// Times a child is retried after a provider rate limit before failing.
+    #[serde(default = "default_rate_limit_max_retries")]
+    pub rate_limit_max_retries: usize,
+    /// Base backoff between rate-limit retries, in milliseconds (doubled each
+    /// subsequent attempt).
+    #[serde(default = "default_rate_limit_base_backoff_ms")]
+    pub rate_limit_base_backoff_ms: u64,
 }
 
 impl Default for AgentSwarmConfig {
@@ -472,13 +496,16 @@ impl Default for AgentSwarmConfig {
             launch_interval_ms: AGENT_SWARM_LAUNCH_INTERVAL_MS,
             max_concurrency: None,
             child_timeout_seconds: None,
+            rate_limit_max_retries: AGENT_SWARM_RATE_LIMIT_MAX_RETRIES,
+            rate_limit_base_backoff_ms: AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS,
         }
     }
 }
 
 impl AgentSwarmConfig {
     /// Clamp config into a bounded, deterministic range so config (or env) can
-    /// never request unbounded fanout or a zero-sized ramp.
+    /// never request unbounded fanout, a zero-sized ramp, or an unbounded
+    /// rate-limit wait.
     pub fn clamped(mut self) -> Self {
         self.max_subagents = self.max_subagents.clamp(1, AGENT_SWARM_MAX_SUBAGENTS);
         self.initial_launch_limit = self.initial_launch_limit.max(1);
@@ -488,6 +515,9 @@ impl AgentSwarmConfig {
         if let Some(timeout) = self.child_timeout_seconds {
             self.child_timeout_seconds = Some(timeout.max(1));
         }
+        self.rate_limit_max_retries = self
+            .rate_limit_max_retries
+            .min(AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_CAP);
         self
     }
 }
@@ -862,12 +892,18 @@ mod tests {
             launch_interval_ms: 700,
             max_concurrency: Some(0),
             child_timeout_seconds: Some(0),
+            rate_limit_max_retries: 9001,
+            ..AgentSwarmConfig::default()
         }
         .clamped();
         assert_eq!(clamped.max_subagents, AGENT_SWARM_MAX_SUBAGENTS);
         assert_eq!(clamped.initial_launch_limit, 1);
         assert_eq!(clamped.max_concurrency, Some(1));
         assert_eq!(clamped.child_timeout_seconds, Some(1));
+        assert_eq!(
+            clamped.rate_limit_max_retries,
+            AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_CAP
+        );
     }
 
     #[test]
