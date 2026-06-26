@@ -174,6 +174,18 @@ pub fn apply_plan_mode(mut instructions: InstructionBundle) -> InstructionBundle
     instructions
 }
 
+/// Inject the agent-swarm reminder into the developer instructions while
+/// agent-swarm mode is active, so any app-server/SDK client (not just the TUI)
+/// nudges the model toward the `agent_swarm` fanout tool.
+pub fn apply_agent_swarm_mode(mut instructions: InstructionBundle) -> InstructionBundle {
+    let reminder = roder_api::subagents::AGENT_SWARM_MODE_REMINDER;
+    instructions.developer = Some(match instructions.developer {
+        Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{reminder}"),
+        _ => reminder.to_string(),
+    });
+    instructions
+}
+
 pub fn apply_model_instruction_overlay(
     mut instructions: InstructionBundle,
     profile: &ModelHarnessProfile,
@@ -193,6 +205,23 @@ pub fn apply_model_instruction_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_swarm_mode_injects_reminder_into_developer_instructions() {
+        let injected = apply_agent_swarm_mode(InstructionBundle::default());
+        let developer = injected.developer.expect("developer instructions");
+        assert!(developer.contains("agent_swarm"));
+        assert!(developer.contains("{{item}}"));
+
+        // Appends to existing developer instructions rather than replacing them.
+        let with_existing = apply_agent_swarm_mode(InstructionBundle {
+            developer: Some("existing dev rules".to_string()),
+            ..InstructionBundle::default()
+        });
+        let developer = with_existing.developer.expect("developer instructions");
+        assert!(developer.starts_with("existing dev rules"));
+        assert!(developer.contains("agent_swarm"));
+    }
 
     #[test]
     fn base_instructions_name_lazy_discovery_tools() {

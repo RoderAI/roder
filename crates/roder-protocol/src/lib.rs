@@ -3869,6 +3869,8 @@ pub struct SettingsGetResult {
     pub default_model: String,
     pub default_reasoning: String,
     pub default_mode: PolicyMode,
+    #[serde(default)]
+    pub agent_swarm_mode: bool,
     pub file_backed_dynamic_context: bool,
 }
 
@@ -3965,6 +3967,26 @@ pub struct ThreadSetModeParams {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadSetModeResult {
     pub mode: PolicyMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetAgentSwarmModeParams {
+    pub enabled: bool,
+    /// How swarm mode was entered: `manual` (persistent toggle), `task`
+    /// (one-shot prompt), or `tool` (implicit `agent_swarm` entry).
+    #[serde(default = "default_agent_swarm_trigger")]
+    pub trigger: roder_api::subagents::AgentSwarmModeTrigger,
+}
+
+fn default_agent_swarm_trigger() -> roder_api::subagents::AgentSwarmModeTrigger {
+    roder_api::subagents::AgentSwarmModeTrigger::Manual
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetAgentSwarmModeResult {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

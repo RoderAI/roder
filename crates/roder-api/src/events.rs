@@ -51,7 +51,7 @@ use crate::skills::{
     SkillActivationResolved, SkillAutoActivated, SkillConfigApplied, SkillIndexRendered,
     SkillInvoked, SkillSkipped, SkillsCatalogLoaded,
 };
-use crate::subagents::SubagentExitReason;
+use crate::subagents::{AgentSwarmModeChanged, SubagentExitReason};
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
     AgentTeamDisplayMode, TeamId, TeamMemberId, TeamMemberRole, TeamMemberStatus,
@@ -1273,6 +1273,7 @@ pub enum RoderEvent {
     PolicyDecisionRecorded(PolicyDecisionRecorded),
     PolicyBypassActive(PolicyBypassActive),
     PolicyModeChanged(PolicyModeChanged),
+    AgentSwarmModeChanged(AgentSwarmModeChanged),
     PolicyExitPlanRequested(PolicyExitPlanRequested),
     PolicyExitPlanResolved(PolicyExitPlanResolved),
     ToolCallStarted(ToolCallStarted),
@@ -1470,6 +1471,7 @@ impl RoderEvent {
             RoderEvent::PolicyDecisionRecorded(_) => "policy.decision",
             RoderEvent::PolicyBypassActive(_) => "policy.bypass_active",
             RoderEvent::PolicyModeChanged(_) => "policy.mode_changed",
+            RoderEvent::AgentSwarmModeChanged(_) => "agent_swarm.mode_changed",
             RoderEvent::PolicyExitPlanRequested(_) => "policy.exit_plan_requested",
             RoderEvent::PolicyExitPlanResolved(_) => "policy.exit_plan_resolved",
             RoderEvent::ToolCallStarted(_) => "tool.call_started",
@@ -1792,6 +1794,7 @@ impl RoderEvent {
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.thread_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.thread_id),
             RoderEvent::PolicyModeChanged(e) => Some(&e.thread_id),
+            RoderEvent::AgentSwarmModeChanged(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.thread_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.thread_id),
@@ -1982,6 +1985,7 @@ impl RoderEvent {
             RoderEvent::PolicyDecisionRecorded(e) => Some(&e.turn_id),
             RoderEvent::PolicyBypassActive(e) => Some(&e.turn_id),
             RoderEvent::PolicyModeChanged(e) => e.turn_id.as_ref(),
+            RoderEvent::AgentSwarmModeChanged(e) => e.turn_id.as_ref(),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.turn_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.turn_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.turn_id),

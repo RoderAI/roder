@@ -1292,6 +1292,7 @@ pub(crate) async fn build_runtime_from_config(
             command_shell,
             workspace: workspace.map(|p| p.display().to_string()),
             policy_mode,
+            agent_swarm_mode: false,
             runtime_profile,
             inference_router,
             speed_policy,

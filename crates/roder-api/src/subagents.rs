@@ -247,6 +247,27 @@ pub const AGENT_SWARM_INITIAL_LAUNCH_LIMIT: usize = 5;
 /// Default pacing interval between additional child launches, in milliseconds.
 pub const AGENT_SWARM_LAUNCH_INTERVAL_MS: u64 = 700;
 
+/// Canonical swarm-mode reminder injected into a turn's developer instructions
+/// (server-side) while agent-swarm mode is active, so the model reaches for the
+/// `agent_swarm` fanout tool. Shared by the runtime injection and the TUI label
+/// so the wording stays in one place.
+pub const AGENT_SWARM_MODE_REMINDER: &str = "Agent-swarm mode is active. When the task splits into \
+several similarly-shaped subtasks over different inputs, call the agent_swarm tool exactly once \
+with a prompt_template containing {{item}} and an items array (or resume_agent_ids), and make it \
+the only tool call in that response.";
+
+/// Emitted when agent-swarm mode is toggled on a runtime/thread.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSwarmModeChanged {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    pub enabled: bool,
+    pub trigger: AgentSwarmModeTrigger,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: time::OffsetDateTime,
+}
+
 /// Why a batch of tool calls violates the `agent_swarm` exclusivity rule:
 /// `agent_swarm` must be the only tool call in a single model response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
