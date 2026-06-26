@@ -438,6 +438,31 @@ impl ToolTimelineTool {
             lines.extend(tool_diff_preview_lines(preview, theme, width));
         }
 
+        // While the swarm is still running (no final result yet), show a live
+        // "swarm: N/total done" tick fed by AgentSwarmProgress events.
+        if self.entry.name == roder_api::subagents::AGENT_SWARM_TOOL_NAME
+            && self.status == ToolTimelineStatus::Running
+            && self.output.as_deref().is_none_or(|o| o.trim().is_empty())
+            && let Some(progress) = self.swarm_progress
+        {
+            let mut label = format!(
+                "swarm: {}/{} done",
+                progress.resolved(),
+                progress.total
+            );
+            if progress.failed > 0 || progress.aborted > 0 {
+                label.push_str(&format!(
+                    " ({} ok, {} failed, {} aborted)",
+                    progress.completed, progress.failed, progress.aborted
+                ));
+            }
+            lines.push(Line::from(vec![
+                Span::styled("  ↳ ", theme.subtle()),
+                Span::styled(label, theme.muted().add_modifier(Modifier::BOLD)),
+            ]));
+            return;
+        }
+
         // Agent-swarm tool calls render a compact child grid (grouped under the
         // tool call) instead of the raw <agent_swarm_result> block: a summary
         // line always, and per-child outcome/item/agent-id rows when expanded.
