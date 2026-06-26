@@ -1,9 +1,9 @@
 class Roder < Formula
   desc "Rust-native TUI coding agent and event-driven agent harness"
-  homepage "https://github.com/PandelisZ/gode"
-  url "https://github.com/PandelisZ/gode.git", branch: "main"
+  homepage "https://github.com/RoderAI/roder"
+  url "https://github.com/RoderAI/roder.git", branch: "master"
   version "0.0.0"
-  head "https://github.com/PandelisZ/gode.git", branch: "main"
+  head "https://github.com/RoderAI/roder.git", branch: "master"
 
   depends_on "rust" => :build
 
