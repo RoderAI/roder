@@ -96,7 +96,8 @@ use roder_protocol::{
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadResolveUserInputParams,
     ThreadResolveUserInputResult, ThreadSetModeParams,
-    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, Turn,
+    ThreadSetAgentSwarmModeResult, ThreadSetModeResult, ThreadStartParams, ThreadStartResult,
+    ThreadStateResult, Turn,
     TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WorkspaceCreateParams,
     WorkspaceCreateResult, WorkspaceRootInput,
 };
@@ -3325,13 +3326,13 @@ where
         let trimmed = args.trim();
         match trimmed.to_ascii_lowercase().as_str() {
             "" => {
-                self.set_swarm_mode(!self.swarm_mode);
+                self.set_swarm_mode(!self.swarm_mode).await;
             }
             "on" => {
-                self.set_swarm_mode(true);
+                self.set_swarm_mode(true).await;
             }
             "off" => {
-                self.set_swarm_mode(false);
+                self.set_swarm_mode(false).await;
             }
             "status" => {
                 let state = if self.swarm_mode { "on" } else { "off" };
@@ -3366,17 +3367,34 @@ where
         }
     }
 
-    fn set_swarm_mode(&mut self, enabled: bool) {
+    async fn set_swarm_mode(&mut self, enabled: bool) {
         if self.swarm_mode == enabled {
             let state = if enabled { "on" } else { "off" };
             self.timeline
                 .push_system(format!("Agent-swarm mode is already {state}."));
             return;
         }
-        self.swarm_mode = enabled;
-        if enabled {
+        // Drive swarm mode through the app-server so the runtime injects the
+        // swarm reminder server-side (every client benefits, not just the TUI).
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/set_agent_swarm_mode")),
+                method: "thread/set_agent_swarm_mode".to_string(),
+                params: Some(serde_json::json!({ "enabled": enabled, "trigger": "manual" })),
+            })
+            .await;
+        match decode_response::<ThreadSetAgentSwarmModeResult>(res) {
+            Ok(result) => self.swarm_mode = result.enabled,
+            Err(err) => {
+                self.record_error(format!("thread/set_agent_swarm_mode failed: {err}"));
+                return;
+            }
+        }
+        if self.swarm_mode {
             self.timeline.push_system(
-                "Agent-swarm mode on. Prompts now nudge the model to use the agent_swarm tool; \
+                "Agent-swarm mode on. Turns now nudge the model to use the agent_swarm tool; \
                  use /agent-swarm off to disable.",
             );
         } else {
@@ -3384,7 +3402,7 @@ where
         }
         self.push_event(format!(
             "slash command: /agent-swarm {}",
-            if enabled { "on" } else { "off" }
+            if self.swarm_mode { "on" } else { "off" }
         ));
     }
 
@@ -3926,11 +3944,9 @@ where
             .as_ref()
             .map(|roadmap| roadmap.prompt_context(&text))
             .unwrap_or(text);
-        let message = if self.swarm_mode {
-            format!("{AGENT_SWARM_REMINDER}\n\n{message}")
-        } else {
-            message
-        };
+        // When persistent swarm mode is on, the swarm reminder is injected
+        // server-side (see Runtime::set_agent_swarm_mode), so the displayed
+        // prompt and the sent message stay identical here.
         Some(PendingPrompt::with_images(display, message, images))
     }
 
@@ -10258,18 +10274,15 @@ mod tests {
     }
 
     #[test]
-    fn swarm_mode_prefixes_reminder_into_submitted_message() {
+    fn swarm_mode_on_does_not_prefix_reminder_client_side() {
+        // Persistent swarm mode injects the reminder server-side now, so the
+        // submitted message stays exactly as typed (no client-side prefix).
         let mut app = test_app();
-        app.set_swarm_mode(true);
-        assert!(app.swarm_mode);
+        app.swarm_mode = true;
         app.composer.insert_str("split this across files");
         let pending = app.take_prepared_prompt().expect("prepared prompt");
-        assert!(
-            pending.message.contains("agent_swarm"),
-            "swarm reminder should reference the agent_swarm tool"
-        );
-        assert!(pending.message.contains("split this across files"));
-        // The displayed transcript text stays exactly as typed.
+        assert_eq!(pending.message, "split this across files");
+        assert!(!pending.message.contains("agent_swarm"));
         assert_eq!(pending.display, "split this across files");
     }
 
@@ -10286,10 +10299,10 @@ mod tests {
     fn active_agent_mode_label_is_agent_swarm_when_on() {
         let mut app = test_app();
         assert_eq!(app.active_agent_mode_label(), None);
-        app.set_swarm_mode(true);
+        app.swarm_mode = true;
         // Shown next to the policy/security mode, e.g. "Bypass - Agent Swarm".
         assert_eq!(app.active_agent_mode_label(), Some("Agent Swarm"));
-        app.set_swarm_mode(false);
+        app.swarm_mode = false;
         assert_eq!(app.active_agent_mode_label(), None);
     }
 

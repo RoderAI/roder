@@ -124,8 +124,9 @@ use roder_protocol::{
     ThreadGoalClearResult, ThreadGoalGetParams, ThreadGoalGetResult, ThreadGoalSetParams,
     ThreadGoalSetResult, ThreadGoalStatus, ThreadItemStatus, ThreadListParams, ThreadListResult,
     ThreadReadParams, ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
-    ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetModeParams,
-    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, ToolCallParams,
+    ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetAgentSwarmModeParams,
+    ThreadSetAgentSwarmModeResult, ThreadSetModeParams, ThreadSetModeResult, ThreadStartParams,
+    ThreadStartResult, ThreadStateResult, ToolCallParams,
     ToolCallResult, ToolsListResult, ToolsResolveParams, ToolsResolveResult, TurnInputItem,
     TurnInterruptParams, TurnInterruptResult, TurnStartParams, TurnStartResult, TurnSteerParams,
     TurnSteerResult, WebwrightArtifactsResult, WebwrightExportParams, WebwrightExportResult,
@@ -9237,6 +9238,67 @@ async fn thread_policy_mode_can_be_set_and_observed() {
         }
     }
     assert!(saw_mode_changed);
+}
+
+#[tokio::test]
+async fn thread_agent_swarm_mode_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+
+    // Off by default.
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.agent_swarm_mode);
+
+    let changed: ThreadSetAgentSwarmModeResult = request(
+        &client,
+        "thread/set_agent_swarm_mode",
+        Some(
+            serde_json::to_value(ThreadSetAgentSwarmModeParams {
+                enabled: true,
+                trigger: roder_api::subagents::AgentSwarmModeTrigger::Manual,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(changed.enabled);
+
+    // Observable through settings/get.
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(settings.agent_swarm_mode);
+
+    // And emits an AgentSwarmModeChanged event.
+    let mut saw_changed = false;
+    for _ in 0..8 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::AgentSwarmModeChanged(event) = envelope.event {
+            saw_changed = event.enabled;
+            break;
+        }
+    }
+    assert!(saw_changed);
+
+    // Toggling off round-trips.
+    let changed: ThreadSetAgentSwarmModeResult = request(
+        &client,
+        "thread/set_agent_swarm_mode",
+        Some(
+            serde_json::to_value(ThreadSetAgentSwarmModeParams {
+                enabled: false,
+                trigger: roder_api::subagents::AgentSwarmModeTrigger::Manual,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!changed.enabled);
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.agent_swarm_mode);
 }
 
 #[tokio::test]

@@ -84,6 +84,33 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "auth/kimi-code/login",
+      "paramsType": "AuthKimiCodeLoginParams",
+      "resultType": "AuthKimiCodeLoginResult",
+      "stability": "stable",
+      "featureGroup": "auth",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "auth/kimi-code/logout",
+      "paramsType": "AuthKimiCodeLogoutParams",
+      "resultType": "AuthKimiCodeLogoutResult",
+      "stability": "stable",
+      "featureGroup": "auth",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "auth/kimi-code/status",
+      "paramsType": "AuthKimiCodeStatusParams",
+      "resultType": "AuthKimiCodeStatusResult",
+      "stability": "stable",
+      "featureGroup": "auth",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "auth/supergrok/login",
       "paramsType": "AuthSupergrokLoginParams",
       "resultType": "AuthSupergrokLoginResult",
@@ -1924,6 +1951,19 @@
       "sideEffect": "localState"
     },
     {
+      "method": "thread/compact",
+      "paramsType": "ThreadCompactParams",
+      "resultType": "ThreadCompactResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "context.compaction_started",
+        "context.compaction_recorded"
+      ]
+    },
+    {
       "method": "thread/exit_plan",
       "paramsType": "ThreadExitPlanParams",
       "resultType": "ThreadExitPlanResult",
@@ -2032,6 +2072,15 @@
       "method": "thread/roadmap/open",
       "paramsType": "ThreadRoadmapOpenParams",
       "resultType": "ThreadRoadmapOpenResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/set_agent_swarm_mode",
+      "paramsType": "ThreadSetAgentSwarmModeParams",
+      "resultType": "ThreadSetAgentSwarmModeResult",
       "stability": "stable",
       "featureGroup": "thread",
       "idempotency": "nonIdempotent",

@@ -153,14 +153,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("auth/codex/logout", "auth", LocalState, NonIdempotent),
     method_spec!("auth/codex/status", "auth", ReadOnly, Idempotent),
     method_spec!(
-        "auth/supergrok/login",
-        "auth",
-        ExternalProcess,
-        NonIdempotent
-    ),
-    method_spec!("auth/supergrok/logout", "auth", LocalState, NonIdempotent),
-    method_spec!("auth/supergrok/status", "auth", ReadOnly, Idempotent),
-    method_spec!(
         "auth/kimi-code/login",
         "auth",
         ExternalProcess,
@@ -168,6 +160,14 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     ),
     method_spec!("auth/kimi-code/logout", "auth", LocalState, NonIdempotent),
     method_spec!("auth/kimi-code/status", "auth", ReadOnly, Idempotent),
+    method_spec!(
+        "auth/supergrok/login",
+        "auth",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!("auth/supergrok/logout", "auth", LocalState, NonIdempotent),
+    method_spec!("auth/supergrok/status", "auth", ReadOnly, Idempotent),
     method_spec!(
         "automations/cancelRun",
         "automations",
@@ -634,6 +634,13 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("team/start", "teams", LocalState, NonIdempotent),
     method_spec!("thread/archive", "thread", LocalState, NonIdempotent),
     method_spec!("thread/attach", "thread", LocalState, NonIdempotent),
+    method_spec!(
+        "thread/compact",
+        "thread",
+        LocalState,
+        NonIdempotent,
+        ["context.compaction_started", "context.compaction_recorded"]
+    ),
     method_spec!("thread/exit_plan", "thread", LocalState, NonIdempotent),
     method_spec!("thread/fork", "thread", LocalState, NonIdempotent),
     method_spec!("thread/fork_status", "thread", ReadOnly, Idempotent),
@@ -652,13 +659,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         NonIdempotent,
         ["thread/goal/updated"]
     ),
-    method_spec!(
-        "thread/compact",
-        "thread",
-        LocalState,
-        NonIdempotent,
-        ["context.compaction_started", "context.compaction_recorded"]
-    ),
     method_spec!("thread/list", "thread", ReadOnly, Idempotent),
     method_spec!("thread/read", "thread", ReadOnly, Idempotent),
     method_spec!("thread/remove_fork", "thread", LocalState, NonIdempotent),
@@ -675,6 +675,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         NonIdempotent
     ),
     method_spec!("thread/roadmap/open", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/set_agent_swarm_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/set_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/start", "thread", LocalState, NonIdempotent),
     method_spec!("thread/state", "thread", ReadOnly, Idempotent),

@@ -61,7 +61,7 @@ use crate::inference_routing::{
     route_inference_selection, transcript_failure_count_since,
 };
 use crate::instructions::{
-    apply_model_instruction_overlay, apply_plan_mode, apply_runtime_profile,
+    apply_agent_swarm_mode, apply_model_instruction_overlay, apply_plan_mode, apply_runtime_profile,
     apply_task_ledger_required, apply_thread_developer_instructions, apply_turn_developer_context,
 };
 use crate::policy_gate::DefaultPolicyGate;
@@ -122,6 +122,10 @@ pub struct RuntimeConfig {
     pub command_shell: String,
     pub workspace: Option<String>,
     pub policy_mode: PolicyMode,
+    /// Whether agent-swarm mode is active (roadmap 104). When on, the runtime
+    /// injects the swarm reminder into each turn's developer instructions so any
+    /// client benefits, not just the TUI.
+    pub agent_swarm_mode: bool,
     pub runtime_profile: RuntimeProfile,
     pub inference_router: RuntimeInferenceRouterConfig,
     pub speed_policy: RuntimeSpeedPolicyConfig,
@@ -154,6 +158,7 @@ impl Default for RuntimeConfig {
             command_shell: roder_api::command_shell::default_command_shell(),
             workspace: None,
             policy_mode: PolicyMode::Default,
+            agent_swarm_mode: false,
             runtime_profile: RuntimeProfile::Interactive,
             inference_router: RuntimeInferenceRouterConfig::default(),
             speed_policy: RuntimeSpeedPolicyConfig::default(),
@@ -612,6 +617,31 @@ impl Runtime {
         .await;
         self.auto_resolve_pending_tool_approvals_for_mode(mode)
             .await;
+        Ok(next)
+    }
+
+    /// Toggle agent-swarm mode for the runtime (roadmap 104). When enabled, the
+    /// swarm reminder is injected into each turn's developer instructions so
+    /// every app-server/SDK client gets it, not only the TUI.
+    pub async fn set_agent_swarm_mode(
+        &self,
+        enabled: bool,
+        trigger: roder_api::subagents::AgentSwarmModeTrigger,
+    ) -> anyhow::Result<RuntimeConfig> {
+        let mut cfg = self.config.write().await;
+        cfg.agent_swarm_mode = enabled;
+        let next = cfg.clone();
+        drop(cfg);
+        self.emit(RoderEvent::AgentSwarmModeChanged(
+            roder_api::subagents::AgentSwarmModeChanged {
+                thread_id: "runtime".to_string(),
+                turn_id: None,
+                enabled,
+                trigger,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
         Ok(next)
     }
 
@@ -2084,6 +2114,7 @@ impl Runtime {
             .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
+        let agent_swarm_mode_active = self.status().await.agent_swarm_mode;
         let thread_overrides = self.thread_turn_overrides(&req.thread_id).await?;
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
@@ -2359,6 +2390,9 @@ impl Runtime {
             }
             if effective_policy_mode == PolicyMode::Plan {
                 instructions = apply_plan_mode(instructions);
+            }
+            if agent_swarm_mode_active {
+                instructions = apply_agent_swarm_mode(instructions);
             }
             instructions = self
                 .goals
@@ -5216,6 +5250,7 @@ mod tests {
                 builder.build().unwrap(),
                 RuntimeConfig {
                     policy_mode: PolicyMode::Bypass,
+                    agent_swarm_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -6751,6 +6786,7 @@ mod tests {
                 RuntimeConfig {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
+                    agent_swarm_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -6824,6 +6860,7 @@ mod tests {
                 RuntimeConfig {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
+                    agent_swarm_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -6899,6 +6936,7 @@ mod tests {
                 RuntimeConfig {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
+                    agent_swarm_mode: false,
                     turn_deadline_seconds: Some(120),
                     ..RuntimeConfig::default()
                 },
@@ -7025,6 +7063,7 @@ mod tests {
                     default_model: "mock".to_string(),
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
+                    agent_swarm_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -7103,6 +7142,7 @@ mod tests {
                     default_model: "gpt-5.5".to_string(),
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
+                    agent_swarm_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -7267,6 +7307,7 @@ mod tests {
                 builder.build().unwrap(),
                 RuntimeConfig {
                     policy_mode: PolicyMode::Bypass,
+                    agent_swarm_mode: false,
                     ..RuntimeConfig::default()
                 },
             )

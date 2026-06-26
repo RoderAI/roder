@@ -94,7 +94,29 @@ Environment overrides (highest precedence; all parsed then clamped):
 - `/agent-swarm <prompt>` runs one swarm task: it prepends a short swarm
   reminder to your prompt so the model reaches for `agent_swarm`, then submits.
 
-While persistent swarm mode is on, normal prompts are prefixed with the same
-reminder (your displayed transcript text stays exactly as typed). Swarm mode
-never relaxes sandbox, capability, or approval policy; children run through the
-already-authorized subagent dispatch path.
+While persistent swarm mode is on, the runtime injects the swarm reminder into
+each turn's developer instructions server-side (your displayed transcript text
+stays exactly as typed). Swarm mode never relaxes sandbox, capability, or
+approval policy; children run through the already-authorized subagent dispatch
+path. The model is held to the single-call rule by the runtime: a response that
+mixes `agent_swarm` with other tools, or issues multiple swarms, is denied with
+a retry message (see "Exclusivity" below).
+
+## App-server / SDK
+
+Swarm mode is runtime state, so any app-server or SDK client can drive it (not
+just the TUI):
+
+- `thread/set_agent_swarm_mode` — `{ "enabled": true, "trigger": "manual" }`
+  returns `{ "enabled": true }`. `trigger` is `manual` (persistent toggle),
+  `task` (one-shot), or `tool` (implicit `agent_swarm` entry).
+- `settings/get` includes `"agentSwarmMode": <bool>`.
+- An `AgentSwarmModeChanged` event is emitted when the mode toggles.
+
+## Exclusivity
+
+`agent_swarm` must be the only tool call in a model response. If a response
+mixes it with other tools, or contains more than one `agent_swarm` call, the
+runtime denies the whole batch and returns an error tool result (with actionable
+retry text) for every call, so each `tool_call_id` is answered and the model
+re-issues `agent_swarm` by itself.

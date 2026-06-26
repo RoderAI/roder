@@ -525,6 +525,12 @@ impl AppServer {
                 })
                 .await
             }
+            "thread/set_agent_swarm_mode" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_set_agent_swarm_mode(p).await
+                })
+                .await
+            }
             "thread/exit_plan" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_exit_plan(p).await
@@ -2179,6 +2185,7 @@ impl AppServer {
             default_model: cfg.default_model.clone(),
             default_reasoning: Runtime::effective_reasoning_for_config(&cfg),
             default_mode: cfg.policy_mode,
+            agent_swarm_mode: cfg.agent_swarm_mode,
             file_backed_dynamic_context: cfg.file_backed_dynamic_context,
         })
         .unwrap())
@@ -2961,6 +2968,21 @@ impl AppServer {
             .map_err(internal_error)?;
         Ok(serde_json::to_value(ThreadSetModeResult {
             mode: cfg.policy_mode,
+        })
+        .unwrap())
+    }
+
+    async fn handle_thread_set_agent_swarm_mode(
+        &self,
+        params: ThreadSetAgentSwarmModeParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let cfg = self
+            .runtime
+            .set_agent_swarm_mode(params.enabled, params.trigger)
+            .await
+            .map_err(internal_error)?;
+        Ok(serde_json::to_value(ThreadSetAgentSwarmModeResult {
+            enabled: cfg.agent_swarm_mode,
         })
         .unwrap())
     }
