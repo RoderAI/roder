@@ -140,6 +140,7 @@ async fn start_parent_thread(client: &LocalAppClient, repo: &Path) -> String {
             tool_allowlist: None,
             developer_instructions: None,
             external_tools: None,
+            mcp_auth_token: None,
             runner: None,
             ephemeral: false,
         })

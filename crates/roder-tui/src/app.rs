@@ -1662,6 +1662,7 @@ where
                     tool_allowlist: None,
                     developer_instructions: None,
                     external_tools: None,
+                    mcp_auth_token: None,
                     runner: None,
                     ephemeral: false,
                 })
@@ -11221,6 +11222,7 @@ mod tests {
                         tool_allowlist: None,
                         developer_instructions: None,
                         external_tools: None,
+                        mcp_auth_token: None,
                         runner: None,
                         ephemeral: false,
                     })
@@ -13035,6 +13037,7 @@ mod tests {
                             tool_allowlist: None,
                             developer_instructions: None,
                             external_tools: None,
+                            mcp_auth_token: None,
                             runner: None,
                             ephemeral: false,
                         })
@@ -13088,6 +13091,7 @@ mod tests {
                             tool_allowlist: None,
                             developer_instructions: None,
                             external_tools: None,
+                            mcp_auth_token: None,
                             runner: None,
                             ephemeral: false,
                         })

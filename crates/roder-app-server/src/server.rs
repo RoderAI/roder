@@ -2535,6 +2535,7 @@ impl AppServer {
             tool_allowlist,
             developer_instructions,
             external_tools,
+            mcp_auth_token,
             runner,
             ephemeral: _,
         } = params;
@@ -2607,6 +2608,11 @@ impl AppServer {
             .write()
             .await
             .insert(thread.id.clone(), thread.clone());
+        // Record the per-thread MCP credential so this thread's MCP tool calls
+        // authenticate as the client-supplied (scoped) identity.
+        if let Some(token) = mcp_auth_token {
+            roder_api::mcp_auth::set_thread_token(thread.id.clone(), token);
+        }
         self.set_thread_model_selection(&thread.id, requested_selection.clone())
             .await?;
         let _ = self
@@ -2713,6 +2719,7 @@ impl AppServer {
             .write()
             .await
             .remove(&params.thread_id);
+        roder_api::mcp_auth::clear_thread_token(&params.thread_id);
         Ok(serde_json::to_value(ThreadArchiveResult {
             thread_id: params.thread_id,
             archived,

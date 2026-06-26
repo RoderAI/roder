@@ -22,6 +22,7 @@ pub mod inference_routing;
 pub mod interactive;
 pub mod knowledge;
 pub mod marketplace;
+pub mod mcp_auth;
 pub mod media;
 pub mod memory;
 pub mod notifications;

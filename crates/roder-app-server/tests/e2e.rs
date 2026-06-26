@@ -5350,6 +5350,7 @@ async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
                 tool_allowlist: Some(vec!["edit".to_string(), "read_file".to_string()]),
                 developer_instructions: Some("You are embedded in a host app.".to_string()),
                 external_tools: None,
+                mcp_auth_token: None,
                 runner: None,
                 ephemeral: false,
             })
@@ -8581,6 +8582,7 @@ async fn start_external_tool_thread(client: &LocalAppClient) -> ThreadStartResul
                 tool_allowlist: None,
                 developer_instructions: None,
                 external_tools: Some(vec![acme_lookup_external_tool()]),
+                mcp_auth_token: None,
                 runner: None,
                 ephemeral: false,
             })
@@ -10653,6 +10655,7 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
                 tool_allowlist: None,
                 developer_instructions: None,
                 external_tools: None,
+                mcp_auth_token: None,
                 runner: None,
                 ephemeral: false,
             })

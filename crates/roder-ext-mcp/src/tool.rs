@@ -75,7 +75,7 @@ impl ToolExecutor for McpRemoteTool {
 
     async fn execute(
         &self,
-        _ctx: ToolExecutionContext,
+        ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let arguments = if call.arguments.is_object() {
@@ -84,11 +84,15 @@ impl ToolExecutor for McpRemoteTool {
             serde_json::json!({})
         };
 
-        match self
-            .client
-            .call_tool(&self.descriptor.name, arguments)
-            .await
-        {
+        // Scope this call to the thread's MCP identity when the client forwarded
+        // a per-thread token at `thread/start`; otherwise use the configured
+        // process-wide credential.
+        let client = match roder_api::mcp_auth::thread_token(&ctx.thread_id) {
+            Some(token) => self.client.with_auth_token_override(token),
+            None => self.client.clone(),
+        };
+
+        match client.call_tool(&self.descriptor.name, arguments).await {
             Ok(outcome) => Ok(ToolResult {
                 id: call.id,
                 name: call.name,
