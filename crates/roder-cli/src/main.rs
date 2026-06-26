@@ -1158,10 +1158,12 @@ pub(crate) async fn build_runtime_from_config(
             DEFAULT_MODEL_ID.to_string()
         }
     });
+    let agent_swarm_config = roder_config::resolve_agent_swarm_config(cfg.agent_swarm.as_ref());
     let subagents = resolve_subagents_config(
         cfg.subagents.as_ref(),
         default_provider.clone(),
         default_model.clone(),
+        agent_swarm_config,
     )
     .await?;
     let model_edit_tools = resolve_model_edit_tools(&cfg.models)?;
@@ -2306,6 +2308,7 @@ async fn resolve_subagents_config(
     cfg: Option<&roder_config::SubagentsConfig>,
     default_provider: String,
     default_model: String,
+    agent_swarm: roder_api::subagents::AgentSwarmConfig,
 ) -> anyhow::Result<Option<DefaultSubagentsConfig>> {
     let Some(cfg) = cfg else {
         return Ok(None);
@@ -2340,6 +2343,8 @@ async fn resolve_subagents_config(
             .unwrap_or_else(|| DefaultSubagentsConfig::default().default_timeout_seconds),
         include_child_transcript: cfg.include_child_transcript,
         expose_per_type: cfg.expose_per_type,
+        expose_agent_swarm: true,
+        agent_swarm,
     }))
 }
 
@@ -3996,7 +4001,12 @@ Report findings.
         };
 
         let resolved =
-            resolve_subagents_config(Some(&cfg), PROVIDER_MOCK.to_string(), "mock".to_string())
+            resolve_subagents_config(
+                Some(&cfg),
+                PROVIDER_MOCK.to_string(),
+                "mock".to_string(),
+                roder_api::subagents::AgentSwarmConfig::default(),
+            )
                 .await
                 .unwrap()
                 .unwrap();
@@ -4035,7 +4045,12 @@ Report findings.
         };
 
         let resolved =
-            resolve_subagents_config(Some(&cfg), PROVIDER_MOCK.to_string(), "mock".to_string())
+            resolve_subagents_config(
+                Some(&cfg),
+                PROVIDER_MOCK.to_string(),
+                "mock".to_string(),
+                roder_api::subagents::AgentSwarmConfig::default(),
+            )
                 .await
                 .unwrap()
                 .unwrap();
