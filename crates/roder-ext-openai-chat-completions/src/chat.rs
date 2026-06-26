@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use futures::StreamExt;
 use roder_api::inference::{AgentInferenceRequest, InferenceEventStream};
@@ -291,6 +291,28 @@ fn chat_tool_choice(choice: &ToolChoice, tool_name_map: &ChatToolNameMap) -> Val
     }
 }
 
+/// Synthetic content used when a tool call has no recorded result. The
+/// chat-completions API rejects an assistant `tool_calls` message unless every
+/// id is answered by a following `role: tool` message; emitting a placeholder
+/// keeps the request structurally valid even if a real result was lost (e.g.
+/// dropped during context compaction or a partial/replayed transcript).
+const MISSING_TOOL_RESULT_PLACEHOLDER: &str = "(no tool result was recorded for this call)";
+
+/// Build the chat-completions `messages` array from the canonical transcript.
+///
+/// The chat-completions API has a strict invariant: a single assistant message
+/// must carry ALL of a turn's `tool_calls`, and it must be immediately followed
+/// by one `role: tool` message per `tool_call_id`. We make this hold no matter
+/// what the transcript looks like:
+///
+/// - Consecutive `ToolCall` items (parallel calls) are coalesced into ONE
+///   assistant message.
+/// - The moment that assistant message is emitted, every one of its tool
+///   results is emitted right after it — looked up by id from anywhere in the
+///   transcript, or a placeholder when none was recorded. This guarantees
+///   correct adjacency even if results are missing or out of order.
+/// - Orphan `ToolResult`s (no matching `ToolCall`) are dropped, since a `tool`
+///   message without a preceding assistant `tool_call` is itself invalid.
 fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMap) -> Vec<Value> {
     let mut messages = Vec::new();
     if let Some(system) = &request.instructions.system {
@@ -299,27 +321,33 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
     if let Some(developer) = &request.instructions.developer {
         messages.push(json!({ "role": "system", "content": developer }));
     }
-    // The chat-completions API requires that a single assistant message carry
-    // ALL of a turn's `tool_calls`, immediately followed by one `role: tool`
-    // message per id. The model emits parallel tool calls (e.g. several
-    // `write_file` calls at once) as consecutive `ToolCall` transcript items, so
-    // we coalesce a run of consecutive `ToolCall`s into one assistant message.
-    // Emitting each as its own assistant message produces an invalid request
-    // ("tool_call_ids did not have response messages").
-    let mut pending_tool_calls: Vec<Value> = Vec::new();
+
+    // Pre-scan all tool results so a coalesced assistant message can pair each
+    // of its calls with a result regardless of transcript ordering.
+    let mut results_by_id: HashMap<&str, &str> = HashMap::new();
+    for item in &request.transcript {
+        if let TranscriptItem::ToolResult(result) = item {
+            results_by_id.insert(result.id.as_str(), result.result.as_str());
+        }
+    }
+
+    let mut pending_tool_calls: Vec<(String, Value)> = Vec::new();
     for item in &request.transcript {
         if let TranscriptItem::ToolCall(call) = item {
-            pending_tool_calls.push(json!({
-                "id": call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_name_map.api_name(&call.name),
-                    "arguments": call.arguments,
-                },
-            }));
+            pending_tool_calls.push((
+                call.id.clone(),
+                json!({
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name_map.api_name(&call.name),
+                        "arguments": call.arguments,
+                    },
+                }),
+            ));
             continue;
         }
-        flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+        flush_pending_tool_calls(&mut messages, &mut pending_tool_calls, &results_by_id);
         match item {
             TranscriptItem::UserMessage(message) => {
                 messages.push(json!({ "role": "user", "content": message.text }));
@@ -329,12 +357,10 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                     messages.push(json!({ "role": "assistant", "content": message.text }));
                 }
             }
-            TranscriptItem::ToolResult(result) => {
-                messages.push(json!({
-                    "role": "tool",
-                    "tool_call_id": result.id,
-                    "content": result.result,
-                }));
+            TranscriptItem::ToolResult(_) => {
+                // Real results are emitted alongside their assistant tool_calls
+                // message during flush. An id that reaches here without a matching
+                // call is an orphan result; dropping it keeps the request valid.
             }
             TranscriptItem::ContextCompaction(compaction) => {
                 messages.push(json!({ "role": "system", "content": compaction.summary }));
@@ -348,21 +374,39 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
             | TranscriptItem::ProviderMetadata(_) => {}
         }
     }
-    flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+    flush_pending_tool_calls(&mut messages, &mut pending_tool_calls, &results_by_id);
     messages
 }
 
 /// Emit any buffered parallel tool calls as a single assistant `tool_calls`
-/// message, then clear the buffer. No-op when there is nothing pending.
-fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending: &mut Vec<Value>) {
+/// message, then immediately emit one `role: tool` message per call id (the
+/// recorded result, or [`MISSING_TOOL_RESULT_PLACEHOLDER`]). No-op when there
+/// is nothing pending.
+fn flush_pending_tool_calls(
+    messages: &mut Vec<Value>,
+    pending: &mut Vec<(String, Value)>,
+    results_by_id: &HashMap<&str, &str>,
+) {
     if pending.is_empty() {
         return;
     }
+    let tool_calls: Vec<Value> = pending.iter().map(|(_, call)| call.clone()).collect();
     messages.push(json!({
         "role": "assistant",
         "content": Value::Null,
-        "tool_calls": std::mem::take(pending),
+        "tool_calls": tool_calls,
     }));
+    for (id, _) in pending.drain(..) {
+        let content = results_by_id
+            .get(id.as_str())
+            .copied()
+            .unwrap_or(MISSING_TOOL_RESULT_PLACEHOLDER);
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": id,
+            "content": content,
+        }));
+    }
 }
 
 #[cfg(test)]
@@ -482,6 +526,103 @@ mod tests {
             .collect();
         assert_eq!(roles, ["assistant", "tool", "assistant", "tool"]);
         assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn missing_tool_result_is_synthesized_so_request_stays_valid() {
+        use roder_api::transcript::{ToolCallRecord, ToolResultRecord};
+
+        // Two parallel calls but only the SECOND has a recorded result — this is
+        // the shape that produced "tool_call_ids did not have response messages:
+        // write_file:0" against Kimi. The serializer must still answer every id.
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "kimi-code".to_string(),
+                model: "kimi-for-coding".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "write_file:0".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: "{}".to_string(),
+                }),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "write_file:1".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: "{}".to_string(),
+                }),
+                // Only write_file:1 has a result.
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "write_file:1".to_string(),
+                    name: Some("write_file".to_string()),
+                    result: "wrote b".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+            ],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let messages = chat_messages(&request, &ChatToolNameMap::default());
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or_default())
+            .collect();
+        // One assistant tool_calls message, then a tool message for EACH id.
+        assert_eq!(roles, ["assistant", "tool", "tool"]);
+        let answered: Vec<&str> = messages
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .map(|m| m["tool_call_id"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(answered, ["write_file:0", "write_file:1"]);
+        // The missing one got a placeholder; the present one kept its content.
+        assert_eq!(messages[1]["content"], MISSING_TOOL_RESULT_PLACEHOLDER);
+        assert_eq!(messages[2]["content"], "wrote b");
+    }
+
+    #[test]
+    fn orphan_tool_result_without_a_call_is_dropped() {
+        use roder_api::transcript::ToolResultRecord;
+
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "kimi-code".to_string(),
+                model: "kimi-for-coding".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("hi")),
+                // A tool result with no preceding tool call (e.g. compaction
+                // dropped the assistant message) must not emit a bare tool role.
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "ghost".to_string(),
+                    name: None,
+                    result: "orphan".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+            ],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let messages = chat_messages(&request, &ChatToolNameMap::default());
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(roles, ["user"], "orphan tool result must be dropped");
     }
 
     #[tokio::test]
