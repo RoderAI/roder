@@ -299,7 +299,27 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
     if let Some(developer) = &request.instructions.developer {
         messages.push(json!({ "role": "system", "content": developer }));
     }
+    // The chat-completions API requires that a single assistant message carry
+    // ALL of a turn's `tool_calls`, immediately followed by one `role: tool`
+    // message per id. The model emits parallel tool calls (e.g. several
+    // `write_file` calls at once) as consecutive `ToolCall` transcript items, so
+    // we coalesce a run of consecutive `ToolCall`s into one assistant message.
+    // Emitting each as its own assistant message produces an invalid request
+    // ("tool_call_ids did not have response messages").
+    let mut pending_tool_calls: Vec<Value> = Vec::new();
     for item in &request.transcript {
+        if let TranscriptItem::ToolCall(call) = item {
+            pending_tool_calls.push(json!({
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_name_map.api_name(&call.name),
+                    "arguments": call.arguments,
+                },
+            }));
+            continue;
+        }
+        flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
         match item {
             TranscriptItem::UserMessage(message) => {
                 messages.push(json!({ "role": "user", "content": message.text }));
@@ -308,20 +328,6 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                 if !message.text.is_empty() {
                     messages.push(json!({ "role": "assistant", "content": message.text }));
                 }
-            }
-            TranscriptItem::ToolCall(call) => {
-                messages.push(json!({
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": tool_name_map.api_name(&call.name),
-                            "arguments": call.arguments,
-                        },
-                    }],
-                }));
             }
             TranscriptItem::ToolResult(result) => {
                 messages.push(json!({
@@ -336,12 +342,27 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
             TranscriptItem::ReasoningSummary(summary) => {
                 messages.push(json!({ "role": "assistant", "content": summary.text }));
             }
-            TranscriptItem::FileChange(_)
+            TranscriptItem::ToolCall(_)
+            | TranscriptItem::FileChange(_)
             | TranscriptItem::Error(_)
             | TranscriptItem::ProviderMetadata(_) => {}
         }
     }
+    flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
     messages
+}
+
+/// Emit any buffered parallel tool calls as a single assistant `tool_calls`
+/// message, then clear the buffer. No-op when there is nothing pending.
+fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending: &mut Vec<Value>) {
+    if pending.is_empty() {
+        return;
+    }
+    messages.push(json!({
+        "role": "assistant",
+        "content": Value::Null,
+        "tool_calls": std::mem::take(pending),
+    }));
 }
 
 #[cfg(test)]
@@ -356,6 +377,112 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn parallel_tool_calls_coalesce_into_one_assistant_message() {
+        use roder_api::transcript::{AssistantMessage, ToolCallRecord, ToolResultRecord};
+
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "kimi-code".to_string(),
+                model: "kimi-for-coding".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("make a calculator")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "On it.".to_string(),
+                    phase: None,
+                }),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "write_file:0".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: "{\"path\":\"a.swift\"}".to_string(),
+                }),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "write_file:1".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: "{\"path\":\"b.swift\"}".to_string(),
+                }),
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "write_file:0".to_string(),
+                    name: Some("write_file".to_string()),
+                    result: "wrote a.swift".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "write_file:1".to_string(),
+                    name: Some("write_file".to_string()),
+                    result: "wrote b.swift".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+            ],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let messages = chat_messages(&request, &ChatToolNameMap::default());
+
+        // user, assistant text, ONE assistant tool_calls message (both ids),
+        // then the two tool results — not two separate tool_calls messages.
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(roles, ["user", "assistant", "assistant", "tool", "tool"]);
+
+        let tool_call_message = &messages[2];
+        let calls = tool_call_message["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 2, "both parallel calls share one message");
+        assert_eq!(calls[0]["id"], "write_file:0");
+        assert_eq!(calls[1]["id"], "write_file:1");
+        assert_eq!(messages[3]["tool_call_id"], "write_file:0");
+        assert_eq!(messages[4]["tool_call_id"], "write_file:1");
+
+        // Interleaved call/result pairs stay valid too (one call per message).
+        let interleaved = AgentInferenceRequest {
+            transcript: vec![
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "a".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                }),
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "a".to_string(),
+                    name: None,
+                    result: "ok".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "b".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                }),
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "b".to_string(),
+                    name: None,
+                    result: "ok".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+            ],
+            ..request
+        };
+        let messages = chat_messages(&interleaved, &ChatToolNameMap::default());
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(roles, ["assistant", "tool", "assistant", "tool"]);
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
+    }
 
     #[tokio::test]
     async fn stream_chat_completions_uses_api_key_header_and_max_completion_tokens() {
