@@ -39,7 +39,7 @@ fi
 version="${version#v}"
 tag="v${version}"
 mode="${MODE:-local}"
-repo_url="${REPO_URL:-https://github.com/PandelisZ/gode}"
+repo_url="${REPO_URL:-https://github.com/RoderAI/roder}"
 formula="${FORMULA:-Formula/roder.rb}"
 run_tests="${RUN_TESTS:-1}"
 create_tag="${CREATE_TAG:-1}"
@@ -127,7 +127,7 @@ class Roder < Formula
   homepage "$repo_url"
   version "$version"
 $url_block
-  head "$repo_url.git", branch: "main"
+  head "$repo_url.git", branch: "master"
 
   depends_on "rust" => :build
 

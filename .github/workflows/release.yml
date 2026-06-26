@@ -31,3 +31,30 @@ jobs:
         run: knope release --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: release
+    # Runs in the same workflow as `knope release` (so it is not blocked by the
+    # GITHUB_TOKEN "no chained workflow" rule) and syncs RoderAI/homebrew-tap to
+    # the latest released `roder` CLI version so `brew install` stays current.
+    if: >-
+      github.repository_owner == 'RoderAI' &&
+      github.head_ref == 'knope/release' &&
+      github.event.pull_request.merged == true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Update Homebrew tap formula
+        env:
+          # PAT (or fine-grained token) with `contents: write` on the tap repo.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: bash scripts/update-homebrew-tap.sh

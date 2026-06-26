@@ -10,7 +10,7 @@ REASONING ?=
 LISTEN ?= stdio://
 VERSION ?=
 
-.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew clean clean-target cargo-unlock
+.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock
 
 # Wipe the cargo target dir. Incremental builds accumulate session artifacts
 # unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
@@ -112,6 +112,9 @@ publish-verify:
 
 release-brew:
 	./scripts/release-brew.sh $(VERSION)
+
+update-homebrew-tap:
+	./scripts/update-homebrew-tap.sh
 
 clean:
 	rm -rf bin .gode

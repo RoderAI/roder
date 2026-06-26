@@ -154,20 +154,8 @@ uv build
 uv publish
 ```
 
-For Homebrew, update `RoderAI/homebrew-tap` after the crates.io `roder` crate is
-visible. The formula should point at the immutable crates.io source archive:
-
-```ruby
-url "https://static.crates.io/crates/roder/roder-<version>.crate"
-```
-
-Then validate:
-
-```sh
-brew audit --strict --online --new RoderAI/tap/roder
-brew reinstall --build-from-source RoderAI/tap/roder
-brew test RoderAI/tap/roder
-```
+For Homebrew, the tap is updated **automatically** by CI — see the "Homebrew"
+section below. Manual steps are only needed for recovery.
 
 ## Registry Publication Readiness
 
@@ -183,9 +171,48 @@ Before publishing crates to crates.io later:
 
 ## Homebrew
 
-The existing Homebrew helper remains manual and should be run from an already
-settled release version:
+`brew install RoderAI/tap/roder` is kept current automatically. When the release
+PR (`knope/release`) merges, `release.yml` runs `knope release` to tag
+`roder/v<version>`, then a `homebrew` job in the same workflow runs
+`scripts/update-homebrew-tap.sh`, which:
+
+1. resolves the released `roder` version from `crates/roder-cli/Cargo.toml`;
+2. downloads the immutable source tag tarball
+   (`https://github.com/RoderAI/roder/archive/refs/tags/roder/v<version>.tar.gz`)
+   and computes its `sha256`;
+3. regenerates `Formula/roder.rb` in `RoderAI/homebrew-tap` for that version;
+4. commits and pushes it (no-op when the tap is already on that version).
+
+The `homebrew` job lives in the same workflow run as `knope release` on purpose:
+a tag/release created with the default `GITHUB_TOKEN` does not trigger a separate
+downstream workflow, so the tap update has to run inline.
+
+### Required configuration
+
+- Repository secret **`HOMEBREW_TAP_TOKEN`**: a PAT (or fine-grained token) with
+  `contents: write` on `RoderAI/homebrew-tap`. Without it the job fails loudly;
+  the crate tags/releases from the earlier step are unaffected.
+
+### Manual run / recovery
+
+Run the same automation locally (dry-run writes the formula under `dist/`
+without pushing):
 
 ```sh
-VERSION=0.1.1 make release-brew
+# Inspect the rendered formula only:
+VERSION=0.1.5 make update-homebrew-tap
+
+# Actually push to the tap:
+VERSION=0.1.5 HOMEBREW_TAP_TOKEN=ghp_... ./scripts/update-homebrew-tap.sh
 ```
+
+Then validate against the tap:
+
+```sh
+brew audit --strict --online --new RoderAI/tap/roder
+brew reinstall --build-from-source RoderAI/tap/roder
+brew test RoderAI/tap/roder
+```
+
+`scripts/release-brew.sh` (`make release-brew`) remains a separate, fully manual
+helper for cutting a local source release; it is not part of the automated flow.
