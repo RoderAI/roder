@@ -500,12 +500,10 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
             prepared.search_root.to_string_lossy().to_string()
         };
         let output = self
-            .run_shell(
-                format!(
-                    "find {} -type f ! -path './.git/*' ! -path './target/*' | sed 's#^./##'",
-                    shell_quote(&target)
-                ),
-            )
+            .run_shell(format!(
+                "find {} -type f ! -path './.git/*' ! -path './target/*' | sed 's#^./##'",
+                shell_quote(&target)
+            ))
             .await?;
         let mut files_considered = 0usize;
         let mut matches = output
