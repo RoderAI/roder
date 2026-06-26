@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3389,7 +3389,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3414,7 +3414,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3532,7 +3532,7 @@ dependencies = [
 
 [[package]]
 name = "roder-config"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -3577,7 +3577,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3736,7 +3736,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-cursor"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3967,7 +3967,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4042,7 +4042,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-chat-completions"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4397,7 +4397,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-subagents"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4632,7 +4632,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4735,7 +4735,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4844,7 +4844,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tools"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4865,7 +4865,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "async-trait",

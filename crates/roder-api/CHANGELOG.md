@@ -1,3 +1,92 @@
+## 0.1.4 (2026-06-26)
+
+### Features
+
+#### Agent-swarm mode
+
+Add a Roder-native `agent_swarm` fanout tool and `/agent-swarm` (alias `/swarm`)
+commands (roadmap phase 104). A lead model can launch many homogeneous
+subagent tasks from one `prompt_template` (with the `{{item}}` placeholder) over
+an `items` array, optionally resuming existing agents via `resume_agent_ids`,
+and receives an ordered `<agent_swarm_result>` summary with completed/failed/
+aborted counts and resumable agent ids. A bounded scheduler paces launches
+(initial burst then one per interval), honors an optional concurrency cap,
+preserves input order, and supports cooperative cancellation. Configure via
+`[agent_swarm]` or `RODER_AGENT_SWARM_*` env. The `/agent-swarm on|off|status`
+command toggles a persistent swarm reminder; `/agent-swarm <prompt>` runs one
+swarm task.
+
+#### Enforce agent_swarm as the only tool call in a response
+
+The core turn loop now denies any model response that mixes `agent_swarm` with
+other tool calls, or issues multiple `agent_swarm` calls at once (roadmap 104,
+Task 2). Each call in the offending batch gets an error tool result with
+actionable retry text, so the model re-issues `agent_swarm` by itself and every
+`tool_call_id` still receives a response (keeping chat-completions transcripts
+valid). Adds `roder_api::subagents::agent_swarm_batch_violation` and the shared
+`AGENT_SWARM_TOOL_NAME` constant.
+
+#### Agent-swarm lifecycle events on the event bus
+
+Emit `AgentSwarmStarted` (with the child count) and `AgentSwarmCompleted` (with
+completed/failed/aborted counts) `RoderEvent`s when the `agent_swarm` tool runs,
+so any app-server/SDK/TUI client can observe a swarm as a whole rather than only
+the per-child `Subagent*` traces (roadmap 104, Task 1). The runtime emits these
+around tool routing; existing notification mappers fall through their catch-all
+arms, so no client breaks.
+
+#### Server-side agent-swarm mode
+
+Move agent-swarm mode from TUI-only client state to runtime/app-server state so
+every client benefits (roadmap 104). Adds the `thread/set_agent_swarm_mode`
+app-server method, an `agentSwarmMode` field on `settings/get`, and an
+`AgentSwarmModeChanged` event. When swarm mode is active the runtime injects the
+canonical swarm reminder into each turn's developer instructions
+(`Runtime::set_agent_swarm_mode` + `apply_agent_swarm_mode`), so the model is
+nudged toward the `agent_swarm` fanout tool regardless of which client drove the
+turn. The TUI now toggles swarm mode through the method and no longer prepends
+the reminder client-side. Also fixes two pre-existing method-manifest ordering
+issues (`auth/kimi-code/*`, `thread/compact`).
+
+#### Rate-limit-aware agent_swarm scheduling
+
+Swarm children that fail with a provider rate limit are now requeued with
+exponential backoff (default 3s, 6s, 12s, ... up to 4 retries) instead of
+failing outright (roadmap 104, Task 3). The concurrency permit is held across
+the backoff so a rate-limited swarm naturally throttles rather than hammering
+the provider, and cancellation still wins promptly. Tunable via
+`[agent_swarm].rate_limit_max_retries` / `rate_limit_base_backoff_ms` and the
+`RODER_AGENT_SWARM_RATE_LIMIT_*` env vars (retries are clamped to a hard cap so
+a swarm can never wait unboundedly).
+
+#### Per-thread MCP bearer token
+
+Let a remote client scope a thread's MCP tool calls to a specific identity (for
+Vex: a per-user, per-organization capability token). The client forwards the
+token via a new `mcpAuthToken` field on `thread/start`; the app-server records
+it in an in-memory `roder_api::mcp_auth` registry keyed by thread id, and the
+MCP tool extension reads it during execution to authenticate that thread's tool
+calls (falling back to the process default when absent). Tokens are short-lived
+and re-supplied on each `thread/start`.
+
+#### Subagent and swarm children inherit the parent workspace
+
+Subagent (`task`) and agent-swarm children built their tool-execution context
+with no handles, so any child file/shell/search tool failed with "workspace
+handle is not available" and the child could not do real work. Children now
+inherit the lead turn's workspace, remote workspace, process runner, and
+context-artifact handles via the new `SubagentDispatcher::dispatch_with_context`
+(the parent goal controller and trace sink are intentionally not inherited).
+Each child still runs on its own child thread/turn id, so it operates on the
+same repository as an independent agent rather than being confused with the
+main-line thread.
+
+### Fixes
+
+#### Cursor fast variants, reasoning params, and stable conversation ids
+
+Expose `composer-2.5-fast` and `gpt-5.5-fast` as first-class catalog models, encode AgentService `fast`/`effort`/`thinking` params from Roder reasoning config, reuse a stable per-thread Cursor `conversation_id`, and open the reasoning submenu when selecting Cursor models that advertise effort options.
+
 ## 0.1.3 (2026-06-22)
 
 ### Features

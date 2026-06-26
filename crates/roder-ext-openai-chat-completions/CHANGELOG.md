@@ -1,3 +1,27 @@
+## 0.1.3 (2026-06-26)
+
+### Fixes
+
+#### Fix parallel tool calls on chat-completions providers (Kimi Code, etc.)
+
+Coalesce a turn's parallel tool calls into a single assistant `tool_calls`
+message followed by one `role: tool` message per id. Previously each tool call
+was emitted as its own assistant message, so a turn with multiple tool calls
+(e.g. several `write_file` calls at once) produced an invalid request and the
+provider returned `400 ... tool_call_ids did not have response messages`.
+
+#### Always pair tool calls with results in chat-completions requests
+
+Harden the chat-completions message builder so an assistant `tool_calls` message
+is ALWAYS immediately followed by exactly one `role: tool` message per id. Each
+coalesced assistant message now emits its tool results right after it (looked up
+by id, or a placeholder when none was recorded), and orphan tool results with no
+matching call are dropped. This makes the request structurally valid even when a
+result is missing or out of order (e.g. dropped during context compaction or a
+partial/replayed transcript), fixing recurring `400 ... tool_call_ids did not
+have response messages` errors on parallel tool calls (Kimi Code and other
+OpenAI-compatible providers).
+
 ## 0.1.2 (2026-06-22)
 
 ### Fixes

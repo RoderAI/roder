@@ -1,3 +1,41 @@
+## 0.1.4 (2026-06-26)
+
+### Features
+
+#### Agent-swarm lifecycle events on the event bus
+
+Emit `AgentSwarmStarted` (with the child count) and `AgentSwarmCompleted` (with
+completed/failed/aborted counts) `RoderEvent`s when the `agent_swarm` tool runs,
+so any app-server/SDK/TUI client can observe a swarm as a whole rather than only
+the per-child `Subagent*` traces (roadmap 104, Task 1). The runtime emits these
+around tool routing; existing notification mappers fall through their catch-all
+arms, so no client breaks.
+
+#### Server-side agent-swarm mode
+
+Move agent-swarm mode from TUI-only client state to runtime/app-server state so
+every client benefits (roadmap 104). Adds the `thread/set_agent_swarm_mode`
+app-server method, an `agentSwarmMode` field on `settings/get`, and an
+`AgentSwarmModeChanged` event. When swarm mode is active the runtime injects the
+canonical swarm reminder into each turn's developer instructions
+(`Runtime::set_agent_swarm_mode` + `apply_agent_swarm_mode`), so the model is
+nudged toward the `agent_swarm` fanout tool regardless of which client drove the
+turn. The TUI now toggles swarm mode through the method and no longer prepends
+the reminder client-side. Also fixes two pre-existing method-manifest ordering
+issues (`auth/kimi-code/*`, `thread/compact`).
+
+### Fixes
+
+#### Enforce agent_swarm as the only tool call in a response
+
+The core turn loop now denies any model response that mixes `agent_swarm` with
+other tool calls, or issues multiple `agent_swarm` calls at once (roadmap 104,
+Task 2). Each call in the offending batch gets an error tool result with
+actionable retry text, so the model re-issues `agent_swarm` by itself and every
+`tool_call_id` still receives a response (keeping chat-completions transcripts
+valid). Adds `roder_api::subagents::agent_swarm_batch_violation` and the shared
+`AGENT_SWARM_TOOL_NAME` constant.
+
 ## 0.1.3 (2026-06-22)
 
 ### Fixes
