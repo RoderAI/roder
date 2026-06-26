@@ -232,6 +232,11 @@ pub trait SubagentDispatcher: Send + Sync + 'static {
 // provider-neutral and do not vendor any external implementation.
 // ---------------------------------------------------------------------------
 
+/// Canonical model-facing swarm tool name. Single source of truth shared by
+/// the tool registration (`roder-ext-subagents`) and the core turn loop's
+/// exclusivity enforcement (`roder-core`).
+pub const AGENT_SWARM_TOOL_NAME: &str = "agent_swarm";
+
 /// Literal placeholder replaced with each `agent_swarm` item value.
 pub const AGENT_SWARM_PROMPT_PLACEHOLDER: &str = "{{item}}";
 
@@ -241,6 +246,73 @@ pub const AGENT_SWARM_MAX_SUBAGENTS: usize = 128;
 pub const AGENT_SWARM_INITIAL_LAUNCH_LIMIT: usize = 5;
 /// Default pacing interval between additional child launches, in milliseconds.
 pub const AGENT_SWARM_LAUNCH_INTERVAL_MS: u64 = 700;
+
+/// Why a batch of tool calls violates the `agent_swarm` exclusivity rule:
+/// `agent_swarm` must be the only tool call in a single model response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentSwarmBatchViolation {
+    /// More than one `agent_swarm` call appeared in the same response.
+    MultipleSwarms {
+        /// Whether non-swarm tool calls were also present in the batch.
+        has_other_tools: bool,
+    },
+    /// Exactly one `agent_swarm` call was mixed with other tool calls.
+    MixedWithOtherTools,
+}
+
+impl AgentSwarmBatchViolation {
+    /// Actionable retry text returned to the model for every call in the
+    /// denied batch, so it re-issues `agent_swarm` by itself.
+    pub fn deny_message(self) -> String {
+        match self {
+            Self::MultipleSwarms { has_other_tools } => {
+                let mut message = String::from(
+                    "agent_swarm must be called one swarm at a time. Multiple agent_swarm calls \
+                     are not forbidden, but issue them sequentially: call one agent_swarm, wait \
+                     for its result, then call the next; or merge the work into a single \
+                     agent_swarm when one swarm can cover it.",
+                );
+                if has_other_tools {
+                    message.push_str(
+                        " agent_swarm also must not be combined with other tools in the same \
+                         response.",
+                    );
+                }
+                message
+            }
+            Self::MixedWithOtherTools => String::from(
+                "agent_swarm must be the only tool call in a model response. Retry with a single \
+                 agent_swarm call by itself, then call any other tools after it returns.",
+            ),
+        }
+    }
+}
+
+/// Detect whether a batch of tool-call names violates the `agent_swarm`
+/// exclusivity rule. Returns `None` when the batch is valid: no `agent_swarm`
+/// call, or exactly one `agent_swarm` call by itself.
+pub fn agent_swarm_batch_violation<'a>(
+    tool_names: impl Iterator<Item = &'a str>,
+) -> Option<AgentSwarmBatchViolation> {
+    let mut total = 0usize;
+    let mut swarm = 0usize;
+    for name in tool_names {
+        total += 1;
+        if name == AGENT_SWARM_TOOL_NAME {
+            swarm += 1;
+        }
+    }
+    if swarm == 0 || (swarm == 1 && total == 1) {
+        return None;
+    }
+    if swarm > 1 {
+        Some(AgentSwarmBatchViolation::MultipleSwarms {
+            has_other_tools: total > swarm,
+        })
+    } else {
+        Some(AgentSwarmBatchViolation::MixedWithOtherTools)
+    }
+}
 
 /// How a swarm-mode session was entered.
 ///
@@ -902,5 +974,53 @@ mod tests {
         assert!(!AgentSwarmModeTrigger::Manual.should_auto_exit());
         assert!(AgentSwarmModeTrigger::Task.should_auto_exit());
         assert!(AgentSwarmModeTrigger::Tool.should_auto_exit());
+    }
+
+    #[test]
+    fn batch_violation_allows_single_swarm_alone() {
+        assert_eq!(
+            agent_swarm_batch_violation(["agent_swarm"].into_iter()),
+            None
+        );
+    }
+
+    #[test]
+    fn batch_violation_allows_batches_without_swarm() {
+        assert_eq!(
+            agent_swarm_batch_violation(["read_file", "write_file"].into_iter()),
+            None
+        );
+    }
+
+    #[test]
+    fn batch_violation_flags_swarm_mixed_with_other_tools() {
+        assert_eq!(
+            agent_swarm_batch_violation(["agent_swarm", "read_file"].into_iter()),
+            Some(AgentSwarmBatchViolation::MixedWithOtherTools)
+        );
+        let message = AgentSwarmBatchViolation::MixedWithOtherTools.deny_message();
+        assert!(message.contains("only tool call"));
+    }
+
+    #[test]
+    fn batch_violation_flags_multiple_swarms() {
+        assert_eq!(
+            agent_swarm_batch_violation(["agent_swarm", "agent_swarm"].into_iter()),
+            Some(AgentSwarmBatchViolation::MultipleSwarms {
+                has_other_tools: false
+            })
+        );
+        assert_eq!(
+            agent_swarm_batch_violation(["agent_swarm", "agent_swarm", "read_file"].into_iter()),
+            Some(AgentSwarmBatchViolation::MultipleSwarms {
+                has_other_tools: true
+            })
+        );
+        let message = AgentSwarmBatchViolation::MultipleSwarms {
+            has_other_tools: true,
+        }
+        .deny_message();
+        assert!(message.contains("one swarm at a time"));
+        assert!(message.contains("combined with other tools"));
     }
 }

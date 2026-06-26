@@ -25,8 +25,9 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinSet;
 
-/// Canonical model-facing swarm tool name.
-pub const AGENT_SWARM_TOOL: &str = "agent_swarm";
+/// Canonical model-facing swarm tool name (shared with `roder-api` and the
+/// core turn loop's exclusivity enforcement).
+pub use roder_api::subagents::AGENT_SWARM_TOOL_NAME as AGENT_SWARM_TOOL;
 
 const AGENT_SWARM_DESCRIPTION: &str = "Launch many subagents from one prompt template, resume \
 existing subagents, or both. Provide a `prompt_template` containing the exact placeholder \

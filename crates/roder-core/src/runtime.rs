@@ -3062,6 +3062,26 @@ impl Runtime {
         workspace: Option<&str>,
         deadline: Option<OffsetDateTime>,
     ) -> anyhow::Result<Vec<ToolResultRecord>> {
+        // Enforce the agent_swarm exclusivity rule (roadmap 104, Task 2):
+        // `agent_swarm` must be the only tool call in a model response. A mixed
+        // or multi-swarm batch is denied wholesale with actionable retry text so
+        // the model re-issues `agent_swarm` by itself, and every tool_call_id
+        // still gets a response (keeping the chat-completions transcript valid).
+        if let Some(violation) = roder_api::subagents::agent_swarm_batch_violation(
+            calls.iter().map(|call| call.name.as_str()),
+        ) {
+            let message = violation.deny_message();
+            return Ok(calls
+                .into_iter()
+                .map(|call| ToolResultRecord {
+                    id: call.id,
+                    name: Some(call.name),
+                    result: message.clone(),
+                    display_payload: None,
+                    is_error: true,
+                })
+                .collect());
+        }
         let force_sequential = calls
             .iter()
             .any(|call| crate::agent_control_tools::is_agent_control_tool(&call.name));
@@ -6193,6 +6213,53 @@ mod tests {
             "unexpected result: {}",
             result.result
         );
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn route_tool_calls_denies_agent_swarm_mixed_with_other_tools() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-swarm-exclusive-{}", uuid::Uuid::new_v4()));
+        let runtime = runtime_with_edit_allowlist(&requests, &thread_root);
+
+        // A response that mixes agent_swarm with another tool is denied wholesale:
+        // both calls get an error result with retry guidance, and no tool runs.
+        let results = runtime
+            .route_tool_calls(
+                &"thread-swarm".to_string(),
+                &"turn-swarm".to_string(),
+                vec![
+                    roder_api::inference::ToolCallCompleted {
+                        id: "swarm-1".to_string(),
+                        name: "agent_swarm".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                    roder_api::inference::ToolCallCompleted {
+                        id: "read-1".to_string(),
+                        name: "read_file".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                ],
+                true,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 2, "every tool_call_id must get a response");
+        assert_eq!(results[0].id, "swarm-1");
+        assert_eq!(results[1].id, "read-1");
+        for result in &results {
+            assert!(result.is_error);
+            assert!(
+                result.result.contains("only tool call"),
+                "unexpected result: {}",
+                result.result
+            );
+        }
 
         let _ = std::fs::remove_dir_all(thread_root);
     }
