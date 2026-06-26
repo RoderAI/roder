@@ -2554,6 +2554,11 @@ where
                         self.current_goal = None;
                     }
                     RoderEvent::ThreadGoalUpdated(_) | RoderEvent::ThreadGoalCleared(_) => {}
+                    RoderEvent::AgentSwarmProgress(ev) if ev.thread_id == self.thread_id => {
+                        self.timeline
+                            .record_agent_swarm_progress(&ev.tool_id, ev.snapshot);
+                    }
+                    RoderEvent::AgentSwarmProgress(_) => {}
                     RoderEvent::SubagentTraceCreated(ev) => {
                         self.timeline.record_subagent_trace_created(ev.summary);
                     }

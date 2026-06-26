@@ -77,6 +77,53 @@ fn hosted_web_search_tool_entry_shows_query() {
 }
 
 #[test]
+fn agent_swarm_running_row_shows_live_progress_then_final_grid() {
+    use roder_api::subagents::AgentSwarmProgressSnapshot;
+
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "swarm_1".to_string(),
+        ToolTimelineEntry::new("agent_swarm", r#"{"description":"x"}"#),
+    );
+
+    // A live progress tick while running renders a "N/total done" line.
+    timeline.record_agent_swarm_progress(
+        "swarm_1",
+        AgentSwarmProgressSnapshot {
+            total: 3,
+            completed: 1,
+            failed: 0,
+            aborted: 0,
+        },
+    );
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines.iter().any(|line| line.contains("swarm: 1/3 done")),
+        "running swarm should show live progress; got {lines:?}"
+    );
+
+    // Once the final <agent_swarm_result> arrives, the grid summary replaces the
+    // live tick.
+    timeline.record_tool_completed(
+        "swarm_1",
+        false,
+        Some(
+            "<agent_swarm_result>\n<summary>completed: 3</summary>\n<subagent item=\"a\" outcome=\"completed\">ok</subagent>\n</agent_swarm_result>"
+                .to_string(),
+        ),
+    );
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines.iter().any(|line| line.contains("swarm: completed: 3")),
+        "completed swarm should show the result summary; got {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("/3 done")),
+        "the live tick should be gone once the result arrives; got {lines:?}"
+    );
+}
+
+#[test]
 fn timeline_updates_tool_rows_in_place() {
     let mut timeline = TimelineState::default();
     timeline.record_tool_requested(

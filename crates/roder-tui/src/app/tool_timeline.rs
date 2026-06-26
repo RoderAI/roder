@@ -213,6 +213,10 @@ struct ToolTimelineTool {
     status: ToolTimelineStatus,
     output: Option<String>,
     started_at: time::OffsetDateTime,
+    /// Live `agent_swarm` progress while the swarm is running, rendered as a
+    /// "swarm: N/total done" tick until the final `<agent_swarm_result>` grid
+    /// arrives.
+    swarm_progress: Option<roder_api::subagents::AgentSwarmProgressSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -530,6 +534,7 @@ impl TimelineState {
                 output: None,
                 started_at: time::OffsetDateTime::now_local()
                     .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+                swarm_progress: None,
             }),
         });
         self.invalidate_render_cache();
@@ -646,6 +651,25 @@ impl TimelineState {
             tool.output = output.filter(|text| !text.trim().is_empty());
             self.mutate_item(index);
             self.follow_live_updates_from_composer();
+        }
+    }
+
+    /// Record a live `agent_swarm` progress tick on its tool row so a running
+    /// swarm shows "swarm: N/total done" until the final result grid arrives.
+    pub fn record_agent_swarm_progress(
+        &mut self,
+        tool_id: &str,
+        snapshot: roder_api::subagents::AgentSwarmProgressSnapshot,
+    ) {
+        let Some(index) = self.tool_indices.get(tool_id).copied() else {
+            return;
+        };
+        if let Some(TimelineItem {
+            kind: TimelineItemKind::Tool(tool),
+        }) = self.items.get_mut(index)
+        {
+            tool.swarm_progress = Some(snapshot);
+            self.mutate_item(index);
         }
     }
 
