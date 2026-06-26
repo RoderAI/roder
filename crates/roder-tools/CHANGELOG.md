@@ -1,3 +1,11 @@
+## 0.1.2 (2026-06-26)
+
+### Fixes
+
+#### Allow glob to search absolute paths outside the workspace
+
+Match `glob` behavior with the other file search tools by allowing absolute patterns to search directly when filesystem access is unrestricted, while preserving workspace-only scoping when configured.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
