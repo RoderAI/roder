@@ -881,6 +881,14 @@ enum ConfirmDialog {
         tool_name: String,
         reason: Option<String>,
     },
+    /// Offered when agent-swarm mode is enabled from an approval-gating policy
+    /// mode (`Default`/`Plan`): every swarm child tool call would otherwise
+    /// block on a separate approval. Confirming switches to `target_mode`
+    /// (a non-gating mode) so the fan-out can run unattended.
+    SwarmPolicySwitch {
+        from_mode: PolicyMode,
+        target_mode: PolicyMode,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -1089,6 +1097,21 @@ fn confirm_action_for_key(key: KeyCode, selected: ConfirmChoice) -> ConfirmKeyAc
         KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => ConfirmKeyAction::Cancel,
         _ => ConfirmKeyAction::Ignore,
     }
+}
+
+/// Whether `mode` gates every side-effecting tool behind an individual
+/// approval, which would stall a swarm fan-out because each child blocks on its
+/// own approval. `Default` prompts per tool and `Plan` blocks writes; both are
+/// gating. `AcceptAll` and `Bypass` let children run unattended.
+fn policy_mode_gates_swarm(mode: PolicyMode) -> bool {
+    matches!(mode, PolicyMode::Default | PolicyMode::Plan)
+}
+
+/// The non-gating policy mode to recommend when entering swarm mode from a
+/// gating mode. `AcceptAll` is the least drastic: it auto-approves tools while
+/// keeping the rest of the runtime's guardrails intact.
+fn swarm_policy_switch_target(_from: PolicyMode) -> PolicyMode {
+    PolicyMode::AcceptAll
 }
 
 fn is_policy_mode_shortcut_key(key: KeyEvent) -> bool {
@@ -2687,11 +2710,24 @@ where
                     ConfirmDialog::ToolApproval { approval_id, .. } => {
                         self.resolve_tool_approval(approval_id, true).await
                     }
+                    ConfirmDialog::SwarmPolicySwitch { target_mode, .. } => {
+                        self.set_policy_mode(target_mode, "agent-swarm entry").await;
+                    }
                 }
             }
             ConfirmKeyAction::Cancel => {
-                if let ConfirmDialog::ToolApproval { approval_id, .. } = state.dialog {
-                    self.resolve_tool_approval(approval_id, false).await;
+                match state.dialog {
+                    ConfirmDialog::ToolApproval { approval_id, .. } => {
+                        self.resolve_tool_approval(approval_id, false).await;
+                    }
+                    ConfirmDialog::SwarmPolicySwitch { from_mode, .. } => {
+                        self.timeline.push_system(format!(
+                            "Keeping {} policy mode. Swarm children will each wait for tool \
+                             approval; use shift+tab to switch modes if that blocks the fan-out.",
+                            policy_mode_label(from_mode)
+                        ));
+                    }
+                    ConfirmDialog::Interrupt | ConfirmDialog::Exit => {}
                 }
                 self.confirm_dialog = None;
             }
@@ -3403,6 +3439,7 @@ where
                 "Agent-swarm mode on. Turns now nudge the model to use the agent_swarm tool; \
                  use /agent-swarm off to disable.",
             );
+            self.maybe_prompt_swarm_policy_switch();
         } else {
             self.timeline.push_system("Agent-swarm mode off.");
         }
@@ -3410,6 +3447,24 @@ where
             "slash command: /agent-swarm {}",
             if self.swarm_mode { "on" } else { "off" }
         ));
+    }
+
+    /// When swarm mode is enabled from an approval-gating policy mode, offer to
+    /// switch to a non-gating mode so swarm children do not each stall on a
+    /// separate tool approval. No-ops when the mode already runs unattended or
+    /// another modal is already on screen.
+    fn maybe_prompt_swarm_policy_switch(&mut self) {
+        if !self.swarm_mode || self.confirm_dialog.is_some() {
+            return;
+        }
+        if !policy_mode_gates_swarm(self.policy_mode) {
+            return;
+        }
+        let target_mode = swarm_policy_switch_target(self.policy_mode);
+        self.confirm_dialog = Some(ConfirmDialogState::new(ConfirmDialog::SwarmPolicySwitch {
+            from_mode: self.policy_mode,
+            target_mode,
+        }));
     }
 
     async fn refresh_command_catalog(&mut self) {
@@ -11560,6 +11615,75 @@ mod tests {
         assert_eq!(
             confirm_action_for_key(KeyCode::Enter, state.selected),
             ConfirmKeyAction::Confirm
+        );
+    }
+
+    #[test]
+    fn swarm_policy_gating_classifies_modes() {
+        assert!(policy_mode_gates_swarm(PolicyMode::Default));
+        assert!(policy_mode_gates_swarm(PolicyMode::Plan));
+        assert!(!policy_mode_gates_swarm(PolicyMode::AcceptAll));
+        assert!(!policy_mode_gates_swarm(PolicyMode::Bypass));
+        // The recommended switch target is always a non-gating mode.
+        for mode in [
+            PolicyMode::Default,
+            PolicyMode::Plan,
+            PolicyMode::AcceptAll,
+            PolicyMode::Bypass,
+        ] {
+            assert!(!policy_mode_gates_swarm(swarm_policy_switch_target(mode)));
+        }
+    }
+
+    #[test]
+    fn entering_swarm_from_gating_mode_offers_policy_switch() {
+        let mut app = test_app();
+        app.policy_mode = PolicyMode::Default;
+        app.swarm_mode = true;
+
+        app.maybe_prompt_swarm_policy_switch();
+
+        match app.confirm_dialog.as_ref().map(|state| &state.dialog) {
+            Some(ConfirmDialog::SwarmPolicySwitch {
+                from_mode,
+                target_mode,
+            }) => {
+                assert_eq!(*from_mode, PolicyMode::Default);
+                assert_eq!(*target_mode, PolicyMode::AcceptAll);
+            }
+            other => panic!("expected a swarm policy-switch dialog, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn entering_swarm_from_non_gating_mode_does_not_prompt() {
+        let mut app = test_app();
+        app.policy_mode = PolicyMode::Bypass;
+        app.swarm_mode = true;
+
+        app.maybe_prompt_swarm_policy_switch();
+
+        assert!(
+            app.confirm_dialog.is_none(),
+            "Bypass already runs unattended, so no policy-switch prompt is needed"
+        );
+    }
+
+    #[test]
+    fn swarm_policy_prompt_does_not_clobber_an_open_dialog() {
+        let mut app = test_app();
+        app.policy_mode = PolicyMode::Plan;
+        app.swarm_mode = true;
+        app.confirm_dialog = Some(ConfirmDialogState::new(ConfirmDialog::Interrupt));
+
+        app.maybe_prompt_swarm_policy_switch();
+
+        assert!(
+            matches!(
+                app.confirm_dialog.as_ref().map(|state| &state.dialog),
+                Some(ConfirmDialog::Interrupt)
+            ),
+            "an already-open modal must take precedence over the swarm prompt"
         );
     }
 

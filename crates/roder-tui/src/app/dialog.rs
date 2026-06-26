@@ -161,6 +161,33 @@ fn dialog_copy(dialog: &ConfirmDialog) -> DialogCopy {
                 .unwrap_or_else(|| "Roder wants to run a side-effecting tool.".to_string()),
             confirm_label: "Approve".to_string(),
         },
+        ConfirmDialog::SwarmPolicySwitch {
+            from_mode,
+            target_mode,
+        } => DialogCopy {
+            title: "Agent-swarm policy".to_string(),
+            context: "agent-swarm mode".to_string(),
+            heading: format!("Switch to {} for the swarm?", policy_mode_name(*target_mode)),
+            detail: format!(
+                "{} mode approves every side-effecting tool call individually, so each swarm \
+                 child would block waiting for you. Switch to {} so the fan-out can run \
+                 unattended, or keep {} and approve children yourself.",
+                policy_mode_name(*from_mode),
+                policy_mode_name(*target_mode),
+                policy_mode_name(*from_mode),
+            ),
+            confirm_label: format!("Switch to {}", policy_mode_name(*target_mode)),
+        },
+    }
+}
+
+/// Short, human-facing policy-mode name used in dialog copy.
+fn policy_mode_name(mode: super::PolicyMode) -> &'static str {
+    match mode {
+        super::PolicyMode::Default => "Default",
+        super::PolicyMode::AcceptAll => "Accept All",
+        super::PolicyMode::Plan => "Plan",
+        super::PolicyMode::Bypass => "Bypass",
     }
 }
 
@@ -299,6 +326,20 @@ mod tests {
         assert_eq!(copy.confirm_label, "Interrupt");
         assert!(copy.heading.contains("Stop"));
         assert!(copy.detail.contains("thread stays open"));
+    }
+
+    #[test]
+    fn swarm_policy_switch_copy_names_both_modes() {
+        let copy = dialog_copy(&ConfirmDialog::SwarmPolicySwitch {
+            from_mode: super::super::PolicyMode::Default,
+            target_mode: super::super::PolicyMode::AcceptAll,
+        });
+
+        assert_eq!(copy.title, "Agent-swarm policy");
+        assert!(copy.heading.contains("Accept All"));
+        assert!(copy.detail.contains("Default"));
+        assert!(copy.detail.contains("Accept All"));
+        assert_eq!(copy.confirm_label, "Switch to Accept All");
     }
 
     #[test]
