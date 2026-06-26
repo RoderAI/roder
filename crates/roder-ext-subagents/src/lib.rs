@@ -18,8 +18,9 @@ use semver::Version;
 
 pub use agent_def::{AgentDefinitionSource, parse_agent_definition};
 pub use agent_swarm::{
-    AGENT_SWARM_TOOL, AgentSwarmCancel, AgentSwarmChildLauncher, AgentSwarmChildRun, AgentSwarmTool,
-    DispatcherChildLauncher, run_agent_swarm,
+    AGENT_SWARM_TOOL, AgentSwarmCancel, AgentSwarmChildLauncher, AgentSwarmChildRun,
+    AgentSwarmProgressObserver, AgentSwarmTool, DispatcherChildLauncher, run_agent_swarm,
+    run_agent_swarm_with_observer,
 };
 pub use dispatcher::{InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry};
 pub use loader::{AgentLoadConfig, load_agent_definitions};

@@ -313,6 +313,51 @@ pub struct AgentSwarmCompleted {
     pub timestamp: time::OffsetDateTime,
 }
 
+/// A running tally of swarm children as they resolve, used for live progress.
+/// `resolved` is `completed + failed + aborted`; clients can render
+/// `resolved/total` as a progress bar without tracking individual children.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSwarmProgressSnapshot {
+    pub total: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub aborted: usize,
+}
+
+impl AgentSwarmProgressSnapshot {
+    /// Children that have finished (in any outcome).
+    pub fn resolved(&self) -> usize {
+        self.completed + self.failed + self.aborted
+    }
+}
+
+/// Emitted each time a swarm child resolves, so a client can render a live
+/// "N/total done" progress tick between `AgentSwarmStarted` and
+/// `AgentSwarmCompleted` rather than only the final result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSwarmProgress {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub snapshot: AgentSwarmProgressSnapshot,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: time::OffsetDateTime,
+}
+
+/// Sink the runtime supplies on a tool-execution context so the `agent_swarm`
+/// tool can publish live progress snapshots (carrying the runtime's thread/turn
+/// ids and the bus emitter) without the tool depending on `roder-core`.
+#[async_trait::async_trait]
+pub trait AgentSwarmProgressSink: Send + Sync {
+    async fn emit_progress(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        tool_id: &str,
+        snapshot: AgentSwarmProgressSnapshot,
+    );
+}
+
 /// Why a batch of tool calls violates the `agent_swarm` exclusivity rule:
 /// `agent_swarm` must be the only tool call in a single model response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

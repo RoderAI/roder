@@ -71,7 +71,7 @@ use crate::reliability::{
 };
 pub use crate::speed_policy::RuntimeSpeedPolicyConfig;
 use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
-use crate::subagent_traces::RuntimeSubagentTraceSink;
+use crate::subagent_traces::{RuntimeAgentSwarmProgressSink, RuntimeSubagentTraceSink};
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
 use crate::thread_item_cache::{ThreadItemCache, ThreadItemCacheEntry};
 use crate::verification_gate::VerificationGateState;
@@ -523,6 +523,10 @@ impl Runtime {
             .with_context_artifacts(self.context_artifacts.backend())
             .with_goal_controller(self.goals.clone())
             .with_subagent_trace_sink(Arc::new(RuntimeSubagentTraceSink::new(
+                self.bus.clone(),
+                self.thread_store.clone(),
+            )))
+            .with_swarm_progress_sink(Arc::new(RuntimeAgentSwarmProgressSink::new(
                 self.bus.clone(),
                 self.thread_store.clone(),
             )));

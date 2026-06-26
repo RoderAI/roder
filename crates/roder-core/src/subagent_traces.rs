@@ -4,6 +4,7 @@ use roder_api::events::{
     RoderEvent, SubagentTraceCompleted, SubagentTraceCreated, SubagentTraceDeltaEvent,
     SubagentTraceFailed, SubagentTraceStatusChanged,
 };
+use roder_api::subagents::{AgentSwarmProgress, AgentSwarmProgressSink, AgentSwarmProgressSnapshot};
 use roder_api::thread::ThreadStore;
 use roder_api::trace::{
     ParentTurnRef, SubagentTraceDelta, SubagentTraceId, SubagentTraceSink, SubagentTraceStatus,
@@ -26,6 +27,43 @@ impl RuntimeSubagentTraceSink {
 
     async fn emit(&self, event: RoderEvent) {
         let envelope = self.bus.emit(event);
+        if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref()) {
+            let _ = store.append_event(thread_id, &envelope).await;
+        }
+    }
+}
+
+/// Bus-backed [`AgentSwarmProgressSink`]: the `agent_swarm` tool publishes a
+/// live tick through this, which the runtime turns into an `AgentSwarmProgress`
+/// event (and persists it like other thread events).
+#[derive(Clone)]
+pub(crate) struct RuntimeAgentSwarmProgressSink {
+    bus: EventBus,
+    thread_store: Option<Arc<dyn ThreadStore>>,
+}
+
+impl RuntimeAgentSwarmProgressSink {
+    pub(crate) fn new(bus: EventBus, thread_store: Option<Arc<dyn ThreadStore>>) -> Self {
+        Self { bus, thread_store }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentSwarmProgressSink for RuntimeAgentSwarmProgressSink {
+    async fn emit_progress(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        tool_id: &str,
+        snapshot: AgentSwarmProgressSnapshot,
+    ) {
+        let envelope = self.bus.emit(RoderEvent::AgentSwarmProgress(AgentSwarmProgress {
+            thread_id: thread_id.to_string(),
+            turn_id: turn_id.to_string(),
+            tool_id: tool_id.to_string(),
+            snapshot,
+            timestamp: OffsetDateTime::now_utc(),
+        }));
         if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref()) {
             let _ = store.append_event(thread_id, &envelope).await;
         }
@@ -138,6 +176,39 @@ mod tests {
                     event.summary.exit_reason,
                     Some(SubagentExitReason::Completed)
                 );
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn swarm_progress_sink_emits_progress_event() {
+        let bus = EventBus::new(16);
+        let sink = RuntimeAgentSwarmProgressSink::new(bus.clone(), None);
+        let mut events = bus.subscribe();
+
+        sink.emit_progress(
+            "thread-1",
+            "turn-1",
+            "swarm-1",
+            AgentSwarmProgressSnapshot {
+                total: 3,
+                completed: 1,
+                failed: 1,
+                aborted: 0,
+            },
+        )
+        .await;
+
+        let envelope = events.recv().await.unwrap();
+        assert_eq!(envelope.kind, "agent_swarm.progress");
+        assert_eq!(envelope.thread_id.as_deref(), Some("thread-1"));
+        assert_eq!(envelope.turn_id.as_deref(), Some("turn-1"));
+        match envelope.event {
+            RoderEvent::AgentSwarmProgress(event) => {
+                assert_eq!(event.tool_id, "swarm-1");
+                assert_eq!(event.snapshot.total, 3);
+                assert_eq!(event.snapshot.resolved(), 2);
             }
             other => panic!("unexpected event: {other:?}"),
         }

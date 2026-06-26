@@ -52,7 +52,8 @@ use crate::skills::{
     SkillInvoked, SkillSkipped, SkillsCatalogLoaded,
 };
 use crate::subagents::{
-    AgentSwarmCompleted, AgentSwarmModeChanged, AgentSwarmStarted, SubagentExitReason,
+    AgentSwarmCompleted, AgentSwarmModeChanged, AgentSwarmProgress, AgentSwarmStarted,
+    SubagentExitReason,
 };
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
@@ -1277,6 +1278,7 @@ pub enum RoderEvent {
     PolicyModeChanged(PolicyModeChanged),
     AgentSwarmModeChanged(AgentSwarmModeChanged),
     AgentSwarmStarted(AgentSwarmStarted),
+    AgentSwarmProgress(AgentSwarmProgress),
     AgentSwarmCompleted(AgentSwarmCompleted),
     PolicyExitPlanRequested(PolicyExitPlanRequested),
     PolicyExitPlanResolved(PolicyExitPlanResolved),
@@ -1477,6 +1479,7 @@ impl RoderEvent {
             RoderEvent::PolicyModeChanged(_) => "policy.mode_changed",
             RoderEvent::AgentSwarmModeChanged(_) => "agent_swarm.mode_changed",
             RoderEvent::AgentSwarmStarted(_) => "agent_swarm.started",
+            RoderEvent::AgentSwarmProgress(_) => "agent_swarm.progress",
             RoderEvent::AgentSwarmCompleted(_) => "agent_swarm.completed",
             RoderEvent::PolicyExitPlanRequested(_) => "policy.exit_plan_requested",
             RoderEvent::PolicyExitPlanResolved(_) => "policy.exit_plan_resolved",
@@ -1802,6 +1805,7 @@ impl RoderEvent {
             RoderEvent::PolicyModeChanged(e) => Some(&e.thread_id),
             RoderEvent::AgentSwarmModeChanged(e) => Some(&e.thread_id),
             RoderEvent::AgentSwarmStarted(e) => Some(&e.thread_id),
+            RoderEvent::AgentSwarmProgress(e) => Some(&e.thread_id),
             RoderEvent::AgentSwarmCompleted(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.thread_id),
@@ -1995,6 +1999,7 @@ impl RoderEvent {
             RoderEvent::PolicyModeChanged(e) => e.turn_id.as_ref(),
             RoderEvent::AgentSwarmModeChanged(e) => e.turn_id.as_ref(),
             RoderEvent::AgentSwarmStarted(e) => Some(&e.turn_id),
+            RoderEvent::AgentSwarmProgress(e) => Some(&e.turn_id),
             RoderEvent::AgentSwarmCompleted(e) => Some(&e.turn_id),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.turn_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.turn_id),
