@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use roder_api::extension::ExtensionRegistryBuilder;
-use roder_api::subagents::SubagentDefinition;
+use roder_api::subagents::{AgentSwarmConfig, SubagentDefinition};
 use roder_api::tools::ToolRegistry;
 use roder_ext_subagents::{
     InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry, SubagentsExtension,
@@ -21,6 +21,10 @@ pub struct DefaultSubagentsConfig {
     pub default_timeout_seconds: u64,
     pub include_child_transcript: bool,
     pub expose_per_type: bool,
+    /// Register the `agent_swarm` fanout tool (roadmap 104).
+    pub expose_agent_swarm: bool,
+    /// Bounded scheduler tuning for `agent_swarm`.
+    pub agent_swarm: AgentSwarmConfig,
 }
 
 impl Default for DefaultSubagentsConfig {
@@ -36,6 +40,8 @@ impl Default for DefaultSubagentsConfig {
             default_timeout_seconds: 180,
             include_child_transcript: false,
             expose_per_type: false,
+            expose_agent_swarm: true,
+            agent_swarm: AgentSwarmConfig::default(),
         }
     }
 }
@@ -73,6 +79,8 @@ pub(crate) fn install_subagents(
         dispatcher,
         TaskToolConfig {
             expose_per_type: config.expose_per_type,
+            expose_agent_swarm: config.expose_agent_swarm,
+            agent_swarm: config.agent_swarm,
             ..TaskToolConfig::default()
         },
     ))

@@ -1,4 +1,5 @@
 mod agent_def;
+mod agent_swarm;
 mod dispatcher;
 mod loader;
 mod tool;
@@ -16,6 +17,10 @@ use roder_api::subagents::SubagentDispatcher;
 use semver::Version;
 
 pub use agent_def::{AgentDefinitionSource, parse_agent_definition};
+pub use agent_swarm::{
+    AGENT_SWARM_TOOL, AgentSwarmCancel, AgentSwarmChildLauncher, AgentSwarmChildRun, AgentSwarmTool,
+    DispatcherChildLauncher, run_agent_swarm,
+};
 pub use dispatcher::{InProcessDispatcher, InProcessDispatcherConfig, InferenceEngineRegistry};
 pub use loader::{AgentLoadConfig, load_agent_definitions};
 pub use tool::{TaskTool, TaskToolConfig, TaskToolContributor, namespaced_task_tool_name};

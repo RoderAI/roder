@@ -6,13 +6,13 @@ use roder_api::events::{ThreadId, TurnId};
 use roder_api::inference::TokenUsage;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
-    SubagentDefinition, SubagentDispatcher, SubagentExitReason, SubagentLane,
+    AgentSwarmConfig, SubagentDefinition, SubagentDispatcher, SubagentExitReason, SubagentLane,
     SubagentPermissionMode, SubagentRequest, SubagentResult,
 };
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry,
 };
-use roder_ext_subagents::{TaskTool, TaskToolConfig, TaskToolContributor};
+use roder_ext_subagents::{AgentSwarmTool, TaskTool, TaskToolConfig, TaskToolContributor};
 use serde_json::json;
 
 #[tokio::test]
@@ -195,6 +195,22 @@ fn task_tool_contributor_installs_only_canonical_tool_by_default() {
 
     contributor.contribute(&mut registry).unwrap();
 
+    assert_eq!(tool_names(&registry), ["agent_swarm", "task"]);
+}
+
+#[test]
+fn task_tool_contributor_can_disable_agent_swarm_tool() {
+    let contributor = TaskToolContributor::new(
+        TaskToolConfig {
+            expose_agent_swarm: false,
+            ..TaskToolConfig::default()
+        },
+        Arc::new(FakeDispatcher::default()),
+    );
+    let mut registry = ToolRegistry::default();
+
+    contributor.contribute(&mut registry).unwrap();
+
     assert_eq!(tool_names(&registry), ["task"]);
 }
 
@@ -213,7 +229,7 @@ fn task_tool_contributor_installs_namespaced_tools_only_when_enabled() {
 
     assert_eq!(
         tool_names(&registry),
-        ["task", "task_explore", "task_review"]
+        ["agent_swarm", "task", "task_explore", "task_review"]
     );
 }
 
@@ -237,8 +253,71 @@ fn schema_snapshot_covers_model_facing_task_tool() {
     assert!(schema.contains(r#""additionalProperties":false"#));
 }
 
+#[tokio::test]
+async fn agent_swarm_tool_dispatches_children_in_order() {
+    let dispatcher = Arc::new(FakeDispatcher::default());
+    let tool = AgentSwarmTool::new(dispatcher.clone(), AgentSwarmConfig::default());
+
+    let result = tool
+        .execute(
+            context(),
+            agent_swarm_call(json!({
+                "description": "inspect fixtures",
+                "subagent_type": "explore",
+                "prompt_template": "Read {{item}} and report.",
+                "items": ["a.rs", "b.rs"]
+            })),
+        )
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.text.contains("<agent_swarm_result>"));
+    assert!(result.text.contains("<summary>completed: 2</summary>"));
+    assert_eq!(result.data["agent_swarm"]["completed"], 2);
+    assert_eq!(result.data["agent_swarm"]["children"][0]["item"], "a.rs");
+    assert_eq!(result.data["agent_swarm"]["children"][1]["item"], "b.rs");
+
+    let requests = dispatcher.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].subagent_type.as_deref(), Some("explore"));
+    assert_eq!(requests[0].prompt, "Read a.rs and report.");
+    assert_eq!(requests[1].prompt, "Read b.rs and report.");
+}
+
+#[tokio::test]
+async fn agent_swarm_tool_rejects_single_item_without_resume() {
+    let tool = AgentSwarmTool::new(Arc::new(FakeDispatcher::default()), AgentSwarmConfig::default());
+
+    let result = tool
+        .execute(
+            context(),
+            agent_swarm_call(json!({
+                "description": "inspect fixtures",
+                "prompt_template": "Read {{item}}.",
+                "items": ["only.rs"]
+            })),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert_eq!(result.data["error"]["kind"], "invalid_arguments");
+}
+
 fn context() -> ToolExecutionContext {
     ToolExecutionContext::new("parent-thread", "parent-turn", PolicyMode::Default)
+}
+
+fn agent_swarm_call(arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: "tool-call".to_string(),
+        name: "agent_swarm".to_string(),
+        raw_arguments: arguments.to_string(),
+        arguments,
+        thread_id: "parent-thread".to_string(),
+        turn_id: "parent-turn".to_string(),
+    }
 }
 
 fn call(arguments: serde_json::Value) -> ToolCall {

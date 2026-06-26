@@ -4,8 +4,11 @@ use anyhow::bail;
 use roder_api::extension::ToolProviderId;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::subagents::{
-    SubagentDispatcher, SubagentExitReason, SubagentLane, SubagentRequest, SubagentResult,
+    AgentSwarmConfig, SubagentDispatcher, SubagentExitReason, SubagentLane, SubagentRequest,
+    SubagentResult,
 };
+
+use crate::agent_swarm::AgentSwarmTool;
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
@@ -19,6 +22,10 @@ const CANONICAL_TASK_TOOL: &str = "task";
 pub struct TaskToolConfig {
     pub provider_id: ToolProviderId,
     pub expose_per_type: bool,
+    /// Register the model-facing `agent_swarm` fanout tool (roadmap 104).
+    pub expose_agent_swarm: bool,
+    /// Bounded scheduler tuning for `agent_swarm`.
+    pub agent_swarm: AgentSwarmConfig,
 }
 
 impl Default for TaskToolConfig {
@@ -26,6 +33,8 @@ impl Default for TaskToolConfig {
         Self {
             provider_id: "roder-subagents-task".to_string(),
             expose_per_type: false,
+            expose_agent_swarm: true,
+            agent_swarm: AgentSwarmConfig::default(),
         }
     }
 }
@@ -48,6 +57,13 @@ impl ToolContributor for TaskToolContributor {
 
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
         registry.register(Arc::new(TaskTool::canonical(self.dispatcher.clone())))?;
+
+        if self.config.expose_agent_swarm {
+            registry.register(Arc::new(AgentSwarmTool::new(
+                self.dispatcher.clone(),
+                self.config.agent_swarm.clone(),
+            )))?;
+        }
 
         if self.config.expose_per_type {
             for definition in self.dispatcher.definitions() {
