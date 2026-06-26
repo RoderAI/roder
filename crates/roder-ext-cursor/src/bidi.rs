@@ -50,6 +50,7 @@ pub struct BidiUsageMetadata {
     pub thread_id: String,
     pub turn_id: String,
     pub model: String,
+    pub conversation_id: String,
 }
 
 pub async fn run_bidi_turn(
@@ -240,6 +241,7 @@ pub async fn run_bidi_turn(
             "threadId": usage_metadata.thread_id,
             "turnId": usage_metadata.turn_id,
             "model": usage_metadata.model,
+            "conversationId": usage_metadata.conversation_id,
             "usage": {
                 "input_tokens": usage_metadata.prompt_tokens,
                 "output_tokens": completion_tokens,

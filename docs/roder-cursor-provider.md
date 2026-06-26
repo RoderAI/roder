@@ -10,12 +10,16 @@ Cursor exposes Composer alongside frontier models it proxies through AgentServic
 
 ```text
 cursor/composer-2.5
+cursor/composer-2.5-fast
 cursor/claude-opus-4-8
 cursor/claude-sonnet-4-6
 cursor/gpt-5.5
+cursor/gpt-5.5-fast
 cursor/gemini-3.1-pro-preview
 cursor/grok-4.3
 ```
+
+Fast variants (`*-fast`) are separate catalog ids. AgentService/Run accepts the bare model id (`composer-2.5`, `gpt-5.5`) with a `fast=true` requested-model param; Roder maps `composer-2.5-fast` / `gpt-5.5-fast` automatically when encoding the protobuf request.
 
 Each proxied model reuses the same id as its native provider, so the model string sent to AgentService matches the underlying model.
 
@@ -151,7 +155,7 @@ The Cursor provider advertises `image_input: true` and uploads images inline (fi
 
 Roder `InputImage`s are `data:<mime>;base64,<payload>` URLs; non-base64 / remote-URL images are skipped because Cursor's inline path needs raw bytes. The Cursor catalog models advertise `supports_images: true`.
 
-> **Known limitation (in progress):** tool *results* are currently replayed as flattened prompt text in the next round, and each round opens a fresh Cursor conversation. Cursor's agent does not treat that as a native tool result, so multi-step tool loops (e.g. read-then-edit) can re-issue the same tool call. Completing the loop requires sending results via `ConversationAction.resume_action` / `UserMessageAction.conversation_history` against a stable `conversation_id`.
+Roder reuses a stable Cursor `conversation_id` for every Roder thread and replays prior user, assistant, tool-call, and tool-result items through `UserMessageAction.conversation_history`. This keeps Cursor's backend conversation state aligned with Roder's transcript across turns, so follow-up prompts can continue from earlier tool results instead of starting a fresh Cursor conversation.
 
 ## Model listing (live + on-disk cache)
 
@@ -159,7 +163,7 @@ Roder `InputImage`s are `data:<mime>;base64,<payload>` URLs; non-base64 / remote
 
 - **RPC:** `POST {backend}/aiserver.v1.AiService/AvailableModels` (Connect unary). Use `content-type: application/json` with body `{}` (the JSON Connect codec; `application/connect+proto` returns HTTP 415 for unary). Auth is the same exchanged access token + `connect-protocol-version: 1`, `x-cursor-client-type: cli`, `x-cursor-client-version`, `x-ghost-mode: true` headers as `AgentService/Run`. Backend host is the API key exchange host (`api2.cursor.sh`), not the AgentService host.
 - **Response:** `{ models: [ { serverModelName, clientDisplayName, supportsAgent, supportsImages, supportsThinking, tooltipData{ markdownContent } } ] }`.
-- **Important divergence:** the picker returns effort/fast variant ids (`claude-opus-4-8-thinking-high-fast`, `composer-2.5-fast`) that are **not** the ids `AgentService/Run` accepts. Run accepts the bare ids in Roder's curated catalog (`claude-opus-4-8`). So Roder reduces each picker id to its base form (strips trailing effort / `-thinking` / `-fast`) and **merges** it into the curated catalog rather than using picker ids verbatim: curated entries keep their hand-tuned context window + reasoning options; genuinely new base ids are appended with a cleaned display name and a context window parsed from the tooltip. Meta ids (`auto`/`default`) and namespaced ids (`accounts/.../...`) are skipped.
+- **Important divergence:** the picker returns effort/fast variant ids (`claude-opus-4-8-thinking-high-fast`, `composer-2.5-fast`) that are **not** the ids `AgentService/Run` accepts as field `requested_model.model_id`. Run accepts the bare ids (`claude-opus-4-8`, `composer-2.5`) plus optional params such as `fast=true`. Roder therefore reduces picker ids to their base form when refreshing the catalog, and exposes supported fast variants (`composer-2.5-fast`, `gpt-5.5-fast`) as first-class catalog ids that encode as bare id + `fast=true` on the wire.
 
 Caching: `~/.roder/models-cache.json` (override with `RODER_MODELS_CACHE_PATH`), 6h TTL (`RODER_MODELS_CACHE_TTL_SECONDS`), background refresh on staleness, force a refresh with `RODER_MODELS_REFRESH=1`. The live call only runs when Cursor auth is configured; otherwise the static catalog (`models_for_provider`) is returned. Any auth/network/HTTP error falls back to the static catalog, so model listing never hard-depends on the live call.
 
