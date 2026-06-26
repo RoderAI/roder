@@ -1,3 +1,48 @@
+## 0.1.7 (2026-06-26)
+
+### Features
+
+#### Agent-swarm mode
+
+Add a Roder-native `agent_swarm` fanout tool and `/agent-swarm` (alias `/swarm`)
+commands (roadmap phase 104). A lead model can launch many homogeneous
+subagent tasks from one `prompt_template` (with the `{{item}}` placeholder) over
+an `items` array, optionally resuming existing agents via `resume_agent_ids`,
+and receives an ordered `<agent_swarm_result>` summary with completed/failed/
+aborted counts and resumable agent ids. A bounded scheduler paces launches
+(initial burst then one per interval), honors an optional concurrency cap,
+preserves input order, and supports cooperative cancellation. Configure via
+`[agent_swarm]` or `RODER_AGENT_SWARM_*` env. The `/agent-swarm on|off|status`
+command toggles a persistent swarm reminder; `/agent-swarm <prompt>` runs one
+swarm task.
+
+#### Render agent_swarm results as a compact child grid
+
+The TUI timeline now renders an `agent_swarm` tool call with a compact swarm
+summary line (`swarm: completed: 2, failed: 1`) grouped under the tool call, and
+per-child outcome/item/agent-id rows when expanded, instead of the raw
+`<agent_swarm_result>` XML block (roadmap 104, Task 5). Live per-child progress
+continues to surface through the existing subagent trace surface.
+
+### Fixes
+
+#### Server-side agent-swarm mode
+
+Move agent-swarm mode from TUI-only client state to runtime/app-server state so
+every client benefits (roadmap 104). Adds the `thread/set_agent_swarm_mode`
+app-server method, an `agentSwarmMode` field on `settings/get`, and an
+`AgentSwarmModeChanged` event. When swarm mode is active the runtime injects the
+canonical swarm reminder into each turn's developer instructions
+(`Runtime::set_agent_swarm_mode` + `apply_agent_swarm_mode`), so the model is
+nudged toward the `agent_swarm` fanout tool regardless of which client drove the
+turn. The TUI now toggles swarm mode through the method and no longer prepends
+the reminder client-side. Also fixes two pre-existing method-manifest ordering
+issues (`auth/kimi-code/*`, `thread/compact`).
+
+#### Cursor fast variants, reasoning params, and stable conversation ids
+
+Expose `composer-2.5-fast` and `gpt-5.5-fast` as first-class catalog models, encode AgentService `fast`/`effort`/`thinking` params from Roder reasoning config, reuse a stable per-thread Cursor `conversation_id`, and open the reasoning submenu when selecting Cursor models that advertise effort options.
+
 ## 0.1.6 (2026-06-26)
 
 ### Fixes
