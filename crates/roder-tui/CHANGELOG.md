@@ -1,3 +1,45 @@
+## 0.1.8 (2026-06-26)
+
+### Features
+
+#### Live agent_swarm progress in the timeline
+
+Render a live "swarm: N/total done" tick on the `agent_swarm` tool row while the
+swarm is running, fed by `AgentSwarmProgress` events, instead of an empty row
+until the final result. Once the `<agent_swarm_result>` arrives, the row swaps to
+the existing compact child grid. When any children fail or abort, the live line
+also shows the `(ok, failed, aborted)` breakdown.
+
+#### Prompt to switch policy mode when entering agent-swarm
+
+When agent-swarm mode is enabled from an approval-gating policy mode
+(`Default` or `Plan`), the TUI now offers a one-key confirm dialog to switch to
+`Accept All` so swarm children don't each stall on a separate tool approval
+(roadmap 104, Task 4). Confirming maps to the existing `thread/set_mode`
+(`Accept All`); declining keeps the current mode and explains that children will
+wait for per-tool approval. Non-gating modes (`Accept All`, `Bypass`) and any
+already-open modal suppress the prompt.
+
+### Fixes
+
+#### Per-thread agent-swarm mode
+
+Scope agent-swarm mode to a single thread instead of the whole runtime (roadmap
+104 follow-up), so toggling swarm mode on one thread no longer leaks the swarm
+reminder into other threads sharing the runtime — aligning swarm mode with the
+per-thread `thread/*` contract.
+
+The runtime keeps a per-thread override map alongside the global default
+(mirroring the team per-member policy-mode idiom): `set_agent_swarm_mode_for_thread`
+stores the override and emits `AgentSwarmModeChanged` with the real `thread_id`,
+and `effective_agent_swarm_mode_for_thread` resolves the per-thread override or
+falls back to the runtime-global default; the turn loop now consults it. The
+`thread/set_agent_swarm_mode` app-server method gains an optional `threadId`
+(present -> per-thread, absent -> global, preserving legacy behavior) echoed back
+in the result, and the TUI passes its current thread id. `settings/get` continues
+to expose the global default. Covered by runtime unit tests (per-thread
+isolation, off-override-wins, real-thread-id event) and an app-server e2e test.
+
 ## 0.1.7 (2026-06-26)
 
 ### Features
