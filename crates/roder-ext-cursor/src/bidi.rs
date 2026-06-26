@@ -17,7 +17,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use roder_api::inference::{
     CompletionMetadata, InferenceEvent, InferenceEventStream, MessageDelta, ReasoningDelta,
-    ToolCallCompleted, TurnToolExecutor,
+    TokenUsage, ToolCallCompleted, TurnToolExecutor,
 };
 use serde_json::json;
 
@@ -38,6 +38,18 @@ pub struct BidiRequest {
     pub context_frames: Vec<Vec<u8>>,
     pub workspace: PathBuf,
     pub tool_executor: Option<Arc<dyn TurnToolExecutor>>,
+    pub usage_metadata: BidiUsageMetadata,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BidiUsageMetadata {
+    pub prompt_tokens: u32,
+    pub provider: String,
+    pub transport: String,
+    pub auth_source: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub model: String,
 }
 
 pub async fn run_bidi_turn(
@@ -96,6 +108,7 @@ pub async fn run_bidi_turn(
 
     let workspace = request.workspace;
     let executor = request.tool_executor;
+    let usage_metadata = request.usage_metadata;
     // The model can think for a while between exec steps; allow generous idle.
     let idle = Duration::from_secs(120);
     let mut bytes_stream = response.bytes_stream();
@@ -106,6 +119,8 @@ pub async fn run_bidi_turn(
         // Keep `tx` alive for the whole turn so the request body stays open.
         let outbound = tx;
         let mut visible_tokens = 0u32;
+        let mut thinking_tokens = 0u32;
+        let mut usage_fields = serde_json::Map::new();
 
         // Periodic heartbeat so the server doesn't reset long turns (the model
         // can think for tens of seconds between/after tool calls).
@@ -167,13 +182,17 @@ pub async fn run_bidi_turn(
                         if let Some(kv_seq) = frame.kv_seq {
                             let _ = outbound.send(Bytes::from(encode_connect_frame(&encode_kv_ack(kv_seq))));
                         }
+                        for (field, value) in frame.usage_fields {
+                            usage_fields.insert(format!("field_{field}"), json!(value));
+                        }
                         if !frame.thinking.is_empty() {
                             last_progress = tokio::time::Instant::now();
+                            thinking_tokens = thinking_tokens.saturating_add(estimate_text_tokens(&frame.thinking));
                             yield InferenceEvent::ReasoningDelta(ReasoningDelta { text: frame.thinking });
                         }
                         if !frame.text.is_empty() {
                             last_progress = tokio::time::Instant::now();
-                            visible_tokens = visible_tokens.saturating_add((frame.text.len() / 4) as u32);
+                            visible_tokens = visible_tokens.saturating_add(estimate_text_tokens(&frame.text));
                             yield InferenceEvent::MessageDelta(MessageDelta { text: frame.text, phase: None });
                         }
                         if let Some(exec) = frame.exec {
@@ -205,6 +224,36 @@ pub async fn run_bidi_turn(
         }
 
         heartbeat.abort();
+        let completion_tokens = visible_tokens.saturating_add(thinking_tokens);
+        let total_tokens = usage_metadata
+            .prompt_tokens
+            .saturating_add(completion_tokens);
+        yield InferenceEvent::Usage(TokenUsage::new(
+            usage_metadata.prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        ));
+        yield InferenceEvent::ProviderMetadata(json!({
+            "provider": usage_metadata.provider,
+            "transport": usage_metadata.transport,
+            "authSource": usage_metadata.auth_source,
+            "threadId": usage_metadata.thread_id,
+            "turnId": usage_metadata.turn_id,
+            "model": usage_metadata.model,
+            "usage": {
+                "input_tokens": usage_metadata.prompt_tokens,
+                "output_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "output_tokens_details": {
+                    "reasoning_tokens": thinking_tokens,
+                    "visible_output_tokens": visible_tokens
+                }
+            },
+            "usageFields": usage_fields,
+            "usageFieldsSource": "cursor-agentservice-turn-end",
+            "usageEstimated": true,
+            "usageSource": "chars_per_4",
+        }));
         yield InferenceEvent::Completed(CompletionMetadata {
             stop_reason: Some("turn_ended".to_string()),
             provider_response_id: None,
@@ -212,6 +261,10 @@ pub async fn run_bidi_turn(
     };
 
     Ok(Box::pin(events))
+}
+
+fn estimate_text_tokens(text: &str) -> u32 {
+    u32::try_from(text.len().div_ceil(4)).unwrap_or(u32::MAX)
 }
 
 /// Execute one exec request and return `(frames_to_send, ack_seq)`.
