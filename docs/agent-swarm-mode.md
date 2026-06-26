@@ -67,6 +67,25 @@ The scheduler (defaults shown) is bounded and deterministic:
   `aborted` with `state = started`, and never-started children are marked
   `aborted` with `state = not_started`.
 
+### Provider rate limits
+
+When the provider rate-limits a child, the swarm backs off on two levels:
+
+- **Per child:** the child is retried with exponential backoff
+  (`rate_limit_base_backoff_ms = 3000`, doubling: 3s, 6s, 12s, ...) up to
+  `rate_limit_max_retries = 4` (hard-capped at 8) before it is reported
+  `failed`.
+- **Globally:** a shared rate-limit governor throttles the *whole* swarm so the
+  children do not each hammer the provider in parallel. The first rate limit
+  sizes a global capacity from the children that were active when it hit, then
+  shrinks it by one. Sustained rate limits shrink capacity by one more (down to
+  a floor of one) no more often than every
+  `rate_limit_shrink_interval_ms = 2000`, and launches are paced apart while
+  throttled. After a quiet window of `rate_limit_recovery_interval_ms = 180000`
+  (three minutes) with no rate limit, the swarm recovers one unit of capacity so
+  it speeds back up. The governor is inert until the first rate limit, so the
+  normal ramp above is unaffected.
+
 ## Configuration
 
 ```toml
@@ -76,6 +95,10 @@ initial_launch_limit = 5
 launch_interval_ms = 700
 max_concurrency = 4       # optional
 child_timeout_seconds = 180  # optional
+rate_limit_max_retries = 4            # per-child retries (hard cap 8)
+rate_limit_base_backoff_ms = 3000     # per-child backoff base (doubles)
+rate_limit_shrink_interval_ms = 2000  # min spacing between capacity shrinks
+rate_limit_recovery_interval_ms = 180000  # quiet window before +1 capacity
 ```
 
 Environment overrides (highest precedence; all parsed then clamped):
@@ -85,6 +108,10 @@ Environment overrides (highest precedence; all parsed then clamped):
 - `RODER_AGENT_SWARM_LAUNCH_INTERVAL_MS`
 - `RODER_AGENT_SWARM_MAX_CONCURRENCY`
 - `RODER_AGENT_SWARM_CHILD_TIMEOUT_SECONDS`
+- `RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES`
+- `RODER_AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS`
+- `RODER_AGENT_SWARM_RATE_LIMIT_SHRINK_INTERVAL_MS`
+- `RODER_AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS`
 
 ## TUI commands
 

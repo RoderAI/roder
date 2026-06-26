@@ -582,6 +582,14 @@ pub const RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_ENV: &str =
 /// Env override for the swarm rate-limit base backoff in milliseconds.
 pub const RODER_AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS_ENV: &str =
     "RODER_AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS";
+/// Env override for the minimum interval between global rate-limit capacity
+/// shrinks, in milliseconds.
+pub const RODER_AGENT_SWARM_RATE_LIMIT_SHRINK_INTERVAL_MS_ENV: &str =
+    "RODER_AGENT_SWARM_RATE_LIMIT_SHRINK_INTERVAL_MS";
+/// Env override for the quiet window after which global rate-limit capacity
+/// recovers by one, in milliseconds.
+pub const RODER_AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS_ENV: &str =
+    "RODER_AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS";
 
 /// `[agent_swarm]` config block (roadmap phase 104). All fields are optional;
 /// unset fields fall back to the bounded defaults in
@@ -595,6 +603,8 @@ pub struct AgentSwarmConfig {
     pub child_timeout_seconds: Option<u64>,
     pub rate_limit_max_retries: Option<usize>,
     pub rate_limit_base_backoff_ms: Option<u64>,
+    pub rate_limit_shrink_interval_ms: Option<u64>,
+    pub rate_limit_recovery_interval_ms: Option<u64>,
 }
 
 /// Resolve the effective swarm scheduler config: bounded defaults, overlaid by
@@ -635,6 +645,12 @@ pub fn resolve_agent_swarm_config_with(
         if let Some(value) = config.rate_limit_base_backoff_ms {
             resolved.rate_limit_base_backoff_ms = value;
         }
+        if let Some(value) = config.rate_limit_shrink_interval_ms {
+            resolved.rate_limit_shrink_interval_ms = value;
+        }
+        if let Some(value) = config.rate_limit_recovery_interval_ms {
+            resolved.rate_limit_recovery_interval_ms = value;
+        }
     }
 
     if let Some(value) = env(RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV).and_then(|v| v.trim().parse().ok())
@@ -670,6 +686,16 @@ pub fn resolve_agent_swarm_config_with(
         env(RODER_AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS_ENV).and_then(|v| v.trim().parse().ok())
     {
         resolved.rate_limit_base_backoff_ms = value;
+    }
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_RATE_LIMIT_SHRINK_INTERVAL_MS_ENV).and_then(|v| v.trim().parse().ok())
+    {
+        resolved.rate_limit_shrink_interval_ms = value;
+    }
+    if let Some(value) = env(RODER_AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS_ENV)
+        .and_then(|v| v.trim().parse().ok())
+    {
+        resolved.rate_limit_recovery_interval_ms = value;
     }
 
     resolved.clamped()
@@ -2048,11 +2074,14 @@ mod tests {
             child_timeout_seconds: Some(45),
             rate_limit_max_retries: Some(2),
             rate_limit_base_backoff_ms: Some(1000),
+            rate_limit_shrink_interval_ms: Some(1500),
+            rate_limit_recovery_interval_ms: Some(90_000),
         };
         let env: std::collections::HashMap<&str, &str> = [
             (RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV, "9001"),
             (RODER_AGENT_SWARM_MAX_CONCURRENCY_ENV, "2"),
             (RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_ENV, "5"),
+            (RODER_AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS_ENV, "60000"),
         ]
         .into_iter()
         .collect();
@@ -2072,6 +2101,10 @@ mod tests {
         // block value still drives the base backoff.
         assert_eq!(resolved.rate_limit_max_retries, 5);
         assert_eq!(resolved.rate_limit_base_backoff_ms, 1000);
+        // the block value drives the shrink interval; env (60s) overrode the
+        // block recovery window (90s).
+        assert_eq!(resolved.rate_limit_shrink_interval_ms, 1500);
+        assert_eq!(resolved.rate_limit_recovery_interval_ms, 60_000);
     }
 
     #[test]
