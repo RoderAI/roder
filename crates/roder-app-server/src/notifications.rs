@@ -445,6 +445,18 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 forced: event.forced,
             },
         )],
+        RoderEvent::AgentSwarmModeChanged(event) => {
+            vec![protocol_notification("agentSwarm/modeChanged", event.clone())]
+        }
+        RoderEvent::AgentSwarmStarted(event) => {
+            vec![protocol_notification("agentSwarm/started", event.clone())]
+        }
+        RoderEvent::AgentSwarmProgress(event) => {
+            vec![protocol_notification("agentSwarm/progress", event.clone())]
+        }
+        RoderEvent::AgentSwarmCompleted(event) => {
+            vec![protocol_notification("agentSwarm/completed", event.clone())]
+        }
         RoderEvent::SubagentTraceCreated(event) => {
             vec![protocol_notification(
                 "turn/subagentTraceCreated",

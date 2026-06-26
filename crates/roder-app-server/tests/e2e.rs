@@ -9248,6 +9248,7 @@ async fn thread_agent_swarm_mode_can_be_set_and_observed() {
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
     let mut events = client.subscribe_events();
+    let mut notifications = client.subscribe_notifications();
 
     // Off by default.
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
@@ -9284,6 +9285,12 @@ async fn thread_agent_swarm_mode_can_be_set_and_observed() {
         }
     }
     assert!(saw_changed);
+
+    // And reaches remote app-server clients as an `agentSwarm/modeChanged`
+    // notification so any SDK/remote client can observe the swarm-mode toggle.
+    let notification =
+        wait_for_notification(&mut notifications, "agentSwarm/modeChanged", None).await;
+    assert_eq!(notification.params["enabled"], serde_json::json!(true));
 
     // Toggling off round-trips.
     let changed: ThreadSetAgentSwarmModeResult = request(

@@ -5368,6 +5368,12 @@ notifications:
 - Subagent traces: `turn/subagentTraceCreated`, `turn/subagentTraceDelta`,
   `turn/subagentTraceStatusChanged`, `turn/subagentTraceCompleted`,
   `turn/subagentTraceFailed`.
+- Agent swarm: `agentSwarm/modeChanged`, `agentSwarm/started`,
+  `agentSwarm/progress`, `agentSwarm/completed`. `modeChanged` reports
+  swarm-mode toggles; `started`/`completed` bracket a single `agent_swarm`
+  tool fan-out; `progress` carries an incremental
+  `{ total, completed, failed, aborted }` snapshot after each child resolves.
+  Per-child detail still flows through the `turn/subagentTrace*` family.
 - Plan review: `plan/reviewCreated`, `plan/reviewStatusChanged`,
   `plan/reviewCommentAdded`, `plan/reviewRewritten`,
   `plan/reviewApproved`, `plan/reviewRejected`.
