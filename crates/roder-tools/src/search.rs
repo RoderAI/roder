@@ -385,7 +385,11 @@ pub(crate) struct PreparedGlobPattern {
 }
 
 impl PreparedGlobPattern {
-    pub(crate) fn display_path(&self, workspace: &crate::workspace::Workspace, path: &Path) -> String {
+    pub(crate) fn display_path(
+        &self,
+        workspace: &crate::workspace::Workspace,
+        path: &Path,
+    ) -> String {
         match self.display_mode {
             GlobDisplayMode::WorkspaceRelative => workspace.display(path),
             GlobDisplayMode::Absolute => path.to_string_lossy().replace('\\', "/"),
@@ -455,7 +459,9 @@ pub(crate) fn prepare_glob_pattern(
 ) -> anyhow::Result<PreparedGlobPattern> {
     let trimmed = pattern.trim();
     if workspace.is_remote() && (trimmed == "~" || trimmed.starts_with("~/")) {
-        anyhow::bail!("home-relative glob patterns are not supported on a remote runner workspace: {trimmed}");
+        anyhow::bail!(
+            "home-relative glob patterns are not supported on a remote runner workspace: {trimmed}"
+        );
     }
     let expanded = if trimmed == "~" || trimmed.starts_with("~/") {
         crate::workspace::expand_home(trimmed)?
@@ -477,9 +483,13 @@ pub(crate) fn prepare_glob_pattern(
     // /var vs /private/var on macOS, still resolve inside the workspace.
     let (literal_prefix, wildcard_parts) = split_glob_literal_prefix(&normalized);
     let prefix_path = Path::new(&literal_prefix);
-    let resolved_prefix = prefix_path
-        .canonicalize()
-        .unwrap_or_else(|_| normalize_path(prefix_path));
+    let resolved_prefix = if workspace.is_remote() {
+        normalize_path(prefix_path)
+    } else {
+        prefix_path
+            .canonicalize()
+            .unwrap_or_else(|_| normalize_path(prefix_path))
+    };
     workspace.ensure_readable_path(&resolved_prefix)?;
     if let Ok(inside) = resolved_prefix.strip_prefix(workspace.root()) {
         let mut relative = inside.to_string_lossy().replace('\\', "/");
@@ -497,8 +507,8 @@ pub(crate) fn prepare_glob_pattern(
     }
 
     Ok(PreparedGlobPattern {
-        search_root: prefix_path.to_path_buf(),
-        matcher_pattern: normalize_absolute_pattern(&normalized),
+        matcher_pattern: resolved_absolute_glob_pattern(&resolved_prefix, &wildcard_parts),
+        search_root: resolved_prefix,
         display_mode: GlobDisplayMode::Absolute,
     })
 }
@@ -540,6 +550,17 @@ fn normalize_path(path: &Path) -> PathBuf {
 fn normalize_absolute_pattern(pattern: &str) -> String {
     let path = normalize_path(Path::new(pattern));
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn resolved_absolute_glob_pattern(resolved_prefix: &Path, wildcard_parts: &[&str]) -> String {
+    let mut pattern = resolved_prefix.to_string_lossy().replace('\\', "/");
+    if !wildcard_parts.is_empty() {
+        if !pattern.ends_with('/') {
+            pattern.push('/');
+        }
+        pattern.push_str(&wildcard_parts.join("/"));
+    }
+    normalize_absolute_pattern(&pattern)
 }
 
 pub(crate) fn compile_glob(pattern: &str) -> anyhow::Result<globset::GlobMatcher> {

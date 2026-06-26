@@ -20,13 +20,10 @@ fn compiled_globs_support_star_question_mark_braces_and_classes() {
 
 #[test]
 fn prepare_glob_pattern_resolves_workspace_absolute_prefixes() {
-    let workspace = Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Global)
-        .unwrap();
+    let workspace =
+        Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Global).unwrap();
     let prepared = prepare_glob_pattern(&workspace, "/workspace/project/src/**/*.rs").unwrap();
-    assert_eq!(
-        prepared.matcher_pattern,
-        "src/**/*.rs"
-    );
+    assert_eq!(prepared.matcher_pattern, "src/**/*.rs");
     assert_eq!(prepared.search_root, PathBuf::from("/workspace/project"));
 
     let prepared = prepare_glob_pattern(&workspace, "src/*.rs").unwrap();
@@ -36,8 +33,8 @@ fn prepare_glob_pattern_resolves_workspace_absolute_prefixes() {
 
 #[test]
 fn prepare_glob_pattern_allows_external_absolute_prefixes_when_scope_is_global() {
-    let workspace = Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Global)
-        .unwrap();
+    let workspace =
+        Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Global).unwrap();
     let prepared = prepare_glob_pattern(&workspace, "/elsewhere/**/*.rs").unwrap();
 
     assert_eq!(prepared.search_root, PathBuf::from("/elsewhere"));
@@ -46,8 +43,11 @@ fn prepare_glob_pattern_allows_external_absolute_prefixes_when_scope_is_global()
 
 #[test]
 fn prepare_glob_pattern_rejects_external_absolute_prefixes_when_scope_is_workspace() {
-    let workspace = Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Workspace)
-        .unwrap();
+    let workspace = Workspace::remote(
+        PathBuf::from("/workspace/project"),
+        ToolPathScope::Workspace,
+    )
+    .unwrap();
     let err = prepare_glob_pattern(&workspace, "/elsewhere/**/*.rs").unwrap_err();
 
     assert!(err.to_string().contains("outside workspace"));
@@ -94,7 +94,6 @@ async fn grep_paging_result_includes_continuation_text_and_data() {
     assert_eq!(result.data["continuation_args"]["offset"], 1);
 
     let _ = std::fs::remove_dir_all(root);
-    let _ = std::fs::remove_dir_all(outside);
 }
 
 #[tokio::test]
@@ -465,7 +464,15 @@ async fn glob_accepts_absolute_patterns_outside_the_workspace_by_default() {
         .await
         .unwrap();
 
-    assert_eq!(result.text, outside_file.display().to_string().replace('\\', "/"));
+    assert_eq!(
+        result.text,
+        outside_file
+            .canonicalize()
+            .unwrap()
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
     assert_eq!(result.data["files_considered"], 2);
 
     let _ = std::fs::remove_dir_all(root);
