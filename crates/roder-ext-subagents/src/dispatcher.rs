@@ -17,7 +17,9 @@ use roder_api::subagents::{
     SUBAGENT_SUMMARY_CONTRACT, SubagentDefinition, SubagentDispatcher, SubagentExitReason,
     SubagentLane, SubagentPermissionMode, SubagentRequest, SubagentResult,
 };
-use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext, ToolRegistry};
+use roder_api::tools::{
+    ToolCall, ToolChoice, ToolExecutionContext, ToolExecutionHandles, ToolRegistry,
+};
 use roder_api::trace::{
     PagedTraceText, ParentTurnRef, SubagentTraceDelta, SubagentTraceItem, SubagentTraceSink,
     SubagentTraceStatus,
@@ -198,8 +200,15 @@ impl InProcessDispatcher {
         parent_turn_id: TurnId,
         request: SubagentRequest,
     ) -> anyhow::Result<SubagentResult> {
-        self.dispatch_at_depth_with_trace(depth, parent_thread_id, parent_turn_id, request, None)
-            .await
+        self.dispatch_at_depth_with_trace(
+            depth,
+            parent_thread_id,
+            parent_turn_id,
+            request,
+            None,
+            ToolExecutionHandles::default(),
+        )
+        .await
     }
 
     async fn dispatch_at_depth_with_trace(
@@ -209,6 +218,7 @@ impl InProcessDispatcher {
         parent_turn_id: TurnId,
         request: SubagentRequest,
         trace_sink: Option<Arc<dyn SubagentTraceSink>>,
+        handles: ToolExecutionHandles,
     ) -> anyhow::Result<SubagentResult> {
         if depth >= self.config.max_depth {
             bail!(
@@ -315,6 +325,7 @@ impl InProcessDispatcher {
                 trace_sink.clone(),
                 trace_ids,
                 started_at,
+                handles,
             )
             .await
         });
@@ -370,6 +381,7 @@ impl InProcessDispatcher {
         trace_sink: Option<Arc<dyn SubagentTraceSink>>,
         trace_ids: TraceIds,
         started_at: Instant,
+        handles: ToolExecutionHandles,
     ) -> anyhow::Result<SubagentResult> {
         let agent_type = request
             .subagent_type
@@ -602,7 +614,7 @@ impl InProcessDispatcher {
                     arguments: call.arguments.clone(),
                 }));
                 let tool_id = call.id.clone();
-                let result = execute_tool(&tools, &thread_id, &turn_id, call).await?;
+                let result = execute_tool(&tools, &thread_id, &turn_id, &handles, call).await?;
                 transcript.push_text("tool", result.result.clone());
                 emit_trace_delta(
                     trace_sink.as_deref(),
@@ -824,8 +836,45 @@ impl SubagentDispatcher for InProcessDispatcher {
             parent_turn_id,
             request,
             trace_sink,
+            ToolExecutionHandles::default(),
         )
         .await
+    }
+
+    async fn dispatch_with_context(
+        &self,
+        parent_thread_id: ThreadId,
+        parent_turn_id: TurnId,
+        request: SubagentRequest,
+        trace_sink: Option<Arc<dyn SubagentTraceSink>>,
+        handles: ToolExecutionHandles,
+    ) -> anyhow::Result<SubagentResult> {
+        let depth = DISPATCH_DEPTH.try_with(|depth| *depth).unwrap_or(0);
+        self.dispatch_at_depth_with_trace(
+            depth,
+            parent_thread_id,
+            parent_turn_id,
+            request,
+            trace_sink,
+            handles,
+        )
+        .await
+    }
+}
+
+/// Build the tool-execution handles a child runs with: it inherits the parent
+/// turn's workspace, remote workspace, process runner, and context-artifact
+/// access so its file/shell/search tools operate on the same repository, but it
+/// does NOT inherit the goal controller or trace sink (the dispatcher emits the
+/// child's traces itself, and children must not complete the parent's goal).
+fn child_tool_handles(parent: &ToolExecutionHandles) -> ToolExecutionHandles {
+    ToolExecutionHandles {
+        workspace: parent.workspace.clone(),
+        remote_workspace: parent.remote_workspace.clone(),
+        process_runner: parent.process_runner.clone(),
+        context_artifacts: parent.context_artifacts.clone(),
+        subagent_trace_sink: None,
+        goal_controller: None,
     }
 }
 
@@ -833,6 +882,7 @@ async fn execute_tool(
     tools: &ToolRegistry,
     thread_id: &ThreadId,
     turn_id: &TurnId,
+    handles: &ToolExecutionHandles,
     call: roder_api::inference::ToolCallCompleted,
 ) -> anyhow::Result<ToolResultRecord> {
     let executor = tools
@@ -844,9 +894,12 @@ async fn execute_tool(
             call.name
         )
     })?;
+    let mut child_ctx =
+        ToolExecutionContext::new(thread_id.clone(), turn_id.clone(), PolicyMode::Default);
+    child_ctx.handles = child_tool_handles(handles);
     let result = executor
         .execute(
-            ToolExecutionContext::new(thread_id.clone(), turn_id.clone(), PolicyMode::Default),
+            child_ctx,
             ToolCall {
                 id: call.id,
                 name: call.name,
@@ -864,4 +917,43 @@ async fn execute_tool(
         display_payload: tool_display_payload(None, None, Some(&result.data)),
         is_error: result.is_error,
     })
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use std::sync::Arc;
+
+    use roder_api::tools::{
+        LocalProcessRunnerHandle, LocalWorkspaceHandle, ScopedProcessRunner, ScopedWorkspaceHandle,
+        ToolExecutionHandles,
+    };
+
+    use super::child_tool_handles;
+
+    #[test]
+    fn child_inherits_workspace_and_process_but_not_goal_or_trace() {
+        let workspace: Arc<dyn ScopedWorkspaceHandle> =
+            Arc::new(LocalWorkspaceHandle::new("/tmp/swarm-workspace"));
+        let process: Arc<dyn ScopedProcessRunner> = Arc::new(LocalProcessRunnerHandle);
+        let parent = ToolExecutionHandles {
+            workspace: Some(workspace.clone()),
+            process_runner: Some(process.clone()),
+            ..ToolExecutionHandles::default()
+        };
+
+        let child = child_tool_handles(&parent);
+
+        // The child operates on the same workspace/process as the lead turn, so
+        // its file/shell tools no longer fail with "workspace handle is not
+        // available".
+        assert!(child.workspace.is_some(), "child keeps the workspace handle");
+        assert!(Arc::ptr_eq(
+            child.workspace.as_ref().unwrap(),
+            &workspace
+        ));
+        assert!(child.process_runner.is_some());
+        // Children must not carry the parent goal controller or trace sink.
+        assert!(child.goal_controller.is_none());
+        assert!(child.subagent_trace_sink.is_none());
+    }
 }

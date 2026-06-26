@@ -205,11 +205,12 @@ impl ToolExecutor for TaskTool {
 
         match self
             .dispatcher
-            .dispatch_traced(
-                ctx.thread_id,
-                ctx.turn_id,
+            .dispatch_with_context(
+                ctx.thread_id.clone(),
+                ctx.turn_id.clone(),
                 request.clone(),
                 ctx.handles.subagent_trace_sink.clone(),
+                ctx.handles.clone(),
             )
             .await
         {

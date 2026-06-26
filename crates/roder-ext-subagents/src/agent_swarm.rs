@@ -18,7 +18,7 @@ use roder_api::subagents::{
     SubagentExitReason, SubagentRequest, build_agent_swarm_specs,
 };
 use roder_api::tools::{
-    ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec,
+    ToolCall, ToolExecutionContext, ToolExecutionHandles, ToolExecutor, ToolResult, ToolSpec,
 };
 use roder_api::trace::SubagentTraceSink;
 use serde_json::{Value, json};
@@ -254,6 +254,10 @@ pub struct DispatcherChildLauncher {
     parent_thread_id: ThreadId,
     parent_turn_id: TurnId,
     trace_sink: Option<Arc<dyn SubagentTraceSink>>,
+    /// Parent turn handles (workspace, process runner, ...) so each child can
+    /// operate on the same repository instead of failing with
+    /// "workspace handle is not available".
+    handles: ToolExecutionHandles,
     description: String,
     subagent_type: Option<String>,
     timeout_seconds: Option<u64>,
@@ -291,11 +295,12 @@ impl AgentSwarmChildLauncher for DispatcherChildLauncher {
 
         match self
             .dispatcher
-            .dispatch_traced(
+            .dispatch_with_context(
                 self.parent_thread_id.clone(),
                 self.parent_turn_id.clone(),
                 request,
                 self.trace_sink.clone(),
+                self.handles.clone(),
             )
             .await
         {
@@ -412,6 +417,7 @@ impl ToolExecutor for AgentSwarmTool {
             parent_thread_id: ctx.thread_id.clone(),
             parent_turn_id: ctx.turn_id.clone(),
             trace_sink: ctx.handles.subagent_trace_sink.clone(),
+            handles: ctx.handles.clone(),
             description: request.description.clone(),
             subagent_type: request.subagent_type.clone(),
             timeout_seconds: self.config.child_timeout_seconds,
