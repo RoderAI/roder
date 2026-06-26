@@ -875,6 +875,8 @@ fn child_tool_handles(parent: &ToolExecutionHandles) -> ToolExecutionHandles {
         context_artifacts: parent.context_artifacts.clone(),
         subagent_trace_sink: None,
         goal_controller: None,
+        // Children do not publish swarm progress (only the lead swarm does).
+        swarm_progress_sink: None,
     }
 }
 

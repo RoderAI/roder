@@ -124,6 +124,8 @@ pub struct ToolExecutionHandles {
     pub subagent_trace_sink: Option<Arc<dyn SubagentTraceSink>>,
     pub context_artifacts: Option<Arc<dyn ContextArtifactAccess>>,
     pub goal_controller: Option<Arc<dyn ThreadGoalController>>,
+    /// Live swarm-progress publisher for the `agent_swarm` tool.
+    pub swarm_progress_sink: Option<Arc<dyn crate::subagents::AgentSwarmProgressSink>>,
 }
 
 impl fmt::Debug for ToolExecutionHandles {
@@ -135,6 +137,7 @@ impl fmt::Debug for ToolExecutionHandles {
             .field("subagent_trace_sink", &self.subagent_trace_sink.is_some())
             .field("context_artifacts", &self.context_artifacts.is_some())
             .field("goal_controller", &self.goal_controller.is_some())
+            .field("swarm_progress_sink", &self.swarm_progress_sink.is_some())
             .finish()
     }
 }
@@ -239,6 +242,14 @@ impl ToolExecutionContext {
 
     pub fn with_goal_controller(mut self, controller: Arc<dyn ThreadGoalController>) -> Self {
         self.handles.goal_controller = Some(controller);
+        self
+    }
+
+    pub fn with_swarm_progress_sink(
+        mut self,
+        sink: Arc<dyn crate::subagents::AgentSwarmProgressSink>,
+    ) -> Self {
+        self.handles.swarm_progress_sink = Some(sink);
         self
     }
 

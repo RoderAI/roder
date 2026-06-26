@@ -14,8 +14,9 @@ use roder_api::events::{ThreadId, TurnId};
 use roder_api::inference::TokenUsage;
 use roder_api::subagents::{
     AgentSwarmChildKind, AgentSwarmChildOutcome, AgentSwarmChildResult, AgentSwarmChildSpec,
-    AgentSwarmChildState, AgentSwarmConfig, AgentSwarmRequest, AgentSwarmResult, SubagentDispatcher,
-    SubagentExitReason, SubagentRequest, build_agent_swarm_specs,
+    AgentSwarmChildState, AgentSwarmConfig, AgentSwarmProgressSink, AgentSwarmProgressSnapshot,
+    AgentSwarmRequest, AgentSwarmResult, SubagentDispatcher, SubagentExitReason, SubagentRequest,
+    build_agent_swarm_specs,
 };
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutionHandles, ToolExecutor, ToolResult, ToolSpec,
@@ -54,6 +55,14 @@ pub struct AgentSwarmChildRun {
 #[async_trait::async_trait]
 pub trait AgentSwarmChildLauncher: Send + Sync {
     async fn launch(&self, spec: AgentSwarmChildSpec) -> AgentSwarmChildRun;
+}
+
+/// Observes a running swarm: `on_progress` is called once per child as it
+/// resolves, with the running tally, so a client can render a live
+/// `N/total done` tick. The final snapshot equals the aggregate result counts.
+#[async_trait::async_trait]
+pub trait AgentSwarmProgressObserver: Send + Sync {
+    async fn on_progress(&self, snapshot: AgentSwarmProgressSnapshot);
 }
 
 /// Cooperative cancellation handle for a running swarm. The tool path never
@@ -115,6 +124,18 @@ pub async fn run_agent_swarm(
     specs: Vec<AgentSwarmChildSpec>,
     config: &AgentSwarmConfig,
     cancel: AgentSwarmCancel,
+) -> AgentSwarmResult {
+    run_agent_swarm_with_observer(launcher, specs, config, cancel, None).await
+}
+
+/// Like [`run_agent_swarm`], but reports a live progress snapshot to `observer`
+/// each time a child resolves.
+pub async fn run_agent_swarm_with_observer(
+    launcher: Arc<dyn AgentSwarmChildLauncher>,
+    specs: Vec<AgentSwarmChildSpec>,
+    config: &AgentSwarmConfig,
+    cancel: AgentSwarmCancel,
+    observer: Option<Arc<dyn AgentSwarmProgressObserver>>,
 ) -> AgentSwarmResult {
     let total = specs.len();
     if total == 0 {
@@ -214,16 +235,29 @@ pub async fn run_agent_swarm(
     }
 
     let mut slots: Vec<Option<AgentSwarmChildResult>> = (0..total).map(|_| None).collect();
+    let mut snapshot = AgentSwarmProgressSnapshot {
+        total,
+        ..AgentSwarmProgressSnapshot::default()
+    };
     while let Some(joined) = set.join_next().await {
         if let Ok((pos, outcome)) = joined {
             let spec = &specs[pos];
-            slots[pos] = Some(match outcome {
+            let child = match outcome {
                 ChildRunOrAbort::Run(run) => child_result_from_run(spec, run),
                 ChildRunOrAbort::Started => aborted_child(spec, AgentSwarmChildState::Started),
                 ChildRunOrAbort::NotStarted => {
                     aborted_child(spec, AgentSwarmChildState::NotStarted)
                 }
-            });
+            };
+            match child.outcome {
+                AgentSwarmChildOutcome::Completed => snapshot.completed += 1,
+                AgentSwarmChildOutcome::Failed => snapshot.failed += 1,
+                AgentSwarmChildOutcome::Aborted => snapshot.aborted += 1,
+            }
+            slots[pos] = Some(child);
+            if let Some(observer) = &observer {
+                observer.on_progress(snapshot).await;
+            }
         }
     }
 
@@ -466,10 +500,47 @@ impl ToolExecutor for AgentSwarmTool {
             timeout_seconds: self.config.child_timeout_seconds,
         });
 
-        let result =
-            run_agent_swarm(launcher, specs, &self.config, AgentSwarmCancel::new()).await;
+        // When the runtime supplied a progress sink, publish a live tick as each
+        // child resolves so clients can render "N/total done" mid-swarm.
+        let observer: Option<Arc<dyn AgentSwarmProgressObserver>> =
+            ctx.handles.swarm_progress_sink.clone().map(|sink| {
+                Arc::new(SwarmProgressEmitter {
+                    sink,
+                    thread_id: ctx.thread_id.clone(),
+                    turn_id: ctx.turn_id.clone(),
+                    tool_id: call.id.clone(),
+                }) as Arc<dyn AgentSwarmProgressObserver>
+            });
+
+        let result = run_agent_swarm_with_observer(
+            launcher,
+            specs,
+            &self.config,
+            AgentSwarmCancel::new(),
+            observer,
+        )
+        .await;
 
         Ok(swarm_tool_result(call.id, call.name, result))
+    }
+}
+
+/// Bridges the scheduler's [`AgentSwarmProgressObserver`] onto the runtime's
+/// [`AgentSwarmProgressSink`], stamping each snapshot with the thread/turn/tool
+/// ids so the runtime can emit a bus event without the scheduler knowing them.
+struct SwarmProgressEmitter {
+    sink: Arc<dyn AgentSwarmProgressSink>,
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    tool_id: String,
+}
+
+#[async_trait::async_trait]
+impl AgentSwarmProgressObserver for SwarmProgressEmitter {
+    async fn on_progress(&self, snapshot: AgentSwarmProgressSnapshot) {
+        self.sink
+            .emit_progress(&self.thread_id, &self.turn_id, &self.tool_id, snapshot)
+            .await;
     }
 }
 
@@ -573,6 +644,57 @@ mod tests {
         assert_eq!(result.completed, 3);
         let indices: Vec<usize> = result.children.iter().map(|c| c.index).collect();
         assert_eq!(indices, vec![1, 2, 3]);
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        snapshots: Mutex<Vec<AgentSwarmProgressSnapshot>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentSwarmProgressObserver for RecordingObserver {
+        async fn on_progress(&self, snapshot: AgentSwarmProgressSnapshot) {
+            self.snapshots.lock().unwrap().push(snapshot);
+        }
+    }
+
+    #[tokio::test]
+    async fn observer_receives_incremental_progress_ending_at_final_counts() {
+        let launcher = Arc::new(RecordingLauncher {
+            fail_indices: vec![2],
+            ..RecordingLauncher::default()
+        });
+        let specs: Vec<_> = (1..=3)
+            .map(|i| spec(i, AgentSwarmChildKind::Spawn))
+            .collect();
+        let observer = Arc::new(RecordingObserver::default());
+        // Cap concurrency at 1 so children resolve one-at-a-time, giving a
+        // deterministic monotonically-increasing resolved count.
+        let config = AgentSwarmConfig {
+            max_concurrency: Some(1),
+            ..fast_config()
+        };
+        let result = run_agent_swarm_with_observer(
+            launcher,
+            specs,
+            &config,
+            AgentSwarmCancel::new(),
+            Some(observer.clone() as Arc<dyn AgentSwarmProgressObserver>),
+        )
+        .await;
+
+        let snapshots = observer.snapshots.lock().unwrap().clone();
+        // One tick per child, each carrying the total and a growing resolved count.
+        assert_eq!(snapshots.len(), 3);
+        let resolved: Vec<usize> = snapshots.iter().map(|s| s.resolved()).collect();
+        assert_eq!(resolved, vec![1, 2, 3]);
+        assert!(snapshots.iter().all(|s| s.total == 3));
+        // Final tick equals the aggregate result.
+        let last = snapshots.last().unwrap();
+        assert_eq!(last.completed, result.completed);
+        assert_eq!(last.failed, result.failed);
+        assert_eq!(last.aborted, result.aborted);
+        assert_eq!((last.completed, last.failed), (2, 1));
     }
 
     #[tokio::test]
