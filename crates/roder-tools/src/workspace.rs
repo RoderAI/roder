@@ -286,6 +286,14 @@ impl Workspace {
         self.path_scope
     }
 
+    pub(crate) fn is_remote(&self) -> bool {
+        self.remote
+    }
+
+    pub(crate) fn ensure_readable_path(&self, path: &Path) -> anyhow::Result<()> {
+        self.ensure_readable(path)
+    }
+
     pub(crate) fn from_context_or_fallback(
         ctx: &ToolExecutionContext,
         fallback: &Workspace,

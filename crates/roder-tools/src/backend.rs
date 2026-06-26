@@ -266,15 +266,15 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         let workspace = self.workspace.clone();
         let pattern = pattern.to_string();
         tokio::task::spawn_blocking(move || {
-            let pattern = crate::search::prepare_glob_pattern(workspace.root(), &pattern)?;
-            let matcher = crate::search::compile_glob(&pattern)?;
+            let prepared = crate::search::prepare_glob_pattern(&workspace, &pattern)?;
+            let matcher = crate::search::compile_glob(&prepared.matcher_pattern)?;
             let mut matches = Vec::new();
             let mut files_considered = 0usize;
-            crate::search::visit_files(workspace.root(), &mut |path| {
+            crate::search::visit_files(&prepared.search_root, &mut |path| {
                 files_considered += 1;
-                let rel = workspace.display(path);
-                if matcher.is_match(&rel) {
-                    matches.push(rel);
+                let display = prepared.display_path(&workspace, path);
+                if matcher.is_match(&display) {
+                    matches.push(display);
                 }
                 Ok(())
             })?;
@@ -492,12 +492,19 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
     }
 
     async fn glob(&self, pattern: &str) -> anyhow::Result<crate::search::GlobOutcome> {
-        let pattern = crate::search::prepare_glob_pattern(self.guard.root(), pattern)?;
-        let matcher = crate::search::compile_glob(&pattern)?;
+        let prepared = crate::search::prepare_glob_pattern(&self.guard, pattern)?;
+        let matcher = crate::search::compile_glob(&prepared.matcher_pattern)?;
+        let target = if prepared.search_root == self.guard.root() {
+            ".".to_string()
+        } else {
+            prepared.search_root.to_string_lossy().to_string()
+        };
         let output = self
             .run_shell(
-                "find . -type f ! -path './.git/*' ! -path './target/*' | sed 's#^./##'"
-                    .to_string(),
+                format!(
+                    "find {} -type f ! -path './.git/*' ! -path './target/*' | sed 's#^./##'",
+                    shell_quote(&target)
+                ),
             )
             .await?;
         let mut files_considered = 0usize;
