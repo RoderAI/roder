@@ -183,6 +183,12 @@ const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
 const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
 const WORKING_SHEEN_WIDTH: usize = 3;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 18;
+/// Reminder prepended to swarm-mode prompts so the model reaches for the
+/// `agent_swarm` fanout tool when a task splits into many similar subtasks.
+const AGENT_SWARM_REMINDER: &str = "Agent-swarm mode is active. When this task splits into \
+several similarly-shaped subtasks over different inputs, call the agent_swarm tool exactly once \
+with a prompt_template containing {{item}} and an items array (or resume_agent_ids), and make it \
+the only tool call in that response.";
 const MAX_VISIBLE_INLINE_COMPLETIONS: usize = 12;
 const MAX_FILE_COMPLETION_CACHE: usize = 1_000;
 const RESUME_VISIBLE_TAIL_ITEMS: usize = 160;
@@ -1410,6 +1416,9 @@ where
     chrome_panel: Option<chrome::ChromePanelState>,
     remote_panel: RemotePanelController,
     roadmap_mode: Option<RoadmapModeState>,
+    /// Persistent agent-swarm mode (roadmap 104): when on, normal prompts are
+    /// prefixed with a swarm reminder nudging the model to use `agent_swarm`.
+    swarm_mode: bool,
     image_attachments: Vec<ImageAttachment>,
     last_image_attachment_remove_buttons: Vec<ImageAttachmentRemoveButton>,
     last_queued_prompt_buttons: Vec<QueuedPromptButton>,
@@ -1864,6 +1873,7 @@ where
             chrome_panel: None,
             remote_panel,
             roadmap_mode: None,
+            swarm_mode: false,
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
             last_queued_prompt_buttons: Vec::new(),
@@ -3264,6 +3274,9 @@ where
             "roadmap" => {
                 self.run_roadmap_slash_command(&args);
             }
+            "agent-swarm" | "swarm" => {
+                self.run_agent_swarm_slash_command(&args).await;
+            }
             "knowledge" => {
                 self.run_knowledge_slash_command(&args).await;
             }
@@ -3300,6 +3313,68 @@ where
             }
             Err(err) => self.record_error(format!("commands/expand failed for /{name}: {err}")),
         }
+    }
+
+    /// Handle `/agent-swarm` (canonical) and its `/swarm` alias.
+    ///
+    /// `on`/`off` toggle persistent swarm mode (normal prompts then carry a
+    /// swarm reminder); a bare invocation toggles; `status` reports state; and
+    /// any other argument runs a one-shot swarm prompt that nudges the model to
+    /// call the `agent_swarm` tool exactly once.
+    async fn run_agent_swarm_slash_command(&mut self, args: &str) {
+        let trimmed = args.trim();
+        match trimmed.to_ascii_lowercase().as_str() {
+            "" => {
+                self.set_swarm_mode(!self.swarm_mode);
+            }
+            "on" => {
+                self.set_swarm_mode(true);
+            }
+            "off" => {
+                self.set_swarm_mode(false);
+            }
+            "status" => {
+                let state = if self.swarm_mode { "on" } else { "off" };
+                self.timeline
+                    .push_system(format!("Agent-swarm mode is {state}."));
+                self.push_event("slash command: /agent-swarm status".to_string());
+            }
+            _ => {
+                let pending = PendingPrompt::with_images(
+                    format!("/agent-swarm {trimmed}"),
+                    format!("{AGENT_SWARM_REMINDER}\n\n{trimmed}"),
+                    Vec::new(),
+                );
+                if self.active_turn_id.is_some() {
+                    self.steer_prepared_prompt(pending);
+                } else {
+                    self.start_prepared_prompt(pending).await;
+                }
+                self.push_event("slash command: /agent-swarm (task)".to_string());
+            }
+        }
+    }
+
+    fn set_swarm_mode(&mut self, enabled: bool) {
+        if self.swarm_mode == enabled {
+            let state = if enabled { "on" } else { "off" };
+            self.timeline
+                .push_system(format!("Agent-swarm mode is already {state}."));
+            return;
+        }
+        self.swarm_mode = enabled;
+        if enabled {
+            self.timeline.push_system(
+                "Agent-swarm mode on. Prompts now nudge the model to use the agent_swarm tool; \
+                 use /agent-swarm off to disable.",
+            );
+        } else {
+            self.timeline.push_system("Agent-swarm mode off.");
+        }
+        self.push_event(format!(
+            "slash command: /agent-swarm {}",
+            if enabled { "on" } else { "off" }
+        ));
     }
 
     async fn refresh_command_catalog(&mut self) {
@@ -3840,6 +3915,11 @@ where
             .as_ref()
             .map(|roadmap| roadmap.prompt_context(&text))
             .unwrap_or(text);
+        let message = if self.swarm_mode {
+            format!("{AGENT_SWARM_REMINDER}\n\n{message}")
+        } else {
+            message
+        };
         Some(PendingPrompt::with_images(display, message, images))
     }
 
@@ -9999,6 +10079,7 @@ mod tests {
                 Some("/tmp/gode".to_string()),
             ),
             roadmap_mode: None,
+            swarm_mode: false,
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
             last_queued_prompt_buttons: Vec::new(),
@@ -10157,6 +10238,31 @@ mod tests {
         fn subscribe_notifications(&self) -> Self::NotificationReceiver {
             self.notifications.subscribe()
         }
+    }
+
+    #[test]
+    fn swarm_mode_prefixes_reminder_into_submitted_message() {
+        let mut app = test_app();
+        app.set_swarm_mode(true);
+        assert!(app.swarm_mode);
+        app.composer.insert_str("split this across files");
+        let pending = app.take_prepared_prompt().expect("prepared prompt");
+        assert!(
+            pending.message.contains("agent_swarm"),
+            "swarm reminder should reference the agent_swarm tool"
+        );
+        assert!(pending.message.contains("split this across files"));
+        // The displayed transcript text stays exactly as typed.
+        assert_eq!(pending.display, "split this across files");
+    }
+
+    #[test]
+    fn swarm_mode_off_leaves_prompt_unchanged() {
+        let mut app = test_app();
+        app.composer.insert_str("hello world");
+        let pending = app.take_prepared_prompt().expect("prepared prompt");
+        assert_eq!(pending.message, "hello world");
+        assert!(!pending.message.contains("agent_swarm"));
     }
 
     #[tokio::test]

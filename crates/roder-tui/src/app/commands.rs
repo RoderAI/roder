@@ -43,6 +43,11 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
         ),
         ("voice", "Toggle voice dictation into the composer."),
         ("roadmap", "Open document-first roadmapping mode."),
+        (
+            "agent-swarm",
+            "Toggle agent-swarm mode or run one task in swarm mode.",
+        ),
+        ("swarm", "Alias for /agent-swarm."),
         ("deep-research", "Run a multi-agent deep research workflow."),
         ("workflows", "Open dynamic workflow runs and controls."),
         ("webwright", "Inspect Webwright workspace progress."),
@@ -66,6 +71,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "chrome" => Some("[status|enable|disable|reconnect|pair|panel]".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
+            "agent-swarm" | "swarm" => Some("[on|off|status|<prompt>]".to_string()),
             "deep-research" => Some("<question>".to_string()),
             "workflows" => {
                 Some("[list|<run-id>|pause|resume|stop|save|restart-agent|scripts]".to_string())
@@ -189,6 +195,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
         "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
+        "/agent-swarm [on|off|status|<prompt>] - Toggle agent-swarm mode or run one swarm task (alias: /swarm).".to_string(),
         "/deep-research <question> - Run a multi-agent deep research workflow.".to_string(),
         "/workflows [list|<run-id>|pause|resume|stop|save|restart-agent|scripts] - Open workflow runs and controls.".to_string(),
         "/webwright [inspect|tail] <workspace> - Inspect Webwright progress and artifacts."
@@ -211,6 +218,8 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "plugin"
                 | "snapshot"
                 | "voice"
+                | "agent-swarm"
+                | "swarm"
                 | "deep-research"
                 | "workflows"
                 | "webwright"
@@ -331,6 +340,8 @@ mod tests {
                 "chrome",
                 "voice",
                 "roadmap",
+                "agent-swarm",
+                "swarm",
                 "deep-research",
                 "workflows",
                 "webwright",
@@ -455,8 +466,8 @@ mod tests {
             "/ps should be visible when commands/list returns commands sorted by name; got {visible:?}"
         );
         assert!(
-            visible.contains(&"roadmap"),
-            "/roadmap should be visible when commands/list returns commands sorted by name; got {visible:?}"
+            visible.contains(&"agent-swarm"),
+            "/agent-swarm should be visible when commands/list returns commands sorted by name; got {visible:?}"
         );
     }
 

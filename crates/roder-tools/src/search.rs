@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ignore::WalkBuilder;
@@ -181,12 +181,12 @@ impl ToolExecutor for GlobTool {
         ToolSpec {
             name: "glob".to_string(),
             description:
-                "Find files under the workspace root matching a glob pattern with paginated output. Patterns are workspace-relative and support *, ?, [..], {a,b} and **."
+                "Find files matching a glob pattern with paginated output. Relative patterns resolve from the workspace root; absolute patterns search that path directly when filesystem access is allowed. Supports *, ?, [..], {a,b} and **."
                     .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "pattern": { "type": "string", "description": "Workspace-relative glob pattern, e.g. src/**/*.{ts,tsx}." },
+                    "pattern": { "type": "string", "description": "Glob pattern. Relative patterns resolve from the workspace root; absolute patterns are searched directly, e.g. src/**/*.{ts,tsx} or /tmp/project/**/*.rs." },
                     "offset": {
                         "type": "integer",
                         "minimum": 0,
@@ -241,7 +241,7 @@ impl ToolExecutor for GlobTool {
         }
         if page.total == 0 {
             text = format!(
-                "No files matched pattern {:?} ({} files considered under the workspace root). Patterns are workspace-relative and support *, ?, [..], {{a,b}} and **.",
+                "No files matched pattern {:?} ({} files considered). Relative patterns resolve from the workspace root; absolute patterns search that path directly when filesystem access is allowed. Supports *, ?, [..], {{a,b}} and **.",
                 args.pattern, outcome.files_considered
             );
         }
@@ -371,6 +371,28 @@ pub(crate) struct GlobOutcome {
     pub(crate) files_considered: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GlobDisplayMode {
+    WorkspaceRelative,
+    Absolute,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreparedGlobPattern {
+    pub(crate) search_root: PathBuf,
+    pub(crate) matcher_pattern: String,
+    display_mode: GlobDisplayMode,
+}
+
+impl PreparedGlobPattern {
+    pub(crate) fn display_path(&self, workspace: &crate::workspace::Workspace, path: &Path) -> String {
+        match self.display_mode {
+            GlobDisplayMode::WorkspaceRelative => workspace.display(path),
+            GlobDisplayMode::Absolute => path.to_string_lossy().replace('\\', "/"),
+        }
+    }
+}
+
 fn looks_like_regex(query: &str) -> bool {
     query.chars().any(|ch| {
         matches!(
@@ -422,12 +444,19 @@ fn no_match_message(
     text
 }
 
-/// Resolve a glob pattern to a workspace-relative form. Absolute and
-/// home-relative patterns are accepted when they point inside the workspace
-/// root and rejected with a clear error otherwise, instead of silently
-/// matching nothing.
-pub(crate) fn prepare_glob_pattern(root: &Path, pattern: &str) -> anyhow::Result<String> {
+/// Resolve a glob pattern to the directory that should be walked and the
+/// string that should be matched for each file. Relative patterns remain
+/// workspace-relative. Absolute patterns inside the workspace keep existing
+/// relative output, while absolute patterns outside the workspace are allowed
+/// when the workspace path scope allows external reads.
+pub(crate) fn prepare_glob_pattern(
+    workspace: &crate::workspace::Workspace,
+    pattern: &str,
+) -> anyhow::Result<PreparedGlobPattern> {
     let trimmed = pattern.trim();
+    if workspace.is_remote() && (trimmed == "~" || trimmed.starts_with("~/")) {
+        anyhow::bail!("home-relative glob patterns are not supported on a remote runner workspace: {trimmed}");
+    }
     let expanded = if trimmed == "~" || trimmed.starts_with("~/") {
         crate::workspace::expand_home(trimmed)?
             .to_string_lossy()
@@ -437,14 +466,47 @@ pub(crate) fn prepare_glob_pattern(root: &Path, pattern: &str) -> anyhow::Result
     };
     let normalized = expanded.replace('\\', "/");
     if !Path::new(&normalized).is_absolute() {
-        return Ok(normalize_relative_pattern(&normalized));
+        return Ok(PreparedGlobPattern {
+            search_root: workspace.root().to_path_buf(),
+            matcher_pattern: normalize_relative_pattern(&normalized),
+            display_mode: GlobDisplayMode::WorkspaceRelative,
+        });
     }
     // Split off the literal directory prefix (everything before the first
     // wildcard component) so symlinked spellings of the workspace root, like
     // /var vs /private/var on macOS, still resolve inside the workspace.
+    let (literal_prefix, wildcard_parts) = split_glob_literal_prefix(&normalized);
+    let prefix_path = Path::new(&literal_prefix);
+    let resolved_prefix = prefix_path
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_path(prefix_path));
+    workspace.ensure_readable_path(&resolved_prefix)?;
+    if let Ok(inside) = resolved_prefix.strip_prefix(workspace.root()) {
+        let mut relative = inside.to_string_lossy().replace('\\', "/");
+        if !wildcard_parts.is_empty() {
+            if !relative.is_empty() {
+                relative.push('/');
+            }
+            relative.push_str(&wildcard_parts.join("/"));
+        }
+        return Ok(PreparedGlobPattern {
+            search_root: workspace.root().to_path_buf(),
+            matcher_pattern: normalize_relative_pattern(&relative),
+            display_mode: GlobDisplayMode::WorkspaceRelative,
+        });
+    }
+
+    Ok(PreparedGlobPattern {
+        search_root: prefix_path.to_path_buf(),
+        matcher_pattern: normalize_absolute_pattern(&normalized),
+        display_mode: GlobDisplayMode::Absolute,
+    })
+}
+
+fn split_glob_literal_prefix(pattern: &str) -> (String, Vec<&str>) {
     let mut literal_parts = Vec::new();
     let mut wildcard_parts = Vec::new();
-    for part in normalized.split('/') {
+    for part in pattern.split('/') {
         if !wildcard_parts.is_empty() || part.chars().any(|ch| matches!(ch, '*' | '?' | '[' | '{'))
         {
             wildcard_parts.push(part);
@@ -452,25 +514,32 @@ pub(crate) fn prepare_glob_pattern(root: &Path, pattern: &str) -> anyhow::Result
             literal_parts.push(part);
         }
     }
-    let literal_prefix = literal_parts.join("/");
-    let prefix_path = Path::new(&literal_prefix);
-    let resolved_prefix = prefix_path
-        .canonicalize()
-        .unwrap_or_else(|_| prefix_path.to_path_buf());
-    let Ok(inside) = resolved_prefix.strip_prefix(root) else {
-        anyhow::bail!(
-            "glob pattern {pattern:?} points outside the workspace root {}; glob only searches the workspace — pass a workspace-relative pattern, or use list_files/grep with an absolute path",
-            root.display()
-        );
-    };
-    let mut relative = inside.to_string_lossy().replace('\\', "/");
-    if !wildcard_parts.is_empty() {
-        if !relative.is_empty() {
-            relative.push('/');
-        }
-        relative.push_str(&wildcard_parts.join("/"));
+    let mut literal_prefix = literal_parts.join("/");
+    if pattern.starts_with('/') && literal_prefix.is_empty() {
+        literal_prefix.push('/');
     }
-    Ok(normalize_relative_pattern(&relative))
+    (literal_prefix, wildcard_parts)
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+        }
+    }
+    normalized
+}
+
+fn normalize_absolute_pattern(pattern: &str) -> String {
+    let path = normalize_path(Path::new(pattern));
+    path.to_string_lossy().replace('\\', "/")
 }
 
 pub(crate) fn compile_glob(pattern: &str) -> anyhow::Result<globset::GlobMatcher> {
