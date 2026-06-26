@@ -3424,7 +3424,11 @@ where
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("thread/set_agent_swarm_mode")),
                 method: "thread/set_agent_swarm_mode".to_string(),
-                params: Some(serde_json::json!({ "enabled": enabled, "trigger": "manual" })),
+                params: Some(serde_json::json!({
+                    "enabled": enabled,
+                    "trigger": "manual",
+                    "threadId": self.thread_id,
+                })),
             })
             .await;
         match decode_response::<ThreadSetAgentSwarmModeResult>(res) {

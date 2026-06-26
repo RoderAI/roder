@@ -355,6 +355,12 @@ pub struct Runtime {
     /// `EventSink`s (process extensions etc.); see `event_sink_dispatch`.
     event_sink_dispatcher: tokio::sync::OnceCell<crate::event_sink_dispatch::EventSinkDispatcher>,
     pub(crate) compaction_hysteresis: std::sync::Mutex<HashMap<ThreadId, u32>>,
+    /// Per-thread agent-swarm mode overrides (roadmap 104). A thread present in
+    /// this map uses its stored value; absent threads fall back to the
+    /// runtime-global `RuntimeConfig.agent_swarm_mode` default. This mirrors the
+    /// team per-member policy-mode override idiom so swarm mode is per-thread
+    /// like the other `thread/*` operations, without a separate runtime.
+    agent_swarm_modes: RwLock<HashMap<ThreadId, bool>>,
 }
 
 impl Runtime {
@@ -440,6 +446,7 @@ impl Runtime {
             ))),
             event_sink_dispatcher: tokio::sync::OnceCell::new(),
             compaction_hysteresis: crate::compaction_runtime::compaction_hysteresis_state(),
+            agent_swarm_modes: RwLock::new(HashMap::new()),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -647,6 +654,44 @@ impl Runtime {
         ))
         .await;
         Ok(next)
+    }
+
+    /// Toggle agent-swarm mode for a single thread (roadmap 104). The override is
+    /// stored per thread so toggling swarm mode on one thread does not leak the
+    /// reminder into other threads sharing the runtime; absent threads fall back
+    /// to the runtime-global default. The emitted `AgentSwarmModeChanged` event
+    /// carries the real `thread_id`.
+    pub async fn set_agent_swarm_mode_for_thread(
+        &self,
+        thread_id: &str,
+        enabled: bool,
+        trigger: roder_api::subagents::AgentSwarmModeTrigger,
+    ) -> bool {
+        {
+            let mut modes = self.agent_swarm_modes.write().await;
+            modes.insert(thread_id.to_string(), enabled);
+        }
+        self.emit(RoderEvent::AgentSwarmModeChanged(
+            roder_api::subagents::AgentSwarmModeChanged {
+                thread_id: thread_id.to_string(),
+                turn_id: None,
+                enabled,
+                trigger,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        enabled
+    }
+
+    /// Resolve whether agent-swarm mode is active for `thread_id`: the per-thread
+    /// override when present, otherwise the runtime-global default. The turn loop
+    /// uses this to decide whether to inject the swarm reminder.
+    pub async fn effective_agent_swarm_mode_for_thread(&self, thread_id: &str) -> bool {
+        if let Some(enabled) = self.agent_swarm_modes.read().await.get(thread_id).copied() {
+            return enabled;
+        }
+        self.status().await.agent_swarm_mode
     }
 
     pub async fn set_hosted_web_search(
@@ -2118,7 +2163,9 @@ impl Runtime {
             .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
-        let agent_swarm_mode_active = self.status().await.agent_swarm_mode;
+        let agent_swarm_mode_active = self
+            .effective_agent_swarm_mode_for_thread(&req.thread_id)
+            .await;
         let thread_overrides = self.thread_turn_overrides(&req.thread_id).await?;
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
@@ -7495,5 +7542,90 @@ mod tests {
         fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
             registry.register(self.tool.clone())
         }
+    }
+
+    #[tokio::test]
+    async fn agent_swarm_mode_override_is_per_thread() {
+        let runtime = Runtime::fake().unwrap();
+        let trigger = roder_api::subagents::AgentSwarmModeTrigger::Manual;
+
+        // Off everywhere by default.
+        assert!(
+            !runtime
+                .effective_agent_swarm_mode_for_thread("thread-a")
+                .await
+        );
+        assert!(
+            !runtime
+                .effective_agent_swarm_mode_for_thread("thread-b")
+                .await
+        );
+
+        // Enabling on thread-a does not leak into thread-b.
+        assert!(
+            runtime
+                .set_agent_swarm_mode_for_thread("thread-a", true, trigger)
+                .await
+        );
+        assert!(
+            runtime
+                .effective_agent_swarm_mode_for_thread("thread-a")
+                .await
+        );
+        assert!(
+            !runtime
+                .effective_agent_swarm_mode_for_thread("thread-b")
+                .await
+        );
+
+        // A per-thread `off` override wins over a runtime-global `on` default.
+        runtime
+            .set_agent_swarm_mode(true, trigger)
+            .await
+            .unwrap();
+        runtime
+            .set_agent_swarm_mode_for_thread("thread-b", false, trigger)
+            .await;
+        assert!(
+            !runtime
+                .effective_agent_swarm_mode_for_thread("thread-b")
+                .await,
+            "explicit per-thread off overrides the global on default"
+        );
+        // A thread with no override still follows the global default.
+        assert!(
+            runtime
+                .effective_agent_swarm_mode_for_thread("thread-c")
+                .await,
+            "threads without an override follow the runtime-global default"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_agent_swarm_mode_for_thread_emits_event_with_real_thread_id() {
+        let runtime = Runtime::fake().unwrap();
+        let mut events = runtime.subscribe_events();
+        runtime
+            .set_agent_swarm_mode_for_thread(
+                "thread-xyz",
+                true,
+                roder_api::subagents::AgentSwarmModeTrigger::Task,
+            )
+            .await;
+        let mut saw = false;
+        for _ in 0..8 {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let RoderEvent::AgentSwarmModeChanged(event) = envelope.event {
+                assert_eq!(event.thread_id, "thread-xyz");
+                assert!(event.enabled);
+                assert_eq!(event.trigger, roder_api::subagents::AgentSwarmModeTrigger::Task);
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "expected an AgentSwarmModeChanged event for the thread");
     }
 }

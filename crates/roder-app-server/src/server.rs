@@ -2983,13 +2983,23 @@ impl AppServer {
         &self,
         params: ThreadSetAgentSwarmModeParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
-        let cfg = self
-            .runtime
-            .set_agent_swarm_mode(params.enabled, params.trigger)
-            .await
-            .map_err(internal_error)?;
+        // A `threadId` scopes the toggle to a single thread (so it does not leak
+        // into other threads sharing the runtime); without it the runtime-global
+        // default is toggled, preserving the legacy behavior.
+        let enabled = if let Some(thread_id) = params.thread_id.as_deref() {
+            self.runtime
+                .set_agent_swarm_mode_for_thread(thread_id, params.enabled, params.trigger)
+                .await
+        } else {
+            self.runtime
+                .set_agent_swarm_mode(params.enabled, params.trigger)
+                .await
+                .map_err(internal_error)?
+                .agent_swarm_mode
+        };
         Ok(serde_json::to_value(ThreadSetAgentSwarmModeResult {
-            enabled: cfg.agent_swarm_mode,
+            enabled,
+            thread_id: params.thread_id,
         })
         .unwrap())
     }
