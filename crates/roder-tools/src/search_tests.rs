@@ -1,5 +1,6 @@
 use super::*;
 use crate::backend::LocalWorkspaceBackend;
+use crate::workspace::ToolPathScope;
 use roder_api::tools::{LocalWorkspaceHandle, ToolExecutionContext};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,14 +20,37 @@ fn compiled_globs_support_star_question_mark_braces_and_classes() {
 
 #[test]
 fn prepare_glob_pattern_resolves_workspace_absolute_prefixes() {
-    let root = Path::new("/workspace/project");
+    let workspace = Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Global)
+        .unwrap();
+    let prepared = prepare_glob_pattern(&workspace, "/workspace/project/src/**/*.rs").unwrap();
     assert_eq!(
-        prepare_glob_pattern(root, "/workspace/project/src/**/*.rs").unwrap(),
+        prepared.matcher_pattern,
         "src/**/*.rs"
     );
-    assert_eq!(prepare_glob_pattern(root, "src/*.rs").unwrap(), "src/*.rs");
-    let err = prepare_glob_pattern(root, "/elsewhere/**/*.rs").unwrap_err();
-    assert!(err.to_string().contains("outside the workspace root"));
+    assert_eq!(prepared.search_root, PathBuf::from("/workspace/project"));
+
+    let prepared = prepare_glob_pattern(&workspace, "src/*.rs").unwrap();
+    assert_eq!(prepared.matcher_pattern, "src/*.rs");
+    assert_eq!(prepared.search_root, PathBuf::from("/workspace/project"));
+}
+
+#[test]
+fn prepare_glob_pattern_allows_external_absolute_prefixes_when_scope_is_global() {
+    let workspace = Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Global)
+        .unwrap();
+    let prepared = prepare_glob_pattern(&workspace, "/elsewhere/**/*.rs").unwrap();
+
+    assert_eq!(prepared.search_root, PathBuf::from("/elsewhere"));
+    assert_eq!(prepared.matcher_pattern, "/elsewhere/**/*.rs");
+}
+
+#[test]
+fn prepare_glob_pattern_rejects_external_absolute_prefixes_when_scope_is_workspace() {
+    let workspace = Workspace::remote(PathBuf::from("/workspace/project"), ToolPathScope::Workspace)
+        .unwrap();
+    let err = prepare_glob_pattern(&workspace, "/elsewhere/**/*.rs").unwrap_err();
+
+    assert!(err.to_string().contains("outside workspace"));
 }
 
 #[test]
@@ -70,6 +94,7 @@ async fn grep_paging_result_includes_continuation_text_and_data() {
     assert_eq!(result.data["continuation_args"]["offset"], 1);
 
     let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(outside);
 }
 
 #[tokio::test]
@@ -416,9 +441,42 @@ async fn glob_supports_brace_patterns_and_explains_zero_matches() {
 }
 
 #[tokio::test]
-async fn glob_rejects_patterns_outside_the_workspace() {
-    let root = test_workspace("glob-outside");
+async fn glob_accepts_absolute_patterns_outside_the_workspace_by_default() {
+    let root = test_workspace("glob-outside-root");
+    let outside = test_workspace("glob-outside-target");
+    std::fs::create_dir_all(outside.join("src")).unwrap();
+    let outside_file = outside.join("src/lib.rs");
+    std::fs::write(&outside_file, "").unwrap();
+    std::fs::write(outside.join("README.md"), "").unwrap();
     let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GlobTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+
+    let result = tool
+        .execute(
+            context(&root),
+            call(
+                "glob",
+                json!({"pattern": format!("{}/**/*.rs", outside.display())}),
+            ),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.text, outside_file.display().to_string().replace('\\', "/"));
+    assert_eq!(result.data["files_considered"], 2);
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(outside);
+}
+
+#[tokio::test]
+async fn glob_rejects_absolute_patterns_outside_workspace_when_scope_is_workspace() {
+    let root = test_workspace("glob-scoped-root");
+    let outside = test_workspace("glob-scoped-outside");
+    let workspace = Workspace::new_with_scope(root.clone(), ToolPathScope::Workspace).unwrap();
     let tool = GlobTool {
         workspace: workspace.clone(),
         backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
@@ -427,12 +485,16 @@ async fn glob_rejects_patterns_outside_the_workspace() {
     let err = tool
         .execute(
             context(&root),
-            call("glob", json!({"pattern": "/somewhere/else/**/*.rs"})),
+            call(
+                "glob",
+                json!({"pattern": format!("{}/**/*.rs", outside.display())}),
+            ),
         )
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("outside the workspace root"));
+
+    assert!(err.contains("outside workspace"));
 
     let inside = tool
         .execute(
