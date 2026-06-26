@@ -178,6 +178,7 @@ impl InferenceEngine for CursorInferenceEngine {
         if let Some(executor) = ctx.tool_executor.clone() {
             let (prompt, history, images) = cursor_request_parts(&request);
             let tools = cursor_mcp_tools_from_request(&request);
+            let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
             let conversation_id = uuid::Uuid::new_v4().to_string();
             let message_id = uuid::Uuid::new_v4().to_string();
             let run_request = crate::proto::encode_agent_client_message_with_history(
@@ -202,6 +203,15 @@ impl InferenceEngine for CursorInferenceEngine {
                     context_frames,
                     workspace,
                     tool_executor: Some(executor),
+                    usage_metadata: crate::bidi::BidiUsageMetadata {
+                        prompt_tokens: estimated_prompt_tokens,
+                        provider: PROVIDER_CURSOR.to_string(),
+                        transport: "cursor-agentservice-http2-connect-proto-bidi".to_string(),
+                        auth_source: auth.source.as_str().to_string(),
+                        thread_id: ctx.thread_id.to_string(),
+                        turn_id: ctx.turn_id.to_string(),
+                        model: request.model.model.clone(),
+                    },
                 },
             )
             .await;

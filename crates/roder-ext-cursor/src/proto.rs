@@ -767,6 +767,7 @@ pub(crate) struct CursorGrepMatch {
 pub(crate) struct CursorServerFrame {
     pub text: String,
     pub thinking: String,
+    pub usage_fields: BTreeMap<u32, u64>,
     pub turn_ended: bool,
     pub exec: Option<CursorExecRequest>,
     /// Sequence of a `kv_server` PUT that must be acked with [`encode_kv_ack`].
@@ -778,6 +779,7 @@ pub(crate) fn decode_server_frame(payload: &[u8]) -> CursorServerFrame {
     let mut frame = CursorServerFrame {
         text: interaction.text,
         thinking: interaction.thinking,
+        usage_fields: interaction.usage_fields,
         turn_ended: interaction.turn_ended,
         exec: None,
         kv_seq: None,

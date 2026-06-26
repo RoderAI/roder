@@ -15,7 +15,7 @@ use futures::StreamExt;
 use roder_api::inference::{InferenceEvent, ToolCallCompleted, TurnToolExecutor, TurnToolOutcome};
 
 use crate::agentservice::AgentServiceConfig;
-use crate::bidi::{BidiRequest, run_bidi_turn};
+use crate::bidi::{BidiRequest, BidiUsageMetadata, run_bidi_turn};
 use crate::proto::{
     encode_connect_frame, proto_field_bytes, proto_field_string, proto_field_varint, proto_message,
 };
@@ -177,6 +177,15 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
         context_frames: Vec::new(),
         workspace: std::env::temp_dir(),
         tool_executor: Some(executor.clone()),
+        usage_metadata: BidiUsageMetadata {
+            prompt_tokens: 7,
+            provider: "cursor".to_string(),
+            transport: "cursor-agentservice-http2-connect-proto-bidi".to_string(),
+            auth_source: "test".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            model: "cursor/opus-4.8".to_string(),
+        },
     };
 
     // Well under the 90s no-progress cap: with the fix the turn completes as
@@ -203,6 +212,27 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
             |event| matches!(event, InferenceEvent::MessageDelta(delta) if delta.text == "done")
         )
     );
+    let usage_index = events
+        .iter()
+        .position(|event| matches!(event, InferenceEvent::Usage(_)))
+        .expect("bidi turn should emit token usage before completion");
+    assert!(matches!(
+        &events[usage_index],
+        InferenceEvent::Usage(usage)
+            if usage.prompt_tokens == 7
+                && usage.completion_tokens == 1
+                && usage.total_tokens == 8
+    ));
+    assert!(matches!(
+        events.get(usage_index + 1),
+        Some(InferenceEvent::ProviderMetadata(metadata))
+            if metadata.get("usageEstimated").and_then(|value| value.as_bool()) == Some(true)
+                && metadata
+                    .get("usageFields")
+                    .and_then(|fields| fields.get("field_1"))
+                    .and_then(|value| value.as_u64())
+                    == Some(10)
+    ));
     assert!(matches!(
         events.last(),
         Some(InferenceEvent::Completed(metadata))
