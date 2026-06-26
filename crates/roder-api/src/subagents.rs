@@ -199,6 +199,27 @@ pub trait SubagentDispatcher: Send + Sync + 'static {
         self.dispatch(parent_thread_id, parent_turn_id, request)
             .await
     }
+
+    /// Dispatch a child carrying the parent tool call's execution handles
+    /// (workspace, remote workspace, process runner, context artifacts). This
+    /// is how a subagent or swarm child operates on the same workspace as the
+    /// lead thread instead of failing with "workspace handle is not available".
+    ///
+    /// The default implementation ignores the handles and falls back to
+    /// [`Self::dispatch_traced`], so non-workspace dispatchers (e.g. remote or
+    /// fake ones) keep working unchanged.
+    async fn dispatch_with_context(
+        &self,
+        parent_thread_id: ThreadId,
+        parent_turn_id: TurnId,
+        request: SubagentRequest,
+        trace_sink: Option<std::sync::Arc<dyn SubagentTraceSink>>,
+        handles: crate::tools::ToolExecutionHandles,
+    ) -> anyhow::Result<SubagentResult> {
+        let _ = handles;
+        self.dispatch_traced(parent_thread_id, parent_turn_id, request, trace_sink)
+            .await
+    }
 }
 
 // ---------------------------------------------------------------------------
