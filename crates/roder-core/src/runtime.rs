@@ -3116,10 +3116,29 @@ impl Runtime {
                 })
                 .collect());
         }
+        // Emit swarm lifecycle events on the bus (roadmap 104, Task 1) so any
+        // app-server/SDK/TUI client can observe a swarm as a whole; per-child
+        // progress flows through the existing Subagent* trace events.
+        let swarm_call = (calls.len() == 1
+            && calls[0].name == roder_api::subagents::AGENT_SWARM_TOOL_NAME)
+            .then(|| (calls[0].id.clone(), calls[0].arguments.clone()));
+        if let Some((tool_id, args)) = &swarm_call {
+            self.emit(RoderEvent::AgentSwarmStarted(
+                roder_api::subagents::AgentSwarmStarted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: tool_id.clone(),
+                    child_count: agent_swarm_child_count(args),
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
+        }
+
         let force_sequential = calls
             .iter()
             .any(|call| crate::agent_control_tools::is_agent_control_tool(&call.name));
-        if parallel && !force_sequential {
+        let results = if parallel && !force_sequential {
             try_join_all(
                 calls.into_iter().map(|call| {
                     self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
@@ -3135,7 +3154,27 @@ impl Runtime {
                 );
             }
             Ok(results)
+        }?;
+
+        if let Some((tool_id, _)) = &swarm_call
+            && let Some(result) = results.iter().find(|result| &result.id == tool_id)
+            && let Some((completed, failed, aborted)) = parse_swarm_counts(&result.result)
+        {
+            self.emit(RoderEvent::AgentSwarmCompleted(
+                roder_api::subagents::AgentSwarmCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: tool_id.clone(),
+                    completed,
+                    failed,
+                    aborted,
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
         }
+
+        Ok(results)
     }
 
     async fn fail_turn_with_error(
@@ -3776,6 +3815,37 @@ fn parallel_tool_calls_for_model(cfg: &RuntimeConfig, model: &str) -> bool {
             model_profile_for_model(cfg, model).and_then(|profile| profile.parallel_tool_calls)
         })
         .unwrap_or(true)
+}
+
+/// Count the children an `agent_swarm` call will launch from its arguments
+/// (item-based spawns plus resumes). Lenient: returns 0 on malformed input.
+fn agent_swarm_child_count(arguments: &str) -> usize {
+    serde_json::from_str::<roder_api::subagents::AgentSwarmRequest>(arguments)
+        .map(|request| request.items.len() + request.resume_agent_ids.len())
+        .unwrap_or(0)
+}
+
+/// Parse `completed`/`failed`/`aborted` counts from an `<agent_swarm_result>`
+/// summary line, e.g. `<summary>completed: 2, failed: 1</summary>`. Omitted
+/// buckets default to 0. Returns `None` when the text is not a swarm result.
+fn parse_swarm_counts(text: &str) -> Option<(usize, usize, usize)> {
+    if !text.contains("<agent_swarm_result>") {
+        return None;
+    }
+    let bucket = |label: &str| -> usize {
+        let needle = format!("{label}: ");
+        text.find(&needle)
+            .map(|start| start + needle.len())
+            .map(|start| {
+                text[start..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+            })
+            .and_then(|digits| digits.parse().ok())
+            .unwrap_or(0)
+    };
+    Some((bucket("completed"), bucket("failed"), bucket("aborted")))
 }
 
 fn effective_reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> String {
@@ -6297,6 +6367,77 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn route_tool_calls_emits_agent_swarm_started_event() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let thread_root =
+            std::env::temp_dir().join(format!("roder-swarm-started-{}", uuid::Uuid::new_v4()));
+        let runtime = runtime_with_edit_allowlist(&requests, &thread_root);
+        let mut events = runtime.subscribe_events();
+
+        // A single agent_swarm call (the valid shape) emits AgentSwarmStarted on
+        // the event bus before dispatch, with the child count parsed from args.
+        let _ = runtime
+            .route_tool_calls(
+                &"thread-swarm".to_string(),
+                &"turn-swarm".to_string(),
+                vec![roder_api::inference::ToolCallCompleted {
+                    id: "swarm-1".to_string(),
+                    name: "agent_swarm".to_string(),
+                    arguments: r#"{"description":"x","prompt_template":"Read {{item}}","items":["a.rs","b.rs"]}"#
+                        .to_string(),
+                }],
+                true,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let mut started_child_count = None;
+        for _ in 0..16 {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let RoderEvent::AgentSwarmStarted(event) = envelope.event {
+                started_child_count = Some(event.child_count);
+                assert_eq!(event.tool_id, "swarm-1");
+                break;
+            }
+        }
+        assert_eq!(started_child_count, Some(2));
+
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[test]
+    fn agent_swarm_child_count_sums_items_and_resumes() {
+        assert_eq!(
+            agent_swarm_child_count(r#"{"description":"x","items":["a","b","c"]}"#),
+            3
+        );
+        assert_eq!(
+            agent_swarm_child_count(
+                r#"{"description":"x","items":["a"],"resume_agent_ids":{"id1":"continue"}}"#
+            ),
+            2
+        );
+        // Malformed input is lenient.
+        assert_eq!(agent_swarm_child_count("not json"), 0);
+    }
+
+    #[test]
+    fn parse_swarm_counts_reads_summary_with_omitted_buckets() {
+        let text = "<agent_swarm_result>\n<summary>completed: 2, failed: 1</summary>\n</agent_swarm_result>";
+        assert_eq!(parse_swarm_counts(text), Some((2, 1, 0)));
+        let text =
+            "<agent_swarm_result>\n<summary>completed: 0</summary>\n</agent_swarm_result>";
+        assert_eq!(parse_swarm_counts(text), Some((0, 0, 0)));
+        // Not a swarm result.
+        assert_eq!(parse_swarm_counts("just text"), None);
     }
 
     /// Signals when inference starts, then waits for `proceed` and fails the stream.

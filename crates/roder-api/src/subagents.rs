@@ -285,6 +285,34 @@ pub struct AgentSwarmModeChanged {
     pub timestamp: time::OffsetDateTime,
 }
 
+/// Emitted when the `agent_swarm` tool begins fanning out children, so any
+/// app-server/SDK/TUI client can observe the swarm as a whole. Per-child
+/// progress flows through the existing `Subagent*` trace events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSwarmStarted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    /// Children the swarm will launch (item-based spawns plus resumes).
+    pub child_count: usize,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: time::OffsetDateTime,
+}
+
+/// Emitted when the `agent_swarm` tool finishes, carrying the aggregate child
+/// outcome counts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSwarmCompleted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub completed: usize,
+    pub failed: usize,
+    pub aborted: usize,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: time::OffsetDateTime,
+}
+
 /// Why a batch of tool calls violates the `agent_swarm` exclusivity rule:
 /// `agent_swarm` must be the only tool call in a single model response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
