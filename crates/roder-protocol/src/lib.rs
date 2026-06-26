@@ -3984,6 +3984,12 @@ pub struct ThreadSetAgentSwarmModeParams {
     /// (one-shot prompt), or `tool` (implicit `agent_swarm` entry).
     #[serde(default = "default_agent_swarm_trigger")]
     pub trigger: roder_api::subagents::AgentSwarmModeTrigger,
+    /// Thread to scope swarm mode to. When set, the toggle is stored as a
+    /// per-thread override so it does not leak into other threads sharing the
+    /// runtime. When omitted, the runtime-global default is toggled (legacy
+    /// behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
 }
 
 fn default_agent_swarm_trigger() -> roder_api::subagents::AgentSwarmModeTrigger {
@@ -3994,6 +4000,9 @@ fn default_agent_swarm_trigger() -> roder_api::subagents::AgentSwarmModeTrigger 
 #[serde(rename_all = "camelCase")]
 pub struct ThreadSetAgentSwarmModeResult {
     pub enabled: bool,
+    /// Echoes the thread the toggle was scoped to, when it was per-thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

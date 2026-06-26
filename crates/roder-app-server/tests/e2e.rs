@@ -9261,6 +9261,7 @@ async fn thread_agent_swarm_mode_can_be_set_and_observed() {
             serde_json::to_value(ThreadSetAgentSwarmModeParams {
                 enabled: true,
                 trigger: roder_api::subagents::AgentSwarmModeTrigger::Manual,
+                thread_id: None,
             })
             .unwrap(),
         ),
@@ -9300,6 +9301,7 @@ async fn thread_agent_swarm_mode_can_be_set_and_observed() {
             serde_json::to_value(ThreadSetAgentSwarmModeParams {
                 enabled: false,
                 trigger: roder_api::subagents::AgentSwarmModeTrigger::Manual,
+                thread_id: None,
             })
             .unwrap(),
         ),
@@ -9308,6 +9310,50 @@ async fn thread_agent_swarm_mode_can_be_set_and_observed() {
     assert!(!changed.enabled);
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert!(!settings.agent_swarm_mode);
+}
+
+#[tokio::test]
+async fn thread_agent_swarm_mode_is_scoped_per_thread() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(app_server(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    // A `threadId` scopes the toggle to that thread; the result echoes it and the
+    // emitted event carries the real thread id (not the global "runtime").
+    let changed: ThreadSetAgentSwarmModeResult = request(
+        &client,
+        "thread/set_agent_swarm_mode",
+        Some(
+            serde_json::to_value(ThreadSetAgentSwarmModeParams {
+                enabled: true,
+                trigger: roder_api::subagents::AgentSwarmModeTrigger::Manual,
+                thread_id: Some("thread-a".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(changed.enabled);
+    assert_eq!(changed.thread_id.as_deref(), Some("thread-a"));
+
+    // The override is observable on the runtime for thread-a only; another
+    // thread still follows the (off) global default, and the global
+    // `settings/get` snapshot is unchanged.
+    assert!(
+        runtime
+            .effective_agent_swarm_mode_for_thread("thread-a")
+            .await
+    );
+    assert!(
+        !runtime
+            .effective_agent_swarm_mode_for_thread("thread-b")
+            .await
+    );
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(
+        !settings.agent_swarm_mode,
+        "a per-thread toggle must not change the global default"
+    );
 }
 
 #[tokio::test]
