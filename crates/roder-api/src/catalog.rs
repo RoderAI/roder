@@ -1064,6 +1064,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         hidden: false,
     },
     cursor_model(
+        "composer-2.5-fast",
+        "Composer 2.5 Fast",
+        "Cursor Composer 2.5 fast variant for lower-latency agent turns.",
+        200_000,
+        180_000,
+        REASONING_NONE,
+        &[],
+    ),
+    cursor_model(
         "claude-opus-4-8",
         "Claude Opus 4.8",
         "Anthropic Claude Opus 4.8 routed through Cursor's AgentService.",
@@ -1087,8 +1096,17 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "OpenAI GPT-5.5 routed through Cursor's AgentService.",
         1_050_000,
         945_000,
-        REASONING_NONE,
-        &[],
+        REASONING_MEDIUM,
+        STANDARD_REASONING,
+    ),
+    cursor_model(
+        "gpt-5.5-fast",
+        "GPT-5.5 Fast",
+        "OpenAI GPT-5.5 fast variant routed through Cursor's AgentService.",
+        1_050_000,
+        945_000,
+        REASONING_MEDIUM,
+        STANDARD_REASONING,
     ),
     cursor_model(
         "gemini-3.1-pro-preview",
@@ -1096,8 +1114,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Google Gemini 3.1 Pro routed through Cursor's AgentService.",
         1_048_576,
         943_718,
-        REASONING_NONE,
-        &[],
+        REASONING_MEDIUM,
+        GEMINI_REASONING,
     ),
     cursor_model(
         "grok-4.3",
@@ -1105,8 +1123,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "xAI Grok 4.3 routed through Cursor's AgentService.",
         1_000_000,
         900_000,
-        REASONING_NONE,
-        &[],
+        REASONING_MEDIUM,
+        STANDARD_REASONING,
     ),
     ModelCatalogEntry {
         id: "text-embedding-3-large",
@@ -1815,9 +1833,11 @@ mod tests {
                 "hf:openai/gpt-oss-120b",
                 "hf:Qwen/Qwen3.5-397B-A17B",
                 "composer-2.5",
+                "composer-2.5-fast",
                 "claude-opus-4-8",
                 "claude-sonnet-4-6",
                 "gpt-5.5",
+                "gpt-5.5-fast",
                 "gemini-3.1-pro-preview",
                 "grok-4.3",
             ]
@@ -1840,7 +1860,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
-        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 6);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 8);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
         assert_eq!(
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
@@ -2194,6 +2214,39 @@ mod tests {
         let fallback =
             built_in_model_profile_for_provider("does-not-exist", "claude-opus-4-8").unwrap();
         assert_eq!(fallback.provider_family, ProviderFamily::Anthropic);
+    }
+
+    #[test]
+    fn cursor_gpt55_advertises_standard_reasoning_effort() {
+        let gpt55 = models_for_provider(PROVIDER_CURSOR, false)
+            .into_iter()
+            .find(|model| model.id == "gpt-5.5")
+            .expect("cursor catalog should expose gpt-5.5");
+
+        assert_eq!(gpt55.default_reasoning.as_deref(), Some(REASONING_MEDIUM));
+        assert_eq!(
+            gpt55
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH
+            ]
+        );
+
+        let gpt55_fast = models_for_provider(PROVIDER_CURSOR, false)
+            .into_iter()
+            .find(|model| model.id == "gpt-5.5-fast")
+            .expect("cursor catalog should expose gpt-5.5-fast");
+        assert_eq!(
+            gpt55_fast.default_reasoning.as_deref(),
+            Some(REASONING_MEDIUM)
+        );
+        assert_eq!(gpt55_fast.supported_reasoning.len(), 4);
     }
 
     #[test]

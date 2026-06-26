@@ -185,6 +185,7 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             model: "cursor/opus-4.8".to_string(),
+            conversation_id: "conversation-1".to_string(),
         },
     };
 

@@ -6,6 +6,8 @@ use futures::{Stream, StreamExt};
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use roder_api::inference::ReasoningConfig;
+
 use crate::proto::{
     ConnectFrame, CursorExecRequest, CursorHistoryMessage, CursorImage, CursorMcpTool,
     CursorToolCall, decode_agent_server_message, decode_server_frame,
@@ -43,12 +45,15 @@ pub struct AgentServiceRequest {
     pub access_token: String,
     pub prompt: String,
     pub model: String,
+    pub conversation_id: String,
     pub context_frames: Vec<Vec<u8>>,
     pub history: Vec<CursorHistoryMessage>,
     /// Inline images attached to the current user message.
     pub images: Vec<CursorImage>,
     /// Roder tools advertised to the model via `AgentRunRequest.mcp_tools`.
     pub tools: Vec<CursorMcpTool>,
+    /// Reasoning effort/thinking flags forwarded to Cursor's requested_model block.
+    pub reasoning: Option<ReasoningConfig>,
     /// Workspace root used to respond to `request_context_args` so the model
     /// knows where to look for files before generating text.
     pub workspace: PathBuf,
@@ -74,7 +79,7 @@ pub async fn stream_agent_service(
     request: AgentServiceRequest,
 ) -> anyhow::Result<AgentServiceStream> {
     let request_id = Uuid::new_v4().to_string();
-    let conversation_id = Uuid::new_v4().to_string();
+    let conversation_id = request.conversation_id;
     let message_id = Uuid::new_v4().to_string();
     let mut frames = vec![encode_connect_frame(
         &encode_agent_client_message_with_history(
@@ -85,6 +90,7 @@ pub async fn stream_agent_service(
             &request.history,
             &request.images,
             &request.tools,
+            request.reasoning.as_ref(),
         ),
     )];
     for frame in &request.context_frames {

@@ -20,22 +20,89 @@
 //! them verbatim: curated entries keep their metadata; genuinely new base ids
 //! are appended with metadata derived from the picker payload.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use roder_api::catalog::{PROVIDER_CURSOR, models_for_provider};
-use roder_api::inference::ModelDescriptor;
+use roder_api::inference::{ModelDescriptor, ReasoningEffortDescriptor};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_MODELS_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const AVAILABLE_MODELS_PATH: &str = "/aiserver.v1.AiService/AvailableModels";
 
+/// Base Cursor model ids that also expose a `-fast` AgentService variant.
+const CURSOR_FAST_VARIANT_BASES: &[&str] = &["composer-2.5", "gpt-5.5"];
+
 /// The curated static catalog — always the authoritative base set and the
 /// fallback when the live call is unavailable.
 pub fn fallback_models() -> Vec<ModelDescriptor> {
-    models_for_provider(PROVIDER_CURSOR, false)
+    finalize_cursor_models(models_for_provider(PROVIDER_CURSOR, false))
+}
+
+/// Ensure the Cursor model list includes `-fast` variants for supported base
+/// models. Idempotent: skips ids already present (catalog, cache, or prior
+/// merge).
+pub fn finalize_cursor_models(mut models: Vec<ModelDescriptor>) -> Vec<ModelDescriptor> {
+    models = enrich_models_from_catalog(models);
+    append_fast_variants(&mut models);
+    models
+}
+
+/// Backfill curated metadata (especially reasoning options) onto models loaded
+/// from a stale cache or live discovery that omitted catalog fields.
+pub fn enrich_models_from_catalog(mut models: Vec<ModelDescriptor>) -> Vec<ModelDescriptor> {
+    let curated: HashMap<String, ModelDescriptor> = models_for_provider(PROVIDER_CURSOR, false)
+        .into_iter()
+        .map(|model| (model.id.clone(), model))
+        .collect();
+    for model in &mut models {
+        let Some(curated) = curated.get(&model.id) else {
+            continue;
+        };
+        if model.supported_reasoning.is_empty() && !curated.supported_reasoning.is_empty() {
+            model.supported_reasoning = curated.supported_reasoning.clone();
+        }
+        if model.default_reasoning.is_none() {
+            model.default_reasoning = curated.default_reasoning.clone();
+        }
+        if model.context_window.is_none() {
+            model.context_window = curated.context_window;
+        }
+        if model.name.is_empty() || model.name == model.id {
+            model.name = curated.name.clone();
+        }
+    }
+    models
+}
+
+fn append_fast_variants(models: &mut Vec<ModelDescriptor>) {
+    let known: std::collections::HashSet<String> = models.iter().map(|m| m.id.clone()).collect();
+    for base_id in CURSOR_FAST_VARIANT_BASES {
+        let fast_id = format!("{base_id}-fast");
+        if !known.contains(*base_id) || known.contains(&fast_id) {
+            continue;
+        }
+        let Some(base) = models.iter().find(|model| model.id == *base_id) else {
+            continue;
+        };
+        models.push(ModelDescriptor {
+            id: fast_id,
+            name: format!("{} Fast", base.name),
+            context_window: base.context_window,
+            default_reasoning: base.default_reasoning.clone(),
+            supported_reasoning: base.supported_reasoning.clone(),
+        });
+    }
+}
+
+/// Map a Roder/Cursor catalog model id to the bare id and `fast` flag the
+/// AgentService `requested_model` block expects. Picker ids such as
+/// `composer-2.5-fast` become wire id `composer-2.5` with `fast=true`.
+pub fn cursor_run_model_params(model_id: &str) -> (String, bool) {
+    let fast = model_id.ends_with("-fast");
+    (base_model_id(model_id), fast)
 }
 
 // ===== Live discovery =====
@@ -108,6 +175,7 @@ fn merge_live_into_catalog(live: Vec<AvailableModel>) -> Vec<ModelDescriptor> {
     let mut models = fallback_models();
     let mut known: std::collections::HashSet<String> =
         models.iter().map(|model| model.id.clone()).collect();
+    let inferred_reasoning = inferred_reasoning_from_live_variants(&live);
 
     // Aggregate live variants by base id, keeping the largest context window
     // seen and a cleaned display name.
@@ -152,15 +220,126 @@ fn merge_live_into_catalog(live: Vec<AvailableModel>) -> Vec<ModelDescriptor> {
             continue;
         }
         known.insert(id.clone());
-        models.push(ModelDescriptor {
+        let mut descriptor = ModelDescriptor {
             id,
             name,
             context_window,
             default_reasoning: None,
             supported_reasoning: Vec::new(),
-        });
+        };
+        apply_inferred_reasoning(&mut descriptor, &inferred_reasoning);
+        models.push(descriptor);
     }
-    models
+    for model in &mut models {
+        if model.supported_reasoning.is_empty() {
+            apply_inferred_reasoning(model, &inferred_reasoning);
+        }
+    }
+    finalize_cursor_models(models)
+}
+
+fn inferred_reasoning_from_live_variants(live: &[AvailableModel]) -> BTreeMap<String, BTreeSet<String>> {
+    let mut inferred: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for model in live {
+        if !model.supports_agent {
+            continue;
+        }
+        let Some(raw_id) = model
+            .server_model_name
+            .as_deref()
+            .or(model.name.as_deref())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+        let base = base_model_id(raw_id);
+        if !is_appendable_base_id(&base) {
+            continue;
+        }
+        if let Some(effort) = picker_effort_token(raw_id) {
+            inferred
+                .entry(base)
+                .or_default()
+                .insert(effort);
+        }
+    }
+    inferred
+}
+
+fn apply_inferred_reasoning(
+    model: &mut ModelDescriptor,
+    inferred: &BTreeMap<String, BTreeSet<String>>,
+) {
+    if !model.supported_reasoning.is_empty() {
+        return;
+    }
+    let Some(efforts) = inferred.get(&model.id) else {
+        return;
+    };
+    let mut options = efforts
+        .iter()
+        .map(|effort| ReasoningEffortDescriptor {
+            effort: effort.clone(),
+            description: format!("{effort} reasoning"),
+        })
+        .collect::<Vec<_>>();
+    options.sort_by_key(|option| reasoning_effort_sort_key(&option.effort));
+    if options.is_empty() {
+        return;
+    }
+    model.supported_reasoning = options;
+    if model.default_reasoning.is_none() {
+        model.default_reasoning = model
+            .supported_reasoning
+            .iter()
+            .map(|option| option.effort.clone())
+            .max_by_key(|effort| reasoning_effort_sort_key(effort));
+    }
+}
+
+/// Extract a normalized reasoning-effort token from a Cursor picker variant id
+/// (e.g. `gpt-5.5-extra-high` -> `xhigh`).
+fn picker_effort_token(raw_id: &str) -> Option<String> {
+    let mut s = raw_id.trim();
+    loop {
+        if let Some(rest) = s.strip_suffix("-fast") {
+            s = rest;
+            continue;
+        }
+        if let Some(rest) = s.strip_suffix("-thinking") {
+            s = rest;
+            continue;
+        }
+        for (suffix, effort) in [
+            ("-extra-high", "xhigh"),
+            ("-xhigh", "xhigh"),
+            ("-medium", "medium"),
+            ("-high", "high"),
+            ("-low", "low"),
+            ("-none", "none"),
+            ("-max", "max"),
+        ] {
+            if s.ends_with(suffix) {
+                return Some(effort.to_string());
+            }
+        }
+        break;
+    }
+    None
+}
+
+fn reasoning_effort_sort_key(effort: &str) -> u8 {
+    match effort {
+        "none" => 0,
+        "minimal" => 1,
+        "low" => 2,
+        "medium" => 3,
+        "high" => 4,
+        "xhigh" => 5,
+        "max" => 6,
+        _ => 7,
+    }
 }
 
 /// Reduce a Cursor picker id to the bare model id the Run path accepts by
@@ -415,6 +594,56 @@ mod tests {
     }
 
     #[test]
+    fn cursor_run_model_params_maps_fast_variants_to_wire_id() {
+        assert_eq!(
+            cursor_run_model_params("composer-2.5-fast"),
+            ("composer-2.5".to_string(), true)
+        );
+        assert_eq!(
+            cursor_run_model_params("gpt-5.5-fast"),
+            ("gpt-5.5".to_string(), true)
+        );
+        assert_eq!(
+            cursor_run_model_params("composer-2.5"),
+            ("composer-2.5".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn finalize_cursor_models_appends_fast_variants() {
+        let models = finalize_cursor_models(vec![ModelDescriptor {
+            id: "composer-2.5".to_string(),
+            name: "Composer 2.5".to_string(),
+            context_window: Some(200_000),
+            default_reasoning: None,
+            supported_reasoning: Vec::new(),
+        }]);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"composer-2.5-fast"));
+    }
+
+    #[test]
+    fn enrich_models_from_catalog_backfills_reasoning_metadata() {
+        let models = enrich_models_from_catalog(vec![ModelDescriptor {
+            id: "claude-opus-4-8".to_string(),
+            name: "claude-opus-4-8".to_string(),
+            context_window: Some(1_000_000),
+            default_reasoning: None,
+            supported_reasoning: Vec::new(),
+        }]);
+        let opus = &models[0];
+        assert!(!opus.supported_reasoning.is_empty());
+        assert_eq!(opus.default_reasoning.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn picker_effort_token_normalizes_cursor_variant_suffixes() {
+        assert_eq!(picker_effort_token("gpt-5.5-extra-high"), Some("xhigh".to_string()));
+        assert_eq!(picker_effort_token("claude-opus-4-8-high"), Some("high".to_string()));
+        assert_eq!(picker_effort_token("composer-2.5-fast"), None);
+    }
+
+    #[test]
     fn merge_keeps_curated_models_and_appends_new_base_ids() {
         let live = vec![
             // Already curated -> must NOT duplicate.
@@ -457,6 +686,8 @@ mod tests {
         let gpt9 = merged.iter().find(|m| m.id == "gpt-9-turbo").unwrap();
         assert_eq!(gpt9.name, "GPT-9 Turbo");
         assert_eq!(gpt9.context_window, Some(500_000));
+        assert_eq!(gpt9.supported_reasoning.len(), 1);
+        assert_eq!(gpt9.supported_reasoning[0].effort, "high");
         assert!(!ids.contains(&"embedding-x"));
     }
 }

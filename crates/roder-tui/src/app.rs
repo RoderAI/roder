@@ -5069,6 +5069,9 @@ where
                         {
                             "✓ "
                         }
+                        ProviderMenuItem::Model(option) if !option.reasoning_options.is_empty() => {
+                            "› "
+                        }
                         ProviderMenuItem::Models
                         | ProviderMenuItem::Providers
                         | ProviderMenuItem::Settings
@@ -6331,6 +6334,7 @@ where
             })
             .unwrap_or(0);
         self.select_provider_menu_index(Some(selected));
+        self.show_provider_popup = true;
     }
 
     fn select_provider_menu_index(&mut self, selected: Option<usize>) {
@@ -13433,8 +13437,31 @@ mod tests {
 
         app.open_reasoning_submenu(option);
 
+        assert!(app.show_provider_popup);
+        assert_eq!(app.provider_popup_screen, ProviderPopupScreen::Reasoning);
         assert_eq!(app.provider_state.selected(), Some(1));
         assert_eq!(app.provider_state.offset(), 0);
+    }
+
+    #[tokio::test]
+    async fn selecting_model_with_reasoning_opens_reasoning_submenu() {
+        let mut app = test_app();
+        app.show_provider_popup = true;
+        let mut option = test_provider_option("cursor", "Cursor", "gpt-5.5");
+        option.reasoning_options = vec![ReasoningEffortDescriptor {
+            effort: "high".to_string(),
+            description: "high".to_string(),
+        }];
+
+        app.select_provider_model(option).await;
+
+        assert!(app.show_provider_popup);
+        assert_eq!(app.provider_popup_screen, ProviderPopupScreen::Reasoning);
+        assert_eq!(app.provider_menu_items.len(), 2);
+        assert!(matches!(
+            &app.provider_menu_items[0],
+            ProviderMenuItem::Reasoning(choice) if choice.effort == "high"
+        ));
     }
 
     #[test]

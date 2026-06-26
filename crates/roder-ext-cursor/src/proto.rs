@@ -10,6 +10,10 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
+use roder_api::inference::ReasoningConfig;
+
+use crate::models::cursor_run_model_params;
+
 const CONNECT_COMPRESSED_FLAG: u8 = 1;
 const CONNECT_END_STREAM_FLAG: u8 = 2;
 
@@ -62,6 +66,7 @@ pub fn encode_agent_client_message_with_history(
     history: &[CursorHistoryMessage],
     images: &[CursorImage],
     tools: &[CursorMcpTool],
+    reasoning: Option<&ReasoningConfig>,
 ) -> Vec<u8> {
     proto_message(vec![proto_field_bytes(
         1,
@@ -73,6 +78,7 @@ pub fn encode_agent_client_message_with_history(
             history,
             images,
             tools,
+            reasoning,
         ),
     )])
 }
@@ -85,6 +91,7 @@ fn encode_agent_run_request(
     history: &[CursorHistoryMessage],
     images: &[CursorImage],
     tools: &[CursorMcpTool],
+    reasoning: Option<&ReasoningConfig>,
 ) -> Vec<u8> {
     // Whether any inline image bytes are present in this turn (current message
     // or replayed history). Cursor only honours inline `SelectedImage.data` /
@@ -105,7 +112,7 @@ fn encode_agent_run_request(
         // no tools, which matches the prior empty-message encoding.
         proto_field_bytes(4, encode_mcp_tools(tools)),
         proto_field_string(5, conversation_id),
-        proto_field_bytes(9, encode_requested_model(model_id)),
+        proto_field_bytes(9, encode_requested_model(model_id, reasoning)),
         proto_field_varint(12, 0),
         proto_field_string(16, conversation_id),
     ];
@@ -416,11 +423,15 @@ fn encode_history_message(item: &CursorHistoryMessage) -> Vec<u8> {
     }
 }
 
-fn encode_requested_model(model_id: &str) -> Vec<u8> {
+fn encode_requested_model(model_id: &str, reasoning: Option<&ReasoningConfig>) -> Vec<u8> {
     // requested_model.f3 is a repeated {key, value} param list. cursor-agent
     // sends thinking/context/effort/fast; effort=high in particular drives the
     // model's full agentic thoroughness (without it the model does minimal work
-    // and stops after a single read).
+    // and stops after a single read). Fast catalog ids such as
+    // `composer-2.5-fast` map to the bare wire id plus `fast=true`.
+    let (wire_model_id, fast) = cursor_run_model_params(model_id);
+    let thinking = cursor_thinking_enabled(reasoning);
+    let effort = cursor_effort_level(reasoning);
     let param = |key: &str, value: &str| {
         proto_field_bytes(
             3,
@@ -431,12 +442,33 @@ fn encode_requested_model(model_id: &str) -> Vec<u8> {
         )
     };
     proto_message(vec![
-        proto_field_string(1, model_id),
-        param("thinking", "true"),
+        proto_field_string(1, &wire_model_id),
+        param("thinking", if thinking { "true" } else { "false" }),
         param("context", "300k"),
-        param("effort", "high"),
-        param("fast", "false"),
+        param("effort", &effort),
+        param("fast", if fast { "true" } else { "false" }),
     ])
+}
+
+fn cursor_thinking_enabled(reasoning: Option<&ReasoningConfig>) -> bool {
+    match reasoning {
+        None => true,
+        Some(cfg) if !cfg.enabled => false,
+        Some(cfg) => !matches!(cfg.level.as_deref(), Some("none")),
+    }
+}
+
+fn cursor_effort_level(reasoning: Option<&ReasoningConfig>) -> String {
+    match reasoning {
+        None => "high".to_string(),
+        Some(cfg) if !cfg.enabled => "none".to_string(),
+        Some(cfg) => cfg
+            .level
+            .as_deref()
+            .filter(|level| !level.is_empty())
+            .unwrap_or("high")
+            .to_string(),
+    }
 }
 
 pub fn encode_connect_frame(payload: &[u8]) -> Vec<u8> {
@@ -1516,10 +1548,30 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
         );
         let strings = collect_utf8_strings(&bytes, 0);
         assert!(strings.iter().any(|value| value.contains("hello cursor")));
         assert!(strings.iter().any(|value| value.contains("composer-2.5")));
+        assert!(strings.iter().any(|value| value == "false"));
+    }
+
+    #[test]
+    fn requested_model_fast_variant_sets_fast_param_and_wire_id() {
+        let bytes = encode_agent_client_message_with_history(
+            "hello",
+            "composer-2.5-fast",
+            "conv",
+            "msg",
+            &[],
+            &[],
+            &[],
+            None,
+        );
+        let strings = collect_utf8_strings(&bytes, 0);
+        assert!(strings.iter().any(|value| value == "composer-2.5"));
+        assert!(!strings.iter().any(|value| value == "composer-2.5-fast"));
+        assert!(strings.iter().any(|value| value == "true"));
     }
 
     #[test]
@@ -1629,6 +1681,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
         );
         let run = submessage(&bytes, 1).expect("agent run request");
         let action = submessage(&run, 2).expect("conversation action");
@@ -1675,6 +1728,7 @@ mod tests {
             &history,
             &[],
             &[],
+            None,
         );
         // ConversationHistory lives at AgentRunRequest(1).action(2).user_message_action(1).conversation_history(7).
         let run = submessage(&bytes, 1).unwrap();
@@ -1707,6 +1761,7 @@ mod tests {
             &[],
             &[],
             std::slice::from_ref(&tool),
+            None,
         );
         // AgentRunRequest.mcp_tools(4).mcp_tools(1) = McpToolDefinition.
         let run = submessage(&bytes, 1).unwrap();
@@ -1730,7 +1785,7 @@ mod tests {
 
     #[test]
     fn omitting_tools_keeps_mcp_tools_message_empty() {
-        let bytes = encode_agent_client_message_with_history("hi", "m", "c", "mid", &[], &[], &[]);
+        let bytes = encode_agent_client_message_with_history("hi", "m", "c", "mid", &[], &[], &[], None);
         let run = submessage(&bytes, 1).unwrap();
         // mcp_tools(4) is present but its repeated definition list is empty.
         let mcp_tools = submessage(&run, 4).unwrap_or_default();
@@ -1761,6 +1816,7 @@ mod tests {
             &[],
             std::slice::from_ref(&image),
             &[],
+            None,
         );
         let run = submessage(&bytes, 1).unwrap();
         // AgentRunRequest.client_supports_inline_images (field 19) must be set.
@@ -1785,7 +1841,7 @@ mod tests {
     #[test]
     fn turn_without_images_keeps_empty_selected_context_and_no_inline_flag() {
         let bytes =
-            encode_agent_client_message_with_history("hello", "m", "c", "mid", &[], &[], &[]);
+            encode_agent_client_message_with_history("hello", "m", "c", "mid", &[], &[], &[], None);
         let run = submessage(&bytes, 1).unwrap();
         assert_eq!(scalar_u64(&run, 19), None);
         let action = submessage(&run, 2).unwrap();
@@ -1806,7 +1862,7 @@ mod tests {
         }];
         use base64::Engine as _;
         let bytes =
-            encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[], &[]);
+            encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[], &[], None);
         let run = submessage(&bytes, 1).unwrap();
         // History images also require the inline-images capability flag.
         assert_eq!(scalar_u64(&run, 19), Some(1));

@@ -22,8 +22,8 @@ use crate::context::{
     CursorContextOptions, discovery_context_frames_from_env, encode_request_context_frame,
 };
 use crate::models::{
-    cache_ttl, cached_models, discover_models, fallback_models, force_refresh_requested,
-    save_cached_models,
+    cache_ttl, cached_models, discover_models, fallback_models, finalize_cursor_models,
+    force_refresh_requested, save_cached_models,
 };
 use crate::proto::{CursorHistoryMessage, CursorImage, CursorMcpTool};
 
@@ -152,7 +152,7 @@ impl InferenceEngine for CursorInferenceEngine {
         if let Some(entry) = cached
             && !entry.models.is_empty()
         {
-            return Ok(entry.models);
+            return Ok(finalize_cursor_models(entry.models));
         }
 
         Ok(fallback_models())
@@ -179,7 +179,7 @@ impl InferenceEngine for CursorInferenceEngine {
             let (prompt, history, images) = cursor_request_parts(&request);
             let tools = cursor_mcp_tools_from_request(&request);
             let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
-            let conversation_id = uuid::Uuid::new_v4().to_string();
+            let conversation_id = cursor_conversation_id(&ctx, &request);
             let message_id = uuid::Uuid::new_v4().to_string();
             let run_request = crate::proto::encode_agent_client_message_with_history(
                 &prompt,
@@ -189,6 +189,7 @@ impl InferenceEngine for CursorInferenceEngine {
                 &history,
                 &images,
                 &tools,
+                Some(&request.reasoning),
             );
             let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
                 vec![encode_request_context_frame(
@@ -211,6 +212,7 @@ impl InferenceEngine for CursorInferenceEngine {
                         thread_id: ctx.thread_id.to_string(),
                         turn_id: ctx.turn_id.to_string(),
                         model: request.model.model.clone(),
+                        conversation_id,
                     },
                 },
             )
@@ -226,16 +228,19 @@ impl InferenceEngine for CursorInferenceEngine {
         let (prompt, history, images) = cursor_request_parts(&request);
         let tools = cursor_mcp_tools_from_request(&request);
         let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
+        let conversation_id = cursor_conversation_id(&ctx, &request);
         let service_stream = stream_agent_service(
             self.agent_service_config(),
             AgentServiceRequest {
                 access_token: auth.token,
                 prompt,
                 model: request.model.model.clone(),
+                conversation_id,
                 context_frames,
                 history,
                 images,
                 tools,
+                reasoning: Some(request.reasoning.clone()),
                 workspace,
             },
         )
@@ -463,6 +468,37 @@ fn validate_request(request: &AgentInferenceRequest) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn cursor_conversation_id(
+    ctx: &InferenceTurnContext<'_>,
+    request: &AgentInferenceRequest,
+) -> String {
+    request
+        .transcript
+        .iter()
+        .rev()
+        .filter_map(|item| match item {
+            TranscriptItem::ProviderMetadata(metadata)
+                if metadata.get("provider").and_then(|value| value.as_str())
+                    == Some(PROVIDER_CURSOR) =>
+            {
+                metadata
+                    .get("conversationId")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| uuid::Uuid::parse_str(value).is_ok())
+                    .map(str::to_string)
+            }
+            _ => None,
+        })
+        .next()
+        .unwrap_or_else(|| {
+            uuid::Uuid::new_v5(
+                &uuid::Uuid::NAMESPACE_URL,
+                format!("roder-cursor:{}", ctx.thread_id).as_bytes(),
+            )
+            .to_string()
+        })
+}
+
 fn estimate_prompt_tokens(prompt: &str) -> u32 {
     estimate_text_tokens(prompt).max(1)
 }
@@ -501,6 +537,14 @@ mod tests {
         }
     }
 
+    fn turn_context(thread_id: &'static str) -> InferenceTurnContext<'static> {
+        InferenceTurnContext {
+            thread_id,
+            turn_id: "turn",
+            tool_executor: None,
+        }
+    }
+
     #[test]
     fn metadata_reports_api_key_auth_state() {
         let engine = CursorInferenceEngine::new(CursorConfig {
@@ -520,6 +564,35 @@ mod tests {
         // A single fresh user turn has no prior history.
         assert!(history.is_empty());
         assert!(images.is_empty());
+    }
+
+    #[test]
+    fn conversation_id_is_stable_per_thread() {
+        let request = request();
+        let first = cursor_conversation_id(&turn_context("thread-a"), &request);
+        let second = cursor_conversation_id(&turn_context("thread-a"), &request);
+        let other = cursor_conversation_id(&turn_context("thread-b"), &request);
+
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+        assert!(uuid::Uuid::parse_str(&first).is_ok());
+    }
+
+    #[test]
+    fn conversation_id_prefers_prior_cursor_metadata() {
+        let prior = uuid::Uuid::new_v4().to_string();
+        let mut request = request();
+        request
+            .transcript
+            .push(TranscriptItem::ProviderMetadata(json!({
+                "provider": PROVIDER_CURSOR,
+                "conversationId": prior,
+            })));
+
+        assert_eq!(
+            cursor_conversation_id(&turn_context("thread-a"), &request),
+            prior
+        );
     }
 
     #[test]
