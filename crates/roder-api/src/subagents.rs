@@ -255,6 +255,15 @@ pub const AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS: u64 = 3_000;
 /// Hard cap on rate-limit retries so config/env can never make a swarm wait
 /// unboundedly.
 pub const AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_CAP: usize = 8;
+/// Default minimum interval between successive global rate-limit capacity
+/// shrinks, in milliseconds. While the provider keeps rate-limiting, the swarm
+/// shrinks its global capacity by one at most this often, so it throttles
+/// smoothly instead of collapsing on the first burst of 429s.
+pub const AGENT_SWARM_RATE_LIMIT_SHRINK_INTERVAL_MS: u64 = 2_000;
+/// Default quiet window after which the swarm recovers one unit of global
+/// rate-limit capacity, in milliseconds (3 minutes). Any fresh rate limit
+/// restarts the window, and recovery happens at most once per quiet window.
+pub const AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS: u64 = 180_000;
 
 fn default_rate_limit_max_retries() -> usize {
     AGENT_SWARM_RATE_LIMIT_MAX_RETRIES
@@ -262,6 +271,14 @@ fn default_rate_limit_max_retries() -> usize {
 
 fn default_rate_limit_base_backoff_ms() -> u64 {
     AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS
+}
+
+fn default_rate_limit_shrink_interval_ms() -> u64 {
+    AGENT_SWARM_RATE_LIMIT_SHRINK_INTERVAL_MS
+}
+
+fn default_rate_limit_recovery_interval_ms() -> u64 {
+    AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS
 }
 
 /// Canonical swarm-mode reminder injected into a turn's developer instructions
@@ -559,6 +576,16 @@ pub struct AgentSwarmConfig {
     /// subsequent attempt).
     #[serde(default = "default_rate_limit_base_backoff_ms")]
     pub rate_limit_base_backoff_ms: u64,
+    /// Minimum interval between successive global rate-limit capacity shrinks,
+    /// in milliseconds. Sustained rate limits shrink global capacity by one at
+    /// most this often.
+    #[serde(default = "default_rate_limit_shrink_interval_ms")]
+    pub rate_limit_shrink_interval_ms: u64,
+    /// Quiet window with no rate limit after which the swarm recovers one unit
+    /// of global rate-limit capacity, in milliseconds. A fresh rate limit
+    /// restarts the window.
+    #[serde(default = "default_rate_limit_recovery_interval_ms")]
+    pub rate_limit_recovery_interval_ms: u64,
 }
 
 impl Default for AgentSwarmConfig {
@@ -571,6 +598,8 @@ impl Default for AgentSwarmConfig {
             child_timeout_seconds: None,
             rate_limit_max_retries: AGENT_SWARM_RATE_LIMIT_MAX_RETRIES,
             rate_limit_base_backoff_ms: AGENT_SWARM_RATE_LIMIT_BASE_BACKOFF_MS,
+            rate_limit_shrink_interval_ms: AGENT_SWARM_RATE_LIMIT_SHRINK_INTERVAL_MS,
+            rate_limit_recovery_interval_ms: AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS,
         }
     }
 }

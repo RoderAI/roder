@@ -25,6 +25,7 @@ use roder_api::trace::SubagentTraceSink;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinSet;
+use tokio::time::Instant;
 
 /// Canonical model-facing swarm tool name (shared with `roder-api` and the
 /// core turn loop's exclusivity enforcement).
@@ -116,6 +117,204 @@ enum ChildRunOrAbort {
     NotStarted,
 }
 
+/// Shared, global coordinator for the swarm's provider rate-limit phase.
+///
+/// The per-child exponential backoff alone lets every child keep hammering the
+/// provider independently. This governor adds the *global* throttle Kimi Code
+/// uses: while the provider keeps returning rate-limit errors it shrinks how
+/// many children may attempt at once (down to one), pacing launches so the
+/// whole swarm backs off together instead of each child retrying in parallel.
+/// After a quiet window with no rate limit it recovers one unit of capacity so
+/// the swarm speeds back up.
+///
+/// It is a no-op until the first rate limit is observed, so the normal-phase
+/// ramp, overlap, ordering, and `max_concurrency` cap are unchanged. Times use
+/// [`tokio::time::Instant`] so fake-clock tests can drive shrink/recovery
+/// deterministically.
+struct RateLimitGovernor {
+    state: std::sync::Mutex<GovernorState>,
+    notify: Notify,
+    /// Minimum spacing between successive global capacity shrinks.
+    shrink_interval: Duration,
+    /// Quiet window with no rate limit before one capacity unit recovers.
+    recovery_interval: Duration,
+    /// Base spacing between launches once in the rate-limit phase.
+    global_pace: Duration,
+}
+
+struct GovernorState {
+    /// True once the first provider rate limit has been seen.
+    mode: bool,
+    /// Children allowed to attempt at once during the rate-limit phase.
+    capacity: usize,
+    /// Children currently holding a launch slot (tracked in every phase so the
+    /// first rate limit can size capacity from the real concurrent load).
+    active: usize,
+    last_rate_limit_at: Option<Instant>,
+    last_shrink_at: Option<Instant>,
+    last_recovery_at: Option<Instant>,
+    /// Earliest instant the next rate-limit-phase launch may begin.
+    next_launch_at: Option<Instant>,
+}
+
+/// RAII guard for one governor launch slot; decrements `active` on drop and
+/// wakes any waiters so a freed slot is taken promptly.
+struct GovernorSlot {
+    governor: Arc<RateLimitGovernor>,
+}
+
+impl Drop for GovernorSlot {
+    fn drop(&mut self) {
+        {
+            let mut state = self.governor.state.lock().unwrap();
+            state.active = state.active.saturating_sub(1);
+        }
+        self.governor.notify.notify_waiters();
+    }
+}
+
+impl RateLimitGovernor {
+    fn new(config: &AgentSwarmConfig) -> Arc<Self> {
+        Arc::new(Self {
+            state: std::sync::Mutex::new(GovernorState {
+                mode: false,
+                capacity: 1,
+                active: 0,
+                last_rate_limit_at: None,
+                last_shrink_at: None,
+                last_recovery_at: None,
+                next_launch_at: None,
+            }),
+            notify: Notify::new(),
+            shrink_interval: Duration::from_millis(config.rate_limit_shrink_interval_ms),
+            recovery_interval: Duration::from_millis(config.rate_limit_recovery_interval_ms),
+            global_pace: Duration::from_millis(config.rate_limit_base_backoff_ms),
+        })
+    }
+
+    /// Acquire a launch slot. In the normal phase this grants immediately; in
+    /// the rate-limit phase it blocks until global capacity, global pacing, and
+    /// this child's own `child_ready_at` eligibility all allow a launch.
+    /// Returns `None` only if the swarm was cancelled while waiting.
+    async fn acquire(
+        self: &Arc<Self>,
+        child_ready_at: Instant,
+        cancel: &AgentSwarmCancel,
+    ) -> Option<GovernorSlot> {
+        loop {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            // A notification permit must be registered before we drop the lock
+            // so a state change between the check and the wait is not missed.
+            let notified = self.notify.notified();
+            let wake_at = {
+                let mut state = self.state.lock().unwrap();
+                let now = Instant::now();
+                if !state.mode {
+                    state.active += 1;
+                    return Some(GovernorSlot {
+                        governor: self.clone(),
+                    });
+                }
+                self.maybe_recover(&mut state, now);
+                let eligible_at = match state.next_launch_at {
+                    Some(next) => next.max(child_ready_at),
+                    None => child_ready_at,
+                };
+                if state.active < state.capacity && now >= eligible_at {
+                    state.active += 1;
+                    state.next_launch_at = Some(now + self.global_pace);
+                    return Some(GovernorSlot {
+                        governor: self.clone(),
+                    });
+                }
+                let recovery_at = self.next_recovery_at(&state);
+                if state.active >= state.capacity {
+                    recovery_at
+                } else {
+                    match recovery_at {
+                        Some(recovery) => Some(eligible_at.min(recovery)),
+                        None => Some(eligible_at),
+                    }
+                }
+            };
+            match wake_at {
+                Some(at) => {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => return None,
+                        _ = notified => {}
+                        _ = tokio::time::sleep_until(at) => {}
+                    }
+                }
+                None => {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => return None,
+                        _ = notified => {}
+                    }
+                }
+            }
+        }
+    }
+
+    /// Record a provider rate limit: enter the rate-limit phase (sizing capacity
+    /// from the concurrent load that triggered it), or shrink capacity by one
+    /// (rate-limited to one shrink per `shrink_interval`). The caller still
+    /// holds its slot, so `active` includes the rate-limited child.
+    fn on_rate_limit(&self) {
+        let now = Instant::now();
+        {
+            let mut state = self.state.lock().unwrap();
+            if !state.mode {
+                state.mode = true;
+                // Size from the children concurrently active when the provider
+                // first throttled us, then force the first shrink (min one).
+                state.capacity = state.active.max(1).saturating_sub(1).max(1);
+                state.last_shrink_at = Some(now);
+                state.next_launch_at = Some(now + self.global_pace);
+            } else {
+                let may_shrink = state
+                    .last_shrink_at
+                    .map(|prev| now.duration_since(prev) >= self.shrink_interval)
+                    .unwrap_or(true);
+                if may_shrink {
+                    state.capacity = state.capacity.saturating_sub(1).max(1);
+                    state.last_shrink_at = Some(now);
+                }
+                let paced = now + self.global_pace;
+                state.next_launch_at = Some(state.next_launch_at.map_or(paced, |n| n.max(paced)));
+            }
+            state.last_rate_limit_at = Some(now);
+        }
+        self.notify.notify_waiters();
+    }
+
+    /// Grow capacity by one when the quiet window has fully elapsed, allowing an
+    /// immediate launch. Happens at most once per window; a new rate limit
+    /// restarts the window via `last_rate_limit_at`.
+    fn maybe_recover(&self, state: &mut GovernorState, now: Instant) {
+        if let Some(at) = self.next_recovery_at(state)
+            && now >= at
+        {
+            state.capacity += 1;
+            state.last_recovery_at = Some(now);
+            if let Some(next) = state.next_launch_at {
+                state.next_launch_at = Some(next.min(now));
+            }
+        }
+    }
+
+    fn next_recovery_at(&self, state: &GovernorState) -> Option<Instant> {
+        let last_rate_limit = state.last_rate_limit_at?;
+        let base = state
+            .last_recovery_at
+            .map_or(last_rate_limit, |recovery| recovery.max(last_rate_limit));
+        Some(base + self.recovery_interval)
+    }
+}
+
 /// Run a swarm: dispatch `specs` through `launcher` with a bounded normal-phase
 /// ramp (initial burst, then one launch per interval), an optional concurrency
 /// cap, ordered results, and cooperative cancellation.
@@ -145,6 +344,11 @@ pub async fn run_agent_swarm_with_observer(
     let config = config.clone().clamped();
     let cap = config.max_concurrency.unwrap_or(total).max(1);
     let concurrency = Arc::new(Semaphore::new(cap));
+
+    // Global rate-limit throttle shared by every child. A no-op until the first
+    // provider rate limit, after which it shrinks how many children may attempt
+    // at once and recovers capacity after a quiet window.
+    let governor = RateLimitGovernor::new(&config);
 
     // Launch credits gate how many children may *start* (the ramp). The initial
     // burst is available immediately; a pacer drips one more per interval.
@@ -187,6 +391,7 @@ pub async fn run_agent_swarm_with_observer(
         let launcher = launcher.clone();
         let launch_gate = launch_gate.clone();
         let concurrency = concurrency.clone();
+        let governor = governor.clone();
         let cancel = cancel.clone();
         set.spawn(async move {
             // Consume exactly one launch credit (permanently) to pace starts.
@@ -204,14 +409,32 @@ pub async fn run_agent_swarm_with_observer(
             if cancel.is_cancelled() {
                 return (pos, ChildRunOrAbort::NotStarted);
             }
-            // Launch the child, retrying with exponential backoff when the
-            // provider rate-limits it. The concurrency permit is held across the
-            // backoff so a rate-limited swarm naturally throttles instead of
-            // hammering the provider. `biased` cancellation wins ties so an
-            // in-flight or backing-off child is reported aborted (started)
-            // rather than completing a turn the user already interrupted.
+            // Launch the child, retrying when the provider rate-limits it. Every
+            // attempt first acquires a governor slot: a no-op in the normal
+            // phase, but once the provider throttles us it gates launches behind
+            // the shrinking global capacity, global pacing, and this child's own
+            // exponential eligibility (3s, 6s, 12s, ...). The concurrency permit
+            // is held across the whole loop so a rate-limited swarm naturally
+            // backs off instead of hammering the provider. `biased` cancellation
+            // wins ties so an in-flight or waiting child is reported aborted.
             let mut attempt = 0usize;
+            let mut child_ready_at = Instant::now();
+            let mut has_started = false;
             loop {
+                let slot = match governor.acquire(child_ready_at, &cancel).await {
+                    Some(slot) => slot,
+                    None => {
+                        return (
+                            pos,
+                            if has_started {
+                                ChildRunOrAbort::Started
+                            } else {
+                                ChildRunOrAbort::NotStarted
+                            },
+                        );
+                    }
+                };
+                has_started = true;
                 let run = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => return (pos, ChildRunOrAbort::Started),
@@ -220,16 +443,16 @@ pub async fn run_agent_swarm_with_observer(
                 if !run.rate_limited || attempt >= max_retries {
                     return (pos, ChildRunOrAbort::Run(run));
                 }
-                // 3s, 6s, 12s, ... capped shift to avoid overflow.
-                let backoff = Duration::from_millis(
-                    base_backoff_ms.saturating_mul(1u64 << attempt.min(20)),
-                );
+                // Tell the global governor about the rate limit (shrink capacity)
+                // before releasing the slot, then schedule this child's own
+                // exponential eligibility: 3s, 6s, 12s, ... capped shift.
+                governor.on_rate_limit();
+                drop(slot);
                 attempt += 1;
-                tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => return (pos, ChildRunOrAbort::Started),
-                    _ = tokio::time::sleep(backoff) => {}
-                }
+                let backoff = Duration::from_millis(
+                    base_backoff_ms.saturating_mul(1u64 << (attempt - 1).min(20)),
+                );
+                child_ready_at = Instant::now() + backoff;
             }
         });
     }
@@ -887,5 +1110,133 @@ mod tests {
                 .iter()
                 .all(|child| child.outcome == AgentSwarmChildOutcome::Aborted)
         );
+    }
+
+    fn governor_config(shrink_ms: u64, recovery_ms: u64) -> AgentSwarmConfig {
+        AgentSwarmConfig {
+            rate_limit_base_backoff_ms: 0,
+            rate_limit_shrink_interval_ms: shrink_ms,
+            rate_limit_recovery_interval_ms: recovery_ms,
+            ..fast_config()
+        }
+    }
+
+    fn capacity(governor: &RateLimitGovernor) -> usize {
+        governor.state.lock().unwrap().capacity
+    }
+
+    /// The first provider rate limit sizes global capacity from the concurrent
+    /// load that triggered it and force-shrinks once; later rate limits shrink
+    /// by one but no more often than `shrink_interval`, down to a floor of one.
+    #[tokio::test(start_paused = true)]
+    async fn governor_shrinks_global_capacity_under_sustained_rate_limits() {
+        let governor = RateLimitGovernor::new(&governor_config(2_000, 180_000));
+        let cancel = AgentSwarmCancel::new();
+        let now = Instant::now();
+
+        // Three children concurrently active in the normal phase (mode off).
+        let s1 = governor.acquire(now, &cancel).await.expect("slot 1");
+        let s2 = governor.acquire(now, &cancel).await.expect("slot 2");
+        let s3 = governor.acquire(now, &cancel).await.expect("slot 3");
+        assert!(!governor.state.lock().unwrap().mode);
+
+        // First rate limit: capacity sized from active(3), force-shrunk to 2.
+        governor.on_rate_limit();
+        assert!(governor.state.lock().unwrap().mode);
+        assert_eq!(capacity(&governor), 2);
+        drop((s1, s2, s3));
+
+        // A second rate limit within the shrink interval does not shrink again.
+        governor.on_rate_limit();
+        assert_eq!(capacity(&governor), 2);
+
+        // Once the shrink interval elapses, the next rate limit shrinks to 1.
+        tokio::time::advance(Duration::from_millis(2_100)).await;
+        governor.on_rate_limit();
+        assert_eq!(capacity(&governor), 1);
+
+        // Capacity never shrinks below one no matter how many rate limits hit.
+        tokio::time::advance(Duration::from_millis(2_100)).await;
+        governor.on_rate_limit();
+        assert_eq!(capacity(&governor), 1);
+    }
+
+    /// After a quiet window with no rate limit, the governor recovers one unit
+    /// of global capacity (at most once per window), letting the swarm speed
+    /// back up.
+    #[tokio::test(start_paused = true)]
+    async fn governor_recovers_one_capacity_after_quiet_window() {
+        let governor = RateLimitGovernor::new(&governor_config(2_000, 180_000));
+        let cancel = AgentSwarmCancel::new();
+        let start = Instant::now();
+
+        let slot = governor.acquire(start, &cancel).await.expect("initial slot");
+        governor.on_rate_limit();
+        drop(slot);
+        assert_eq!(capacity(&governor), 1);
+
+        // Less than the full quiet window: no recovery yet.
+        tokio::time::advance(Duration::from_millis(179_000)).await;
+        {
+            let mut state = governor.state.lock().unwrap();
+            governor.maybe_recover(&mut state, Instant::now());
+        }
+        assert_eq!(capacity(&governor), 1);
+
+        // Crossing the quiet window recovers exactly one unit of capacity.
+        tokio::time::advance(Duration::from_millis(1_100)).await;
+        let slot = governor
+            .acquire(start, &cancel)
+            .await
+            .expect("post-recovery slot");
+        assert_eq!(capacity(&governor), 2);
+        drop(slot);
+
+        // Recovery happens at most once per window: immediately re-checking does
+        // not grow capacity again until another full quiet window elapses.
+        {
+            let mut state = governor.state.lock().unwrap();
+            governor.maybe_recover(&mut state, Instant::now());
+        }
+        assert_eq!(capacity(&governor), 2);
+    }
+
+    /// End-to-end: with sustained provider rate limits and a real backoff, the
+    /// global governor paces and throttles retries (the paused clock advances
+    /// past the shrink interval each round), yet every child still completes in
+    /// input order with no deadlock.
+    #[tokio::test(start_paused = true)]
+    async fn sustained_rate_limits_throttle_without_deadlock() {
+        // Global counter: the first six launches rate-limit (3 children x 2),
+        // the rest succeed.
+        let launcher = Arc::new(RateLimitLauncher {
+            attempts: Mutex::new(0),
+            rate_limit_attempts: 6,
+        });
+        let specs: Vec<_> = (1..=3)
+            .map(|i| spec(i, AgentSwarmChildKind::Spawn))
+            .collect();
+        let config = AgentSwarmConfig {
+            initial_launch_limit: 5,
+            launch_interval_ms: 0,
+            rate_limit_max_retries: 4,
+            rate_limit_base_backoff_ms: 3_000,
+            rate_limit_shrink_interval_ms: 2_000,
+            rate_limit_recovery_interval_ms: 180_000,
+            ..fast_config()
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(600),
+            run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()),
+        )
+        .await
+        .expect("throttled swarm should not deadlock");
+        assert_eq!(result.completed, 3);
+        assert_eq!(result.failed, 0);
+        // 3 children x (2 rate-limited + 1 success) = 9 launches.
+        assert_eq!(*launcher.attempts.lock().unwrap(), 9);
+        // Results stay in input order.
+        let indices: Vec<_> = result.children.iter().map(|child| child.index).collect();
+        assert_eq!(indices, vec![1, 2, 3]);
     }
 }
