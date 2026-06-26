@@ -3355,6 +3355,17 @@ where
         }
     }
 
+    /// Label for the active agent mode shown next to the policy/security mode
+    /// in the composer title (e.g. "Bypass - Swarm"). Returns `None` when no
+    /// agent mode is set. Review mode will add its branch when it lands.
+    fn active_agent_mode_label(&self) -> Option<&'static str> {
+        if self.swarm_mode {
+            Some("Swarm")
+        } else {
+            None
+        }
+    }
+
     fn set_swarm_mode(&mut self, enabled: bool) {
         if self.swarm_mode == enabled {
             let state = if enabled { "on" } else { "off" };
@@ -4356,7 +4367,13 @@ where
             self.render_overlays(f, area);
             return;
         }
-        style_composer_for_current_mode(&mut self.composer, self.theme, self.policy_mode);
+        let active_agent_mode = self.active_agent_mode_label();
+        style_composer_for_current_mode(
+            &mut self.composer,
+            self.theme,
+            self.policy_mode,
+            active_agent_mode,
+        );
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
         let queue_height = queued_prompt_height(self.queued_prompts.len());

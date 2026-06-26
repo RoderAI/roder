@@ -41,10 +41,25 @@ impl ComposerMode {
         }
     }
 
-    fn title_spans(self, theme: Theme, policy_mode: PolicyMode) -> Option<Line<'static>> {
-        let mode_label = match policy_mode {
+    fn title_spans(
+        self,
+        theme: Theme,
+        policy_mode: PolicyMode,
+        agent_mode: Option<&str>,
+    ) -> Option<Line<'static>> {
+        // Combine the security/policy label (e.g. "Bypass") with an active
+        // agent mode (e.g. "Swarm" or "Review") so the composer title reads
+        // "Bypass - Swarm". When the policy mode is Default but an agent mode
+        // is active, show just the agent mode.
+        let policy_label = match policy_mode {
             PolicyMode::Default => "",
             _ => pretty_policy_mode_label(policy_mode),
+        };
+        let mode_label = match (policy_label.is_empty(), agent_mode) {
+            (true, None) => String::new(),
+            (true, Some(agent)) => agent.to_string(),
+            (false, None) => policy_label.to_string(),
+            (false, Some(agent)) => format!("{policy_label} - {agent}"),
         };
 
         Some(match self {
@@ -64,8 +79,8 @@ impl ComposerMode {
     }
 
     #[cfg(test)]
-    fn title_text(self, policy_mode: PolicyMode) -> String {
-        self.title_spans(Theme::for_dark_background(true), policy_mode)
+    fn title_text(self, policy_mode: PolicyMode, agent_mode: Option<&str>) -> String {
+        self.title_spans(Theme::for_dark_background(true), policy_mode, agent_mode)
             .unwrap_or_default()
             .spans
             .iter()
@@ -88,6 +103,7 @@ pub(super) fn composer_textarea(theme: Theme) -> TextArea<'static> {
         theme,
         ComposerMode::Chat,
         PolicyMode::Default,
+        None,
     );
     composer.set_wrap_mode(WrapMode::WordOrGlyph);
     composer.set_min_rows(3);
@@ -102,9 +118,10 @@ pub(super) fn style_composer_for_current_mode(
     composer: &mut TextArea<'static>,
     theme: Theme,
     policy_mode: PolicyMode,
+    agent_mode: Option<&str>,
 ) {
     let mode = composer_mode(composer);
-    style_composer_for_mode(composer, theme, mode, policy_mode);
+    style_composer_for_mode(composer, theme, mode, policy_mode, agent_mode);
 }
 
 pub(super) fn composer_mode(composer: &TextArea<'_>) -> ComposerMode {
@@ -207,6 +224,7 @@ fn style_composer_for_mode(
     theme: Theme,
     mode: ComposerMode,
     policy_mode: PolicyMode,
+    agent_mode: Option<&str>,
 ) {
     let borders = if theme.borders_visible {
         Borders::ALL
@@ -225,7 +243,7 @@ fn style_composer_for_mode(
         .border_type(theme.border_type)
         .border_style(border_style);
 
-    if let Some(title) = mode.title_spans(theme, policy_mode) {
+    if let Some(title) = mode.title_spans(theme, policy_mode, agent_mode) {
         block = block.title(title);
     }
 
@@ -253,14 +271,17 @@ mod tests {
 
     #[test]
     fn default_chat_mode_has_no_composer_title() {
-        assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Default), "");
+        assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Default, None), "");
     }
 
     #[test]
     fn non_default_chat_mode_title_only_shows_policy_mode() {
-        assert_eq!(ComposerMode::Chat.title_text(PolicyMode::Plan), " Plan ");
         assert_eq!(
-            ComposerMode::Chat.title_text(PolicyMode::AcceptAll),
+            ComposerMode::Chat.title_text(PolicyMode::Plan, None),
+            " Plan "
+        );
+        assert_eq!(
+            ComposerMode::Chat.title_text(PolicyMode::AcceptAll, None),
             " Accept All "
         );
     }
@@ -268,8 +289,39 @@ mod tests {
     #[test]
     fn shell_mode_title_is_not_labeled_as_chat() {
         assert_eq!(
-            ComposerMode::Shell.title_text(PolicyMode::Plan),
+            ComposerMode::Shell.title_text(PolicyMode::Plan, None),
             " shell Plan "
+        );
+    }
+
+    #[test]
+    fn active_agent_mode_appends_to_policy_label() {
+        // Bypass + Swarm -> "Bypass - Swarm".
+        assert_eq!(
+            ComposerMode::Chat.title_text(PolicyMode::Bypass, Some("Swarm")),
+            " Bypass - Swarm "
+        );
+        assert_eq!(
+            ComposerMode::Chat.title_text(PolicyMode::Bypass, Some("Review")),
+            " Bypass - Review "
+        );
+    }
+
+    #[test]
+    fn active_agent_mode_shows_alone_in_default_policy() {
+        // Default policy mode normally has no title, but an active agent mode
+        // still surfaces by itself.
+        assert_eq!(
+            ComposerMode::Chat.title_text(PolicyMode::Default, Some("Swarm")),
+            " Swarm "
+        );
+    }
+
+    #[test]
+    fn shell_mode_combines_policy_and_agent_mode() {
+        assert_eq!(
+            ComposerMode::Shell.title_text(PolicyMode::Bypass, Some("Swarm")),
+            " shell Bypass - Swarm "
         );
     }
 
