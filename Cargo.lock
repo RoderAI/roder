@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3736,7 +3736,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-cursor"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4865,7 +4865,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "async-trait",
