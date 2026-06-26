@@ -352,6 +352,18 @@ config = { sprite_name_prefix = "roder", cleanup = "delete-on-close", working_di
 
 Sprites destinations can also bootstrap a durable remote app-server service by downloading the `remote-app-server` distribution artifact from `dl.roder.sh`; see [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md).
 
+Celesto sandboxed computers can be selected with the first-party `celesto` runner. Put the API key in `CELESTO_API_KEY` (or `RODER_CELESTO_API_KEY`); computers are deleted on close unless configured otherwise:
+
+```toml
+[remote_runners]
+enabled = true
+default_destination = "celesto-dev"
+
+[remote_runners.destinations.celesto-dev]
+provider = "celesto"
+config = { template_id = "coding-agent", cleanup = "delete-on-close", working_dir = "/root/roder" }
+```
+
 For local testing, override the selected destination without editing the file:
 
 ```sh

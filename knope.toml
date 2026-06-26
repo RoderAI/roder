@@ -389,6 +389,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-runner-blaxel/CHANGELOG.md"
 
+[packages."roder-ext-runner-celesto"]
+versioned_files = [
+    "crates/roder-ext-runner-celesto/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-runner-celesto/CHANGELOG.md"
+
 [packages."roder-ext-runner-cloudflare"]
 versioned_files = [
     "crates/roder-ext-runner-cloudflare/Cargo.toml",

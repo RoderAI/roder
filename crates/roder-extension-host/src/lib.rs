@@ -52,6 +52,7 @@ use roder_ext_postgres_session::{
 };
 use roder_ext_roder_cloud::{RoderCloudConfig, RoderCloudExtension};
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
+use roder_ext_runner_celesto::CelestoRunnerExtension;
 use roder_ext_runner_cloudflare::CloudflareRunnerExtension;
 use roder_ext_runner_daytona::DaytonaRunnerExtension;
 use roder_ext_runner_docker::DockerRunnerExtension;
@@ -481,6 +482,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(UnixLocalRunnerExtension)?;
     builder.install(DockerRunnerExtension)?;
     builder.install(BlaxelRunnerExtension)?;
+    builder.install(CelestoRunnerExtension)?;
     builder.install(CloudflareRunnerExtension)?;
     builder.install(DaytonaRunnerExtension)?;
     builder.install(E2bRunnerExtension)?;

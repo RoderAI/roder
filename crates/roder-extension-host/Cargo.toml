@@ -54,6 +54,7 @@ roder-ext-synthetic-search.workspace = true
 roder-ext-poolside.workspace = true
 roder-ext-plan-mode.workspace = true
 roder-ext-runner-blaxel.workspace = true
+roder-ext-runner-celesto.workspace = true
 roder-ext-runner-cloudflare.workspace = true
 roder-ext-runner-daytona.workspace = true
 roder-ext-runner-docker.workspace = true
