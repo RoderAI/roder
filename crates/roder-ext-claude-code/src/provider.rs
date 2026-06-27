@@ -11,10 +11,11 @@ use claude_code_sdk_rust::{
 use roder_api::catalog::{PROVIDER_CLAUDE_CODE, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
-    AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
-    InferenceEvent, InferenceEventStream, InferenceFailure, InferenceProviderContext,
-    InferenceProviderMetadata, InferenceTurnContext, MessageDelta, ModelDescriptor,
-    ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted, ToolCallDelta,
+    AgentInferenceRequest, CompletionMetadata, HostedToolCallCompleted, HostedToolCallStarted,
+    InferenceCapabilities, InferenceEngine, InferenceEvent, InferenceEventStream, InferenceFailure,
+    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, MessageDelta,
+    ModelDescriptor, ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
+    ToolCallDelta,
 };
 use roder_api::transcript::TranscriptItem;
 use serde_json::json;
@@ -33,6 +34,21 @@ pub struct ClaudeCodeConfig {
     /// sends the new transcript tail each turn. Set to `Some(false)` to force
     /// the legacy behavior of replaying the full transcript every turn.
     pub reuse_cli_session: Option<bool>,
+    /// Enable the Claude Code "Claude in Chrome" (CFC) browser integration so
+    /// the model can drive the user's real browser through the CLI's
+    /// `mcp__claude-in-chrome__*` tools.
+    ///
+    /// * `Some(true)` / `Some(false)` force the integration on or off.
+    /// * `None` (default) auto-detects: it turns on when the local Claude Code
+    ///   config shows the Chrome extension is paired/enabled, and otherwise
+    ///   off. The `RODER_CLAUDE_CODE_ENABLE_CHROME` / `CLAUDE_CODE_ENABLE_CHROME`
+    ///   environment variables override the auto-detection.
+    ///
+    /// When enabled the provider spawns `claude` with `CLAUDE_CODE_ENABLE_CFC=1`
+    /// and blanks `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` for that child so
+    /// the CLI uses its claude.ai subscription auth — a prerequisite for the
+    /// Chrome integration to connect (it is disabled under API-key auth).
+    pub enable_claude_in_chrome: Option<bool>,
 }
 
 impl ClaudeCodeConfig {
@@ -378,6 +394,16 @@ fn map_stream_events(
         // produces duplicate, failing rows that trip the reliability limit.
         let mut mcp_tool_ids: std::collections::HashSet<String> =
             std::collections::HashSet::new();
+        // Tool-use ids for non-Roder MCP servers the CLI executes itself (e.g.
+        // Claude-in-Chrome browser tools). Roder never runs these, so they are
+        // surfaced as hosted tool calls for visibility instead of runtime tool
+        // calls -- emitting `ToolCallCompleted` would make the runtime try to
+        // execute a tool it never registered. `hosted_pending` maps a started
+        // id to its tool name until the matching completion has been emitted.
+        let mut hosted_pending: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut hosted_done: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         while let Some(event) = events.recv().await {
             match event {
                 StreamEvent::ContentChunk(text) => {
@@ -400,10 +426,41 @@ fn map_stream_events(
                     yield InferenceEvent::ReasoningDelta(ReasoningDelta { text: thinking });
                 }
                 StreamEvent::ToolUseStart { id, name, input } => {
-                    if name.starts_with("mcp__") {
+                    if name.starts_with("mcp__roder__") {
                         // Executed in-process via the MCP handler; the executor
                         // owns the canonical tool-call events. Skip emission.
                         mcp_tool_ids.insert(id);
+                        continue;
+                    }
+                    if name.starts_with("mcp__") {
+                        // A non-Roder MCP server the CLI runs itself (e.g.
+                        // Claude-in-Chrome). Suppress the runtime tool-call path
+                        // and surface it as a hosted tool call instead. Under
+                        // `include_partial_messages` the same tool-use arrives
+                        // twice: once at `content_block_start` (empty input) and
+                        // once in the final assistant message (full input); emit
+                        // `started` on first sight and `completed` once the full
+                        // input is known (or at the tool result / turn end).
+                        mcp_tool_ids.insert(id.clone());
+                        if hosted_done.contains(&id) {
+                            continue;
+                        }
+                        if !hosted_pending.contains_key(&id) {
+                            hosted_pending.insert(id.clone(), name.clone());
+                            yield InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
+                                id: id.clone(),
+                                name: name.clone(),
+                            });
+                        }
+                        if !input.is_empty() {
+                            hosted_pending.remove(&id);
+                            hosted_done.insert(id.clone());
+                            yield InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                                id,
+                                name,
+                                arguments: serde_json::Value::Object(input).to_string(),
+                            });
+                        }
                         continue;
                     }
                     if !input.is_empty() {
@@ -421,6 +478,18 @@ fn map_stream_events(
                     yield InferenceEvent::ToolCallDelta(ToolCallDelta { id, arguments_delta: partial_input });
                 }
                 StreamEvent::ToolResult { tool_use_id, content, is_error } => {
+                    // Close out a hosted (CLI-executed) tool that never carried
+                    // a full input on its tool-use block (e.g. a no-argument
+                    // browser tool), so its UI row does not stay in progress.
+                    if let Some(name) = hosted_pending.remove(&tool_use_id) {
+                        hosted_done.insert(tool_use_id.clone());
+                        yield InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                            id: tool_use_id,
+                            name,
+                            arguments: "{}".to_string(),
+                        });
+                        continue;
+                    }
                     yield InferenceEvent::ProviderMetadata(json!({
                         "provider": PROVIDER_CLAUDE_CODE,
                         "toolResult": {
@@ -463,6 +532,14 @@ fn map_stream_events(
                     if completed {
                         continue;
                     }
+                    for (id, name) in std::mem::take(&mut hosted_pending) {
+                        hosted_done.insert(id.clone());
+                        yield InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                            id,
+                            name,
+                            arguments: "{}".to_string(),
+                        });
+                    }
                     if let Some(usage) = usage_from_response(&response) {
                         yield InferenceEvent::Usage(usage);
                     }
@@ -482,6 +559,17 @@ fn map_stream_events(
                     clear_session(&continuity);
                     yield InferenceEvent::Failed(InferenceFailure { message: redact_error(&message) });
                 }
+            }
+        }
+        // Complete any hosted tool rows still open so they never hang in the UI
+        // if the stream ended before their results arrived.
+        if !completed {
+            for (id, name) in std::mem::take(&mut hosted_pending) {
+                yield InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
+                    id,
+                    name,
+                    arguments: "{}".to_string(),
+                });
             }
         }
         // The CLI stream ended without a result message (e.g. the process
@@ -948,6 +1036,97 @@ mod tests {
             .filter(|event| matches!(event, InferenceEvent::Completed(_)))
             .count();
         assert_eq!(completions, 1, "turn must complete exactly once");
+    }
+
+    /// Claude-in-Chrome browser tools are executed by the CLI itself, not by
+    /// Roder. They must surface as hosted tool calls (so the runtime never tries
+    /// to run an unregistered tool) and never as runtime `ToolCallCompleted`s.
+    #[tokio::test]
+    async fn surfaces_claude_in_chrome_tool_use_as_hosted_calls() {
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(FakeRunner {
+                events: vec![
+                    // Partial start (empty input) then the full tool-use block.
+                    StreamEvent::ToolUseStart {
+                        id: "toolu_chrome".to_string(),
+                        name: "mcp__claude-in-chrome__navigate".to_string(),
+                        input: serde_json::Map::new(),
+                    },
+                    StreamEvent::ToolUseStart {
+                        id: "toolu_chrome".to_string(),
+                        name: "mcp__claude-in-chrome__navigate".to_string(),
+                        input: {
+                            let mut input = serde_json::Map::new();
+                            input.insert("url".to_string(), json!("https://example.com"));
+                            input
+                        },
+                    },
+                    StreamEvent::ContentChunk("Opened the page.".to_string()),
+                    StreamEvent::ContentChunk("Opened the page.".to_string()),
+                    StreamEvent::Complete(MessageResponse {
+                        content: "Opened the page.".to_string(),
+                        blocks: Vec::new(),
+                        model: "opus".to_string(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-1".to_string(),
+                        usage: None,
+                    }),
+                    StreamEvent::TurnComplete(MessageResponse {
+                        content: String::new(),
+                        blocks: Vec::new(),
+                        model: String::new(),
+                        stop_reason: Some("end_turn".to_string()),
+                        session_id: "session-1".to_string(),
+                        usage: None,
+                    }),
+                ],
+            }),
+        );
+        let events = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        // The browser tool must never become a runtime tool call.
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, InferenceEvent::ToolCallCompleted(_))),
+            "Claude-in-Chrome tools must not surface as runtime tool calls"
+        );
+
+        let started = events
+            .iter()
+            .filter(|event| matches!(event, InferenceEvent::HostedToolCallStarted(_)))
+            .count();
+        assert_eq!(started, 1, "browser tool must surface as one hosted start");
+
+        let completed = events
+            .iter()
+            .filter_map(|event| match event {
+                InferenceEvent::HostedToolCallCompleted(call) => Some(call),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(completed.len(), 1, "browser tool must complete exactly once");
+        assert_eq!(completed[0].name, "mcp__claude-in-chrome__navigate");
+        assert!(
+            completed[0].arguments.contains("example.com"),
+            "completion must carry the full tool input"
+        );
     }
 
     #[tokio::test]

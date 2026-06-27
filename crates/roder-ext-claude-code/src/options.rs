@@ -58,6 +58,18 @@ pub fn build_options(
         let budget = i32::try_from(max_tokens).unwrap_or(i32::MAX);
         builder = builder.max_thinking_tokens(budget);
     }
+    // When the Claude-in-Chrome integration is enabled, force the CLI to wire
+    // its browser MCP server even in the SDK's headless/streaming mode and blank
+    // API-key auth so the CLI falls back to claude.ai subscription auth -- the
+    // Chrome integration only connects under subscription auth, and an inherited
+    // `ANTHROPIC_API_KEY` would otherwise take precedence and disable it.
+    let chrome_enabled = claude_in_chrome_enabled(config);
+    if chrome_enabled {
+        builder = builder
+            .env_var("CLAUDE_CODE_ENABLE_CFC", "1")
+            .env_var("ANTHROPIC_API_KEY", "")
+            .env_var("ANTHROPIC_AUTH_TOKEN", "");
+    }
     let allowed_tool_names = allowed_claude_tool_names(request);
     if !request.tools.is_empty() && !matches!(request.tool_choice, ToolChoice::None) {
         let executor = tool_executor.ok_or_else(|| {
@@ -82,6 +94,12 @@ pub fn build_options(
     builder = builder.can_use_tool(move |tool_name, _input, _context| {
         let allowed_tool_names = allowed_tool_names.clone();
         async move {
+            // Let the CLI execute its own Claude-in-Chrome browser tools when the
+            // integration is enabled; Roder does not mediate these (they drive
+            // the user's real browser through the CLI's native host).
+            if chrome_enabled && is_claude_in_chrome_tool(&tool_name) {
+                return Ok(PermissionResult::allow());
+            }
             let Some(claude_tool_name) = tool_name.strip_prefix("mcp__roder__") else {
                 return Ok(PermissionResult::deny(format!(
                     "Claude Code tool {tool_name} is not managed by Roder"
@@ -100,6 +118,84 @@ pub fn build_options(
         }
     });
     Ok(builder.build())
+}
+
+/// Tool-name prefixes for the Claude Code "Claude in Chrome" integration. The
+/// CLI exposes the browser surface under two server spellings (the Chrome
+/// extension and the desktop app), so both are recognized.
+const CLAUDE_IN_CHROME_TOOL_PREFIXES: [&str; 2] =
+    ["mcp__claude-in-chrome__", "mcp__Claude_in_Chrome__"];
+
+/// Whether `name` is a Claude-in-Chrome browser tool the CLI executes itself.
+fn is_claude_in_chrome_tool(name: &str) -> bool {
+    CLAUDE_IN_CHROME_TOOL_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+/// Resolve whether the Claude-in-Chrome integration should be enabled for this
+/// turn: explicit config wins, then the `RODER_CLAUDE_CODE_ENABLE_CHROME` /
+/// `CLAUDE_CODE_ENABLE_CHROME` env overrides, then auto-detection of a local
+/// Claude-in-Chrome setup.
+fn claude_in_chrome_enabled(config: &ClaudeCodeConfig) -> bool {
+    if let Some(explicit) = config.enable_claude_in_chrome {
+        return explicit;
+    }
+    if let Some(value) = env_flag("RODER_CLAUDE_CODE_ENABLE_CHROME")
+        .or_else(|| env_flag("CLAUDE_CODE_ENABLE_CHROME"))
+    {
+        return value;
+    }
+    detect_claude_in_chrome_setup()
+}
+
+/// Parse a boolean-ish environment flag. Returns `None` when unset or
+/// unrecognized so callers can fall back to the next signal.
+fn env_flag(key: &str) -> Option<bool> {
+    let raw = std::env::var(key).ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" | "" => Some(false),
+        _ => None,
+    }
+}
+
+/// Best-effort detection of a local Claude-in-Chrome setup by inspecting the
+/// Claude Code config file (`$CLAUDE_CONFIG_DIR/.claude.json` or
+/// `~/.claude.json`). Returns false when the file is missing or unreadable.
+fn detect_claude_in_chrome_setup() -> bool {
+    let Some(path) = claude_config_path() else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    let default_enabled = value
+        .get("claudeInChromeDefaultEnabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let paired = value
+        .get("chromeExtension")
+        .and_then(|ext| ext.get("pairedDeviceId"))
+        .map(|id| !id.is_null())
+        .unwrap_or(false);
+    let installed = value
+        .get("cachedChromeExtensionInstalled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    default_enabled || paired || installed
+}
+
+/// Path to the Claude Code config JSON, honoring `CLAUDE_CONFIG_DIR`.
+fn claude_config_path() -> Option<std::path::PathBuf> {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        return Some(std::path::PathBuf::from(dir).join(".claude.json"));
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(std::path::PathBuf::from(home).join(".claude.json"))
 }
 
 fn allowed_claude_tool_names(request: &AgentInferenceRequest) -> Vec<String> {
@@ -416,6 +512,7 @@ mod tests {
                 setting_sources: Some(vec!["user".to_string(), "project".to_string()]),
                 workspace: None,
                 reuse_cli_session: None,
+                enable_claude_in_chrome: Some(false),
             },
             &request,
             None,
@@ -509,6 +606,117 @@ mod tests {
         assert!(options.allowed_tools.is_empty());
         // With no Roder tools advertised we leave the built-in tool set alone.
         assert!(!options.tools_set);
+    }
+
+    fn chrome_request() -> AgentInferenceRequest {
+        AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "claude-code".to_string(),
+                model: "opus".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints {
+                hosted_web_search: HostedWebSearchConfig::disabled(),
+                ..RuntimeHints::default()
+            },
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn classifies_claude_in_chrome_tools() {
+        assert!(is_claude_in_chrome_tool("mcp__claude-in-chrome__navigate"));
+        assert!(is_claude_in_chrome_tool("mcp__Claude_in_Chrome__read_page"));
+        assert!(!is_claude_in_chrome_tool("mcp__roder__shell"));
+        assert!(!is_claude_in_chrome_tool("Bash"));
+    }
+
+    #[test]
+    fn chrome_disabled_sets_no_chrome_env() {
+        let options = build_options(
+            &ClaudeCodeConfig {
+                enable_claude_in_chrome: Some(false),
+                ..ClaudeCodeConfig::default()
+            },
+            &chrome_request(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!options.env.contains_key("CLAUDE_CODE_ENABLE_CFC"));
+        assert!(!options.env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!options.env.contains_key("ANTHROPIC_AUTH_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn chrome_enabled_wires_cfc_env_and_authorizes_browser_tools() {
+        let options = build_options(
+            &ClaudeCodeConfig {
+                enable_claude_in_chrome: Some(true),
+                ..ClaudeCodeConfig::default()
+            },
+            &chrome_request(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        // The CLI is told to wire the Claude-in-Chrome MCP server and to ignore
+        // API-key auth so it falls back to subscription auth.
+        assert_eq!(
+            options.env.get("CLAUDE_CODE_ENABLE_CFC").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            options.env.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            options.env.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str),
+            Some("")
+        );
+
+        let can_use_tool = options.can_use_tool.expect("permission callback set");
+        let allowed = can_use_tool
+            .call(
+                "mcp__claude-in-chrome__navigate".to_string(),
+                serde_json::Map::new(),
+                claude_code_sdk_rust::ToolPermissionContext::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(allowed, PermissionResult::Allow { .. }));
+    }
+
+    #[tokio::test]
+    async fn chrome_disabled_callback_denies_browser_tools() {
+        let options = build_options(
+            &ClaudeCodeConfig {
+                enable_claude_in_chrome: Some(false),
+                ..ClaudeCodeConfig::default()
+            },
+            &chrome_request(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let can_use_tool = options.can_use_tool.expect("permission callback set");
+        let denied = can_use_tool
+            .call(
+                "mcp__claude-in-chrome__navigate".to_string(),
+                serde_json::Map::new(),
+                claude_code_sdk_rust::ToolPermissionContext::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(denied, PermissionResult::Deny { .. }));
     }
 
     #[test]
