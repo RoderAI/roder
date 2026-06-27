@@ -388,6 +388,9 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         // process keeps history server-side and auto-compacts it instead of
         // Roder replaying the full transcript every turn.
         reuse_cli_session: None,
+        // Auto-detect the local "Claude in Chrome" setup (overridable via the
+        // RODER_CLAUDE_CODE_ENABLE_CHROME / CLAUDE_CODE_ENABLE_CHROME env vars).
+        enable_claude_in_chrome: None,
     }))?;
     if declared(InferenceProviderSelection::Gemini) {
         builder.install(GeminiExtension::new(config.gemini_api_key.clone()))?;

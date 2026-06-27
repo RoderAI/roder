@@ -88,6 +88,57 @@ When `file_backed_dynamic_context` is enabled, the pre-compaction transcript is 
 
 Claude Code tool-use events are surfaced through Roder's canonical event stream. The provider installs a default SDK `can_use_tool` callback that denies unmapped Claude Code tool execution, so the harness does not run local filesystem or shell tools outside Roder while same-stream `TurnToolExecutor` mapping is still being hardened. Broader same-stream execution of Claude Code tool requests through `TurnToolExecutor` remains the next hardening area before advertising more aggressive tool autonomy.
 
+## Claude in Chrome (browser tools)
+
+Claude Code ships a native "Claude in Chrome" (CFC) integration: when the
+`claude` CLI runs under your claude.ai subscription with the Chrome extension
+paired, the model gets browser tools named `mcp__claude-in-chrome__*`
+(`navigate`, `read_page`, `javascript_tool`, `tabs_context_mcp`, ...) that drive
+your real local browser.
+
+Roder's provider can register against that integration so a `claude-code/*` turn
+can use the browser:
+
+- It spawns `claude` with `CLAUDE_CODE_ENABLE_CFC=1` so the CLI wires its
+  Claude-in-Chrome MCP server even in the SDK's headless/streaming mode (the CLI
+  only auto-wires it for interactive sessions otherwise).
+- It blanks `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` for that child process.
+  The Chrome integration only connects under claude.ai subscription auth; an
+  inherited API key takes precedence and disables it. Blanking the key for the
+  child makes the CLI fall back to its subscription login.
+- It pre-authorizes the `mcp__claude-in-chrome__*` tools through the SDK
+  `can_use_tool` callback (every other unmapped CLI tool stays denied).
+- Because the CLI executes these tools itself, the provider surfaces them as
+  hosted tool calls (`HostedToolCallStarted` / `HostedToolCallCompleted`) so the
+  activity shows in the UI without the runtime trying to re-run a tool it never
+  registered.
+
+### Enabling
+
+Enablement is resolved per turn in this order:
+
+1. `ClaudeCodeConfig::enable_claude_in_chrome` (`Some(true)` / `Some(false)`).
+2. The `RODER_CLAUDE_CODE_ENABLE_CHROME` or `CLAUDE_CODE_ENABLE_CHROME`
+   environment variable (`1`/`true`/`on` or `0`/`false`/`off`).
+3. Auto-detection (default): on when the local Claude Code config
+   (`$CLAUDE_CONFIG_DIR/.claude.json` or `~/.claude.json`) shows the Chrome
+   extension is paired or enabled (`claudeInChromeDefaultEnabled`,
+   `chromeExtension.pairedDeviceId`, or `cachedChromeExtensionInstalled`).
+
+```sh
+# Force the integration on (or off) regardless of detection:
+export RODER_CLAUDE_CODE_ENABLE_CHROME=1
+```
+
+To actually act on a page, Chrome must be running with the paired Claude
+extension; otherwise the tool still runs but reports the extension as not
+connected.
+
+> Note: enabling this means a `claude-code` turn uses your claude.ai
+> subscription auth, not `ANTHROPIC_API_KEY`. Set
+> `RODER_CLAUDE_CODE_ENABLE_CHROME=0` if you need the CLI to keep using an API
+> key.
+
 ## Live checks
 
 Offline checks:
@@ -102,4 +153,12 @@ Live checks should remain opt-in and redacted:
 ```sh
 RODER_CLAUDE_CODE_LIVE=1 \
   cargo test -p roder-ext-claude-code live_claude_code -- --ignored --nocapture
+```
+
+The Claude-in-Chrome path has its own opt-in live check (needs an authenticated
+`claude` CLI with the Chrome extension paired):
+
+```sh
+RODER_CLAUDE_CODE_CHROME_LIVE=1 RODER_CLAUDE_CODE_MODEL=sonnet \
+  cargo test -p roder-ext-claude-code --test live_claude_in_chrome -- --ignored --nocapture
 ```
