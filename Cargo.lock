@@ -3720,7 +3720,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-claude-code"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4632,7 +4632,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "async-trait",
