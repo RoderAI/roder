@@ -520,7 +520,12 @@ fn human_time(ts: i64) -> String {
         .map(|offset| ts.to_offset(offset))
         .unwrap_or(ts);
     local_ts
-        .format(&time::format_description::parse("[year]-[month]-[day] [hour]:[minute]").unwrap())
+        .format(
+            &time::format_description::parse_borrowed::<2>(
+                "[year]-[month]-[day] [hour]:[minute]",
+            )
+            .unwrap(),
+        )
         .unwrap_or_else(|_| local_ts.unix_timestamp().to_string())
 }
 

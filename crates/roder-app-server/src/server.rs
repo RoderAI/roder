@@ -1816,20 +1816,23 @@ impl AppServer {
         params: RunnersLifecycleParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let thread_id = params.thread_id;
-        let state = match action {
-            "pause" => self.runtime.pause_thread_runner(&thread_id).await,
-            "resume" => self.runtime.resume_thread_runner(&thread_id).await,
-            "detach" => self.runtime.detach_thread_runner(&thread_id).await,
-            "rejoin" => {
-                self.runtime
-                    .rejoin_thread_runner(&thread_id, params.sandbox)
-                    .await
-            }
-            other => {
-                return Err(invalid_params_error(format!(
-                    "unknown runner lifecycle action {other:?}"
-                )));
-            }
+        // Note: `if/else` (not a string-literal `match`) keeps the dispatch
+        // method-manifest scanner from mistaking these lifecycle actions for
+        // top-level JSON-RPC method handlers in `handle_request`.
+        let state = if action == "pause" {
+            self.runtime.pause_thread_runner(&thread_id).await
+        } else if action == "resume" {
+            self.runtime.resume_thread_runner(&thread_id).await
+        } else if action == "detach" {
+            self.runtime.detach_thread_runner(&thread_id).await
+        } else if action == "rejoin" {
+            self.runtime
+                .rejoin_thread_runner(&thread_id, params.sandbox)
+                .await
+        } else {
+            return Err(invalid_params_error(format!(
+                "unknown runner lifecycle action {action:?}"
+            )));
         }
         .map_err(invalid_params_error)?;
         let paused = state

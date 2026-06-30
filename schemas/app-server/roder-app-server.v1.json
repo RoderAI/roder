@@ -1530,6 +1530,15 @@
       "sideEffect": "localState"
     },
     {
+      "method": "runners/detach",
+      "paramsType": "RunnersDetachParams",
+      "resultType": "RunnersDetachResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "runners/list",
       "paramsType": "RunnersListParams",
       "resultType": "RunnersListResult",
@@ -1539,6 +1548,15 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "runners/pause",
+      "paramsType": "RunnersPauseParams",
+      "resultType": "RunnersPauseResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "runners/ports",
       "paramsType": "RunnersPortsParams",
       "resultType": "RunnersPortsResult",
@@ -1546,6 +1564,24 @@
       "featureGroup": "runners",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "runners/rejoin",
+      "paramsType": "RunnersRejoinParams",
+      "resultType": "RunnersRejoinResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "runners/resume",
+      "paramsType": "RunnersResumeParams",
+      "resultType": "RunnersResumeResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "runners/select",
