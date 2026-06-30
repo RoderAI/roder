@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3389,7 +3389,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3414,7 +3414,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3577,7 +3577,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4262,7 +4262,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-blaxel"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4299,7 +4299,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-docker"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4322,7 +4322,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-hosted-common"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4358,7 +4358,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-sprites"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4378,7 +4378,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-unix-local"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4636,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4739,7 +4739,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4869,7 +4869,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
