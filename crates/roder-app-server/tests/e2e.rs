@@ -4707,6 +4707,8 @@ impl roder_api::remote_runner::RemoteRunnerProvider for StubRunnerProvider {
             cancellation: false,
             artifact_export: false,
             mounts: Default::default(),
+            pausable: false,
+            detachable: false,
         }
     }
 
@@ -4723,6 +4725,241 @@ impl roder_api::remote_runner::RemoteRunnerProvider for StubRunnerProvider {
     ) -> anyhow::Result<Arc<dyn roder_api::remote_runner::RemoteRunnerSession>> {
         anyhow::bail!("stub runner provider does not resume sessions")
     }
+}
+
+/// Pausable + detachable fake runner used to exercise the `runners/pause`,
+/// `runners/resume`, `runners/detach`, and `runners/rejoin` methods end to end.
+#[derive(Debug, Default)]
+struct LifecycleRunnerProvider {
+    created: Arc<std::sync::atomic::AtomicUsize>,
+    resumed: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl roder_api::remote_runner::RemoteRunnerProvider for LifecycleRunnerProvider {
+    fn id(&self) -> roder_api::remote_runner::RemoteRunnerProviderId {
+        "lifecycle-runner".to_string()
+    }
+
+    fn capabilities(&self) -> roder_api::remote_runner::RunnerCapabilities {
+        roder_api::remote_runner::RunnerCapabilities {
+            command_exec: true,
+            file_read: true,
+            file_write: true,
+            port_preview: true,
+            snapshots: false,
+            cancellation: false,
+            artifact_export: false,
+            mounts: Default::default(),
+            pausable: true,
+            detachable: true,
+        }
+    }
+
+    async fn create_session(
+        &self,
+        destination: roder_api::remote_runner::RunnerDestination,
+    ) -> anyhow::Result<Arc<dyn roder_api::remote_runner::RemoteRunnerSession>> {
+        self.created
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Arc::new(LifecycleRunnerSession {
+            destination_id: destination.id,
+            sandbox: "sandbox-1".to_string(),
+            paused: std::sync::atomic::AtomicBool::new(false),
+        }))
+    }
+
+    async fn resume_session(
+        &self,
+        state: roder_api::remote_runner::RunnerSessionState,
+    ) -> anyhow::Result<Arc<dyn roder_api::remote_runner::RemoteRunnerSession>> {
+        self.resumed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Arc::new(LifecycleRunnerSession {
+            destination_id: state.destination_id,
+            sandbox: state.session_id,
+            paused: std::sync::atomic::AtomicBool::new(false),
+        }))
+    }
+}
+
+struct LifecycleRunnerSession {
+    destination_id: String,
+    sandbox: String,
+    paused: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl roder_api::remote_runner::RemoteRunnerSession for LifecycleRunnerSession {
+    fn state(&self) -> roder_api::remote_runner::RunnerSessionState {
+        roder_api::remote_runner::RunnerSessionState {
+            provider_id: "lifecycle-runner".to_string(),
+            session_id: self.sandbox.clone(),
+            destination_id: self.destination_id.clone(),
+            snapshot: None,
+            metadata: serde_json::json!({
+                "sandbox_name": self.sandbox,
+                "paused": self.paused.load(std::sync::atomic::Ordering::SeqCst),
+            }),
+        }
+    }
+
+    async fn run_command(
+        &self,
+        request: roder_api::remote_runner::RunnerCommandRequest,
+    ) -> anyhow::Result<roder_api::remote_runner::RunnerCommandResult> {
+        Ok(roder_api::remote_runner::RunnerCommandResult {
+            command_id: request.command_id,
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+
+    async fn read_file(
+        &self,
+        request: roder_api::remote_runner::RunnerFileReadRequest,
+    ) -> anyhow::Result<roder_api::remote_runner::RunnerFileReadResult> {
+        Ok(roder_api::remote_runner::RunnerFileReadResult {
+            path: request.path,
+            contents: Vec::new(),
+        })
+    }
+
+    async fn write_file(
+        &self,
+        _request: roder_api::remote_runner::RunnerFileWriteRequest,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn expose_port(
+        &self,
+        request: roder_api::remote_runner::RunnerPortRequest,
+    ) -> anyhow::Result<roder_api::remote_runner::RunnerPortResult> {
+        Ok(roder_api::remote_runner::RunnerPortResult {
+            port: request.port,
+            url: Some(format!("https://preview.example/{}", request.port)),
+        })
+    }
+
+    async fn snapshot(
+        &self,
+    ) -> anyhow::Result<Option<roder_api::remote_runner::RunnerSnapshotRef>> {
+        Ok(None)
+    }
+
+    async fn pause(&self) -> anyhow::Result<roder_api::remote_runner::RunnerSessionState> {
+        self.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.state())
+    }
+
+    async fn resume(&self) -> anyhow::Result<roder_api::remote_runner::RunnerSessionState> {
+        self.paused
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.state())
+    }
+
+    async fn detach(&self) -> anyhow::Result<roder_api::remote_runner::RunnerSessionState> {
+        Ok(self.state())
+    }
+
+    async fn close(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn runner_lifecycle_methods_pause_resume_detach_and_rejoin() {
+    let session_dir =
+        std::env::temp_dir().join(format!("roder-runner-lifecycle-{}", uuid::Uuid::new_v4()));
+    let created = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let resumed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: session_dir.clone(),
+    }));
+    builder.remote_runner_provider(Arc::new(LifecycleRunnerProvider {
+        created: created.clone(),
+        resumed: resumed.clone(),
+    }));
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    let server = Arc::new(app_server(runtime.clone()));
+    let client = LocalAppClient::new(server);
+    let workspace = create_workspace_for_path(&client, std::path::Path::new("/tmp")).await;
+
+    let started: serde_json::Value = request(
+        &client,
+        "thread/start",
+        Some(serde_json::json!({
+            "model": "mock",
+            "modelProvider": PROVIDER_MOCK,
+            "workspaceId": workspace.workspace_id,
+            "rootId": workspace.root_id,
+            "runner": {
+                "providerId": "lifecycle-runner",
+                "config": {},
+                "workspace": "/sandbox/workspace"
+            },
+            "ephemeral": false
+        })),
+    )
+    .await;
+    let thread_id = started["thread"]["id"].as_str().expect("thread id").to_string();
+
+    // runners/list surfaces the lifecycle capabilities.
+    let list: roder_protocol::RunnersListResult =
+        request(&client, "runners/list", Some(serde_json::json!({}))).await;
+    let provider = list
+        .providers
+        .iter()
+        .find(|provider| provider.provider_id == "lifecycle-runner")
+        .expect("lifecycle runner listed");
+    assert!(provider.capabilities.pausable);
+    assert!(provider.capabilities.detachable);
+
+    let pause: roder_protocol::RunnersLifecycleResult = request(
+        &client,
+        "runners/pause",
+        Some(serde_json::json!({ "thread_id": thread_id })),
+    )
+    .await;
+    assert_eq!(pause.action, "pause");
+    assert_eq!(pause.provider_id, "lifecycle-runner");
+    assert!(pause.paused);
+    assert_eq!(created.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let resume: roder_protocol::RunnersLifecycleResult = request(
+        &client,
+        "runners/resume",
+        Some(serde_json::json!({ "thread_id": thread_id })),
+    )
+    .await;
+    assert!(!resume.paused);
+
+    let detach: roder_protocol::RunnersLifecycleResult = request(
+        &client,
+        "runners/detach",
+        Some(serde_json::json!({ "thread_id": thread_id })),
+    )
+    .await;
+    assert!(detach.detached);
+
+    let rejoin: roder_protocol::RunnersLifecycleResult = request(
+        &client,
+        "runners/rejoin",
+        Some(serde_json::json!({ "thread_id": thread_id })),
+    )
+    .await;
+    assert_eq!(rejoin.action, "rejoin");
+    assert_eq!(rejoin.session_id.as_deref(), Some("sandbox-1"));
+    // Rejoin reuses the same sandbox; no new sandbox is provisioned.
+    assert_eq!(created.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(resumed.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+
+    let _ = std::fs::remove_dir_all(session_dir);
 }
 
 #[tokio::test]
@@ -5238,7 +5475,7 @@ async fn thread_snapshots_reject_metadata_without_workspace() {
     std::fs::write(
         thread_root.join(&thread_id).join("metadata.json"),
         serde_json::json!({
-            "thread_id": thread_id.clone(),
+            "threadId": thread_id.clone(),
             "title": "legacy missing workspace",
             "provider": PROVIDER_MOCK,
             "model": "mock",

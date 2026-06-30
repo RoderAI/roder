@@ -37,6 +37,8 @@ impl HostedRunnerSpec {
                 box_storage: true,
                 provider_native: true,
             },
+            pausable: false,
+            detachable: false,
         }
     }
 }

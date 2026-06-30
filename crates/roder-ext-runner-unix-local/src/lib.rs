@@ -71,6 +71,8 @@ impl RemoteRunnerProvider for UnixLocalRunnerProvider {
                 provider_native: true,
                 ..Default::default()
             },
+            pausable: false,
+            detachable: false,
         }
     }
 

@@ -11,6 +11,7 @@ mod exec;
 mod exec_events;
 mod exec_output;
 mod forks;
+mod runners;
 mod knowledge;
 mod marketplace;
 mod media;
@@ -212,6 +213,9 @@ async fn run_cli() -> anyhow::Result<()> {
     }
     if matches!(args.first().map(String::as_str), Some("forks")) {
         return forks::run_forks_cli(&args[1..]).await;
+    }
+    if matches!(args.first().map(String::as_str), Some("runners")) {
+        return runners::run_runners_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("stats")) {
         return stats::run_stats_cli(&args[1..]).await;

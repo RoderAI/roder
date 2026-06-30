@@ -2311,6 +2311,29 @@ pub struct RunnersPortsResult {
     pub ports: Vec<roder_api::remote_runner::RunnerPortResult>,
 }
 
+/// Parameters for the thread-scoped runner lifecycle methods
+/// (`runners/pause`, `runners/resume`, `runners/detach`, `runners/rejoin`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnersLifecycleParams {
+    pub thread_id: String,
+    /// Optional sandbox name / external id used by `runners/rejoin` to recover
+    /// a sandbox whose persisted name was lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+}
+
+/// Result of a runner lifecycle transition. Carries no secret values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnersLifecycleResult {
+    /// The lifecycle action performed: `pause`, `resume`, `detach`, or `rejoin`.
+    pub action: String,
+    pub provider_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub paused: bool,
+    pub detached: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WebSearchSettings {
     /// Hosted (OpenAI/Codex) web-search mode.

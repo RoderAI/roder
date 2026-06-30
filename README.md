@@ -325,7 +325,7 @@ config = { image = "rust:latest" }
 secret_env = { DOCKER_TOKEN = "RODER_DOCKER_TOKEN" }
 ```
 
-Hosted providers use the same destination shape. Secrets stay in environment variables or secret references; do not put raw tokens in checked-in config:
+Blaxel runs coding tools inside a [Blaxel sandbox](https://docs.blaxel.ai/Overview) that scales to standby when idle and resumes in milliseconds with its filesystem and processes intact. Provide the API key via `BLAXEL_API_KEY` (or `BL_API_KEY`) and the workspace via `BL_WORKSPACE`; do not put raw tokens in checked-in config. The sandbox can be paused, resumed, detached, and rejoined — see [`docs/roder-blaxel-runner.md`](./docs/roder-blaxel-runner.md):
 
 ```toml
 [remote_runners]
@@ -334,8 +334,8 @@ default_destination = "blaxel-dev"
 
 [remote_runners.destinations.blaxel-dev]
 provider = "blaxel"
-secret_env = { BLAXEL_API_KEY = "BLAXEL_API_KEY" }
-config = { region = "iad" }
+secret_env = { BLAXEL_API_KEY = "BLAXEL_API_KEY", BL_WORKSPACE = "BL_WORKSPACE" }
+config = { region = "us-pdx-1", working_dir = "/home/user/roder", cleanup = "detach-on-close" }
 ```
 
 Fly Sprites can be selected with the first-party `sprites` runner. Put the token in `RODER_SPRITES_TOKEN` or `SPRITES_TOKEN`; generated sprites are deleted on close unless configured otherwise:
@@ -358,7 +358,7 @@ For local testing, override the selected destination without editing the file:
 RODER_REMOTE_RUNNER=unix-local cargo run -p roder --bin roder
 ```
 
-The app-server exposes `runners/list`, `runners/select`, `runners/session`, `runners/snapshot`, `runners/delete`, and `runners/ports`. The TUI exposes runner selection from the `Ctrl+P` menu and shows the active runner in the status surface. Runner sessions own files, commands, ports, snapshots, mounts, artifacts, and provider state; Roder orchestrates and persists the selected destination/session boundary.
+The app-server exposes `runners/list`, `runners/select`, `runners/session`, `runners/snapshot`, `runners/delete`, `runners/ports`, and the thread-scoped lifecycle methods `runners/pause`, `runners/resume`, `runners/detach`, and `runners/rejoin` (also available as `roder runners pause|resume|detach|rejoin <thread-id>`). The TUI exposes runner selection from the `Ctrl+P` menu and shows the active runner in the status surface. Runner sessions own files, commands, ports, snapshots, mounts, artifacts, and provider state; Roder orchestrates and persists the selected destination/session boundary.
 
 See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts, artifacts, snapshots, ports, and secret-handling rules. See [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md) for Sprites setup, cleanup/cost notes, network policy, troubleshooting, and live smoke commands.
 

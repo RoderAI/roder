@@ -13258,6 +13258,8 @@ mod tests {
                     cancellation: true,
                     artifact_export: false,
                     mounts: Default::default(),
+                    pausable: false,
+                    detachable: false,
                 },
                 setup_hint: None,
             }],
@@ -13292,6 +13294,8 @@ mod tests {
                     cancellation: false,
                     artifact_export: false,
                     mounts: Default::default(),
+                    pausable: false,
+                    detachable: false,
                 },
                 setup_hint: Some(
                     "set SPRITES_TOKEN (or RODER_SPRITES_TOKEN) to run Fly Sprites sandboxes; \
