@@ -1,6 +1,6 @@
 [package]
 name = "roder-app-server"
-version = "0.1.7"
+version = "0.1.8"
 edition.workspace = true
 description.workspace = true
 license.workspace = true
