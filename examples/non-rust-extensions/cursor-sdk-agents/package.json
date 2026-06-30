@@ -13,10 +13,13 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@cursor/sdk": "1.0.18"
+    "@cursor/sdk": "^1.0.22"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "undici": "^6.27.0"
   }
 }
