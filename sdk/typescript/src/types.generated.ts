@@ -86,6 +86,33 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "auth/kimi-code/login",
+      "paramsType": "AuthKimiCodeLoginParams",
+      "resultType": "AuthKimiCodeLoginResult",
+      "stability": "stable",
+      "featureGroup": "auth",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "auth/kimi-code/logout",
+      "paramsType": "AuthKimiCodeLogoutParams",
+      "resultType": "AuthKimiCodeLogoutResult",
+      "stability": "stable",
+      "featureGroup": "auth",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "auth/kimi-code/status",
+      "paramsType": "AuthKimiCodeStatusParams",
+      "resultType": "AuthKimiCodeStatusResult",
+      "stability": "stable",
+      "featureGroup": "auth",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "auth/supergrok/login",
       "paramsType": "AuthSupergrokLoginParams",
       "resultType": "AuthSupergrokLoginResult",
@@ -1505,6 +1532,15 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "runners/detach",
+      "paramsType": "RunnersDetachParams",
+      "resultType": "RunnersDetachResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "runners/list",
       "paramsType": "RunnersListParams",
       "resultType": "RunnersListResult",
@@ -1514,6 +1550,15 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "runners/pause",
+      "paramsType": "RunnersPauseParams",
+      "resultType": "RunnersPauseResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "runners/ports",
       "paramsType": "RunnersPortsParams",
       "resultType": "RunnersPortsResult",
@@ -1521,6 +1566,24 @@ export const appServerManifest = {
       "featureGroup": "runners",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "runners/rejoin",
+      "paramsType": "RunnersRejoinParams",
+      "resultType": "RunnersRejoinResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "runners/resume",
+      "paramsType": "RunnersResumeParams",
+      "resultType": "RunnersResumeResult",
+      "stability": "stable",
+      "featureGroup": "runners",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "runners/select",
@@ -1926,6 +1989,19 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "thread/compact",
+      "paramsType": "ThreadCompactParams",
+      "resultType": "ThreadCompactResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "context.compaction_started",
+        "context.compaction_recorded"
+      ]
+    },
+    {
       "method": "thread/exit_plan",
       "paramsType": "ThreadExitPlanParams",
       "resultType": "ThreadExitPlanResult",
@@ -2034,6 +2110,15 @@ export const appServerManifest = {
       "method": "thread/roadmap/open",
       "paramsType": "ThreadRoadmapOpenParams",
       "resultType": "ThreadRoadmapOpenResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/set_agent_swarm_mode",
+      "paramsType": "ThreadSetAgentSwarmModeParams",
+      "resultType": "ThreadSetAgentSwarmModeResult",
       "stability": "stable",
       "featureGroup": "thread",
       "idempotency": "nonIdempotent",
@@ -2607,6 +2692,9 @@ export const appServerMethods = [
   "auth/codex/login",
   "auth/codex/logout",
   "auth/codex/status",
+  "auth/kimi-code/login",
+  "auth/kimi-code/logout",
+  "auth/kimi-code/status",
   "auth/supergrok/login",
   "auth/supergrok/logout",
   "auth/supergrok/status",
@@ -2763,8 +2851,12 @@ export const appServerMethods = [
   "roadmap/thread/spawn",
   "roadmap/validate",
   "runners/delete",
+  "runners/detach",
   "runners/list",
+  "runners/pause",
   "runners/ports",
+  "runners/rejoin",
+  "runners/resume",
   "runners/select",
   "runners/session",
   "runners/snapshot",
@@ -2809,6 +2901,7 @@ export const appServerMethods = [
   "team/start",
   "thread/archive",
   "thread/attach",
+  "thread/compact",
   "thread/exit_plan",
   "thread/fork",
   "thread/fork_status",
@@ -2821,6 +2914,7 @@ export const appServerMethods = [
   "thread/resolve_approval",
   "thread/resolve_user_input",
   "thread/roadmap/open",
+  "thread/set_agent_swarm_mode",
   "thread/set_mode",
   "thread/start",
   "thread/state",
