@@ -4,7 +4,17 @@
 
 ## What It Does
 
-It lets Roder dispatch hosted runner work to Blaxel.
+It runs a Roder thread's coding tools inside a [Blaxel sandbox](https://docs.blaxel.ai/Overview)
+— an instant-launching micro VM that scales to standby when idle and resumes in
+milliseconds with its filesystem and processes intact. The provider drives the
+Blaxel control-plane (`/sandboxes`) and per-sandbox REST APIs (process,
+filesystem, preview) and supports the full runner lifecycle: pause, resume,
+detach, and rejoin.
+
+Credentials come from `BLAXEL_API_KEY` (or `BL_API_KEY`) plus `BL_WORKSPACE` and
+are never written to session state. See
+[`docs/roder-blaxel-runner.md`](https://github.com/RoderAI/roder/blob/master/docs/roder-blaxel-runner.md)
+for setup, configuration, and the lifecycle model.
 
 ## How It Fits Into Roder
 

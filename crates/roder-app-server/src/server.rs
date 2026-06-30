@@ -227,6 +227,30 @@ impl AppServer {
             "runners/snapshot" => self.handle_runners_snapshot().await,
             "runners/delete" => self.handle_runners_delete().await,
             "runners/ports" => self.handle_runners_ports().await,
+            "runners/pause" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_runners_lifecycle("pause", p).await
+                })
+                .await
+            }
+            "runners/resume" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_runners_lifecycle("resume", p).await
+                })
+                .await
+            }
+            "runners/detach" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_runners_lifecycle("detach", p).await
+                })
+                .await
+            }
+            "runners/rejoin" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_runners_lifecycle("rejoin", p).await
+                })
+                .await
+            }
             "settings/get" => self.handle_settings_get().await,
             "settings/set_web_search" => {
                 self.decode_and(req.params, |p| async move {
@@ -1784,6 +1808,43 @@ impl AppServer {
 
     async fn handle_runners_ports(&self) -> Result<serde_json::Value, JsonRpcError> {
         Ok(serde_json::to_value(RunnersPortsResult { ports: Vec::new() }).unwrap())
+    }
+
+    async fn handle_runners_lifecycle(
+        &self,
+        action: &str,
+        params: RunnersLifecycleParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let thread_id = params.thread_id;
+        let state = match action {
+            "pause" => self.runtime.pause_thread_runner(&thread_id).await,
+            "resume" => self.runtime.resume_thread_runner(&thread_id).await,
+            "detach" => self.runtime.detach_thread_runner(&thread_id).await,
+            "rejoin" => {
+                self.runtime
+                    .rejoin_thread_runner(&thread_id, params.sandbox)
+                    .await
+            }
+            other => {
+                return Err(invalid_params_error(format!(
+                    "unknown runner lifecycle action {other:?}"
+                )));
+            }
+        }
+        .map_err(invalid_params_error)?;
+        let paused = state
+            .metadata
+            .get("paused")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        Ok(serde_json::to_value(RunnersLifecycleResult {
+            action: action.to_string(),
+            provider_id: state.provider_id,
+            session_id: Some(state.session_id),
+            paused,
+            detached: action == "detach",
+        })
+        .unwrap())
     }
 
     async fn handle_extensions_list(&self) -> Result<serde_json::Value, JsonRpcError> {

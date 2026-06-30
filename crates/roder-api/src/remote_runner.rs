@@ -20,6 +20,18 @@ pub struct RunnerCapabilities {
     pub artifact_export: bool,
     #[serde(default)]
     pub mounts: RunnerMountCapabilities,
+    /**
+     * Provider can transition a live session toward a paused/standby state and
+     * later resume it without losing the session's filesystem/process state.
+     */
+    #[serde(default)]
+    pub pausable: bool,
+    /**
+     * Provider can detach a session (releasing the local handle while keeping
+     * the remote sandbox alive) and later rejoin it from persisted state.
+     */
+    #[serde(default)]
+    pub detachable: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -243,6 +255,19 @@ pub trait RemoteRunnerProvider: Send + Sync + 'static {
         None
     }
 
+    /**
+     * Default absolute workspace path on the runner for threads that select
+     * this provider as a runtime-level destination without an explicit
+     * per-thread workspace. When `Some`, selecting this runner (e.g. from the
+     * TUI runner picker or config `default_destination`) routes a new thread's
+     * coding tools into the runner at this path. `None` (the default) keeps the
+     * legacy behavior where only an explicit `thread/start` binding routes
+     * tools, so other providers are unchanged.
+     */
+    fn default_workspace(&self) -> Option<String> {
+        None
+    }
+
     async fn create_session(
         &self,
         destination: RunnerDestination,
@@ -256,11 +281,50 @@ pub trait RemoteRunnerProvider: Send + Sync + 'static {
         &self,
         state: RunnerSessionState,
     ) -> anyhow::Result<Arc<dyn RemoteRunnerSession>>;
+
+    /**
+     * Reattach to a previously created remote sandbox from persisted state
+     * without provisioning a new one. Providers that expose a durable,
+     * rejoinable sandbox (see `RunnerCapabilities::detachable`) override this;
+     * the default reuses `resume_session`.
+     */
+    async fn rejoin_session(
+        &self,
+        state: RunnerSessionState,
+    ) -> anyhow::Result<Arc<dyn RemoteRunnerSession>> {
+        self.resume_session(state).await
+    }
 }
 
 #[async_trait::async_trait]
 pub trait RemoteRunnerSession: Send + Sync + 'static {
     fn state(&self) -> RunnerSessionState;
+
+    /**
+     * Move the session toward a paused/standby state to save cost. Default is a
+     * no-op for providers that do not support pausing
+     * (`RunnerCapabilities::pausable == false`). Returns the post-pause state.
+     */
+    async fn pause(&self) -> anyhow::Result<RunnerSessionState> {
+        Ok(self.state())
+    }
+
+    /**
+     * Wake a paused/standby session so subsequent commands run immediately.
+     * Default is a no-op. Returns the post-resume state.
+     */
+    async fn resume(&self) -> anyhow::Result<RunnerSessionState> {
+        Ok(self.state())
+    }
+
+    /**
+     * Release the local session handle while keeping the remote sandbox alive
+     * for a later `rejoin_session`. Returns the durable state that callers must
+     * persist to rejoin. Default errors for providers that are not detachable.
+     */
+    async fn detach(&self) -> anyhow::Result<RunnerSessionState> {
+        anyhow::bail!("runner detach is not supported by this provider")
+    }
 
     async fn run_command(
         &self,
@@ -321,6 +385,40 @@ mod tests {
         let decoded: RunnerDestination = serde_json::from_value(encoded).unwrap();
 
         assert_eq!(decoded, destination);
+    }
+
+    #[test]
+    fn capabilities_round_trip_includes_lifecycle_flags() {
+        let capabilities = RunnerCapabilities {
+            command_exec: true,
+            file_read: true,
+            file_write: true,
+            port_preview: true,
+            snapshots: false,
+            cancellation: true,
+            artifact_export: false,
+            mounts: RunnerMountCapabilities::default(),
+            pausable: true,
+            detachable: true,
+        };
+        let encoded = serde_json::to_value(&capabilities).unwrap();
+        let decoded: RunnerCapabilities = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, capabilities);
+        assert!(decoded.pausable);
+        assert!(decoded.detachable);
+
+        // Older payloads without the lifecycle flags default to false.
+        let legacy: RunnerCapabilities = serde_json::from_value(serde_json::json!({
+            "command_exec": true,
+            "file_read": true,
+            "file_write": true,
+            "port_preview": false,
+            "snapshots": false,
+            "cancellation": false
+        }))
+        .unwrap();
+        assert!(!legacy.pausable);
+        assert!(!legacy.detachable);
     }
 
     #[test]

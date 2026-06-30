@@ -4265,10 +4265,14 @@ name = "roder-ext-runner-blaxel"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "reqwest",
  "roder-api",
- "roder-ext-runner-hosted-common",
  "semver",
+ "serde",
+ "serde_json",
  "tokio",
+ "urlencoding",
 ]
 
 [[package]]

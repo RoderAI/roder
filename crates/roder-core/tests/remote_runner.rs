@@ -41,6 +41,7 @@ struct MockRunnerState {
     created: Mutex<usize>,
     resumed: Mutex<usize>,
     commands: Mutex<Vec<RunnerCommandRequest>>,
+    default_workspace: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Default)]
@@ -176,7 +177,13 @@ impl RemoteRunnerProvider for MockRunnerProvider {
             cancellation: true,
             artifact_export: true,
             mounts: Default::default(),
+            pausable: true,
+            detachable: true,
         }
+    }
+
+    fn default_workspace(&self) -> Option<String> {
+        self.state.default_workspace.lock().unwrap().clone()
     }
 
     async fn create_session(
@@ -188,6 +195,7 @@ impl RemoteRunnerProvider for MockRunnerProvider {
             state: self.state.clone(),
             destination_id: destination.id,
             session_id: "mock-session".to_string(),
+            paused: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
@@ -200,6 +208,7 @@ impl RemoteRunnerProvider for MockRunnerProvider {
             state: self.state.clone(),
             destination_id: state.destination_id,
             session_id: state.session_id,
+            paused: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 }
@@ -208,6 +217,7 @@ struct MockRunnerSession {
     state: Arc<MockRunnerState>,
     destination_id: String,
     session_id: String,
+    paused: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -218,8 +228,26 @@ impl RemoteRunnerSession for MockRunnerSession {
             session_id: self.session_id.clone(),
             destination_id: self.destination_id.clone(),
             snapshot: None,
-            metadata: serde_json::json!({ "mock": true }),
+            metadata: serde_json::json!({
+                "mock": true,
+                "paused": self.paused.load(std::sync::atomic::Ordering::SeqCst),
+            }),
         }
+    }
+
+    async fn pause(&self) -> anyhow::Result<RunnerSessionState> {
+        self.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.state())
+    }
+
+    async fn resume(&self) -> anyhow::Result<RunnerSessionState> {
+        self.paused
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.state())
+    }
+
+    async fn detach(&self) -> anyhow::Result<RunnerSessionState> {
+        Ok(self.state())
     }
 
     async fn run_command(
@@ -584,6 +612,163 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
         *provider.state.resumed.lock().unwrap() >= 2,
         "runtime and explicit resume should reuse the mock runner session"
     );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn runtime_destination_auto_binds_new_thread_when_provider_has_default_workspace() {
+    let session_dir = temp_dir("remote-runner-autobind-sessions");
+    let workspace = temp_dir("remote-runner-autobind-workspace");
+    let provider = MockRunnerProvider::default();
+    // Provider advertises a default workspace -> a runtime-level destination
+    // (as set by the TUI runner picker / config default) should auto-bind.
+    *provider.state.default_workspace.lock().unwrap() = Some("/runner/workspace".to_string());
+    let engine = Arc::new(ToolScriptEngine {
+        requests: Mutex::new(0),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: session_dir.clone(),
+    }));
+    builder.remote_runner_provider(Arc::new(provider.clone()));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: None,
+                file_backed_dynamic_context: true,
+                hosted_web_search: HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
+                model_profiles: std::collections::HashMap::new(),
+                tool_allowlist: Vec::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
+                workspace: Some(workspace.display().to_string()),
+                policy_mode: roder_api::policy_mode::PolicyMode::AcceptAll,
+                runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
+                speed_policy: Default::default(),
+                dynamic_workflows: Default::default(),
+                reliability: Default::default(),
+                turn_deadline_seconds: None,
+                remote_runner_destination: Some(RunnerDestination {
+                    id: "mock-hosted".to_string(),
+                    provider_id: "mock-hosted".to_string(),
+                    config: serde_json::Value::Null,
+                    default_manifest: RunnerManifest::default(),
+                }),
+                team_data_dir: None,
+                roadmap_data_dir: None,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+
+    let metadata = runtime.create_thread(None).await.unwrap();
+    let binding = metadata
+        .runner_binding
+        .expect("runtime-level destination should auto-bind a new thread");
+    assert_eq!(binding.destination.provider_id, "mock-hosted");
+    assert_eq!(
+        binding.workspace,
+        std::path::PathBuf::from("/runner/workspace")
+    );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn runner_pause_resume_detach_and_rejoin_reuse_one_session() {
+    let session_dir = temp_dir("remote-runner-lifecycle-sessions");
+    let workspace = temp_dir("remote-runner-lifecycle-workspace");
+    let provider = MockRunnerProvider::default();
+    let engine = Arc::new(ToolScriptEngine {
+        requests: Mutex::new(0),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine);
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: session_dir.clone(),
+    }));
+    builder.remote_runner_provider(Arc::new(provider.clone()));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: None,
+                file_backed_dynamic_context: true,
+                hosted_web_search: HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
+                model_profiles: std::collections::HashMap::new(),
+                tool_allowlist: Vec::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
+                workspace: Some(workspace.display().to_string()),
+                policy_mode: roder_api::policy_mode::PolicyMode::AcceptAll,
+                runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
+                speed_policy: Default::default(),
+                dynamic_workflows: Default::default(),
+                reliability: Default::default(),
+                turn_deadline_seconds: None,
+                remote_runner_destination: Some(RunnerDestination {
+                    id: "mock-hosted".to_string(),
+                    provider_id: "mock-hosted".to_string(),
+                    config: serde_json::Value::Null,
+                    default_manifest: RunnerManifest::default(),
+                }),
+                team_data_dir: None,
+                roadmap_data_dir: None,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let metadata = runtime.create_thread(None).await.unwrap();
+    let thread_id = metadata.thread_id.clone();
+
+    // Pause establishes (creates) the session, then marks standby intent.
+    let paused = runtime.pause_thread_runner(&thread_id).await.unwrap();
+    assert_eq!(paused.metadata["paused"].as_bool(), Some(true));
+    assert_eq!(*provider.state.created.lock().unwrap(), 1);
+
+    // Resume wakes the (resumed) session.
+    let resumed = runtime.resume_thread_runner(&thread_id).await.unwrap();
+    assert_eq!(resumed.metadata["paused"].as_bool(), Some(false));
+
+    // Detach persists durable, rejoinable state without deleting the sandbox.
+    let detached = runtime.detach_thread_runner(&thread_id).await.unwrap();
+    assert_eq!(detached.provider_id, "mock-hosted");
+    let persisted = runtime
+        .load_thread(&thread_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .metadata
+        .unwrap()
+        .runner_state
+        .unwrap();
+    assert_eq!(persisted.session_id, detached.session_id);
+
+    // Rejoin (simulating a fresh process) reuses the same sandbox via the
+    // persisted state and never provisions a new one.
+    let rejoined = runtime.rejoin_thread_runner(&thread_id, None).await.unwrap();
+    assert_eq!(rejoined.session_id, detached.session_id);
+    assert_eq!(
+        *provider.state.created.lock().unwrap(),
+        1,
+        "rejoin must not create a new sandbox"
+    );
+    assert!(*provider.state.resumed.lock().unwrap() >= 1);
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(workspace);

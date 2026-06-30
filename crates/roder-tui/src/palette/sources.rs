@@ -1814,6 +1814,8 @@ mod tests {
                     cancellation: true,
                     artifact_export: false,
                     mounts: Default::default(),
+                    pausable: false,
+                    detachable: false,
                 },
                 setup_hint: None,
             }],

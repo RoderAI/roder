@@ -70,6 +70,8 @@ impl RemoteRunnerProvider for DockerRunnerProvider {
                 provider_native: true,
                 ..Default::default()
             },
+            pausable: false,
+            detachable: false,
         }
     }
 

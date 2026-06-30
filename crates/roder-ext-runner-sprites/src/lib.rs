@@ -106,6 +106,8 @@ impl RemoteRunnerProvider for SpritesRunnerProvider {
                 provider_native: true,
                 ..Default::default()
             },
+            pausable: false,
+            detachable: false,
         }
     }
 

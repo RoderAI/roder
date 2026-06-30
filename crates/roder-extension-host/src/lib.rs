@@ -1418,6 +1418,8 @@ mod tests {
                 cancellation: false,
                 artifact_export: false,
                 mounts: Default::default(),
+                pausable: false,
+                detachable: false,
             }
         }
 

@@ -27,7 +27,8 @@ use roder_api::reliability::{
     provider_retry_delay_ms,
 };
 use roder_api::remote_runner::{
-    RemoteRunnerSession, RemoteWorkspace, RunnerDestination, ThreadRunnerBinding,
+    RemoteRunnerProvider, RemoteRunnerSession, RemoteWorkspace, RunnerDestination,
+    RunnerSessionState, ThreadRunnerBinding,
 };
 use roder_api::subagents::SubagentDefinition;
 use roder_api::teams::TeamMemberStatus;
@@ -1117,6 +1118,52 @@ impl Runtime {
         })
     }
 
+    /**
+     * Build a per-thread binding from a runtime-level destination (selected via
+     * the TUI runner picker or config `default_destination`) when the
+     * destination's provider advertises a default workspace. Returns `None` when
+     * there is no destination or the provider opts out (no default workspace),
+     * preserving the legacy behavior where such threads keep local tools.
+     */
+    async fn synthesize_runtime_runner_binding(
+        &self,
+        thread_id: &str,
+        destination: Option<RunnerDestination>,
+    ) -> anyhow::Result<Option<ThreadRunnerBinding>> {
+        let Some(destination) = destination else {
+            return Ok(None);
+        };
+        let Some(provider) = self
+            .registry
+            .remote_runner_providers
+            .iter()
+            .find(|provider| provider.id() == destination.provider_id)
+        else {
+            return Ok(None);
+        };
+        // An explicit workspace in the destination config wins over the
+        // provider default; absence of both means the provider opts out.
+        let workspace = destination
+            .config
+            .get("working_dir")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .or_else(|| provider.default_workspace());
+        let Some(workspace) = workspace else {
+            return Ok(None);
+        };
+        let selection = ThreadRunnerSelection {
+            provider_id: destination.provider_id.clone(),
+            config: destination.config.clone(),
+            workspace,
+            read_roots: Vec::new(),
+        };
+        Ok(Some(
+            self.resolve_thread_runner_binding(thread_id, selection)
+                .await?,
+        ))
+    }
+
     /// Validates a runner selection without creating a thread; the placeholder destination id only appears in error messages.
     pub async fn validate_thread_runner_selection(
         &self,
@@ -1145,7 +1192,15 @@ impl Runtime {
                 self.resolve_thread_runner_binding(&thread_id, selection)
                     .await?,
             ),
-            None => None,
+            // No explicit per-thread selection: if a runtime-level destination
+            // is active and its provider advertises a default workspace, bind
+            // the new thread so its coding tools route into the runner. This is
+            // what makes a TUI/config-selected runner (e.g. Blaxel) actually
+            // execute tools in the sandbox instead of locally. Providers that
+            // return no default workspace stay unbound (legacy local-tools).
+            None => self
+                .synthesize_runtime_runner_binding(&thread_id, cfg.remote_runner_destination.clone())
+                .await?,
         };
         let runner_destination = runner_binding
             .as_ref()
@@ -1858,6 +1913,143 @@ impl Runtime {
         metadata.updated_at = OffsetDateTime::now_utc();
         store.update_thread_metadata(metadata).await?;
         Ok(())
+    }
+
+    fn remote_runner_provider_by_id(
+        &self,
+        provider_id: &str,
+    ) -> Option<Arc<dyn RemoteRunnerProvider>> {
+        self.registry
+            .remote_runner_providers
+            .iter()
+            .find(|provider| provider.id() == provider_id)
+            .cloned()
+    }
+
+    /// Resolve the live runner session for a thread along with its provider,
+    /// failing clearly when the thread is not runner-bound.
+    async fn thread_runner_session(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<(
+        RunnerDestination,
+        Arc<dyn RemoteRunnerProvider>,
+        Arc<dyn RemoteRunnerSession>,
+    )> {
+        let Some((destination, session)) = self.runner_session_for_thread(thread_id).await? else {
+            anyhow::bail!("thread {thread_id} is not bound to a remote runner");
+        };
+        let provider = self
+            .remote_runner_provider_by_id(&destination.provider_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "remote runner provider {:?} is not installed",
+                    destination.provider_id
+                )
+            })?;
+        Ok((destination, provider, session))
+    }
+
+    /// Pause a runner-bound thread's session toward standby and persist the
+    /// post-pause state. Errors if the provider is not pausable.
+    pub async fn pause_thread_runner(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<RunnerSessionState> {
+        let (destination, provider, session) = self.thread_runner_session(thread_id).await?;
+        anyhow::ensure!(
+            provider.capabilities().pausable,
+            "remote runner provider {:?} does not support pausing",
+            destination.provider_id
+        );
+        let state = session.pause().await?;
+        self.persist_runner_state(thread_id, Some(&(destination, session)))
+            .await?;
+        Ok(state)
+    }
+
+    /// Resume (wake) a runner-bound thread's paused session and persist state.
+    pub async fn resume_thread_runner(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<RunnerSessionState> {
+        let (destination, _provider, session) = self.thread_runner_session(thread_id).await?;
+        let state = session.resume().await?;
+        self.persist_runner_state(thread_id, Some(&(destination, session)))
+            .await?;
+        Ok(state)
+    }
+
+    /// Detach a runner-bound thread's session: persist the durable, rejoinable
+    /// state and leave the remote sandbox alive. Errors if not detachable.
+    pub async fn detach_thread_runner(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<RunnerSessionState> {
+        let (destination, provider, session) = self.thread_runner_session(thread_id).await?;
+        anyhow::ensure!(
+            provider.capabilities().detachable,
+            "remote runner provider {:?} does not support detaching",
+            destination.provider_id
+        );
+        let state = session.detach().await?;
+        // Persist the detached state explicitly so a later turn or process
+        // rejoins the same sandbox instead of provisioning a new one.
+        if let Some(store) = &self.thread_store
+            && let Some(snapshot) = store.load_thread(thread_id).await?
+            && let Some(mut metadata) = snapshot.metadata
+        {
+            metadata.runner_destination = Some(destination);
+            metadata.runner_state = Some(state.clone());
+            metadata.updated_at = OffsetDateTime::now_utc();
+            store.update_thread_metadata(metadata).await?;
+        }
+        Ok(state)
+    }
+
+    /// Rejoin a previously created sandbox from a thread's persisted runner
+    /// state without provisioning a new one. An optional `sandbox` overrides the
+    /// persisted sandbox name (recovery by name). Persists refreshed state.
+    pub async fn rejoin_thread_runner(
+        &self,
+        thread_id: &ThreadId,
+        sandbox: Option<String>,
+    ) -> anyhow::Result<RunnerSessionState> {
+        let store = self
+            .thread_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("thread store is required to rejoin a runner"))?;
+        let metadata = store
+            .load_thread_metadata(thread_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("thread {thread_id} has no metadata"))?;
+        let destination = metadata
+            .runner_binding
+            .as_ref()
+            .map(|binding| binding.destination.clone())
+            .or_else(|| metadata.runner_destination.clone())
+            .ok_or_else(|| anyhow::anyhow!("thread {thread_id} is not bound to a remote runner"))?;
+        let mut state = metadata
+            .runner_state
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("thread {thread_id} has no persisted runner state"))?;
+        if let Some(sandbox) = sandbox
+            && let Some(object) = state.metadata.as_object_mut()
+        {
+            object.insert("sandbox_name".to_string(), serde_json::Value::from(sandbox));
+        }
+        let provider = self
+            .remote_runner_provider_by_id(&destination.provider_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "remote runner provider {:?} is not installed",
+                    destination.provider_id
+                )
+            })?;
+        let session = provider.rejoin_session(state).await?;
+        self.persist_runner_state(thread_id, Some(&(destination, session.clone())))
+            .await?;
+        Ok(session.state())
     }
 
     async fn record_thread_usage_metadata(
