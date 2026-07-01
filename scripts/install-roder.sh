@@ -7,7 +7,7 @@ install_name="${RODER_INSTALL_NAME:-roder}"
 target="${RODER_TARGET:-}"
 version="${RODER_VERSION:-latest}"
 archive_format="${RODER_ARCHIVE_FORMAT:-tar.gz}"
-force_direct="${RODER_FORCE_DIRECT_INSTALL:-0}"
+build_from_source="${RODER_BUILD_FROM_SOURCE:-0}"
 tmp_dir=""
 
 usage() {
@@ -19,7 +19,7 @@ Usage:
   curl -fsSL https://dl.roder.sh/latest/install.sh | bash
 
 Behavior:
-  macOS: installs with Homebrew (`brew install RoderAI/tap/roder`).
+  macOS: downloads a signed, notarized arm64 archive from dl.roder.sh.
   Linux: downloads a verified archive from dl.roder.sh and installs `roder`.
 
 Environment:
@@ -28,7 +28,7 @@ Environment:
   RODER_DOWNLOAD_BASE_URL    download base URL, default: https://dl.roder.sh/latest
   RODER_TARGET               override target triple, e.g. x86_64-unknown-linux-gnu
   RODER_ARCHIVE_FORMAT       tar.gz or zip, default: tar.gz
-  RODER_FORCE_DIRECT_INSTALL set to 1 on macOS to skip Homebrew and download directly
+  RODER_BUILD_FROM_SOURCE    set to 1 on macOS to build via Homebrew instead of downloading
   RODER_HOMEBREW_TAP         Homebrew tap, default: RoderAI/tap
   RODER_HOMEBREW_FORMULA     Homebrew formula, default: RoderAI/tap/roder
 USAGE
@@ -97,7 +97,7 @@ install_with_homebrew() {
   local formula="${RODER_HOMEBREW_FORMULA:-RoderAI/tap/roder}"
   local formula_name="${formula##*/}"
   if ! command -v brew >/dev/null 2>&1; then
-    fail "Homebrew is required on macOS. Install it from https://brew.sh, then run: brew install ${formula}. To force a direct archive install, set RODER_FORCE_DIRECT_INSTALL=1."
+    fail "Homebrew is required for source builds on macOS. Install it from https://brew.sh, then run: brew install --with-source ${formula}."
   fi
 
   if [[ "$formula" != */* ]] && ! brew tap | grep -qx "$tap"; then
@@ -106,11 +106,11 @@ install_with_homebrew() {
   fi
 
   if brew list --formula "$formula_name" >/dev/null 2>&1; then
-    log "upgrading Homebrew formula $formula"
-    brew upgrade "$formula" || brew reinstall "$formula"
+    log "reinstalling Homebrew formula $formula from source"
+    brew reinstall --with-source "$formula"
   else
-    log "installing Homebrew formula $formula"
-    brew install "$formula"
+    log "installing Homebrew formula $formula from source"
+    brew install --with-source "$formula"
   fi
 
   log "installed via Homebrew: $(command -v roder || true)"
@@ -182,10 +182,10 @@ install_direct_archive() {
 
 case "$(uname -s)" in
   Darwin)
-    if [[ "$force_direct" == "1" ]]; then
-      install_direct_archive
-    else
+    if [[ "$build_from_source" == "1" ]]; then
       install_with_homebrew
+    else
+      install_direct_archive
     fi
     ;;
   Linux)
