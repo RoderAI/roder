@@ -154,8 +154,9 @@ uv build
 uv publish
 ```
 
-For Homebrew, the tap is updated **automatically** by CI — see the "Homebrew"
-section below. Manual steps are only needed for recovery.
+For Homebrew and macOS binary signing, CI updates the tap and release assets
+automatically — see the "Homebrew" and "macOS signing" sections below. Manual
+steps are only needed for recovery.
 
 ## Registry Publication Readiness
 
@@ -171,16 +172,21 @@ Before publishing crates to crates.io later:
 
 ## Homebrew
 
-`brew install RoderAI/tap/roder` is kept current automatically. When the release
-PR (`knope/release`) merges, `release.yml` runs `knope release` to tag
-`roder/v<version>`, then a `homebrew` job in the same workflow runs
-`scripts/update-homebrew-tap.sh`, which:
+`brew install RoderAI/tap/roder` is kept current automatically and installs the
+signed Apple Silicon release archive by default. Users who want to build locally
+can run `brew install --with-source RoderAI/tap/roder`.
+
+When the release PR (`knope/release`) merges, `release.yml` runs `knope release`
+to tag `roder/v<version>`, builds release archives, signs and notarizes the
+`aarch64-apple-darwin` archive, uploads those archives to the `roder/v<version>`
+GitHub release, then runs `scripts/update-homebrew-tap.sh`, which:
 
 1. resolves the released `roder` version from `crates/roder-cli/Cargo.toml`;
-2. downloads the immutable source tag tarball
-   (`https://github.com/RoderAI/roder/archive/refs/tags/roder/v<version>.tar.gz`)
-   and computes its `sha256`;
-3. regenerates `Formula/roder.rb` in `RoderAI/homebrew-tap` for that version;
+2. downloads the signed Apple Silicon release archive
+   (`roder-aarch64-apple-darwin.tar.gz`) and immutable source tag tarball, then
+   computes their `sha256` values;
+3. regenerates `Formula/roder.rb` in `RoderAI/homebrew-tap` so default installs
+   use the binary archive and `--with-source` uses the source tag;
 4. commits and pushes it (no-op when the tap is already on that version).
 
 The `homebrew` job lives in the same workflow run as `knope release` on purpose:
@@ -192,6 +198,13 @@ downstream workflow, so the tap update has to run inline.
 - Repository secret **`HOMEBREW_TAP_TOKEN`**: a PAT (or fine-grained token) with
   `contents: write` on `RoderAI/homebrew-tap`. Without it the job fails loudly;
   the crate tags/releases from the earlier step are unaffected.
+- Repository secret **`APPLE_CERTIFICATE_BASE64`**: base64-encoded Developer ID
+  Application `.p12` certificate for signing the macOS CLI.
+- Repository secret **`APPLE_CERTIFICATE_PASSWORD`**: password for the `.p12`.
+- Repository secret **`APPLE_NOTARIZE_KEY_BASE64`**: base64-encoded App Store
+  Connect API key `.p8` for notarization.
+- Repository secret **`APPLE_NOTARIZE_KEY_ID`**: App Store Connect API key ID.
+- Repository secret **`APPLE_NOTARIZE_ISSUER_ID`**: App Store Connect issuer ID.
 
 ### Manual run / recovery
 
@@ -210,9 +223,22 @@ Then validate against the tap:
 
 ```sh
 brew audit --strict --online --new RoderAI/tap/roder
-brew reinstall --build-from-source RoderAI/tap/roder
+brew reinstall RoderAI/tap/roder
+brew reinstall --with-source RoderAI/tap/roder
 brew test RoderAI/tap/roder
 ```
 
 `scripts/release-brew.sh` (`make release-brew`) remains a separate, fully manual
 helper for cutting a local source release; it is not part of the automated flow.
+
+## macOS signing
+
+Roder publishes signed, notarized macOS binaries for Apple Silicon only. The
+`publish-latest-roder.yml` workflow signs the latest `aarch64-apple-darwin`
+binary before uploading it to `dl.roder.sh`; the release workflow signs the same
+target before uploading release archives to GitHub.
+
+The signing path uses Anchore Quill with a Developer ID Application certificate
+and App Store Connect API key. Intel macOS release binaries are intentionally not
+published; `--with-source` remains available for users who explicitly want a
+local build.
