@@ -1073,6 +1073,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         &[],
     ),
     cursor_model(
+        "claude-fable-5",
+        "Claude Fable 5",
+        "Anthropic Claude Fable 5, Anthropic's most powerful frontier model, routed through Cursor's AgentService.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    cursor_model(
         "claude-opus-4-8",
         "Claude Opus 4.8",
         "Anthropic Claude Opus 4.8 routed through Cursor's AgentService.",
@@ -1834,6 +1843,7 @@ mod tests {
                 "hf:Qwen/Qwen3.5-397B-A17B",
                 "composer-2.5",
                 "composer-2.5-fast",
+                "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-sonnet-4-6",
                 "gpt-5.5",
@@ -1860,7 +1870,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
-        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 9);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
         assert_eq!(
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
