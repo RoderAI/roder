@@ -12,13 +12,11 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   RUST_VERSION: "1.95.0"
-  R2_ACCOUNT_ID: "769befa385792ae6e7ca7136b7010256"
-  R2_BUCKET: "roder-downloads"
-  R2_PUBLIC_BASE_URL: "https://dl.roder.sh"
+  LATEST_RELEASE_BASE_URL: "https://github.com/RoderAI/roder/releases/download"
 
 jobs:
   build:
@@ -180,7 +178,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish latest objects to R2
+    name: Publish latest objects to GitHub release
     runs-on: ubuntu-latest
     needs: build
     if: ${{ github.repository_owner == 'RoderAI' }}
@@ -239,7 +237,7 @@ jobs:
                   "target": target,
                   "distribution": distribution,
                   "kind": kind,
-                  "url": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/{path.name}",
+                  "url": f"{os.environ['LATEST_RELEASE_BASE_URL']}/latest/{path.name}",
                   "sha256": digest,
                   "bytes": path.stat().st_size,
               })
@@ -247,80 +245,37 @@ jobs:
               "version": "latest",
               "commit": os.environ["GITHUB_SHA"],
               "artifacts": artifacts,
-              "install": f"{os.environ['R2_PUBLIC_BASE_URL']}/install.sh",
-              "install_latest": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/install.sh",
+              "install": f"{os.environ['LATEST_RELEASE_BASE_URL']}/latest/install.sh",
+              "install_latest": f"{os.environ['LATEST_RELEASE_BASE_URL']}/latest/install.sh",
           }
           (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
           PY
 
-      - name: Install AWS CLI
-        shell: bash
-        run: |
-          if ! command -v aws >/dev/null 2>&1; then
-            python3 -m pip install --user awscli
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          fi
-
-      - name: Derive R2 S3 credentials
+      - name: Upload latest objects to GitHub release
         shell: bash
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
-            echo "CLOUDFLARE_API_TOKEN secret is required" >&2
-            exit 1
-          fi
-          verify_json="$(curl -fsSL \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts/${R2_ACCOUNT_ID}/tokens/verify")"
-          access_key_id="$(jq -r '.result.id // empty' <<<"$verify_json")"
-          status="$(jq -r '.result.status // empty' <<<"$verify_json")"
-          if [[ -z "$access_key_id" || "$status" != "active" ]]; then
-            echo "Cloudflare account token verification failed" >&2
-            exit 1
-          fi
-          secret_access_key="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | awk '{print $1}')"
-          {
-            echo "AWS_ACCESS_KEY_ID=$access_key_id"
-            echo "AWS_SECRET_ACCESS_KEY=$secret_access_key"
-            echo "AWS_DEFAULT_REGION=auto"
-          } >> "$GITHUB_ENV"
+          git tag -f latest "$GITHUB_SHA"
+          git push --force origin refs/tags/latest
 
-      - name: Upload latest objects to R2
-        shell: bash
-        run: |
-          set -euo pipefail
-          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          for path in dist/latest/*; do
-            name="$(basename "$path")"
-            case "$name" in
-              install.sh) content_type="text/x-shellscript; charset=utf-8" ;;
-              manifest.json) content_type="application/json; charset=utf-8" ;;
-              SHA256SUMS|*.sha256) content_type="text/plain; charset=utf-8" ;;
-              *.tar.gz|*.zip) content_type="application/octet-stream" ;;
-              *) content_type="application/octet-stream" ;;
-            esac
-            aws s3 cp "$path" "s3://${R2_BUCKET}/latest/${name}" \
-              --endpoint-url "$endpoint" \
-              --content-type "$content_type" \
-              --cache-control "public, max-age=300" \
-              --no-progress
-            if [[ "$name" == "install.sh" ]]; then
-              aws s3 cp "$path" "s3://${R2_BUCKET}/install.sh" \
-                --endpoint-url "$endpoint" \
-                --content-type "$content_type" \
-                --cache-control "public, max-age=300" \
-                --no-progress
-            fi
-          done
+          if gh release view latest >/dev/null 2>&1; then
+            gh release edit latest \
+              --title "Latest Roder CLI" \
+              --notes "Latest signed Roder CLI build from ${GITHUB_SHA}."
+          else
+            gh release create latest \
+              --title "Latest Roder CLI" \
+              --notes "Latest signed Roder CLI build from ${GITHUB_SHA}."
+          fi
+          gh release upload latest dist/latest/* --clobber
 
       - name: Print URLs
         shell: bash
         run: |
-          echo "Install: ${R2_PUBLIC_BASE_URL}/install.sh"
-          echo "Install (latest): ${R2_PUBLIC_BASE_URL}/latest/install.sh"
-          echo "Manifest: ${R2_PUBLIC_BASE_URL}/latest/manifest.json"
+          echo "Install: ${LATEST_RELEASE_BASE_URL}/latest/install.sh"
+          echo "Manifest: ${LATEST_RELEASE_BASE_URL}/latest/manifest.json"
 
       - name: Verify public remote distro artifacts
         shell: bash
@@ -328,4 +283,5 @@ jobs:
           RODER_PUBLISH_TARGETS="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu" \
           RODER_PUBLISH_VERIFY_ATTEMPTS=30 \
           RODER_PUBLISH_VERIFY_DELAY_SECONDS=10 \
+          R2_PUBLIC_BASE_URL="${LATEST_RELEASE_BASE_URL}" \
             make publish-verify

@@ -7,9 +7,7 @@ cd "$repo_root"
 targets="${RODER_PUBLISH_TARGETS:-x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu}"
 dist_dir="${RODER_PUBLISH_DIST_DIR:-dist/latest}"
 remote_dist_dir="${RODER_REMOTE_DIST_DIR:-dist/remote-roder}"
-r2_account_id="${R2_ACCOUNT_ID:-769befa385792ae6e7ca7136b7010256}"
-r2_bucket="${R2_BUCKET:-roder-downloads}"
-r2_public_base_url="${R2_PUBLIC_BASE_URL:-https://dl.roder.sh}"
+latest_release_base_url="${RODER_LATEST_RELEASE_BASE_URL:-https://github.com/RoderAI/roder/releases/download}"
 dry_run="${RODER_PUBLISH_DRY_RUN:-0}"
 
 if command -v cargo-zigbuild >/dev/null 2>&1 || cargo zigbuild --version >/dev/null 2>&1; then
@@ -113,7 +111,7 @@ chmod 0644 "$dist_dir/install.sh"
   done
 )
 
-R2_PUBLIC_BASE_URL="$r2_public_base_url" python3 - <<'PY'
+RODER_LATEST_RELEASE_BASE_URL="$latest_release_base_url" python3 - <<'PY'
 import json
 import os
 import subprocess
@@ -144,7 +142,7 @@ for path in sorted([*root.glob("roder-*"), *root.glob("remote-roder-*")]):
         "target": target,
         "distribution": distribution,
         "kind": kind,
-        "url": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/{path.name}",
+        "url": f"{os.environ['RODER_LATEST_RELEASE_BASE_URL']}/latest/{path.name}",
         "sha256": digest,
         "bytes": path.stat().st_size,
     })
@@ -152,8 +150,8 @@ manifest = {
     "version": "latest",
     "commit": commit,
     "artifacts": artifacts,
-    "install": f"{os.environ['R2_PUBLIC_BASE_URL']}/install.sh",
-    "install_latest": f"{os.environ['R2_PUBLIC_BASE_URL']}/latest/install.sh",
+    "install": f"{os.environ['RODER_LATEST_RELEASE_BASE_URL']}/latest/install.sh",
+    "install_latest": f"{os.environ['RODER_LATEST_RELEASE_BASE_URL']}/latest/install.sh",
 }
 (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 PY
@@ -163,63 +161,24 @@ if [[ "$dry_run" == "1" ]]; then
   exit 0
 fi
 
-if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-  echo "publish: CLOUDFLARE_API_TOKEN is required for R2 upload; set RODER_PUBLISH_DRY_RUN=1 to build only" >&2
-  exit 1
-fi
-if ! command -v aws >/dev/null 2>&1; then
-  echo "publish: aws CLI is required for R2 upload" >&2
-  exit 1
-fi
-if ! command -v jq >/dev/null 2>&1; then
-  echo "publish: jq is required for R2 credential derivation" >&2
+if ! command -v gh >/dev/null 2>&1; then
+  echo "publish: gh CLI is required for GitHub release upload" >&2
   exit 1
 fi
 
-verify_json="$(curl -fsSL \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  "https://api.cloudflare.com/client/v4/accounts/${r2_account_id}/tokens/verify")"
-access_key_id="$(jq -r '.result.id // empty' <<<"$verify_json")"
-status="$(jq -r '.result.status // empty' <<<"$verify_json")"
-if [[ -z "$access_key_id" || "$status" != "active" ]]; then
-  echo "publish: Cloudflare account token verification failed" >&2
-  exit 1
-fi
-if command -v sha256sum >/dev/null 2>&1; then
-  secret_access_key="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | awk '{print $1}')"
+git tag -f latest HEAD
+git push --force origin refs/tags/latest
+
+if gh release view latest >/dev/null 2>&1; then
+  gh release edit latest \
+    --title "Latest Roder CLI" \
+    --notes "Latest signed Roder CLI build from $(git rev-parse HEAD)."
 else
-  secret_access_key="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | shasum -a 256 | awk '{print $1}')"
+  gh release create latest \
+    --title "Latest Roder CLI" \
+    --notes "Latest signed Roder CLI build from $(git rev-parse HEAD)."
 fi
-endpoint="https://${r2_account_id}.r2.cloudflarestorage.com"
+gh release upload latest "$dist_dir"/* --clobber
 
-for path in "$dist_dir"/*; do
-  name="$(basename "$path")"
-  case "$name" in
-    install.sh) content_type="text/x-shellscript; charset=utf-8" ;;
-    manifest.json) content_type="application/json; charset=utf-8" ;;
-    SHA256SUMS|*.sha256) content_type="text/plain; charset=utf-8" ;;
-    *.tar.gz|*.zip) content_type="application/octet-stream" ;;
-    *) content_type="application/octet-stream" ;;
-  esac
-  AWS_ACCESS_KEY_ID="$access_key_id" \
-  AWS_SECRET_ACCESS_KEY="$secret_access_key" \
-  AWS_DEFAULT_REGION=auto \
-    aws s3 cp "$path" "s3://${r2_bucket}/latest/${name}" \
-      --endpoint-url "$endpoint" \
-      --content-type "$content_type" \
-      --cache-control "public, max-age=300" \
-      --no-progress
-  if [[ "$name" == "install.sh" ]]; then
-    AWS_ACCESS_KEY_ID="$access_key_id" \
-    AWS_SECRET_ACCESS_KEY="$secret_access_key" \
-    AWS_DEFAULT_REGION=auto \
-      aws s3 cp "$path" "s3://${r2_bucket}/install.sh" \
-        --endpoint-url "$endpoint" \
-        --content-type "$content_type" \
-        --cache-control "public, max-age=300" \
-        --no-progress
-  fi
-done
-
-echo "publish: uploaded ${r2_public_base_url}/latest/manifest.json"
-echo "publish: uploaded ${r2_public_base_url}/install.sh"
+echo "publish: uploaded ${latest_release_base_url}/latest/manifest.json"
+echo "publish: uploaded ${latest_release_base_url}/latest/install.sh"
