@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import platform
 import re
+import shutil
+import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -93,6 +97,22 @@ class Trial:
                 name for name in CORE_ARTIFACTS if name not in missing and not (agent_dir / name).exists()
             )
         return sorted(set(missing))
+
+    def agent_artifact_path(self, name: str) -> Path:
+        return self.path / "agent" / name
+
+    def agent_artifact_size(self, name: str) -> int | None:
+        path = self.agent_artifact_path(name)
+        if not path.exists():
+            return None
+        try:
+            return path.stat().st_size
+        except OSError:
+            return None
+
+    def has_nonempty_agent_artifact(self, name: str) -> bool:
+        size = self.agent_artifact_size(name)
+        return size is not None and size > 0
 
     def roder_exit_status(self) -> int | None:
         summary_status = self.run_summary.get("exit_status")
@@ -205,6 +225,18 @@ def classify_trial(trial: Trial) -> set[str]:
 
     if trial.exception_type == "AgentTimeoutError" or "Agent execution timed out" in text:
         classes.add("agent_timeout")
+        if trial.roder_exit_status() == 0 and trial.has_nonempty_agent_artifact(
+            "roder-last-message.txt"
+        ):
+            classes.add("agent_exec_finished_but_harbor_timeout")
+        elif trial.has_nonempty_agent_artifact(
+            "roder-events.jsonl"
+        ) and not trial.has_nonempty_agent_artifact("roder-run-summary.json"):
+            classes.add("agent_exec_timeout_no_summary")
+    if trial.exception_info and re.search(
+        r"Roder command failed with status (124|130|137|143)", text
+    ):
+        classes.add("agent_exec_signal_terminated_no_summary")
     if trial.run_summary.get("soft_timed_out") is True or "roder exec soft-timed-out" in text:
         classes.add("soft_timeout")
         if trial.reward == 1.0:
@@ -225,14 +257,25 @@ def classify_trial(trial: Trial) -> set[str]:
     ) and "turn deadline expired" not in text:
         classes.add("deadline_finalized")
 
-    roder_status = trial.roder_exit_status()
-    if roder_status not in (None, 0, 124, 130, 137, 143):
-        classes.add("roder_exec_error_status")
     provider_error_kind = trial.run_summary.get("provider_error_kind")
+    roder_status = trial.roder_exit_status()
+    soft_or_deadline_timeout = (
+        trial.run_summary.get("soft_timed_out") is True
+        or trial.run_summary.get("deadline_timed_out") is True
+        or trial.run_summary.get("provider_error_kind") == "turn_deadline_expired"
+    )
+    if (
+        roder_status not in (None, 0, 124, 130, 137, 143)
+        and not soft_or_deadline_timeout
+        and provider_error_kind not in {"policy_block", "auth_refresh_token_reused"}
+    ):
+        classes.add("roder_exec_error_status")
     if provider_error_kind == "invalid_tool_name" or (
         "Invalid 'input[" in text and "string does not match pattern" in text
     ):
         classes.add("provider_api_invalid_tool_name")
+    if provider_error_kind == "auth_refresh_token_reused" or "refresh_token_reused" in text:
+        classes.add("provider_auth_refresh_token_reused")
     if provider_error_kind == "stream_decode_error" or "error decoding response body" in text:
         classes.add("provider_stream_decode_error")
     if (
@@ -249,6 +292,14 @@ def classify_trial(trial: Trial) -> set[str]:
         or (setup_return and setup_return != "0" and not trial.has_agent_started())
     ):
         classes.add("agent_setup_failed")
+    if (
+        "Uploaded /installed-agent/roder is not executable in this task container" in text
+        or "Selected Roder binary is not executable in this task container" in text
+        or "No prebuilt Roder binary matched task container architecture" in text
+        or "Dynamic loader not found: /lib64/ld-linux-x86-64.so.2" in text
+        or re.search(r"\bnot a dynamic executable\b", text)
+    ):
+        classes.add("setup_arch_mismatch")
 
     if "Failed to download artifact" in trial.trial_log:
         classes.add("missing_artifacts")
@@ -256,7 +307,14 @@ def classify_trial(trial: Trial) -> set[str]:
         classes.add("missing_artifacts")
 
     if trial.exception_info and not classes.intersection(
-        {"docker_registry_bad_gateway", "agent_timeout", "agent_setup_failed"}
+        {
+            "docker_registry_bad_gateway",
+            "agent_timeout",
+            "agent_exec_signal_terminated_no_summary",
+            "agent_setup_failed",
+            "provider_auth_refresh_token_reused",
+            "setup_arch_mismatch",
+        }
     ):
         if trial.exception_type and "Verifier" in trial.exception_type:
             classes.add("verifier_error")
@@ -289,7 +347,70 @@ def task_entry(trial: Trial) -> dict[str, Any]:
     missing = trial.missing_expected_artifacts()
     if missing:
         entry["missing_artifacts"] = missing
+    artifact_sizes = {
+        name: trial.agent_artifact_size(name)
+        for name in (
+            "roder-events.jsonl",
+            "roder-run-summary.json",
+            "roder-last-message.txt",
+            "roder-stderr.txt",
+            "setup-summary.txt",
+        )
+    }
+    entry["agent_artifact_sizes"] = {
+        name: size for name, size in artifact_sizes.items() if size is not None
+    }
+    setup_tail = "\n".join(trial.setup_text.splitlines()[-12:])
+    if setup_tail:
+        entry["setup_tail"] = setup_tail
+    exception_tail = "\n".join(trial.exception_text.splitlines()[-12:])
+    if exception_tail:
+        entry["exception_tail"] = exception_tail
     return entry
+
+
+def command_output(command: list[str]) -> str | None:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = result.stdout.strip()
+    return text or None
+
+
+def file_sha256(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def build_environment_metadata() -> dict[str, Any]:
+    harbor_path = shutil.which("harbor")
+    metadata: dict[str, Any] = {
+        "host_machine": platform.machine(),
+        "host_platform": platform.platform(),
+        "harbor_path": harbor_path,
+        "harbor_version": command_output(["harbor", "--version"]) if harbor_path else None,
+    }
+    for arch in ("amd64", "arm64"):
+        binary = Path(f"evals/harbor/artifacts/roder-linux-{arch}")
+        if binary.exists():
+            metadata[f"roder_linux_{arch}_sha256"] = file_sha256(binary)
+    return {key: value for key, value in metadata.items() if value is not None}
 
 
 def classify_scored_failure(task_name: str) -> str:
@@ -314,7 +435,16 @@ def build_scored_groups(scored_trials: list[Trial]) -> dict[str, Any]:
 
 
 def explain_scored_trial_difference(stats: dict[str, Any], classes: dict[str, list[dict[str, Any]]]) -> str:
-    total_trials = int(stats.get("n_trials") or 0)
+    total_trials = int(
+        stats.get("n_trials")
+        or (
+            int(stats.get("n_completed_trials") or 0)
+            + int(stats.get("n_errored_trials") or 0)
+            + int(stats.get("n_cancelled_trials") or 0)
+            + int(stats.get("n_running_trials") or 0)
+            + int(stats.get("n_pending_trials") or 0)
+        )
+    )
     evals = stats.get("evals")
     scored_trials = 0
     if isinstance(evals, dict):
@@ -355,6 +485,7 @@ def analyze_job(job_dir: Path, group_scored_failures: bool = False) -> dict[str,
     scored_trials = [trial for trial in trials if trial.reward == 0.0]
     analysis: dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "environment": build_environment_metadata(),
         "job_dir": str(job_dir),
         "job_name": job_dir.name,
         "result_id": job_result.get("id"),

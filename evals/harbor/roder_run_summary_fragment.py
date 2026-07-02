@@ -177,6 +177,8 @@ def run_summary_shell_fragment(
         "provider_error_kind = None\n"
         "if 'flagged for possible cybersecurity risk' in combined:\n"
         "    provider_error_kind = 'policy_block'\n"
+        "elif 'refresh_token_reused' in combined:\n"
+        "    provider_error_kind = 'auth_refresh_token_reused'\n"
         "elif 'turn deadline expired' in combined:\n"
         "    provider_error_kind = 'turn_deadline_expired'\n"
         "elif \"Invalid 'input[\" in combined and 'string does not match pattern' in combined:\n"
