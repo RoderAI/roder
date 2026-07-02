@@ -1,14 +1,19 @@
 """Shared constants for Harbor Terminal-Bench analysis."""
 
 HARNESS_ERROR_CLASSES = {
+    "agent_exec_finished_but_harbor_timeout",
+    "agent_exec_signal_terminated_no_summary",
+    "agent_exec_timeout_no_summary",
     "docker_registry_bad_gateway",
     "agent_setup_failed",
     "agent_timeout",
     "missing_artifacts",
+    "provider_auth_refresh_token_reused",
     "provider_api_invalid_tool_name",
     "provider_stream_decode_error",
     "provider_stream_incomplete",
     "roder_exec_error_status",
+    "setup_arch_mismatch",
     "verifier_error",
     "unknown_error",
 }

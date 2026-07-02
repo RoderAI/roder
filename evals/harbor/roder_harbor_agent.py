@@ -5,7 +5,17 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+try:
+    from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+except ImportError:
+    from dataclasses import dataclass
+
+    from harbor.agents.installed.base import BaseInstalledAgent
+
+    @dataclass
+    class ExecInput:
+        command: str
+        env: dict[str, str] | None = None
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.trial.paths import EnvironmentPaths
@@ -27,6 +37,7 @@ from roder_plan_first import (
     plan_prompt_for_instruction,
 )
 from roder_run_summary_fragment import run_summary_shell_fragment
+from roder_signal_recovery import signal_recovery_shell_fragment
 
 
 PROVIDER_ENV_KEYS = {
@@ -38,6 +49,8 @@ PROVIDER_ENV_KEYS = {
         "GOOGLE_AI_API_KEY",
     ),
 }
+
+SIGNAL_TERMINATED_STATUSES = {124, 130, 137, 143}
 
 
 class RoderCli(BaseInstalledAgent):
@@ -74,6 +87,16 @@ class RoderCli(BaseInstalledAgent):
             kwargs.get("prebuilt_binary")
             or os.environ.get("RODER_HARBOR_PREBUILT_BINARY")
             or self._source_dir / "evals/harbor/artifacts/roder-linux-amd64"
+        ).expanduser()
+        self._prebuilt_binary_amd64 = Path(
+            kwargs.get("prebuilt_binary_amd64")
+            or os.environ.get("RODER_HARBOR_PREBUILT_BINARY_AMD64")
+            or self._source_dir / "evals/harbor/artifacts/roder-linux-amd64"
+        ).expanduser()
+        self._prebuilt_binary_arm64 = Path(
+            kwargs.get("prebuilt_binary_arm64")
+            or os.environ.get("RODER_HARBOR_PREBUILT_BINARY_ARM64")
+            or self._source_dir / "evals/harbor/artifacts/roder-linux-arm64"
         ).expanduser()
         guidance = optional_bool(
             kwargs.get("benchmark_guidance_enabled")
@@ -184,11 +207,23 @@ class RoderCli(BaseInstalledAgent):
         return Path(__file__).with_name("install-roder.sh.j2")
 
     def _setup_env(self) -> dict[str, str]:
-        env = super()._setup_env()
+        setup_env = getattr(super(), "_setup_env", None)
+        env = setup_env() if setup_env else {}
         for key in ("RODER_HARBOR_GIT_URL", "RODER_HARBOR_GIT_REF"):
             if value := os.environ.get(key):
                 env[key] = value
         return env
+
+    async def install(self, environment: BaseEnvironment) -> None:
+        command = self._install_agent_template_path.read_text()
+        result = await environment.exec(
+            command=f"bash -lc {shlex.quote(command)}",
+            user="root",
+            env=self._setup_env(),
+            timeout_sec=2400,
+        )
+        if result.return_code != 0:
+            raise RuntimeError(f"Roder install failed with status {result.return_code}")
 
     def _resolved_provider_model(self) -> tuple[str, str]:
         model_name = self.model_name or "codex/gpt-5.5"
@@ -268,22 +303,36 @@ class RoderCli(BaseInstalledAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         await environment.exec(command="mkdir -p /installed-agent")
+        uploaded_prebuilt = False
+        if self._include_prebuilt_binary and self._prebuilt_binary_amd64.exists():
+            await environment.upload_file(
+                source_path=self._prebuilt_binary_amd64,
+                target_path="/installed-agent/roder-linux-amd64",
+            )
+            uploaded_prebuilt = True
+        if self._include_prebuilt_binary and self._prebuilt_binary_arm64.exists():
+            await environment.upload_file(
+                source_path=self._prebuilt_binary_arm64,
+                target_path="/installed-agent/roder-linux-arm64",
+            )
+            uploaded_prebuilt = True
         if self._include_prebuilt_binary and self._prebuilt_binary.exists():
             await environment.upload_file(
                 source_path=self._prebuilt_binary,
                 target_path="/installed-agent/roder",
             )
-        elif self._include_local_source:
+            uploaded_prebuilt = True
+        if not uploaded_prebuilt and self._include_local_source:
             archive_path = self._create_source_archive()
             await environment.upload_file(
                 source_path=archive_path,
                 target_path="/installed-agent/roder-source.tar.gz",
             )
-        else:
+        elif not uploaded_prebuilt:
             raise FileNotFoundError(
                 "No prebuilt Linux roder binary found. Run "
                 "./evals/harbor/build-prebuilt-roder.sh or set "
-                "RODER_HARBOR_PREBUILT_BINARY."
+                "RODER_HARBOR_PREBUILT_BINARY_AMD64/ARM64."
             )
         if self._auth_file.exists():
             await environment.upload_file(
@@ -342,6 +391,7 @@ class RoderCli(BaseInstalledAgent):
             "started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')\n"
             "soft_timed_out=0\n"
             "deadline_timed_out=0\n"
+            "provider_policy_blocked=0\n"
             "RODER_HARBOR_PLAN_THREAD_ID=\n"
             f"printf 'roder exec starting\\n' >> {shlex.quote(setup_summary_path)}\n"
             + self._reasoning_shell_fragment(
@@ -386,6 +436,9 @@ class RoderCli(BaseInstalledAgent):
             f"if grep -q 'turn deadline expired' {shlex.quote(stderr_path)}; then "
             "deadline_timed_out=1; soft_timed_out=1; "
             "fi\n"
+            f"if grep -q 'flagged for possible cybersecurity risk' {shlex.quote(stderr_path)}; then "
+            "provider_policy_blocked=1; "
+            "fi\n"
             f"if [ -s {shlex.quote(last_message_path)} ]; then "
             f"cp {shlex.quote(last_message_path)} {shlex.quote(output_path)}; "
             "else "
@@ -418,6 +471,10 @@ class RoderCli(BaseInstalledAgent):
             f"printf 'roder exec soft-timed-out before Harbor hard timeout\\n' >> {shlex.quote(setup_summary_path)}; "
             "exit 0; "
             "fi\n"
+            + "if [ \"$provider_policy_blocked\" -eq 1 ]; then "
+            f"printf 'roder exec provider-policy-blocked; preserving scored trial artifacts\\n' >> {shlex.quote(setup_summary_path)}; "
+            "exit 0; "
+            "fi\n"
             "exit \"$status\"\n"
         )
         run = f"bash -lc {shlex.quote(run_script)}"
@@ -431,6 +488,69 @@ class RoderCli(BaseInstalledAgent):
             ExecInput(command=setup, env=env),
             ExecInput(command=run, env=env),
         ]
+
+    async def run(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
+        commands = self.create_run_agent_commands(instruction)
+        for index, exec_input in enumerate(commands):
+            result = await environment.exec(
+                command=exec_input.command,
+                env=exec_input.env,
+            )
+            if result.return_code != 0:
+                is_run_command = index == len(commands) - 1
+                if (
+                    is_run_command
+                    and result.return_code in SIGNAL_TERMINATED_STATUSES
+                    and await self._recover_signal_terminated_run(
+                        environment=environment,
+                        signal_status=result.return_code,
+                    )
+                ):
+                    return
+                raise RuntimeError(
+                    f"Roder command failed with status {result.return_code}"
+                )
+
+    async def _recover_signal_terminated_run(
+        self,
+        *,
+        environment: BaseEnvironment,
+        signal_status: int,
+    ) -> bool:
+        provider, model = self._resolved_provider_model()
+        config_dir = "/tmp/roder-harbor"
+        agent_dir = EnvironmentPaths.agent_dir
+        command = signal_recovery_shell_fragment(
+            signal_status=signal_status,
+            provider=provider,
+            model=model,
+            reasoning=str(self._reasoning),
+            policy_mode=str(self._policy_mode),
+            task_ledger_required=self._task_ledger_required,
+            soft_timeout_sec=self._soft_timeout_sec,
+            eval_deadline_seconds=self._speed_policy_eval_deadline_seconds,
+            config_dir=config_dir,
+            events_path=(agent_dir / "roder-events.jsonl").as_posix(),
+            stderr_path=(agent_dir / "roder-stderr.txt").as_posix(),
+            output_path=(agent_dir / "roder-cli.txt").as_posix(),
+            last_message_path=(agent_dir / "roder-last-message.txt").as_posix(),
+            setup_summary_path=(agent_dir / "setup-summary.txt").as_posix(),
+            run_summary_path=(agent_dir / "roder-run-summary.json").as_posix(),
+        )
+        result = await environment.exec(
+            command=f"bash -lc {shlex.quote(command)}",
+            env={
+                "RODER_CONFIG_DIR": config_dir,
+                "RODER_DATA_DIR": config_dir,
+            },
+            timeout_sec=120,
+        )
+        return result.return_code == 0
 
     def _reasoning_shell_fragment(
         self,
