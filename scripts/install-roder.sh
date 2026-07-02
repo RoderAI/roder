@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-base_url="${RODER_DOWNLOAD_BASE_URL:-https://dl.roder.sh/latest}"
+base_url="${RODER_DOWNLOAD_BASE_URL:-https://github.com/RoderAI/roder/releases/download/latest}"
 install_dir="${RODER_INSTALL_DIR:-$HOME/.local/bin}"
 install_name="${RODER_INSTALL_NAME:-roder}"
 target="${RODER_TARGET:-}"
@@ -15,17 +15,16 @@ usage() {
 Install Roder.
 
 Usage:
-  curl -fsSL https://dl.roder.sh/install.sh | bash
-  curl -fsSL https://dl.roder.sh/latest/install.sh | bash
+  curl -fsSL https://github.com/RoderAI/roder/releases/download/latest/install.sh | bash
 
 Behavior:
-  macOS: downloads a signed, notarized arm64 archive from dl.roder.sh.
-  Linux: downloads a verified archive from dl.roder.sh and installs `roder`.
+  macOS: downloads a signed, notarized arm64 archive from GitHub Releases.
+  Linux: downloads a verified archive from GitHub Releases and installs `roder`.
 
 Environment:
   RODER_INSTALL_DIR          install directory for direct installs, default: $HOME/.local/bin
   RODER_INSTALL_NAME         installed binary name, default: roder
-  RODER_DOWNLOAD_BASE_URL    download base URL, default: https://dl.roder.sh/latest
+  RODER_DOWNLOAD_BASE_URL    download base URL, default: https://github.com/RoderAI/roder/releases/download/latest
   RODER_TARGET               override target triple, e.g. x86_64-unknown-linux-gnu
   RODER_ARCHIVE_FORMAT       tar.gz or zip, default: tar.gz
   RODER_BUILD_FROM_SOURCE    set to 1 on macOS to build via Homebrew instead of downloading

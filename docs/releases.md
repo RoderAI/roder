@@ -235,8 +235,8 @@ helper for cutting a local source release; it is not part of the automated flow.
 
 Roder publishes signed, notarized macOS binaries for Apple Silicon only. The
 `publish-latest-roder.yml` workflow signs the latest `aarch64-apple-darwin`
-binary before uploading it to `dl.roder.sh`; the release workflow signs the same
-target before uploading release archives to GitHub.
+binary before uploading it to the `latest` GitHub release; the release workflow
+signs the same target before uploading versioned release archives to GitHub.
 
 The signing path uses Anchore Quill with a Developer ID Application certificate
 and App Store Connect API key. Intel macOS release binaries are intentionally not
