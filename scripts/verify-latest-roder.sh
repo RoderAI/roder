@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-base_url="${R2_PUBLIC_BASE_URL:-https://dl.roder.sh}"
+base_url="${R2_PUBLIC_BASE_URL:-https://github.com/RoderAI/roder/releases/download}"
 targets="${RODER_PUBLISH_TARGETS:-x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu}"
 attempts="${RODER_PUBLISH_VERIFY_ATTEMPTS:-1}"
 delay_seconds="${RODER_PUBLISH_VERIFY_DELAY_SECONDS:-10}"
@@ -33,7 +33,7 @@ artifacts = manifest.get("artifacts", [])
 errors = []
 by_name = {artifact.get("name"): artifact for artifact in artifacts}
 
-for install_url in [f"{base_url}/install.sh", f"{base_url}/latest/install.sh"]:
+for install_url in [f"{base_url}/latest/install.sh"]:
     request = urllib.request.Request(
         install_url,
         headers={"User-Agent": "roder-publish-verify/1.0"},

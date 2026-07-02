@@ -22,8 +22,8 @@ RODER_LIVE_SPRITES_RUNNER=1 cargo test -p roder-ext-runner-sprites live_sprites_
 ```
 
 The durable app-server live smoke additionally requires `RODER_REMOTE_APP_SERVER_TOKEN`.
-It can either download `remote-roder` from `dl.roder.sh/latest` or upload a local
-Linux binary with `RODER_LIVE_SPRITES_REMOTE_RODER_BIN`:
+It can either download `remote-roder` from the latest GitHub release or upload a
+local Linux binary with `RODER_LIVE_SPRITES_REMOTE_RODER_BIN`:
 
 ```sh
 RUSTC="$(rustup which rustc)" \
@@ -36,7 +36,7 @@ RODER_LIVE_SPRITES_REPO_SOURCE="$PWD" \
   cargo test -p roder-ext-runner-sprites live_sprites_repo_app_server_accepts_remote_control -- --ignored --nocapture
 ```
 
-After publishing `remote-roder-*` to `dl.roder.sh/latest`, rerun the same live
+After publishing `remote-roder-*` to the latest GitHub release, rerun the same live
 smoke without `RODER_LIVE_SPRITES_REMOTE_RODER_BIN` to prove the Sprite can
 download the production artifact itself:
 
@@ -65,7 +65,7 @@ config = {
   url_auth = "sprite",
   cleanup = "delete-on-close",
   working_dir = "/home/sprite/roder",
-  network_policy = { default = "deny", allow = ["github.com", "*.npmjs.org", "crates.io", "static.crates.io", "dl.roder.sh"] }
+  network_policy = { default = "deny", allow = ["github.com", "*.npmjs.org", "crates.io", "static.crates.io"] }
 }
 ```
 
@@ -98,10 +98,10 @@ config = {
   sprite_name_prefix = "roder",
   cleanup = "keep",
   working_dir = "/home/sprite/roder",
-  network_policy = { default = "deny", allow = ["dl.roder.sh", "api.openai.com"] },
+  network_policy = { default = "deny", allow = ["github.com", "api.openai.com"] },
   app_server = {
     enabled = true,
-    download_base_url = "https://dl.roder.sh/latest",
+    download_base_url = "https://github.com/RoderAI/roder/releases/download/latest",
     binary_name = "remote-roder",
     service_name = "roder-app-server",
     port = 17373,
@@ -112,13 +112,13 @@ config = {
 }
 ```
 
-Build the binary with the `remote-app-server` distribution profile and publish it as `remote-roder-<target>` plus `remote-roder-<target>.sha256`, for example `remote-roder-x86_64-unknown-linux-gnu`. The `publish-latest-roder.yml` workflow publishes these Linux remote distro artifacts to `dl.roder.sh/latest`; locally, `make publish` does the same when `CLOUDFLARE_API_TOKEN` is set. The local publish script sets `RUSTC="$(rustup which rustc)"` for `cargo zigbuild` when rustup is available, so Homebrew `rustc` does not break Linux builds. The Sprite bootstrap resolves its Linux target with `uname`, downloads and verifies the artifact, installs it as `.roder/bin/roder`, and creates or reuses the running `roder-app-server` service.
+Build the binary with the `remote-app-server` distribution profile and publish it as `remote-roder-<target>` plus `remote-roder-<target>.sha256`, for example `remote-roder-x86_64-unknown-linux-gnu`. The `publish-latest-roder.yml` workflow publishes these Linux remote distro artifacts to the latest GitHub release. Locally, use `RODER_PUBLISH_DRY_RUN=1 make publish` to build the artifacts without uploading. The Sprite bootstrap resolves its Linux target with `uname`, downloads and verifies the artifact, installs it as `.roder/bin/roder`, and creates or reuses the running `roder-app-server` service.
 
 Use `make publish-verify` after publishing to confirm the public manifest and required Linux `remote-roder-*` binary/checksum URLs exist before running the production-download live smoke. CI runs the same verifier after upload with `RODER_PUBLISH_VERIFY_ATTEMPTS` and `RODER_PUBLISH_VERIFY_DELAY_SECONDS` set so public endpoint propagation has time to settle.
 
 Set `app_server.workspace_path` to the manifest target that contains the forked repo, for example `repo`. The provider starts the app-server service in `/home/sprite/roder/repo` while invoking the installed binary from `/home/sprite/roder/.roder/bin/roder`, so Roder tools operate against the forked workspace. If omitted, the app-server runs in the destination `working_dir`.
 
-For local development only, set `app_server.local_binary_path` to upload a local binary instead of downloading from `dl.roder.sh`.
+For local development only, set `app_server.local_binary_path` to upload a local binary instead of downloading from GitHub Releases.
 
 The auth token value is read from `RODER_REMOTE_APP_SERVER_TOKEN` locally and injected into the service environment. Session state records the service name, port, Sprite URL, remote WebSocket `connect_url`, `/readyz` health URL, proxy endpoint, token env name, supported auth schemes, subprotocol templates, and status, but not the token value. Native clients connect with `Authorization: Bearer $RODER_REMOTE_APP_SERVER_TOKEN`; browser-constrained clients use `Sec-WebSocket-Protocol: roder.remote.v1, bearer.$RODER_REMOTE_APP_SERVER_TOKEN`.
 
@@ -145,4 +145,4 @@ Roder remains the policy authority for approvals and path scope. The Sprites net
 - `runner path cannot escape workspace`: use workspace-relative paths; absolute paths and `..` are rejected before requests leave Roder.
 - `delete sprite` failures on close: check the Sprites dashboard for the sprite name in the runner session state and delete it manually if needed.
 - Package installs fail inside the sandbox: expand `network_policy.allow` to include the package registry domains you need.
-- `sprites app-server bootstrap failed`: confirm `dl.roder.sh` is reachable from the Sprite, the `remote-roder-<target>` artifact and `.sha256` exist, and `RODER_REMOTE_APP_SERVER_TOKEN` is exported before starting local Roder.
+- `sprites app-server bootstrap failed`: confirm GitHub Releases is reachable from the Sprite, the `remote-roder-<target>` artifact and `.sha256` exist, and `RODER_REMOTE_APP_SERVER_TOKEN` is exported before starting local Roder.
