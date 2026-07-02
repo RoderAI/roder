@@ -176,12 +176,13 @@ Override the install directory with:
 curl -fsSL https://dl.roder.sh/install.sh | RODER_INSTALL_DIR=/usr/local/bin bash
 ```
 
-The same script works on macOS by delegating to Homebrew. To force a direct
-archive install on macOS instead, set `RODER_FORCE_DIRECT_INSTALL=1`.
+The same script works on Apple Silicon macOS by downloading the signed,
+notarized `aarch64-apple-darwin` archive. To build locally instead, set
+`RODER_BUILD_FROM_SOURCE=1`.
 
 #### Homebrew
 
-On macOS, install from the Roder Homebrew tap:
+On Apple Silicon macOS, install from the Roder Homebrew tap:
 
 ```sh
 brew install RoderAI/tap/roder
@@ -195,8 +196,8 @@ brew upgrade RoderAI/tap/roder
 ```
 
 > Homebrew publication is updated after each tagged release. If the newest GitHub
-> release is not visible in Homebrew yet, set `RODER_FORCE_DIRECT_INSTALL=1` with
-> the install script above or build from source.
+> release is not visible in Homebrew yet, run the install script above or build
+> from source with `brew install --with-source RoderAI/tap/roder`.
 
 #### Build from source
 
