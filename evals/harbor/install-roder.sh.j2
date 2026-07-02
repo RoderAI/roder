@@ -16,6 +16,12 @@ echo "Roder Harbor setup started"
 if [ -f /etc/os-release ]; then
   cat /etc/os-release
 fi
+echo "Container architecture: $(uname -m)"
+if command -v ldd >/dev/null 2>&1; then
+  ldd --version | head -n 1 || true
+else
+  echo "ldd unavailable"
+fi
 
 apt_install() {
   apt-get install -y --no-install-recommends "$@"
@@ -31,23 +37,55 @@ apt-get update
 apt_install \
   ca-certificates \
   python3
-apt_install_optional ripgrep
+apt_install_optional ripgrep file
 
-if [ -f /installed-agent/roder ]; then
-  install -m 0755 /installed-agent/roder /usr/local/bin/roder
+roder_binary=""
+case "$(uname -m)" in
+  x86_64|amd64)
+    if [ -f /installed-agent/roder-linux-amd64 ]; then
+      roder_binary=/installed-agent/roder-linux-amd64
+    fi
+    ;;
+  aarch64|arm64)
+    if [ -f /installed-agent/roder-linux-arm64 ]; then
+      roder_binary=/installed-agent/roder-linux-arm64
+    fi
+    ;;
+esac
+
+if [ -z "$roder_binary" ] \
+  && [ ! -f /installed-agent/roder-linux-amd64 ] \
+  && [ ! -f /installed-agent/roder-linux-arm64 ] \
+  && [ -f /installed-agent/roder ]; then
+  roder_binary=/installed-agent/roder
+fi
+
+if [ -n "$roder_binary" ]; then
+  echo "Selected prebuilt Roder binary: $roder_binary"
+  install -m 0755 "$roder_binary" /usr/local/bin/roder
   if roder --version >/logs/agent/roder-version.txt 2>>/logs/agent/roder-stderr.txt; then
     cat /logs/agent/roder-version.txt
   else
     echo "roder --version is unavailable; continuing with roder exec --help self-test."
   fi
   if ! roder exec --help >/logs/agent/roder-exec-help.txt 2>>/logs/agent/roder-stderr.txt; then
-    echo "Uploaded /installed-agent/roder is not executable in this task container." >&2
-    file /usr/local/bin/roder >&2 || true
+    echo "Selected Roder binary is not executable in this task container." >&2
+    echo "Container architecture: $(uname -m)" >&2
+    echo "Selected binary: $roder_binary" >&2
+    if command -v file >/dev/null 2>&1; then
+      file /usr/local/bin/roder >&2 || true
+    else
+      echo "file command unavailable" >&2
+    fi
     ldd /usr/local/bin/roder >&2 || true
     exit 1
   fi
   echo "Prebuilt roder self-test passed."
   exit 0
+elif [ -f /installed-agent/roder-linux-amd64 ] || [ -f /installed-agent/roder-linux-arm64 ]; then
+  echo "No prebuilt Roder binary matched task container architecture $(uname -m)." >&2
+  ls -l /installed-agent >&2 || true
+  exit 1
 fi
 
 apt_install \
@@ -82,7 +120,7 @@ else
 fi
 
 cd /opt/roder-src
-cargo build -p roder-cli --bin roder
+cargo build -p roder --bin roder
 install -m 0755 target/debug/roder /usr/local/bin/roder
 roder exec --help >/logs/agent/roder-exec-help.txt 2>>/logs/agent/roder-stderr.txt
 echo "Source-built roder self-test passed."
