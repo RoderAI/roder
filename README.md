@@ -158,11 +158,11 @@ the same provider contract without forking core runtime code.
 #### Linux install script
 
 ```sh
-curl -fsSL https://dl.roder.sh/install.sh | bash
+curl -fsSL https://github.com/RoderAI/roder/releases/download/latest/install.sh | bash
 ```
 
 On Linux, the installer downloads the latest `roder-<target>.tar.gz` archive
-from `dl.roder.sh`, verifies its SHA-256 checksum, and writes `roder` to
+from GitHub Releases, verifies its SHA-256 checksum, and writes `roder` to
 `~/.local/bin` by default. If that directory is not on your `PATH`, add it
 first:
 
@@ -173,7 +173,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Override the install directory with:
 
 ```sh
-curl -fsSL https://dl.roder.sh/install.sh | RODER_INSTALL_DIR=/usr/local/bin bash
+curl -fsSL https://github.com/RoderAI/roder/releases/download/latest/install.sh | RODER_INSTALL_DIR=/usr/local/bin bash
 ```
 
 The same script works on Apple Silicon macOS by downloading the signed,
@@ -351,7 +351,7 @@ provider = "sprites"
 config = { sprite_name_prefix = "roder", cleanup = "delete-on-close", working_dir = "/home/sprite/roder" }
 ```
 
-Sprites destinations can also bootstrap a durable remote app-server service by downloading the `remote-app-server` distribution artifact from `dl.roder.sh`; see [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md).
+Sprites destinations can also bootstrap a durable remote app-server service by downloading the `remote-app-server` distribution artifact from the latest GitHub release; see [`docs/roder-fly-sprites-runner.md`](./docs/roder-fly-sprites-runner.md).
 
 For local testing, override the selected destination without editing the file:
 
