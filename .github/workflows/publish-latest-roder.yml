@@ -59,6 +59,39 @@ jobs:
         run: |
           cargo build --release -p roder --bin roder --target "${{ matrix.target }}"
 
+      - name: Install Anchore Quill
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/bin"
+          curl -sSfL https://raw.githubusercontent.com/anchore/quill/main/install.sh | sh -s -- -b "${RUNNER_TEMP}/bin"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Sign and notarize macOS CLI
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          QUILL_SIGN_P12: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          QUILL_SIGN_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARIZE_KEY_BASE64 }}
+          QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARIZE_KEY_ID }}
+          QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARIZE_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for name in QUILL_SIGN_P12 QUILL_SIGN_PASSWORD QUILL_NOTARY_KEY QUILL_NOTARY_KEY_ID QUILL_NOTARY_ISSUER; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "${name} secret is required for macOS signing and notarization" >&2
+              exit 1
+            fi
+          done
+          binary="target/${{ matrix.target }}/release/roder"
+          if codesign -dvv "$binary" >/dev/null 2>&1; then
+            codesign --remove-signature "$binary"
+          fi
+          quill sign-and-notarize \
+            --entitlements .github/roder-darwin-signing-entitlements.plist \
+            "$binary"
+
       - name: Generate remote app-server distribution
         if: runner.os == 'Linux'
         shell: bash
@@ -122,14 +155,18 @@ jobs:
           source_path="target/${{ matrix.target }}/release/roder"
           dest="dist/latest/roder-${{ matrix.target }}"
           cp "$source_path" "$dest"
-          strip "$dest" 2>/dev/null || true
+          if [[ "${RUNNER_OS}" != "macOS" ]]; then
+            strip "$dest" 2>/dev/null || true
+          fi
           chmod 0755 "$dest"
           write_checksum "$dest"
           package_binary "$dest" roder "${{ matrix.target }}"
           if [[ -f "dist/remote-roder/target/${{ matrix.target }}/release/remote-roder" ]]; then
             remote_dest="dist/latest/remote-roder-${{ matrix.target }}"
             cp "dist/remote-roder/target/${{ matrix.target }}/release/remote-roder" "$remote_dest"
-            strip "$remote_dest" 2>/dev/null || true
+            if [[ "${RUNNER_OS}" != "macOS" ]]; then
+              strip "$remote_dest" 2>/dev/null || true
+            fi
             chmod 0755 "$remote_dest"
             write_checksum "$remote_dest"
             package_binary "$remote_dest" remote-roder "${{ matrix.target }}"

@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # What it does:
 #   - resolves the `roder` CLI version (VERSION env, else crates/roder-cli/Cargo.toml)
-#   - resolves the immutable GitHub source tag tarball and its sha256
+#   - resolves the signed arm64 macOS release archive and source tag tarball sha256s
 #   - regenerates the tap's Formula/roder.rb for that version
 #   - commits and pushes it to the tap repository (when a token is provided)
 #
@@ -26,9 +26,9 @@ set -euo pipefail
 #   FORMULA_PATH             formula path in the tap, default: Formula/roder.rb
 #   HOMEBREW_TAP_TOKEN       token with push access to TAP_REPO (else dry-run)
 #   OUTPUT_DIR               dry-run output dir, default: dist
-#   RODER_TAP_DOWNLOAD_ATTEMPTS  tag-tarball fetch attempts, default: 12
+#   RODER_TAP_DOWNLOAD_ATTEMPTS  release/source fetch attempts, default: 12
 #   RODER_TAP_DOWNLOAD_DELAY_SECONDS  delay between attempts, default: 10
-#   RODER_TAP_REQUIRE_TAG    1 (default) fails when the tag is missing; 0 skips
+#   RODER_TAP_REQUIRE_TAG    1 (default) fails when release assets are missing; 0 skips
 
 usage() {
   sed -n '3,40p' "$0" | sed 's/^# \{0,1\}//'
@@ -58,6 +58,15 @@ tag="${TAG:-roder/v${version}}"
 formula_path="${FORMULA_PATH:-Formula/roder.rb}"
 homepage="https://github.com/${source_repo}"
 tarball_url="https://github.com/${source_repo}/archive/refs/tags/${tag}.tar.gz"
+release_tag_path="$(TAG="$tag" python3 - <<'PY'
+import os
+import urllib.parse
+
+print(urllib.parse.quote(os.environ["TAG"], safe=""))
+PY
+)"
+darwin_arm64_asset="roder-aarch64-apple-darwin.tar.gz"
+darwin_arm64_url="https://github.com/${source_repo}/releases/download/${release_tag_path}/${darwin_arm64_asset}"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/roder-tap.XXXXXX")"
 cleanup() {
@@ -74,44 +83,66 @@ sha256_of() {
   fi
 }
 
-tarball="$work/roder-src.tar.gz"
 attempts="${RODER_TAP_DOWNLOAD_ATTEMPTS:-12}"
 delay="${RODER_TAP_DOWNLOAD_DELAY_SECONDS:-10}"
-http_status=""
-for ((attempt = 1; attempt <= attempts; attempt++)); do
-  http_status="$(curl -sSL --connect-timeout 20 -w '%{http_code}' -o "$tarball" "$tarball_url" || echo "000")"
-  if [[ "$http_status" == "200" ]]; then
-    break
-  fi
-  echo "update-homebrew-tap: attempt ${attempt}/${attempts} for ${tag} returned HTTP ${http_status}; retrying in ${delay}s" >&2
-  sleep "$delay"
-done
 
-if [[ "$http_status" != "200" ]]; then
-  echo "update-homebrew-tap: source tag tarball not available (${tarball_url}, last HTTP ${http_status})." >&2
+download_with_retries() {
+  local url="$1"
+  local out="$2"
+  local label="$3"
+  local http_status=""
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    http_status="$(curl -sSL --connect-timeout 20 -w '%{http_code}' -o "$out" "$url" || echo "000")"
+    if [[ "$http_status" == "200" ]]; then
+      return 0
+    fi
+    echo "update-homebrew-tap: attempt ${attempt}/${attempts} for ${label} returned HTTP ${http_status}; retrying in ${delay}s" >&2
+    sleep "$delay"
+  done
+  echo "update-homebrew-tap: ${label} not available (${url}, last HTTP ${http_status})." >&2
   if [[ "${RODER_TAP_REQUIRE_TAG:-1}" == "1" ]]; then
     exit 1
   fi
   echo "update-homebrew-tap: RODER_TAP_REQUIRE_TAG=0, skipping." >&2
   exit 0
-fi
+}
 
-sha256="$(sha256_of "$tarball")"
+tarball="$work/roder-src.tar.gz"
+darwin_arm64_archive="$work/$darwin_arm64_asset"
+download_with_retries "$tarball_url" "$tarball" "source tag ${tag}"
+download_with_retries "$darwin_arm64_url" "$darwin_arm64_archive" "$darwin_arm64_asset"
+source_sha256="$(sha256_of "$tarball")"
+darwin_arm64_sha256="$(sha256_of "$darwin_arm64_archive")"
 
 render_formula() {
   cat <<EOF
 class Roder < Formula
   desc "Rust-native TUI coding agent and event-driven agent harness"
   homepage "${homepage}"
-  url "${tarball_url}"
+  url "${darwin_arm64_url}"
   version "${version}"
-  sha256 "${sha256}"
+  sha256 "${darwin_arm64_sha256}"
   head "https://github.com/${source_repo}.git", branch: "master"
 
-  depends_on "rust" => :build
+  option "with-source", "Build from source instead of installing the signed release binary"
+
+  depends_on "rust" => :build if build.head? || build.with?("source")
+
+  resource "source" do
+    url "${tarball_url}"
+    sha256 "${source_sha256}"
+  end
 
   def install
-    system "cargo", "install", *std_cargo_args(path: "crates/roder-cli")
+    if build.head?
+      system "cargo", "install", *std_cargo_args(path: "crates/roder-cli")
+    elsif build.with?("source")
+      resource("source").stage { system "cargo", "install", *std_cargo_args(path: "crates/roder-cli") }
+    else
+      odie "Roder publishes signed macOS release binaries for Apple Silicon only; use --with-source for a local source build." unless OS.mac? && Hardware::CPU.arm?
+
+      bin.install "roder-aarch64-apple-darwin/roder" => "roder"
+    end
   end
 
   test do
@@ -129,7 +160,7 @@ if [[ -z "$token" ]]; then
   mkdir -p "$(dirname "$target")"
   render_formula >"$target"
   echo "update-homebrew-tap: HOMEBREW_TAP_TOKEN not set; wrote ${target} (dry-run, no push)."
-  echo "update-homebrew-tap: version=${version} sha256=${sha256}"
+  echo "update-homebrew-tap: version=${version} darwin_arm64_sha256=${darwin_arm64_sha256} source_sha256=${source_sha256}"
   exit 0
 fi
 
@@ -162,4 +193,4 @@ fi
 git add "$formula_path"
 git commit -m "roder ${version}"
 git push origin HEAD
-echo "update-homebrew-tap: pushed roder ${version} to ${tap_repo} (${formula_path}, sha256 ${sha256})."
+echo "update-homebrew-tap: pushed roder ${version} to ${tap_repo} (${formula_path}, darwin_arm64_sha256 ${darwin_arm64_sha256}, source_sha256 ${source_sha256})."
