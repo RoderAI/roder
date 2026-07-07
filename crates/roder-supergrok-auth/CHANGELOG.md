@@ -1,3 +1,11 @@
+## 0.1.3 (2026-07-07)
+
+### Fixes
+
+#### Make provider browser auth robust on WSL and add Kimi Code API key login
+
+Print auth URLs before opening browsers, fall back to WSL-friendly browser commands, and allow `roder auth login kimi-code --api-key [KEY]`.
+
 ## 0.1.2 (2026-06-22)
 
 ### Fixes
