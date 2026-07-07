@@ -360,17 +360,7 @@ fn chrome_status_summary(status: &ChromeStatus) -> String {
 /// Open `url` in the user's default browser via the OS opener. Spawned without
 /// waiting so the TUI never blocks; output is ignored.
 fn open_url_in_browser(url: &str) {
-    use std::process::Command;
-    let mut command = if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    } else {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    let _ = command.spawn();
+    let _ = crate::browser::open_url_detached(url);
 }
 
 fn render_chrome_panel(
