@@ -3099,8 +3099,10 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         Some("login") => {
             let provider = args.get(1).map(String::as_str).unwrap_or("codex");
+            let provider_args = args.get(2..).unwrap_or(&[]);
             match auth_provider_kind(provider)? {
                 AuthProviderKind::Codex => {
+                    ensure_no_auth_provider_args(provider_args)?;
                     eprintln!("Opening browser for Codex sign-in...");
                     let tokens = roder_codex_auth::login().await?;
                     if tokens.account_id.is_empty() {
@@ -3110,6 +3112,7 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     }
                 }
                 AuthProviderKind::SuperGrok => {
+                    ensure_no_auth_provider_args(provider_args)?;
                     let (_tokens, maybe_email) = roder_supergrok_auth::device_flow().await?;
                     if let Some(email) = maybe_email {
                         eprintln!("Signed in with SuperGrok account {email}");
@@ -3118,11 +3121,11 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     }
                 }
                 AuthProviderKind::RoderCloud => {
+                    ensure_no_auth_provider_args(provider_args)?;
                     roder_cloud_login().await?;
                 }
                 AuthProviderKind::KimiCode => {
-                    roder_ext_kimi_code::device_flow().await?;
-                    eprintln!("Signed in with Kimi Code");
+                    kimi_code_login(provider_args).await?;
                 }
             }
             Ok(())
@@ -3144,10 +3147,19 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     Some(_) => println!("supergrok: signed in"),
                     None => println!("supergrok: signed out"),
                 },
-                AuthProviderKind::KimiCode => match roder_ext_kimi_code::status().await? {
-                    Some(_) => println!("kimi-code: signed in"),
-                    None => println!("kimi-code: signed out"),
-                },
+                AuthProviderKind::KimiCode => {
+                    if roder_config::provider_api_key(PROVIDER_KIMI_CODE).is_some()
+                        || env_nonempty("KIMI_CODE_API_KEY").is_some()
+                        || env_nonempty("RODER_KIMI_CODE_API_KEY").is_some()
+                    {
+                        println!("kimi-code: API key configured");
+                    } else {
+                        match roder_ext_kimi_code::status().await? {
+                            Some(_) => println!("kimi-code: signed in"),
+                            None => println!("kimi-code: signed out"),
+                        }
+                    }
+                }
                 AuthProviderKind::RoderCloud => {
                     let configured = env_nonempty("RODER_CLOUD_API_KEY")
                         .or_else(|| env_nonempty("RODER_CLOUD_TOKEN"))
@@ -3175,7 +3187,8 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                 }
                 AuthProviderKind::KimiCode => {
                     roder_ext_kimi_code::logout()?;
-                    println!("kimi-code: signed out");
+                    roder_config::delete_provider_api_key(PROVIDER_KIMI_CODE)?;
+                    println!("kimi-code: signed out and API key removed from config");
                 }
                 AuthProviderKind::RoderCloud => {
                     roder_config::delete_provider_api_key(PROVIDER_RODER_CLOUD)?;
@@ -3185,8 +3198,68 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         _ => anyhow::bail!(
-            "usage: roder auth login|status|logout [codex|supergrok|kimi-code|roder-cloud]"
+            "usage: roder auth login|status|logout [codex|supergrok|kimi-code|roder-cloud]\n\
+             Kimi Code API key login: roder auth login kimi-code --api-key [KEY]"
         ),
+    }
+}
+
+fn ensure_no_auth_provider_args(args: &[String]) -> anyhow::Result<()> {
+    if args.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("unexpected auth login arguments: {}", args.join(" "))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum KimiCodeLoginMode {
+    OAuth,
+    ApiKey(Option<String>),
+}
+
+async fn kimi_code_login(args: &[String]) -> anyhow::Result<()> {
+    match parse_kimi_code_login_mode(args)? {
+        KimiCodeLoginMode::OAuth => {
+            roder_ext_kimi_code::device_flow().await?;
+            eprintln!("Signed in with Kimi Code");
+        }
+        KimiCodeLoginMode::ApiKey(key) => {
+            let key = match key {
+                Some(key) => key,
+                None => {
+                    eprint!("Paste your Kimi Code API key: ");
+                    let mut key = String::new();
+                    std::io::stdin().read_line(&mut key)?;
+                    key
+                }
+            };
+            let key = key.trim().to_string();
+            if key.is_empty() {
+                anyhow::bail!("no Kimi Code API key entered");
+            }
+            roder_config::save_provider_api_key(PROVIDER_KIMI_CODE, &key)?;
+            eprintln!("Saved Kimi Code API key to user config");
+        }
+    }
+    Ok(())
+}
+
+fn parse_kimi_code_login_mode(args: &[String]) -> anyhow::Result<KimiCodeLoginMode> {
+    match args {
+        [] => Ok(KimiCodeLoginMode::OAuth),
+        [flag] if flag == "--oauth" => Ok(KimiCodeLoginMode::OAuth),
+        [flag] if flag == "--api-key" => Ok(KimiCodeLoginMode::ApiKey(None)),
+        [flag, key] if flag == "--api-key" => Ok(KimiCodeLoginMode::ApiKey(Some(key.clone()))),
+        [flag, ..] if flag == "--oauth" => {
+            anyhow::bail!("--oauth does not accept additional arguments")
+        }
+        [flag, ..] if flag == "--api-key" => {
+            anyhow::bail!("--api-key accepts at most one key argument")
+        }
+        _ => {
+            anyhow::bail!("unsupported kimi-code login option; use `--oauth` or `--api-key [KEY]`")
+        }
     }
 }
 
@@ -3464,6 +3537,27 @@ mod tests {
             AuthProviderKind::KimiCode
         );
         assert!(auth_provider_kind("xai").is_err());
+    }
+
+    #[test]
+    fn kimi_code_login_args_select_oauth_or_api_key() {
+        assert_eq!(
+            parse_kimi_code_login_mode(&[]).unwrap(),
+            KimiCodeLoginMode::OAuth
+        );
+        assert_eq!(
+            parse_kimi_code_login_mode(&["--oauth".to_string()]).unwrap(),
+            KimiCodeLoginMode::OAuth
+        );
+        assert_eq!(
+            parse_kimi_code_login_mode(&["--api-key".to_string()]).unwrap(),
+            KimiCodeLoginMode::ApiKey(None)
+        );
+        assert_eq!(
+            parse_kimi_code_login_mode(&["--api-key".to_string(), "key".to_string()]).unwrap(),
+            KimiCodeLoginMode::ApiKey(Some("key".to_string()))
+        );
+        assert!(parse_kimi_code_login_mode(&["--unknown".to_string()]).is_err());
     }
 
     #[test]

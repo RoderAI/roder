@@ -1,4 +1,5 @@
 pub mod app;
+mod browser;
 pub mod config;
 pub mod diff;
 pub mod frame_snapshot;

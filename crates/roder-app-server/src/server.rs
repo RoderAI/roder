@@ -2462,6 +2462,21 @@ impl AppServer {
     }
 
     async fn handle_kimi_code_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
+        let api_key_configured =
+            roder_config::provider_api_key(roder_api::catalog::PROVIDER_KIMI_CODE).is_some()
+                || std::env::var("KIMI_CODE_API_KEY")
+                    .ok()
+                    .is_some_and(|value| !value.trim().is_empty())
+                || std::env::var("RODER_KIMI_CODE_API_KEY")
+                    .ok()
+                    .is_some_and(|value| !value.trim().is_empty());
+        if api_key_configured {
+            return Ok(serde_json::to_value(ProviderAuthResult {
+                signed_in: true,
+                account_id: Some("API key configured".to_string()),
+            })
+            .unwrap());
+        }
         let signed_in = roder_ext_kimi_code::status()
             .await
             .map_err(internal_error)?;
@@ -2479,6 +2494,8 @@ impl AppServer {
             ));
         }
         roder_ext_kimi_code::logout().map_err(internal_error)?;
+        roder_config::delete_provider_api_key(roder_api::catalog::PROVIDER_KIMI_CODE)
+            .map_err(internal_error)?;
         Ok(serde_json::to_value(ProviderAuthResult {
             signed_in: false,
             account_id: None,

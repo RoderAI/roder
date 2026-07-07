@@ -6,6 +6,8 @@ use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::browser::open_browser;
+
 const DEFAULT_OAUTH_HOST: &str = "https://auth.kimi.com";
 pub const DEFAULT_MANAGED_BASE_URL: &str = "https://api.kimi.com/coding/v1";
 pub const DEFAULT_OPEN_PLATFORM_BASE_URL: &str = "https://api.moonshot.ai/v1";
@@ -500,30 +502,6 @@ fn tokens_from_response(response: TokenResponse) -> anyhow::Result<Tokens> {
     Ok(tokens)
 }
 
-fn open_browser(url: &str) -> anyhow::Result<()> {
-    let mut command = browser_command(url);
-    let status = command.status()?;
-    if !status.success() {
-        anyhow::bail!("failed to open browser");
-    }
-    Ok(())
-}
-
-fn browser_command(url: &str) -> std::process::Command {
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(target_os = "linux")]
-    let mut command = std::process::Command::new("xdg-open");
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = std::process::Command::new("rundll32");
-        command.arg("url.dll,FileProtocolHandler");
-        command
-    };
-    command.arg(url);
-    command
-}
-
 fn redacted_body_excerpt(body: &str) -> String {
     const MAX_ERROR_BODY_CHARS: usize = 1_000;
     let mut excerpt = body.chars().take(MAX_ERROR_BODY_CHARS).collect::<String>();
@@ -692,19 +670,5 @@ mod tests {
     #[test]
     fn managed_base_url_defaults_to_kimi_coding_api() {
         assert_eq!(managed_base_url(), DEFAULT_MANAGED_BASE_URL);
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn windows_browser_command_does_not_shell_split_oauth_url() {
-        let url = "https://auth.kimi.com/device?client_id=app";
-        let command = browser_command(url);
-        let args = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-
-        assert_eq!(command.get_program().to_string_lossy(), "rundll32");
-        assert_eq!(args, vec!["url.dll,FileProtocolHandler", url]);
     }
 }

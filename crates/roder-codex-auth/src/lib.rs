@@ -8,8 +8,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod browser;
 mod store;
 
+use browser::open_browser;
 pub use store::Store;
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -116,8 +118,11 @@ pub async fn login() -> anyhow::Result<Tokens> {
     let redirect_uri = format!("http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}");
     let auth_url = authorize_url(&redirect_uri, &pkce_challenge, &state);
 
-    open_browser(&auth_url)?;
     eprintln!("Codex sign-in URL: {auth_url}");
+    open_browser(&auth_url).or_else(|err| {
+        eprintln!("Could not open browser automatically: {err}");
+        Ok::<(), anyhow::Error>(())
+    })?;
 
     let (code, returned_state) = wait_for_callback(listener)?;
     if returned_state != state {
@@ -354,30 +359,6 @@ fn random_string(len: usize) -> String {
         .collect()
 }
 
-fn open_browser(url: &str) -> anyhow::Result<()> {
-    let mut command = browser_command(url);
-    let status = command.status()?;
-    if !status.success() {
-        anyhow::bail!("failed to open browser");
-    }
-    Ok(())
-}
-
-fn browser_command(url: &str) -> std::process::Command {
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(target_os = "linux")]
-    let mut command = std::process::Command::new("xdg-open");
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = std::process::Command::new("rundll32");
-        command.arg("url.dll,FileProtocolHandler");
-        command
-    };
-    command.arg(url);
-    command
-}
-
 fn normalize(tokens: &mut Tokens) {
     if tokens.token_type.is_empty() {
         tokens.token_type = default_token_type();
@@ -428,20 +409,6 @@ mod tests {
         assert!(url.contains("api.connectors.read"));
         assert!(url.contains("codex_cli_simplified_flow=true"));
         assert!(url.contains("code_challenge_method=S256"));
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn windows_browser_command_does_not_shell_split_oauth_url() {
-        let url = "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app";
-        let command = browser_command(url);
-        let args = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-
-        assert_eq!(command.get_program().to_string_lossy(), "rundll32");
-        assert_eq!(args, vec!["url.dll,FileProtocolHandler", url]);
     }
 
     #[test]

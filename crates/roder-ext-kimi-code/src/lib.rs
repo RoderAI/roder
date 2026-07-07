@@ -1,4 +1,5 @@
 mod auth;
+mod browser;
 mod extension;
 mod provider;
 

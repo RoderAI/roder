@@ -10,6 +10,10 @@ use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod browser;
+
+use browser::open_browser;
+
 const ISSUER: &str = "https://auth.x.ai";
 const DISCOVERY_URL: &str = "https://auth.x.ai/.well-known/openid-configuration";
 const CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
@@ -184,9 +188,9 @@ pub async fn login() -> anyhow::Result<Tokens> {
         &nonce,
     );
 
+    eprintln!("SuperGrok sign-in URL: {auth_url}");
     open_browser(&auth_url).or_else(|err| {
         eprintln!("Could not open browser automatically: {err}");
-        eprintln!("Open this SuperGrok sign-in URL manually: {auth_url}");
         Ok::<(), anyhow::Error>(())
     })?;
 
@@ -540,30 +544,6 @@ fn random_string(len: usize) -> String {
         .collect()
 }
 
-fn open_browser(url: &str) -> anyhow::Result<()> {
-    let mut command = browser_command(url);
-    let status = command.status()?;
-    if !status.success() {
-        anyhow::bail!("failed to open browser");
-    }
-    Ok(())
-}
-
-fn browser_command(url: &str) -> std::process::Command {
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(target_os = "linux")]
-    let mut command = std::process::Command::new("xdg-open");
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = std::process::Command::new("rundll32");
-        command.arg("url.dll,FileProtocolHandler");
-        command
-    };
-    command.arg(url);
-    command
-}
-
 fn redacted_body_excerpt(body: &str) -> String {
     const MAX_ERROR_BODY_CHARS: usize = 1_000;
     let mut excerpt = body.chars().take(MAX_ERROR_BODY_CHARS).collect::<String>();
@@ -670,20 +650,6 @@ mod tests {
         assert!(url.contains("referrer=roder"));
         assert!(url.contains("nonce=nonce"));
         assert!(url.contains("code_challenge_method=S256"));
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn windows_browser_command_does_not_shell_split_oauth_url() {
-        let url = "https://auth.x.ai/oauth/authorize?response_type=code&client_id=app";
-        let command = browser_command(url);
-        let args = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-
-        assert_eq!(command.get_program().to_string_lossy(), "rundll32");
-        assert_eq!(args, vec!["url.dll,FileProtocolHandler", url]);
     }
 
     #[test]

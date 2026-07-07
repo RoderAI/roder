@@ -107,6 +107,7 @@ use tokio::process::Command;
 use tui_textarea::TextArea;
 
 use self::commands::built_in_command_catalog;
+use crate::browser;
 use crate::frame_snapshot;
 use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::roadmap::RoadmapModeState;
@@ -6565,7 +6566,7 @@ where
             return;
         };
         let url = provider_api_key_url(&provider.provider_id);
-        match open_url(url).await {
+        match browser::open_url(url).await {
             Ok(()) => self.push_event(format!("opened {} API keys", provider.name)),
             Err(err) => self.record_error(format!("failed to open {url}: {err}")),
         }
@@ -9091,24 +9092,6 @@ fn provider_auth_event(result: &ProviderAuthResult) -> &'static str {
     } else {
         "signed out"
     }
-}
-
-async fn open_url(url: &str) -> anyhow::Result<()> {
-    let mut command = if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", url]);
-        command
-    } else {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    command.spawn()?.wait().await?;
-    Ok(())
 }
 
 fn decode_response<T: serde::de::DeserializeOwned>(res: JsonRpcResponse) -> anyhow::Result<T> {
