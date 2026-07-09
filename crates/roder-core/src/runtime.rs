@@ -6,8 +6,9 @@ use anyhow::Context;
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable, BoxFuture, try_join_all};
 use roder_api::catalog::{
-    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, PROVIDER_GEMINI, REASONING_NONE, built_in_model_profile,
-    built_in_model_profile_for_provider, lookup_model,
+    EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, PROVIDER_GEMINI, REASONING_NONE, REASONING_ULTRA,
+    built_in_model_profile, built_in_model_profile_for_provider, lookup_model,
+    model_supports_reasoning_effort,
 };
 use roder_api::context::PolicyGate;
 use roder_api::events::*;
@@ -47,6 +48,8 @@ use roder_skills::{SkillRegistry, SkillRegistryOptions};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
+mod codex_v2;
+
 use crate::artifacts::{
     ContextArtifactStore as FilesystemContextArtifactStore, default_context_artifact_dir,
 };
@@ -62,8 +65,9 @@ use crate::inference_routing::{
     route_inference_selection, transcript_failure_count_since,
 };
 use crate::instructions::{
-    apply_agent_swarm_mode, apply_model_instruction_overlay, apply_plan_mode, apply_runtime_profile,
-    apply_task_ledger_required, apply_thread_developer_instructions, apply_turn_developer_context,
+    apply_agent_swarm_mode, apply_codex_multi_agent_mode, apply_model_instruction_overlay,
+    apply_plan_mode, apply_runtime_profile, apply_task_ledger_required,
+    apply_thread_developer_instructions, apply_turn_developer_context,
 };
 use crate::policy_gate::DefaultPolicyGate;
 use crate::reliability::{
@@ -342,8 +346,10 @@ pub struct Runtime {
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
     pub(crate) pending_external_tool_calls: Mutex<HashMap<String, PendingExternalToolCall>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
+    active_turn_selections: RwLock<HashMap<TurnId, ModelSelectionMode>>,
     workspace: PathBuf,
     teams: TeamManager,
+    agent_team_spawn_lock: Mutex<()>,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
     pub(crate) goals: Arc<RuntimeGoalController>,
     context_artifacts: roder_api::artifacts::ContextArtifactStore,
@@ -428,10 +434,12 @@ impl Runtime {
             pending_user_inputs: Mutex::new(HashMap::new()),
             pending_external_tool_calls: Mutex::new(HashMap::new()),
             active_turns: RwLock::new(HashMap::new()),
+            active_turn_selections: RwLock::new(HashMap::new()),
             workspace: workspace.clone(),
             teams: TeamManager::new(
                 team_data_dir.unwrap_or_else(crate::teams::default_team_data_dir),
             ),
+            agent_team_spawn_lock: Mutex::new(()),
             roadmaps: Mutex::new(roder_roadmap::RoadmapRuntime::new(
                 workspace,
                 roadmap_data_dir,
@@ -1390,49 +1398,8 @@ impl Runtime {
         team_id: &str,
         req: TeamMemberStartRequest,
     ) -> anyhow::Result<TeamState> {
-        let cfg = self.config.read().await.clone();
-        let thread = self
-            .create_thread_with(CreateThreadRequest {
-                title: Some(req.name.clone()),
-                workspace: self.workspace.display().to_string(),
-                workspace_id: None,
-                root_id: None,
-                provider: req.model_provider.clone(),
-                model: req.model.clone(),
-                selection_mode: None,
-                tool_allowlist: Vec::new(),
-                developer_instructions: None,
-                external_tools: Vec::new(),
-                runner: None,
-            })
-            .await?;
-        let team = self
-            .read_team(team_id)
+        self.start_team_member_with_selection(team_id, req, None)
             .await
-            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
-        let member_id = format!("member-{}", team.members.len());
-        let descriptor = crate::teams::teammate_member(
-            member_id.clone(),
-            req.name,
-            thread.thread_id.clone(),
-            req.model_provider.or(thread.provider),
-            req.model.or(thread.model),
-            cfg.policy_mode,
-        );
-        let mut next = team;
-        next.members.push(descriptor.clone());
-        next.updated_at = OffsetDateTime::now_utc();
-        let next = self.teams.insert(next).await?;
-        self.emit(RoderEvent::TeamMemberStarted(TeamMemberStarted {
-            team_id: next.id.clone(),
-            member_id,
-            member_thread_id: descriptor.thread_id,
-            role: descriptor.role,
-            name: descriptor.name,
-            timestamp: OffsetDateTime::now_utc(),
-        }))
-        .await;
-        Ok(next)
     }
 
     pub async fn message_team_member(
@@ -2136,6 +2103,11 @@ impl Runtime {
                         .await;
                 }
                 runtime.active_turns.write().await.remove(&turn_id_for_task);
+                runtime
+                    .active_turn_selections
+                    .write()
+                    .await
+                    .remove(&turn_id_for_task);
                 if completed {
                     let _ = runtime
                         .continue_active_goal_after_turn(thread_id_for_task)
@@ -2217,6 +2189,7 @@ impl Runtime {
         if let Some(handle) = self.active_turns.write().await.remove(&turn_id) {
             handle.abort.abort();
         }
+        self.active_turn_selections.write().await.remove(&turn_id);
         self.cancel_pending_external_tool_calls_for_turn(&turn_id)
             .await;
         self.emit(RoderEvent::TurnInterrupted(TurnInterrupted {
@@ -2584,6 +2557,14 @@ impl Runtime {
                     .clone()
                     .unwrap_or_else(|| reasoning_for_model(&cfg, &model)),
             );
+            self.active_turn_selections.write().await.insert(
+                turn_id.clone(),
+                ModelSelectionMode::manual(
+                    provider.clone(),
+                    model.clone(),
+                    request_reasoning.level.clone(),
+                ),
+            );
             if let Some(limit) = reliability.record_model_call(
                 &cfg.reliability,
                 runtime_profile == RuntimeProfile::Interactive,
@@ -2636,6 +2617,12 @@ impl Runtime {
             }
             if agent_swarm_mode_active {
                 instructions = apply_agent_swarm_mode(instructions);
+            }
+            if model_supports_reasoning_effort(&model, REASONING_ULTRA) {
+                instructions = apply_codex_multi_agent_mode(
+                    instructions,
+                    request_reasoning.level.as_deref() == Some(REASONING_ULTRA),
+                );
             }
             instructions = self
                 .goals
@@ -4351,6 +4338,10 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 fn should_persist_thread_event(thread_id: &str) -> bool {
     !is_synthetic_event_thread_id(thread_id)
 }
+
+#[cfg(test)]
+#[path = "runtime/codex_v2_tests.rs"]
+mod codex_v2_tests;
 
 #[cfg(test)]
 mod tests {
@@ -6069,6 +6060,63 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("standard_required_first")
         );
+    }
+
+    #[tokio::test]
+    async fn ultra_reasoning_reaches_transport_state_and_enables_proactive_delegation() {
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.6-sol".to_string(),
+            reasoning: Some(REASONING_ULTRA.to_string()),
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_ULTRA));
+        let developer = request
+            .instructions
+            .developer
+            .as_deref()
+            .expect("ultra developer instructions");
+        assert!(developer.contains("Proactive multi-agent delegation is active"));
+    }
+
+    #[tokio::test]
+    async fn lower_sol_effort_requires_explicit_multi_agent_request() {
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.6-sol".to_string(),
+            reasoning: Some(roder_api::catalog::REASONING_MEDIUM.to_string()),
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        let developer = request
+            .instructions
+            .developer
+            .as_deref()
+            .expect("sol developer instructions");
+        assert!(developer.contains("Do not spawn sub-agents unless"));
+        assert!(!developer.contains("Proactive multi-agent delegation is active"));
+    }
+
+    #[tokio::test]
+    async fn luna_does_not_receive_codex_v2_multi_agent_policy() {
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.6-luna".to_string(),
+            reasoning: Some(roder_api::catalog::REASONING_MAX.to_string()),
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        let developer = request
+            .instructions
+            .developer
+            .as_deref()
+            .unwrap_or_default();
+        assert!(!developer.contains("Do not spawn sub-agents unless"));
+        assert!(!developer.contains("Proactive multi-agent delegation is active"));
     }
 
     #[tokio::test]

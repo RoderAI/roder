@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use roder_api::catalog::{
     EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, REASONING_HIGH, REASONING_LOW, REASONING_MAX,
-    REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE, REASONING_XHIGH, built_in_model_profile,
-    built_in_model_profiles, lookup_model, model_supports_reasoning_effort,
+    REASONING_MEDIUM, REASONING_MINIMAL, REASONING_NONE, REASONING_ULTRA, REASONING_XHIGH,
+    built_in_model_profile, built_in_model_profiles, lookup_model, model_supports_reasoning_effort,
 };
 use roder_api::inference::{
     ModelHarnessProfile, ModelInstructionOverlay, ModelProfileReasoning, ModelSchemaPolicy,
@@ -162,7 +162,7 @@ fn validate_edit_tool_name(value: &str) -> anyhow::Result<()> {
 fn validate_reasoning_name(value: &str) -> anyhow::Result<()> {
     match value {
         REASONING_NONE | REASONING_MINIMAL | REASONING_LOW | REASONING_MEDIUM | REASONING_HIGH
-        | REASONING_XHIGH | REASONING_MAX => Ok(()),
+        | REASONING_XHIGH | REASONING_MAX | REASONING_ULTRA => Ok(()),
         other => anyhow::bail!("unsupported model profile reasoning effort {other:?}"),
     }
 }
@@ -302,6 +302,32 @@ mod tests {
                 .orientation
                 .as_deref(),
             Some(REASONING_XHIGH)
+        );
+    }
+
+    #[test]
+    fn model_profile_validation_accepts_ultra_for_supported_models() {
+        let mut overrides = ModelProfileOverrides::default();
+        overrides.profiles.insert(
+            "gpt-5.6-sol".to_string(),
+            ModelHarnessProfileOverride {
+                reasoning: ModelProfileReasoningOverride {
+                    orientation: Some(REASONING_ULTRA.to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let profiles = resolve_model_profiles(&overrides).unwrap();
+        assert_eq!(
+            profiles
+                .get("gpt-5.6-sol")
+                .unwrap()
+                .reasoning
+                .orientation
+                .as_deref(),
+            Some(REASONING_ULTRA)
         );
     }
 }

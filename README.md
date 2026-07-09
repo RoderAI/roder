@@ -30,7 +30,7 @@ Quickstart for bundled chat providers:
 | Provider | Setup | Example model |
 | --- | --- | --- |
 | OpenAI | `export OPENAI_API_KEY=...` | `openai/gpt-5.5` |
-| Codex | `export OPENAI_API_KEY=...` | `codex/gpt-5.5` |
+| Codex | `roder auth login codex` | `codex/gpt-5.6-sol` |
 | Anthropic | `export ANTHROPIC_API_KEY=...` | `anthropic/claude-sonnet-4-6` |
 | Gemini | `export GEMINI_API_KEY=...` | `gemini/gemini-3.5-flash` |
 | Vertex AI | `export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json` | `vertex/gemini-3.5-flash` |
@@ -56,6 +56,13 @@ roder auth status
 roder providers list
 roder app-server --listen 127.0.0.1:0
 ```
+
+The Codex OAuth picker includes GPT-5.6 Sol, Terra, and Luna alongside GPT-5.5,
+GPT-5.4, GPT-5.4 Mini, and GPT-5.3 Codex Spark. Sol and Terra support reasoning
+efforts through Ultra; Luna supports efforts through Max. Ultra keeps the
+selected mode visible in Roder, sends the model's `max` wire effort, and enables
+proactive multi-agent delegation, which can increase subscription usage. Model
+availability still depends on the signed-in Codex account.
 
 Media and speech providers use their own commands:
 

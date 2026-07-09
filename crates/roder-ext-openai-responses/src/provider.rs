@@ -1,6 +1,6 @@
 use roder_api::catalog::{
     PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI,
-    lookup_model_for_provider, models_for_provider,
+    REASONING_MAX, REASONING_ULTRA, lookup_model_for_provider, models_for_provider,
 };
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
@@ -242,7 +242,10 @@ impl OpenAiResponsesEngine {
                 }
                 ResponsesProviderProfile::OpenAi => {
                     body["reasoning"] = match request.reasoning.level.as_deref() {
-                        Some(level) => json!({ "effort": level, "summary": "auto" }),
+                        Some(level) => json!({
+                            "effort": openai_reasoning_effort_for_request(level),
+                            "summary": "auto"
+                        }),
                         None => json!({ "summary": "auto" }),
                     };
                     body["include"] = json!(["reasoning.encrypted_content"]);
@@ -295,6 +298,14 @@ impl OpenAiResponsesEngine {
                 json!([{ "type": "compaction", "compact_threshold": threshold }]);
         }
         (body, tool_name_map)
+    }
+}
+
+fn openai_reasoning_effort_for_request(effort: &str) -> &str {
+    if effort == REASONING_ULTRA {
+        REASONING_MAX
+    } else {
+        effort
     }
 }
 
@@ -3040,6 +3051,17 @@ mod tests {
         let body = OpenAiResponsesEngine::map_request(&request);
 
         assert_eq!(body["parallel_tool_calls"], false);
+    }
+
+    #[test]
+    fn maps_ultra_mode_to_max_openai_reasoning_effort() {
+        let mut request = request();
+        request.reasoning.level = Some(REASONING_ULTRA.to_string());
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+
+        assert_eq!(body["reasoning"]["effort"], REASONING_MAX);
+        assert_eq!(request.reasoning.level.as_deref(), Some(REASONING_ULTRA));
     }
 
     #[test]

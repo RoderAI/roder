@@ -10,6 +10,7 @@ use roder_api::tools::{
 };
 use roder_api::transcript::TranscriptItem;
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
+use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
 use serde_json::json;
 use tokio::sync::Notify;
 
@@ -23,6 +24,7 @@ struct ParallelToolLoopEngine {
 }
 
 struct AgentControlEngine {
+    parent_thread_id: Mutex<Option<String>>,
     thread_ids: Mutex<Vec<String>>,
     tool_names_by_thread: Mutex<Vec<(String, Vec<String>)>>,
 }
@@ -385,7 +387,7 @@ impl InferenceEngine for AgentControlEngine {
         ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
-        let is_parent = ctx.thread_id == "thread-agent-control";
+        let is_parent = self.parent_thread_id.lock().unwrap().as_deref() == Some(ctx.thread_id);
         let has_result = |name: &str| {
             request.transcript.iter().any(|item| {
                 matches!(
@@ -1191,29 +1193,44 @@ async fn runtime_uses_custom_model_edit_tool_override() {
 #[tokio::test]
 async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
     let engine = Arc::new(AgentControlEngine {
+        parent_thread_id: Mutex::new(None),
         thread_ids: Mutex::new(Vec::new()),
         tool_names_by_thread: Mutex::new(Vec::new()),
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
+    let thread_root = std::env::temp_dir().join(format!(
+        "roder-agent-control-tool-threads-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let team_root = std::env::temp_dir().join(format!(
+        "roder-agent-control-tool-teams-{}",
+        uuid::Uuid::new_v4()
+    ));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
+    }));
     let runtime = Arc::new(
         Runtime::new(
             builder.build().unwrap(),
             RuntimeConfig {
                 policy_mode: roder_api::policy_mode::PolicyMode::Bypass,
-                team_data_dir: Some(std::env::temp_dir().join(format!(
-                    "roder-agent-control-tools-{}",
-                    uuid::Uuid::new_v4()
-                ))),
+                team_data_dir: Some(team_root.clone()),
                 ..RuntimeConfig::default()
             },
         )
         .unwrap(),
     );
+    let parent_thread_id = runtime
+        .create_thread(Some("Agent control parent".to_string()))
+        .await
+        .unwrap()
+        .thread_id;
+    *engine.parent_thread_id.lock().unwrap() = Some(parent_thread_id.clone());
     let mut rx = runtime.subscribe_events();
     let _turn_id = runtime
         .start_turn(StartTurnRequest {
-            thread_id: "thread-agent-control".to_string(),
+            thread_id: parent_thread_id.clone(),
             message: "delegate this".to_string(),
             images: Vec::new(),
             provider_override: None,
@@ -1227,11 +1244,11 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
         .await
         .unwrap();
 
-    wait_for_completed(&mut rx, "thread-agent-control").await;
+    wait_for_completed(&mut rx, &parent_thread_id).await;
 
     let teams = runtime.list_teams().await;
     assert_eq!(teams.len(), 1);
-    assert_eq!(teams[0].lead_thread_id, "thread-agent-control");
+    assert_eq!(teams[0].lead_thread_id, parent_thread_id);
     assert_eq!(teams[0].members.len(), 2);
     assert_eq!(teams[0].members[1].name, "reviewer");
     assert_eq!(
@@ -1240,12 +1257,12 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
     );
     assert_ne!(teams[0].members[1].thread_id, teams[0].lead_thread_id);
     let thread_ids = engine.thread_ids.lock().unwrap().clone();
-    assert!(thread_ids.contains(&"thread-agent-control".to_string()));
-    assert!(thread_ids.iter().any(|id| id != "thread-agent-control"));
+    assert!(thread_ids.contains(&teams[0].lead_thread_id));
+    assert!(thread_ids.iter().any(|id| id != &teams[0].lead_thread_id));
     let tool_names_by_thread = engine.tool_names_by_thread.lock().unwrap().clone();
     let parent_tools = tool_names_by_thread
         .iter()
-        .find(|(thread_id, _)| thread_id == "thread-agent-control")
+        .find(|(thread_id, _)| thread_id == &teams[0].lead_thread_id)
         .map(|(_, tools)| tools)
         .unwrap();
     assert!(parent_tools.contains(&"spawn_agent".to_string()));
@@ -1255,7 +1272,7 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
     assert!(parent_tools.contains(&"close_agent".to_string()));
     let child_tools = tool_names_by_thread
         .iter()
-        .find(|(thread_id, _)| thread_id != "thread-agent-control")
+        .find(|(thread_id, _)| thread_id != &teams[0].lead_thread_id)
         .map(|(_, tools)| tools)
         .unwrap();
     assert!(child_tools.contains(&"spawn_agent".to_string()));
@@ -1263,6 +1280,9 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
     assert!(child_tools.contains(&"list_agents".to_string()));
     assert!(child_tools.contains(&"wait_agent".to_string()));
     assert!(child_tools.contains(&"close_agent".to_string()));
+
+    let _ = std::fs::remove_dir_all(thread_root);
+    let _ = std::fs::remove_dir_all(team_root);
 }
 
 #[tokio::test]
