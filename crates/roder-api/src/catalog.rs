@@ -399,7 +399,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_XAI,
         name: "xAI",
         kind: PROVIDER_KIND_XAI,
-        default_model: "grok-4.3",
+        default_model: "grok-4.5",
         base_url: Some("https://api.x.ai/v1"),
         env_key: Some("XAI_API_KEY"),
         env_aliases: XAI_ENV_ALIASES,
@@ -410,7 +410,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_SUPERGROK,
         name: "SuperGrok",
         kind: PROVIDER_KIND_XAI,
-        default_model: "grok-build-0.1",
+        default_model: "grok-4.5",
         base_url: Some("https://api.x.ai/v1"),
         env_key: None,
         env_aliases: &[],
@@ -745,6 +745,17 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     xai_model(
         PROVIDER_XAI,
+        "grok-4.5",
+        "Grok 4.5",
+        "xAI flagship model for coding, agentic tasks, knowledge work, and configurable reasoning.",
+        500_000,
+        REASONING_HIGH,
+        XAI_REASONING,
+        true,
+        false,
+    ),
+    xai_model(
+        PROVIDER_XAI,
         "grok-4.3",
         "Grok 4.3",
         "xAI flagship model for chat, coding, tool use, and configurable reasoning.",
@@ -784,6 +795,17 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_NONE,
         XAI_NO_REASONING,
+        true,
+        false,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-4.5",
+        "Grok 4.5",
+        "SuperGrok OAuth access to xAI Grok 4.5 for coding, agentic tasks, and knowledge work.",
+        500_000,
+        REASONING_HIGH,
+        XAI_REASONING,
         true,
         false,
     ),
@@ -1792,10 +1814,12 @@ mod tests {
                 "gemini-3.1-pro-preview",
                 "gemini-3-flash-preview",
                 "gemini-3.1-flash-lite-preview",
+                "grok-4.5",
                 "grok-4.3",
                 "grok-4.20-multi-agent-0309",
                 "grok-4.20-0309-reasoning",
                 "grok-4.20-0309-non-reasoning",
+                "grok-4.5",
                 "grok-build-0.1",
                 "grok-composer-2.5-fast",
                 "gpt-5.5",
@@ -1862,8 +1886,8 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 4);
-        assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 4);
-        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 2);
+        assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 5);
+        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
@@ -2101,6 +2125,12 @@ mod tests {
 
     #[test]
     fn supergrok_catalog_exposes_build_and_composer_with_expected_context_windows() {
+        let grok45 = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-4.5").unwrap();
+        assert_eq!(grok45.display_name, "Grok 4.5");
+        assert_eq!(grok45.context_window, 500_000);
+        assert_eq!(grok45.auto_compact_token_limit, 450_000);
+        assert_eq!(grok45.default_reasoning, REASONING_HIGH);
+
         let build = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-build-0.1").unwrap();
         assert_eq!(build.display_name, "Grok Build 0.1");
         assert_eq!(build.context_window, 500_000);
@@ -2121,6 +2151,7 @@ mod tests {
         assert_eq!(
             visible,
             vec![
+                "grok-4.5".to_string(),
                 "grok-build-0.1".to_string(),
                 "grok-composer-2.5-fast".to_string()
             ]
@@ -2129,6 +2160,21 @@ mod tests {
 
     #[test]
     fn xai_catalog_entries_match_current_grok_contract() {
+        let grok45 = models_for_provider(PROVIDER_XAI, false)
+            .into_iter()
+            .find(|model| model.id == "grok-4.5")
+            .unwrap();
+        assert_eq!(grok45.context_window, Some(500_000));
+        assert_eq!(grok45.default_reasoning.as_deref(), Some(REASONING_HIGH));
+        assert_eq!(
+            grok45
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort.as_str())
+                .collect::<Vec<_>>(),
+            vec![REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH]
+        );
+
         let grok43 = models_for_provider(PROVIDER_XAI, false)
             .into_iter()
             .find(|model| model.id == "grok-4.3")

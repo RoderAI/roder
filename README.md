@@ -34,8 +34,8 @@ Quickstart for bundled chat providers:
 | Anthropic | `export ANTHROPIC_API_KEY=...` | `anthropic/claude-sonnet-4-6` |
 | Gemini | `export GEMINI_API_KEY=...` | `gemini/gemini-3.5-flash` |
 | Vertex AI | `export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json` | `vertex/gemini-3.5-flash` |
-| xAI | `export XAI_API_KEY=...` | `xai/grok-4.3` |
-| SuperGrok | `roder auth login supergrok` | `supergrok/grok-build-0.1` |
+| xAI | `export XAI_API_KEY=...` | `xai/grok-4.5` |
+| SuperGrok | `roder auth login supergrok` | `supergrok/grok-4.5` |
 | OpenCode Zen | `export OPENCODE_API_KEY=...` | `opencode/gpt-5.5` |
 | OpenCode Go | `export OPENCODE_GO_API_KEY=...` | `opencode-go/kimi-k2.6` |
 | OpenRouter | `export OPENROUTER_API_KEY=...` | `openrouter/x-ai/grok-build-0.1` |
@@ -365,7 +365,7 @@ See [`docs/roder-remote-runners.md`](./docs/roder-remote-runners.md) for mounts,
 
 OpenAI hosted web search is enabled by default. External web search provider setup is documented in [`docs/roder-web-search-extensions.md`](./docs/roder-web-search-extensions.md).
 
-xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.3` with `XAI_API_KEY` for direct xAI API-key auth, or select `supergrok/grok-build-0.1` (or `supergrok/grok-4.3`) in the TUI to start SuperGrok OAuth. Models for SuperGrok are kept up-to-date by querying the xAI `/models` endpoint over the OAuth session (with disk cache).
+xAI Grok and SuperGrok provider setup is documented in [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md). Use `xai/grok-4.5` with `XAI_API_KEY` for direct xAI API-key auth, or select `supergrok/grok-4.5` (or `supergrok/grok-build-0.1`) in the TUI to start SuperGrok OAuth. Models for SuperGrok are kept up-to-date by querying the xAI `/models` endpoint over the OAuth session (with disk cache).
 
 OpenRouter provider setup is documented in [`docs/roder-openrouter-provider.md`](./docs/roder-openrouter-provider.md). Use `openrouter/x-ai/grok-build-0.1` with `OPENROUTER_API_KEY`; direct xAI uses `grok-build-0.1`, while OpenRouter uses the `x-ai/grok-build-0.1` slug.
 
