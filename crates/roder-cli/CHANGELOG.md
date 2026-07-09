@@ -1,3 +1,13 @@
+## 0.1.10 (2026-07-09)
+
+### Fixes
+
+#### Add Grok 4.5 to xAI and SuperGrok providers
+
+Expose `grok-4.5` (500k context, default high reasoning, low/medium/high) as the
+default model for both the `xai` API-key provider and SuperGrok OAuth. Keep
+legacy Grok 4.3 / 4.20 and SuperGrok Build/Composer entries selectable.
+
 ## 0.1.9 (2026-07-07)
 
 ### Fixes
