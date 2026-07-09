@@ -5,7 +5,7 @@ Roder exposes Grok models through two provider ids:
 - `xai`: direct xAI API-key auth with `XAI_API_KEY`.
 - `supergrok`: SuperGrok subscription OAuth with `roder auth login supergrok`.
 
-Both providers use `provider/model` labels such as `xai/grok-4.3`, `supergrok/grok-build-0.1`, and `supergrok/grok-4.3`. SuperGrok now dynamically queries the xAI `/models` (and `/v1/models`) endpoint (with caching + background refresh, using the SuperGrok OAuth token) to surface the latest models and basic capabilities from xAI. Static catalog entries (including grok-build-0.1) act as the curated fallback.
+Both providers use `provider/model` labels such as `xai/grok-4.5`, `supergrok/grok-4.5`, and `supergrok/grok-build-0.1`. SuperGrok now dynamically queries the xAI `/models` (and `/v1/models`) endpoint (with caching + background refresh, using the SuperGrok OAuth token) to surface the latest models and basic capabilities from xAI. Static catalog entries (including grok-4.5 and grok-build-0.1) act as the curated fallback.
 
 ## Direct xAI API Key
 
@@ -13,7 +13,7 @@ Set an API key in the environment:
 
 ```sh
 export XAI_API_KEY=...
-roder --provider xai/grok-4.3
+roder --provider xai/grok-4.5
 ```
 
 `RODER_XAI_API_KEY` is also accepted. The xAI base URL defaults to `https://api.x.ai/v1` and can be overridden with `RODER_XAI_BASE_URL` or `XAI_BASE_URL` for compatible test endpoints.
@@ -49,8 +49,10 @@ OAuth aliases `grok-oauth`, `xai-oauth`, `x-ai-oauth`, and `xai-grok-oauth` norm
 
 Current visible Grok entries:
 
+- `grok-4.5`: 500,000 token context, default high reasoning (low/medium/high). Primary default for xAI and SuperGrok.
 - `grok-4.3`: 1,000,000 token context (legacy via static catalog).
-- `grok-build-0.1`: Grok Build (xAI's agentic coding model); ~256k context. Primary default for SuperGrok; fetched live via `/models` when signed in.
+- `grok-build-0.1`: Grok Build (xAI's agentic coding model); 500k context. Visible on SuperGrok; fetched live via `/models` when signed in.
+- `grok-composer-2.5-fast`: 200,000 token context SuperGrok coding model (no image inputs).
 - `grok-4.20-multi-agent-0309`: 2,000,000 token context, 1,800,000 token auto-compaction threshold.
 - `grok-4.20-0309-reasoning`: 2,000,000 token context, 1,800,000 token auto-compaction threshold.
 - `grok-4.20-0309-non-reasoning`: 2,000,000 token context, 1,800,000 token auto-compaction threshold.

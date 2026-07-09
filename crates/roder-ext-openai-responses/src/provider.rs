@@ -342,7 +342,8 @@ impl ResponsesToolNameMap {
 }
 
 fn xai_supports_reasoning(model: &str) -> bool {
-    model == "grok-4.3"
+    model == "grok-4.5"
+        || model == "grok-4.3"
         || model == "grok-4.20-0309-reasoning"
         || model.starts_with("grok-4.20-multi-agent-")
 }
