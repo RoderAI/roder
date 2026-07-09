@@ -6,6 +6,7 @@ use crate::inference::{
 };
 
 pub mod image_models;
+mod openai_codex;
 mod synthetic;
 mod xiaomi_mimo;
 
@@ -64,8 +65,9 @@ pub const REASONING_MEDIUM: &str = "medium";
 pub const REASONING_HIGH: &str = "high";
 pub const REASONING_XHIGH: &str = "xhigh";
 pub const REASONING_MAX: &str = "max";
+pub const REASONING_ULTRA: &str = "ultra";
 
-pub const DEFAULT_MODEL_ID: &str = "gpt-5.5";
+pub const DEFAULT_MODEL_ID: &str = "gpt-5.6-sol";
 pub const EDIT_TOOL_PATCH: &str = "patch";
 pub const EDIT_TOOL_EDIT: &str = "edit";
 
@@ -514,6 +516,9 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
 ];
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
+    openai_codex::GPT_56_SOL,
+    openai_codex::GPT_56_TERRA,
+    openai_codex::GPT_56_LUNA,
     openai_model(
         "gpt-5.5",
         "GPT-5.5",
@@ -523,6 +528,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         true,
         STANDARD_REASONING,
     ),
+    openai_codex::GPT_54,
     openai_model(
         "gpt-5.4-mini",
         "GPT-5.4-Mini",
@@ -1790,7 +1796,11 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
                 "gpt-5.5",
+                "gpt-5.4",
                 "gpt-5.4-mini",
                 "gpt-5.3-codex-spark",
                 "claude-fable-5",
@@ -1880,8 +1890,8 @@ mod tests {
 
     #[test]
     fn provider_model_lists_match_gode_catalog() {
-        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 2);
-        assert_eq!(models_for_codex(false).len(), 3);
+        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 6);
+        assert_eq!(models_for_codex(false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
@@ -1903,6 +1913,139 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_KIMI_CODE, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_SYNTHETIC, false).len(), 14);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
+    }
+
+    #[test]
+    fn codex_model_list_matches_current_subscription_roster() {
+        let codex_provider = built_in_providers()
+            .iter()
+            .find(|provider| provider.id == PROVIDER_CODEX)
+            .expect("codex provider");
+        assert_eq!(codex_provider.default_model, "gpt-5.6-sol");
+
+        let ids = models_for_codex(false)
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            vec![
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+                "gpt-5.5",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.3-codex-spark",
+            ]
+        );
+    }
+
+    #[test]
+    fn new_codex_models_match_current_subscription_metadata() {
+        let assert_model = |id: &str,
+                            name: &str,
+                            description: &str,
+                            default_reasoning: &str,
+                            efforts: &[&str],
+                            context_window: u32,
+                            max_context_window: u32| {
+            let model = lookup_model_for_provider(PROVIDER_OPENAI, id).unwrap();
+
+            assert_eq!(model.display_name, name, "{id} display name");
+            assert_eq!(model.description, description, "{id} description");
+            assert_eq!(model.provider, PROVIDER_OPENAI, "{id} provider");
+            assert_eq!(
+                model.default_reasoning, default_reasoning,
+                "{id} default reasoning"
+            );
+            assert_eq!(
+                model
+                    .supported_reasoning
+                    .iter()
+                    .map(|option| option.effort)
+                    .collect::<Vec<_>>(),
+                efforts,
+                "{id} efforts"
+            );
+            assert_eq!(model.context_window, context_window, "{id} context window");
+            assert_eq!(
+                model.max_context_window, max_context_window,
+                "{id} max context window"
+            );
+            assert_eq!(
+                model.auto_compact_token_limit,
+                context_window.saturating_mul(9) / 10,
+                "{id} auto compact limit"
+            );
+            assert!(model.supports_compaction, "{id} compaction support");
+            assert!(model.supports_images, "{id} image support");
+            assert!(model.supports_tools, "{id} tool support");
+            assert!(!model.hidden, "{id} visibility");
+        };
+
+        assert_model(
+            "gpt-5.6-sol",
+            "GPT-5.6-Sol",
+            "Latest frontier agentic coding model.",
+            REASONING_LOW,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+                REASONING_ULTRA,
+            ],
+            372_000,
+            372_000,
+        );
+        assert_model(
+            "gpt-5.6-terra",
+            "GPT-5.6-Terra",
+            "Balanced agentic coding model for everyday work.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+                REASONING_ULTRA,
+            ],
+            372_000,
+            372_000,
+        );
+        assert_model(
+            "gpt-5.6-luna",
+            "GPT-5.6-Luna",
+            "Fast and affordable agentic coding model.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            372_000,
+            372_000,
+        );
+        assert_model(
+            "gpt-5.4",
+            "GPT-5.4",
+            "Strong model for everyday coding.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+            ],
+            272_000,
+            1_000_000,
+        );
     }
 
     #[test]

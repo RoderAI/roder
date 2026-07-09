@@ -92,6 +92,9 @@ When the plan is ready for approval, call `exit_plan_mode` with:
 
 After the user approves, the harness exits plan mode and the turn may continue with implementation. If the user rejects, keep discussing and revise the plan."#;
 
+const EXPLICIT_REQUEST_ONLY_MULTI_AGENT_INSTRUCTIONS: &str = "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.";
+const PROACTIVE_MULTI_AGENT_INSTRUCTIONS: &str = "Proactive multi-agent delegation is active. Any earlier instruction requiring an explicit user request before spawning sub-agents no longer applies. Use sub-agents when parallel work would materially improve speed or quality. This mode remains active until a later multi-agent mode developer message changes it.";
+
 const LITERAL_TOOL_OUTPUTS_OVERLAY: &str = r#"## Model Harness Profile
 
 Tool outputs are literal evidence from the harness. Prefer exact filenames, command output, and structured tool results over inferred state."#;
@@ -186,6 +189,27 @@ pub fn apply_agent_swarm_mode(mut instructions: InstructionBundle) -> Instructio
     instructions
 }
 
+/// Apply the effort-derived Codex V2 delegation policy. Ultra is a client-side
+/// orchestration mode layered over maximum model reasoning; lower efforts stay
+/// explicit-request-only so changing effort also changes delegation policy.
+pub fn apply_codex_multi_agent_mode(
+    mut instructions: InstructionBundle,
+    proactive: bool,
+) -> InstructionBundle {
+    let mode_instructions = if proactive {
+        PROACTIVE_MULTI_AGENT_INSTRUCTIONS
+    } else {
+        EXPLICIT_REQUEST_ONLY_MULTI_AGENT_INSTRUCTIONS
+    };
+    instructions.developer = Some(match instructions.developer {
+        Some(existing) if !existing.trim().is_empty() => {
+            format!("{existing}\n\n{mode_instructions}")
+        }
+        _ => mode_instructions.to_string(),
+    });
+    instructions
+}
+
 pub fn apply_model_instruction_overlay(
     mut instructions: InstructionBundle,
     profile: &ModelHarnessProfile,
@@ -221,6 +245,32 @@ mod tests {
         let developer = with_existing.developer.expect("developer instructions");
         assert!(developer.starts_with("existing dev rules"));
         assert!(developer.contains("agent_swarm"));
+    }
+
+    #[test]
+    fn ultra_reasoning_injects_proactive_multi_agent_policy() {
+        let injected = apply_codex_multi_agent_mode(
+            InstructionBundle {
+                developer: Some("existing dev rules".to_string()),
+                ..InstructionBundle::default()
+            },
+            true,
+        );
+        let developer = injected.developer.expect("developer instructions");
+
+        assert!(developer.starts_with("existing dev rules"));
+        assert!(developer.contains("Proactive multi-agent delegation is active"));
+        assert!(developer.contains("parallel work would materially improve speed or quality"));
+        assert!(developer.contains("until a later multi-agent mode developer message changes it"));
+    }
+
+    #[test]
+    fn lower_reasoning_injects_explicit_request_only_multi_agent_policy() {
+        let injected = apply_codex_multi_agent_mode(InstructionBundle::default(), false);
+        let developer = injected.developer.expect("developer instructions");
+
+        assert!(developer.contains("Do not spawn sub-agents unless"));
+        assert!(developer.contains("AGENTS.md/skill instructions explicitly ask"));
     }
 
     #[test]

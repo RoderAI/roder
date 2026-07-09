@@ -9,7 +9,8 @@ use roder_api::capabilities::CapabilityDecision;
 use roder_api::catalog::{
     PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_FIREWORKS, PROVIDER_MOCK,
     PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
-    PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_XAI, REASONING_HIGH, REASONING_MEDIUM,
+    PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_XAI, REASONING_HIGH, REASONING_LOW,
+    REASONING_MAX, REASONING_MEDIUM, REASONING_ULTRA, REASONING_XHIGH,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -3761,6 +3762,100 @@ async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
             .iter()
             .any(|model| model.id == "grok-composer-2.5-fast")
     );
+}
+
+#[tokio::test]
+async fn providers_list_exposes_current_codex_subscription_roster_and_ultra_selection() {
+    let _guard = PROVIDER_TEST_LOCK.lock().await;
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let providers: ProvidersListResult = request(&client, "providers/list", None).await;
+    let codex = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == PROVIDER_CODEX)
+        .expect("codex provider should be listed");
+    assert_eq!(
+        codex
+            .models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex-spark",
+        ]
+    );
+
+    let full_gpt_56_efforts = vec![
+        REASONING_LOW,
+        REASONING_MEDIUM,
+        REASONING_HIGH,
+        REASONING_XHIGH,
+        REASONING_MAX,
+        REASONING_ULTRA,
+    ];
+    for model_id in ["gpt-5.6-sol", "gpt-5.6-terra"] {
+        let model = codex
+            .models
+            .iter()
+            .find(|model| model.id == model_id)
+            .unwrap_or_else(|| panic!("{model_id} should be listed"));
+        assert_eq!(
+            model
+                .supported_reasoning
+                .iter()
+                .map(|effort| effort.effort.as_str())
+                .collect::<Vec<_>>(),
+            full_gpt_56_efforts,
+            "{model_id} reasoning efforts"
+        );
+    }
+
+    let luna = codex
+        .models
+        .iter()
+        .find(|model| model.id == "gpt-5.6-luna")
+        .expect("gpt-5.6-luna should be listed");
+    assert_eq!(
+        luna.supported_reasoning
+            .iter()
+            .map(|effort| effort.effort.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            REASONING_LOW,
+            REASONING_MEDIUM,
+            REASONING_HIGH,
+            REASONING_XHIGH,
+            REASONING_MAX,
+        ]
+    );
+
+    let selected: ProviderSelectResult = request(
+        &client,
+        "providers/select",
+        Some(
+            serde_json::to_value(ProviderSelectParams {
+                provider: PROVIDER_CODEX.to_string(),
+                model: Some("gpt-5.6-sol".to_string()),
+                reasoning: Some(REASONING_ULTRA.to_string()),
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(selected.provider, PROVIDER_CODEX);
+    assert_eq!(selected.model, "gpt-5.6-sol");
+    assert_eq!(selected.reasoning, REASONING_ULTRA);
 }
 
 #[tokio::test]

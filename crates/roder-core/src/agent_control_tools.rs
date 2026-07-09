@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use roder_api::events::{RoderEvent, TeamMemberCompleted, ThreadId, TurnId};
 use roder_api::inference::ToolCallCompleted;
-use roder_api::teams::{AgentTeamDisplayMode, TeamId, TeamMemberDescriptor, TeamMemberStatus};
+use roder_api::teams::{TeamId, TeamMemberDescriptor, TeamMemberStatus};
 use roder_api::tools::{ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec};
 use serde::Deserialize;
 use serde_json::json;
@@ -10,7 +10,7 @@ use time::OffsetDateTime;
 use tokio::time::{Duration, Instant};
 
 use crate::runtime::Runtime;
-use crate::teams::{TeamMemberStartRequest, TeamStartRequest, TeamState};
+use crate::teams::{TeamMemberStartRequest, TeamState};
 
 const SPAWN_AGENT: &str = "spawn_agent";
 const SEND_MESSAGE: &str = "send_message";
@@ -257,7 +257,7 @@ impl Runtime {
     ) -> ToolResult {
         match call.name.as_str() {
             SPAWN_AGENT => {
-                self.spawn_agent_tool(parent_thread_id, call, arguments)
+                self.spawn_agent_tool(parent_thread_id, parent_turn_id, call, arguments)
                     .await
             }
             SEND_MESSAGE | FOLLOWUP_TASK => {
@@ -287,6 +287,7 @@ impl Runtime {
     async fn spawn_agent_tool(
         self: &Arc<Self>,
         parent_thread_id: &ThreadId,
+        parent_turn_id: &TurnId,
         call: &ToolCallCompleted,
         arguments: serde_json::Value,
     ) -> ToolResult {
@@ -301,28 +302,15 @@ impl Runtime {
                 "task_name and message are required",
             );
         }
-        let team = match self.team_for_caller(parent_thread_id).await {
-            Some(team) => team,
-            None => match self
-                .start_team(TeamStartRequest {
-                    lead_thread_id: Some(parent_thread_id.clone()),
-                    display_mode: AgentTeamDisplayMode::InProcess,
-                    members: Vec::new(),
-                })
-                .await
-            {
-                Ok(team) => team,
-                Err(err) => return control_error(call, "spawn_failed", err.to_string()),
-            },
-        };
         let member_name = args
             .agent_type
             .as_deref()
             .map(|role| format!("{}:{role}", args.task_name))
             .unwrap_or_else(|| args.task_name.clone());
         let next = match self
-            .start_team_member(
-                &team.id,
+            .spawn_team_member_for_caller(
+                parent_thread_id,
+                parent_turn_id,
                 TeamMemberStartRequest {
                     name: member_name,
                     model_provider: args.model_provider,
@@ -425,11 +413,13 @@ impl Runtime {
             .flat_map(|team| {
                 let team_id = team.id.clone();
                 let prefix = prefix.clone();
+                let caller_thread_id = parent_thread_id.clone();
                 team.members
                     .into_iter()
                     .filter(|member| !matches!(member.status, TeamMemberStatus::Closed))
                     .filter(move |member| {
                         member.role != roder_api::teams::TeamMemberRole::Lead
+                            && member.thread_id != caller_thread_id
                             && (prefix.is_empty() || member.name.starts_with(&prefix))
                     })
                     .map(move |member| {
@@ -472,9 +462,13 @@ impl Runtime {
                 .into_iter()
                 .flat_map(|team| {
                     let team_id = team.id;
+                    let caller_thread_id = parent_thread_id.clone();
                     team.members
                         .into_iter()
-                        .filter(|member| member.role != roder_api::teams::TeamMemberRole::Lead)
+                        .filter(move |member| {
+                            member.role != roder_api::teams::TeamMemberRole::Lead
+                                && member.thread_id != caller_thread_id
+                        })
                         .map(move |member| AgentTarget {
                             team_id: team_id.clone(),
                             member,
@@ -587,18 +581,17 @@ impl Runtime {
         )
     }
 
-    async fn team_for_caller(&self, parent_thread_id: &ThreadId) -> Option<TeamState> {
-        self.caller_agents(parent_thread_id)
-            .await
-            .into_iter()
-            .next()
-    }
-
     async fn caller_agents(&self, parent_thread_id: &ThreadId) -> Vec<TeamState> {
         self.list_teams()
             .await
             .into_iter()
-            .filter(|team| team.lead_thread_id == *parent_thread_id)
+            .filter(|team| {
+                team.lead_thread_id == *parent_thread_id
+                    || team
+                        .members
+                        .iter()
+                        .any(|member| member.thread_id == *parent_thread_id)
+            })
             .collect()
     }
 
@@ -612,13 +605,21 @@ impl Runtime {
                 .read_team(team_id)
                 .await
                 .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
-            if team.lead_thread_id != *parent_thread_id {
-                anyhow::bail!("team {team_id:?} is not owned by this caller thread");
+            if !team
+                .members
+                .iter()
+                .any(|member| member.thread_id == *parent_thread_id)
+            {
+                anyhow::bail!("caller thread is not a member of team {team_id:?}");
             }
             let member = team
                 .members
                 .into_iter()
-                .find(|member| member.id == member_id || member.name == member_id)
+                .find(|member| {
+                    member.role != roder_api::teams::TeamMemberRole::Lead
+                        && member.thread_id != *parent_thread_id
+                        && (member.id == member_id || member.name == member_id)
+                })
                 .ok_or_else(|| anyhow::anyhow!("unknown team member {member_id:?}"))?;
             return Ok(AgentTarget {
                 team_id: team_id.to_string(),
@@ -636,10 +637,11 @@ impl Runtime {
                     .into_iter()
                     .filter(|member| member.role != roder_api::teams::TeamMemberRole::Lead)
                     .filter(move |member| {
-                        member.id == target
-                            || member.name == target
-                            || member.thread_id == target
-                            || member.name.split(':').next() == Some(target)
+                        member.thread_id != *parent_thread_id
+                            && (member.id == target
+                                || member.name == target
+                                || member.thread_id == target
+                                || member.name.split(':').next() == Some(target))
                     })
                     .map(move |member| AgentTarget {
                         team_id: team_id.clone(),
