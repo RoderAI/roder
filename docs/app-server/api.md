@@ -2973,11 +2973,33 @@ Examples:
 }
 ```
 
+A `team/read` mailbox entry includes its typed delivery intent:
+
+```json
+{
+  "id": "message-123",
+  "teamId": "team-123",
+  "fromMemberId": "lead",
+  "toMemberId": "member-123",
+  "kind": "NEW_TASK",
+  "text": "review this patch",
+  "delivered": true,
+  "timestamp": "2026-07-10T12:00:00Z"
+}
+```
+
 Behavior:
 
 - `team/list` applies optional `limit` and currently returns `nextCursor: null`.
 - `team/read` returns `{ "team": null, "messages": [] }` for unknown teams.
+- Persisted mailbox `kind` is `MESSAGE` for queue-only coordination,
+  `NEW_TASK` for work that starts or steers a turn, and `FINAL_ANSWER` for a
+  terminal child-to-parent result. Legacy entries without `kind` deserialize as
+  `MESSAGE`.
 - `team/member/start` returns the newly appended member.
+- `team/member/message` starts an idle member turn or steers its active turn;
+  model-facing queue-only messaging uses `send_message`, not this JSON-RPC
+  method.
 - `team/member/interrupt` returns whether a member turn was interrupted.
 - `team/member/focus` validates the team and member and echoes
   `focusedMemberId`.
@@ -5318,7 +5340,7 @@ Team notifications include:
 - `team/member/completed`
 - `team/cleanupCompleted`
 
-Example:
+Message-delta example:
 
 ```json
 {
@@ -5328,6 +5350,25 @@ Example:
   "delta": "Reviewing"
 }
 ```
+
+Terminal completion example:
+
+```json
+{
+  "teamId": "team-123",
+  "memberId": "member-123",
+  "turnId": "turn-456",
+  "status": "completed",
+  "finalMessage": "Review complete: no blocking issues."
+}
+```
+
+`finalMessage` is optional and contains the teammate's final assistant response
+when the turn produced one. `error` is optional and contains the terminal failure
+text. A failed turn may include both partial `finalMessage` text and `error`; a
+completion or interruption that produced neither omits both fields. Consumers
+should use `status` as the terminal-state discriminator rather than inferring
+success from the presence of `finalMessage`.
 
 ### Automation notifications
 
@@ -5508,6 +5549,15 @@ Cancellation and interruption:
    it.
 2. For teammate work, call `team/member/interrupt`.
 3. For background tasks, call `tasks/cancel`.
+
+### Run and Collect Teammate Work
+
+1. Subscribe to team notifications before starting a teammate turn.
+2. Call `team/member/message` with the selected `teamId` and `memberId`.
+3. Append matching `team/member/messageDelta` text to the teammate view.
+4. Wait for the matching `team/member/completed` notification.
+5. Use `finalMessage` as the terminal worker result and surface `error` when
+   present; retain `status` for completed, failed, or interrupted UI state.
 
 ### Run a Command with Streaming Output
 

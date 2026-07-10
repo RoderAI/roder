@@ -8,11 +8,11 @@ use roder_protocol::{
     ApprovalRequestedNotification, ApprovalResolvedNotification, AutomationRunFailedNotification,
     AutomationRunNotification, AutomationRunSkippedNotification, ExternalToolCall,
     JsonRpcNotification, PlanExitRequestedNotification, PlanExitResolvedNotification,
-    TeamCleanupCompletedNotification, TeamMemberCompletedNotification,
+    TeamCleanupCompletedNotification, TeamDescriptor, TeamMemberCompletedNotification,
     TeamMemberMessageDeltaNotification, TeamMemberStartedNotification,
-    TeamMemberStatusChangedNotification, Thread, ThreadGoalClearedNotification,
-    ThreadGoalUpdatedNotification, ThreadStartedNotification, ThreadStatus,
-    ThreadStatusChangedNotification, ToolExecutionRequestedNotification,
+    TeamMemberStatusChangedNotification, TeamStartedNotification, Thread,
+    ThreadGoalClearedNotification, ThreadGoalUpdatedNotification, ThreadStartedNotification,
+    ThreadStatus, ThreadStatusChangedNotification, ToolExecutionRequestedNotification,
     ToolExecutionResolvedNotification, Turn, TurnCompletedNotification, TurnStartedNotification,
     UserInputRequestedNotification, UserInputResolvedNotification,
     VerificationCompletedNotification, VerificationRequiredNotification,
@@ -394,22 +394,23 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 thread_status_notification(&event.thread_id, "idle", None),
             ]
         }
+        RoderEvent::TeamStarted(event) => vec![protocol_notification(
+            "team/started",
+            TeamStartedNotification {
+                team: TeamDescriptor {
+                    id: event.team_id.clone(),
+                    lead_thread_id: event.lead_thread_id.clone(),
+                    display_mode: event.display_mode,
+                    members: event.members.clone(),
+                    tasks: event.tasks.clone(),
+                },
+            },
+        )],
         RoderEvent::TeamMemberStarted(event) => vec![protocol_notification(
             "team/member/started",
             TeamMemberStartedNotification {
                 team_id: event.team_id.clone(),
-                member: roder_api::teams::TeamMemberDescriptor {
-                    id: event.member_id.clone(),
-                    role: event.role,
-                    name: event.name.clone(),
-                    thread_id: event.member_thread_id.clone(),
-                    current_turn_id: None,
-                    model_provider: None,
-                    model: None,
-                    policy_mode: roder_api::policy_mode::PolicyMode::Default,
-                    status: roder_api::teams::TeamMemberStatus::Idle,
-                    pane_id: None,
-                },
+                member: event.member.clone(),
             },
         )],
         RoderEvent::TeamMemberStatusChanged(event) => vec![protocol_notification(
@@ -436,6 +437,8 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 member_id: event.member_id.clone(),
                 turn_id: event.turn_id.clone(),
                 status: event.status,
+                final_message: event.final_message.clone(),
+                error: event.error.clone(),
             },
         )],
         RoderEvent::TeamCleanupCompleted(event) => vec![protocol_notification(
@@ -446,7 +449,10 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
             },
         )],
         RoderEvent::AgentSwarmModeChanged(event) => {
-            vec![protocol_notification("agentSwarm/modeChanged", event.clone())]
+            vec![protocol_notification(
+                "agentSwarm/modeChanged",
+                event.clone(),
+            )]
         }
         RoderEvent::AgentSwarmStarted(event) => {
             vec![protocol_notification("agentSwarm/started", event.clone())]
@@ -934,12 +940,15 @@ mod tests {
         AutomationSkipped, AutomationStarted,
     };
     use roder_api::events::{
-        InferenceEventReceived, InferenceRoutingDecisionEvent, TranscriptItemAppended,
-        VerificationRequired,
+        InferenceEventReceived, InferenceRoutingDecisionEvent, TeamMemberCompleted,
+        TeamMemberStarted, TeamStarted, TranscriptItemAppended, VerificationRequired,
     };
     use roder_api::inference::{InferenceEvent, ModelSelection, ReasoningDelta};
     use roder_api::inference_routing::InferenceRoutingDecision;
     use roder_api::notifications::NotificationKind;
+    use roder_api::teams::{
+        AgentTeamDisplayMode, TeamMemberDescriptor, TeamMemberRole, TeamMemberStatus,
+    };
     use roder_api::thread::{
         ThreadItem, ThreadItemDelta, ThreadItemEvent, ThreadItemEventKind, ThreadItemStatus,
     };
@@ -1103,6 +1112,104 @@ mod tests {
         ));
 
         assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn team_member_completed_forwards_final_message_and_error() {
+        let completed = protocol_notifications_for_event(&RoderEvent::TeamMemberCompleted(
+            TeamMemberCompleted {
+                team_id: "team-1".to_string(),
+                member_id: "member-1".to_string(),
+                member_thread_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                status: TeamMemberStatus::Completed,
+                final_message: Some("Review complete.".to_string()),
+                error: None,
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].method, "team/member/completed");
+        assert_eq!(completed[0].params["teamId"], "team-1");
+        assert_eq!(completed[0].params["memberId"], "member-1");
+        assert_eq!(completed[0].params["turnId"], "turn-1");
+        assert_eq!(completed[0].params["status"], "completed");
+        assert_eq!(completed[0].params["finalMessage"], "Review complete.");
+        assert!(completed[0].params.get("error").is_none());
+
+        let failed = protocol_notifications_for_event(&RoderEvent::TeamMemberCompleted(
+            TeamMemberCompleted {
+                team_id: "team-1".to_string(),
+                member_id: "member-2".to_string(),
+                member_thread_id: "thread-2".to_string(),
+                turn_id: Some("turn-2".to_string()),
+                status: TeamMemberStatus::Failed,
+                final_message: None,
+                error: Some("provider request failed".to_string()),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            },
+        ));
+        assert_eq!(failed[0].params["error"], "provider request failed");
+        assert!(failed[0].params.get("finalMessage").is_none());
+    }
+
+    #[test]
+    fn team_start_notifications_forward_complete_ultra_descriptors() {
+        let member = TeamMemberDescriptor {
+            id: "member-ultra".to_string(),
+            role: TeamMemberRole::Teammate,
+            name: "Reviewer".to_string(),
+            task_name: Some("reviewer".to_string()),
+            agent_path: Some("/root/reviewer".to_string()),
+            thread_id: "thread-ultra".to_string(),
+            parent_thread_id: Some("thread-root".to_string()),
+            current_turn_id: Some("turn-ultra".to_string()),
+            model_provider: Some("codex".to_string()),
+            model: Some("gpt-5.6-terra".to_string()),
+            policy_mode: roder_api::policy_mode::PolicyMode::Bypass,
+            status: TeamMemberStatus::Running,
+            final_message: None,
+            terminal_error: None,
+            pane_id: None,
+        };
+        let started = protocol_notifications_for_event(&RoderEvent::TeamStarted(TeamStarted {
+            team_id: "team-ultra".to_string(),
+            lead_thread_id: "thread-root".to_string(),
+            display_mode: AgentTeamDisplayMode::InProcess,
+            members: vec![member.clone()],
+            tasks: Vec::new(),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        }));
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].method, "team/started");
+        assert_eq!(started[0].params["team"]["id"], "team-ultra");
+        assert_eq!(
+            started[0].params["team"]["members"][0]["model"],
+            "gpt-5.6-terra"
+        );
+        assert_eq!(
+            started[0].params["team"]["members"][0]["agentPath"],
+            "/root/reviewer"
+        );
+
+        let member_started =
+            protocol_notifications_for_event(&RoderEvent::TeamMemberStarted(TeamMemberStarted {
+                team_id: "team-ultra".to_string(),
+                member,
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }));
+        assert_eq!(member_started.len(), 1);
+        assert_eq!(member_started[0].method, "team/member/started");
+        let projected = &member_started[0].params["member"];
+        assert_eq!(projected["taskName"], "reviewer");
+        assert_eq!(projected["agentPath"], "/root/reviewer");
+        assert_eq!(projected["parentThreadId"], "thread-root");
+        assert_eq!(projected["currentTurnId"], "turn-ultra");
+        assert_eq!(projected["modelProvider"], "codex");
+        assert_eq!(projected["model"], "gpt-5.6-terra");
+        assert_eq!(projected["policyMode"], "bypass");
+        assert_eq!(projected["status"], "running");
     }
 
     #[test]

@@ -2229,6 +2229,10 @@ pub struct TeamMemberCompletedNotification {
     pub member_id: TeamMemberId,
     pub turn_id: Option<TurnId>,
     pub status: TeamMemberStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4857,6 +4861,42 @@ mod tests {
         );
         assert_eq!(value["params"]["event"]["delta"]["delta"], "hello");
         assert_eq!(value["params"]["event"]["delta"]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn team_member_completion_notification_carries_optional_result_details() {
+        let value = serde_json::to_value(TeamMemberCompletedNotification {
+            team_id: "team-1".to_string(),
+            member_id: "member-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            status: TeamMemberStatus::Completed,
+            final_message: Some("Review complete: no blocking issues.".to_string()),
+            error: None,
+        })
+        .unwrap();
+
+        assert_eq!(value["teamId"], "team-1");
+        assert_eq!(value["memberId"], "member-1");
+        assert_eq!(value["turnId"], "turn-1");
+        assert_eq!(value["status"], "completed");
+        assert_eq!(
+            value["finalMessage"],
+            "Review complete: no blocking issues."
+        );
+        assert!(value.get("error").is_none());
+
+        let legacy: TeamMemberCompletedNotification = serde_json::from_value(serde_json::json!({
+            "teamId": "team-1",
+            "memberId": "member-1",
+            "turnId": null,
+            "status": "failed"
+        }))
+        .unwrap();
+        assert!(legacy.final_message.is_none());
+        assert!(legacy.error.is_none());
+        let encoded = serde_json::to_value(legacy).unwrap();
+        assert!(encoded.get("finalMessage").is_none());
+        assert!(encoded.get("error").is_none());
     }
 
     #[test]

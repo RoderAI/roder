@@ -461,8 +461,14 @@ impl Runtime {
         let result = self
             .resolve_user_input_request(thread_id, turn_id, result)
             .await?;
-        self.emit_subagent_events(thread_id, turn_id, &parsed_args, &result)
-            .await;
+        // Long-lived collaboration controls have their own team lifecycle events. Projecting
+        // their tool result through the legacy one-shot task bridge would emit a synthetic
+        // SubagentCompleted immediately after spawn_agent returns, while the agent is still
+        // running.
+        if !crate::agent_control_tools::is_agent_control_tool(&tool_call.name) {
+            self.emit_subagent_events(thread_id, turn_id, &parsed_args, &result)
+                .await;
+        }
         self.emit_policy_exit_plan_request(thread_id, turn_id, &result)
             .await;
         self.emit_hunk_records(&result).await;

@@ -127,10 +127,10 @@ use roder_protocol::{
     ThreadReadParams, ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetAgentSwarmModeParams,
     ThreadSetAgentSwarmModeResult, ThreadSetModeParams, ThreadSetModeResult, ThreadStartParams,
-    ThreadStartResult, ThreadStateResult, ToolCallParams,
-    ToolCallResult, ToolsListResult, ToolsResolveParams, ToolsResolveResult, TurnInputItem,
-    TurnInterruptParams, TurnInterruptResult, TurnStartParams, TurnStartResult, TurnSteerParams,
-    TurnSteerResult, WebwrightArtifactsResult, WebwrightExportParams, WebwrightExportResult,
+    ThreadStartResult, ThreadStateResult, ToolCallParams, ToolCallResult, ToolsListResult,
+    ToolsResolveParams, ToolsResolveResult, TurnInputItem, TurnInterruptParams,
+    TurnInterruptResult, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+    WebwrightArtifactsResult, WebwrightExportParams, WebwrightExportResult,
     WebwrightLatestRunResult, WebwrightPrepareParams, WebwrightPrepareResult,
     WebwrightReportResult, WebwrightRerunParams, WebwrightRerunResult, WebwrightSetupParams,
     WebwrightSetupResult, WebwrightVerifyResult, WebwrightVisualJudgeParams,
@@ -5002,7 +5002,10 @@ async fn runner_lifecycle_methods_pause_resume_detach_and_rejoin() {
         })),
     )
     .await;
-    let thread_id = started["thread"]["id"].as_str().expect("thread id").to_string();
+    let thread_id = started["thread"]["id"]
+        .as_str()
+        .expect("thread id")
+        .to_string();
 
     // runners/list surfaces the lifecycle capabilities.
     let list: roder_protocol::RunnersListResult =
@@ -6776,6 +6779,17 @@ async fn team_methods_start_list_read_message_and_cleanup() {
             .as_str()
             .is_some_and(|text| !text.is_empty())
     );
+    let completed = wait_for_notification(&mut notifications, "team/member/completed", None).await;
+    assert_eq!(completed.params["teamId"], started.team.id);
+    assert_eq!(completed.params["memberId"], member_id);
+    assert_eq!(completed.params["turnId"], turn.turn_id);
+    assert_eq!(completed.params["status"], "completed");
+    assert!(
+        completed.params["finalMessage"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
+    );
+    assert!(completed.params.get("error").is_none());
 
     let read: TeamReadResult = request(
         &client,
@@ -6791,6 +6805,10 @@ async fn team_methods_start_list_read_message_and_cleanup() {
     assert!(read.team.is_some());
     assert_eq!(read.messages.len(), 1);
     assert_eq!(read.messages[0].to_member_id, member_id);
+    assert_eq!(
+        read.messages[0].kind,
+        roder_api::teams::TeamMailboxMessageKind::NewTask
+    );
     assert_eq!(read.messages[0].text, "build it");
 
     let cleanup: TeamCleanupResult = request(
@@ -7341,7 +7359,7 @@ async fn tools_list_exposes_default_coding_tools() {
         "followup_task",
         "wait_agent",
         "list_agents",
-        "close_agent",
+        "interrupt_agent",
     ] {
         assert!(
             names.contains(&expected.to_string()),

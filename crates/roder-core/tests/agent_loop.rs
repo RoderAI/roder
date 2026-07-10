@@ -27,6 +27,8 @@ struct AgentControlEngine {
     parent_thread_id: Mutex<Option<String>>,
     thread_ids: Mutex<Vec<String>>,
     tool_names_by_thread: Mutex<Vec<(String, Vec<String>)>>,
+    parent_saw_child_result: Mutex<bool>,
+    child_saw_queued_message: Mutex<bool>,
 }
 
 struct EchoContributor;
@@ -388,6 +390,28 @@ impl InferenceEngine for AgentControlEngine {
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         let is_parent = self.parent_thread_id.lock().unwrap().as_deref() == Some(ctx.thread_id);
+        if is_parent
+            && request.transcript.iter().any(|item| {
+                matches!(
+                    item,
+                    TranscriptItem::UserMessage(message) if message.text.contains("child done")
+                )
+            })
+        {
+            *self.parent_saw_child_result.lock().unwrap() = true;
+        }
+        if !is_parent
+            && request.transcript.iter().any(|item| {
+                matches!(
+                    item,
+                    TranscriptItem::UserMessage(message)
+                        if message.text.contains("add one more detail")
+                            && message.text.contains("turn this into a final review")
+                )
+            })
+        {
+            *self.child_saw_queued_message.lock().unwrap() = true;
+        }
         let has_result = |name: &str| {
             request.transcript.iter().any(|item| {
                 matches!(
@@ -443,18 +467,41 @@ impl InferenceEngine for AgentControlEngine {
                     })
                     .to_string(),
                 })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some("resp_send".to_string()),
+                })),
+            ]
+        } else if is_parent && !has_result("followup_task") {
+            vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_followup".to_string(),
+                    name: "followup_task".to_string(),
+                    arguments: json!({
+                        "target": "reviewer",
+                        "message": "turn this into a final review"
+                    })
+                    .to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: Some("resp_followup".to_string()),
+                })),
+            ]
+        } else if is_parent && !has_result("wait_agent") {
+            vec![
                 Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
                     id: "call_wait".to_string(),
                     name: "wait_agent".to_string(),
                     arguments: json!({
                         "target": "reviewer",
-                        "timeout_ms": 100
+                        "timeout_ms": 10_000
                     })
                     .to_string(),
                 })),
                 Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                    id: "call_close".to_string(),
-                    name: "close_agent".to_string(),
+                    id: "call_interrupt".to_string(),
+                    name: "interrupt_agent".to_string(),
                     arguments: json!({
                         "target": "reviewer"
                     })
@@ -994,7 +1041,9 @@ async fn steer_turn_is_included_in_next_provider_request() {
         )
         .await
         .unwrap();
-    release_tool.notify_waiters();
+    // Store a permit if the executor has not reached `notified()` yet; the
+    // tool-start event is emitted just before execution and can race that await.
+    release_tool.notify_one();
     wait_for_completed(&mut events, "thread_steer").await;
 
     let requests = engine.requests.lock().unwrap();
@@ -1196,6 +1245,8 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
         parent_thread_id: Mutex::new(None),
         thread_ids: Mutex::new(Vec::new()),
         tool_names_by_thread: Mutex::new(Vec::new()),
+        parent_saw_child_result: Mutex::new(false),
+        child_saw_queued_message: Mutex::new(false),
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
@@ -1244,7 +1295,28 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
         .await
         .unwrap();
 
-    wait_for_completed(&mut rx, &parent_thread_id).await;
+    let mut saw_legacy_one_shot_completion = false;
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(
+            envelope.event,
+            roder_api::events::RoderEvent::SubagentCompleted(_)
+        ) {
+            saw_legacy_one_shot_completion = true;
+        }
+        if envelope.kind == "turn.completed"
+            && envelope.thread_id.as_deref() == Some(parent_thread_id.as_str())
+        {
+            break;
+        }
+    }
+    assert!(
+        !saw_legacy_one_shot_completion,
+        "long-lived agent controls must not emit synthetic one-shot SubagentCompleted events"
+    );
 
     let teams = runtime.list_teams().await;
     assert_eq!(teams.len(), 1);
@@ -1253,12 +1325,29 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
     assert_eq!(teams[0].members[1].name, "reviewer");
     assert_eq!(
         teams[0].members[1].status,
-        roder_api::teams::TeamMemberStatus::Closed
+        roder_api::teams::TeamMemberStatus::Completed
     );
+    for text in ["add one more detail", "turn this into a final review"] {
+        assert!(
+            teams[0]
+                .mailbox
+                .iter()
+                .any(|message| message.text == text && message.delivered),
+            "mailbox entry {text:?} should be acknowledged only after it reaches the child transcript"
+        );
+    }
     assert_ne!(teams[0].members[1].thread_id, teams[0].lead_thread_id);
     let thread_ids = engine.thread_ids.lock().unwrap().clone();
     assert!(thread_ids.contains(&teams[0].lead_thread_id));
     assert!(thread_ids.iter().any(|id| id != &teams[0].lead_thread_id));
+    assert_eq!(
+        thread_ids
+            .iter()
+            .filter(|id| *id == &teams[0].members[1].thread_id)
+            .count(),
+        2,
+        "send_message must stay queued while followup_task starts exactly one reusable-agent turn"
+    );
     let tool_names_by_thread = engine.tool_names_by_thread.lock().unwrap().clone();
     let parent_tools = tool_names_by_thread
         .iter()
@@ -1269,7 +1358,7 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
     assert!(parent_tools.contains(&"send_message".to_string()));
     assert!(parent_tools.contains(&"list_agents".to_string()));
     assert!(parent_tools.contains(&"wait_agent".to_string()));
-    assert!(parent_tools.contains(&"close_agent".to_string()));
+    assert!(parent_tools.contains(&"interrupt_agent".to_string()));
     let child_tools = tool_names_by_thread
         .iter()
         .find(|(thread_id, _)| thread_id != &teams[0].lead_thread_id)
@@ -1279,7 +1368,15 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
     assert!(child_tools.contains(&"send_message".to_string()));
     assert!(child_tools.contains(&"list_agents".to_string()));
     assert!(child_tools.contains(&"wait_agent".to_string()));
-    assert!(child_tools.contains(&"close_agent".to_string()));
+    assert!(child_tools.contains(&"interrupt_agent".to_string()));
+    assert!(
+        *engine.parent_saw_child_result.lock().unwrap(),
+        "the direct parent should receive the child's terminal result in its next inference context"
+    );
+    assert!(
+        *engine.child_saw_queued_message.lock().unwrap(),
+        "the follow-up turn should receive both the queued send_message and followup_task input"
+    );
 
     let _ = std::fs::remove_dir_all(thread_root);
     let _ = std::fs::remove_dir_all(team_root);
