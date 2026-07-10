@@ -57,7 +57,7 @@ use crate::subagents::{
 };
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
-    AgentTeamDisplayMode, TeamId, TeamMemberId, TeamMemberRole, TeamMemberStatus,
+    AgentTeamDisplayMode, TeamId, TeamMemberDescriptor, TeamMemberId, TeamMemberStatus,
     TeamTaskDescriptor,
 };
 use crate::trace::{
@@ -1015,6 +1015,8 @@ pub struct TeamStarted {
     pub team_id: TeamId,
     pub lead_thread_id: ThreadId,
     pub display_mode: AgentTeamDisplayMode,
+    pub members: Vec<TeamMemberDescriptor>,
+    pub tasks: Vec<TeamTaskDescriptor>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1022,10 +1024,7 @@ pub struct TeamStarted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamMemberStarted {
     pub team_id: TeamId,
-    pub member_id: TeamMemberId,
-    pub member_thread_id: ThreadId,
-    pub role: TeamMemberRole,
-    pub name: String,
+    pub member: TeamMemberDescriptor,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1058,6 +1057,10 @@ pub struct TeamMemberCompleted {
     pub member_thread_id: ThreadId,
     pub turn_id: Option<TurnId>,
     pub status: TeamMemberStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1871,7 +1874,7 @@ impl RoderEvent {
             RoderEvent::ThreadGoalUpdated(e) => Some(&e.thread_id),
             RoderEvent::ThreadGoalCleared(e) => Some(&e.thread_id),
             RoderEvent::TeamStarted(e) => Some(&e.lead_thread_id),
-            RoderEvent::TeamMemberStarted(e) => Some(&e.member_thread_id),
+            RoderEvent::TeamMemberStarted(e) => Some(&e.member.thread_id),
             RoderEvent::TeamMemberStatusChanged(e) => Some(&e.member_thread_id),
             RoderEvent::TeamMemberMessageDelta(e) => Some(&e.member_thread_id),
             RoderEvent::TeamMemberCompleted(e) => Some(&e.member_thread_id),
@@ -2616,6 +2619,60 @@ mod tests {
                 assert_eq!(started.reasoning, ReasoningConfig::default());
             }
             other => panic!("expected inference started, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn team_member_completed_round_trips_optional_result_details() {
+        let event = RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
+            team_id: "team-a".to_string(),
+            member_id: "member-a".to_string(),
+            member_thread_id: "thread-a".to_string(),
+            turn_id: Some("turn-a".to_string()),
+            status: TeamMemberStatus::Failed,
+            final_message: Some("Partial review result.".to_string()),
+            error: Some("provider request failed".to_string()),
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+        });
+
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            value["TeamMemberCompleted"]["final_message"],
+            "Partial review result."
+        );
+        assert_eq!(
+            value["TeamMemberCompleted"]["error"],
+            "provider request failed"
+        );
+        let round_trip: RoderEvent = serde_json::from_value(value).unwrap();
+        match round_trip {
+            RoderEvent::TeamMemberCompleted(completed) => {
+                assert_eq!(
+                    completed.final_message.as_deref(),
+                    Some("Partial review result.")
+                );
+                assert_eq!(completed.error.as_deref(), Some("provider request failed"));
+            }
+            other => panic!("expected team completion, got {other:?}"),
+        }
+
+        let legacy: RoderEvent = serde_json::from_value(serde_json::json!({
+            "TeamMemberCompleted": {
+                "team_id": "team-a",
+                "member_id": "member-a",
+                "member_thread_id": "thread-a",
+                "turn_id": "turn-a",
+                "status": "completed",
+                "timestamp": "1970-01-01T00:00:00Z"
+            }
+        }))
+        .unwrap();
+        match legacy {
+            RoderEvent::TeamMemberCompleted(completed) => {
+                assert!(completed.final_message.is_none());
+                assert!(completed.error.is_none());
+            }
+            other => panic!("expected team completion, got {other:?}"),
         }
     }
 

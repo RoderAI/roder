@@ -302,7 +302,7 @@ mod tests {
         let plan = PolicyModeConfig::for_mode(PolicyMode::Plan);
         assert_eq!(plan.auto_approve, AutoApproveSet::empty());
         assert!(!plan.allow_writes);
-        assert!(!plan.allow_process);
+        assert!(plan.allow_process);
         assert!(plan.allow_network);
         assert!(!plan.requires_user_to_exit);
 

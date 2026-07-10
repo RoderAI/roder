@@ -35,7 +35,7 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `eval/reports/list`, `eval/report/read` | eval report viewer | List and read bounded markdown reports from `<workspace>/evals/reports`. | Report ids must come from the list response. |
 | `team/start` | start an agent team | Create a lead thread plus long-lived teammate threads with `displayMode` `auto`, `in_process`, `tmux`, or `iterm2`. | Team control-plane methods use singular protocol method names. |
 | `team/list` | team sidebar/bootstrap | List active or persisted teams as `TeamDescriptor` objects. | Supports optional `limit`; pagination cursors are reserved. |
-| `team/read` | attach/split-pane bootstrap | Read a team plus persisted mailbox messages by `teamId`. | Used by `roder team attach --team ... --member ...`. |
+| `team/read` | attach/split-pane bootstrap | Read a team plus persisted mailbox messages by `teamId`. | Each message includes `kind`: `MESSAGE`, `NEW_TASK`, or `FINAL_ANSWER`. |
 | `team/member/start` | add teammate | Add a new long-lived teammate thread to an existing team. | Returns the new `member` descriptor. |
 | `team/member/message` | direct message | Start or steer the selected teammate's active turn and persist the mailbox message. | Does not inject hidden text into the lead transcript. |
 | `team/member/interrupt` | stop focused teammate | Interrupt only the selected teammate's active turn. | `turnId` is accepted for client bookkeeping; the team member id is authoritative. |
@@ -79,7 +79,7 @@ from the app-server process when persisted metadata is missing or invalid.
 | `team/member/started` | `teamId` plus a member descriptor; roster grows. | Runtime team member creation. |
 | `team/member/statusChanged` | `teamId`, `memberId`, `status`; roster status updates. | Runtime member turn routing. |
 | `team/member/messageDelta` | `teamId`, `memberId`, `turnId`, `delta`; append to that member's transcript. | Teammate inference deltas. |
-| `team/member/completed` | `teamId`, `memberId`, optional `turnId`, `status`; selected teammate becomes idle/completed/interrupted. | Runtime turn completion/interruption. |
+| `team/member/completed` | `teamId`, `memberId`, optional `turnId`, `status`, optional `finalMessage`, and optional `error`; selected teammate becomes idle/completed/interrupted and its terminal result becomes available for synthesis. | Runtime turn completion/interruption. |
 | `team/cleanupCompleted` | `teamId`, `forced`; remove local team state. | `team/cleanup`. |
 | `automations/runStarted` | `run` with `state: "running"`; show active scheduled work. | Automation worker start. |
 | `automations/runCompleted` | `run` with terminal success fields; mark the run complete. | Automation worker completion. |

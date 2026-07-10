@@ -47,6 +47,12 @@ impl PolicyGate for DefaultPolicyGate {
                 reason: format!("tool {:?} is denied by policy", call.name),
             };
         }
+        // Agent-control calls only mutate Roder's internal collaboration state. In
+        // particular, spawn_agent does not launch an OS process, despite its name.
+        // The child remains subject to the caller's inherited policy and tool filters.
+        if crate::agent_control_tools::is_agent_control_tool(&call.name) {
+            return PolicyDecision::Allowed;
+        }
         if !config.allow_writes && looks_like_write(call) {
             return PolicyDecision::Denied {
                 reason: "write-like tool calls are denied in the active policy mode".to_string(),
@@ -303,6 +309,28 @@ mod tests {
         );
 
         assert!(matches!(decision, PolicyDecision::RequiresApproval { .. }));
+    }
+
+    #[test]
+    fn agent_control_tools_are_internal_orchestration_not_os_processes() {
+        for tool in [
+            "spawn_agent",
+            "send_message",
+            "followup_task",
+            "wait_agent",
+            "list_agents",
+            "interrupt_agent",
+        ] {
+            let decision = DefaultPolicyGate::new().decide(
+                &call(tool, json!({})),
+                PolicyMode::Default,
+                &context(),
+            );
+            assert!(
+                matches!(decision, PolicyDecision::Allowed),
+                "{tool} should not be classified as an operating-system side effect"
+            );
+        }
     }
 
     #[test]

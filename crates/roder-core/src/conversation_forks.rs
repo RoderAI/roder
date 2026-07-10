@@ -57,6 +57,54 @@ pub struct ForkThreadOutcome {
 }
 
 impl Runtime {
+    /// Seeds a long-lived collaboration agent with a safe subset of the parent
+    /// conversation. Unlike `fork_thread`, this keeps the same workspace: only
+    /// transcript/lifecycle records are copied, never executable tool or approval
+    /// events.
+    pub(crate) async fn seed_agent_thread_history(
+        &self,
+        parent_thread_id: &ThreadId,
+        child_thread_id: &ThreadId,
+        fork_turns: &str,
+    ) -> anyhow::Result<()> {
+        if fork_turns == "none" {
+            return Ok(());
+        }
+        let Some(store) = self.thread_store.clone() else {
+            return Ok(());
+        };
+        let Some(parent) = store.load_thread(parent_thread_id).await? else {
+            return Ok(());
+        };
+        let mut events = seed_events_for_child(&parent.events, None)?;
+        if fork_turns != "all" {
+            let turn_count = fork_turns.parse::<usize>().map_err(|_| {
+                anyhow::anyhow!("fork_turns must be one of none, all, or a positive integer")
+            })?;
+            anyhow::ensure!(turn_count > 0, "fork_turns integer must be positive");
+            let mut ordered_turns = Vec::<TurnId>::new();
+            for event in &events {
+                if let Some(turn_id) = event.turn_id.as_ref()
+                    && ordered_turns.last() != Some(turn_id)
+                {
+                    ordered_turns.push(turn_id.clone());
+                }
+            }
+            let keep_from = ordered_turns.len().saturating_sub(turn_count);
+            let kept = &ordered_turns[keep_from..];
+            events.retain(|event| {
+                event
+                    .turn_id
+                    .as_ref()
+                    .is_some_and(|turn_id| kept.contains(turn_id))
+            });
+        }
+        for event in &events {
+            store.append_event(child_thread_id, event).await?;
+        }
+        Ok(())
+    }
+
     /// Forks `parent_thread_id` into a new child thread backed by a fresh
     /// workspace fork of the parent workspace.
     pub async fn fork_thread(
@@ -304,25 +352,45 @@ fn seed_events_for_child(
 
     Ok(ordered[..cutoff]
         .iter()
-        .filter(|envelope| {
-            matches!(
-                envelope.event,
-                RoderEvent::TurnStarted(_)
-                    | RoderEvent::TranscriptItemAppended(_)
-                    | RoderEvent::TurnCompleted(_)
-                    | RoderEvent::TurnFailed(_)
-                    | RoderEvent::TurnInterrupted(_)
-            )
+        .filter(|envelope| match &envelope.event {
+            RoderEvent::TurnStarted(_)
+            | RoderEvent::TurnCompleted(_)
+            | RoderEvent::TurnFailed(_)
+            | RoderEvent::TurnInterrupted(_) => true,
+            RoderEvent::TranscriptItemAppended(event) => event
+                .item
+                .as_ref()
+                .is_some_and(forkable_agent_transcript_item),
+            _ => false,
         })
         .map(|envelope| (*envelope).clone())
         .collect())
+}
+
+fn forkable_agent_transcript_item(item: &roder_api::transcript::TranscriptItem) -> bool {
+    match item {
+        roder_api::transcript::TranscriptItem::UserMessage(_) => true,
+        roder_api::transcript::TranscriptItem::AssistantMessage(message) => message
+            .phase
+            .as_deref()
+            .is_none_or(|phase| phase.is_empty() || phase == "final_answer"),
+        roder_api::transcript::TranscriptItem::ReasoningSummary(_)
+        | roder_api::transcript::TranscriptItem::ToolCall(_)
+        | roder_api::transcript::TranscriptItem::ToolResult(_)
+        | roder_api::transcript::TranscriptItem::FileChange(_)
+        | roder_api::transcript::TranscriptItem::ContextCompaction(_)
+        | roder_api::transcript::TranscriptItem::Error(_)
+        | roder_api::transcript::TranscriptItem::ProviderMetadata(_) => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use roder_api::events::{EventSource, TranscriptItemAppended, TurnCompleted, TurnStarted};
-    use roder_api::transcript::{TranscriptItem, UserMessage};
+    use roder_api::transcript::{
+        ContextCompactionRecord, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    };
 
     fn envelope(seq: u64, turn_id: &str, event: RoderEvent) -> EventEnvelope {
         EventEnvelope {
@@ -390,15 +458,77 @@ mod tests {
                 timestamp: OffsetDateTime::UNIX_EPOCH,
             }),
         ));
+        events.push(envelope(
+            7,
+            "turn-1",
+            RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
+                thread_id: "parent".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_type: "context_compaction".to_string(),
+                item_index: None,
+                item: Some(TranscriptItem::ContextCompaction(ContextCompactionRecord {
+                    summary: "private parent compaction".to_string(),
+                })),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        ));
+        events.push(envelope(
+            5,
+            "turn-1",
+            RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
+                thread_id: "parent".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_type: "tool_call".to_string(),
+                item_index: None,
+                item: Some(TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "spawn-call".to_string(),
+                    name: "spawn_agent".to_string(),
+                    arguments: "{}".to_string(),
+                })),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        ));
+        events.push(envelope(
+            6,
+            "turn-1",
+            RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
+                thread_id: "parent".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_type: "tool_result".to_string(),
+                item_index: None,
+                item: Some(TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "spawn-call".to_string(),
+                    name: Some("spawn_agent".to_string()),
+                    result: "spawned".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                })),
+                timestamp: OffsetDateTime::UNIX_EPOCH,
+            }),
+        ));
 
         let seeded = seed_events_for_child(&events, None).unwrap();
 
-        assert_eq!(seeded.len(), 3, "tool events must not be replayed");
+        assert_eq!(seeded.len(), 3, "tool records must not be replayed");
         assert!(
             seeded
                 .iter()
                 .all(|envelope| !matches!(envelope.event, RoderEvent::ToolCallStarted(_)))
         );
+        assert!(seeded.iter().all(|envelope| {
+            !matches!(
+                &envelope.event,
+                RoderEvent::TranscriptItemAppended(event)
+                    if matches!(
+                        event.item,
+                        Some(
+                            TranscriptItem::ToolCall(_)
+                                | TranscriptItem::ToolResult(_)
+                                | TranscriptItem::ContextCompaction(_)
+                        )
+                    )
+            )
+        }));
     }
 
     #[test]

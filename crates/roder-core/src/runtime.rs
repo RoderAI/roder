@@ -32,7 +32,10 @@ use roder_api::remote_runner::{
     RunnerSessionState, ThreadRunnerBinding,
 };
 use roder_api::subagents::SubagentDefinition;
-use roder_api::teams::TeamMemberStatus;
+use roder_api::teams::{
+    TeamId, TeamMailboxMessage, TeamMailboxMessageKind, TeamMemberDescriptor, TeamMemberRole,
+    TeamMemberStatus,
+};
 use roder_api::thread::{
     ThreadItemEvent, ThreadItemEventKind, ThreadMetadata, ThreadSnapshot, ThreadStore,
     ThreadUsageMetadata, is_synthetic_event_thread_id, validate_thread_workspace,
@@ -281,7 +284,26 @@ pub(crate) struct PendingExternalToolCall {
 struct ActiveTurnHandle {
     thread_id: ThreadId,
     abort: AbortHandle,
-    steers: Arc<Mutex<Vec<UserMessage>>>,
+    steers: Arc<Mutex<Vec<QueuedTurnSteer>>>,
+}
+
+#[derive(Clone)]
+struct QueuedTurnSteer {
+    message: UserMessage,
+    mailbox_ack: Option<MailboxDeliveryAck>,
+}
+
+#[derive(Clone)]
+struct MailboxDeliveryAck {
+    team_id: TeamId,
+    message_ids: Vec<String>,
+}
+
+#[derive(Clone)]
+struct InheritedTurnContext {
+    workspace: String,
+    instructions: InstructionBundle,
+    developer_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -337,6 +359,79 @@ pub fn default_plan_exit_timeout() -> Duration {
 
 pub const DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECONDS: u64 = 300;
 
+fn format_mailbox_messages(team: &TeamState, messages: &[TeamMailboxMessage]) -> String {
+    messages
+        .iter()
+        .map(|message| {
+            let recipient = team
+                .members
+                .iter()
+                .find(|member| member.id == message.to_member_id)
+                .map(canonical_team_member_path)
+                .unwrap_or_else(|| format!("/root/{}", message.to_member_id));
+            let sender = message
+                .from_member_id
+                .as_deref()
+                .and_then(|id| team.members.iter().find(|member| member.id == id))
+                .map(canonical_team_member_path)
+                .unwrap_or_else(|| "/root".to_string());
+            let message_type = match message.kind {
+                TeamMailboxMessageKind::Message => "MESSAGE",
+                TeamMailboxMessageKind::NewTask => "NEW_TASK",
+                TeamMailboxMessageKind::FinalAnswer => "FINAL_ANSWER",
+            };
+            format!(
+                "Message Type: {message_type}\nTask name: {recipient}\nSender: {sender}\nPayload:\n{}",
+                message.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn canonical_team_member_path(member: &TeamMemberDescriptor) -> String {
+    if let Some(agent_path) = member
+        .agent_path
+        .as_deref()
+        .filter(|path| *path == "/root" || path.starts_with("/root/"))
+    {
+        return agent_path.to_string();
+    }
+    if member.role == TeamMemberRole::Lead {
+        return "/root".to_string();
+    }
+    member
+        .task_name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| format!("/root/{}", name.trim().trim_matches('/')))
+        .unwrap_or_else(|| format!("/root/{}", member.id))
+}
+
+fn is_codex_v2_team(team: &TeamState) -> bool {
+    team.members.iter().any(|member| {
+        member
+            .model
+            .as_deref()
+            .is_some_and(|model| model_supports_reasoning_effort(model, REASONING_ULTRA))
+    })
+}
+
+fn runtime_local_team_view(
+    mut team: TeamState,
+    active_thread_ids: &std::collections::HashSet<ThreadId>,
+) -> TeamState {
+    for member in &mut team.members {
+        if member.status == TeamMemberStatus::Running
+            && !active_thread_ids.contains(&member.thread_id)
+        {
+            member.status = TeamMemberStatus::Interrupted;
+            member.current_turn_id = None;
+        }
+    }
+    team
+}
+
 pub struct Runtime {
     pub bus: EventBus,
     pub registry: ExtensionRegistry,
@@ -347,6 +442,11 @@ pub struct Runtime {
     pub(crate) pending_external_tool_calls: Mutex<HashMap<String, PendingExternalToolCall>>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
     active_turn_selections: RwLock<HashMap<TurnId, ModelSelectionMode>>,
+    active_turn_contexts: RwLock<HashMap<TurnId, InheritedTurnContext>>,
+    // Spawn-time live authority retained for every reusable turn of a long-lived teammate.
+    // This stays process-local because developer_context is explicitly volatile and must never
+    // be persisted to thread state.
+    team_member_turn_contexts: Mutex<HashMap<ThreadId, InheritedTurnContext>>,
     workspace: PathBuf,
     teams: TeamManager,
     agent_team_spawn_lock: Mutex<()>,
@@ -435,6 +535,8 @@ impl Runtime {
             pending_external_tool_calls: Mutex::new(HashMap::new()),
             active_turns: RwLock::new(HashMap::new()),
             active_turn_selections: RwLock::new(HashMap::new()),
+            active_turn_contexts: RwLock::new(HashMap::new()),
+            team_member_turn_contexts: Mutex::new(HashMap::new()),
             workspace: workspace.clone(),
             teams: TeamManager::new(
                 team_data_dir.unwrap_or_else(crate::teams::default_team_data_dir),
@@ -1206,9 +1308,13 @@ impl Runtime {
             // what makes a TUI/config-selected runner (e.g. Blaxel) actually
             // execute tools in the sandbox instead of locally. Providers that
             // return no default workspace stay unbound (legacy local-tools).
-            None => self
-                .synthesize_runtime_runner_binding(&thread_id, cfg.remote_runner_destination.clone())
-                .await?,
+            None => {
+                self.synthesize_runtime_runner_binding(
+                    &thread_id,
+                    cfg.remote_runner_destination.clone(),
+                )
+                .await?
+            }
         };
         let runner_destination = runner_binding
             .as_ref()
@@ -1317,12 +1423,36 @@ impl Runtime {
             }
         };
         let team_id = uuid::Uuid::new_v4().to_string();
-        let mut members = vec![crate::teams::lead_member(
+        let active_lead_turn_id = self.active_turn_for_thread(&lead_thread_id).await;
+        let lead_selection = match active_lead_turn_id.as_ref() {
+            Some(turn_id) => self
+                .active_turn_selections
+                .read()
+                .await
+                .get(turn_id)
+                .cloned(),
+            None => self.selection_mode_for_thread(&lead_thread_id).await?,
+        };
+        let lead_concrete_selection = lead_selection
+            .as_ref()
+            .map(ModelSelectionMode::concrete_selection);
+        let mut lead = crate::teams::lead_member(
             lead_thread_id.clone(),
-            Some(cfg.default_provider.clone()),
-            Some(cfg.default_model.clone()),
+            lead_concrete_selection
+                .as_ref()
+                .map(|selection| selection.provider.clone())
+                .or_else(|| Some(cfg.default_provider.clone())),
+            lead_concrete_selection
+                .as_ref()
+                .map(|selection| selection.model.clone())
+                .or_else(|| Some(cfg.default_model.clone())),
             cfg.policy_mode,
-        )];
+        );
+        if let Some(turn_id) = active_lead_turn_id {
+            lead.current_turn_id = Some(turn_id);
+            lead.status = TeamMemberStatus::Running;
+        }
+        let mut members = vec![lead];
 
         for (index, member) in req.members.into_iter().enumerate() {
             let thread = self
@@ -1349,15 +1479,6 @@ impl Runtime {
                 member.model.or(thread.model),
                 cfg.policy_mode,
             );
-            self.emit(RoderEvent::TeamMemberStarted(TeamMemberStarted {
-                team_id: team_id.clone(),
-                member_id,
-                member_thread_id: thread.thread_id,
-                role: descriptor.role,
-                name: descriptor.name.clone(),
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
             members.push(descriptor);
         }
 
@@ -1376,21 +1497,57 @@ impl Runtime {
             })
             .await?;
         self.emit(RoderEvent::TeamStarted(TeamStarted {
-            team_id,
+            team_id: team_id.clone(),
             lead_thread_id,
             display_mode: team.display_mode,
+            members: team.members.clone(),
+            tasks: team.tasks.clone(),
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
+        for member in team
+            .members
+            .iter()
+            .filter(|member| member.role != roder_api::teams::TeamMemberRole::Lead)
+        {
+            self.emit(RoderEvent::TeamMemberStarted(TeamMemberStarted {
+                team_id: team_id.clone(),
+                member: member.clone(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+            .await;
+        }
         Ok(team)
     }
 
     pub async fn list_teams(&self) -> Vec<TeamState> {
-        self.teams.list().await
+        let active_thread_ids = self
+            .active_turns
+            .read()
+            .await
+            .values()
+            .map(|handle| handle.thread_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.teams
+            .list()
+            .await
+            .into_iter()
+            .map(|team| runtime_local_team_view(team, &active_thread_ids))
+            .collect()
     }
 
     pub async fn read_team(&self, team_id: &str) -> Option<TeamState> {
-        self.teams.get(team_id).await
+        let active_thread_ids = self
+            .active_turns
+            .read()
+            .await
+            .values()
+            .map(|handle| handle.thread_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.teams
+            .get(team_id)
+            .await
+            .map(|team| runtime_local_team_view(team, &active_thread_ids))
     }
 
     pub async fn start_team_member(
@@ -1412,6 +1569,24 @@ impl Runtime {
             .read_team(team_id)
             .await
             .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
+        self.followup_team_member(&team.lead_thread_id, team_id, member_id, message)
+            .await
+    }
+
+    /// Queue a mailbox message without starting an idle agent. If the target is
+    /// already running, the message is delivered at the next inference boundary.
+    pub(crate) async fn queue_team_member_message(
+        self: &Arc<Self>,
+        caller_thread_id: &ThreadId,
+        team_id: &str,
+        member_id: &str,
+        message: String,
+    ) -> anyhow::Result<Option<TurnId>> {
+        let _delivery_guard = self.agent_team_spawn_lock.lock().await;
+        let team = self
+            .read_team(team_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
         let member = team
             .members
             .iter()
@@ -1421,84 +1596,124 @@ impl Runtime {
         if member.status == TeamMemberStatus::Closed {
             anyhow::bail!("subagent {} is closed", member.name);
         }
+        let from_member_id = team
+            .members
+            .iter()
+            .find(|candidate| candidate.thread_id == *caller_thread_id)
+            .map(|candidate| candidate.id.clone());
         self.teams
-            .append_mailbox_message(team_id, None, member_id.to_string(), message.clone())
-            .await?;
-        let workspace = self.workspace.display().to_string();
-        let turn_id = if member.status == TeamMemberStatus::Running {
-            if let Some(turn_id) = member.current_turn_id.clone() {
-                self.steer_turn(
-                    member.thread_id.clone(),
-                    turn_id.clone(),
-                    message,
-                    Vec::new(),
-                )
-                .await?;
-                turn_id
-            } else {
-                self.start_turn(StartTurnRequest {
-                    thread_id: member.thread_id.clone(),
-                    message,
-                    images: Vec::new(),
-                    provider_override: member.model_provider.clone(),
-                    model_override: member.model.clone(),
-                    reasoning_override: None,
-                    workspace: workspace.clone(),
-                    instructions: crate::default_instructions(),
-                    developer_context: None,
-                    task_ledger_required: false,
-                })
-                .await?
-            }
-        } else {
-            self.start_turn(StartTurnRequest {
-                thread_id: member.thread_id.clone(),
+            .append_mailbox_message(
+                team_id,
+                from_member_id,
+                member_id.to_string(),
+                TeamMailboxMessageKind::Message,
                 message,
+            )
+            .await?;
+        let Some(turn_id) = self.active_turn_for_thread(&member.thread_id).await else {
+            return Ok(None);
+        };
+        self.deliver_pending_team_mailbox(team_id, member_id, member.thread_id, turn_id.clone())
+            .await?;
+        Ok(Some(turn_id))
+    }
+
+    /// Deliver queued messages and start an idle agent, or steer its active turn.
+    pub(crate) async fn followup_team_member(
+        self: &Arc<Self>,
+        caller_thread_id: &ThreadId,
+        team_id: &str,
+        member_id: &str,
+        message: String,
+    ) -> anyhow::Result<TurnId> {
+        let _spawn_guard = self.agent_team_spawn_lock.lock().await;
+        self.followup_team_member_locked(caller_thread_id, team_id, member_id, message)
+            .await
+    }
+
+    async fn followup_team_member_locked(
+        self: &Arc<Self>,
+        caller_thread_id: &ThreadId,
+        team_id: &str,
+        member_id: &str,
+        message: String,
+    ) -> anyhow::Result<TurnId> {
+        let team = self
+            .read_team(team_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
+        let member = team
+            .members
+            .iter()
+            .find(|member| member.id == member_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown team member {member_id:?}"))?
+            .clone();
+        if member.status == TeamMemberStatus::Closed {
+            anyhow::bail!("subagent {} is closed", member.name);
+        }
+        let from_member_id = team
+            .members
+            .iter()
+            .find(|candidate| candidate.thread_id == *caller_thread_id)
+            .map(|candidate| candidate.id.clone());
+        self.teams
+            .append_mailbox_message(
+                team_id,
+                from_member_id,
+                member_id.to_string(),
+                TeamMailboxMessageKind::NewTask,
+                message,
+            )
+            .await?;
+        if let Some(turn_id) = self.active_turn_for_thread(&member.thread_id).await {
+            self.deliver_pending_team_mailbox(
+                team_id,
+                member_id,
+                member.thread_id,
+                turn_id.clone(),
+            )
+            .await?;
+            return Ok(turn_id);
+        }
+
+        self.ensure_codex_v2_team_capacity(&team, &member.id, None)
+            .await?;
+        let metadata = self.load_thread_metadata(&member.thread_id).await?;
+        let inherited_context = self
+            .team_member_turn_contexts
+            .lock()
+            .await
+            .get(&member.thread_id)
+            .cloned();
+        let workspace = inherited_context
+            .as_ref()
+            .map(|context| context.workspace.clone())
+            .or_else(|| metadata.as_ref().map(|metadata| metadata.workspace.clone()))
+            .unwrap_or_else(|| self.workspace.display().to_string());
+        let member_thread_id = member.thread_id;
+        let turn_id = self
+            .start_turn(StartTurnRequest {
+                thread_id: member_thread_id.clone(),
+                message: String::new(),
                 images: Vec::new(),
-                provider_override: member.model_provider.clone(),
-                model_override: member.model.clone(),
-                reasoning_override: None,
+                provider_override: member.model_provider,
+                model_override: member.model,
+                reasoning_override: metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.selection_mode.as_ref())
+                    .and_then(ModelSelectionMode::reasoning)
+                    .map(str::to_string),
                 workspace,
-                instructions: crate::default_instructions(),
-                developer_context: None,
+                instructions: inherited_context
+                    .as_ref()
+                    .map(|context| context.instructions.clone())
+                    .unwrap_or_else(crate::default_instructions),
+                developer_context: inherited_context
+                    .as_ref()
+                    .and_then(|context| context.developer_context.clone()),
                 task_ledger_required: false,
             })
-            .await?
-        };
-        let is_active = self.active_turns.read().await.contains_key(&turn_id);
-        self.teams
-            .update_member(team_id, member_id, |member| {
-                if is_active {
-                    member.current_turn_id = Some(turn_id.clone());
-                    member.status = TeamMemberStatus::Running;
-                } else {
-                    member.current_turn_id = None;
-                    member.status = TeamMemberStatus::Completed;
-                }
-            })
             .await?;
-        if is_active {
-            self.emit(RoderEvent::TeamMemberStatusChanged(
-                TeamMemberStatusChanged {
-                    team_id: team_id.to_string(),
-                    member_id: member_id.to_string(),
-                    member_thread_id: member.thread_id,
-                    status: TeamMemberStatus::Running,
-                    timestamp: OffsetDateTime::now_utc(),
-                },
-            ))
-            .await;
-        } else {
-            self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
-                team_id: team_id.to_string(),
-                member_id: member_id.to_string(),
-                member_thread_id: member.thread_id,
-                turn_id: Some(turn_id.clone()),
-                status: TeamMemberStatus::Completed,
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
-        }
         Ok(turn_id)
     }
 
@@ -1518,6 +1733,7 @@ impl Runtime {
         team_id: &str,
         member_id: &str,
     ) -> anyhow::Result<Option<TurnId>> {
+        let _interrupt_guard = self.agent_team_spawn_lock.lock().await;
         let team = self
             .read_team(team_id)
             .await
@@ -1528,15 +1744,34 @@ impl Runtime {
             .find(|member| member.id == member_id)
             .ok_or_else(|| anyhow::anyhow!("unknown team member {member_id:?}"))?
             .clone();
+        if member.status != TeamMemberStatus::Running {
+            return Ok(None);
+        }
         let Some(turn_id) = member.current_turn_id.clone() else {
             return Ok(None);
         };
+        if self
+            .active_turn_for_thread(&member.thread_id)
+            .await
+            .as_ref()
+            != Some(&turn_id)
+        {
+            return Ok(None);
+        }
         self.interrupt_turn(member.thread_id.clone(), turn_id.clone())
             .await?;
+        // Make queued mailbox work immediately eligible for the replacement turn while the
+        // lifecycle lock still prevents a follow-up from starting. Delivery acknowledgements
+        // are turn-owned, so a late acknowledgement from the aborted turn cannot steal a
+        // reservation acquired by its replacement.
+        self.teams
+            .release_mailbox_reservations_for_turn(&turn_id)
+            .await;
         self.teams
             .update_member(team_id, member_id, |member| {
                 member.status = TeamMemberStatus::Interrupted;
                 member.current_turn_id = None;
+                member.terminal_error = None;
             })
             .await?;
         self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
@@ -1545,6 +1780,8 @@ impl Runtime {
             member_thread_id: member.thread_id,
             turn_id: Some(turn_id.clone()),
             status: TeamMemberStatus::Interrupted,
+            final_message: member.final_message,
+            error: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -1593,11 +1830,20 @@ impl Runtime {
             .find(|member| member.id == member_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("closed team member disappeared"))?;
-        self.emit(crate::agent_control_tools::closed_member_event(
-            team_id.to_string(),
-            &closed,
-            interrupted_turn_id,
-        ))
+        self.team_member_turn_contexts
+            .lock()
+            .await
+            .remove(&closed.thread_id);
+        self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
+            team_id: team_id.to_string(),
+            member_id: closed.id.clone(),
+            member_thread_id: closed.thread_id.clone(),
+            turn_id: interrupted_turn_id,
+            status: TeamMemberStatus::Closed,
+            final_message: closed.final_message.clone(),
+            error: closed.terminal_error.clone(),
+            timestamp: OffsetDateTime::now_utc(),
+        }))
         .await;
         Ok(closed)
     }
@@ -1614,8 +1860,31 @@ impl Runtime {
         {
             anyhow::bail!("team {team_id:?} has active teammates; use forced cleanup");
         }
+        if force {
+            for member in team.members.iter().filter(|member| {
+                member.role != roder_api::teams::TeamMemberRole::Lead
+                    && member.status == TeamMemberStatus::Running
+            }) {
+                if let Some(turn_id) = member
+                    .current_turn_id
+                    .clone()
+                    .or(self.active_turn_for_thread(&member.thread_id).await)
+                {
+                    let _ = self.interrupt_turn(member.thread_id.clone(), turn_id).await;
+                }
+            }
+        }
         let removed = self.teams.remove(team_id).await?.is_some();
         if removed {
+            let member_thread_ids = team
+                .members
+                .iter()
+                .map(|member| member.thread_id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            self.team_member_turn_contexts
+                .lock()
+                .await
+                .retain(|thread_id, _| !member_thread_ids.contains(thread_id));
             self.emit(RoderEvent::TeamCleanupCompleted(TeamCleanupCompleted {
                 team_id: team_id.to_string(),
                 forced: force,
@@ -1633,25 +1902,91 @@ impl Runtime {
         self.status().await.policy_mode
     }
 
-    async fn complete_team_member_turn(
+    async fn complete_team_member_turn_with_result(
         &self,
         thread_id: &ThreadId,
         turn_id: &TurnId,
         status: TeamMemberStatus,
+        final_message: Option<String>,
+        terminal_error: Option<String>,
     ) -> anyhow::Result<()> {
+        let _delivery_guard = self.agent_team_spawn_lock.lock().await;
+        self.active_turns.write().await.remove(turn_id);
+        self.active_turn_selections.write().await.remove(turn_id);
+        self.active_turn_contexts.write().await.remove(turn_id);
         let Some((team_id, member)) = self
             .teams
-            .complete_member_turn(thread_id, turn_id, status)
+            .complete_member_turn(
+                thread_id,
+                turn_id,
+                status,
+                final_message.clone(),
+                terminal_error.clone(),
+            )
             .await?
         else {
             return Ok(());
         };
+        if let Some(parent_thread_id) = member.parent_thread_id.as_ref()
+            && let Some(team) = self.read_team(&team_id).await
+            && let Some(parent) = team
+                .members
+                .iter()
+                .find(|candidate| candidate.thread_id == *parent_thread_id)
+        {
+            let identity = member
+                .agent_path
+                .as_deref()
+                .or(member.task_name.as_deref())
+                .unwrap_or(&member.name);
+            let mut report = format!("Agent {identity} finished with status {status:?}.");
+            if let Some(message) = final_message.as_deref()
+                && !message.trim().is_empty()
+            {
+                report.push_str("\n\nFinal result:\n");
+                report.push_str(message);
+            }
+            if let Some(error) = terminal_error.as_deref()
+                && !error.trim().is_empty()
+            {
+                report.push_str("\n\nTerminal error:\n");
+                report.push_str(error);
+            }
+            let mailbox_appended = self
+                .teams
+                .append_mailbox_message(
+                    &team_id,
+                    Some(member.id.clone()),
+                    parent.id.clone(),
+                    TeamMailboxMessageKind::FinalAnswer,
+                    report,
+                )
+                .await
+                .is_ok();
+            if mailbox_appended
+                && let Some(parent_turn_id) = self.active_turn_for_thread(parent_thread_id).await
+            {
+                // The parent may finish between the active-turn lookup and enqueue. Its durable
+                // mailbox entry remains pending for the next turn, while terminal observers must
+                // still receive TeamMemberCompleted for this child.
+                let _ = self
+                    .deliver_pending_team_mailbox(
+                        &team_id,
+                        &parent.id,
+                        parent_thread_id.clone(),
+                        parent_turn_id,
+                    )
+                    .await;
+            }
+        }
         self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
             team_id,
             member_id: member.id,
             member_thread_id: member.thread_id,
             turn_id: Some(turn_id.clone()),
             status,
+            final_message,
+            error: terminal_error,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
@@ -2051,6 +2386,7 @@ impl Runtime {
     ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
         Box::pin(async move {
             req.workspace = validate_thread_workspace(&req.workspace)?;
+            let team_member = self.teams.member_for_thread(&req.thread_id).await;
             let cfg = self.config.read().await.clone();
             let provider = req
                 .provider_override
@@ -2058,6 +2394,27 @@ impl Runtime {
                 .unwrap_or_else(|| cfg.default_provider.clone());
             self.engine_for(&provider)?;
             let turn_id = uuid::Uuid::new_v4().to_string();
+            let mut initial_mailbox_ack = None;
+            if let Some((team_id, member)) = &team_member {
+                let pending = self
+                    .teams
+                    .reserve_pending_mailbox_messages(team_id, &member.id, &turn_id)
+                    .await?;
+                if !pending.is_empty()
+                    && let Some(team) = self.read_team(team_id).await
+                {
+                    let mailbox = format_mailbox_messages(&team, &pending);
+                    req.message = if req.message.trim().is_empty() {
+                        mailbox
+                    } else {
+                        format!("{mailbox}\n\n[Direct task input]\n{}", req.message)
+                    };
+                    initial_mailbox_ack = Some(MailboxDeliveryAck {
+                        team_id: team_id.clone(),
+                        message_ids: pending.iter().map(|message| message.id.clone()).collect(),
+                    });
+                }
+            }
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let active = ActiveTurnHandle {
                 thread_id: req.thread_id.clone(),
@@ -2068,13 +2425,59 @@ impl Runtime {
                 .write()
                 .await
                 .insert(turn_id.clone(), active);
+            self.active_turn_contexts.write().await.insert(
+                turn_id.clone(),
+                InheritedTurnContext {
+                    workspace: req.workspace.clone(),
+                    instructions: req.instructions.clone(),
+                    developer_context: req.developer_context.clone(),
+                },
+            );
+            if let Some((team_id, member)) = team_member {
+                let updated = match self
+                    .teams
+                    .update_member(&team_id, &member.id, |member| {
+                        member.current_turn_id = Some(turn_id.clone());
+                        member.status = TeamMemberStatus::Running;
+                        member.final_message = None;
+                        member.terminal_error = None;
+                    })
+                    .await
+                {
+                    Ok(updated) => updated,
+                    Err(error) => {
+                        self.active_turns.write().await.remove(&turn_id);
+                        self.active_turn_contexts.write().await.remove(&turn_id);
+                        self.teams
+                            .release_mailbox_reservations_for_turn(&turn_id)
+                            .await;
+                        return Err(error);
+                    }
+                };
+                if let Some(member) = updated
+                    .members
+                    .into_iter()
+                    .find(|candidate| candidate.id == member.id)
+                {
+                    self.emit(RoderEvent::TeamMemberStatusChanged(
+                        TeamMemberStatusChanged {
+                            team_id,
+                            member_id: member.id,
+                            member_thread_id: member.thread_id,
+                            status: TeamMemberStatus::Running,
+                            timestamp: OffsetDateTime::now_utc(),
+                        },
+                    ))
+                    .await;
+                }
+            }
             let runtime = Arc::clone(self);
             let turn_req = req;
             let thread_id_for_task = turn_req.thread_id.clone();
             let turn_id_for_task = turn_id.clone();
             tokio::spawn(async move {
                 let result = Abortable::new(
-                    runtime.run_turn(turn_req, turn_id_for_task.clone()),
+                    runtime.run_turn(turn_req, turn_id_for_task.clone(), initial_mailbox_ack),
                     abort_registration,
                 )
                 .await;
@@ -2089,22 +2492,65 @@ impl Runtime {
                     .cancel_pending_external_tool_calls_for_turn(&turn_id_for_task)
                     .await;
                 let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
-                if let Ok(Err(err)) = &result {
-                    // run_turn emits failures after the stream starts; this covers setup/startup errors.
-                    runtime
-                        .emit(RoderEvent::TurnFailed(TurnFailed {
-                            thread_id: thread_id_for_task.clone(),
-                            turn_id: turn_id_for_task.clone(),
-                            error: err.to_string(),
-                            error_kind: None,
-                            usage: None,
-                            timestamp: OffsetDateTime::now_utc(),
-                        }))
-                        .await;
+                match &result {
+                    Ok(Err(err)) => {
+                        // run_turn emits failures after the stream starts; this covers setup/startup errors.
+                        runtime
+                            .emit(RoderEvent::TurnFailed(TurnFailed {
+                                thread_id: thread_id_for_task.clone(),
+                                turn_id: turn_id_for_task.clone(),
+                                error: err.to_string(),
+                                error_kind: None,
+                                usage: None,
+                                timestamp: OffsetDateTime::now_utc(),
+                            }))
+                            .await;
+                        let _ = runtime
+                            .complete_team_member_turn_with_result(
+                                &thread_id_for_task,
+                                &turn_id_for_task,
+                                TeamMemberStatus::Failed,
+                                None,
+                                Some(err.to_string()),
+                            )
+                            .await;
+                    }
+                    Ok(Ok(TurnRunOutcome::Stopped)) => {
+                        let _ = runtime
+                            .complete_team_member_turn_with_result(
+                                &thread_id_for_task,
+                                &turn_id_for_task,
+                                TeamMemberStatus::Failed,
+                                None,
+                                Some("turn stopped before completion".to_string()),
+                            )
+                            .await;
+                    }
+                    Err(_) => {
+                        let _ = runtime
+                            .complete_team_member_turn_with_result(
+                                &thread_id_for_task,
+                                &turn_id_for_task,
+                                TeamMemberStatus::Interrupted,
+                                None,
+                                None,
+                            )
+                            .await;
+                    }
+                    Ok(Ok(TurnRunOutcome::Completed)) => {}
                 }
+                runtime
+                    .teams
+                    .release_mailbox_reservations_for_turn(&turn_id_for_task)
+                    .await;
                 runtime.active_turns.write().await.remove(&turn_id_for_task);
                 runtime
                     .active_turn_selections
+                    .write()
+                    .await
+                    .remove(&turn_id_for_task);
+                runtime
+                    .active_turn_contexts
                     .write()
                     .await
                     .remove(&turn_id_for_task);
@@ -2124,6 +2570,42 @@ impl Runtime {
             .await
             .values()
             .any(|handle| &handle.thread_id == thread_id)
+    }
+
+    async fn ensure_codex_v2_team_capacity(
+        &self,
+        team: &TeamState,
+        resuming_member_id: &str,
+        candidate_model: Option<&str>,
+    ) -> anyhow::Result<()> {
+        if !is_codex_v2_team(team)
+            && !candidate_model
+                .is_some_and(|model| model_supports_reasoning_effort(model, REASONING_ULTRA))
+        {
+            return Ok(());
+        }
+        let active_thread_ids = self
+            .active_turns
+            .read()
+            .await
+            .values()
+            .map(|handle| handle.thread_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let resident_threads = 1 + team
+            .members
+            .iter()
+            .filter(|member| {
+                member.role != roder_api::teams::TeamMemberRole::Lead
+                    && member.id != resuming_member_id
+                    && active_thread_ids.contains(&member.thread_id)
+            })
+            .count();
+        anyhow::ensure!(
+            resident_threads < codex_v2::CODEX_V2_MAX_RESIDENT_TEAM_THREADS,
+            "agent thread limit reached for this Codex V2 team: maximum {} resident threads (the lead plus 3 running subagents)",
+            codex_v2::CODEX_V2_MAX_RESIDENT_TEAM_THREADS
+        );
+        Ok(())
     }
 
     /// Number of currently running turns across all threads. Hosted runtime
@@ -2208,6 +2690,88 @@ impl Runtime {
         message: String,
         images: Vec<InputImage>,
     ) -> anyhow::Result<()> {
+        self.enqueue_turn_steer(thread_id, turn_id, message, images, None)
+            .await
+    }
+
+    pub(crate) async fn has_pending_turn_steers(&self, turn_id: &TurnId) -> bool {
+        let active = self.active_turns.read().await.get(turn_id).cloned();
+        let Some(active) = active else {
+            return false;
+        };
+        let has_pending = !active.steers.lock().await.is_empty();
+        has_pending
+    }
+
+    async fn steer_turn_with_mailbox_ack(
+        &self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        message: String,
+        message_ids: Vec<String>,
+        team_id: TeamId,
+    ) -> anyhow::Result<()> {
+        self.enqueue_turn_steer(
+            thread_id,
+            turn_id,
+            message,
+            Vec::new(),
+            Some(MailboxDeliveryAck {
+                team_id,
+                message_ids,
+            }),
+        )
+        .await
+    }
+
+    async fn deliver_pending_team_mailbox(
+        &self,
+        team_id: &str,
+        member_id: &str,
+        member_thread_id: ThreadId,
+        turn_id: TurnId,
+    ) -> anyhow::Result<()> {
+        let pending = self
+            .teams
+            .reserve_pending_mailbox_messages(team_id, member_id, &turn_id)
+            .await?;
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let message_ids = pending
+            .iter()
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        let team = self
+            .read_team(team_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
+        if let Err(error) = self
+            .steer_turn_with_mailbox_ack(
+                member_thread_id,
+                turn_id.clone(),
+                format_mailbox_messages(&team, &pending),
+                message_ids.clone(),
+                team_id.to_string(),
+            )
+            .await
+        {
+            self.teams
+                .release_mailbox_reservations(&turn_id, &message_ids)
+                .await;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn enqueue_turn_steer(
+        &self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        message: String,
+        images: Vec<InputImage>,
+        mailbox_ack: Option<MailboxDeliveryAck>,
+    ) -> anyhow::Result<()> {
         let message = message.trim().to_string();
         if message.is_empty() && images.is_empty() {
             return Ok(());
@@ -2216,11 +2780,10 @@ impl Runtime {
         let Some(active) = self.active_turns.read().await.get(&turn_id).cloned() else {
             anyhow::bail!("no active turn to steer");
         };
-        active
-            .steers
-            .lock()
-            .await
-            .push(UserMessage::with_images(message.clone(), images));
+        active.steers.lock().await.push(QueuedTurnSteer {
+            message: UserMessage::with_images(message.clone(), images),
+            mailbox_ack,
+        });
         self.emit(RoderEvent::TurnSteered(TurnSteered {
             thread_id,
             turn_id,
@@ -2250,6 +2813,7 @@ impl Runtime {
         self: &Arc<Self>,
         req: StartTurnRequest,
         turn_id: TurnId,
+        initial_mailbox_ack: Option<MailboxDeliveryAck>,
     ) -> anyhow::Result<TurnRunOutcome> {
         let turn_started_at = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TurnStarted(TurnStarted {
@@ -2268,6 +2832,11 @@ impl Runtime {
             )),
         )
         .await?;
+        if let Some(ack) = initial_mailbox_ack {
+            self.teams
+                .mark_mailbox_messages_delivered(&ack.team_id, &turn_id, &ack.message_ids)
+                .await?;
+        }
 
         let mut cfg = self.config.read().await.clone();
         let runtime_profile = cfg.runtime_profile;
@@ -2881,16 +3450,18 @@ impl Runtime {
                         self.emit(RoderEvent::TurnFailed(TurnFailed {
                             thread_id: req.thread_id.clone(),
                             turn_id: turn_id.clone(),
-                            error,
+                            error: error.clone(),
                             error_kind: None,
                             usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
-                        self.complete_team_member_turn(
+                        self.complete_team_member_turn_with_result(
                             &req.thread_id,
                             &turn_id,
                             TeamMemberStatus::Failed,
+                            (!assistant_text.trim().is_empty()).then(|| assistant_text.clone()),
+                            Some(error),
                         )
                         .await?;
                         return Err(err);
@@ -2938,27 +3509,30 @@ impl Runtime {
                     InferenceEvent::ToolCallCompleted(call) => tool_calls.push(call),
                     InferenceEvent::Failed(failure) => {
                         speed_policy.record_failure();
+                        let error = failure.message;
                         self.persist_turn_item(
                             &req.thread_id,
                             &turn_id,
                             &TranscriptItem::Error(ErrorRecord {
-                                message: failure.message.clone(),
+                                message: error.clone(),
                             }),
                         )
                         .await?;
                         self.emit(RoderEvent::TurnFailed(TurnFailed {
                             thread_id: req.thread_id.clone(),
                             turn_id: turn_id.clone(),
-                            error: failure.message,
+                            error: error.clone(),
                             error_kind: None,
                             usage: None,
                             timestamp: OffsetDateTime::now_utc(),
                         }))
                         .await;
-                        self.complete_team_member_turn(
+                        self.complete_team_member_turn_with_result(
                             &req.thread_id,
                             &turn_id,
                             TeamMemberStatus::Failed,
+                            (!assistant_text.trim().is_empty()).then(|| assistant_text.clone()),
+                            Some(error),
                         )
                         .await?;
                         return Ok(TurnRunOutcome::Stopped);
@@ -3216,14 +3790,20 @@ impl Runtime {
             self.emit(RoderEvent::TurnFailed(TurnFailed {
                 thread_id: req.thread_id.clone(),
                 turn_id: turn_id.clone(),
-                error: message,
+                error: message.clone(),
                 error_kind: None,
                 usage: None,
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
-            self.complete_team_member_turn(&req.thread_id, &turn_id, TeamMemberStatus::Failed)
-                .await?;
+            self.complete_team_member_turn_with_result(
+                &req.thread_id,
+                &turn_id,
+                TeamMemberStatus::Failed,
+                None,
+                Some(message),
+            )
+            .await?;
             return Ok(TurnRunOutcome::Stopped);
         }
 
@@ -3259,7 +3839,7 @@ impl Runtime {
                 &req.thread_id,
                 &turn_id,
                 &TranscriptItem::AssistantMessage(AssistantMessage {
-                    text: final_assistant_text,
+                    text: final_assistant_text.clone(),
                     phase: Some(FINAL_ANSWER_PHASE.to_string()),
                 }),
             )
@@ -3302,14 +3882,20 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        self.complete_team_member_turn(&req.thread_id, &turn_id, TeamMemberStatus::Completed)
-            .await?;
+        self.complete_team_member_turn_with_result(
+            &req.thread_id,
+            &turn_id,
+            TeamMemberStatus::Completed,
+            (!final_assistant_text.is_empty()).then_some(final_assistant_text),
+            None,
+        )
+        .await?;
         self.persist_runner_state(&req.thread_id, runner_session.as_ref())
             .await?;
         Ok(TurnRunOutcome::Completed)
     }
 
-    async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<UserMessage> {
+    async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<QueuedTurnSteer> {
         let Some(active) = self.active_turns.read().await.get(turn_id).cloned() else {
             return Vec::new();
         };
@@ -3368,23 +3954,22 @@ impl Runtime {
         let force_sequential = calls
             .iter()
             .any(|call| crate::agent_control_tools::is_agent_control_tool(&call.name));
-        let results = if parallel && !force_sequential {
-            try_join_all(
-                calls.into_iter().map(|call| {
+        let results =
+            if parallel && !force_sequential {
+                try_join_all(calls.into_iter().map(|call| {
                     self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
-                }),
-            )
-            .await
-        } else {
-            let mut results = Vec::with_capacity(calls.len());
-            for call in calls {
-                results.push(
-                    self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
-                        .await?,
-                );
-            }
-            Ok(results)
-        }?;
+                }))
+                .await
+            } else {
+                let mut results = Vec::with_capacity(calls.len());
+                for call in calls {
+                    results.push(
+                        self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
+                            .await?,
+                    );
+                }
+                Ok(results)
+            }?;
 
         if let Some((tool_id, _)) = &swarm_call
             && let Some(result) = results.iter().find(|result| &result.id == tool_id)
@@ -3424,14 +4009,20 @@ impl Runtime {
         self.emit(RoderEvent::TurnFailed(TurnFailed {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
-            error: message,
+            error: message.clone(),
             error_kind: None,
             usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        self.complete_team_member_turn(thread_id, turn_id, TeamMemberStatus::Failed)
-            .await?;
+        self.complete_team_member_turn_with_result(
+            thread_id,
+            turn_id,
+            TeamMemberStatus::Failed,
+            None,
+            Some(message),
+        )
+        .await?;
         Ok(())
     }
 
@@ -3470,14 +4061,20 @@ impl Runtime {
         self.emit(RoderEvent::TurnFailed(TurnFailed {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
-            error: message,
+            error: message.clone(),
             error_kind: Some("deadline_timeout".to_string()),
             usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        self.complete_team_member_turn(thread_id, turn_id, TeamMemberStatus::Failed)
-            .await?;
+        self.complete_team_member_turn_with_result(
+            thread_id,
+            turn_id,
+            TeamMemberStatus::Failed,
+            None,
+            Some(format!("{message}: {partial_result}")),
+        )
+        .await?;
         Ok(())
     }
 
@@ -3552,14 +4149,20 @@ impl Runtime {
         self.emit(RoderEvent::TurnFailed(TurnFailed {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
-            error: message,
+            error: message.clone(),
             error_kind: Some("reliability_limit".to_string()),
             usage: None,
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        self.complete_team_member_turn(thread_id, turn_id, TeamMemberStatus::Failed)
-            .await?;
+        self.complete_team_member_turn_with_result(
+            thread_id,
+            turn_id,
+            TeamMemberStatus::Failed,
+            None,
+            Some(format!("{message}: {partial_result}")),
+        )
+        .await?;
         Ok(())
     }
 
@@ -3568,9 +4171,10 @@ impl Runtime {
         req: &StartTurnRequest,
         turn_id: &TurnId,
         transcript: &mut Vec<TranscriptItem>,
-        steers: Vec<UserMessage>,
+        steers: Vec<QueuedTurnSteer>,
     ) -> anyhow::Result<()> {
-        for mut steer in steers {
+        for queued in steers {
+            let mut steer = queued.message;
             steer.text = steer.text.trim().to_string();
             if steer.text.is_empty() && steer.images.is_empty() {
                 continue;
@@ -3579,6 +4183,11 @@ impl Runtime {
             self.persist_turn_item(&req.thread_id, turn_id, &item)
                 .await?;
             transcript.push(item);
+            if let Some(ack) = queued.mailbox_ack {
+                self.teams
+                    .mark_mailbox_messages_delivered(&ack.team_id, turn_id, &ack.message_ids)
+                    .await?;
+            }
         }
         Ok(())
     }
@@ -4342,6 +4951,10 @@ fn should_persist_thread_event(thread_id: &str) -> bool {
 #[cfg(test)]
 #[path = "runtime/codex_v2_tests.rs"]
 mod codex_v2_tests;
+
+#[cfg(test)]
+#[path = "runtime/codex_v2_lifecycle_tests.rs"]
+mod codex_v2_lifecycle_tests;
 
 #[cfg(test)]
 mod tests {
@@ -6724,8 +7337,7 @@ mod tests {
     fn parse_swarm_counts_reads_summary_with_omitted_buckets() {
         let text = "<agent_swarm_result>\n<summary>completed: 2, failed: 1</summary>\n</agent_swarm_result>";
         assert_eq!(parse_swarm_counts(text), Some((2, 1, 0)));
-        let text =
-            "<agent_swarm_result>\n<summary>completed: 0</summary>\n</agent_swarm_result>";
+        let text = "<agent_swarm_result>\n<summary>completed: 0</summary>\n</agent_swarm_result>";
         assert_eq!(parse_swarm_counts(text), Some((0, 0, 0)));
         // Not a swarm result.
         assert_eq!(parse_swarm_counts("just text"), None);
@@ -7819,10 +8431,7 @@ mod tests {
         );
 
         // A per-thread `off` override wins over a runtime-global `on` default.
-        runtime
-            .set_agent_swarm_mode(true, trigger)
-            .await
-            .unwrap();
+        runtime.set_agent_swarm_mode(true, trigger).await.unwrap();
         runtime
             .set_agent_swarm_mode_for_thread("thread-b", false, trigger)
             .await;
@@ -7861,11 +8470,17 @@ mod tests {
             if let RoderEvent::AgentSwarmModeChanged(event) = envelope.event {
                 assert_eq!(event.thread_id, "thread-xyz");
                 assert!(event.enabled);
-                assert_eq!(event.trigger, roder_api::subagents::AgentSwarmModeTrigger::Task);
+                assert_eq!(
+                    event.trigger,
+                    roder_api::subagents::AgentSwarmModeTrigger::Task
+                );
                 saw = true;
                 break;
             }
         }
-        assert!(saw, "expected an AgentSwarmModeChanged event for the thread");
+        assert!(
+            saw,
+            "expected an AgentSwarmModeChanged event for the thread"
+        );
     }
 }

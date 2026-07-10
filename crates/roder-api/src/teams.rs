@@ -88,12 +88,22 @@ pub struct TeamMemberDescriptor {
     pub id: TeamMemberId,
     pub role: TeamMemberRole,
     pub name: String,
+    #[serde(default)]
+    pub task_name: Option<String>,
+    #[serde(default)]
+    pub agent_path: Option<String>,
     pub thread_id: ThreadId,
+    #[serde(default)]
+    pub parent_thread_id: Option<ThreadId>,
     pub current_turn_id: Option<TurnId>,
     pub model_provider: Option<String>,
     pub model: Option<String>,
     pub policy_mode: PolicyMode,
     pub status: TeamMemberStatus,
+    #[serde(default)]
+    pub final_message: Option<String>,
+    #[serde(default)]
+    pub terminal_error: Option<String>,
     pub pane_id: Option<String>,
 }
 
@@ -104,9 +114,22 @@ pub struct TeamMailboxMessage {
     pub team_id: TeamId,
     pub from_member_id: Option<TeamMemberId>,
     pub to_member_id: TeamMemberId,
+    #[serde(default)]
+    pub kind: TeamMailboxMessageKind,
     pub text: String,
+    #[serde(default)]
+    pub delivered: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TeamMailboxMessageKind {
+    #[default]
+    Message,
+    NewTask,
+    FinalAnswer,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -152,5 +175,52 @@ mod tests {
         assert_eq!(config.display_mode, AgentTeamDisplayMode::Auto);
         assert_eq!(config.max_teammates, 5);
         assert!(config.split_panes.reuse_existing_tmux_session);
+    }
+
+    #[test]
+    fn legacy_team_state_fields_deserialize_with_safe_defaults() {
+        let member: TeamMemberDescriptor = serde_json::from_value(serde_json::json!({
+            "id": "member-1",
+            "role": "teammate",
+            "name": "Reviewer",
+            "threadId": "thread-1",
+            "currentTurnId": null,
+            "modelProvider": "codex",
+            "model": "gpt-5.6-sol",
+            "policyMode": "default",
+            "status": "idle",
+            "paneId": null
+        }))
+        .unwrap();
+        assert_eq!(member.task_name, None);
+        assert_eq!(member.agent_path, None);
+        assert_eq!(member.parent_thread_id, None);
+        assert_eq!(member.final_message, None);
+        assert_eq!(member.terminal_error, None);
+
+        let message: TeamMailboxMessage = serde_json::from_value(serde_json::json!({
+            "id": "message-1",
+            "teamId": "team-1",
+            "fromMemberId": null,
+            "toMemberId": "member-1",
+            "text": "Review this",
+            "timestamp": "2026-07-10T00:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(message.kind, TeamMailboxMessageKind::Message);
+        assert!(!message.delivered);
+
+        assert_eq!(
+            serde_json::to_string(&TeamMailboxMessageKind::Message).unwrap(),
+            "\"MESSAGE\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TeamMailboxMessageKind::NewTask).unwrap(),
+            "\"NEW_TASK\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TeamMailboxMessageKind::FinalAnswer).unwrap(),
+            "\"FINAL_ANSWER\""
+        );
     }
 }

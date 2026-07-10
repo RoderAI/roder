@@ -3297,14 +3297,6 @@ impl AppServer {
             .await
             .map_err(internal_error)?;
         let descriptor = team_descriptor(team);
-        self.publish_notification(JsonRpcNotification {
-            jsonrpc: "2.0".to_string(),
-            method: "team/started".to_string(),
-            params: serde_json::to_value(TeamStartedNotification {
-                team: descriptor.clone(),
-            })
-            .unwrap(),
-        });
         Ok(serde_json::to_value(TeamStartResult { team: descriptor }).unwrap())
     }
 

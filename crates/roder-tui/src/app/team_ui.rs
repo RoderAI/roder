@@ -278,12 +278,17 @@ mod tests {
             id: id.to_string(),
             role,
             name: name.to_string(),
+            task_name: None,
+            agent_path: None,
             thread_id: thread_id.to_string(),
+            parent_thread_id: None,
             current_turn_id: None,
             model_provider: None,
             model: None,
             policy_mode: PolicyMode::Default,
             status: TeamMemberStatus::Idle,
+            final_message: None,
+            terminal_error: None,
             pane_id: None,
         }
     }
