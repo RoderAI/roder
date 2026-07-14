@@ -91,6 +91,29 @@ class RoderHarborAgentConfigTests(unittest.TestCase):
             module.reliability_config_toml(agent._reliability),
         )
 
+    def test_tool_allowlist_is_written_to_config_toml(self) -> None:
+        module = load_module()
+
+        agent = module.RoderCli(
+            tool_allowlist="read_file,list_files,grep,glob,exec_command,write_stdin,apply_patch"
+        )
+        setup_command = agent.create_run_agent_commands("solve it")[0].command
+
+        self.assertIn("[tools]", setup_command)
+        self.assertIn('allowlist = ["read_file"', setup_command)
+        self.assertIn('"apply_patch"', setup_command)
+        # broken auxiliary tools are omitted from the allow-list
+        self.assertNotIn("media_attach", setup_command)
+        self.assertNotIn("chrome_tab_open", setup_command)
+
+    def test_no_tool_allowlist_leaves_all_tools_advertised(self) -> None:
+        module = load_module()
+
+        agent = module.RoderCli()
+        setup_command = agent.create_run_agent_commands("solve it")[0].command
+
+        self.assertNotIn("[tools]", setup_command)
+
     def test_gemini_api_key_is_forwarded_to_roder_exec_env(self) -> None:
         module = load_module()
         previous = os.environ.get("GEMINI_API_KEY")

@@ -1,0 +1,70 @@
+{
+  "job_name": "roder-tbench-full-gpt55-xhigh-minimal",
+  "jobs_dir": "evals/harbor/jobs",
+  "n_attempts": 1,
+  "timeout_multiplier": 1.0,
+  "agent_setup_timeout_multiplier": 4.0,
+  "debug": false,
+  "orchestrator": {
+    "type": "local",
+    "n_concurrent_trials": 4,
+    "quiet": false,
+    "retry": {
+      "max_retries": 0,
+      "exclude_exceptions": [
+        "RewardFileEmptyError",
+        "AgentTimeoutError",
+        "VerifierOutputParseError",
+        "RewardFileNotFoundError",
+        "VerifierTimeoutError"
+      ]
+    }
+  },
+  "environment": {
+    "type": "docker",
+    "force_build": false,
+    "delete": false,
+    "kwargs": {}
+  },
+  "verifier": {
+    "disable": false
+  },
+  "agents": [
+    {
+      "import_path": "roder_harbor_agent:RoderCli",
+      "model_name": "codex/gpt-5.5",
+      "kwargs": {
+        "reasoning": "xhigh",
+        "benchmark_guidance_enabled": false,
+        "task_ledger_required": false,
+        "plan_first_enabled": false,
+        "speed_policy_enabled": false,
+        "reliability_max_consecutive_tool_failures": 16,
+        "policy_mode": "bypass",
+        "include_prebuilt_binary": "true",
+        "include_local_source": "false",
+        "agent_timeout_multiplier_hint": 1.0,
+        "policy_block_max_retries": 2
+      },
+      "env": {}
+    }
+  ],
+  "datasets": [
+    {
+      "registry": {
+        "url": "https://raw.githubusercontent.com/laude-institute/harbor/main/registry.json"
+      },
+      "name": "terminal-bench",
+      "version": "2.0"
+    }
+  ],
+  "tasks": [],
+  "artifacts": [
+    "/logs/agent/roder-cli.txt",
+    "/logs/agent/roder-events.jsonl",
+    "/logs/agent/roder-stderr.txt",
+    "/logs/agent/roder-last-message.txt",
+    "/logs/agent/setup-summary.txt",
+    "/logs/agent/roder-run-summary.json"
+  ]
+}
