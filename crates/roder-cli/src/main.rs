@@ -11,7 +11,6 @@ mod exec;
 mod exec_events;
 mod exec_output;
 mod forks;
-mod runners;
 mod knowledge;
 mod marketplace;
 mod media;
@@ -19,6 +18,7 @@ mod packages;
 mod replay;
 mod resume_picker;
 mod roadmap_cli;
+mod runners;
 mod sdk_schema;
 mod skills;
 mod speech;
@@ -35,10 +35,9 @@ use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
     PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK, PROVIDER_OPENAI,
-    PROVIDER_SYNTHETIC,
     PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
-    PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
-    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
+    PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_VERTEX, PROVIDER_XAI,
+    PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
@@ -1130,7 +1129,7 @@ pub(crate) async fn build_runtime_from_config(
     let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
     let inference_router = resolve_inference_router_config(cfg.inference_router.as_ref())?;
     let dynamic_workflows = resolve_dynamic_workflows_config(cfg.dynamic_workflows.as_ref());
-    let reliability = resolve_reliability_config(cfg.reliability.as_ref());
+    let reliability = resolve_reliability_config(cfg.reliability.as_ref(), runtime_profile);
     let custom_inference_provider_configs = custom_inference_providers(&cfg);
     let skills_config = cfg.skills.clone();
     let (mut default_provider, mut configured_model) =
@@ -2233,8 +2232,16 @@ fn resolve_inference_router_config(
 
 fn resolve_reliability_config(
     cfg: Option<&roder_config::ReliabilityConfig>,
+    runtime_profile: RuntimeProfile,
 ) -> RuntimeReliabilityConfig {
     let mut reliability = RuntimeReliabilityConfig::default();
+    // The eval profile favors loop persistence: continue past the consecutive
+    // tool-failure limit and nudge once on an empty tool-call finalization.
+    // Explicit `[reliability]` config keys below still override these defaults.
+    if runtime_profile == RuntimeProfile::Eval {
+        reliability.continue_on_failure_limit = true;
+        reliability.empty_tool_call_nudges = 1;
+    }
     if let Some(cfg) = cfg {
         if let Some(value) = cfg.max_consecutive_tool_failures {
             reliability.max_consecutive_tool_failures = value;
@@ -2244,6 +2251,12 @@ fn resolve_reliability_config(
         }
         if let Some(value) = cfg.max_model_calls_per_turn {
             reliability.max_model_calls_per_turn = value;
+        }
+        if let Some(value) = cfg.continue_on_failure_limit {
+            reliability.continue_on_failure_limit = value;
+        }
+        if let Some(value) = cfg.empty_tool_call_nudges {
+            reliability.empty_tool_call_nudges = value;
         }
         if let Some(value) = cfg.provider_retry_max_attempts {
             reliability.provider_retry_max_attempts = value;
@@ -4099,16 +4112,15 @@ Report findings.
             ..roder_config::SubagentsConfig::default()
         };
 
-        let resolved =
-            resolve_subagents_config(
-                Some(&cfg),
-                PROVIDER_MOCK.to_string(),
-                "mock".to_string(),
-                roder_api::subagents::AgentSwarmConfig::default(),
-            )
-                .await
-                .unwrap()
-                .unwrap();
+        let resolved = resolve_subagents_config(
+            Some(&cfg),
+            PROVIDER_MOCK.to_string(),
+            "mock".to_string(),
+            roder_api::subagents::AgentSwarmConfig::default(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
 
         assert!(resolved.enabled);
         assert_eq!(resolved.default_agent, "explore");
@@ -4143,16 +4155,15 @@ Report findings.
             ..roder_config::SubagentsConfig::default()
         };
 
-        let resolved =
-            resolve_subagents_config(
-                Some(&cfg),
-                PROVIDER_MOCK.to_string(),
-                "mock".to_string(),
-                roder_api::subagents::AgentSwarmConfig::default(),
-            )
-                .await
-                .unwrap()
-                .unwrap();
+        let resolved = resolve_subagents_config(
+            Some(&cfg),
+            PROVIDER_MOCK.to_string(),
+            "mock".to_string(),
+            roder_api::subagents::AgentSwarmConfig::default(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
 
         assert!(!resolved.enabled);
         assert!(resolved.definitions.is_empty());
@@ -4424,5 +4435,40 @@ Report findings.
         assert!(row.contains("running"));
         assert!(row.contains("CommandExec"));
         assert!(row.contains("sleep 10"));
+    }
+
+    #[test]
+    fn eval_profile_enables_loop_persistence_by_default() {
+        let reliability = resolve_reliability_config(None, RuntimeProfile::Eval);
+        assert!(reliability.continue_on_failure_limit);
+        assert_eq!(reliability.empty_tool_call_nudges, 1);
+    }
+
+    #[test]
+    fn non_eval_profiles_keep_loop_persistence_disabled_by_default() {
+        for profile in [RuntimeProfile::Interactive, RuntimeProfile::NonInteractive] {
+            let reliability = resolve_reliability_config(None, profile);
+            assert!(!reliability.continue_on_failure_limit);
+            assert_eq!(reliability.empty_tool_call_nudges, 0);
+        }
+    }
+
+    #[test]
+    fn explicit_reliability_config_overrides_eval_profile_defaults() {
+        let cfg = roder_config::ReliabilityConfig {
+            max_consecutive_tool_failures: None,
+            max_tool_failures_per_turn: None,
+            max_model_calls_per_turn: None,
+            continue_on_failure_limit: Some(false),
+            empty_tool_call_nudges: Some(0),
+            provider_retry_max_attempts: None,
+            provider_retry_initial_backoff_ms: None,
+            provider_retry_backoff_factor: None,
+            provider_retry_status_codes: Vec::new(),
+            retry_empty_provider_body: None,
+        };
+        let reliability = resolve_reliability_config(Some(&cfg), RuntimeProfile::Eval);
+        assert!(!reliability.continue_on_failure_limit);
+        assert_eq!(reliability.empty_tool_call_nudges, 0);
     }
 }

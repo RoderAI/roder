@@ -6,7 +6,7 @@ use roder_api::remote_runner::{
 };
 use roder_api::tools::{ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 
 use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
@@ -45,8 +45,18 @@ impl ToolExecutor for ApplyPatchTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
-        let args = parse::<ApplyPatchArgs>(&call)?;
-        if args.patch.trim().is_empty() {
+        let patch = match patch_text_from_call(&call) {
+            Ok(patch) => patch,
+            Err(err) => {
+                return Ok(result(
+                    call,
+                    format!("failed to apply patch: {err}"),
+                    json!({ "error": { "kind": "invalid_arguments", "message": err.to_string() } }),
+                    true,
+                ));
+            }
+        };
+        if patch.trim().is_empty() {
             return Ok(result(
                 call,
                 "failed to apply patch: patch is required".to_string(),
@@ -55,9 +65,9 @@ impl ToolExecutor for ApplyPatchTool {
             ));
         }
 
-        let hunks = hunk_records_from_patch(&ctx, &call, &args.patch).unwrap_or_default();
+        let hunks = hunk_records_from_patch(&ctx, &call, &patch).unwrap_or_default();
         let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
-        let outcome = backend.apply_patch(&args.patch).await;
+        let outcome = backend.apply_patch(&patch).await;
 
         match outcome {
             Ok(text) => Ok(result(call, text, json!({ "hunks": hunks }), false)),
@@ -74,6 +84,28 @@ impl ToolExecutor for ApplyPatchTool {
 #[derive(Deserialize)]
 struct ApplyPatchArgs {
     patch: String,
+}
+
+/**
+ * Extracts the patch text from a tool call, accepting BOTH channels:
+ * - JSON function arguments `{ "patch": "..." }` (every non-freeform provider);
+ * - the Responses freeform/custom channel, where the provider wraps the raw
+ *   patch string as `{ "input": "..." }`.
+ *
+ * A bare JSON string body is also treated as raw patch text.
+ */
+fn patch_text_from_call(call: &ToolCall) -> anyhow::Result<String> {
+    if let Some(object) = call.arguments.as_object() {
+        for key in ["patch", "input", "raw"] {
+            if let Some(text) = object.get(key).and_then(Value::as_str) {
+                return Ok(text.to_string());
+            }
+        }
+    }
+    if let Some(text) = call.arguments.as_str() {
+        return Ok(text.to_string());
+    }
+    Ok(parse::<ApplyPatchArgs>(call)?.patch)
 }
 
 fn is_codex_patch(patch: &str) -> bool {
@@ -492,5 +524,35 @@ mod hunk_tests {
         assert_eq!(records[0].path, "src/lib.rs");
         assert_eq!(records[0].tool_name, "apply_patch");
         assert_eq!(records[0].diff.len(), 2);
+    }
+
+    fn call_with_arguments(arguments: Value) -> ToolCall {
+        ToolCall {
+            id: "patch-1".to_string(),
+            name: "apply_patch".to_string(),
+            arguments,
+            raw_arguments: "{}".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+        }
+    }
+
+    #[test]
+    fn patch_text_accepts_json_function_arguments() {
+        let call = call_with_arguments(json!({ "patch": "PATCH" }));
+        assert_eq!(patch_text_from_call(&call).unwrap(), "PATCH");
+    }
+
+    #[test]
+    fn patch_text_accepts_freeform_input_wrapper() {
+        // The Responses provider wraps the raw custom-channel body as `input`.
+        let call = call_with_arguments(json!({ "input": "PATCH" }));
+        assert_eq!(patch_text_from_call(&call).unwrap(), "PATCH");
+    }
+
+    #[test]
+    fn patch_text_accepts_bare_string_body() {
+        let call = call_with_arguments(Value::String("PATCH".to_string()));
+        assert_eq!(patch_text_from_call(&call).unwrap(), "PATCH");
     }
 }

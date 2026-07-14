@@ -75,7 +75,9 @@ This turn is running in a non-interactive profile. Do not wait for unavailable u
 
 const EVAL_INSTRUCTIONS: &str = r#"## Eval Runtime Profile
 
-This turn is running in eval mode. Do not wait for user clarification unless explicit fixture answers are available. Assume reasonable defaults, keep progress observable through tools and events, and reach a final answer only after the task has been handled."#;
+This turn is running in eval mode. Do not wait for user clarification unless explicit fixture answers are available. Assume reasonable defaults and keep progress observable through tools and events.
+
+Persist until the task is fully solved and verified. Do not stop early because a step is slow, a command is still running, or a tool call failed — a single failure is not a reason to give up. When one approach stalls or errors, try a different approach with the tools available rather than abandoning the task. Only produce a final answer once you have actually completed the work and confirmed it is correct; never fabricate results or claim completion without verification. If you believe you are done, first re-check that nothing remains, then restate your final answer."#;
 
 const TASK_LEDGER_REQUIRED_INSTRUCTIONS: &str = r#"## Task Ledger Required
 
