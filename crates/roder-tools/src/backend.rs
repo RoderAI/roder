@@ -28,6 +28,10 @@ pub(crate) struct EditOutcome {
 pub(crate) trait WorkspaceBackend: Send + Sync + 'static {
     async fn read_text(&self, path: &str) -> anyhow::Result<(String, String)>;
 
+    /// Read a file as raw bytes (for binary content such as images). Returns
+    /// the workspace-relative display path alongside the bytes.
+    async fn read_bytes(&self, path: &str) -> anyhow::Result<(String, Vec<u8>)>;
+
     async fn list_files(&self, path: &str) -> anyhow::Result<(String, Vec<String>)>;
 
     async fn write_text(&self, path: &str, content: String) -> anyhow::Result<String>;
@@ -137,6 +141,12 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         let path = self.workspace.resolve_existing(path)?;
         let text = std::fs::read_to_string(&path)?;
         Ok((self.workspace.display(&path), text))
+    }
+
+    async fn read_bytes(&self, path: &str) -> anyhow::Result<(String, Vec<u8>)> {
+        let path = self.workspace.resolve_existing(path)?;
+        let bytes = std::fs::read(&path)?;
+        Ok((self.workspace.display(&path), bytes))
     }
 
     async fn list_files(&self, path: &str) -> anyhow::Result<(String, Vec<String>)> {
@@ -311,6 +321,18 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
             })
             .await?;
         Ok((rel, String::from_utf8(read.contents)?))
+    }
+
+    async fn read_bytes(&self, path: &str) -> anyhow::Result<(String, Vec<u8>)> {
+        let path = self.guard.resolve_existing(path)?;
+        let rel = self.guard.display(&path);
+        let read = self
+            .session
+            .read_file(RunnerFileReadRequest {
+                path: rel.clone().into(),
+            })
+            .await?;
+        Ok((rel, read.contents))
     }
 
     async fn list_files(&self, path: &str) -> anyhow::Result<(String, Vec<String>)> {

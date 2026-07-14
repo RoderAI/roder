@@ -84,6 +84,80 @@ class HarborReadinessValidationTests(unittest.TestCase):
         self.assertIn("soft_timeout_sec", text)
         self.assertIn("speed_policy_eval_deadline_seconds", text)
 
+    def test_checked_in_per_task_config_is_leaderboard_valid_candidate(self) -> None:
+        config = self.load_config("tbench-full-gpt55-xhigh-pertask.json")
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-pertask.json", config
+        )
+        self.assertEqual([], issues)
+        self.assertEqual(
+            "leaderboard-valid-candidate", self.module.config_deadline_track(config)
+        )
+
+    def test_checked_in_minimal_config_is_codex_parity_and_valid(self) -> None:
+        config = self.load_config("tbench-full-gpt55-xhigh-minimal.json")
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-minimal.json", config
+        )
+        self.assertEqual([], issues)
+        self.assertEqual("codex-parity", self.module.config_deadline_track(config))
+
+    def test_leaderboard_track_rejects_benchmark_guidance(self) -> None:
+        config = copy.deepcopy(self.load_config("tbench-full-gpt55-xhigh-minimal.json"))
+        config["agents"][0]["kwargs"]["benchmark_guidance_enabled"] = True
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-minimal.json", config
+        )
+        self.assertIn("benchmark_guidance_enabled", "\n".join(issues))
+
+    def test_leaderboard_track_rejects_task_ledger(self) -> None:
+        config = copy.deepcopy(self.load_config("tbench-full-gpt55-xhigh-minimal.json"))
+        config["agents"][0]["kwargs"]["task_ledger_required"] = True
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-minimal.json", config
+        )
+        self.assertIn("task_ledger_required", "\n".join(issues))
+
+    def test_codex_parity_track_rejects_internal_deadline(self) -> None:
+        config = copy.deepcopy(self.load_config("tbench-full-gpt55-xhigh-minimal.json"))
+        config["agents"][0]["kwargs"]["speed_policy_eval_deadline_seconds"] = 720
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-minimal.json", config
+        )
+        self.assertIn("speed_policy_eval_deadline_seconds", "\n".join(issues))
+
+    def test_per_task_track_rejects_window_override(self) -> None:
+        config = copy.deepcopy(
+            self.load_config("tbench-full-gpt55-xhigh-pertask.json")
+        )
+        config["agents"][0]["override_timeout_sec"] = 1800
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-pertask.json", config
+        )
+        self.assertIn("override_timeout_sec", "\n".join(issues))
+
+    def test_per_task_track_rejects_agent_timeout_multiplier(self) -> None:
+        config = copy.deepcopy(
+            self.load_config("tbench-full-gpt55-xhigh-pertask.json")
+        )
+        config["agent_timeout_multiplier"] = 2.0
+        config["agents"][0]["kwargs"]["agent_timeout_multiplier_hint"] = 2.0
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-pertask.json", config
+        )
+        self.assertIn("agent_timeout_multiplier", "\n".join(issues))
+        self.assertEqual("local-only", self.module.config_deadline_track(config))
+
+    def test_per_task_track_rejects_pinned_static_deadlines(self) -> None:
+        config = copy.deepcopy(
+            self.load_config("tbench-full-gpt55-xhigh-pertask.json")
+        )
+        config["agents"][0]["kwargs"]["soft_timeout_sec"] = 780
+        issues = self.module.validate_config(
+            ROOT / "evals/harbor/tbench-full-gpt55-xhigh-pertask.json", config
+        )
+        self.assertIn("soft_timeout_sec", "\n".join(issues))
+
     def test_source_fallback_is_reported_for_prebuilt_eval_configs(self) -> None:
         config = self.load_config("tbench-full-gpt55-medium.json")
         config = copy.deepcopy(config)

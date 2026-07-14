@@ -188,10 +188,7 @@ fn command_writes_or_edits_files(cmd: &str) -> bool {
         cleaned.contains('>')
     };
 
-    contains_redirect 
-        || cmd.contains("<<") 
-        || cmd.contains("sed -i") 
-        || cmd.contains("tee ")
+    contains_redirect || cmd.contains("<<") || cmd.contains("sed -i") || cmd.contains("tee ")
 }
 
 fn looks_like_process(call: &ToolCall) -> bool {

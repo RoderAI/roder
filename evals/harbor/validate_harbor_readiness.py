@@ -40,6 +40,7 @@ def validate_config(path: Path, config: dict[str, Any]) -> list[str]:
     kwargs = agent.get("kwargs") if isinstance(agent.get("kwargs"), dict) else {}
     job_name = str(config.get("job_name") or path.stem)
     is_smoke = "smoke" in job_name
+    per_task = bool(kwargs.get("per_task_deadlines"))
 
     expect_equal(issues, path, "timeout_multiplier", config.get("timeout_multiplier"), 1.0)
     expect_equal(
@@ -49,48 +50,17 @@ def validate_config(path: Path, config: dict[str, Any]) -> list[str]:
         nested(config, "environment", "delete"),
         False,
     )
-    expect_equal(
-        issues,
-        path,
-        "agents[0].override_timeout_sec",
-        agent.get("override_timeout_sec"),
-        TBENCH_DEADLINE_POLICY.override_timeout_sec,
-    )
-    expect_equal(
-        issues,
-        path,
-        "agents[0].kwargs.soft_timeout_sec",
-        kwargs.get("soft_timeout_sec"),
-        TBENCH_DEADLINE_POLICY.soft_timeout_sec,
-    )
-    expect_equal(
-        issues,
-        path,
-        "agents[0].kwargs.speed_policy_eval_deadline_seconds",
-        kwargs.get("speed_policy_eval_deadline_seconds"),
-        TBENCH_DEADLINE_POLICY.eval_deadline_seconds,
-    )
-    expect_equal(
-        issues,
-        path,
-        "agents[0].kwargs.speed_policy_enabled",
-        kwargs.get("speed_policy_enabled"),
-        False,
-    )
-    expect_equal(
-        issues,
-        path,
-        "agents[0].kwargs.task_ledger_required",
-        kwargs.get("task_ledger_required"),
-        True,
-    )
-    expect_equal(
-        issues,
-        path,
-        "agents[0].kwargs.benchmark_guidance_enabled",
-        kwargs.get("benchmark_guidance_enabled"),
-        True,
-    )
+    if per_task:
+        # Per-task deadline ladder: leaderboard-valid intent (rejects window
+        # modification below); integrity invariants also apply.
+        validate_per_task_deadline_track(issues, path, config, agent, kwargs)
+        validate_leaderboard_integrity(issues, path, kwargs)
+    elif has_no_internal_deadline(agent, kwargs):
+        # Codex-parity: no internal deadline at all, run to Harbor's hard window.
+        validate_codex_parity_track(issues, path, config, agent, kwargs)
+        validate_leaderboard_integrity(issues, path, kwargs)
+    else:
+        validate_static_deadline_track(issues, path, agent, kwargs)
     expect_equal(
         issues,
         path,
@@ -129,6 +99,188 @@ def validate_config(path: Path, config: dict[str, Any]) -> list[str]:
             issues.append(f"{path}: missing artifact {artifact}")
 
     return issues
+
+
+def validate_static_deadline_track(
+    issues: list[str],
+    path: Path,
+    agent: dict[str, Any],
+    kwargs: dict[str, Any],
+) -> None:
+    """Static local-development ladder: fixed override/soft/eval seconds."""
+    expect_equal(
+        issues,
+        path,
+        "agents[0].override_timeout_sec",
+        agent.get("override_timeout_sec"),
+        TBENCH_DEADLINE_POLICY.override_timeout_sec,
+    )
+    expect_equal(
+        issues,
+        path,
+        "agents[0].kwargs.soft_timeout_sec",
+        kwargs.get("soft_timeout_sec"),
+        TBENCH_DEADLINE_POLICY.soft_timeout_sec,
+    )
+    expect_equal(
+        issues,
+        path,
+        "agents[0].kwargs.speed_policy_eval_deadline_seconds",
+        kwargs.get("speed_policy_eval_deadline_seconds"),
+        TBENCH_DEADLINE_POLICY.eval_deadline_seconds,
+    )
+    expect_equal(
+        issues,
+        path,
+        "agents[0].kwargs.speed_policy_enabled",
+        kwargs.get("speed_policy_enabled"),
+        False,
+    )
+
+
+def validate_per_task_deadline_track(
+    issues: list[str],
+    path: Path,
+    config: dict[str, Any],
+    agent: dict[str, Any],
+    kwargs: dict[str, Any],
+) -> None:
+    """Leaderboard-valid track: each task keeps its own Terminal-Bench window.
+
+    Soft timeout and roder's turn deadline are derived per task, so a
+    leaderboard-valid config must NOT override the task window or apply an
+    agent-timeout multiplier, and must not also pin the static global
+    soft/eval seconds (they would silently win over the derivation).
+    """
+    if agent.get("override_timeout_sec") is not None:
+        issues.append(
+            f"{path}: per-task deadline track must not set agents[0].override_timeout_sec "
+            "(it replaces each task's Terminal-Bench window)"
+        )
+    multiplier = config.get("agent_timeout_multiplier")
+    if multiplier is not None and multiplier != 1.0:
+        issues.append(
+            f"{path}: leaderboard-valid per-task track must not set "
+            f"agent_timeout_multiplier ({multiplier!r}); it modifies task timeouts"
+        )
+    hint = kwargs.get("agent_timeout_multiplier_hint")
+    expected_hint = multiplier if multiplier is not None else 1.0
+    if hint is not None and hint != expected_hint:
+        issues.append(
+            f"{path}: agents[0].kwargs.agent_timeout_multiplier_hint ({hint!r}) must match "
+            f"agent_timeout_multiplier ({expected_hint!r}) so derived deadlines fit the real window"
+        )
+    for banned in ("soft_timeout_sec", "speed_policy_eval_deadline_seconds"):
+        if kwargs.get(banned) is not None:
+            issues.append(
+                f"{path}: per-task deadline track must not pin agents[0].kwargs.{banned}; "
+                "it is derived from each task's window"
+            )
+    expect_equal(
+        issues,
+        path,
+        "agents[0].kwargs.per_task_deadlines",
+        kwargs.get("per_task_deadlines"),
+        True,
+    )
+
+
+def validate_leaderboard_integrity(
+    issues: list[str], path: Path, kwargs: dict[str, Any]
+) -> None:
+    """Integrity invariants every leaderboard-valid track must satisfy.
+
+    The ``benchmark_guidance_enabled`` block is NOT leaderboard-valid: it directs
+    the model to grep the task's ``/tests`` for expected constants/answer formats
+    (verifier peeking) and injects task-family-specific heuristics reverse-
+    engineered from individual Terminal-Bench tasks (task-specific priming). It
+    also drives premature/provisional writes that manufacture fabricated scored
+    artifacts. It must be explicitly disabled. The task ledger is off-distribution
+    for a Codex-trained model, is never scored, and converts nothing, so a
+    leaderboard-valid config must not force it.
+    """
+    expect_equal(
+        issues,
+        path,
+        "agents[0].kwargs.benchmark_guidance_enabled",
+        kwargs.get("benchmark_guidance_enabled"),
+        False,
+    )
+    if kwargs.get("task_ledger_required") not in (False, None):
+        issues.append(
+            f"{path}: leaderboard-valid track must not set "
+            "agents[0].kwargs.task_ledger_required (off-distribution; never scored)"
+        )
+
+
+def validate_codex_parity_track(
+    issues: list[str],
+    path: Path,
+    config: dict[str, Any],
+    agent: dict[str, Any],
+    kwargs: dict[str, Any],
+) -> None:
+    """Codex-parity track: no internal deadline at all; run to Harbor's hard window.
+
+    Removing every internal cutoff (no ``timeout -s INT`` wrapper, no
+    ``eval_deadline_seconds`` in ``[speed_policy]``) lets the agent use the task's
+    full Terminal-Bench window exactly like the Codex CLI harness, and sidesteps
+    the window-resolution fragility of the per-task ladder entirely.
+    """
+    if agent.get("override_timeout_sec") is not None:
+        issues.append(
+            f"{path}: codex-parity track must not set agents[0].override_timeout_sec"
+        )
+    for banned in ("soft_timeout_sec", "speed_policy_eval_deadline_seconds"):
+        if kwargs.get(banned) is not None:
+            issues.append(
+                f"{path}: codex-parity track must not pin agents[0].kwargs.{banned} "
+                "(it runs to Harbor's hard per-task window)"
+            )
+    if kwargs.get("per_task_deadlines"):
+        issues.append(
+            f"{path}: codex-parity track must not enable per_task_deadlines "
+            "(no internal deadline at all)"
+        )
+    multiplier = config.get("agent_timeout_multiplier")
+    if multiplier is not None and multiplier != 1.0:
+        issues.append(
+            f"{path}: codex-parity track must not set agent_timeout_multiplier "
+            f"({multiplier!r}); it modifies task timeouts"
+        )
+    hint = kwargs.get("agent_timeout_multiplier_hint")
+    if hint is not None and hint != 1.0:
+        issues.append(
+            f"{path}: agents[0].kwargs.agent_timeout_multiplier_hint ({hint!r}) "
+            "must be 1.0 for a leaderboard-valid codex-parity run"
+        )
+
+
+def has_no_internal_deadline(agent: dict[str, Any], kwargs: dict[str, Any]) -> bool:
+    """True when the config imposes no internal cutoff below Harbor's hard window."""
+    return (
+        not kwargs.get("per_task_deadlines")
+        and agent.get("override_timeout_sec") is None
+        and kwargs.get("soft_timeout_sec") is None
+        and kwargs.get("speed_policy_eval_deadline_seconds") is None
+    )
+
+
+def config_deadline_track(config: dict[str, Any]) -> str:
+    """Classify a config as codex-parity, leaderboard-valid-candidate, or local-only."""
+    agents = config.get("agents")
+    agent = agents[0] if isinstance(agents, list) and agents else {}
+    kwargs = agent.get("kwargs") if isinstance(agent.get("kwargs"), dict) else {}
+    multiplier = config.get("agent_timeout_multiplier")
+    modifies_window = (
+        agent.get("override_timeout_sec") is not None
+        or (multiplier is not None and multiplier != 1.0)
+    )
+    if kwargs.get("per_task_deadlines") and not modifies_window:
+        return "leaderboard-valid-candidate"
+    if has_no_internal_deadline(agent, kwargs) and not modifies_window:
+        return "codex-parity"
+    return "local-only"
 
 
 def validate_gitignore(text: str) -> list[str]:

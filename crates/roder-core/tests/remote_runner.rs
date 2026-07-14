@@ -761,7 +761,10 @@ async fn runner_pause_resume_detach_and_rejoin_reuse_one_session() {
 
     // Rejoin (simulating a fresh process) reuses the same sandbox via the
     // persisted state and never provisions a new one.
-    let rejoined = runtime.rejoin_thread_runner(&thread_id, None).await.unwrap();
+    let rejoined = runtime
+        .rejoin_thread_runner(&thread_id, None)
+        .await
+        .unwrap();
     assert_eq!(rejoined.session_id, detached.session_id);
     assert_eq!(
         *provider.state.created.lock().unwrap(),
