@@ -770,7 +770,11 @@ pub fn build_agent_swarm_specs(
         return Err(AgentSwarmValidationError::EmptyDescription);
     }
 
-    let items: Vec<String> = request.items.iter().map(|item| item.trim().to_string()).collect();
+    let items: Vec<String> = request
+        .items
+        .iter()
+        .map(|item| item.trim().to_string())
+        .collect();
     if items.iter().any(|item| item.is_empty()) {
         return Err(AgentSwarmValidationError::EmptyItem);
     }
@@ -869,14 +873,20 @@ impl std::fmt::Display for AgentSwarmValidationError {
             Self::EmptyDescription => write!(f, "description must not be empty"),
             Self::EmptyItem => write!(f, "items must not contain empty values"),
             Self::EmptyResumeEntry => {
-                write!(f, "resume_agent_ids entries must have non-empty ids and prompts")
+                write!(
+                    f,
+                    "resume_agent_ids entries must have non-empty ids and prompts"
+                )
             }
             Self::TooFewItems => write!(
                 f,
                 "agent_swarm requires at least 2 items unless resume_agent_ids is provided"
             ),
             Self::TooManySubagents { total, max } => {
-                write!(f, "agent_swarm supports at most {max} subagents (got {total})")
+                write!(
+                    f,
+                    "agent_swarm supports at most {max} subagents (got {total})"
+                )
             }
             Self::MissingPromptTemplate => {
                 write!(f, "prompt_template is required when items are provided")
@@ -1010,9 +1020,11 @@ mod tests {
 
     #[test]
     fn build_specs_expands_items_in_order() {
-        let specs =
-            build_agent_swarm_specs(&swarm_request(&["a.rs", "b.rs"]), &AgentSwarmConfig::default())
-                .unwrap();
+        let specs = build_agent_swarm_specs(
+            &swarm_request(&["a.rs", "b.rs"]),
+            &AgentSwarmConfig::default(),
+        )
+        .unwrap();
         assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].index, 1);
         assert_eq!(specs[0].kind, AgentSwarmChildKind::Spawn);
@@ -1036,8 +1048,9 @@ mod tests {
 
     #[test]
     fn build_specs_rejects_single_item_without_resume() {
-        let err = build_agent_swarm_specs(&swarm_request(&["only.rs"]), &AgentSwarmConfig::default())
-            .unwrap_err();
+        let err =
+            build_agent_swarm_specs(&swarm_request(&["only.rs"]), &AgentSwarmConfig::default())
+                .unwrap_err();
         assert_eq!(err, AgentSwarmValidationError::TooFewItems);
     }
 

@@ -39,6 +39,30 @@ def optional_int_list(value: Any) -> list[int] | None:
     return [int(part.strip()) for part in str(value).split(",") if part.strip()]
 
 
+def str_tuple(value: Any) -> tuple[str, ...]:
+    """Parse a comma-separated string or list/tuple into a tuple of names."""
+    if value is None or value == "":
+        return ()
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    return tuple(part.strip() for part in str(value).split(",") if part.strip())
+
+
+def tools_config_toml(allowlist: tuple[str, ...]) -> str:
+    """Render a ``[tools]`` section pinning the advertised tool allow-list.
+
+    Roder gates tools by allow-list: empty means every tool is advertised;
+    a non-empty list restricts the model to exactly those tools. Excluding the
+    failure-prone auxiliary tools (``media_attach``, ``chrome_*``) keeps repeated
+    tool-call failures from tripping ``max_consecutive_tool_failures`` and ending
+    the turn early. Empty allowlist renders nothing (default behavior).
+    """
+    if not allowlist:
+        return ""
+    rendered = ", ".join(json.dumps(name) for name in allowlist)
+    return f"\n[tools]\nallowlist = [{rendered}]\n"
+
+
 def speed_policy_config_toml(
     *,
     enabled: bool | None,

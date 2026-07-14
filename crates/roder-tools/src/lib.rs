@@ -17,6 +17,7 @@ mod remote_test_support;
 mod response_format;
 mod search;
 mod shell;
+mod view_image;
 mod workflow;
 mod workspace;
 
@@ -167,6 +168,7 @@ impl ToolContributor for BuiltinCodingToolsContributor {
         design::register(registry, self.workspace.clone())?;
         workflow::register(registry)?;
         media::register(registry)?;
+        view_image::register(registry, self.workspace.clone(), self.backend.clone())?;
         artifacts::register(registry)?;
         discovery::register(registry)
     }

@@ -23,9 +23,9 @@ use roder_api::inference::{
 use roder_api::inference_routing::{InferenceRoutingOutcome, ModelSelectionMode};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::reliability::{
-    ReliabilityContext, ReliabilityDetails, ReliabilityErrorClass, ReliabilityLimitRecorded,
-    ReliabilityRequestPolicy, ReliabilityRetryDecision, ReliabilityRetryRecorded,
-    provider_retry_delay_ms,
+    ReliabilityContext, ReliabilityDetails, ReliabilityErrorClass, ReliabilityLimitDecision,
+    ReliabilityLimitRecorded, ReliabilityRequestPolicy, ReliabilityRetryDecision,
+    ReliabilityRetryRecorded, provider_retry_delay_ms,
 };
 use roder_api::remote_runner::{
     RemoteRunnerProvider, RemoteRunnerSession, RemoteWorkspace, RunnerDestination,
@@ -85,6 +85,10 @@ use crate::thread_item_cache::{ThreadItemCache, ThreadItemCacheEntry};
 use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
+/// Injected when `continue_on_failure_limit` turns a consecutive-tool-failure
+/// limit into a continuation, or as the empty-tool-call persistence nudge, so
+/// the model keeps working instead of ending the turn early.
+const RELIABILITY_CONTINUATION_PROMPT: &str = "Verify the task is fully complete. If any part remains unfinished or unverified, keep working using the available tools — try an alternative approach if one is failing. Only stop once the solution is complete and verified; if it is already complete, restate your final answer.";
 /// Capacity of the runtime event broadcast ring buffer. The TUI drains this on
 /// its render loop, which during an active turn only wakes at the ~6 FPS status
 /// animation cadence (backend events do not wake the input poll), so up to
@@ -2919,6 +2923,7 @@ impl Runtime {
         let mut deadline_scoreable_completion_requested = false;
         let mut task_ledger_completion_reminders = 0_u8;
         let mut task_ledger_scoreable_checkpoints = 0_u8;
+        let mut empty_tool_call_nudges_used = 0_u32;
         let mut provider_stream_retry_attempts = 0_u32;
         let mut routing_candidates = None;
         let routing_transcript_start = transcript.len().saturating_sub(1);
@@ -3642,6 +3647,27 @@ impl Runtime {
                     transcript.push(item);
                     continue;
                 }
+                // Loop persistence nudge: in non-interactive/eval runs, when the
+                // model returns a final message with no tool calls, gently prompt
+                // it to keep going (bounded by `empty_tool_call_nudges`) before
+                // ending the turn. Gated to non-interactive/eval so interactive
+                // chat completions are never delayed, and only fires when the
+                // model actually produced a final answer to re-examine.
+                if !deadline_finalization_requested
+                    && runtime_profile != RuntimeProfile::Interactive
+                    && cfg.reliability.empty_tool_call_nudges > 0
+                    && empty_tool_call_nudges_used < cfg.reliability.empty_tool_call_nudges
+                    && (!assistant_text.trim().is_empty() || !phase_messages.is_empty())
+                {
+                    empty_tool_call_nudges_used += 1;
+                    let item = TranscriptItem::UserMessage(UserMessage::text(
+                        RELIABILITY_CONTINUATION_PROMPT.to_string(),
+                    ));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                        .await?;
+                    transcript.push(item);
+                    continue;
+                }
                 if deadline_finalization_requested
                     && assistant_text.trim().is_empty()
                     && phase_messages.is_empty()
@@ -3731,22 +3757,11 @@ impl Runtime {
                     turn_deadline,
                 )
                 .await?;
-            if let Some(limit) = reliability.record_tool_results(
+            let reliability_limit = reliability.record_tool_results(
                 &cfg.reliability,
                 &results,
                 runtime_profile == RuntimeProfile::Interactive,
-            ) {
-                self.fail_turn_due_to_reliability_limit(
-                    &req.thread_id,
-                    &turn_id,
-                    &provider,
-                    &model,
-                    limit,
-                    &transcript,
-                )
-                .await?;
-                return Ok(TurnRunOutcome::Stopped);
-            }
+            );
             for result in results {
                 verification_gate.record_tool_result(&result);
                 transcript.push(TranscriptItem::ToolResult(result));
@@ -3759,6 +3774,41 @@ impl Runtime {
                     "tool_result",
                 )
                 .await?;
+            }
+            if let Some(limit) = reliability_limit {
+                if limit.decision == ReliabilityLimitDecision::RequestContinuation {
+                    // Loop persistence: rather than ending the turn, reset the
+                    // consecutive-failure counter, nudge the model to keep going,
+                    // and continue the round loop. Bounded by the per-turn tool
+                    // failure ceiling, `max_model_calls_per_turn`, and
+                    // `MAX_TOOL_ROUNDS_PER_TURN`.
+                    self.record_reliability_limit_continuation(
+                        &req.thread_id,
+                        &turn_id,
+                        &provider,
+                        &model,
+                        limit,
+                    )
+                    .await;
+                    reliability.reset_consecutive_failures();
+                    let nudge = TranscriptItem::UserMessage(UserMessage::text(
+                        RELIABILITY_CONTINUATION_PROMPT.to_string(),
+                    ));
+                    self.persist_turn_item(&req.thread_id, &turn_id, &nudge)
+                        .await?;
+                    transcript.push(nudge);
+                } else {
+                    self.fail_turn_due_to_reliability_limit(
+                        &req.thread_id,
+                        &turn_id,
+                        &provider,
+                        &model,
+                        limit,
+                        &transcript,
+                    )
+                    .await?;
+                    return Ok(TurnRunOutcome::Stopped);
+                }
             }
             transcript = self
                 .compact_transcript_if_needed(
@@ -4098,6 +4148,39 @@ impl Runtime {
         }))
         .await;
         Ok(())
+    }
+
+    /// Emits the reliability-limit event for a continuation (loop persistence)
+    /// without failing the turn. The caller resets the failure counter and
+    /// injects a nudge so the round loop keeps going.
+    async fn record_reliability_limit_continuation(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        provider: &str,
+        model: &str,
+        limit: ReliabilityLimitHit,
+    ) {
+        self.emit(RoderEvent::ReliabilityLimitRecorded(
+            ReliabilityLimitRecorded {
+                context: ReliabilityContext {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: None,
+                    tool_name: None,
+                    provider: Some(provider.to_string()),
+                    model: Some(model.to_string()),
+                },
+                error_class: limit.error_class,
+                limit_kind: limit.limit_kind,
+                decision: limit.decision,
+                current: limit.current,
+                limit: limit.limit,
+                details: ReliabilityDetails::redacted(&limit.message),
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
     }
 
     async fn fail_turn_due_to_reliability_limit(

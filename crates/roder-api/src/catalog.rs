@@ -2110,19 +2110,16 @@ mod tests {
             .expect("MiniMax-M3 pinned");
         assert_eq!(minimax.context_window, 524_288);
 
-        let glm_4_7 =
-            lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:zai-org/GLM-4.7").expect("GLM-4.7 pinned");
+        let glm_4_7 = lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:zai-org/GLM-4.7")
+            .expect("GLM-4.7 pinned");
         assert_eq!(glm_4_7.context_window, 202_752);
 
         let gpt_oss = lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:openai/gpt-oss-120b")
             .expect("gpt-oss-120b pinned");
         assert_eq!(gpt_oss.context_window, 131_072);
 
-        let qwen_3_5 = lookup_model_for_provider(
-            PROVIDER_SYNTHETIC,
-            "hf:Qwen/Qwen3.5-397B-A17B",
-        )
-        .expect("Qwen3.5 397B pinned");
+        let qwen_3_5 = lookup_model_for_provider(PROVIDER_SYNTHETIC, "hf:Qwen/Qwen3.5-397B-A17B")
+            .expect("Qwen3.5 397B pinned");
         assert_eq!(qwen_3_5.context_window, 262_144);
 
         // Every documented always-on id resolves to a catalog entry.

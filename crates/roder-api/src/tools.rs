@@ -28,6 +28,23 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
+    /// The argument field a raw freeform-channel body maps to, for tools that
+    /// are best emitted on a provider's freeform/custom tool channel instead of
+    /// as a JSON-schema function.
+    ///
+    /// `apply_patch` is the canonical case: gpt-5.5 was RL-trained to emit
+    /// patches on the OpenAI Responses custom-tool channel (`type:"custom"`),
+    /// where the call carries the raw patch text as a string `input` rather than
+    /// JSON arguments. Ordinary function tools return `None` (the default), so
+    /// this is backward-compatible. Providers without a freeform channel ignore
+    /// it and always serialize `type:"function"`.
+    pub fn freeform_input_field(&self) -> Option<&'static str> {
+        match self.name.as_str() {
+            "apply_patch" => Some("patch"),
+            _ => None,
+        }
+    }
+
     pub fn normalized_for_model(&self, policy: ToolSchemaPolicy) -> Self {
         let mut spec = self.clone();
         spec.parameters = normalize_tool_schema(&spec.name, &spec.parameters, policy).schema;

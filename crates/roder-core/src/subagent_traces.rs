@@ -4,7 +4,9 @@ use roder_api::events::{
     RoderEvent, SubagentTraceCompleted, SubagentTraceCreated, SubagentTraceDeltaEvent,
     SubagentTraceFailed, SubagentTraceStatusChanged,
 };
-use roder_api::subagents::{AgentSwarmProgress, AgentSwarmProgressSink, AgentSwarmProgressSnapshot};
+use roder_api::subagents::{
+    AgentSwarmProgress, AgentSwarmProgressSink, AgentSwarmProgressSnapshot,
+};
 use roder_api::thread::ThreadStore;
 use roder_api::trace::{
     ParentTurnRef, SubagentTraceDelta, SubagentTraceId, SubagentTraceSink, SubagentTraceStatus,
@@ -57,13 +59,15 @@ impl AgentSwarmProgressSink for RuntimeAgentSwarmProgressSink {
         tool_id: &str,
         snapshot: AgentSwarmProgressSnapshot,
     ) {
-        let envelope = self.bus.emit(RoderEvent::AgentSwarmProgress(AgentSwarmProgress {
-            thread_id: thread_id.to_string(),
-            turn_id: turn_id.to_string(),
-            tool_id: tool_id.to_string(),
-            snapshot,
-            timestamp: OffsetDateTime::now_utc(),
-        }));
+        let envelope = self
+            .bus
+            .emit(RoderEvent::AgentSwarmProgress(AgentSwarmProgress {
+                thread_id: thread_id.to_string(),
+                turn_id: turn_id.to_string(),
+                tool_id: tool_id.to_string(),
+                snapshot,
+                timestamp: OffsetDateTime::now_utc(),
+            }));
         if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref()) {
             let _ = store.append_event(thread_id, &envelope).await;
         }

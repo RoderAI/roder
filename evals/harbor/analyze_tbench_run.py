@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Analyze a Harbor Terminal-Bench job produced by the Roder harness."""
+"""Analyze a Harbor Terminal-Bench job produced by the Roder harness.
+
+Trial loading lives in ``tbench_trial``, class assignment in ``tbench_classify``,
+and evaluation-neutral completion-hygiene labels + trajectory features in
+``tbench_hygiene``. This module orchestrates them into the analysis JSON /
+Markdown report and the rerun manifests.
+"""
 
 from __future__ import annotations
 
@@ -7,326 +13,31 @@ import argparse
 import hashlib
 import json
 import platform
-import re
 import shutil
 import subprocess
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from tbench_analysis_constants import (
-    CORE_ARTIFACTS,
     HARNESS_ERROR_CLASSES,
     RUN_SUMMARY_TASK_FIELDS,
     SCORED_GROUP_PATTERNS,
     SCORED_GROUP_SUBSYSTEMS,
 )
+from tbench_classify import classify_trial
+from tbench_hygiene import (
+    HYGIENE_LABELS,
+    build_hygiene_record,
+    hygiene_summary,
+    rank_failed_trials,
+)
+from tbench_trial import Trial, load_json, load_trials
 
 
-@dataclass
-class Trial:
-    name: str
-    task_name: str
-    path: Path
-    result: dict[str, Any]
-    config: dict[str, Any]
-    trial_log: str
-    exception_text: str
-    setup_text: str
-    agent_text: str
-    run_summary: dict[str, Any]
-
-    @property
-    def combined_text(self) -> str:
-        chunks = [self.trial_log, self.exception_text, self.setup_text, self.agent_text]
-        return "\n".join(chunk for chunk in chunks if chunk)
-
-    @property
-    def exception_info(self) -> dict[str, Any] | None:
-        info = self.result.get("exception_info")
-        return info if isinstance(info, dict) else None
-
-    @property
-    def exception_type(self) -> str | None:
-        info = self.exception_info
-        value = info.get("exception_type") if info else None
-        return str(value) if value else None
-
-    @property
-    def reward(self) -> float | None:
-        verifier = self.result.get("verifier_result")
-        if not isinstance(verifier, dict):
-            return None
-        rewards = verifier.get("rewards")
-        if not isinstance(rewards, dict):
-            return None
-        reward = rewards.get("reward")
-        try:
-            return float(reward)
-        except (TypeError, ValueError):
-            return None
-
-    @property
-    def expected_artifacts(self) -> list[str]:
-        artifacts = self.config.get("artifacts")
-        if not isinstance(artifacts, list):
-            return []
-        names: list[str] = []
-        for artifact in artifacts:
-            if not isinstance(artifact, str):
-                continue
-            if artifact.startswith("/logs/agent/"):
-                names.append(artifact.removeprefix("/logs/agent/"))
-            else:
-                names.append(Path(artifact).name)
-        return names
-
-    def has_agent_started(self) -> bool:
-        return self.result.get("agent_execution") is not None or (
-            self.path / "agent" / "command-0"
-        ).exists()
-
-    def missing_expected_artifacts(self) -> list[str]:
-        agent_dir = self.path / "agent"
-        missing = [name for name in self.expected_artifacts if not (agent_dir / name).exists()]
-        if self.has_agent_started():
-            missing.extend(
-                name for name in CORE_ARTIFACTS if name not in missing and not (agent_dir / name).exists()
-            )
-        return sorted(set(missing))
-
-    def agent_artifact_path(self, name: str) -> Path:
-        return self.path / "agent" / name
-
-    def agent_artifact_size(self, name: str) -> int | None:
-        path = self.agent_artifact_path(name)
-        if not path.exists():
-            return None
-        try:
-            return path.stat().st_size
-        except OSError:
-            return None
-
-    def has_nonempty_agent_artifact(self, name: str) -> bool:
-        size = self.agent_artifact_size(name)
-        return size is not None and size > 0
-
-    def roder_exit_status(self) -> int | None:
-        summary_status = self.run_summary.get("exit_status")
-        if summary_status is not None:
-            try:
-                return int(summary_status)
-            except (TypeError, ValueError):
-                pass
-        match = re.search(r"roder exec finished with status (\d+)", self.setup_text)
-        if not match:
-            return None
-        try:
-            return int(match.group(1))
-        except ValueError:
-            return None
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
-
-
-def load_json_if_present(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        value = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
-def read_text(path: Path) -> str:
-    if not path.exists():
-        return ""
-    try:
-        return path.read_text(errors="replace")
-    except OSError:
-        return ""
-
-
-def setup_text(trial_dir: Path) -> str:
-    setup_dir = trial_dir / "agent" / "setup"
-    chunks = []
-    for name in ("return-code.txt", "stdout.txt", "stderr.txt"):
-        text = read_text(setup_dir / name)
-        if text:
-            chunks.append(f"--- {name} ---\n{text}")
-    summary = read_text(trial_dir / "agent" / "setup-summary.txt")
-    if summary:
-        chunks.append(f"--- setup-summary.txt ---\n{summary}")
-    return "\n".join(chunks)
-
-
-def agent_text(trial_dir: Path) -> str:
-    chunks = []
-    for base in (trial_dir / "agent", trial_dir / "artifacts"):
-        for name in ("roder-stderr.txt", "roder-cli.txt"):
-            text = read_text(base / name)
-            if text:
-                chunks.append(f"--- {base.name}/{name} ---\n{text}")
-    return "\n".join(chunks)
-
-
-def task_name_from_trial_name(name: str) -> str:
-    return name.split("__", 1)[0]
-
-
-def load_trials(job_dir: Path) -> list[Trial]:
-    trials: list[Trial] = []
-    for result_path in sorted(job_dir.glob("*/result.json")):
-        trial_dir = result_path.parent
-        result = load_json(result_path)
-        config_path = trial_dir / "config.json"
-        config = load_json(config_path) if config_path.exists() else {}
-        name = str(result.get("trial_name") or trial_dir.name)
-        task_name = str(result.get("task_name") or task_name_from_trial_name(name))
-        exception = read_text(trial_dir / "exception.txt")
-        trials.append(
-            Trial(
-                name=name,
-                task_name=task_name,
-                path=trial_dir,
-                result=result,
-                config=config,
-                trial_log=read_text(trial_dir / "trial.log"),
-                exception_text=exception,
-                setup_text=setup_text(trial_dir),
-                agent_text=agent_text(trial_dir),
-                run_summary=load_json_if_present(
-                    trial_dir / "agent" / "roder-run-summary.json"
-                ),
-            )
-        )
-    return trials
-
-
-def classify_trial(trial: Trial) -> set[str]:
-    classes: set[str] = set()
-    text = trial.combined_text
-
-    if trial.reward == 1.0 and not trial.exception_info:
-        classes.add("pass")
-    if trial.reward == 0.0:
-        classes.add("scored_fail")
-
-    if "registry-1.docker.io" in text and "Bad Gateway" in text:
-        classes.add("docker_registry_bad_gateway")
-    elif "Bad Gateway" in text and re.search(r"\bImage\b|\bdocker\b", text, re.I):
-        classes.add("docker_registry_bad_gateway")
-
-    if trial.exception_type == "AgentTimeoutError" or "Agent execution timed out" in text:
-        classes.add("agent_timeout")
-        if trial.roder_exit_status() == 0 and trial.has_nonempty_agent_artifact(
-            "roder-last-message.txt"
-        ):
-            classes.add("agent_exec_finished_but_harbor_timeout")
-        elif trial.has_nonempty_agent_artifact(
-            "roder-events.jsonl"
-        ) and not trial.has_nonempty_agent_artifact("roder-run-summary.json"):
-            classes.add("agent_exec_timeout_no_summary")
-    if trial.exception_info and re.search(
-        r"Roder command failed with status (124|130|137|143)", text
-    ):
-        classes.add("agent_exec_signal_terminated_no_summary")
-    if trial.run_summary.get("soft_timed_out") is True or "roder exec soft-timed-out" in text:
-        classes.add("soft_timeout")
-        if trial.reward == 1.0:
-            classes.add("soft_timeout_pass")
-        elif trial.reward == 0.0:
-            classes.add("soft_timeout_fail")
-    if (
-        trial.run_summary.get("deadline_timed_out") is True
-        or trial.run_summary.get("provider_error_kind") == "turn_deadline_expired"
-        or "roder exec hit internal eval deadline before Harbor hard timeout" in text
-        or "turn deadline expired" in text
-    ):
-        classes.add("internal_deadline_timeout")
-    if (
-        trial.run_summary.get("deadline_finalized") is True
-        or "deadline finalization" in text.lower()
-        or "before the deadline" in text.lower()
-    ) and "turn deadline expired" not in text:
-        classes.add("deadline_finalized")
-
-    provider_error_kind = trial.run_summary.get("provider_error_kind")
-    roder_status = trial.roder_exit_status()
-    soft_or_deadline_timeout = (
-        trial.run_summary.get("soft_timed_out") is True
-        or trial.run_summary.get("deadline_timed_out") is True
-        or trial.run_summary.get("provider_error_kind") == "turn_deadline_expired"
-    )
-    if (
-        roder_status not in (None, 0, 124, 130, 137, 143)
-        and not soft_or_deadline_timeout
-        and provider_error_kind not in {"policy_block", "auth_refresh_token_reused"}
-    ):
-        classes.add("roder_exec_error_status")
-    if provider_error_kind == "invalid_tool_name" or (
-        "Invalid 'input[" in text and "string does not match pattern" in text
-    ):
-        classes.add("provider_api_invalid_tool_name")
-    if provider_error_kind == "auth_refresh_token_reused" or "refresh_token_reused" in text:
-        classes.add("provider_auth_refresh_token_reused")
-    if provider_error_kind == "stream_decode_error" or "error decoding response body" in text:
-        classes.add("provider_stream_decode_error")
-    if (
-        provider_error_kind == "stream_incomplete"
-        or "stream closed before response.completed" in text
-    ):
-        classes.add("provider_stream_incomplete")
-    if provider_error_kind == "policy_block" or "flagged for possible cybersecurity risk" in text:
-        classes.add("provider_policy_block")
-
-    setup_return = read_text(trial.path / "agent" / "setup" / "return-code.txt").strip()
-    if (
-        "Agent setup failed" in text
-        or (setup_return and setup_return != "0" and not trial.has_agent_started())
-    ):
-        classes.add("agent_setup_failed")
-    if (
-        "Uploaded /installed-agent/roder is not executable in this task container" in text
-        or "Selected Roder binary is not executable in this task container" in text
-        or "No prebuilt Roder binary matched task container architecture" in text
-        or "Dynamic loader not found: /lib64/ld-linux-x86-64.so.2" in text
-        or re.search(r"\bnot a dynamic executable\b", text)
-    ):
-        classes.add("setup_arch_mismatch")
-
-    if "Failed to download artifact" in trial.trial_log:
-        classes.add("missing_artifacts")
-    elif trial.has_agent_started() and trial.missing_expected_artifacts():
-        classes.add("missing_artifacts")
-
-    if trial.exception_info and not classes.intersection(
-        {
-            "docker_registry_bad_gateway",
-            "agent_timeout",
-            "agent_exec_signal_terminated_no_summary",
-            "agent_setup_failed",
-            "provider_auth_refresh_token_reused",
-            "setup_arch_mismatch",
-        }
-    ):
-        if trial.exception_type and "Verifier" in trial.exception_type:
-            classes.add("verifier_error")
-        else:
-            classes.add("unknown_error")
-
-    if not classes:
-        classes.add("unknown")
-    return classes
-
-
-def task_entry(trial: Trial) -> dict[str, Any]:
+def task_entry(trial: Trial, hygiene: dict[str, Any] | None = None) -> dict[str, Any]:
     entry = {
         "trial_name": trial.name,
         "task_name": trial.task_name,
@@ -366,6 +77,10 @@ def task_entry(trial: Trial) -> dict[str, Any]:
     exception_tail = "\n".join(trial.exception_text.splitlines()[-12:])
     if exception_tail:
         entry["exception_tail"] = exception_tail
+    if hygiene is not None:
+        entry["features"] = hygiene["features"]
+        if hygiene["hygiene"]:
+            entry["hygiene"] = hygiene["hygiene"]
     return entry
 
 
@@ -420,7 +135,9 @@ def classify_scored_failure(task_name: str) -> str:
     return "other"
 
 
-def build_scored_groups(scored_trials: list[Trial]) -> dict[str, Any]:
+def build_scored_groups(
+    scored_trials: list[Trial], hygiene_by_trial: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {
         group: {
             "nearest_roder_subsystem": subsystem,
@@ -430,7 +147,7 @@ def build_scored_groups(scored_trials: list[Trial]) -> dict[str, Any]:
     }
     for trial in scored_trials:
         group = classify_scored_failure(trial.task_name)
-        groups[group]["tasks"].append(task_entry(trial))
+        groups[group]["tasks"].append(task_entry(trial, hygiene_by_trial.get(trial.name)))
     return {name: value for name, value in groups.items() if value["tasks"]}
 
 
@@ -470,11 +187,16 @@ def analyze_job(job_dir: Path, group_scored_failures: bool = False) -> dict[str,
 
     classes: dict[str, list[dict[str, Any]]] = defaultdict(list)
     trial_classes: dict[str, list[str]] = {}
+    records: list[dict[str, Any]] = []
+    hygiene_by_trial: dict[str, dict[str, Any]] = {}
     for trial in trials:
         classified = sorted(classify_trial(trial))
         trial_classes[trial.name] = classified
+        record = build_hygiene_record(trial, classified)
+        records.append(record)
+        hygiene_by_trial[trial.name] = record
         for class_name in classified:
-            classes[class_name].append(task_entry(trial))
+            classes[class_name].append(task_entry(trial, record))
 
     stats = job_result.get("stats") if isinstance(job_result.get("stats"), dict) else {}
     clean_errors = {
@@ -505,9 +227,15 @@ def analyze_job(job_dir: Path, group_scored_failures: bool = False) -> dict[str,
             "Clean-run errors exclude reward-0 scored failures and include setup, environment, timeout, verifier, unknown, and artifact failures.",
             "Soft timeouts are adapter-controlled early exits before Harbor's hard timeout; they are scored normally and are not clean-run errors.",
             "Soft-timeout pass/fail subsets identify timeout-ladder rerun candidates without changing clean-run status.",
+            "Hygiene labels and failed-trial rankings are evaluation-neutral post-run signals; they never inspect scoreable artifacts during a trial.",
         ],
         "classes": {name: entries for name, entries in sorted(classes.items())},
         "trial_classes": trial_classes,
+        "trial_hygiene": {
+            rec["trial_name"]: rec["hygiene"] for rec in records if rec["hygiene"]
+        },
+        "hygiene": hygiene_summary(records),
+        "failed_trial_rankings": rank_failed_trials(records),
         "rerun_manifests": {
             name: {
                 "class": name,
@@ -520,8 +248,41 @@ def analyze_job(job_dir: Path, group_scored_failures: bool = False) -> dict[str,
         "clean": not clean_errors,
     }
     if group_scored_failures:
-        analysis["scored_failure_groups"] = build_scored_groups(scored_trials)
+        analysis["scored_failure_groups"] = build_scored_groups(scored_trials, hygiene_by_trial)
     return analysis
+
+
+def _render_hygiene(analysis: dict[str, Any], lines: list[str]) -> None:
+    hygiene = analysis.get("hygiene")
+    if not hygiene:
+        return
+    lines.extend(["## Completion Hygiene", ""])
+    lines.append("Evaluation-neutral post-run labels over reward-0 trials.")
+    lines.append("")
+    for label in HYGIENE_LABELS:
+        info = hygiene.get(label, {"count": 0, "tasks": []})
+        lines.append(f"### {label} ({info['count']})")
+        if info["tasks"]:
+            lines.append(f"- tasks: {', '.join(info['tasks'])}")
+        lines.append("")
+
+
+def _render_rankings(analysis: dict[str, Any], lines: list[str]) -> None:
+    rankings = analysis.get("failed_trial_rankings")
+    if not rankings:
+        return
+    lines.extend(["## Failed-Trial Rankings", ""])
+    for dimension, entries in rankings.items():
+        lines.append(f"### {dimension} ({len(entries)})")
+        for entry in entries[:15]:
+            detail = ", ".join(
+                f"{key}={value}"
+                for key, value in entry.items()
+                if key not in ("trial_name", "task_name")
+            )
+            suffix = f" ({detail})" if detail else ""
+            lines.append(f"- `{entry['task_name']}`{suffix}")
+        lines.append("")
 
 
 def render_markdown(analysis: dict[str, Any], include_groups: bool = False) -> str:
@@ -552,8 +313,13 @@ def render_markdown(analysis: dict[str, Any], include_groups: bool = False) -> s
                 suffix += f" exception={entry['exception_type']}"
             if entry.get("missing_artifacts"):
                 suffix += f" missing_artifacts={','.join(entry['missing_artifacts'])}"
+            if entry.get("hygiene"):
+                suffix += f" hygiene={','.join(entry['hygiene'])}"
             lines.append(f"- `{entry['trial_name']}` task=`{entry['task_name']}`{suffix}")
         lines.append("")
+
+    _render_hygiene(analysis, lines)
+    _render_rankings(analysis, lines)
 
     if include_groups and analysis.get("scored_failure_groups"):
         lines.extend(["## Scored Failure Groups", ""])

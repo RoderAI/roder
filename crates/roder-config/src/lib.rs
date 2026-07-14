@@ -115,6 +115,14 @@ pub struct ReliabilityConfig {
     pub max_consecutive_tool_failures: Option<u32>,
     pub max_tool_failures_per_turn: Option<u32>,
     pub max_model_calls_per_turn: Option<u32>,
+    /// When true, hitting `max_consecutive_tool_failures` continues the turn
+    /// (reset + nudge) instead of stopping it. Defaults to false; the eval
+    /// runtime profile enables it automatically.
+    pub continue_on_failure_limit: Option<bool>,
+    /// Number of times a non-interactive/eval turn may be nudged to keep working
+    /// after the model returns a final message with no tool calls. Defaults to 0
+    /// (disabled); the eval runtime profile defaults it to 1.
+    pub empty_tool_call_nudges: Option<u32>,
     pub provider_retry_max_attempts: Option<u32>,
     pub provider_retry_initial_backoff_ms: Option<u64>,
     pub provider_retry_backoff_factor: Option<u32>,
@@ -653,7 +661,8 @@ pub fn resolve_agent_swarm_config_with(
         }
     }
 
-    if let Some(value) = env(RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV).and_then(|v| v.trim().parse().ok())
+    if let Some(value) =
+        env(RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV).and_then(|v| v.trim().parse().ok())
     {
         resolved.max_subagents = value;
     }
@@ -2081,7 +2090,10 @@ mod tests {
             (RODER_AGENT_SWARM_MAX_SUBAGENTS_ENV, "9001"),
             (RODER_AGENT_SWARM_MAX_CONCURRENCY_ENV, "2"),
             (RODER_AGENT_SWARM_RATE_LIMIT_MAX_RETRIES_ENV, "5"),
-            (RODER_AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS_ENV, "60000"),
+            (
+                RODER_AGENT_SWARM_RATE_LIMIT_RECOVERY_INTERVAL_MS_ENV,
+                "60000",
+            ),
         ]
         .into_iter()
         .collect();
@@ -2734,6 +2746,8 @@ mod tests {
             max_consecutive_tool_failures = 4
             max_tool_failures_per_turn = 8
             max_model_calls_per_turn = 20
+            continue_on_failure_limit = true
+            empty_tool_call_nudges = 2
             provider_retry_max_attempts = 5
             provider_retry_initial_backoff_ms = 250
             provider_retry_backoff_factor = 3
@@ -2747,6 +2761,8 @@ mod tests {
         assert_eq!(reliability.max_consecutive_tool_failures, Some(4));
         assert_eq!(reliability.max_tool_failures_per_turn, Some(8));
         assert_eq!(reliability.max_model_calls_per_turn, Some(20));
+        assert_eq!(reliability.continue_on_failure_limit, Some(true));
+        assert_eq!(reliability.empty_tool_call_nudges, Some(2));
         assert_eq!(reliability.provider_retry_max_attempts, Some(5));
         assert_eq!(reliability.provider_retry_initial_backoff_ms, Some(250));
         assert_eq!(reliability.provider_retry_backoff_factor, Some(3));
@@ -3488,7 +3504,10 @@ mod tests {
 
         save_web_search_external_provider_to_path(&path, "tavily").unwrap();
 
-        let web_search = load_config_file_from_path(&path).unwrap().web_search.unwrap();
+        let web_search = load_config_file_from_path(&path)
+            .unwrap()
+            .web_search
+            .unwrap();
         assert!(web_search.enabled);
         assert_eq!(web_search.mode.as_deref(), Some("external"));
         assert_eq!(web_search.provider.as_deref(), Some("tavily"));

@@ -111,8 +111,12 @@ async fn lifecycle(action: &str, args: &[String]) -> anyhow::Result<()> {
         sandbox: flag_value(args, "--sandbox"),
     };
     let client = client().await?;
-    let result: RunnersLifecycleResult =
-        call(&client, &format!("runners/{action}"), serde_json::to_value(params)?).await?;
+    let result: RunnersLifecycleResult = call(
+        &client,
+        &format!("runners/{action}"),
+        serde_json::to_value(params)?,
+    )
+    .await?;
     println!("action\t{}", result.action);
     println!("provider\t{}", result.provider_id);
     if let Some(session_id) = result.session_id {

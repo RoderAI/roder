@@ -136,7 +136,8 @@ impl ToolExecutor for AttachMediaTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "media_attach".to_string(),
-            description: "Converts generated media bytes into a later-turn attachment payload."
+            description: "Re-attach media bytes produced by media_generate_* as a later-turn \
+                payload. To view an existing image file on disk, use view_image(path) instead."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -144,7 +145,7 @@ impl ToolExecutor for AttachMediaTool {
                     "artifact": { "type": "object" },
                     "bytesBase64": { "type": "string" }
                 },
-                "required": ["artifact", "bytesBase64"],
+                "required": ["artifact"],
                 "additionalProperties": false
             }),
         }
@@ -159,10 +160,26 @@ impl ToolExecutor for AttachMediaTool {
         #[serde(rename_all = "camelCase")]
         struct Args {
             artifact: MediaArtifact,
-            bytes_base64: String,
+            #[serde(default)]
+            bytes_base64: Option<String>,
         }
         let args = parse::<Args>(&call)?;
-        let url = data_url(&args.artifact.mime_type, &args.bytes_base64);
+        // Missing bytes is the common misuse (the model has no raw base64 to
+        // supply). Return actionable guidance instead of a hard error so it
+        // does not count against the consecutive-tool-failure budget; point at
+        // view_image for the real "look at an image file" workflow.
+        let Some(bytes_base64) = args.bytes_base64.filter(|bytes| !bytes.is_empty()) else {
+            return Ok(ToolResult {
+                id: call.id,
+                name: call.name,
+                text: "media_attach needs raw base64 bytes from a prior media_generate_* call. \
+                    To view an image file on disk, call view_image with its path instead."
+                    .to_string(),
+                data: json!({ "artifactId": args.artifact.id }),
+                is_error: false,
+            });
+        };
+        let url = data_url(&args.artifact.mime_type, &bytes_base64);
         Ok(ToolResult {
             id: call.id,
             name: call.name,
@@ -331,5 +348,60 @@ mod tests {
         assert_eq!(result.data["mediaArtifacts"][0]["kind"], "image");
         assert_eq!(result.data["mediaPreviews"][0]["strategy"], "inlineImage");
         assert_eq!(result.data["mediaGeneration"]["provider"], "fake-media");
+    }
+
+    async fn attach(arguments: serde_json::Value) -> ToolResult {
+        AttachMediaTool
+            .execute(
+                ToolExecutionContext::new("thread", "turn", PolicyMode::Default),
+                ToolCall {
+                    id: "call".to_string(),
+                    name: "media_attach".to_string(),
+                    arguments,
+                    raw_arguments: "{}".to_string(),
+                    thread_id: "thread".to_string(),
+                    turn_id: "turn".to_string(),
+                },
+            )
+            .await
+            .unwrap()
+    }
+
+    fn sample_artifact() -> serde_json::Value {
+        json!({
+            "id": "media-1",
+            "kind": "image",
+            "mimeType": "image/png",
+            "byteSize": 0,
+            "provider": "fake-media",
+            "promptHash": "hash",
+            "storePath": "memory://media-1",
+            "createdAt": "1970-01-01T00:00:00Z"
+        })
+    }
+
+    #[tokio::test]
+    async fn media_attach_without_bytes_redirects_instead_of_failing() {
+        // The documented failure trap: the model has no raw base64 to supply.
+        // It must not count as a tool failure and should point at view_image.
+        let result = attach(json!({ "artifact": sample_artifact() })).await;
+        assert!(!result.is_error);
+        assert!(result.text.contains("view_image"));
+    }
+
+    #[tokio::test]
+    async fn media_attach_with_bytes_builds_data_url() {
+        let result = attach(json!({
+            "artifact": sample_artifact(),
+            "bytesBase64": "aVZCT1J3MEtHZ28="
+        }))
+        .await;
+        assert!(!result.is_error);
+        assert!(
+            result.data["attachment"]["dataUrl"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
     }
 }

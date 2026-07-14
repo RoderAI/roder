@@ -108,6 +108,57 @@ async fn reliability_limits_model_call_emits_interactive_continuation_decision()
     assert!(saw_partial);
 }
 
+#[tokio::test]
+async fn continue_on_failure_limit_recovers_eval_turn_instead_of_stopping() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FailThenFinishEngine {
+        requests_by_turn: Mutex::new(HashMap::new()),
+    }));
+    builder.tool_contributor(Arc::new(FailingToolContributor));
+    let runtime = runtime(
+        builder,
+        RuntimeReliabilityConfig {
+            max_consecutive_tool_failures: 2,
+            continue_on_failure_limit: true,
+            ..RuntimeReliabilityConfig::default()
+        },
+        RuntimeProfile::Eval,
+    );
+    let mut events = runtime.subscribe_events();
+    let thread_id = "thread-continue-on-failure";
+
+    runtime.start_turn(turn(thread_id)).await.unwrap();
+
+    let mut saw_continuation = false;
+    loop {
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match &envelope.event {
+            RoderEvent::ReliabilityLimitRecorded(event) => {
+                assert_eq!(
+                    event.limit_kind,
+                    ReliabilityLimitKind::ConsecutiveToolFailures
+                );
+                assert_eq!(
+                    event.decision,
+                    ReliabilityLimitDecision::RequestContinuation
+                );
+                saw_continuation = true;
+            }
+            RoderEvent::TurnFailed(failed) => panic!("turn unexpectedly failed: {failed:?}"),
+            RoderEvent::TurnCompleted(completed) if completed.thread_id == thread_id => break,
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_continuation,
+        "expected a RequestContinuation reliability limit before completion"
+    );
+}
+
 #[test]
 fn reliability_default_tool_failure_limit_allows_extended_recovery() {
     assert_eq!(
@@ -287,6 +338,67 @@ impl InferenceEngine for OncePerTurnToolEngine {
         *request_count += 1;
         if *request_count == 1 {
             let call_id = format!("call-{}", ctx.turn_id);
+            return Ok(Box::pin(stream::iter(vec![
+                Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: call_id,
+                    name: "unstable".to_string(),
+                    arguments: "{}".to_string(),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("tool_calls".to_string()),
+                    provider_response_id: None,
+                })),
+            ])));
+        }
+
+        Ok(Box::pin(stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "recovered".to_string(),
+                phase: None,
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            })),
+        ])))
+    }
+}
+
+/// Emits a failing tool call for the first two model calls of a turn, then a
+/// final message. With `continue_on_failure_limit` the consecutive-failure limit
+/// (2) is reached on the second call and continued, letting the third call
+/// finalize the turn.
+struct FailThenFinishEngine {
+    requests_by_turn: Mutex<HashMap<String, usize>>,
+}
+
+#[async_trait::async_trait]
+impl InferenceEngine for FailThenFinishEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests_by_turn.lock().unwrap();
+        let request_count = requests.entry(ctx.turn_id.to_string()).or_default();
+        *request_count += 1;
+        if *request_count <= 2 {
+            let call_id = format!("call-{}-{}", ctx.turn_id, *request_count);
             return Ok(Box::pin(stream::iter(vec![
                 Ok(InferenceEvent::ToolCallCompleted(ToolCallCompleted {
                     id: call_id,

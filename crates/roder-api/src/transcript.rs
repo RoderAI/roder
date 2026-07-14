@@ -58,6 +58,13 @@ pub struct ToolResultRecord {
     pub is_error: bool,
 }
 
+/// Reserved `display_payload` key carrying an image content block produced by
+/// the `view_image` tool. The Responses provider reads this to forward the
+/// image to the model as `input_image` inside the tool output; nothing else
+/// writes it. Kept out of the scalar allow-list because it is a large data URL,
+/// not a display field.
+pub const VIEW_IMAGE_DISPLAY_KEY: &str = "__view_image";
+
 pub fn tool_display_payload(
     _tool_name: Option<&str>,
     arguments: Option<&Value>,
@@ -66,6 +73,11 @@ pub fn tool_display_payload(
     let mut payload = Map::new();
     merge_display_fields(&mut payload, arguments);
     merge_display_fields(&mut payload, data);
+    if let Some(Value::Object(source)) = data
+        && let Some(image) = source.get(VIEW_IMAGE_DISPLAY_KEY)
+    {
+        payload.insert(VIEW_IMAGE_DISPLAY_KEY.to_string(), image.clone());
+    }
     (!payload.is_empty()).then_some(Value::Object(payload))
 }
 

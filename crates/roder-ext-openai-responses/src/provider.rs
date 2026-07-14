@@ -565,12 +565,22 @@ fn responses_tools(
         let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
         let api_name = responses_tool_name(&tool.name, &mut used_tool_names);
         tool_name_map.register(&tool.name, &api_name);
-        let mut entry = json!({
-            "type": "function",
-            "name": api_name,
-            "description": tool.description,
-            "parameters": tool.parameters,
-        });
+        let mut entry = if freeform_custom_tool(&tool, request) {
+            // Freeform/custom channel: the model emits the raw body (patch
+            // text) as a string `input`; no JSON parameters schema is sent.
+            json!({
+                "type": "custom",
+                "name": api_name,
+                "description": tool.description,
+            })
+        } else {
+            json!({
+                "type": "function",
+                "name": api_name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            })
+        };
         if openai_provider_native_tool_search(request) {
             entry["defer_loading"] = json!(true);
         }
@@ -595,6 +605,29 @@ fn openai_provider_native_tool_search(request: &AgentInferenceRequest) -> bool {
  */
 pub fn openai_model_supports_tool_search(model: &str) -> bool {
     model.starts_with("gpt-5.4") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.6")
+}
+
+/**
+ * Whether an OpenAI model reliably emits `apply_patch` on the Responses
+ * freeform/custom tool channel. gpt-5.5 was RL-trained on it; other models
+ * keep the JSON `type:"function"` shape.
+ */
+pub fn openai_model_supports_freeform_apply_patch(model: &str) -> bool {
+    model.starts_with("gpt-5.5")
+}
+
+/**
+ * Whether a tool should be advertised on the Responses custom-tool channel
+ * (`type:"custom"`) for this request. Gated to the gpt-5.5 family via the
+ * OpenAI provider; every other tool/model falls back to `type:"function"`.
+ */
+fn freeform_custom_tool(
+    tool: &roder_api::tools::ToolSpec,
+    request: &AgentInferenceRequest,
+) -> bool {
+    tool.freeform_input_field().is_some()
+        && request.model.provider == PROVIDER_OPENAI
+        && openai_model_supports_freeform_apply_patch(&request.model.model)
 }
 
 fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -> String {
@@ -1447,6 +1480,9 @@ fn events_from_sse_event(
                 if let Some(call) = started_function_call(item, state) {
                     return vec![InferenceEvent::ToolCallStarted(call)];
                 }
+                if let Some(call) = started_custom_tool_call(item, state) {
+                    return vec![InferenceEvent::ToolCallStarted(call)];
+                }
             }
             Vec::new()
         }
@@ -1744,6 +1780,23 @@ fn record_output_item(item: &Value, state: &mut ResponsesStreamState) {
                     .insert(id.to_string(), arguments.to_string());
             }
         }
+        Some("custom_tool_call") => {
+            let Some(id) = item.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(name) = item.get("name").and_then(Value::as_str) {
+                state.tool_names.insert(id.to_string(), name.to_string());
+            }
+            if let Some(call_id) = item
+                .get("call_id")
+                .or_else(|| item.get("id"))
+                .and_then(Value::as_str)
+            {
+                state
+                    .tool_call_ids
+                    .insert(id.to_string(), call_id.to_string());
+            }
+        }
         _ => {}
     }
 }
@@ -1782,6 +1835,29 @@ fn message_delta_from_done_item(
 
 fn started_function_call(item: &Value, state: &ResponsesStreamState) -> Option<ToolCallStarted> {
     if item.get("type").and_then(Value::as_str) != Some("function_call") {
+        return None;
+    }
+    let item_id = item.get("id").and_then(Value::as_str)?;
+    let id = state
+        .tool_call_ids
+        .get(item_id)
+        .cloned()
+        .unwrap_or_else(|| item_id.to_string());
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
+        .or_else(|| {
+            state
+                .tool_names
+                .get(item_id)
+                .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
+        })?;
+    Some(ToolCallStarted { id, name })
+}
+
+fn started_custom_tool_call(item: &Value, state: &ResponsesStreamState) -> Option<ToolCallStarted> {
+    if item.get("type").and_then(Value::as_str) != Some("custom_tool_call") {
         return None;
     }
     let item_id = item.get("id").and_then(Value::as_str)?;
@@ -1855,10 +1931,42 @@ fn emit_tool_call_once(
         .then_some(InferenceEvent::ToolCallCompleted(call))
 }
 
+/**
+ * Parses a Responses `custom_tool_call` output item (the freeform/custom
+ * channel). The call carries the raw body as a string `input`; it is wrapped as
+ * `{ "input": <raw> }` so it routes through the same tool-dispatch path as JSON
+ * function arguments. The `apply_patch` handler accepts both shapes.
+ */
+fn custom_tool_call_completed(
+    item: &Value,
+    tool_name_map: &HashMap<String, String>,
+) -> Option<ToolCallCompleted> {
+    if item.get("type").and_then(Value::as_str) != Some("custom_tool_call") {
+        return None;
+    }
+    let id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(Value::as_str)?;
+    let name = item.get("name").and_then(Value::as_str)?;
+    let input = item
+        .get("input")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(ToolCallCompleted {
+        id: id.to_string(),
+        name: map_tool_name(name, tool_name_map).to_string(),
+        arguments: json!({ "input": input }).to_string(),
+    })
+}
+
 fn extract_tool_calls_from_item(
     item: &Value,
     tool_name_map: &HashMap<String, String>,
 ) -> Vec<ToolCallCompleted> {
+    if let Some(call) = custom_tool_call_completed(item, tool_name_map) {
+        return vec![call];
+    }
     if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
         return Vec::new();
     }
@@ -1918,6 +2026,7 @@ fn response_input_items(
     let mut provider_output_call_ids = HashSet::new();
     let completed_tool_call_ids = completed_tool_call_ids(&request.transcript);
     let known_tool_call_ids = known_tool_call_ids(&request.transcript);
+    let custom_tool_call_ids = custom_tool_call_ids(&request.transcript);
 
     for conversation_item in &request.transcript {
         let mapped = match conversation_item {
@@ -1956,10 +2065,25 @@ fn response_input_items(
             }
             roder_api::transcript::TranscriptItem::ToolResult(result) => {
                 if known_tool_call_ids.contains(&result.id) {
+                    // Results for freeform/custom calls must be replayed as
+                    // `custom_tool_call_output`, not `function_call_output`.
+                    let is_custom = custom_tool_call_ids.contains(&result.id);
+                    let output_type = if is_custom {
+                        "custom_tool_call_output"
+                    } else {
+                        "function_call_output"
+                    };
+                    // A `view_image` result carries an image content block:
+                    // forward it as an `input_image` so the model sees the
+                    // pixels. Custom-tool outputs stay plain strings.
+                    let output = tool_output_image_block(result)
+                        .filter(|_| supports_images && !is_custom)
+                        .map(|image| json!([{ "type": "input_image", "image_url": image }]))
+                        .unwrap_or_else(|| Value::String(result.result.clone()));
                     Some(json!({
-                        "type": "function_call_output",
+                        "type": output_type,
                         "call_id": result.id,
-                        "output": result.result
+                        "output": output
                     }))
                 } else {
                     None
@@ -1989,6 +2113,40 @@ fn response_input_items(
     }
 
     items
+}
+
+/// Extract the image `data:` URL a `view_image` tool result stashed in its
+/// display payload, so it can be replayed to the model as `input_image`.
+fn tool_output_image_block(result: &roder_api::transcript::ToolResultRecord) -> Option<String> {
+    result
+        .display_payload
+        .as_ref()?
+        .get(roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY)?
+        .get("image_url")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/**
+ * Call ids that were emitted on the freeform/custom tool channel, recovered
+ * from the raw provider output. Their results replay as `custom_tool_call_output`.
+ */
+fn custom_tool_call_ids(transcript: &[roder_api::transcript::TranscriptItem]) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    for item in transcript {
+        if let roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) = item
+            && let Some(output) = metadata.get("output").and_then(Value::as_array)
+        {
+            for out in output {
+                if out.get("type").and_then(Value::as_str) == Some("custom_tool_call")
+                    && let Some(call_id) = out.get("call_id").and_then(Value::as_str)
+                {
+                    ids.insert(call_id.to_string());
+                }
+            }
+        }
+    }
+    ids
 }
 
 fn known_tool_call_ids(transcript: &[roder_api::transcript::TranscriptItem]) -> HashSet<String> {
@@ -2145,6 +2303,20 @@ fn append_provider_output_items(
                 }
                 items.push(item);
             }
+            Some("custom_tool_call") => {
+                let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !completed_tool_call_ids.contains(call_id) {
+                    continue;
+                }
+                provider_output_call_ids.insert(call_id.to_string());
+                let mut item = item.clone();
+                if let Some(name) = item.get("name").and_then(Value::as_str) {
+                    item["name"] = json!(tool_name_map.replay_api_name(name));
+                }
+                items.push(item);
+            }
             Some("reasoning") => items.push(replay_provider_output_item(item, profile)),
             Some(kind) if is_compaction_type(kind) => {
                 items.push(replay_provider_output_item(item, profile))
@@ -2225,26 +2397,7 @@ fn extract_tool_calls(
     };
     output
         .iter()
-        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("function_call"))
-        .filter_map(|item| {
-            let id = item
-                .get("call_id")
-                .or_else(|| item.get("id"))
-                .and_then(|v| v.as_str())?
-                .to_string();
-            let name = map_tool_name(item.get("name").and_then(|v| v.as_str())?, tool_name_map)
-                .to_string();
-            let arguments = item
-                .get("arguments")
-                .and_then(|v| v.as_str())
-                .unwrap_or("{}")
-                .to_string();
-            Some(ToolCallCompleted {
-                id,
-                name,
-                arguments,
-            })
-        })
+        .flat_map(|item| extract_tool_calls_from_item(item, tool_name_map))
         .collect()
 }
 
@@ -3091,7 +3244,8 @@ mod tests {
         let body = OpenAiResponsesEngine::map_request(&request);
 
         assert_eq!(body["tools"][0]["name"], "apply_patch");
-        assert_eq!(body["tools"][0]["parameters"]["required"][0], "patch");
+        // gpt-5.5 receives apply_patch on the freeform/custom channel.
+        assert_eq!(body["tools"][0]["type"], "custom");
         assert_eq!(body["reasoning"]["effort"], "high");
         assert_eq!(body["parallel_tool_calls"], false);
         assert_eq!(
@@ -3208,9 +3362,100 @@ mod tests {
         let body = OpenAiResponsesEngine::map_request(&request);
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
+        // gpt-5.5 advertises apply_patch on the freeform/custom channel: a bare
+        // `type:"custom"` tool with no JSON parameters schema.
+        assert_eq!(tools[0]["type"], "custom");
+        assert_eq!(tools[0]["name"], "apply_patch");
+        assert!(tools[0].get("parameters").is_none());
+    }
+
+    #[test]
+    fn keeps_apply_patch_as_function_for_non_gpt55_models() {
+        let mut request = request();
+        request.model.model = "gpt-5.4".to_string();
+        request.tools = vec![roder_api::tools::ToolSpec {
+            name: "apply_patch".to_string(),
+            description: "Apply a patch".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "patch": { "type": "string" } },
+                "required": ["patch"],
+                "additionalProperties": false
+            }),
+        }];
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["name"], "apply_patch");
         assert_eq!(tools[0]["parameters"]["required"][0], "patch");
+    }
+
+    #[test]
+    fn parses_custom_tool_call_into_dispatch_arguments() {
+        let response = json!({
+            "output": [
+                {
+                    "type": "custom_tool_call",
+                    "id": "ctc_1",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** End Patch\n"
+                }
+            ]
+        });
+        let calls = extract_tool_calls(&response, &HashMap::new());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_patch");
+        assert_eq!(calls[0].name, "apply_patch");
+        assert_eq!(
+            calls[0].arguments,
+            json!({ "input": "*** Begin Patch\n*** End Patch\n" }).to_string()
+        );
+    }
+
+    #[test]
+    fn replays_custom_tool_call_output_for_freeform_results() {
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "type": "custom_tool_call",
+                        "id": "ctc_1",
+                        "call_id": "call_patch",
+                        "name": "apply_patch",
+                        "input": "*** Begin Patch\n*** End Patch\n"
+                    }
+                ]
+            })),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_patch".to_string(),
+                name: "apply_patch".to_string(),
+                arguments: json!({ "input": "*** Begin Patch\n*** End Patch\n" }).to_string(),
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_patch".to_string(),
+                name: Some("apply_patch".to_string()),
+                result: "Success.".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+        ];
+
+        let items = input_items(&request);
+        let call = items
+            .iter()
+            .find(|item| item["type"] == "custom_tool_call")
+            .expect("custom_tool_call replayed");
+        assert_eq!(call["call_id"], "call_patch");
+        assert_eq!(call["input"], "*** Begin Patch\n*** End Patch\n");
+        let output = items
+            .iter()
+            .find(|item| item["type"] == "custom_tool_call_output")
+            .expect("custom_tool_call_output replayed");
+        assert_eq!(output["call_id"], "call_patch");
+        assert_eq!(output["output"], "Success.");
     }
 
     #[test]
@@ -3361,6 +3606,62 @@ mod tests {
         );
         assert_eq!(input.len(), 2);
         assert_eq!(input[1]["role"], "user");
+    }
+
+    fn view_image_transcript() -> Vec<TranscriptItem> {
+        vec![
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_img".to_string(),
+                name: "view_image".to_string(),
+                arguments: "{\"path\":\"board.png\"}".to_string(),
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_img".to_string(),
+                name: Some("view_image".to_string()),
+                result: "Viewing image board.png".to_string(),
+                display_payload: Some(json!({
+                    "__view_image": {
+                        "image_url": "data:image/png;base64,YWJj",
+                        "detail": "auto"
+                    }
+                })),
+                is_error: false,
+            }),
+        ]
+    }
+
+    #[test]
+    fn forwards_view_image_output_as_input_image() {
+        let mut request = request();
+        request.transcript = view_image_transcript();
+
+        let input = input_items(&request);
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("tool output present");
+        let content = output["output"].as_array().expect("image array output");
+        assert_eq!(content[0]["type"], "input_image");
+        assert_eq!(content[0]["image_url"], "data:image/png;base64,YWJj");
+    }
+
+    #[test]
+    fn view_image_output_falls_back_to_string_without_image_support() {
+        let mut request = request();
+        request.transcript = view_image_transcript();
+
+        let (_, tool_name_map) = responses_tools(&request, ResponsesProviderProfile::OpenAi);
+        let input = response_input_items(
+            &request,
+            &tool_name_map,
+            ResponsesProviderProfile::OpenAi,
+            false,
+        );
+        let output = input
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("tool output present");
+        assert_eq!(output["output"], "Viewing image board.png");
     }
 
     #[test]

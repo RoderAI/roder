@@ -41,7 +41,28 @@ def write_config(
     *,
     include_local_source: str,
     benchmark_guidance_enabled: bool = True,
+    leaderboard_valid: bool = False,
 ) -> None:
+    kwargs: dict = {
+        "reasoning": "medium",
+        "speed_policy_enabled": False,
+        "task_ledger_required": True,
+        "benchmark_guidance_enabled": benchmark_guidance_enabled,
+        "policy_mode": "bypass",
+        "include_prebuilt_binary": "true",
+        "include_local_source": include_local_source,
+    }
+    agent: dict = {"model_name": "codex/gpt-5.5", "kwargs": kwargs}
+    if leaderboard_valid:
+        # Codex-parity track: no internal deadline pins; ledger off so the
+        # integrity check trips only on benchmark_guidance_enabled.
+        kwargs["task_ledger_required"] = False
+        kwargs["agent_timeout_multiplier_hint"] = 1.0
+    else:
+        # Static local-only ladder.
+        agent["override_timeout_sec"] = 1800
+        kwargs["speed_policy_eval_deadline_seconds"] = 1740
+        kwargs["soft_timeout_sec"] = 1780
     path.write_text(
         json.dumps(
             {
@@ -49,23 +70,7 @@ def write_config(
                 "timeout_multiplier": 1.0,
                 "environment": {"delete": False},
                 "orchestrator": {"n_concurrent_trials": 4},
-                "agents": [
-                    {
-                        "model_name": "codex/gpt-5.5",
-                        "override_timeout_sec": 1800,
-                        "kwargs": {
-                            "reasoning": "medium",
-                            "speed_policy_enabled": False,
-                            "speed_policy_eval_deadline_seconds": 1740,
-                            "soft_timeout_sec": 1780,
-                            "task_ledger_required": True,
-                            "benchmark_guidance_enabled": benchmark_guidance_enabled,
-                            "policy_mode": "bypass",
-                            "include_prebuilt_binary": "true",
-                            "include_local_source": include_local_source,
-                        },
-                    }
-                ],
+                "agents": [agent],
                 "artifacts": [
                     "/logs/agent/roder-cli.txt",
                     "/logs/agent/roder-events.jsonl",
@@ -162,14 +167,18 @@ class PreEvalConfigSummaryTests(unittest.TestCase):
             self.assertEqual("failed", summary["checks"]["harborConfigs"]["status"])
             self.assertIn("include_local_source", "\n".join(summary["checks"]["harborConfigs"]["issues"]))
 
-    def test_summary_blocks_missing_benchmark_guidance_invariant(self) -> None:
+    def test_summary_blocks_benchmark_guidance_on_leaderboard_valid_config(self) -> None:
+        # Inverted invariant: the benchmark-guidance block is a PRD-integrity
+        # violation (verifier-peeking + task-specific injection), so a
+        # leaderboard-valid (codex-parity) config with guidance ENABLED must block.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             config_path = root / "tbench.json"
             write_config(
                 config_path,
                 include_local_source="false",
-                benchmark_guidance_enabled=False,
+                benchmark_guidance_enabled=True,
+                leaderboard_valid=True,
             )
 
             summary = self.build_summary(root, config_path)
@@ -180,6 +189,24 @@ class PreEvalConfigSummaryTests(unittest.TestCase):
             self.assertIn(
                 "benchmark_guidance_enabled",
                 "\n".join(summary["checks"]["harborConfigs"]["issues"]),
+            )
+
+    def test_summary_allows_guidance_off_leaderboard_valid_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config_path = root / "tbench.json"
+            write_config(
+                config_path,
+                include_local_source="false",
+                benchmark_guidance_enabled=False,
+                leaderboard_valid=True,
+            )
+
+            summary = self.build_summary(root, config_path)
+
+            self.assertEqual(
+                [],
+                summary["checks"]["harborConfigs"].get("issues", []),
             )
 
 

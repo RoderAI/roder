@@ -1195,7 +1195,10 @@ mod tests {
     async fn test_runtime_turn_tool_executor_persists_tool_call() {
         use super::RuntimeTurnToolExecutor;
         use roder_api::extension::ExtensionRegistryBuilder;
-        use roder_api::inference::{ToolCallCompleted, TurnToolExecutor, InferenceEngine, InferenceCapabilities, InferenceProviderContext, InferenceTurnContext, InferenceEventStream, ModelDescriptor};
+        use roder_api::inference::{
+            InferenceCapabilities, InferenceEngine, InferenceEventStream, InferenceProviderContext,
+            InferenceTurnContext, ModelDescriptor, ToolCallCompleted, TurnToolExecutor,
+        };
         use roder_api::transcript::TranscriptItem;
         use std::sync::Arc;
 
@@ -1230,7 +1233,10 @@ mod tests {
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(MockInferenceEngine));
         let registry = builder.build().unwrap();
-        let runtime = Arc::new(crate::runtime::Runtime::new(registry, crate::runtime::RuntimeConfig::default()).unwrap());
+        let runtime = Arc::new(
+            crate::runtime::Runtime::new(registry, crate::runtime::RuntimeConfig::default())
+                .unwrap(),
+        );
         let thread = runtime.create_thread(None).await.unwrap();
         let thread_id = thread.thread_id;
         let turn_id = "test_turn_1".to_string();
@@ -1257,7 +1263,8 @@ mod tests {
 
         let mut found_tool_call = false;
         while let Ok(envelope) = events.try_recv() {
-            if let roder_api::events::RoderEvent::TranscriptItemAppended(appended) = envelope.event {
+            if let roder_api::events::RoderEvent::TranscriptItemAppended(appended) = envelope.event
+            {
                 if let Some(TranscriptItem::ToolCall(tc)) = appended.item {
                     if tc.id == "call_1" && tc.name == "test_tool" {
                         found_tool_call = true;
@@ -1266,6 +1273,9 @@ mod tests {
                 }
             }
         }
-        assert!(found_tool_call, "The ToolCall record must be persisted and broadcast when execute() is called on RuntimeTurnToolExecutor");
+        assert!(
+            found_tool_call,
+            "The ToolCall record must be persisted and broadcast when execute() is called on RuntimeTurnToolExecutor"
+        );
     }
 }
