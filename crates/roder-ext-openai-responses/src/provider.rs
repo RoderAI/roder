@@ -2112,6 +2112,14 @@ fn response_input_items(
         }
     }
 
+    // OpenAI server-side compaction: after the latest compaction item, drop the
+    // pre-compact window so the next request does not re-send (and re-compact)
+    // the full history. The opaque compaction item carries prior state.
+    // https://developers.openai.com/api/docs/guides/compaction
+    if let Some(idx) = items.iter().rposition(is_compaction_item) {
+        items = items[idx..].to_vec();
+    }
+
     items
 }
 
@@ -4000,6 +4008,66 @@ mod tests {
         assert_eq!(input[0]["type"], "compaction");
         assert_eq!(input[0]["encrypted_content"], "opaque");
         assert_eq!(input[1]["role"], "user");
+    }
+
+    #[test]
+    fn drops_pre_compaction_history_when_provider_compaction_exists() {
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("old history that must be dropped")),
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "old answer".to_string(),
+                phase: None,
+            }),
+            TranscriptItem::ToolCall(ToolCallRecord {
+                id: "call_old".to_string(),
+                name: "read_file".to_string(),
+                arguments: "{\"path\":\"old.rs\"}".to_string(),
+            }),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_old".to_string(),
+                name: Some("read_file".to_string()),
+                result: "huge tool dump ".repeat(1_000),
+                display_payload: None,
+                is_error: false,
+            }),
+            TranscriptItem::ProviderMetadata(json!({
+                "output": [
+                    {
+                        "id": "cmp_1",
+                        "type": "compaction",
+                        "encrypted_content": "opaque-state"
+                    }
+                ]
+            })),
+            TranscriptItem::UserMessage(UserMessage::text("Continue after compact")),
+        ];
+
+        let input = input_items(&request);
+        assert_eq!(input.len(), 2, "expected only compaction + new user: {input:?}");
+        assert_eq!(input[0]["type"], "compaction");
+        assert_eq!(input[0]["encrypted_content"], "opaque-state");
+        assert_eq!(input[1]["role"], "user");
+        assert!(
+            input[1]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("Continue after compact")),
+            "{input:?}"
+        );
+        assert!(
+            !input.iter().any(|item| {
+                item.get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|content| {
+                        content.iter().any(|part| {
+                            part.get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| text.contains("old history"))
+                        })
+                    })
+            }),
+            "pre-compaction user history must not be replayed: {input:?}"
+        );
     }
 
     #[test]
