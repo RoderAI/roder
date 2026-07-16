@@ -63,13 +63,35 @@ pub(crate) fn estimate_prompt_tokens(items: &[TranscriptItem]) -> u32 {
 }
 
 pub(crate) fn trim_to_last_compaction_boundary(items: Vec<TranscriptItem>) -> Vec<TranscriptItem> {
-    let Some(idx) = items
-        .iter()
-        .rposition(|item| matches!(item, TranscriptItem::ContextCompaction(_)))
-    else {
+    let Some(idx) = items.iter().rposition(is_compaction_boundary) else {
         return items;
     };
     items[idx..].to_vec()
+}
+
+/// Local `ContextCompaction` summaries and opaque provider compaction items both
+/// mark a hard context boundary. Subsequent turns must start at the latest
+/// boundary so server-side (OpenAI/Anthropic) compaction is not undone by
+/// replaying the full pre-compact history.
+pub(crate) fn is_compaction_boundary(item: &TranscriptItem) -> bool {
+    match item {
+        TranscriptItem::ContextCompaction(_) => true,
+        TranscriptItem::ProviderMetadata(metadata) => provider_metadata_has_compaction(metadata),
+        _ => false,
+    }
+}
+
+pub(crate) fn provider_metadata_has_compaction(metadata: &serde_json::Value) -> bool {
+    metadata
+        .get("output")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|output| {
+            output.iter().any(|item| {
+                item.get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|kind| kind.contains("compaction"))
+            })
+        })
 }
 
 pub(crate) fn compaction_skip_reason(
@@ -343,9 +365,7 @@ fn meets_compaction_threshold(
 }
 
 fn transcript_already_compacted(items: &[TranscriptItem]) -> bool {
-    items
-        .iter()
-        .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)))
+    items.iter().any(is_compaction_boundary)
 }
 
 fn item_prompt_tokens(item: &TranscriptItem) -> u32 {
@@ -461,6 +481,55 @@ mod tests {
             &trimmed[0],
             TranscriptItem::ContextCompaction(record) if record.summary == "summary two"
         ));
+    }
+
+    #[test]
+    fn trim_to_last_compaction_boundary_honors_provider_compaction_items() {
+        let items = vec![
+            TranscriptItem::UserMessage(UserMessage::text("old context ".repeat(100))),
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "old answer".to_string(),
+                phase: None,
+            }),
+            TranscriptItem::ProviderMetadata(serde_json::json!({
+                "output": [
+                    {
+                        "id": "cmp_1",
+                        "type": "compaction",
+                        "encrypted_content": "opaque"
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "read_file",
+                        "arguments": "{}"
+                    }
+                ]
+            })),
+            TranscriptItem::ToolResult(ToolResultRecord {
+                id: "call_1".to_string(),
+                name: Some("read_file".to_string()),
+                result: "fresh".to_string(),
+                display_payload: None,
+                is_error: false,
+            }),
+            TranscriptItem::UserMessage(UserMessage::text("continue")),
+        ];
+        let trimmed = trim_to_last_compaction_boundary(items);
+        assert_eq!(trimmed.len(), 3);
+        assert!(matches!(
+            &trimmed[0],
+            TranscriptItem::ProviderMetadata(metadata)
+                if provider_metadata_has_compaction(metadata)
+        ));
+        assert!(matches!(
+            &trimmed[2],
+            TranscriptItem::UserMessage(message) if message.text == "continue"
+        ));
+        assert!(!trimmed.iter().any(|item| matches!(
+            item,
+            TranscriptItem::UserMessage(message) if message.text.starts_with("old context")
+        )));
     }
 
     #[test]

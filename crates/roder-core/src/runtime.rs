@@ -2898,7 +2898,7 @@ impl Runtime {
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
         let mut compacted_this_turn = transcript
             .iter()
-            .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
+            .any(crate::compaction::is_compaction_boundary);
         let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
         let agent_swarm_mode_active = self
@@ -3120,7 +3120,7 @@ impl Runtime {
             compacted_this_turn = compacted_this_turn
                 || transcript
                     .iter()
-                    .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
+                    .any(crate::compaction::is_compaction_boundary);
 
             let speed_policy_decision =
                 speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);
@@ -3603,10 +3603,20 @@ impl Runtime {
                         .await?;
                     }
                     if let Some(metadata) = provider_metadata {
+                        let had_provider_compaction =
+                            crate::compaction::provider_metadata_has_compaction(&metadata);
                         let item = TranscriptItem::ProviderMetadata(metadata);
                         self.persist_turn_item(&req.thread_id, &turn_id, &item)
                             .await?;
                         transcript.push(item);
+                        if had_provider_compaction {
+                            // Server-side compaction replaced the prior window;
+                            // drop pre-boundary items so the next request does
+                            // not re-send (and re-compact) the full history.
+                            transcript =
+                                crate::compaction::trim_to_last_compaction_boundary(transcript);
+                            compacted_this_turn = true;
+                        }
                     }
                     self.append_steers(&req, &turn_id, &mut transcript, steers)
                         .await?;
@@ -3716,10 +3726,19 @@ impl Runtime {
                 .await?;
             }
             if let Some(metadata) = provider_metadata {
+                let had_provider_compaction =
+                    crate::compaction::provider_metadata_has_compaction(&metadata);
                 let item = TranscriptItem::ProviderMetadata(metadata);
                 self.persist_turn_item(&req.thread_id, &turn_id, &item)
                     .await?;
                 transcript.push(item);
+                if had_provider_compaction {
+                    // Server-side compaction replaced the prior window; drop
+                    // pre-boundary items so subsequent tool rounds use the
+                    // compact window as the next input.
+                    transcript = crate::compaction::trim_to_last_compaction_boundary(transcript);
+                    compacted_this_turn = true;
+                }
             }
             for call in &tool_calls {
                 let tool_item = TranscriptItem::ToolCall(ToolCallRecord {
@@ -3823,7 +3842,7 @@ impl Runtime {
             compacted_this_turn = compacted_this_turn
                 || transcript
                     .iter()
-                    .any(|item| matches!(item, TranscriptItem::ContextCompaction(_)));
+                    .any(crate::compaction::is_compaction_boundary);
         }
 
         if exhausted_tool_rounds {
@@ -5393,6 +5412,175 @@ mod tests {
         assert_eq!(metadata.workspace, workspace.display().to_string());
         assert_eq!(metadata.provider.as_deref(), Some("mock"));
         assert_eq!(metadata.model.as_deref(), Some("mock"));
+    }
+
+    #[tokio::test]
+    async fn prior_provider_compaction_boundary_is_used_on_next_turn() {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-provider-compaction-boundary-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: PROVIDER_MOCK.to_string(),
+                    default_model: "gpt-5.5".to_string(),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime
+            .create_thread(Some("Provider compaction boundary".to_string()))
+            .await
+            .unwrap()
+            .thread_id;
+        let old_turn = "old-turn".to_string();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &old_turn,
+                &TranscriptItem::UserMessage(UserMessage::text(
+                    "old history that must not be replayed after provider compaction",
+                )),
+            )
+            .await
+            .unwrap();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &old_turn,
+                &TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "old answer".to_string(),
+                    phase: None,
+                }),
+            )
+            .await
+            .unwrap();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &old_turn,
+                &TranscriptItem::ProviderMetadata(serde_json::json!({
+                    "output": [{
+                        "id": "cmp_1",
+                        "type": "compaction",
+                        "encrypted_content": "opaque-state"
+                    }]
+                })),
+            )
+            .await
+            .unwrap();
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &old_turn,
+                &TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "after compact".to_string(),
+                    phase: None,
+                }),
+            )
+            .await
+            .unwrap();
+
+        let mut events = runtime.subscribe_events();
+        runtime
+            .start_turn(StartTurnRequest {
+                thread_id: thread_id.clone(),
+                message: "continue".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                developer_context: None,
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+        loop {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if envelope.thread_id.as_deref() == Some(&thread_id)
+                && matches!(envelope.event, RoderEvent::TurnCompleted(_))
+            {
+                break;
+            }
+        }
+
+        let request = captured.lock().unwrap().clone().unwrap();
+        let compaction_idx = request.transcript.iter().position(|item| {
+            matches!(
+                item,
+                TranscriptItem::ProviderMetadata(metadata)
+                    if crate::compaction::provider_metadata_has_compaction(metadata)
+            )
+        });
+        assert!(
+            compaction_idx.is_some(),
+            "next provider request should include the provider compaction item: {:?}",
+            request.transcript
+        );
+        // Skill/context injectors may prepend non-history items, but no prior-turn
+        // conversation may appear before the latest provider compaction boundary.
+        let history_before_boundary = request
+            .transcript
+            .iter()
+            .take(compaction_idx.unwrap())
+            .any(|item| match item {
+                TranscriptItem::AssistantMessage(_)
+                | TranscriptItem::ToolCall(_)
+                | TranscriptItem::ToolResult(_) => true,
+                TranscriptItem::UserMessage(message) => {
+                    !message.text.contains("<skills>") && message.text != "continue"
+                }
+                _ => false,
+            });
+        assert!(
+            !history_before_boundary,
+            "pre-provider-compaction conversation must not be replayed: {:?}",
+            request.transcript
+        );
+        assert!(
+            !request.transcript.iter().any(|item| {
+                matches!(
+                    item,
+                    TranscriptItem::UserMessage(message)
+                        if message.text.contains("old history that must not be replayed")
+                )
+            }),
+            "pre-provider-compaction history must not be replayed: {:?}",
+            request.transcript
+        );
+        assert!(
+            request.transcript.iter().any(|item| {
+                matches!(
+                    item,
+                    TranscriptItem::UserMessage(message) if message.text == "continue"
+                )
+            }),
+            "current continue prompt must be preserved: {:?}",
+            request.transcript
+        );
+        assert_eq!(
+            request.runtime.auto_compact_token_limit,
+            Some(945_000),
+            "gpt-5.5 should keep server-side auto compaction configured"
+        );
+
+        let _ = std::fs::remove_dir_all(thread_root);
     }
 
     #[test]

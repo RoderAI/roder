@@ -278,8 +278,18 @@ impl InferenceEngine for AnthropicEngine {
 }
 
 fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
-    request
-        .transcript
+    // Prefer the latest local/provider compaction boundary so emergency
+    // client-side summaries and prior state snapshots are not buried under a
+    // full pre-compact replay. Server-side `compact_20260112` still receives
+    // the post-boundary window with context_management configured.
+    let transcript = {
+        let items = &request.transcript;
+        match items.iter().rposition(is_anthropic_compaction_boundary) {
+            Some(idx) => &items[idx..],
+            None => items.as_slice(),
+        }
+    };
+    transcript
         .iter()
         .filter_map(|item| match item {
             roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
@@ -289,6 +299,13 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
             roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
                 "role": "assistant",
                 "content": [{ "type": "text", "text": message.text }]
+            })),
+            roder_api::transcript::TranscriptItem::ContextCompaction(compaction) => Some(json!({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": format!("Context summary:\n{}", compaction.summary)
+                }]
             })),
             roder_api::transcript::TranscriptItem::ToolCall(call) => Some(json!({
                 "role": "assistant",
@@ -311,6 +328,13 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
             _ => None,
         })
         .collect()
+}
+
+fn is_anthropic_compaction_boundary(item: &roder_api::transcript::TranscriptItem) -> bool {
+    matches!(
+        item,
+        roder_api::transcript::TranscriptItem::ContextCompaction(_)
+    )
 }
 
 fn anthropic_tool_choice(choice: &roder_api::tools::ToolChoice) -> Value {
@@ -947,5 +971,53 @@ mod tests {
 
         assert!(body.get("context_management").is_none());
         assert!(anthropic_betas(&request).is_empty());
+    }
+
+    #[test]
+    fn maps_local_context_compaction_and_drops_pre_boundary_history() {
+        use roder_api::transcript::ContextCompactionRecord;
+
+        let mut request = request();
+        request.transcript = vec![
+            TranscriptItem::UserMessage(UserMessage::text("old history that must be dropped")),
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "old answer".to_string(),
+                phase: None,
+            }),
+            TranscriptItem::ContextCompaction(ContextCompactionRecord {
+                summary: "durable state snapshot".to_string(),
+            }),
+            TranscriptItem::UserMessage(UserMessage::text("continue after compact")),
+        ];
+
+        let body = AnthropicEngine::map_request(&request);
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages[0]["role"], "user");
+        assert!(
+            messages[0]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("durable state snapshot")),
+            "{messages:?}"
+        );
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(
+            messages[1]["content"][0]["text"],
+            "continue after compact"
+        );
+        assert!(
+            !messages.iter().any(|message| {
+                message["content"]
+                    .as_array()
+                    .is_some_and(|content| {
+                        content.iter().any(|part| {
+                            part.get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| text.contains("old history"))
+                        })
+                    })
+            }),
+            "pre-compaction history must not be replayed: {messages:?}"
+        );
     }
 }
