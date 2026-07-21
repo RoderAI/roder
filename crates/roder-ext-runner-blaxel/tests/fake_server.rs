@@ -24,8 +24,10 @@ struct ServerState {
     processes: HashMap<String, FakeProcess>,
     tagged_descendants: HashMap<String, String>,
     fail_descendant_cleanup: bool,
+    descendant_cleanup_failures_remaining: usize,
     fail_named_process_kill: bool,
     cleanup_polls_before_terminal: usize,
+    killed_user_process_polls_before_terminal: usize,
 }
 
 #[derive(Clone)]
@@ -109,12 +111,26 @@ impl FakeBlaxelServer {
         self.state.lock().unwrap().fail_descendant_cleanup = fail;
     }
 
+    pub fn fail_next_descendant_cleanups(&self, count: usize) {
+        self.state
+            .lock()
+            .unwrap()
+            .descendant_cleanup_failures_remaining = count;
+    }
+
     pub fn fail_named_process_kill(&self, fail: bool) {
         self.state.lock().unwrap().fail_named_process_kill = fail;
     }
 
     pub fn set_cleanup_polls_before_terminal(&self, polls: usize) {
         self.state.lock().unwrap().cleanup_polls_before_terminal = polls;
+    }
+
+    pub fn delay_killed_user_process_for_polls(&self, polls: usize) {
+        self.state
+            .lock()
+            .unwrap()
+            .killed_user_process_polls_before_terminal = polls;
     }
 
     pub fn terminate_user_processes_without_exit(&self) {
@@ -204,11 +220,14 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
             let name = parsed["name"].as_str().unwrap_or("unnamed").to_string();
             let is_cleanup = name.starts_with("roder-cleanup-");
             let (cleanup_should_fail, cleanup_polls_before_terminal) = {
-                let guard = state.lock().unwrap();
-                (
-                    is_cleanup && guard.fail_descendant_cleanup,
-                    guard.cleanup_polls_before_terminal,
-                )
+                let mut guard = state.lock().unwrap();
+                let should_fail = is_cleanup
+                    && (guard.fail_descendant_cleanup
+                        || guard.descendant_cleanup_failures_remaining > 0);
+                if is_cleanup && guard.descendant_cleanup_failures_remaining > 0 {
+                    guard.descendant_cleanup_failures_remaining -= 1;
+                }
+                (should_fail, guard.cleanup_polls_before_terminal)
             };
             let stdout = command
                 .split_once("; exec echo ")
@@ -322,10 +341,23 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
                     json_error("named process kill unavailable"),
                 );
             }
+            let delayed_terminal_polls = if name.starts_with("roder-cleanup-") {
+                0
+            } else {
+                guard.killed_user_process_polls_before_terminal
+            };
             let Some(process) = guard.processes.get_mut(name) else {
                 return ("404 Not Found", json_error("process not found"));
             };
-            process.status = "killed".to_string();
+            if delayed_terminal_polls == 0 {
+                process.status = "killed".to_string();
+            } else {
+                process.status = "running".to_string();
+                process.long_running = false;
+                process.polls = 0;
+                process.polls_before_terminal = delayed_terminal_polls;
+                process.terminal_status = "killed".to_string();
+            }
             (
                 "200 OK",
                 serde_json::json!({ "message": "Process killed successfully" }).to_string(),

@@ -96,13 +96,32 @@ to 10 minutes for internal runner operations without one. Tool timeout, turn
 interruption, or a dropped transport creates a cancellation tombstone and
 requests Blaxel's named-process kill endpoint. Each user command also receives
 a unique `RODER_BLAXEL_COMMAND_TAG` value (overriding a caller-supplied value),
-which its normal descendants inherit. A separate, untagged `/bin/sh` cleanup
-process scans exact entries in `/proc/*/environ`, sends TERM and then KILL to
-matching processes, and requires two tag-free scans before it succeeds. Roder
-reports cancellation only after that cleanup exits successfully; failures keep
-the tombstone and local process mapping available for retry. The server lease
-remains a backstop for the named supervisor, but is not treated as proof that a
-detached descendant stopped.
+which its normal descendants inherit. A separate, untagged cleanup process runs
+a Python 3 scanner over `/proc/*/environ`. It opens a Linux pidfd before reading
+each environment, matches the exact NUL-delimited tag, sends TERM and then KILL
+through the pidfd, and requires two tag-free scans before it succeeds. This
+avoids signaling a reused raw PID.
+
+The sandbox image must therefore be Linux with `/proc`, provide Python 3 with
+`os.pidfd_open` and `signal.pidfd_send_signal`, and permit reading the
+environment of every extant userspace process the scanner encounters. Tasks
+positively identified as Linux kernel threads through `/proc/<pid>/stat` are
+skipped because they have no userspace environment. Missing pidfd support or an
+inaccessible extant userspace environment fails closed: cancellation
+returns `false`, retaining the tombstone and local process mapping for retry.
+The server lease remains a backstop for the named supervisor, but is not treated
+as proof that a detached descendant stopped. The gated live smoke verifies
+these requirements for the default `blaxel/base-image:latest`; custom `image`
+values must satisfy them independently.
+
+When Blaxel positively confirms the named process was killed or terminal, Roder
+keeps the cancellation acknowledgement briefly for idempotent retries and then
+deletes that command's unique tombstone. An absence-only observation cannot
+close a timed-out process-registration race. In that case Roder keeps the
+unique tombstone permanently, performs a final descendant sweep after the full
+server-lease horizon, and later reaps only its local command mapping. Persistent
+entries in `/tmp/roder-cancelled-processes` are intentional fences, not leaked
+active commands.
 
 ## Driving the lifecycle
 
@@ -135,7 +154,8 @@ timeout.
 A gated end-to-end smoke (`RODER_LIVE_BLAXEL_RUNNER=1`, with `BLAXEL_API_KEY`
 and `BL_WORKSPACE` set) exercises create → exec → tagged-descendant
 cancellation (including a ready, `setsid`, signal-ignoring child whose delayed
-file mutation must never land) → pause → resume → detach → rejoin → delete:
+file mutation must never land and whose PID plus `/proc` start-time identity
+must disappear) → pause → resume → detach → rejoin → delete:
 
 ```sh
 RODER_LIVE_BLAXEL_RUNNER=1 cargo test -p roder-ext-runner-blaxel --test live -- --ignored
