@@ -114,4 +114,9 @@ Permissive mode yields unknown notifications as `raw.notification`; a known meth
 
 SDK compatibility follows `schemaVersion` in `roder-app-server.v1.json`. Raw clients may call unknown future methods because the manifest includes `unknownMethodsAllowed`; generated helper maps stay strict to known methods.
 
-Remote WebSocket transports use bearer auth headers where supported. Deployments that cannot pass headers should use the documented remote pairing subprotocol flow rather than putting tokens in query strings.
+`HostedClient` defaults to browser-safe bearer subprotocol auth, offering
+`roder.remote.v1` and `bearer.<token>` during the WebSocket handshake. Native
+clients with a header-capable custom WebSocket factory can select
+`bearerAuth: "header"`. The lower-level `WebSocketTransport` retains header
+auth as its default for compatibility and supports `bearerAuth: "subprotocol"`
+for browser-shaped transports. Tokens must never be put in query strings.

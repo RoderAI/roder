@@ -50,16 +50,19 @@ referenced key env var is unset. Logs print only redacted summaries.
 ## Security model (current state)
 
 - **Auth before dispatch**: every connection authenticates at the WebSocket
-  handshake (`Authorization: Bearer …`; query-string credentials always
-  rejected). Static `rk_test_*` keys and hashed `rk_sa_*` service-account
-  keys are supported; JWT/JWKS is deferred pending a dependency/IdP
-  decision.
+  handshake. Native clients can send `Authorization: Bearer …`; browser
+  clients offer `roder.remote.v1` and `bearer.<token>` as WebSocket
+  subprotocols. Query-string credentials are always rejected. Static
+  `rk_test_*` keys, hashed `rk_sa_*` service-account keys, and credentials
+  resolved by a registered external verifier are supported; built-in
+  JWT/JWKS configuration is deferred pending a dependency/IdP decision.
 - **Authorization per request**: read-only methods need `read`, mutating
   methods `write`, `hosted/*` administration `admin` + tenant-admin role;
   cross-tenant listing is system-admin only; unknown methods are denied.
-- **Tenant isolation by construction**: per-tenant runtimes and stores
-  under `data_root/<tenant>/`; notifications come from the tenant's own
-  app-server.
+- **Tenant isolation by construction**: per-tenant runtimes and stores use
+  `data_root/<tenant>/` for existing safe slugs and
+  `data_root/.tenant-data-v2/<sha256>/` for arbitrary external tenant ids;
+  notifications come from the tenant's own app-server.
 - **Limits and audit**: per-tenant/principal token-bucket rate limits,
   frame-size limits, and an append-only redacted audit JSONL
   (`hosted/audit/list` exposes a tenant's own records).
@@ -84,11 +87,17 @@ hosted helpers — no separate protocol:
 
 ```ts
 import { HostedClient } from "@roderai/sdk";
-const hosted = await HostedClient.connect({ url, token }); // or tokenProvider / headers
+// Browser-safe by default: offers roder.remote.v1 + bearer.<token>.
+const hosted = await HostedClient.connect({ url, token }); // or tokenProvider
 await hosted.whoami();
 const key = await hosted.createServiceAccount("ci"); // token shown once
 await hosted.reconnect(); // fresh token from the provider; nothing is replayed
 ```
+
+Native WebSocket libraries that support custom handshake headers can instead
+pass `bearerAuth: "header"` with a `webSocketFactory`. Browser WebSockets
+cannot set `Authorization` headers, and credentials must never be put in the
+URL query string.
 
 ```python
 from roder_sdk import HostedClient

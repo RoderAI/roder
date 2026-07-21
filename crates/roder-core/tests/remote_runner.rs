@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,6 +43,9 @@ struct MockRunnerState {
     resumed: Mutex<usize>,
     commands: Mutex<Vec<RunnerCommandRequest>>,
     default_workspace: Mutex<Option<String>>,
+    create_started: tokio::sync::Notify,
+    create_delay_ms: AtomicU64,
+    create_failures_remaining: Mutex<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -191,6 +195,23 @@ impl RemoteRunnerProvider for MockRunnerProvider {
         destination: RunnerDestination,
     ) -> anyhow::Result<Arc<dyn RemoteRunnerSession>> {
         *self.state.created.lock().unwrap() += 1;
+        self.state.create_started.notify_waiters();
+        let delay_ms = self.state.create_delay_ms.load(Ordering::SeqCst);
+        if delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+        let should_fail = {
+            let mut remaining = self.state.create_failures_remaining.lock().unwrap();
+            if *remaining == 0 {
+                false
+            } else {
+                *remaining -= 1;
+                true
+            }
+        };
+        if should_fail {
+            anyhow::bail!("mock runner creation failed");
+        }
         Ok(Arc::new(MockRunnerSession {
             state: self.state.clone(),
             destination_id: destination.id,
@@ -425,40 +446,29 @@ impl ToolExecutor for MockRunnerReadTool {
 }
 
 #[tokio::test]
-async fn remote_runner_state_persists_and_resumes_between_turns() {
+async fn runner_bound_text_only_turn_does_not_provision_session() {
     let session_dir = temp_dir("remote-runner-sessions");
     let workspace = temp_dir("remote-runner-workspace");
     let runtime = runtime(session_dir.clone(), workspace.clone()).await;
     let mut events = runtime.subscribe_events();
-    let metadata = runtime.create_thread(None).await.unwrap();
+    let metadata = runtime
+        .create_thread_with(unix_runner_thread_request(&workspace))
+        .await
+        .unwrap();
     assert!(metadata.runner_destination.is_some());
     assert!(metadata.runner_state.is_none());
 
-    start_and_wait(&runtime, &mut events, &metadata.thread_id, "first").await;
-    let first_state = runtime
+    start_and_wait(&runtime, &mut events, &metadata.thread_id, "text only").await;
+    let state = runtime
         .load_thread(&metadata.thread_id)
         .await
         .unwrap()
         .unwrap()
         .metadata
         .unwrap()
-        .runner_state
-        .unwrap();
+        .runner_state;
 
-    start_and_wait(&runtime, &mut events, &metadata.thread_id, "second").await;
-    let second_state = runtime
-        .load_thread(&metadata.thread_id)
-        .await
-        .unwrap()
-        .unwrap()
-        .metadata
-        .unwrap()
-        .runner_state
-        .unwrap();
-
-    assert_eq!(second_state.provider_id, "unix-local");
-    assert_eq!(second_state.destination_id, "unix-local");
-    assert_eq!(second_state.session_id, first_state.session_id);
+    assert!(state.is_none());
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(workspace);
@@ -469,8 +479,17 @@ async fn stale_remote_runner_state_falls_back_to_fresh_session() {
     let session_dir = temp_dir("remote-runner-stale-sessions");
     let workspace = temp_dir("remote-runner-stale-workspace");
     let runtime = runtime(session_dir.clone(), workspace.clone()).await;
-    let mut events = runtime.subscribe_events();
-    let metadata = runtime.create_thread(None).await.unwrap();
+    let metadata = runtime
+        .create_thread_with(unix_runner_thread_request(&workspace))
+        .await
+        .unwrap();
+    let destination_id = metadata
+        .runner_binding
+        .as_ref()
+        .unwrap()
+        .destination
+        .id
+        .clone();
     let store = JsonlThreadStore {
         base_path: session_dir.clone(),
     };
@@ -478,14 +497,18 @@ async fn stale_remote_runner_state_falls_back_to_fresh_session() {
     stale.runner_state = Some(RunnerSessionState {
         provider_id: "unix-local".to_string(),
         session_id: "stale-session".to_string(),
-        destination_id: "unix-local".to_string(),
+        destination_id: destination_id.clone(),
         snapshot: None,
         metadata: serde_json::json!({ "root": "/definitely/missing/runner/root" }),
     });
     stale.updated_at = OffsetDateTime::now_utc();
     store.update_thread_metadata(stale.clone()).await.unwrap();
 
-    start_and_wait(&runtime, &mut events, &stale.thread_id, "recover").await;
+    let error = runtime
+        .pause_thread_runner(&stale.thread_id)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("does not support pausing"));
     let recovered = runtime
         .load_thread(&stale.thread_id)
         .await
@@ -497,7 +520,7 @@ async fn stale_remote_runner_state_falls_back_to_fresh_session() {
         .unwrap();
 
     assert_ne!(recovered.session_id, "stale-session");
-    assert_eq!(recovered.destination_id, "unix-local");
+    assert_eq!(recovered.destination_id, destination_id);
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(workspace);
@@ -508,6 +531,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
     let session_dir = temp_dir("remote-runner-e2e-sessions");
     let workspace = temp_dir("remote-runner-e2e-workspace");
     let provider = MockRunnerProvider::default();
+    *provider.state.default_workspace.lock().unwrap() = Some("/sandbox/workspace".to_string());
     let engine = Arc::new(ToolScriptEngine {
         requests: Mutex::new(0),
     });
@@ -588,6 +612,7 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
             args: vec!["ok".to_string()],
             cwd: None,
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await
         .unwrap();
@@ -608,9 +633,10 @@ async fn mock_runner_e2e_tools_command_port_snapshot_resume_and_continue() {
 
     start_and_wait(&runtime, &mut events, &metadata.thread_id, "continue").await;
     assert_eq!(*provider.state.created.lock().unwrap(), 1);
-    assert!(
-        *provider.state.resumed.lock().unwrap() >= 2,
-        "runtime and explicit resume should reuse the mock runner session"
+    assert_eq!(
+        *provider.state.resumed.lock().unwrap(),
+        1,
+        "the live runtime session is cached; only the explicit test resume should reattach"
     );
 
     let _ = std::fs::remove_dir_all(session_dir);
@@ -771,7 +797,12 @@ async fn runner_pause_resume_detach_and_rejoin_reuse_one_session() {
         1,
         "rejoin must not create a new sandbox"
     );
-    assert!(*provider.state.resumed.lock().unwrap() >= 1);
+    assert_eq!(*provider.state.resumed.lock().unwrap(), 1);
+
+    // Rejoin refreshes the live cache; a subsequent lifecycle operation uses
+    // that handle instead of asking the provider to reattach again.
+    runtime.resume_thread_runner(&thread_id).await.unwrap();
+    assert_eq!(*provider.state.resumed.lock().unwrap(), 1);
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(workspace);
@@ -866,6 +897,7 @@ async fn live_sprites_runner_runtime_creates_session_and_offloads_operations() {
             args: vec!["-c".to_string(), "print(2+2)".to_string()],
             cwd: None,
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await
         .unwrap();
@@ -956,6 +988,19 @@ fn tool_call_round(calls: &[(&str, &str, &str)]) -> Vec<InferenceEvent> {
     events
 }
 
+fn final_round() -> Vec<InferenceEvent> {
+    vec![
+        InferenceEvent::MessageDelta(MessageDelta {
+            text: "done".to_string(),
+            phase: None,
+        }),
+        InferenceEvent::Completed(CompletionMetadata {
+            stop_reason: Some("stop".to_string()),
+            provider_response_id: Some("resp-final".to_string()),
+        }),
+    ]
+}
+
 fn coding_tools_runtime(
     session_dir: PathBuf,
     scratch: PathBuf,
@@ -978,6 +1023,7 @@ fn coding_tools_runtime(
             RuntimeConfig {
                 workspace: Some(scratch.display().to_string()),
                 policy_mode: roder_api::policy_mode::PolicyMode::Bypass,
+                model_parallel_tool_calls: HashMap::from([("mock".to_string(), true)]),
                 ..RuntimeConfig::default()
             },
         )
@@ -1025,12 +1071,301 @@ async fn run_turn_collecting_tool_calls(
                 output: call.output,
                 is_error: call.is_error,
             }),
+            RoderEvent::ExternalToolCallRequested(request) => {
+                runtime
+                    .resolve_external_tool_call(
+                        &request.request_id,
+                        roder_core::ExternalToolResolution {
+                            output: "external MCP result".to_string(),
+                            is_error: false,
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
             RoderEvent::TurnCompleted(_) => break,
             RoderEvent::TurnFailed(failed) => panic!("turn failed: {}", failed.error),
             _ => {}
         }
     }
     completed
+}
+
+#[tokio::test]
+async fn runner_bound_mcp_only_turn_does_not_provision_session() {
+    let session_dir = temp_dir("runner-mcp-only-sessions");
+    let scratch = temp_dir("runner-mcp-only-scratch");
+    let provider = MockRunnerProvider::default();
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "mcp-list",
+            "mcp__vex__repositories",
+            r#"{"organization":"vex"}"#,
+        )])],
+    );
+    let mut request = mock_runner_thread_request(&scratch);
+    request.external_tools = vec![ToolSpec {
+        name: "mcp__vex__repositories".to_string(),
+        description: "List repositories through Vex MCP".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": { "organization": { "type": "string" } },
+            "additionalProperties": false
+        }),
+    }];
+    let metadata = runtime.create_thread_with(request).await.unwrap();
+
+    let completed = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+
+    assert!(completed.iter().all(|call| !call.is_error));
+    assert_eq!(*provider.state.created.lock().unwrap(), 0);
+    let persisted = runtime
+        .load_thread(&metadata.thread_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .metadata
+        .unwrap()
+        .runner_state;
+    assert!(persisted.is_none());
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn concurrent_first_workspace_tools_initialize_one_runner_session() {
+    let session_dir = temp_dir("runner-singleflight-sessions");
+    let scratch = temp_dir("runner-singleflight-scratch");
+    let provider = MockRunnerProvider::default();
+    provider.state.create_delay_ms.store(25, Ordering::SeqCst);
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[
+            ("write-a", "write_file", r#"{"path":"a.txt","content":"a"}"#),
+            ("write-b", "write_file", r#"{"path":"b.txt","content":"b"}"#),
+        ])],
+    );
+    let metadata = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+
+    let completed = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+
+    assert!(completed.iter().all(|call| !call.is_error));
+    assert_eq!(*provider.state.created.lock().unwrap(), 1);
+    let persisted = runtime
+        .load_thread(&metadata.thread_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .metadata
+        .unwrap()
+        .runner_state;
+    assert!(persisted.is_some());
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn runner_session_is_reused_by_workspace_tools_on_later_turns() {
+    let session_dir = temp_dir("runner-reuse-sessions");
+    let scratch = temp_dir("runner-reuse-scratch");
+    let provider = MockRunnerProvider::default();
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![
+            tool_call_round(&[(
+                "write",
+                "write_file",
+                r#"{"path":"reuse.txt","content":"same session"}"#,
+            )]),
+            final_round(),
+            tool_call_round(&[("read", "read_file", r#"{"path":"reuse.txt"}"#)]),
+        ],
+    );
+    let metadata = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+
+    run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+    let second = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+
+    assert_eq!(*provider.state.created.lock().unwrap(), 1);
+    assert_eq!(*provider.state.resumed.lock().unwrap(), 0);
+    let read = second
+        .iter()
+        .find(|call| call.tool_name.as_deref() == Some("read_file"))
+        .unwrap();
+    assert!(read.output.as_deref().unwrap().contains("same session"));
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn failed_runner_initialization_is_retryable_without_local_fallback() {
+    let session_dir = temp_dir("runner-retry-sessions");
+    let scratch = temp_dir("runner-retry-scratch");
+    let provider = MockRunnerProvider::default();
+    *provider.state.create_failures_remaining.lock().unwrap() = 1;
+    provider.state.create_delay_ms.store(25, Ordering::SeqCst);
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![
+            tool_call_round(&[
+                (
+                    "first-write-a",
+                    "write_file",
+                    r#"{"path":"retry-a.txt","content":"remote only"}"#,
+                ),
+                (
+                    "first-write-b",
+                    "write_file",
+                    r#"{"path":"retry-b.txt","content":"remote only"}"#,
+                ),
+            ]),
+            final_round(),
+            tool_call_round(&[(
+                "second-write",
+                "write_file",
+                r#"{"path":"retry.txt","content":"remote only"}"#,
+            )]),
+        ],
+    );
+    let metadata = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+
+    let first = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+    assert!(
+        first.iter().all(|call| call.is_error),
+        "expected every concurrent caller to share the initialization error: {first:?}"
+    );
+    assert_eq!(*provider.state.created.lock().unwrap(), 1);
+    assert!(!scratch.join("retry-a.txt").exists());
+    assert!(!scratch.join("retry-b.txt").exists());
+    let first_state = runtime
+        .load_thread(&metadata.thread_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .metadata
+        .unwrap()
+        .runner_state;
+    assert!(first_state.is_none());
+
+    let second = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+    assert!(second.iter().all(|call| !call.is_error));
+    assert_eq!(*provider.state.created.lock().unwrap(), 2);
+    assert_eq!(
+        provider
+            .state
+            .files
+            .lock()
+            .unwrap()
+            .get("retry.txt")
+            .cloned(),
+        Some(b"remote only".to_vec())
+    );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn interrupted_turn_does_not_strand_runner_initialization() {
+    let session_dir = temp_dir("runner-interrupt-sessions");
+    let scratch = temp_dir("runner-interrupt-scratch");
+    let provider = MockRunnerProvider::default();
+    *provider.state.create_failures_remaining.lock().unwrap() = 1;
+    provider.state.create_delay_ms.store(100, Ordering::SeqCst);
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "interrupted-write",
+            "write_file",
+            r#"{"path":"never-written.txt","content":"interrupted"}"#,
+        )])],
+    );
+    let metadata = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+    let create_started = provider.state.create_started.notified();
+
+    let turn_id = runtime
+        .start_turn(StartTurnRequest {
+            thread_id: metadata.thread_id.clone(),
+            message: "begin a runner-backed write".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            reasoning_override: None,
+            workspace: scratch.display().to_string(),
+            instructions: default_instructions(),
+            developer_context: None,
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), create_started)
+        .await
+        .expect("runner initialization should start");
+    runtime
+        .interrupt_turn(metadata.thread_id.clone(), turn_id)
+        .await
+        .unwrap();
+
+    // The detached singleflight finishes the failed attempt after the turn is
+    // gone. A later caller observes that failure and can then retry instead of
+    // waiting forever on an `Initializing` slot owned by the aborted turn.
+    let state = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match runtime.pause_thread_runner(&metadata.thread_id).await {
+                Ok(state) => break state,
+                Err(error) if error.to_string().contains("mock runner creation failed") => {
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => panic!("unexpected runner retry error: {error:#}"),
+            }
+        }
+    })
+    .await
+    .expect("runner initialization should recover after interrupt");
+
+    assert_eq!(state.session_id, "mock-session");
+    assert_eq!(*provider.state.created.lock().unwrap(), 2);
+    assert!(!scratch.join("never-written.txt").exists());
+    assert!(
+        runtime
+            .load_thread(&metadata.thread_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .metadata
+            .unwrap()
+            .runner_state
+            .is_some()
+    );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
 }
 
 #[tokio::test]
@@ -1130,20 +1465,30 @@ async fn runner_bound_thread_routes_coding_tools_through_remote_runner() {
             .contains("hello from runner")
     );
 
-    // Tools without a remote transport fail clearly instead of touching local disk.
+    // Codex-shaped exec_command is a completed one-shot runner command.
     let exec = completed
         .iter()
         .find(|call| call.tool_name.as_deref() == Some("exec_command"))
         .expect("exec_command completed");
-    assert!(exec.is_error);
+    assert!(!exec.is_error);
     assert!(
         exec.output
             .as_deref()
             .unwrap_or_default()
-            .contains("not supported on a remote runner workspace"),
+            .contains("Status: completed"),
         "unexpected exec output: {:?}",
         exec.output
     );
+    assert_eq!(*provider.state.created.lock().unwrap(), 1);
+    let runner_state = runtime
+        .load_thread(&metadata.thread_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .metadata
+        .unwrap()
+        .runner_state;
+    assert!(runner_state.is_some());
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(scratch);
@@ -1178,6 +1523,63 @@ async fn unbound_thread_keeps_local_coding_tools_on_a_runner_capable_server() {
     assert_eq!(
         std::fs::read_to_string(scratch.join("local-out.txt")).unwrap(),
         "hello locally"
+    );
+    assert!(provider.state.files.lock().unwrap().is_empty());
+    assert_eq!(*provider.state.created.lock().unwrap(), 0);
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn unbound_thread_cannot_touch_host_when_local_workspaces_are_disabled() {
+    let session_dir = temp_dir("runner-hosted-unbound-sessions");
+    let scratch = temp_dir("runner-hosted-unbound-scratch");
+    let provider = MockRunnerProvider::default();
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "write",
+            "write_file",
+            r#"{"path":"must-not-touch-host.txt","content":"host escape"}"#,
+        )])],
+    );
+    runtime.set_allow_local_workspaces(false);
+    let host_path = scratch.join("must-not-touch-host.txt");
+    std::fs::write(&host_path, "original host contents").unwrap();
+    let mut events = runtime.subscribe_events();
+
+    let metadata = runtime.create_thread(None).await.unwrap();
+    assert!(metadata.runner_binding.is_none());
+
+    let completed = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+    let write = completed
+        .iter()
+        .find(|call| call.tool_name.as_deref() == Some("write_file"))
+        .expect("write_file completed with an isolation error");
+    assert!(write.is_error);
+    assert!(
+        write
+            .output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("local workspace execution is disabled")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&host_path).unwrap(),
+        "original host contents"
+    );
+    let mut preview_emitted = false;
+    while let Ok(envelope) = events.try_recv() {
+        if matches!(envelope.event, RoderEvent::FileChangePreviewReady(_)) {
+            preview_emitted = true;
+        }
+    }
+    assert!(
+        !preview_emitted,
+        "hosted calls must not read a host preview"
     );
     assert!(provider.state.files.lock().unwrap().is_empty());
     assert_eq!(*provider.state.created.lock().unwrap(), 0);
@@ -1276,6 +1678,48 @@ async fn runtime(session_dir: PathBuf, workspace: PathBuf) -> Arc<Runtime> {
         )
         .unwrap(),
     )
+}
+
+fn unix_runner_thread_request(workspace: &std::path::Path) -> roder_core::CreateThreadRequest {
+    roder_core::CreateThreadRequest {
+        title: None,
+        workspace: workspace.display().to_string(),
+        workspace_id: None,
+        root_id: None,
+        provider: None,
+        model: None,
+        selection_mode: None,
+        tool_allowlist: Vec::new(),
+        developer_instructions: None,
+        external_tools: Vec::new(),
+        runner: Some(roder_core::ThreadRunnerSelection {
+            provider_id: "unix-local".to_string(),
+            config: serde_json::json!({ "root": workspace.display().to_string() }),
+            workspace: workspace.display().to_string(),
+            read_roots: Vec::new(),
+        }),
+    }
+}
+
+fn mock_runner_thread_request(workspace: &std::path::Path) -> roder_core::CreateThreadRequest {
+    roder_core::CreateThreadRequest {
+        title: None,
+        workspace: workspace.display().to_string(),
+        workspace_id: None,
+        root_id: None,
+        provider: None,
+        model: None,
+        selection_mode: None,
+        tool_allowlist: Vec::new(),
+        developer_instructions: None,
+        external_tools: Vec::new(),
+        runner: Some(roder_core::ThreadRunnerSelection {
+            provider_id: "mock-hosted".to_string(),
+            config: serde_json::json!({}),
+            workspace: "/sandbox/workspace".to_string(),
+            read_roots: Vec::new(),
+        }),
+    }
 }
 
 async fn start_and_wait(

@@ -148,6 +148,7 @@ impl TaskExecutor for WebwrightTaskExecutor {
                     args: Vec::new(),
                     cwd: Some(workspace_root.clone()),
                     env: Vec::new(),
+                    timeout_ms: None,
                 })
                 .await
                 .context("run Webwright remote preflight")?;

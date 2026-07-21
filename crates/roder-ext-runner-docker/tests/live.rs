@@ -44,6 +44,7 @@ async fn live_docker_runner_reads_writes_runs_and_closes() {
             args: vec!["hello.txt".to_string()],
             cwd: None,
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await
         .unwrap();

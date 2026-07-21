@@ -118,6 +118,7 @@ async fn live_sprites_repo_app_server_accepts_remote_control() -> anyhow::Result
             args: Vec::new(),
             cwd: Some(PathBuf::from("repo")),
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await?;
     assert_eq!(command.exit_code, Some(0));

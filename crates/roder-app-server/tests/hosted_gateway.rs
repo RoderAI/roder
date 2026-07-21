@@ -5,15 +5,19 @@
 //! with the fake inference engine.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use futures::{SinkExt, StreamExt};
 use roder_api::extension::ExtensionRegistryBuilder;
-use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantContext};
+use roder_api::identity::{
+    HostedRequestContext, HostedRole, HostedScope, PrincipalContext, TenantContext,
+};
 use roder_app_server::AppServer;
 use roder_app_server::hosted::auth::PrincipalSeed;
 use roder_app_server::hosted::{
-    AuditLog, HostedAuthenticator, HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile,
-    RateLimitConfig, TenantRegistry, serve_hosted_gateway,
+    AllowAllHostedRequestPolicy, AuditLog, ExternalBearerVerifier, HostedAuthError,
+    HostedAuthenticator, HostedGatewayOptions, HostedRequestPolicy, HostedRequestPolicyDecision,
+    HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry, serve_hosted_gateway,
 };
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};
@@ -34,11 +38,23 @@ fn temp_dir(label: &str) -> std::path::PathBuf {
 /// Per-tenant app-server factory: every tenant gets its own runtime with a
 /// private JSONL thread store under its data directory.
 fn tenant_pool(label: &str, allow_local_workspaces: bool) -> Arc<HostedRuntimePool> {
+    tenant_pool_with_ttl(
+        label,
+        allow_local_workspaces,
+        std::time::Duration::from_secs(3600),
+    )
+}
+
+fn tenant_pool_with_ttl(
+    label: &str,
+    allow_local_workspaces: bool,
+    idle_ttl: std::time::Duration,
+) -> Arc<HostedRuntimePool> {
     Arc::new(HostedRuntimePool::new(
         HostedRuntimeProfile {
             data_root: temp_dir(label),
             allow_local_workspaces,
-            idle_ttl: std::time::Duration::from_secs(3600),
+            idle_ttl,
         },
         Arc::new(|_tenant_id, data_dir| {
             Box::pin(async move {
@@ -60,12 +76,29 @@ fn tenant_pool(label: &str, allow_local_workspaces: bool) -> Arc<HostedRuntimePo
 struct Fixture {
     controller: roder_app_server::hosted::HostedGatewayController,
     authenticator: Arc<HostedAuthenticator>,
+    audit: Arc<AuditLog>,
     url: String,
 }
 
 async fn fixture(label: &str, limits: RateLimitConfig, allow_local_workspaces: bool) -> Fixture {
+    fixture_with_policy(
+        label,
+        limits,
+        allow_local_workspaces,
+        Arc::new(AllowAllHostedRequestPolicy),
+    )
+    .await
+}
+
+async fn fixture_with_policy(
+    label: &str,
+    limits: RateLimitConfig,
+    allow_local_workspaces: bool,
+    request_policy: Arc<dyn HostedRequestPolicy>,
+) -> Fixture {
     let authenticator = Arc::new(HostedAuthenticator::default());
     let tenants = Arc::new(TenantRegistry::default());
+    let audit = Arc::new(AuditLog::default());
     for tenant in ["tenant-a", "tenant-b"] {
         tenants.insert(TenantContext {
             tenant_id: tenant.to_string(),
@@ -92,12 +125,13 @@ async fn fixture(label: &str, limits: RateLimitConfig, allow_local_workspaces: b
             listen: "127.0.0.1:0".to_string(),
             authenticator: authenticator.clone(),
             tenants,
-            audit: Arc::new(AuditLog::default()),
+            audit: audit.clone(),
             limits,
             hooks: Arc::new(roder_app_server::hosted::HookStore::default()),
             hook_delivery: Arc::new(roder_app_server::hosted::HookDeliveryService::new(
                 Default::default(),
             )),
+            request_policy,
         },
     )
     .await
@@ -106,6 +140,7 @@ async fn fixture(label: &str, limits: RateLimitConfig, allow_local_workspaces: b
     Fixture {
         controller,
         authenticator,
+        audit,
         url,
     }
 }
@@ -145,6 +180,74 @@ async fn call(socket: &mut Socket, method: &str, params: serde_json::Value) -> J
                 return serde_json::from_value(value).unwrap();
             }
         }
+    }
+}
+
+struct RewriteAndDenyPolicy;
+
+impl HostedRequestPolicy for RewriteAndDenyPolicy {
+    fn evaluate(
+        &self,
+        context: &roder_api::identity::HostedRequestContext,
+        bearer_token: &str,
+        mut request: JsonRpcRequest,
+    ) -> HostedRequestPolicyDecision {
+        assert_eq!(context.tenant.tenant_id, "tenant-a");
+        assert_eq!(bearer_token, "rk_test_tenant_a_writer");
+        match request.method.as_str() {
+            "client/whoami" => {
+                request.method = "hosted/whoami".to_string();
+                HostedRequestPolicyDecision::allow(request)
+            }
+            "thread/list" => HostedRequestPolicyDecision::deny(format!(
+                "policy_blocked credential={bearer_token}"
+            )),
+            _ => HostedRequestPolicyDecision::allow(request),
+        }
+    }
+}
+
+struct ExpiringExternalVerifier {
+    valid: AtomicBool,
+    checks: AtomicUsize,
+}
+
+impl ExpiringExternalVerifier {
+    fn new() -> Self {
+        Self {
+            valid: AtomicBool::new(true),
+            checks: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ExternalBearerVerifier for ExpiringExternalVerifier {
+    fn verify_bearer(
+        &self,
+        token: &str,
+        now: time::OffsetDateTime,
+    ) -> Result<Option<HostedRequestContext>, HostedAuthError> {
+        if token != "external-expiring-token" {
+            return Ok(None);
+        }
+        self.checks.fetch_add(1, Ordering::SeqCst);
+        if !self.valid.load(Ordering::SeqCst) {
+            return Err(HostedAuthError::Expired);
+        }
+        Ok(Some(HostedRequestContext {
+            tenant: TenantContext {
+                tenant_id: "external-tenant".to_string(),
+                display_name: None,
+            },
+            principal: PrincipalContext::User {
+                user_id: "external-user".to_string(),
+                display_name: None,
+            },
+            role: HostedRole::Member,
+            scopes: vec![HostedScope::Read, HostedScope::Write],
+            credential_id: Some("external:session-1".to_string()),
+            authenticated_at: now,
+        }))
     }
 }
 
@@ -197,6 +300,15 @@ async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
     )
     .await;
     assert_eq!(revoked.result.unwrap()["revoked"], true);
+
+    // Revocation applies to the already-open service-account socket before
+    // another request can reach the tenant runtime.
+    let denied_existing = call(&mut sa_socket, "hosted/whoami", serde_json::json!({})).await;
+    let error = denied_existing
+        .error
+        .expect("revoked socket must be denied");
+    assert_eq!(error.code, -32013);
+    assert!(error.message.contains("credential_revoked"));
     assert!(connect(&fixture.url, &token).await.is_err());
 
     // Audit shows the lifecycle without leaking secrets.
@@ -210,6 +322,182 @@ async fn gateway_authenticates_and_serves_whoami_and_service_accounts() {
     );
 
     let _ = fixture.authenticator;
+    fixture.controller.stop().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_external_bearers_are_revalidated_and_closed_without_notification_leaks() {
+    let authenticator = Arc::new(HostedAuthenticator::default());
+    let verifier = Arc::new(ExpiringExternalVerifier::new());
+    authenticator.register_external_bearer_verifier(verifier.clone());
+    let audit = Arc::new(AuditLog::default());
+    let controller = serve_hosted_gateway(
+        tenant_pool("external-revalidation", true),
+        HostedGatewayOptions {
+            listen: "127.0.0.1:0".to_string(),
+            authenticator,
+            tenants: Arc::new(TenantRegistry::default()),
+            audit: audit.clone(),
+            limits: RateLimitConfig::default(),
+            hooks: Arc::new(roder_app_server::hosted::HookStore::default()),
+            hook_delivery: Arc::new(roder_app_server::hosted::HookDeliveryService::new(
+                Default::default(),
+            )),
+            request_policy: Arc::new(AllowAllHostedRequestPolicy),
+        },
+    )
+    .await
+    .unwrap();
+    let url = format!("ws://{}", controller.listen_addr);
+
+    let mut socket = connect(&url, "external-expiring-token").await.unwrap();
+    assert_eq!(verifier.checks.load(Ordering::SeqCst), 1);
+    assert!(
+        call(&mut socket, "initialize", serde_json::json!({}))
+            .await
+            .error
+            .is_none()
+    );
+    assert_eq!(verifier.checks.load(Ordering::SeqCst), 2);
+
+    verifier.valid.store(false, Ordering::SeqCst);
+    // Send nothing else. The gateway's independent auth timer must terminate
+    // this passive socket, and no tenant notification may drain after the
+    // credential has been rejected.
+    let saw_terminal_auth_error = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        let mut saw_terminal_auth_error = false;
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    assert!(!text.contains("external-expiring-token"));
+                    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    assert!(
+                        value.get("method").is_none(),
+                        "notifications must stop once auth is invalid: {value}"
+                    );
+                    let response: JsonRpcResponse = serde_json::from_value(value).unwrap();
+                    let error = response
+                        .error
+                        .expect("terminal frame must be an auth error");
+                    assert_eq!(error.code, -32013);
+                    assert!(error.message.contains("credential_expired"));
+                    saw_terminal_auth_error = true;
+                }
+                Some(Ok(Message::Close(_))) | None => return saw_terminal_auth_error,
+                Some(Ok(_)) => {}
+                Some(Err(error)) => panic!("unexpected socket error before close: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("idle expired socket was not closed by the auth timer");
+    assert!(saw_terminal_auth_error);
+    assert!(verifier.checks.load(Ordering::SeqCst) >= 3);
+
+    let records = serde_json::to_string(&audit.for_tenant("external-tenant")).unwrap();
+    assert!(records.contains("auth_revalidation_failed"));
+    assert!(records.contains("credential_expired"));
+    assert!(!records.contains("external-expiring-token"));
+
+    controller.stop().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn browser_subprotocol_auth_requires_and_echoes_remote_protocol() {
+    let fixture = fixture("browser-auth", RateLimitConfig::default(), true).await;
+    let mut request = fixture.url.as_str().into_client_request().unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "roder.remote.v1, bearer.rk_test_tenant_a_writer"
+            .parse()
+            .unwrap(),
+    );
+    let (mut socket, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert_eq!(
+        response
+            .headers()
+            .get("Sec-WebSocket-Protocol")
+            .and_then(|value| value.to_str().ok()),
+        Some("roder.remote.v1")
+    );
+    assert!(
+        call(&mut socket, "initialize", serde_json::json!({}))
+            .await
+            .error
+            .is_none()
+    );
+    socket.close(None).await.unwrap();
+
+    let mut missing_protocol = fixture.url.as_str().into_client_request().unwrap();
+    missing_protocol.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "bearer.rk_test_tenant_a_writer".parse().unwrap(),
+    );
+    assert!(
+        tokio_tungstenite::connect_async(missing_protocol)
+            .await
+            .is_err()
+    );
+
+    fixture.controller.stop().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hosted_health_endpoints_do_not_require_auth() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let fixture = fixture("health", RateLimitConfig::default(), true).await;
+    for path in ["/readyz", "/healthz"] {
+        let mut stream = tokio::net::TcpStream::connect(fixture.controller.listen_addr)
+            .await
+            .unwrap();
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: roder\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut buffer = [0_u8; 512];
+        let bytes_read = stream.read(&mut buffer).await.unwrap();
+        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.ends_with("\r\n\r\nok\n"));
+    }
+
+    fixture.controller.stop().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn request_policy_can_rewrite_or_deny_without_leaking_bearer() {
+    let fixture = fixture_with_policy(
+        "request-policy",
+        RateLimitConfig::default(),
+        true,
+        Arc::new(RewriteAndDenyPolicy),
+    )
+    .await;
+    let mut socket = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
+    assert!(
+        call(&mut socket, "initialize", serde_json::json!({}))
+            .await
+            .error
+            .is_none()
+    );
+
+    let rewritten = call(&mut socket, "client/whoami", serde_json::json!({})).await;
+    assert_eq!(rewritten.result.unwrap()["tenant"]["tenantId"], "tenant-a");
+
+    let denied = call(&mut socket, "thread/list", serde_json::json!({})).await;
+    let error = denied.error.unwrap();
+    assert_eq!(error.code, -32012);
+    assert!(error.message.contains("policy_blocked"));
+    assert!(!error.message.contains("rk_test_tenant_a_writer"));
+
+    let audit = serde_json::to_string(&fixture.audit.for_tenant("tenant-a")).unwrap();
+    assert!(audit.contains("request_policy_denied"));
+    assert!(!audit.contains("rk_test_tenant_a_writer"));
+
     fixture.controller.stop().await.unwrap();
 }
 
@@ -306,10 +594,18 @@ async fn tenants_run_isolated_runtimes_with_isolated_stores_and_notifications() 
     let turn = call(
         &mut tenant_a,
         "turn/start",
-        serde_json::json!({ "threadId": thread_id, "prompt": "hello" }),
+        serde_json::json!({
+            "threadId": thread_id,
+            "prompt": "hello",
+            "mcpAuthToken": "turn-scoped-mcp-token"
+        }),
     )
     .await;
     assert!(turn.error.is_none(), "{:?}", turn.error);
+    assert_eq!(
+        roder_api::mcp_auth::thread_token(&thread_id).as_deref(),
+        Some("turn-scoped-mcp-token")
+    );
 
     let mut a_saw_notification = false;
     for _ in 0..50 {
@@ -339,6 +635,7 @@ async fn tenants_run_isolated_runtimes_with_isolated_stores_and_notifications() 
         "tenant B must not receive tenant A notifications"
     );
 
+    roder_api::mcp_auth::clear_thread_token(&thread_id);
     fixture.controller.stop().await.unwrap();
 }
 
@@ -523,6 +820,57 @@ async fn idle_tenant_runtimes_evict_without_touching_busy_ones() {
     assert!(!Arc::ptr_eq(&lease_a.server, &lease_b.server));
     pool.shutdown(std::time::Duration::from_secs(1)).await;
     assert!(pool.is_empty().await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gateway_periodically_evicts_idle_runtimes_and_stops_on_shutdown() {
+    let pool = tenant_pool_with_ttl(
+        "periodic-eviction",
+        false,
+        std::time::Duration::from_millis(20),
+    );
+    let controller = serve_hosted_gateway(
+        pool.clone(),
+        HostedGatewayOptions {
+            listen: "127.0.0.1:0".to_string(),
+            authenticator: Arc::new(HostedAuthenticator::default()),
+            tenants: Arc::new(TenantRegistry::default()),
+            audit: Arc::new(AuditLog::default()),
+            limits: RateLimitConfig::default(),
+            hooks: Arc::new(roder_app_server::hosted::HookStore::default()),
+            hook_delivery: Arc::new(roder_app_server::hosted::HookDeliveryService::new(
+                Default::default(),
+            )),
+            request_policy: Arc::new(AllowAllHostedRequestPolicy),
+        },
+    )
+    .await
+    .unwrap();
+
+    let lease = pool.lease("tenant-idle").await.unwrap();
+    assert!(
+        !lease.server.runtime.allows_local_workspaces(),
+        "the hosted profile must reach native workspace-tool enforcement"
+    );
+    drop(lease);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !pool.is_empty().await {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("gateway did not evict the idle tenant runtime");
+
+    controller.stop().await.unwrap();
+    let lease = pool.lease("tenant-after-shutdown").await.unwrap();
+    drop(lease);
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert_eq!(
+        pool.len().await,
+        1,
+        "the eviction loop must stop with the gateway"
+    );
+    pool.shutdown(std::time::Duration::ZERO).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

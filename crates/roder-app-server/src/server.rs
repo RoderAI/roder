@@ -3297,6 +3297,7 @@ impl AppServer {
         &self,
         params: TurnStartParams,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let mcp_auth_token = params.mcp_auth_token.clone();
         let message = protocol_turn_message(&params.input, params.prompt);
         let images = protocol_turn_images(&params.input);
         if let Some(turn_id) = self.runtime.active_turn_for_thread(&params.thread_id).await {
@@ -3306,6 +3307,9 @@ impl AppServer {
              * developerContext sent here cannot reach the active turn and is
              * dropped. Hosts get it applied on the next turn/start.
              */
+            if let Some(token) = mcp_auth_token {
+                roder_api::mcp_auth::set_thread_token(params.thread_id.clone(), token);
+            }
             self.runtime
                 .steer_turn(params.thread_id.clone(), turn_id.clone(), message, images)
                 .await
@@ -3352,6 +3356,9 @@ impl AppServer {
         } else {
             return Err(not_found(format!("thread not found: {}", params.thread_id)));
         };
+        if let Some(token) = mcp_auth_token {
+            roder_api::mcp_auth::set_thread_token(params.thread_id.clone(), token);
+        }
         if let Some(policy_mode) = params.policy_mode {
             self.runtime
                 .set_policy_mode(

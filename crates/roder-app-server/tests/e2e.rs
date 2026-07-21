@@ -309,6 +309,13 @@ impl ThreadStore for FailingThreadStore {
         }))
     }
 
+    async fn load_extension_states(
+        &self,
+        _thread_id: &roder_api::events::ThreadId,
+    ) -> anyhow::Result<Vec<roder_api::extension_state::ExtensionStateRecord>> {
+        Ok(Vec::new())
+    }
+
     async fn append_event(
         &self,
         _thread_id: &roder_api::events::ThreadId,
@@ -1207,6 +1214,7 @@ async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
                 input: text_input("find refactor opportunities"),
                 prompt: None,
                 developer_context: None,
+                mcp_auth_token: None,
                 model_provider: None,
                 model: None,
                 reasoning: None,
@@ -6085,6 +6093,7 @@ async fn runtime_drain_interrupts_pending_turn_and_reports_clean() {
                 input: text_input("must not start while runtime is quiescing"),
                 prompt: None,
                 developer_context: None,
+                mcp_auth_token: None,
                 model_provider: None,
                 model: None,
                 reasoning: None,
@@ -11549,6 +11558,7 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 input: text_input(text),
                 prompt: None,
                 developer_context: None,
+                mcp_auth_token: None,
                 model_provider: None,
                 model: None,
                 reasoning: None,

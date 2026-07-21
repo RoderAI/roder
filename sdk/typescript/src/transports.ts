@@ -206,11 +206,19 @@ export class LocalProcessTransport implements RoderTransport {
 export interface WebSocketTransportOptions {
   url: string;
   token?: string;
-  /** Extra handshake headers (e.g. externally supplied auth headers). */
+  /**
+   * How `token` is sent. Header auth is the backwards-compatible default;
+   * browser callers should use `subprotocol` because the standard WebSocket
+   * constructor cannot set handshake headers.
+   */
+  bearerAuth?: WebSocketBearerAuth;
+  /** Extra handshake headers forwarded to a header-capable custom factory. */
   headers?: Record<string, string>;
   protocols?: string[];
   webSocketFactory?: WebSocketFactory;
 }
+
+export type WebSocketBearerAuth = "header" | "subprotocol";
 
 export type WebSocketFactory = (
   url: string,
@@ -232,11 +240,17 @@ export class WebSocketTransport implements RoderTransport {
   private readonly notificationHub = new NotificationHub();
 
   constructor(options: WebSocketTransportOptions) {
-    const protocols = options.protocols ?? [];
+    const bearerAuth = options.bearerAuth ?? "header";
+    const protocols =
+      options.token && bearerAuth === "subprotocol"
+        ? bearerSubprotocols(options.token, options.protocols ?? [])
+        : (options.protocols ?? []);
     const headers: Record<string, string> | undefined =
-      options.token || options.headers
+      (options.token && bearerAuth === "header") || options.headers
         ? {
-            ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+            ...(options.token && bearerAuth === "header"
+              ? { Authorization: `Bearer ${options.token}` }
+              : {}),
             ...options.headers,
           }
         : undefined;
@@ -433,7 +447,22 @@ function defaultWebSocketFactory(
   if (!WebSocketCtor) {
     throw new RoderTransportError("global WebSocket is unavailable");
   }
-  return new WebSocketCtor(url, protocols, options);
+  // Standards-compliant browser WebSockets accept only URL and protocols.
+  // Preserve the legacy third-argument path only when a native implementation
+  // is explicitly being asked to carry headers.
+  return options.headers
+    ? new WebSocketCtor(url, protocols, options)
+    : new WebSocketCtor(url, protocols);
+}
+
+function bearerSubprotocols(token: string, requested: string[]): string[] {
+  return [
+    "roder.remote.v1",
+    `bearer.${token}`,
+    ...requested.filter(
+      (protocol) => protocol !== "roder.remote.v1" && !protocol.startsWith("bearer."),
+    ),
+  ];
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

@@ -1,12 +1,15 @@
 //! Hosted credential validation and method authorization (phase 72,
 //! Task 2). Fully offline.
 
+use std::sync::Arc;
+
 use roder_api::identity::{
-    AuthorizationDecision, HostedRole, HostedScope, PrincipalContext, TenantContext,
+    AuthorizationDecision, HostedRequestContext, HostedRole, HostedScope, PrincipalContext,
+    TenantContext,
 };
 use roder_app_server::hosted::auth::PrincipalSeed;
 use roder_app_server::hosted::{
-    HostedAuthError, HostedAuthenticator, TenantRegistry, authorize_method,
+    ExternalBearerVerifier, HostedAuthError, HostedAuthenticator, TenantRegistry, authorize_method,
 };
 use time::OffsetDateTime;
 
@@ -28,6 +31,34 @@ fn seed(tenant: &str, role: HostedRole, scopes: Vec<HostedScope>) -> PrincipalSe
         },
         role,
         scopes,
+    }
+}
+
+struct DynamicVerifier;
+
+impl ExternalBearerVerifier for DynamicVerifier {
+    fn verify_bearer(
+        &self,
+        token: &str,
+        now: OffsetDateTime,
+    ) -> Result<Option<HostedRequestContext>, HostedAuthError> {
+        if token != "external-user-token" {
+            return Ok(None);
+        }
+        Ok(Some(HostedRequestContext {
+            tenant: TenantContext {
+                tenant_id: "tenant-from-token".to_string(),
+                display_name: Some("Dynamic tenant".to_string()),
+            },
+            principal: PrincipalContext::User {
+                user_id: "external-user".to_string(),
+                display_name: None,
+            },
+            role: HostedRole::Member,
+            scopes: vec![HostedScope::Read, HostedScope::Write],
+            credential_id: Some("external:credential-1".to_string()),
+            authenticated_at: now,
+        }))
     }
 }
 
@@ -62,6 +93,26 @@ fn static_keys_and_service_account_keys_authenticate() {
     assert_eq!(
         context.credential_id.as_deref(),
         Some(&*format!("sa:{}", key.key_id))
+    );
+}
+
+#[test]
+fn external_verifier_resolves_dynamic_tenant_without_registry_entry() {
+    let auth = HostedAuthenticator::default();
+    auth.register_external_bearer_verifier(Arc::new(DynamicVerifier));
+    let tenants = TenantRegistry::default();
+    let now = OffsetDateTime::UNIX_EPOCH;
+
+    let context = auth
+        .authenticate("external-user-token", &tenants, now)
+        .unwrap();
+
+    assert_eq!(context.tenant.tenant_id, "tenant-from-token");
+    assert_eq!(context.principal.id(), "external-user");
+    assert_eq!(context.authenticated_at, now);
+    assert_eq!(
+        auth.authenticate("external-unknown", &tenants, now),
+        Err(HostedAuthError::Invalid)
     );
 }
 

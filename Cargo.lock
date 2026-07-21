@@ -669,7 +669,9 @@ dependencies = [
 
 [[package]]
 name = "claude-code-sdk-rust"
-version = "0.4.0"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acd160dca3358c1074b5a1577652596a7ddd0ad205ba5ca4f91df8ab0d8318cd"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4254,6 +4256,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]

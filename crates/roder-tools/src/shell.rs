@@ -12,6 +12,7 @@ use tokio::process::Command;
 use crate::backend::WorkspaceBackendHandle;
 use crate::command_shell::{command_args_for_shell, shell_for_context};
 use crate::files::{parse, require_nonempty, result};
+use crate::remote_cancel::RemoteCancelOnDrop;
 use crate::workspace::Workspace;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
@@ -104,18 +105,24 @@ impl ToolExecutor for ShellTool {
         let started = Instant::now();
         let (exit_code, aggregated_output, timed_out) =
             if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
+                let mut cancel_on_drop =
+                    RemoteCancelOnDrop::new(remote.session.clone(), call.id.clone());
                 let request = RunnerCommandRequest {
                     command_id: call.id.clone(),
                     program: shell.clone(),
                     args: vec!["-lc".to_string(), command.clone()],
                     cwd: Some(cwd.clone()),
                     env: Vec::new(),
+                    timeout_ms: Some(timeout.saturating_mul(1000)),
                 };
                 let output = tokio::time::timeout(
                     std::time::Duration::from_secs(timeout),
                     remote.session.run_command(request),
                 )
                 .await;
+                if output.is_ok() {
+                    cancel_on_drop.disarm();
+                }
                 match output {
                     Ok(Ok(output)) => (
                         output.exit_code.unwrap_or(-1),
@@ -484,6 +491,59 @@ mod tests {
         assert_eq!(
             commands[0].cwd.as_deref(),
             Some(std::path::Path::new("/sandbox/workspace/apps/web"))
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn dropping_remote_shell_requests_cancellation() {
+        let root = temp_workspace("roder-shell-remote-drop-cancel");
+        std::fs::create_dir_all(&root).unwrap();
+        let state =
+            std::sync::Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        state
+            .command_delay_ms
+            .store(5_000, std::sync::atomic::Ordering::SeqCst);
+        let ctx = context(&root).with_remote_workspace(Arc::new(
+            roder_api::remote_runner::RemoteWorkspace {
+                session: Arc::new(crate::remote_test_support::RecordingRunnerSession {
+                    state: state.clone(),
+                }),
+                root: "/sandbox/workspace".into(),
+                read_roots: Vec::new(),
+            },
+        ));
+        let tool = ShellTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
+        };
+
+        let task = tokio::spawn(async move {
+            tool.execute(ctx, call(json!({ "command": "sleep 10" })))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_millis(100), async {
+            while state.commands.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("remote shell command should start before interruption");
+
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        tokio::time::timeout(std::time::Duration::from_millis(100), async {
+            while state.cancelled_commands.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the remote shell should request cancellation");
+        assert_eq!(
+            state.cancelled_commands.lock().unwrap().as_slice(),
+            ["call-shell"]
         );
 
         let _ = std::fs::remove_dir_all(root);

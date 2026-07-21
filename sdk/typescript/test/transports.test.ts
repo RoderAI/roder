@@ -194,6 +194,28 @@ test("websocket transport sends bearer headers and resolves responses", async ()
   transport.close();
 });
 
+test("websocket transport replaces stale bearer protocols in subprotocol mode", () => {
+  let socket!: FakeWebSocket;
+  const transport = new WebSocketTransport({
+    url: "ws://127.0.0.1:1234",
+    token: "fresh-token",
+    bearerAuth: "subprotocol",
+    protocols: ["bearer.stale-token", "custom.v1", "roder.remote.v1"],
+    webSocketFactory(url, protocols, options) {
+      socket = new FakeWebSocket(url, protocols, options);
+      return socket;
+    },
+  });
+
+  assert.deepEqual(socket.protocols, [
+    "roder.remote.v1",
+    "bearer.fresh-token",
+    "custom.v1",
+  ]);
+  assert.equal(socket.options.headers, undefined);
+  transport.close();
+});
+
 test("websocket transport streams notifications", async () => {
   let socket!: FakeWebSocket;
   const transport = new WebSocketTransport({
