@@ -1,3 +1,13 @@
+## 0.1.2 (2026-07-21)
+
+### Fixes
+
+#### Read lifecycle state without loading full threads
+
+Thread stores can now load persisted extension state directly. Lifecycle-only
+reads use that seam, so metadata-only thread reads do not need to project a
+full event, turn, and item snapshot.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
