@@ -477,14 +477,13 @@ async fn ensure_ok(response: reqwest::Response, action: &str) -> anyhow::Result<
 
 /// Extract a short error message without echoing secrets or large bodies.
 fn error_summary(body: &str) -> String {
-    if let Ok(value) = serde_json::from_str::<Value>(body) {
-        if let Some(message) = value
+    if let Ok(value) = serde_json::from_str::<Value>(body)
+        && let Some(message) = value
             .get("message")
             .or_else(|| value.get("error"))
             .and_then(Value::as_str)
-        {
-            return message.to_string();
-        }
+    {
+        return message.to_string();
     }
     body.chars().take(200).collect()
 }

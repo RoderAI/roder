@@ -24,6 +24,7 @@ struct ServerState {
     processes: HashMap<String, FakeProcess>,
     tagged_descendants: HashMap<String, String>,
     fail_descendant_cleanup: bool,
+    fail_named_process_kill: bool,
     cleanup_polls_before_terminal: usize,
 }
 
@@ -106,6 +107,10 @@ impl FakeBlaxelServer {
 
     pub fn fail_descendant_cleanup(&self, fail: bool) {
         self.state.lock().unwrap().fail_descendant_cleanup = fail;
+    }
+
+    pub fn fail_named_process_kill(&self, fail: bool) {
+        self.state.lock().unwrap().fail_named_process_kill = fail;
     }
 
     pub fn set_cleanup_polls_before_terminal(&self, polls: usize) {
@@ -311,6 +316,12 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
                 .trim_start_matches("/process/")
                 .trim_end_matches("/kill");
             let mut guard = state.lock().unwrap();
+            if guard.fail_named_process_kill && !name.starts_with("roder-cleanup-") {
+                return (
+                    "503 Service Unavailable",
+                    json_error("named process kill unavailable"),
+                );
+            }
             let Some(process) = guard.processes.get_mut(name) else {
                 return ("404 Not Found", json_error("process not found"));
             };

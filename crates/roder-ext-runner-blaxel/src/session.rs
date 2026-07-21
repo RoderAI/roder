@@ -125,7 +125,8 @@ impl BlaxelRunnerSession {
 
 fn process_timeout_seconds(timeout_ms: Option<u64>) -> u64 {
     let timeout_ms = timeout_ms.unwrap_or(DEFAULT_PROCESS_TIMEOUT_MS).max(1);
-    (timeout_ms / 1000 + u64::from(timeout_ms % 1000 != 0)).min(MAX_PROCESS_TIMEOUT_SECONDS)
+    (timeout_ms / 1000 + u64::from(!timeout_ms.is_multiple_of(1000)))
+        .min(MAX_PROCESS_TIMEOUT_SECONDS)
 }
 
 /// Join a program and its args into a single shell command, quoting args that
