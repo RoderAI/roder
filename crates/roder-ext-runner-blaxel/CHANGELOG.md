@@ -1,3 +1,12 @@
+## 0.1.6 (2026-07-21)
+
+### Fixes
+
+#### Add Blaxel sandbox lifecycle controls
+
+Support a bounded post-operation standby grace interval and reconcile validated
+sandbox expiration policies in place on create and rejoin.
+
 ## 0.1.5 (2026-07-21)
 
 ### Fixes
