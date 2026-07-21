@@ -16,6 +16,17 @@ Chat Completions failures now surface structured OpenCode error details such as
 `ModelError: Model is disabled` and `CreditsError: No payment method` instead of
 only the raw status/body blob.
 
+## 0.1.2 (2026-07-21)
+
+### Fixes
+
+#### Fix OpenCode DeepSeek multi-step tool rollouts
+
+Refresh the OpenCode Zen model catalog (drop disabled free DeepSeek IDs, add
+current free models and paid `deepseek-v4-flash` / `deepseek-v4-pro`), coalesce
+parallel tool calls into valid chat-completions histories for longer DeepSeek
+rollouts, and surface clearer OpenCode ModelError/CreditsError messages.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
