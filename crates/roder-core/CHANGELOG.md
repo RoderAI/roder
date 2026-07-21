@@ -1,3 +1,18 @@
+## 0.1.11 (2026-07-21)
+
+### Fixes
+
+#### Add provider-authoritative remote workspace execution leases
+
+Allow remote runner providers to fence a complete multi-step workspace tool
+execution across runtimes or replicas. Roder now bounds lease acquisition,
+stops execution if the provider loses the fence, releases it on every normal
+tool outcome, and refreshes command deadlines after waiting for the fence.
+
+#### Serialize shared remote runner tools and refresh their deadlines
+
+Prevent concurrent agent threads attached to the same remote runner session from interleaving multi-step workspace tool operations. Recompute the tool deadline after lazy runner provisioning and the shared-session queue so command leases use the time that actually remains.
+
 ## 0.1.10 (2026-07-21)
 
 ### Features
