@@ -3,8 +3,10 @@ use std::sync::Arc;
 use anyhow::Context;
 use roder_api::artifacts::ContextArtifactStore;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
+
 use roder_api::extension::ThreadStoreId;
 use roder_api::extension_state::ExtensionStateRecord;
+use roder_api::lifecycle::turn_lifecycle_corruption_marker;
 use roder_api::thread::{
     ThreadItemEvent, ThreadListOptions, ThreadListPage, ThreadMetadata, ThreadSnapshot,
     ThreadStore, ThreadStoreFactory, project_turns_from_events, validate_thread_workspace,
@@ -278,13 +280,14 @@ impl ThreadStore for PostgresSessionStore {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let state_rows = sqlx_core::query::query::<Postgres>("SELECT record FROM roder_session_extension_state WHERE tenant_id = $1 AND thread_id = $2 ORDER BY seq ASC")
             .bind(&self.tenant_id).bind(thread_id).fetch_all(&self.pool).await?;
-        let extension_states = state_rows
+        let raw_extension_states = state_rows
             .into_iter()
             .map(|row| {
-                let json: sqlx_core::types::Json<ExtensionStateRecord> = row.try_get("record")?;
+                let json: sqlx_core::types::Json<serde_json::Value> = row.try_get("record")?;
                 Ok(json.0)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let extension_states = decode_extension_state_records(thread_id, raw_extension_states);
         Ok(Some(ThreadSnapshot {
             metadata: Some(metadata),
             events,
@@ -383,4 +386,87 @@ fn truncate_chars(value: &str, max: usize) -> String {
     let mut out = value.chars().take(max - 3).collect::<String>();
     out.push_str("...");
     out
+}
+
+/// Decodes generic extension-state rows without allowing one malformed record
+/// to make an otherwise usable thread unreadable. The redacted marker preserves
+/// the recovery signal without retaining raw database values that could contain
+/// prompts, command output, or credentials.
+fn decode_extension_state_records(
+    thread_id: &ThreadId,
+    raw_records: Vec<serde_json::Value>,
+) -> Vec<ExtensionStateRecord> {
+    let mut records = Vec::with_capacity(raw_records.len());
+    let mut corrupt_record_count = 0usize;
+    for raw in raw_records {
+        match serde_json::from_value::<ExtensionStateRecord>(raw) {
+            Ok(record) => records.push(record),
+            Err(_) => corrupt_record_count = corrupt_record_count.saturating_add(1),
+        }
+    }
+    if corrupt_record_count > 0 {
+        records.push(turn_lifecycle_corruption_marker(
+            thread_id.clone(),
+            corrupt_record_count,
+        ));
+    }
+    records
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::extension_state::ExtensionStoreScope;
+    use roder_api::lifecycle::{TurnLifecycleState, turn_lifecycle_snapshot};
+
+    #[test]
+    fn malformed_extension_state_rows_are_retained_as_redacted_lifecycle_diagnostic() {
+        let thread_id = "thread-postgres-corrupt".to_string();
+        let decoded = decode_extension_state_records(
+            &thread_id,
+            vec![
+                serde_json::json!({
+                    "extension_id": "roder.lifecycle",
+                    "key": "turn_lifecycle",
+                    "scope": {
+                        "Turn": {
+                            "thread_id": thread_id,
+                            "turn_id": "turn-valid"
+                        }
+                    },
+                    "schema_version": 1,
+                    "value": {
+                        "threadId": "thread-postgres-corrupt",
+                        "turnId": "turn-valid",
+                        "state": "completed",
+                        "cleanup": "completed",
+                        "ownership": "runtime_task_only",
+                        "timestamp": "1970-01-01T00:00:00Z"
+                    }
+                }),
+                serde_json::json!({ "extension_id": 7 }),
+            ],
+        );
+
+        assert_eq!(decoded.len(), 2);
+        let snapshot = turn_lifecycle_snapshot(&decoded);
+        assert_eq!(snapshot.corrupt_record_count, 1);
+        assert!(snapshot.records.iter().any(|record| {
+            record.turn_id == "turn-valid" && record.state == TurnLifecycleState::Completed
+        }));
+        assert!(decoded.iter().any(|record| {
+            record.extension_id == "roder.lifecycle"
+                && record.key == "turn_lifecycle_corruption"
+                && record.scope
+                    == ExtensionStoreScope::Thread {
+                        thread_id: "thread-postgres-corrupt".to_string(),
+                    }
+        }));
+        assert!(
+            !serde_json::to_string(&snapshot)
+                .unwrap()
+                .contains("extension_id\":7"),
+            "only the redacted corruption count may survive"
+        );
+    }
 }

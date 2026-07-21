@@ -68,7 +68,13 @@ The canonical tool is `task`. Per-agent tools such as `task_explore` are registe
 }
 ```
 
-`description` and `prompt` are required. `subagent_type` defaults to `[subagents].default_agent`. The optional `tools` list can only further restrict the agent definition's whitelist.
+`description` and `prompt` are required. `subagent_type` must exactly match a
+configured role or it defaults to `[subagents].default_agent`. A lane only
+restricts the selected role's declared tool whitelist; it never creates a role
+or grants tools. If a lane leaves the selected role with no compatible tools,
+the task fails before a child is started. Use `spawn_agent` for generic
+repository work when it is available. The optional `tools` list can only further
+restrict the agent definition's whitelist.
 
 The tool result text is the child final message with a short agent label. Structured result data includes the child `thread_id`, `turn_id`, `agent_type`, model, usage, exit reason, and optional bounded transcript.
 

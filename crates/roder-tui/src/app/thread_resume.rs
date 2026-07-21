@@ -1,3 +1,4 @@
+use roder_api::lifecycle::{TurnLifecycleSnapshot, TurnLifecycleState};
 use roder_protocol::{
     Thread, ThreadItemStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
     ThreadReadResult,
@@ -51,14 +52,24 @@ where
     C: AppClient,
 {
     pub(super) async fn load_thread(&mut self, thread_id: String) {
-        match load_thread(&self.client, &thread_id).await {
-            Ok(Some(thread)) => self.apply_thread(thread),
-            Ok(None) => self.record_error(format!("thread not found: {}", short_id(&thread_id))),
+        match read_thread(&self.client, &thread_id).await {
+            Ok(read) => match read.thread {
+                Some(thread) => self.apply_thread_with_lifecycle(thread, read.lifecycle),
+                None => self.record_error(format!("thread not found: {}", short_id(&thread_id))),
+            },
             Err(err) => self.record_error(format!("thread/read failed: {err}")),
         }
     }
 
     pub(super) fn apply_thread(&mut self, thread: Thread) {
+        self.apply_thread_with_lifecycle(thread, TurnLifecycleSnapshot::default());
+    }
+
+    pub(super) fn apply_thread_with_lifecycle(
+        &mut self,
+        thread: Thread,
+        lifecycle: TurnLifecycleSnapshot,
+    ) {
         let thread_id = thread.id.clone();
         let active_turn_id = thread.status.active_turn_id.clone();
         self.thread_id = thread_id.clone();
@@ -134,6 +145,9 @@ where
                     "s"
                 }
             ));
+        }
+        if let Some(warning) = lifecycle_recovery_warning(&thread_id, &lifecycle) {
+            self.timeline.push_system(warning);
         }
         self.timeline.follow_latest();
         self.push_event(format!("resumed thread {}", short_id(&thread_id)));
@@ -375,7 +389,7 @@ fn routing_decision_summary(decision: &roder_protocol::InferenceRoutingDecisionE
     format!("Auto {verb} {selected}{thinking}")
 }
 
-pub(super) async fn load_thread<C>(client: &C, thread_id: &str) -> anyhow::Result<Option<Thread>>
+pub(super) async fn read_thread<C>(client: &C, thread_id: &str) -> anyhow::Result<ThreadReadResult>
 where
     C: AppClient,
 {
@@ -393,7 +407,43 @@ where
             ),
         })
         .await;
-    Ok(decode_response::<ThreadReadResult>(res)?.thread)
+    decode_response::<ThreadReadResult>(res)
+}
+
+fn lifecycle_recovery_warning(
+    thread_id: &str,
+    lifecycle: &TurnLifecycleSnapshot,
+) -> Option<String> {
+    let recovery_needed = lifecycle
+        .records
+        .iter()
+        .filter(|record| record.state == TurnLifecycleState::RecoveryNeeded)
+        .count();
+    let corrupt_records = lifecycle.corrupt_record_count;
+
+    let mut warnings = Vec::new();
+    if recovery_needed > 0 {
+        let turns = if recovery_needed == 1 {
+            "turn was"
+        } else {
+            "turns were"
+        };
+        warnings.push(format!(
+            "Recovery warning: {recovery_needed} {turns} reconciled after an interrupted runtime. Verify results before continuing."
+        ));
+    }
+    if corrupt_records > 0 {
+        let records = if corrupt_records == 1 {
+            "record was"
+        } else {
+            "records were"
+        };
+        warnings.push(format!(
+            "Lifecycle warning: {corrupt_records} corrupt lifecycle {records} skipped. Inspect with `roder thread lifecycle {thread_id} --json`."
+        ));
+    }
+
+    (!warnings.is_empty()).then(|| warnings.join("\n"))
 }
 
 fn title_from_thread(thread: &Thread) -> Option<String> {
@@ -431,7 +481,9 @@ fn thread_has_user_message(thread: &Thread) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use roder_api::lifecycle::{TurnCleanupState, TurnLifecycleRecord};
     use roder_protocol::{ThreadStatus, Turn};
+    use time::OffsetDateTime;
 
     use super::*;
 
@@ -531,5 +583,34 @@ mod tests {
 
         assert!(thread_has_user_message(&with_user));
         assert!(!thread_has_user_message(&assistant_only));
+    }
+
+    #[test]
+    fn recovery_warning_reports_reconciled_turns_and_corrupt_records() {
+        let lifecycle = TurnLifecycleSnapshot {
+            records: vec![TurnLifecycleRecord::new(
+                "thread-a".to_string(),
+                "turn-a".to_string(),
+                TurnLifecycleState::RecoveryNeeded,
+                TurnCleanupState::Unknown,
+                None,
+                OffsetDateTime::UNIX_EPOCH,
+            )],
+            corrupt_record_count: 2,
+        };
+
+        let warning = lifecycle_recovery_warning("thread-a", &lifecycle)
+            .expect("recovery state should be visible");
+
+        assert!(warning.contains("1 turn was reconciled"));
+        assert!(warning.contains("2 corrupt lifecycle records were skipped"));
+        assert!(warning.contains("roder thread lifecycle thread-a --json"));
+    }
+
+    #[test]
+    fn recovery_warning_is_absent_without_recovery_diagnostics() {
+        assert!(
+            lifecycle_recovery_warning("thread-a", &TurnLifecycleSnapshot::default()).is_none()
+        );
     }
 }

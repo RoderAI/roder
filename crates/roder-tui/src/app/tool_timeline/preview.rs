@@ -222,7 +222,10 @@ mod swarm_preview_tests {
         assert_eq!(parsed.children.len(), 2);
         assert_eq!(parsed.children[0].outcome, "completed");
         assert_eq!(parsed.children[0].item.as_deref(), Some("README.md"));
-        assert_eq!(parsed.children[0].agent_id.as_deref(), Some("5dc6a1a5-746f"));
+        assert_eq!(
+            parsed.children[0].agent_id.as_deref(),
+            Some("5dc6a1a5-746f")
+        );
         // XML entities in item are unescaped.
         assert_eq!(parsed.children[1].item.as_deref(), Some("b & c.rs"));
         assert_eq!(parsed.children[1].outcome, "failed");

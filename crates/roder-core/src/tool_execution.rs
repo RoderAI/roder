@@ -1178,6 +1178,14 @@ impl roder_api::inference::TurnToolExecutor for RuntimeTurnToolExecutor {
             is_error: record.is_error,
         })
     }
+
+    fn register_provider_cleanup(
+        &self,
+        cleanup: std::sync::Arc<dyn roder_api::inference::ProviderTurnCleanup>,
+    ) {
+        self.runtime
+            .register_provider_turn_cleanup(&self.turn_id, cleanup);
+    }
 }
 
 #[cfg(test)]

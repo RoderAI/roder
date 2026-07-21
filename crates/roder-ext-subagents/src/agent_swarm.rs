@@ -27,6 +27,8 @@ use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
+use crate::role_selection::{configured_role_catalog, validate_configured_subagent_type};
+
 /// Canonical model-facing swarm tool name (shared with `roder-api` and the
 /// core turn loop's exclusivity enforcement).
 pub use roder_api::subagents::AGENT_SWARM_TOOL_NAME as AGENT_SWARM_TOOL;
@@ -624,9 +626,9 @@ fn outcome_for_exit(exit: &SubagentExitReason) -> AgentSwarmChildOutcome {
     match exit {
         SubagentExitReason::Completed => AgentSwarmChildOutcome::Completed,
         SubagentExitReason::Cancelled => AgentSwarmChildOutcome::Aborted,
-        SubagentExitReason::MaxTurns
-        | SubagentExitReason::Timeout
-        | SubagentExitReason::Failed => AgentSwarmChildOutcome::Failed,
+        SubagentExitReason::MaxTurns | SubagentExitReason::Timeout | SubagentExitReason::Failed => {
+            AgentSwarmChildOutcome::Failed
+        }
     }
 }
 
@@ -648,9 +650,12 @@ impl AgentSwarmTool {
 #[async_trait::async_trait]
 impl ToolExecutor for AgentSwarmTool {
     fn spec(&self) -> ToolSpec {
+        let roles = configured_role_catalog(&self.dispatcher.definitions());
         ToolSpec {
             name: AGENT_SWARM_TOOL.to_string(),
-            description: AGENT_SWARM_DESCRIPTION.to_string(),
+            description: format!(
+                "{AGENT_SWARM_DESCRIPTION} This tool dispatches configured roles only. Available exact role IDs and declared tools: {roles}. Lane names are not role IDs; use spawn_agent for generic repository work when available."
+            ),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -660,7 +665,7 @@ impl ToolExecutor for AgentSwarmTool {
                     },
                     "subagent_type": {
                         "type": "string",
-                        "description": "Configured Roder subagent type used for every spawned child."
+                        "description": format!("Optional exact configured role ID used for every spawned child. Available roles: {roles}. Lane names such as scout are not role IDs.")
                     },
                     "prompt_template": {
                         "type": "string",
@@ -699,6 +704,17 @@ impl ToolExecutor for AgentSwarmTool {
                 ));
             }
         };
+        let definitions = self.dispatcher.definitions();
+        if let Err(err) =
+            validate_configured_subagent_type(&definitions, request.subagent_type.as_deref())
+        {
+            return Ok(error_result(
+                call.id,
+                call.name,
+                "unknown_subagent_type",
+                err.to_string(),
+            ));
+        }
 
         let specs = match build_agent_swarm_specs(&request, &self.config) {
             Ok(specs) => specs,
@@ -711,7 +727,6 @@ impl ToolExecutor for AgentSwarmTool {
                 ));
             }
         };
-
         let launcher: Arc<dyn AgentSwarmChildLauncher> = Arc::new(DispatcherChildLauncher {
             dispatcher: self.dispatcher.clone(),
             parent_thread_id: ctx.thread_id.clone(),
@@ -948,7 +963,8 @@ mod tests {
             max_concurrency: Some(1),
             ..fast_config()
         };
-        let result = run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
+        let result =
+            run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
         assert_eq!(result.completed, 4);
         // With a concurrency cap of one the children execute one at a time in
         // input order.
@@ -1032,7 +1048,8 @@ mod tests {
             rate_limit_base_backoff_ms: 0,
             ..fast_config()
         };
-        let result = run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
+        let result =
+            run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
         assert_eq!(result.completed, 2, "both children recover after retries");
         assert_eq!(result.failed, 0);
         // 2 children x (2 rate-limited + 1 success) = 6 launches.
@@ -1056,7 +1073,8 @@ mod tests {
             rate_limit_base_backoff_ms: 0,
             ..fast_config()
         };
-        let result = run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
+        let result =
+            run_agent_swarm(launcher.clone(), specs, &config, AgentSwarmCancel::new()).await;
         assert_eq!(result.failed, 2);
         assert_eq!(result.completed, 0);
         // 2 children x (1 + 2 retries) = 6 launches.
@@ -1170,7 +1188,10 @@ mod tests {
         let cancel = AgentSwarmCancel::new();
         let start = Instant::now();
 
-        let slot = governor.acquire(start, &cancel).await.expect("initial slot");
+        let slot = governor
+            .acquire(start, &cancel)
+            .await
+            .expect("initial slot");
         governor.on_rate_limit();
         drop(slot);
         assert_eq!(capacity(&governor), 1);

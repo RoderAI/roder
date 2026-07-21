@@ -31,6 +31,7 @@ use crate::inference::{
 };
 use crate::inference_routing::InferenceRoutingDecision;
 use crate::knowledge::{KnowledgeDocId, KnowledgeDocSummary, KnowledgeLinkType};
+use crate::lifecycle::TurnLifecycleRecord;
 use crate::media::{MediaArtifact, MediaArtifactId, MediaPreview};
 use crate::memory::{MemoryCitation, MemoryId, MemoryProviderSelection, MemoryRecord, MemoryScope};
 use crate::plan_review::{
@@ -265,6 +266,9 @@ pub struct ContextCompactionRecorded {
     pub strategy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pruned_tool_count: Option<u32>,
+    /// Wall-clock duration of the compaction pass, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }
@@ -1413,6 +1417,7 @@ pub enum RoderEvent {
     TurnFailed(TurnFailed),
     TurnPartialResult(TurnPartialResult),
     TurnDeadlineExceeded(TurnDeadlineExceeded),
+    TurnLifecycleUpdated(TurnLifecycleRecord),
     TurnInterrupted(TurnInterrupted),
     TurnSteered(TurnSteered),
     RunnerLifecycle(RunnerLifecycle),
@@ -1614,6 +1619,7 @@ impl RoderEvent {
             RoderEvent::TurnFailed(_) => "turn.failed",
             RoderEvent::TurnPartialResult(_) => "turn.partial_result",
             RoderEvent::TurnDeadlineExceeded(_) => "turn.deadline_exceeded",
+            RoderEvent::TurnLifecycleUpdated(_) => "turn.lifecycle_updated",
             RoderEvent::TurnInterrupted(_) => "turn.interrupted",
             RoderEvent::TurnSteered(_) => "turn.steered",
             RoderEvent::RunnerLifecycle(_) => "runner.lifecycle",
@@ -1743,6 +1749,7 @@ impl RoderEvent {
             | RoderEvent::TaskLedgerUpdated(_)
             | RoderEvent::TurnPartialResult(_)
             | RoderEvent::TurnDeadlineExceeded(_)
+            | RoderEvent::TurnLifecycleUpdated(_)
             | RoderEvent::VerificationRequired(_)
             | RoderEvent::VerificationCompleted(_)
             | RoderEvent::VerificationSkipped(_) => EventSource::Core,
@@ -1869,6 +1876,7 @@ impl RoderEvent {
             RoderEvent::TurnFailed(e) => Some(&e.thread_id),
             RoderEvent::TurnPartialResult(e) => Some(&e.thread_id),
             RoderEvent::TurnDeadlineExceeded(e) => Some(&e.thread_id),
+            RoderEvent::TurnLifecycleUpdated(e) => Some(&e.thread_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.thread_id),
             RoderEvent::TurnSteered(e) => Some(&e.thread_id),
             RoderEvent::ThreadGoalUpdated(e) => Some(&e.thread_id),
@@ -2061,6 +2069,7 @@ impl RoderEvent {
             RoderEvent::TurnFailed(e) => Some(&e.turn_id),
             RoderEvent::TurnPartialResult(e) => Some(&e.turn_id),
             RoderEvent::TurnDeadlineExceeded(e) => Some(&e.turn_id),
+            RoderEvent::TurnLifecycleUpdated(e) => Some(&e.turn_id),
             RoderEvent::TurnInterrupted(e) => Some(&e.turn_id),
             RoderEvent::TurnSteered(e) => Some(&e.turn_id),
             RoderEvent::TeamMemberMessageDelta(e) => Some(&e.turn_id),

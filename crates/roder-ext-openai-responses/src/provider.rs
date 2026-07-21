@@ -2358,6 +2358,12 @@ fn compaction_event(item: &Value, status: &str) -> InferenceEvent {
     InferenceEvent::Compaction(CompactionProgress {
         status: status.to_string(),
         item_id: item.get("id").and_then(Value::as_str).map(str::to_string),
+        tokens_before: None,
+        tokens_after: None,
+        duration_ms: None,
+        // Always attach the opaque item so the runtime can persist a boundary
+        // even when the SSE stream aborts before response.completed.
+        item: Some(item.clone()),
     })
 }
 
@@ -4044,7 +4050,11 @@ mod tests {
         ];
 
         let input = input_items(&request);
-        assert_eq!(input.len(), 2, "expected only compaction + new user: {input:?}");
+        assert_eq!(
+            input.len(),
+            2,
+            "expected only compaction + new user: {input:?}"
+        );
         assert_eq!(input[0]["type"], "compaction");
         assert_eq!(input[0]["encrypted_content"], "opaque-state");
         assert_eq!(input[1]["role"], "user");
@@ -4732,11 +4742,20 @@ mod tests {
                 }
             }),
         };
+        let expected_item = json!({
+            "id": "cmp_1",
+            "type": "compaction",
+            "encrypted_content": "opaque"
+        });
         assert_eq!(
             events_from_sse_event(&added, &mut state),
             vec![InferenceEvent::Compaction(CompactionProgress {
                 status: "started".to_string(),
                 item_id: Some("cmp_1".to_string()),
+                tokens_before: None,
+                tokens_after: None,
+                duration_ms: None,
+                item: Some(expected_item.clone()),
             })]
         );
 
@@ -4756,6 +4775,10 @@ mod tests {
             vec![InferenceEvent::Compaction(CompactionProgress {
                 status: "completed".to_string(),
                 item_id: Some("cmp_1".to_string()),
+                tokens_before: None,
+                tokens_after: None,
+                duration_ms: None,
+                item: Some(expected_item),
             })]
         );
     }

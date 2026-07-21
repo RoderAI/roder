@@ -2,6 +2,7 @@ mod agent_def;
 mod agent_swarm;
 mod dispatcher;
 mod loader;
+mod role_selection;
 mod tool;
 mod trace;
 mod transcript;

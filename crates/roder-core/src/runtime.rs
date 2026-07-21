@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -16,11 +17,15 @@ use roder_api::extension::ExtensionRegistry;
 use roder_api::inference::{
     AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
     InferenceEvent, InferenceTurnContext, InstructionBundle, ModelHarnessProfile,
-    ModelSchemaPolicy, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints, RuntimeProfile,
-    TokenUsage, ToolCallCompleted, ToolSearchConfig, ToolSearchConfigOverlay,
-    finish_reason_from_stop_reason,
+    ModelSchemaPolicy, ModelSelection, OutputConfig, ProviderTurnCleanup, ReasoningConfig,
+    RuntimeHints, RuntimeProfile, TokenUsage, ToolCallCompleted, ToolSearchConfig,
+    ToolSearchConfigOverlay, finish_reason_from_stop_reason,
 };
 use roder_api::inference_routing::{InferenceRoutingOutcome, ModelSelectionMode};
+use roder_api::lifecycle::{
+    LifecycleMetricsSnapshot, TurnCleanupOwnership, TurnCleanupState, TurnLifecycleReason,
+    TurnLifecycleRecord, TurnLifecycleSnapshot, TurnLifecycleState, turn_lifecycle_snapshot,
+};
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
 use roder_api::reliability::{
     ReliabilityContext, ReliabilityDetails, ReliabilityErrorClass, ReliabilityLimitDecision,
@@ -49,7 +54,7 @@ use roder_sandbox::ScopedFilesystem;
 use roder_sandbox::process::LocalProcessRunner;
 use roder_skills::{SkillRegistry, SkillRegistryOptions};
 use time::{Duration, OffsetDateTime};
-use tokio::sync::{Mutex, RwLock, oneshot};
+use tokio::sync::{Mutex, Notify, RwLock, oneshot};
 
 mod codex_v2;
 
@@ -107,6 +112,7 @@ const TASK_LEDGER_SCOREABLE_CHECKPOINT_LIMIT: u8 = 1;
 pub(crate) const MIN_CHILD_DEADLINE_SECONDS: u64 = 2;
 const MODEL_PROFILE_TRACE_KIND: &str = "model_profile_segment";
 const MODEL_SWITCH_SUMMARY_PREFIX: &str = "Model switch summary:";
+const PROVIDER_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InferenceTimeoutAction {
@@ -289,6 +295,39 @@ struct ActiveTurnHandle {
     thread_id: ThreadId,
     abort: AbortHandle,
     steers: Arc<Mutex<Vec<QueuedTurnSteer>>>,
+    drain: Arc<TurnDrainHandle>,
+}
+
+/// Tracks a task after it has been interrupted and removed from the interactive
+/// active-turn map. This lets users start a follow-up turn immediately while a
+/// bounded runtime shutdown can still await the original task's cleanup.
+struct TurnDrainHandle {
+    thread_id: ThreadId,
+    interrupt_requested: AtomicBool,
+    interrupt_reason: Mutex<Option<TurnLifecycleReason>>,
+    completed: AtomicBool,
+    completed_notify: Notify,
+}
+
+/// Result of a bounded runtime drain. `Clean` proves the runtime's own turn
+/// tasks have reached their cleanup paths; provider-specific child-process
+/// reaping remains an explicit provider capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeDrainOutcome {
+    Clean {
+        interrupted_turn_ids: Vec<TurnId>,
+    },
+    DeadlineExceeded {
+        interrupted_turn_ids: Vec<TurnId>,
+        remaining_turn_ids: Vec<TurnId>,
+    },
+    /// At least one lifecycle transition initiated by this drain could not be
+    /// durably appended. The runtime still made its best cleanup attempt, but
+    /// callers must not claim a persisted terminal state as proof of recovery.
+    PersistenceFailed {
+        interrupted_turn_ids: Vec<TurnId>,
+        remaining_turn_ids: Vec<TurnId>,
+    },
 }
 
 #[derive(Clone)]
@@ -444,7 +483,31 @@ pub struct Runtime {
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
     pub(crate) pending_external_tool_calls: Mutex<HashMap<String, PendingExternalToolCall>>,
+    /// Serializes turn admission with shutdown quiescing. A drain takes this
+    /// gate before flipping `accepting_turns` and snapshotting active work so a
+    /// turn that observed the old flag cannot be inserted after the snapshot.
+    turn_admission: Mutex<()>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
+    turn_drains: RwLock<HashMap<TurnId, Arc<TurnDrainHandle>>>,
+    /// Provider cleanup handles register synchronously through the inference
+    /// tool-executor context. They are intentionally separate from active turn
+    /// admission so an interrupted turn can remain drainable after a follow-up
+    /// turn starts on the same thread.
+    provider_turn_cleanups: std::sync::Mutex<HashMap<TurnId, Arc<dyn ProviderTurnCleanup>>>,
+    accepting_turns: AtomicBool,
+    /// Monotonic counter used by bounded drains to surface lifecycle-state
+    /// persistence failures without making an individual provider turn fail.
+    lifecycle_persistence_failures: AtomicUsize,
+    lifecycle_shutdown_drains: AtomicUsize,
+    lifecycle_clean_shutdowns: AtomicUsize,
+    lifecycle_deadline_exceeded: AtomicUsize,
+    lifecycle_persistence_failed_drains: AtomicUsize,
+    lifecycle_restart_reconciliations: AtomicUsize,
+    lifecycle_shutdown_drain_duration_ms_total: AtomicUsize,
+    provider_cleanup_confirmed: AtomicUsize,
+    provider_cleanup_timed_out: AtomicUsize,
+    provider_cleanup_unknown: AtomicUsize,
+    active_turns_changed: Notify,
     active_turn_selections: RwLock<HashMap<TurnId, ModelSelectionMode>>,
     active_turn_contexts: RwLock<HashMap<TurnId, InheritedTurnContext>>,
     // Spawn-time live authority retained for every reusable turn of a long-lived teammate.
@@ -537,7 +600,22 @@ impl Runtime {
             pending_tool_approvals: Mutex::new(HashMap::new()),
             pending_user_inputs: Mutex::new(HashMap::new()),
             pending_external_tool_calls: Mutex::new(HashMap::new()),
+            turn_admission: Mutex::new(()),
             active_turns: RwLock::new(HashMap::new()),
+            turn_drains: RwLock::new(HashMap::new()),
+            provider_turn_cleanups: std::sync::Mutex::new(HashMap::new()),
+            accepting_turns: AtomicBool::new(true),
+            lifecycle_persistence_failures: AtomicUsize::new(0),
+            lifecycle_shutdown_drains: AtomicUsize::new(0),
+            lifecycle_clean_shutdowns: AtomicUsize::new(0),
+            lifecycle_deadline_exceeded: AtomicUsize::new(0),
+            lifecycle_persistence_failed_drains: AtomicUsize::new(0),
+            lifecycle_restart_reconciliations: AtomicUsize::new(0),
+            lifecycle_shutdown_drain_duration_ms_total: AtomicUsize::new(0),
+            provider_cleanup_confirmed: AtomicUsize::new(0),
+            provider_cleanup_timed_out: AtomicUsize::new(0),
+            provider_cleanup_unknown: AtomicUsize::new(0),
+            active_turns_changed: Notify::new(),
             active_turn_selections: RwLock::new(HashMap::new()),
             active_turn_contexts: RwLock::new(HashMap::new()),
             team_member_turn_contexts: Mutex::new(HashMap::new()),
@@ -589,6 +667,228 @@ impl Runtime {
 
     pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<EventEnvelope> {
         self.bus.subscribe()
+    }
+
+    /// Returns process-local, redacted lifecycle health counters. The snapshot
+    /// intentionally has fixed fields and contains no provider, command,
+    /// process, thread, or turn identifiers.
+    pub fn lifecycle_metrics(&self) -> LifecycleMetricsSnapshot {
+        LifecycleMetricsSnapshot {
+            shutdown_drain_count: self.lifecycle_shutdown_drains.load(Ordering::Acquire) as u64,
+            clean_shutdown_count: self.lifecycle_clean_shutdowns.load(Ordering::Acquire) as u64,
+            deadline_exceeded_count: self.lifecycle_deadline_exceeded.load(Ordering::Acquire)
+                as u64,
+            persistence_failed_count: self
+                .lifecycle_persistence_failed_drains
+                .load(Ordering::Acquire) as u64,
+            restart_reconciliation_count: self
+                .lifecycle_restart_reconciliations
+                .load(Ordering::Acquire) as u64,
+            lifecycle_persistence_failure_count: self
+                .lifecycle_persistence_failures
+                .load(Ordering::Acquire) as u64,
+            shutdown_drain_duration_ms_total: self
+                .lifecycle_shutdown_drain_duration_ms_total
+                .load(Ordering::Acquire) as u64,
+            provider_cleanup_confirmed_count: self
+                .provider_cleanup_confirmed
+                .load(Ordering::Acquire) as u64,
+            provider_cleanup_timed_out_count: self
+                .provider_cleanup_timed_out
+                .load(Ordering::Acquire) as u64,
+            provider_cleanup_unknown_count: self.provider_cleanup_unknown.load(Ordering::Acquire)
+                as u64,
+        }
+    }
+
+    async fn persist_turn_lifecycle_record(&self, record: &TurnLifecycleRecord) -> bool {
+        let Some(store) = &self.thread_store else {
+            return true;
+        };
+        let state = match record.extension_state() {
+            Ok(state) => state,
+            Err(_) => {
+                self.lifecycle_persistence_failures
+                    .fetch_add(1, Ordering::AcqRel);
+                return false;
+            }
+        };
+        // Lifecycle diagnostics must not turn a provider result into a failed
+        // turn merely because a third-party store lacks extension-state support.
+        // JSONL/Postgres stores persist this append-only record atomically at
+        // their own storage boundary.
+        if store
+            .append_extension_state(&record.thread_id, &state)
+            .await
+            .is_err()
+        {
+            self.lifecycle_persistence_failures
+                .fetch_add(1, Ordering::AcqRel);
+            return false;
+        }
+        true
+    }
+
+    async fn record_turn_lifecycle(
+        &self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        state: TurnLifecycleState,
+        cleanup: TurnCleanupState,
+        reason: Option<TurnLifecycleReason>,
+    ) -> TurnLifecycleRecord {
+        self.record_turn_lifecycle_with_ownership(
+            thread_id,
+            turn_id,
+            state,
+            cleanup,
+            reason,
+            TurnCleanupOwnership::RuntimeTaskOnly,
+        )
+        .await
+    }
+
+    async fn record_turn_lifecycle_with_ownership(
+        &self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        state: TurnLifecycleState,
+        cleanup: TurnCleanupState,
+        reason: Option<TurnLifecycleReason>,
+        ownership: TurnCleanupOwnership,
+    ) -> TurnLifecycleRecord {
+        let record = TurnLifecycleRecord::new(
+            thread_id,
+            turn_id,
+            state,
+            cleanup,
+            reason,
+            OffsetDateTime::now_utc(),
+        )
+        .with_ownership(ownership);
+        let _ = self.persist_turn_lifecycle_record(&record).await;
+        self.emit(RoderEvent::TurnLifecycleUpdated(record.clone()))
+            .await;
+        record
+    }
+
+    pub(crate) fn register_provider_turn_cleanup(
+        &self,
+        turn_id: &TurnId,
+        cleanup: Arc<dyn ProviderTurnCleanup>,
+    ) {
+        if let Ok(mut cleanups) = self.provider_turn_cleanups.lock() {
+            cleanups.insert(turn_id.clone(), cleanup);
+        }
+    }
+
+    fn provider_cleanup_ownership(&self, turn_id: &TurnId) -> TurnCleanupOwnership {
+        self.provider_turn_cleanups
+            .lock()
+            .ok()
+            .and_then(|cleanups| cleanups.get(turn_id).cloned())
+            .map(|cleanup| cleanup.ownership())
+            .unwrap_or(TurnCleanupOwnership::RuntimeTaskOnly)
+    }
+
+    async fn await_provider_turn_cleanup(
+        &self,
+        turn_id: &TurnId,
+    ) -> (TurnCleanupState, TurnCleanupOwnership) {
+        let cleanup = self
+            .provider_turn_cleanups
+            .lock()
+            .ok()
+            .and_then(|mut cleanups| cleanups.remove(turn_id));
+        let Some(cleanup) = cleanup else {
+            return (
+                TurnCleanupState::Unknown,
+                TurnCleanupOwnership::RuntimeTaskOnly,
+            );
+        };
+        let ownership = cleanup.ownership();
+        match tokio::time::timeout(PROVIDER_CLEANUP_TIMEOUT, cleanup.wait_for_cleanup()).await {
+            Ok(Ok(())) => {
+                self.provider_cleanup_confirmed
+                    .fetch_add(1, Ordering::AcqRel);
+                (
+                    TurnCleanupState::Completed,
+                    TurnCleanupOwnership::ProviderCleanupConfirmed,
+                )
+            }
+            Ok(Err(_)) => {
+                self.provider_cleanup_unknown.fetch_add(1, Ordering::AcqRel);
+                (TurnCleanupState::Unknown, ownership)
+            }
+            Err(_) => {
+                self.provider_cleanup_timed_out
+                    .fetch_add(1, Ordering::AcqRel);
+                (TurnCleanupState::TimedOut, ownership)
+            }
+        }
+    }
+
+    fn record_lifecycle_drain_outcome(
+        &self,
+        started_at: tokio::time::Instant,
+        outcome: &RuntimeDrainOutcome,
+    ) {
+        self.lifecycle_shutdown_drains
+            .fetch_add(1, Ordering::AcqRel);
+        self.lifecycle_shutdown_drain_duration_ms_total.fetch_add(
+            started_at.elapsed().as_millis().min(usize::MAX as u128) as usize,
+            Ordering::AcqRel,
+        );
+        match outcome {
+            RuntimeDrainOutcome::Clean { .. } => {
+                self.lifecycle_clean_shutdowns
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+            RuntimeDrainOutcome::DeadlineExceeded { .. } => {
+                self.lifecycle_deadline_exceeded
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+            RuntimeDrainOutcome::PersistenceFailed { .. } => {
+                self.lifecycle_persistence_failed_drains
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+        }
+    }
+
+    fn lifecycle_record_for_event(event: &RoderEvent) -> Option<TurnLifecycleRecord> {
+        match event {
+            RoderEvent::TurnStarted(event) => Some(TurnLifecycleRecord::new(
+                event.thread_id.clone(),
+                event.turn_id.clone(),
+                TurnLifecycleState::Running,
+                TurnCleanupState::NotRequested,
+                None,
+                event.timestamp,
+            )),
+            // `run_turn` persists completed turns after it has awaited a
+            // registered provider cleanup handle. Do not let the generic event
+            // projection overwrite that acknowledgement with an unproven state.
+            RoderEvent::TurnCompleted(_) => None,
+            // Some failure paths already have an event before the turn wrapper
+            // reaches its cleanup acknowledgement. Preserve a durable fallback
+            // reason here; the wrapper appends a later record with the more
+            // precise cleanup outcome when a provider registered one.
+            RoderEvent::TurnFailed(event) => Some(TurnLifecycleRecord::new(
+                event.thread_id.clone(),
+                event.turn_id.clone(),
+                TurnLifecycleState::Failed,
+                TurnCleanupState::Unknown,
+                Some(if event.error_kind.as_deref() == Some("deadline_timeout") {
+                    TurnLifecycleReason::DeadlineExceeded
+                } else {
+                    TurnLifecycleReason::ProviderFailure
+                }),
+                event.timestamp,
+            )),
+            RoderEvent::TurnDeadlineExceeded(_) | RoderEvent::TurnInterrupted(_) => None,
+            RoderEvent::TurnLifecycleUpdated(_) => None,
+            _ => None,
+        }
     }
 
     pub fn registry(&self) -> &ExtensionRegistry {
@@ -1915,9 +2215,6 @@ impl Runtime {
         terminal_error: Option<String>,
     ) -> anyhow::Result<()> {
         let _delivery_guard = self.agent_team_spawn_lock.lock().await;
-        self.active_turns.write().await.remove(turn_id);
-        self.active_turn_selections.write().await.remove(turn_id);
-        self.active_turn_contexts.write().await.remove(turn_id);
         let Some((team_id, member)) = self
             .teams
             .complete_member_turn(
@@ -1997,6 +2294,136 @@ impl Runtime {
         Ok(())
     }
 
+    /// Stops accepting new turns, requests interruption for every active turn,
+    /// and waits for their runtime tasks to reach terminal cleanup up to
+    /// `timeout`. Repeated calls are safe and continue draining the same set.
+    pub async fn drain_active_turns(&self, timeout: std::time::Duration) -> RuntimeDrainOutcome {
+        let started_at = tokio::time::Instant::now();
+        let persistence_failures_before =
+            self.lifecycle_persistence_failures.load(Ordering::Acquire);
+        let turn_admission = self.turn_admission.lock().await;
+        self.accepting_turns.store(false, Ordering::Release);
+        let active = self
+            .active_turns
+            .read()
+            .await
+            .iter()
+            .map(|(turn_id, handle)| (turn_id.clone(), handle.thread_id.clone()))
+            .collect::<Vec<_>>();
+        let draining = self
+            .turn_drains
+            .read()
+            .await
+            .iter()
+            .map(|(turn_id, drain)| (turn_id.clone(), drain.thread_id.clone()))
+            .collect::<Vec<_>>();
+        drop(turn_admission);
+
+        let mut interrupted_turns = std::collections::BTreeMap::new();
+        for (turn_id, thread_id) in active.iter().chain(draining.iter()) {
+            interrupted_turns.insert(turn_id.clone(), thread_id.clone());
+        }
+        let interrupted_turn_ids = interrupted_turns.keys().cloned().collect::<Vec<_>>();
+        for (turn_id, thread_id) in active {
+            let _ = self
+                .interrupt_turn_with_reason(thread_id, turn_id, TurnLifecycleReason::Shutdown)
+                .await;
+        }
+
+        let wait_for_empty = async {
+            loop {
+                let notified = self.active_turns_changed.notified();
+                if self.active_turns.read().await.is_empty()
+                    && self.turn_drains.read().await.is_empty()
+                {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        let outcome = if tokio::time::timeout(timeout, wait_for_empty).await.is_ok() {
+            if self.lifecycle_persistence_failures.load(Ordering::Acquire)
+                > persistence_failures_before
+            {
+                RuntimeDrainOutcome::PersistenceFailed {
+                    interrupted_turn_ids,
+                    remaining_turn_ids: Vec::new(),
+                }
+            } else {
+                RuntimeDrainOutcome::Clean {
+                    interrupted_turn_ids,
+                }
+            }
+        } else {
+            let active_remaining = self
+                .active_turns
+                .read()
+                .await
+                .iter()
+                .map(|(turn_id, handle)| (turn_id.clone(), handle.drain.clone()))
+                .collect::<Vec<_>>();
+            let draining_remaining = self
+                .turn_drains
+                .read()
+                .await
+                .iter()
+                .map(|(turn_id, drain)| (turn_id.clone(), drain.clone()))
+                .collect::<Vec<_>>();
+            let remaining = active_remaining
+                .into_iter()
+                .chain(draining_remaining)
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let remaining_turn_ids = remaining.keys().cloned().collect::<Vec<_>>();
+            for turn_id in &remaining_turn_ids {
+                let handle = remaining
+                    .get(turn_id)
+                    .expect("remaining turn ID must have a drain handle");
+                self.record_turn_lifecycle(
+                    handle.thread_id.clone(),
+                    turn_id.clone(),
+                    TurnLifecycleState::InterruptRequested,
+                    TurnCleanupState::TimedOut,
+                    Some(TurnLifecycleReason::Shutdown),
+                )
+                .await;
+            }
+            if self.lifecycle_persistence_failures.load(Ordering::Acquire)
+                > persistence_failures_before
+            {
+                RuntimeDrainOutcome::PersistenceFailed {
+                    interrupted_turn_ids,
+                    remaining_turn_ids,
+                }
+            } else {
+                RuntimeDrainOutcome::DeadlineExceeded {
+                    interrupted_turn_ids,
+                    remaining_turn_ids,
+                }
+            }
+        };
+        self.record_lifecycle_drain_outcome(started_at, &outcome);
+        outcome
+    }
+
+    /// Enables turn submission after a prior drain attempt. This is intended
+    /// for embedders that keep a runtime alive after a bounded drain timeout.
+    pub fn resume_accepting_turns(&self) {
+        self.accepting_turns.store(true, Ordering::Release);
+    }
+
+    pub async fn turn_lifecycle_snapshot(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<TurnLifecycleSnapshot> {
+        let Some(store) = &self.thread_store else {
+            return Ok(TurnLifecycleSnapshot::default());
+        };
+        let Some(snapshot) = store.load_thread(thread_id).await? else {
+            return Ok(TurnLifecycleSnapshot::default());
+        };
+        Ok(turn_lifecycle_snapshot(&snapshot.extension_states))
+    }
+
     pub async fn load_thread(
         &self,
         thread_id: &ThreadId,
@@ -2006,7 +2433,30 @@ impl Runtime {
         } else {
             None
         };
-        if loaded.is_some() {
+        if let Some(snapshot) = loaded.as_ref() {
+            let live_turn_ids = self
+                .active_turns
+                .read()
+                .await
+                .keys()
+                .cloned()
+                .chain(self.turn_drains.read().await.keys().cloned())
+                .collect::<std::collections::HashSet<_>>();
+            let lifecycle = turn_lifecycle_snapshot(&snapshot.extension_states);
+            for record in lifecycle.records.into_iter().filter(|record| {
+                record.state.requires_recovery() && !live_turn_ids.contains(&record.turn_id)
+            }) {
+                self.lifecycle_restart_reconciliations
+                    .fetch_add(1, Ordering::AcqRel);
+                self.record_turn_lifecycle(
+                    record.thread_id,
+                    record.turn_id,
+                    TurnLifecycleState::RecoveryNeeded,
+                    TurnCleanupState::Unknown,
+                    Some(TurnLifecycleReason::RuntimeRestart),
+                )
+                .await;
+            }
             self.emit(RoderEvent::ThreadLoaded(ThreadLoaded {
                 thread_id: thread_id.clone(),
                 timestamp: OffsetDateTime::now_utc(),
@@ -2389,6 +2839,11 @@ impl Runtime {
         mut req: StartTurnRequest,
     ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
         Box::pin(async move {
+            let turn_admission = self.turn_admission.lock().await;
+            anyhow::ensure!(
+                self.accepting_turns.load(Ordering::Acquire),
+                "runtime is quiescing and cannot accept new turns"
+            );
             req.workspace = validate_thread_workspace(&req.workspace)?;
             let team_member = self.teams.member_for_thread(&req.thread_id).await;
             let cfg = self.config.read().await.clone();
@@ -2420,15 +2875,31 @@ impl Runtime {
                 }
             }
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
+            let drain = Arc::new(TurnDrainHandle {
+                thread_id: req.thread_id.clone(),
+                interrupt_requested: AtomicBool::new(false),
+                interrupt_reason: Mutex::new(None),
+                completed: AtomicBool::new(false),
+                completed_notify: Notify::new(),
+            });
             let active = ActiveTurnHandle {
                 thread_id: req.thread_id.clone(),
                 abort: abort_handle,
                 steers: Arc::new(Mutex::new(Vec::new())),
+                drain,
             };
             self.active_turns
                 .write()
                 .await
                 .insert(turn_id.clone(), active);
+            self.record_turn_lifecycle(
+                req.thread_id.clone(),
+                turn_id.clone(),
+                TurnLifecycleState::Running,
+                TurnCleanupState::NotRequested,
+                None,
+            )
+            .await;
             self.active_turn_contexts.write().await.insert(
                 turn_id.clone(),
                 InheritedTurnContext {
@@ -2498,6 +2969,8 @@ impl Runtime {
                 let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
                 match &result {
                     Ok(Err(err)) => {
+                        let (cleanup, ownership) =
+                            runtime.await_provider_turn_cleanup(&turn_id_for_task).await;
                         // run_turn emits failures after the stream starts; this covers setup/startup errors.
                         runtime
                             .emit(RoderEvent::TurnFailed(TurnFailed {
@@ -2508,6 +2981,16 @@ impl Runtime {
                                 usage: None,
                                 timestamp: OffsetDateTime::now_utc(),
                             }))
+                            .await;
+                        runtime
+                            .record_turn_lifecycle_with_ownership(
+                                thread_id_for_task.clone(),
+                                turn_id_for_task.clone(),
+                                TurnLifecycleState::Failed,
+                                cleanup,
+                                Some(TurnLifecycleReason::ProviderFailure),
+                                ownership,
+                            )
                             .await;
                         let _ = runtime
                             .complete_team_member_turn_with_result(
@@ -2520,6 +3003,18 @@ impl Runtime {
                             .await;
                     }
                     Ok(Ok(TurnRunOutcome::Stopped)) => {
+                        let (cleanup, ownership) =
+                            runtime.await_provider_turn_cleanup(&turn_id_for_task).await;
+                        runtime
+                            .record_turn_lifecycle_with_ownership(
+                                thread_id_for_task.clone(),
+                                turn_id_for_task.clone(),
+                                TurnLifecycleState::Failed,
+                                cleanup,
+                                Some(TurnLifecycleReason::ProviderFailure),
+                                ownership,
+                            )
+                            .await;
                         let _ = runtime
                             .complete_team_member_turn_with_result(
                                 &thread_id_for_task,
@@ -2531,6 +3026,40 @@ impl Runtime {
                             .await;
                     }
                     Err(_) => {
+                        let reason = if let Some(handle) = runtime
+                            .turn_drains
+                            .read()
+                            .await
+                            .get(&turn_id_for_task)
+                            .cloned()
+                        {
+                            handle
+                                .interrupt_reason
+                                .lock()
+                                .await
+                                .unwrap_or(TurnLifecycleReason::RuntimeFailure)
+                        } else {
+                            TurnLifecycleReason::RuntimeFailure
+                        };
+                        let (cleanup, ownership) =
+                            runtime.await_provider_turn_cleanup(&turn_id_for_task).await;
+                        runtime
+                            .record_turn_lifecycle_with_ownership(
+                                thread_id_for_task.clone(),
+                                turn_id_for_task.clone(),
+                                TurnLifecycleState::Interrupted,
+                                cleanup,
+                                Some(reason),
+                                ownership,
+                            )
+                            .await;
+                        runtime
+                            .emit(RoderEvent::TurnInterrupted(TurnInterrupted {
+                                thread_id: thread_id_for_task.clone(),
+                                turn_id: turn_id_for_task.clone(),
+                                timestamp: OffsetDateTime::now_utc(),
+                            }))
+                            .await;
                         let _ = runtime
                             .complete_team_member_turn_with_result(
                                 &thread_id_for_task,
@@ -2548,6 +3077,10 @@ impl Runtime {
                     .release_mailbox_reservations_for_turn(&turn_id_for_task)
                     .await;
                 runtime.active_turns.write().await.remove(&turn_id_for_task);
+                if let Some(drain) = runtime.turn_drains.write().await.remove(&turn_id_for_task) {
+                    drain.completed.store(true, Ordering::Release);
+                    drain.completed_notify.notify_waiters();
+                }
                 runtime
                     .active_turn_selections
                     .write()
@@ -2558,12 +3091,22 @@ impl Runtime {
                     .write()
                     .await
                     .remove(&turn_id_for_task);
+                if !completed {
+                    // Completion paths above consume registered provider cleanup
+                    // handles. A setup failure before an engine can stream has no
+                    // such handle; this is a harmless final defensive sweep.
+                    let _ = runtime.provider_turn_cleanups.lock().map(|mut cleanups| {
+                        cleanups.remove(&turn_id_for_task);
+                    });
+                }
+                runtime.active_turns_changed.notify_waiters();
                 if completed {
                     let _ = runtime
                         .continue_active_goal_after_turn(thread_id_for_task)
                         .await;
                 }
             });
+            drop(turn_admission);
             Ok(turn_id)
         })
     }
@@ -2627,7 +3170,19 @@ impl Runtime {
     }
 
     pub async fn thread_activity(&self, thread_id: &ThreadId) -> ThreadActivity {
-        let Some(active_turn_id) = self.active_turn_for_thread(thread_id).await else {
+        let active_turn_id = self.active_turn_for_thread(thread_id).await;
+        let draining_turn_id = if active_turn_id.is_none() {
+            self.turn_drains
+                .read()
+                .await
+                .iter()
+                .find_map(|(turn_id, drain)| {
+                    (&drain.thread_id == thread_id).then(|| turn_id.clone())
+                })
+        } else {
+            None
+        };
+        let Some(active_turn_id) = active_turn_id.or(draining_turn_id) else {
             return ThreadActivity::default();
         };
 
@@ -2659,6 +3214,21 @@ impl Runtime {
                 active_flags.push("externalToolPending".to_string());
             }
         }
+        let interrupting = self
+            .active_turns
+            .read()
+            .await
+            .get(&active_turn_id)
+            .is_some_and(|handle| handle.drain.interrupt_requested.load(Ordering::Acquire))
+            || self
+                .turn_drains
+                .read()
+                .await
+                .get(&active_turn_id)
+                .is_some_and(|drain| drain.interrupt_requested.load(Ordering::Acquire));
+        if interrupting {
+            active_flags.push("interrupting".to_string());
+        }
         if self.pending_plan_exit().await.is_some_and(|pending| {
             &pending.thread_id == thread_id && pending.turn_id == active_turn_id
         }) {
@@ -2672,18 +3242,46 @@ impl Runtime {
     }
 
     pub async fn interrupt_turn(&self, thread_id: ThreadId, turn_id: TurnId) -> anyhow::Result<()> {
-        if let Some(handle) = self.active_turns.write().await.remove(&turn_id) {
+        self.interrupt_turn_with_reason(thread_id, turn_id, TurnLifecycleReason::UserInterrupt)
+            .await
+    }
+
+    async fn interrupt_turn_with_reason(
+        &self,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        reason: TurnLifecycleReason,
+    ) -> anyhow::Result<()> {
+        let handle = self.active_turns.write().await.remove(&turn_id);
+        if let Some(handle) = handle {
+            if handle
+                .drain
+                .interrupt_requested
+                .swap(true, Ordering::AcqRel)
+            {
+                return Ok(());
+            }
+            *handle.drain.interrupt_reason.lock().await = Some(reason);
+            self.turn_drains
+                .write()
+                .await
+                .insert(turn_id.clone(), handle.drain.clone());
+            let ownership = self.provider_cleanup_ownership(&turn_id);
+            self.record_turn_lifecycle_with_ownership(
+                thread_id.clone(),
+                turn_id.clone(),
+                TurnLifecycleState::InterruptRequested,
+                TurnCleanupState::Requested,
+                Some(reason),
+                ownership,
+            )
+            .await;
             handle.abort.abort();
+            self.active_turns_changed.notify_waiters();
         }
         self.active_turn_selections.write().await.remove(&turn_id);
         self.cancel_pending_external_tool_calls_for_turn(&turn_id)
             .await;
-        self.emit(RoderEvent::TurnInterrupted(TurnInterrupted {
-            thread_id,
-            turn_id,
-            timestamp: OffsetDateTime::now_utc(),
-        }))
-        .await;
         Ok(())
     }
 
@@ -3352,6 +3950,11 @@ impl Runtime {
             let mut reasoning_text = String::new();
             let mut tool_calls = Vec::new();
             let mut provider_metadata = None;
+            // Captured from mid-stream Compaction(completed) events. Codex/OpenAI
+            // sometimes abort the SSE stream after emitting the compaction item
+            // ("error decoding response body") before response.completed, so we
+            // must not rely solely on ProviderMetadata for the boundary.
+            let mut stream_compaction_item: Option<serde_json::Value> = None;
 
             loop {
                 let next = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
@@ -3551,12 +4154,47 @@ impl Runtime {
                             .as_deref()
                             .map(finish_reason_from_stop_reason);
                     }
-                    InferenceEvent::Compaction(_)
-                    | InferenceEvent::HostedToolCallStarted(_)
+                    InferenceEvent::Compaction(progress) => {
+                        // Persist the boundary as soon as the provider emits a
+                        // completed compaction item. ChatGPT Codex often aborts
+                        // the SSE stream right after ("error decoding response
+                        // body"), so waiting for ProviderMetadata loses the
+                        // boundary and every subsequent request re-compacts.
+                        if progress.status == "completed"
+                            && let Some(item) = progress.item
+                        {
+                            let already = stream_compaction_item
+                                .as_ref()
+                                .and_then(|existing| {
+                                    existing.get("id").and_then(serde_json::Value::as_str)
+                                })
+                                .zip(item.get("id").and_then(serde_json::Value::as_str))
+                                .is_some_and(|(a, b)| a == b);
+                            if !already {
+                                stream_compaction_item = Some(item.clone());
+                                let boundary = TranscriptItem::ProviderMetadata(
+                                    crate::compaction::provider_metadata_from_compaction_item(item),
+                                );
+                                self.persist_turn_item(&req.thread_id, &turn_id, &boundary)
+                                    .await?;
+                                transcript.push(boundary);
+                                transcript =
+                                    crate::compaction::trim_to_last_compaction_boundary(transcript);
+                                compacted_this_turn = true;
+                            }
+                        }
+                    }
+                    InferenceEvent::HostedToolCallStarted(_)
                     | InferenceEvent::HostedToolCallCompleted(_)
                     | InferenceEvent::ToolCallStarted(_)
                     | InferenceEvent::ToolCallDelta(_) => {}
-                    InferenceEvent::ProviderMetadata(metadata) => {
+                    InferenceEvent::ProviderMetadata(mut metadata) => {
+                        if let Some(compaction_item) = stream_compaction_item.as_ref() {
+                            let _ = crate::compaction::ensure_provider_metadata_compaction(
+                                &mut metadata,
+                                compaction_item,
+                            );
+                        }
                         provider_metadata = Some(metadata);
                     }
                 }
@@ -3943,6 +4581,16 @@ impl Runtime {
                 OffsetDateTime::now_utc() - turn_started_at,
             )
             .await?;
+        let (cleanup, ownership) = self.await_provider_turn_cleanup(&turn_id).await;
+        self.record_turn_lifecycle_with_ownership(
+            req.thread_id.clone(),
+            turn_id.clone(),
+            TurnLifecycleState::Completed,
+            cleanup,
+            None,
+            ownership,
+        )
+        .await;
         self.emit(RoderEvent::TurnCompleted(TurnCompleted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
@@ -4365,6 +5013,9 @@ impl Runtime {
     }
 
     pub async fn emit(&self, event: RoderEvent) -> EventEnvelope {
+        if let Some(record) = Self::lifecycle_record_for_event(&event) {
+            let _ = self.persist_turn_lifecycle_record(&record).await;
+        }
         let envelope = self.bus.emit(event);
         if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref())
             && should_persist_thread_event(thread_id)
@@ -5535,19 +6186,20 @@ mod tests {
         );
         // Skill/context injectors may prepend non-history items, but no prior-turn
         // conversation may appear before the latest provider compaction boundary.
-        let history_before_boundary = request
-            .transcript
-            .iter()
-            .take(compaction_idx.unwrap())
-            .any(|item| match item {
-                TranscriptItem::AssistantMessage(_)
-                | TranscriptItem::ToolCall(_)
-                | TranscriptItem::ToolResult(_) => true,
-                TranscriptItem::UserMessage(message) => {
-                    !message.text.contains("<skills>") && message.text != "continue"
-                }
-                _ => false,
-            });
+        let history_before_boundary =
+            request
+                .transcript
+                .iter()
+                .take(compaction_idx.unwrap())
+                .any(|item| match item {
+                    TranscriptItem::AssistantMessage(_)
+                    | TranscriptItem::ToolCall(_)
+                    | TranscriptItem::ToolResult(_) => true,
+                    TranscriptItem::UserMessage(message) => {
+                        !message.text.contains("<skills>") && message.text != "continue"
+                    }
+                    _ => false,
+                });
         assert!(
             !history_before_boundary,
             "pre-provider-compaction conversation must not be replayed: {:?}",

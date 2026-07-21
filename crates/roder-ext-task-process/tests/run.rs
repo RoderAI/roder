@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use roder_api::events::RoderEvent;
@@ -34,6 +34,9 @@ fn runner(max_log_bytes: usize) -> BackgroundRunner {
             max_concurrent: 2,
             max_log_bytes,
             auto_cancel_on_session_end: true,
+            process_grace_timeout: Duration::from_millis(100),
+            process_kill_timeout: Duration::from_secs(1),
+            max_completed_process_diagnostics: 64,
         },
     )
 }
@@ -175,6 +178,50 @@ async fn process_task_registers_process_descriptor_and_stops_from_registry() {
     panic!("process did not stop");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn process_task_stop_reaps_forced_process_group() {
+    let workspace = temp_workspace();
+    let runner = runner(1024);
+    let handle = runner
+        .submit(
+            "process",
+            serde_json::json!({
+                "command": "sh",
+                // Ignore the cooperative signal so this deterministically
+                // exercises the bounded process-group SIGKILL fallback.
+                "args": ["-c", "trap '' TERM; sleep 600"],
+            }),
+            TaskSubmitOptions {
+                workspace_root: Some(workspace.display().to_string()),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let registry = runner.processes();
+    let process = wait_for_task_process(&registry, &handle.task_id).await;
+    let pid = process.pid.expect("local process PID");
+
+    let stopped = registry
+        .stop(&process.process_id, Some("reap regression".to_string()))
+        .await
+        .unwrap();
+    assert!(stopped.stopped);
+
+    for _ in 0..100 {
+        let state = registry
+            .get(&process.process_id)
+            .await
+            .map(|entry| entry.state);
+        if matches!(state, Some(ProcessState::Stopped)) && !pid_is_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("forced process group PID {pid} was not reaped");
+}
+
 #[tokio::test]
 async fn process_task_routes_through_remote_runner_session_when_configured() {
     let workspace = temp_workspace();
@@ -270,6 +317,59 @@ async fn remote_process_descriptor_uses_runner_ids_and_provider_cancel() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("remote process did not record provider completion");
+}
+
+#[tokio::test]
+async fn drain_cancels_remote_process_once_without_local_pid() {
+    let workspace = temp_workspace();
+    let runner = runner(1024);
+    let session = Arc::new(FakeRemoteSession::new("fake-destination", true));
+    let destination = RunnerDestination {
+        id: "fake-destination".to_string(),
+        provider_id: "fake".to_string(),
+        config: serde_json::Value::Null,
+        default_manifest: RunnerManifest::default(),
+    };
+    let handle = runner
+        .submit(
+            "process",
+            serde_json::json!({
+                "command": "remote-program",
+                "args": ["--long"],
+            }),
+            TaskSubmitOptions {
+                workspace_root: Some(workspace.display().to_string()),
+                runner_destination: Some(destination),
+                runner_session: Some(session.clone()),
+                ..TaskSubmitOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let registry = runner.processes();
+    let process = wait_for_task_process(&registry, &handle.task_id).await;
+
+    assert_eq!(process.origin, ProcessOrigin::RemoteRunner);
+    assert_eq!(process.pid, None);
+
+    let outcome = runner
+        .drain(Duration::from_secs(1), Some("test shutdown".to_string()))
+        .await;
+
+    assert_eq!(session.cancel_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        outcome.stopped_process_ids,
+        vec![process.process_id.clone()]
+    );
+    assert!(outcome.remaining_process_ids.is_empty());
+
+    let process = registry.get(&process.process_id).await.unwrap();
+    assert_eq!(process.origin, ProcessOrigin::RemoteRunner);
+    assert_eq!(process.pid, None);
+    assert!(matches!(
+        process.state,
+        ProcessState::Exited { exit_code: None }
+    ));
 }
 
 #[tokio::test]
@@ -441,11 +541,20 @@ async fn wait_for_task_process(
     panic!("process descriptor for task {task_id} not found");
 }
 
+#[cfg(unix)]
+fn pid_is_alive(pid: u32) -> bool {
+    // `kill(pid, 0)` succeeds for zombies, so failure after `Stopped` proves
+    // the direct child was reaped rather than merely signalled.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
 struct FakeRemoteSession {
     state: RunnerSessionState,
     cancel_succeeds: bool,
     cancel_called: AtomicBool,
-    cancelled: Notify,
+    cancel_count: AtomicUsize,
+    cancelled: AtomicBool,
+    cancelled_notify: Notify,
 }
 
 impl FakeRemoteSession {
@@ -460,7 +569,9 @@ impl FakeRemoteSession {
             },
             cancel_succeeds,
             cancel_called: AtomicBool::new(false),
-            cancelled: Notify::new(),
+            cancel_count: AtomicUsize::new(0),
+            cancelled: AtomicBool::new(false),
+            cancelled_notify: Notify::new(),
         }
     }
 }
@@ -475,7 +586,9 @@ impl RemoteRunnerSession for FakeRemoteSession {
         &self,
         request: RunnerCommandRequest,
     ) -> anyhow::Result<RunnerCommandResult> {
-        self.cancelled.notified().await;
+        while !self.cancelled.load(Ordering::SeqCst) {
+            self.cancelled_notify.notified().await;
+        }
         Ok(RunnerCommandResult {
             command_id: request.command_id,
             exit_code: None,
@@ -486,8 +599,10 @@ impl RemoteRunnerSession for FakeRemoteSession {
 
     async fn cancel_command(&self, _command_id: &RunnerCommandId) -> anyhow::Result<bool> {
         self.cancel_called.store(true, Ordering::SeqCst);
+        self.cancel_count.fetch_add(1, Ordering::SeqCst);
         if self.cancel_succeeds {
-            self.cancelled.notify_waiters();
+            self.cancelled.store(true, Ordering::SeqCst);
+            self.cancelled_notify.notify_one();
             Ok(true)
         } else {
             Ok(false)

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -27,14 +28,14 @@ use roder_commands::{
     CommandsRegistry, CommandsRegistryOptions, WorkflowCommandDirectory, expand_command,
 };
 use roder_core::{
-    CreateThreadRequest, Runtime, StartTurnRequest,
+    CreateThreadRequest, Runtime, RuntimeDrainOutcome, StartTurnRequest,
     TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
     TeamStartRequest as RuntimeTeamStartRequest, TeamState, default_instructions,
     media_artifacts::MediaArtifactStore, policy_gate::DefaultPolicyGate,
 };
 use roder_protocol::*;
 use roder_roadmap::{ListOptions, list_documents, parse_document, validate_document};
-use roder_tasks::BackgroundRunner;
+use roder_tasks::{BackgroundDrainOutcome, BackgroundRunner};
 use time::OffsetDateTime;
 use tokio::sync::{OnceCell, RwLock, broadcast};
 
@@ -103,6 +104,14 @@ pub struct AppServer {
     pub(crate) protocol_thread_models:
         RwLock<std::collections::HashMap<String, ProtocolThreadModelSelection>>,
     pub(crate) protocol_notifications: broadcast::Sender<JsonRpcNotification>,
+    /// Aggregate outcomes for the app-server's combined runtime + background
+    /// drain. Runtime-only metrics remain available through the same snapshot
+    /// for restart and provider-cleanup accounting.
+    pub(crate) lifecycle_shutdown_drains: AtomicUsize,
+    pub(crate) lifecycle_clean_shutdowns: AtomicUsize,
+    pub(crate) lifecycle_deadline_exceeded: AtomicUsize,
+    pub(crate) lifecycle_persistence_failed: AtomicUsize,
+    pub(crate) lifecycle_shutdown_duration_ms_total: AtomicUsize,
     pub(crate) workspaces: crate::workspaces::WorkspaceRegistry,
     pub(crate) workspace_files: crate::workspace_files::WorkspaceFileService,
     pub(crate) command_registry: OnceCell<CommandsRegistry>,
@@ -170,6 +179,12 @@ impl AppServer {
             "speech/synthesize" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_speech_synthesize(p).await
+                })
+                .await
+            }
+            "lifecycle/metrics" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_lifecycle_metrics(p).await
                 })
                 .await
             }
@@ -543,6 +558,13 @@ impl AppServer {
                 .await
             }
             "thread/state" => self.handle_thread_state().await,
+            "runtime/drain" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_runtime_drain(p).await },
+                )
+                .await
+            }
             "thread/set_mode" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_set_mode(p).await
@@ -1730,6 +1752,124 @@ impl AppServer {
         .unwrap())
     }
 
+    async fn handle_runtime_drain(
+        &self,
+        params: RuntimeDrainParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let timeout_ms = params
+            .timeout_ms
+            .unwrap_or(self.features.lifecycle.shutdown_drain_timeout_ms)
+            .clamp(1, roder_config::MAX_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS);
+        let result = self
+            .drain_runtime(std::time::Duration::from_millis(timeout_ms))
+            .await;
+        Ok(serde_json::to_value(result).unwrap())
+    }
+
+    async fn handle_lifecycle_metrics(
+        &self,
+        _params: LifecycleMetricsParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        Ok(serde_json::to_value(LifecycleMetricsResult {
+            metrics: self.lifecycle_metrics(),
+        })
+        .unwrap())
+    }
+
+    /// Returns redacted lifecycle counters for this app-server process. Combined
+    /// drain outcome fields reflect runtime plus owned background task/process
+    /// cleanup; remaining provider and restart fields come from the runtime.
+    pub fn lifecycle_metrics(&self) -> roder_api::lifecycle::LifecycleMetricsSnapshot {
+        let mut metrics = self.runtime.lifecycle_metrics();
+        metrics.shutdown_drain_count =
+            self.lifecycle_shutdown_drains.load(Ordering::Acquire) as u64;
+        metrics.clean_shutdown_count =
+            self.lifecycle_clean_shutdowns.load(Ordering::Acquire) as u64;
+        metrics.deadline_exceeded_count =
+            self.lifecycle_deadline_exceeded.load(Ordering::Acquire) as u64;
+        metrics.persistence_failed_count =
+            self.lifecycle_persistence_failed.load(Ordering::Acquire) as u64;
+        metrics.shutdown_drain_duration_ms_total = self
+            .lifecycle_shutdown_duration_ms_total
+            .load(Ordering::Acquire) as u64;
+        metrics
+    }
+
+    /// Local embedders use this after restoring their terminal. It shares the
+    /// same bounded coordinator as the explicit `runtime/drain` JSON-RPC
+    /// method without forcing an in-process client through serialization. Turn
+    /// cleanup and app-server-owned background task/process cleanup run in
+    /// parallel against the same deadline.
+    pub async fn drain_runtime(&self, timeout: std::time::Duration) -> RuntimeDrainResult {
+        let started_at = tokio::time::Instant::now();
+        let (turn_outcome, background_outcome) = tokio::join!(
+            self.runtime.drain_active_turns(timeout),
+            self.tasks
+                .drain(timeout, Some("app-server shutdown drain".to_string()),),
+        );
+        let result = Self::runtime_drain_result(turn_outcome, background_outcome);
+        self.lifecycle_shutdown_drains
+            .fetch_add(1, Ordering::AcqRel);
+        self.lifecycle_shutdown_duration_ms_total.fetch_add(
+            started_at.elapsed().as_millis().min(usize::MAX as u128) as usize,
+            Ordering::AcqRel,
+        );
+        match result.status {
+            RuntimeDrainStatus::Clean => {
+                self.lifecycle_clean_shutdowns
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+            RuntimeDrainStatus::DeadlineExceeded => {
+                self.lifecycle_deadline_exceeded
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+            RuntimeDrainStatus::PersistenceFailed => {
+                self.lifecycle_persistence_failed
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+        }
+        result
+    }
+
+    fn runtime_drain_result(
+        turn_outcome: RuntimeDrainOutcome,
+        background_outcome: BackgroundDrainOutcome,
+    ) -> RuntimeDrainResult {
+        let (mut status, interrupted_turn_ids, remaining_turn_ids) = match turn_outcome {
+            RuntimeDrainOutcome::Clean {
+                interrupted_turn_ids,
+            } => (RuntimeDrainStatus::Clean, interrupted_turn_ids, Vec::new()),
+            RuntimeDrainOutcome::DeadlineExceeded {
+                interrupted_turn_ids,
+                remaining_turn_ids,
+            } => (
+                RuntimeDrainStatus::DeadlineExceeded,
+                interrupted_turn_ids,
+                remaining_turn_ids,
+            ),
+            RuntimeDrainOutcome::PersistenceFailed {
+                interrupted_turn_ids,
+                remaining_turn_ids,
+            } => (
+                RuntimeDrainStatus::PersistenceFailed,
+                interrupted_turn_ids,
+                remaining_turn_ids,
+            ),
+        };
+        if !background_outcome.is_clean() {
+            status = RuntimeDrainStatus::DeadlineExceeded;
+        }
+        RuntimeDrainResult {
+            status,
+            interrupted_turn_ids,
+            remaining_turn_ids,
+            quiesced_task_ids: background_outcome.quiesced_task_ids,
+            cancelled_task_ids: background_outcome.cancelled_task_ids,
+            stopped_process_ids: background_outcome.stopped_process_ids,
+            remaining_process_ids: background_outcome.remaining_process_ids,
+        }
+    }
+
     async fn handle_runners_list(&self) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self.runtime.status().await;
         let providers = self
@@ -2780,7 +2920,15 @@ impl AppServer {
                 None => None,
             }
         };
-        Ok(serde_json::to_value(ThreadReadResult { thread }).unwrap())
+        let lifecycle = if thread.is_some() {
+            self.runtime
+                .turn_lifecycle_snapshot(&params.thread_id)
+                .await
+                .map_err(internal_error)?
+        } else {
+            Default::default()
+        };
+        Ok(serde_json::to_value(ThreadReadResult { thread, lifecycle }).unwrap())
     }
 
     async fn handle_thread_archive(

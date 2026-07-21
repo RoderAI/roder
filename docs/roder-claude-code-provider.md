@@ -8,10 +8,36 @@ claude-code
 
 This provider runs the local Claude Code CLI through the Rust `claude-agent-sdk` crate. It is separate from the direct Anthropic API provider (`anthropic`) and does not use `ANTHROPIC_API_KEY` as Roder provider auth.
 
+## CLI process lifecycle
+
+Roder vendors a narrow, MIT-licensed patch of `claude-code-sdk-rust` 0.4.0 under
+`vendor/claude-code-sdk-rust` and applies it through Cargo's
+`[patch.crates-io]` mechanism. The patch configures the spawned `claude` child
+with `kill_on_drop(true)`, makes the convenience stream observe receiver drop,
+and always disconnects the owned SDK client before the stream task exits. The
+transport close path kills and waits for the child process. This gives an
+interrupted Roder turn an SDK-level child-process cleanup path rather than
+relying only on Tokio task abort.
+
+The vendor patch provenance is recorded in
+`vendor/claude-code-sdk-rust/RODER_PATCH.md`. Roder intends to remove the
+override after an upstream released SDK contains equivalent receiver-close-aware
+stream cleanup and subprocess ownership behavior.
+
+Roder still treats cleanup as bounded and observable, not guaranteed solely by
+this provider. The local TUI first requests `turn/interrupt`, restores the
+terminal, then the CLI performs a bounded `runtime/drain`. The CLI retains a
+final `std::process::exit(0)` guard after that drain while optional third-party
+subprocess providers cannot all prove equivalent cleanup. A non-`clean` drain
+warning means some locally owned turn or process work was still present, or
+lifecycle persistence failed, when the deadline expired.
+
 ## Requirements
 
 - `claude` installed and authenticated locally.
-- The local Rust SDK crate at `/Users/pz/w/claude-agent-sdk-rust` while this provider is developed as a path dependency.
+- The vendored `claude-code-sdk-rust` patch included with this Roder source
+  tree. Cargo applies it automatically; a separate local SDK checkout is not a
+  runtime requirement.
 
 Normal tests do not run `claude` and do not require a Claude subscription. Live checks must be explicitly enabled.
 
@@ -147,6 +173,11 @@ Offline checks:
 cargo test -p roder-ext-claude-code
 cargo test -p roder-app-server --test e2e providers_list_exposes_claude_code_models_without_api_key -- --nocapture
 ```
+
+The vendored SDK also has an offline fake-CLI regression that drops a stream
+receiver and proves its owned child is terminated and reaped. Run it from a
+temporary standalone copy of `vendor/claude-code-sdk-rust` because that vendor
+manifest is intentionally outside the root workspace.
 
 Live checks should remain opt-in and redacted:
 

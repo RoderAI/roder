@@ -204,7 +204,10 @@ async fn repeated_calls_of_same_tool_get_unique_ids() {
     assert_eq!(calls.len(), 2);
     // Distinct ids are required: the TUI/runtime key tool-call rows by id, so a
     // reused id would collapse the second call into the first row.
-    assert_ne!(calls[0].id, calls[1].id, "repeated tool calls must have unique ids");
+    assert_ne!(
+        calls[0].id, calls[1].id,
+        "repeated tool calls must have unique ids"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -345,7 +348,10 @@ async fn request_user_input_is_advertised_and_routes_through_executor() {
     );
 
     // The permission callback pre-authorizes the advertised survey tool.
-    let callback = options.can_use_tool.clone().expect("can_use_tool registered");
+    let callback = options
+        .can_use_tool
+        .clone()
+        .expect("can_use_tool registered");
     let permission = callback
         .call(
             "mcp__roder__request_user_input".to_string(),
@@ -391,5 +397,8 @@ async fn request_user_input_is_advertised_and_routes_through_executor() {
         arguments["questions"][0]["id"], "release",
         "questions payload must be preserved: {arguments}"
     );
-    assert_eq!(arguments["questions"][0]["options"][0]["label"], "fix-first");
+    assert_eq!(
+        arguments["questions"][0]["options"][0]["label"],
+        "fix-first"
+    );
 }

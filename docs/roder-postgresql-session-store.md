@@ -39,6 +39,15 @@ docker run --rm --name roder-postgres \
 
 The extension runs idempotent `CREATE TABLE IF NOT EXISTS` migrations on startup and records the migration version in `roder_session_migrations`.
 
+## Lifecycle extension-state recovery
+
+The PostgreSQL store persists the same versioned `roder.lifecycle` extension
+records as JSONL. During a thread load, malformed extension-state rows are
+skipped rather than making an otherwise valid thread unreadable. Roder exposes
+only the resulting redacted `corruptRecordCount` through `thread/read.lifecycle`;
+it does not return the malformed database value to clients. Valid lifecycle
+records for other turns remain available for restart reconciliation.
+
 ## Context artifacts
 
 When PostgreSQL is active, context artifacts are stored in `roder_context_artifacts` under the same `(tenant_id, thread_id)` scope as sessions. The runtime asks the active thread store for its artifact backend, so PostgreSQL mode does not silently fall back to `~/.roder/context-artifacts`.

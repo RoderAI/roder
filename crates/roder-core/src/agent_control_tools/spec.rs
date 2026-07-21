@@ -95,7 +95,7 @@ impl AgentControlToolKind {
                     },
                     "agent_type": {
                         "type": "string",
-                        "description": "Optional role label for the subagent."
+                        "description": "Optional collaboration label for the subagent (for example, release-audit). This label is allowed with a full-history fork and does not select a model, provider, or tool set."
                     },
                     "model": {
                         "type": "string",
@@ -111,7 +111,7 @@ impl AgentControlToolKind {
                     },
                     "fork_turns": {
                         "type": "string",
-                        "description": "Context to fork: `all` (default), `none`, or a positive integer string for the latest N turns. Full-history forks inherit the parent agent type, model, provider, and reasoning effort and reject overrides."
+                        "description": "Context to fork: `all` (default), `none`, or a positive integer string for the latest N turns. Full-history forks inherit the parent model, provider, and reasoning effort; agent_type remains an allowed collaboration label, but model, model_provider, and reasoning_effort overrides are rejected."
                     }
                 },
                 "required": ["task_name", "message"],
@@ -281,18 +281,14 @@ pub(super) fn valid_task_name(task_name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-pub(super) fn full_history_overrides_present(
+pub(super) fn full_history_selection_overrides_present(
     fork_turns: &str,
-    agent_type: Option<&str>,
     model: Option<&str>,
     model_provider: Option<&str>,
     reasoning_effort: Option<&str>,
 ) -> bool {
     fork_turns == "all"
-        && (agent_type.is_some()
-            || model.is_some()
-            || model_provider.is_some()
-            || reasoning_effort.is_some())
+        && (model.is_some() || model_provider.is_some() || reasoning_effort.is_some())
 }
 
 #[cfg(test)]
@@ -331,31 +327,50 @@ mod tests {
     }
 
     #[test]
-    fn full_history_forks_reject_model_and_role_overrides() {
-        assert!(full_history_overrides_present(
+    fn full_history_forks_reject_selection_overrides_but_allow_labels() {
+        assert!(full_history_selection_overrides_present(
             "all",
-            None,
             Some("gpt-5.6-terra"),
             None,
             None
         ));
-        assert!(full_history_overrides_present(
+        assert!(full_history_selection_overrides_present(
             "all",
-            Some("reviewer"),
             None,
-            None,
+            Some("codex"),
             None
         ));
-        assert!(!full_history_overrides_present(
+        assert!(full_history_selection_overrides_present(
+            "all",
+            None,
+            None,
+            Some("high")
+        ));
+        assert!(!full_history_selection_overrides_present(
             "3",
-            Some("reviewer"),
             Some("gpt-5.6-terra"),
             Some("codex"),
             Some("high")
         ));
-        assert!(!full_history_overrides_present(
-            "all", None, None, None, None
+        assert!(!full_history_selection_overrides_present(
+            "all", None, None, None
         ));
+    }
+
+    #[test]
+    fn spawn_schema_allows_a_label_with_full_history() {
+        let schema = AgentControlToolKind::SpawnAgent.parameters();
+        let agent_type = schema
+            .pointer("/properties/agent_type/description")
+            .and_then(serde_json::Value::as_str)
+            .expect("agent_type description");
+        let fork_turns = schema
+            .pointer("/properties/fork_turns/description")
+            .and_then(serde_json::Value::as_str)
+            .expect("fork_turns description");
+
+        assert!(agent_type.contains("allowed with a full-history fork"));
+        assert!(fork_turns.contains("agent_type remains an allowed collaboration label"));
     }
 
     #[test]

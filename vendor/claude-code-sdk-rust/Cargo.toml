@@ -1,0 +1,36 @@
+[package]
+name = "claude-code-sdk-rust"
+version = "0.4.0"
+edition = "2021"
+authors = ["Pandelis Zembashis <p@ndel.is>"]
+description = "Async Rust SDK for the Claude Code CLI: streaming agent turns, tool use, and sessions."
+license = "MIT"
+repository = "https://github.com/PandelisZ/claude-agent-sdk-rust"
+homepage = "https://github.com/PandelisZ/claude-agent-sdk-rust"
+documentation = "https://docs.rs/claude-code-sdk-rust"
+readme = "README.md"
+keywords = ["claude", "anthropic", "agent", "sdk", "ai"]
+categories = ["api-bindings", "asynchronous"]
+exclude = [".agents/", ".github/"]
+
+[dependencies]
+tokio = { version = "1", features = ["process", "io-util", "sync", "rt-multi-thread", "time", "fs", "macros"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+bytes = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde", "clock", "std"] }
+tracing = "0.1"
+async-trait = "0.1"
+which = "6"
+futures = "0.3"
+dirs = "5"
+opentelemetry = { version = "0.32", optional = true }
+
+[features]
+otel = ["dep:opentelemetry"]
+
+[dev-dependencies]
+tokio-test = "0.4"

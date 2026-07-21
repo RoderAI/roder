@@ -219,6 +219,7 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
                     "turn-1".to_string(),
                     SubagentRequest {
                         lane: Some(SubagentLane::Runner),
+                        max_concurrent: Some(8),
                         ..request()
                     },
                 )
@@ -235,6 +236,7 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
             "turn-2".to_string(),
             SubagentRequest {
                 lane: Some(SubagentLane::Runner),
+                max_concurrent: Some(8),
                 ..request()
             },
         )
@@ -243,6 +245,52 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
     assert!(err.to_string().contains("runner lane max_concurrent"));
     engine.release.store(true, Ordering::SeqCst);
     first.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn lane_without_compatible_declared_tools_fails_before_engine_invocation() {
+    let engine = Arc::new(ScriptedEngine::new(Vec::new()));
+    let mut registry = InferenceEngineRegistry::new();
+    registry.insert(engine.clone());
+    let dispatcher = InProcessDispatcher::new(
+        InProcessDispatcherConfig {
+            default_agent: "market-analyst".to_string(),
+            ..InProcessDispatcherConfig::default()
+        },
+        vec![SubagentDefinition {
+            agent_type: "market-analyst".to_string(),
+            description: "Web-only specialist".to_string(),
+            tools: vec!["echo".to_string()],
+            model: Some("mock".to_string()),
+            system_prompt: None,
+            permission_mode: SubagentPermissionMode::Default,
+            max_turns: Some(1),
+            max_result_chars: None,
+        }],
+        registry,
+        tool_registry(),
+    )
+    .unwrap();
+
+    let error = dispatcher
+        .dispatch(
+            "parent".to_string(),
+            "turn".to_string(),
+            SubagentRequest {
+                subagent_type: None,
+                lane: Some(SubagentLane::Scout),
+                ..request()
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("no tools compatible with the scout lane")
+    );
+    assert!(engine.requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

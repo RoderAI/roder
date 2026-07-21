@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_stream::try_stream;
 use claude_code_sdk_rust::{
     ClaudeAgentClient, ClaudeAgentOptions, ImageSource, InputContentBlock, MessageResponse,
-    StreamEvent, UserMessageInput,
+    SpawnedStreamCleanup, StreamEvent, UserMessageInput,
 };
 use roder_api::catalog::{PROVIDER_CLAUDE_CODE, models_for_provider};
 use roder_api::extension::InferenceEngineId;
@@ -14,9 +14,10 @@ use roder_api::inference::{
     AgentInferenceRequest, CompletionMetadata, HostedToolCallCompleted, HostedToolCallStarted,
     InferenceCapabilities, InferenceEngine, InferenceEvent, InferenceEventStream, InferenceFailure,
     InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, MessageDelta,
-    ModelDescriptor, ProviderAuthType, ReasoningDelta, TokenUsage, ToolCallCompleted,
-    ToolCallDelta,
+    ModelDescriptor, ProviderAuthType, ProviderTurnCleanup, ReasoningDelta, TokenUsage,
+    ToolCallCompleted, ToolCallDelta,
 };
+use roder_api::lifecycle::TurnCleanupOwnership;
 use roder_api::transcript::TranscriptItem;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -64,6 +65,28 @@ pub trait ClaudeCodeRunner: Send + Sync {
         options: ClaudeAgentOptions,
         content: UserMessageInput,
     ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>>;
+
+    /// Starts the stream together with an optional provider-owned cleanup
+    /// acknowledgement. Test runners and SDK-independent implementations can
+    /// keep implementing [`Self::stream`]; the default advertises no owned
+    /// subprocess cleanup.
+    async fn stream_with_cleanup(
+        &self,
+        options: ClaudeAgentOptions,
+        content: UserMessageInput,
+    ) -> anyhow::Result<ClaudeCodeStream> {
+        Ok(ClaudeCodeStream {
+            events: self.stream(options, content).await?,
+            cleanup: None,
+        })
+    }
+}
+
+/// A Claude Code event receiver paired with an optional acknowledgement that
+/// the provider-owned execution has completed cleanup.
+pub struct ClaudeCodeStream {
+    events: mpsc::UnboundedReceiver<StreamEvent>,
+    cleanup: Option<Arc<dyn ProviderTurnCleanup>>,
 }
 
 #[derive(Debug, Default)]
@@ -77,6 +100,37 @@ impl ClaudeCodeRunner for SdkClaudeCodeRunner {
         content: UserMessageInput,
     ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>> {
         Ok(ClaudeAgentClient::spawn_stream_message(options, content))
+    }
+
+    async fn stream_with_cleanup(
+        &self,
+        options: ClaudeAgentOptions,
+        content: UserMessageInput,
+    ) -> anyhow::Result<ClaudeCodeStream> {
+        let stream = ClaudeAgentClient::spawn_stream_message_supervised(options, content);
+        Ok(ClaudeCodeStream {
+            events: stream.events,
+            cleanup: Some(Arc::new(SdkClaudeCodeCleanup {
+                cleanup: stream.cleanup,
+            })),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct SdkClaudeCodeCleanup {
+    cleanup: SpawnedStreamCleanup,
+}
+
+#[async_trait::async_trait]
+impl ProviderTurnCleanup for SdkClaudeCodeCleanup {
+    fn ownership(&self) -> TurnCleanupOwnership {
+        TurnCleanupOwnership::ProviderCleanupPending
+    }
+
+    async fn wait_for_cleanup(&self) -> anyhow::Result<()> {
+        self.cleanup.wait_for_cleanup().await?;
+        Ok(())
     }
 }
 
@@ -162,7 +216,7 @@ impl InferenceEngine for ClaudeCodeEngine {
 
     async fn stream_turn(
         &self,
-        _ctx: InferenceTurnContext<'_>,
+        ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         validate_request(&request)?;
@@ -176,11 +230,17 @@ impl InferenceEngine for ClaudeCodeEngine {
         let options = build_options(
             &self.config,
             &request,
-            _ctx.tool_executor.clone(),
+            ctx.tool_executor.clone(),
             cwd,
             plan.resume_session_id.as_deref(),
         )?;
-        let events = self.runner.stream(options, plan.content).await?;
+        let ClaudeCodeStream { events, cleanup } = self
+            .runner
+            .stream_with_cleanup(options, plan.content)
+            .await?;
+        if let (Some(cleanup), Some(executor)) = (cleanup, ctx.tool_executor.as_ref()) {
+            executor.register_provider_cleanup(cleanup);
+        }
         Ok(Box::pin(map_stream_events(
             events,
             Arc::clone(&self.continuity),
@@ -263,7 +323,10 @@ fn prompt_from_delta(request: &AgentInferenceRequest, boundary: usize) -> UserMe
 /// Debug form of each item (the historical behavior); any images carried by
 /// user messages are decoded into real image content blocks so Claude actually
 /// receives the pixels instead of a base64 string dumped into the text.
-fn prompt_from_items(request: &AgentInferenceRequest, items: &[TranscriptItem]) -> UserMessageInput {
+fn prompt_from_items(
+    request: &AgentInferenceRequest,
+    items: &[TranscriptItem],
+) -> UserMessageInput {
     let mut parts = Vec::new();
     let mut images = Vec::new();
     for item in items {
@@ -282,10 +345,9 @@ fn prompt_from_items(request: &AgentInferenceRequest, items: &[TranscriptItem]) 
             }
             // Replay only the text; embedding the raw base64 data URL as Debug
             // text would balloon the prompt and duplicate the image bytes.
-            let text_only =
-                TranscriptItem::UserMessage(roder_api::transcript::UserMessage::text(
-                    message.text.clone(),
-                ));
+            let text_only = TranscriptItem::UserMessage(roder_api::transcript::UserMessage::text(
+                message.text.clone(),
+            ));
             parts.push(format!("{text_only:?}"));
             continue;
         }
@@ -1121,7 +1183,11 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(completed.len(), 1, "browser tool must complete exactly once");
+        assert_eq!(
+            completed.len(),
+            1,
+            "browser tool must complete exactly once"
+        );
         assert_eq!(completed[0].name, "mcp__claude-in-chrome__navigate");
         assert!(
             completed[0].arguments.contains("example.com"),
@@ -1602,8 +1668,14 @@ mod tests {
         let models = roder_api::catalog::models_for_provider(PROVIDER_CLAUDE_CODE, false);
         assert!(!models.is_empty());
         for model in models {
-            let entry = roder_api::catalog::lookup_model_for_provider(PROVIDER_CLAUDE_CODE, &model.id).unwrap();
-            assert!(entry.supports_images, "model {} must support images", model.id);
+            let entry =
+                roder_api::catalog::lookup_model_for_provider(PROVIDER_CLAUDE_CODE, &model.id)
+                    .unwrap();
+            assert!(
+                entry.supports_images,
+                "model {} must support images",
+                model.id
+            );
         }
     }
 
@@ -1665,7 +1737,9 @@ mod tests {
             other => panic!("expected image content blocks, got {other:?}"),
         };
         // First a text block, then the decoded base64 image block.
-        assert!(matches!(blocks.first(), Some(InputContentBlock::Text { text }) if text.contains("describe this")));
+        assert!(
+            matches!(blocks.first(), Some(InputContentBlock::Text { text }) if text.contains("describe this"))
+        );
         assert!(blocks.iter().any(|block| matches!(
             block,
             InputContentBlock::Image {

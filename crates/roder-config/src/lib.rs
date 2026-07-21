@@ -43,6 +43,8 @@ pub struct Config {
     pub tools: Option<ToolsConfig>,
     pub search_index: Option<SearchIndexConfig>,
     pub notifications: Option<NotificationsConfig>,
+    /// Shutdown, process-drain, and task-cancellation policy (`[lifecycle]`).
+    pub lifecycle: Option<LifecycleConfig>,
     pub tui: Option<TuiConfig>,
     pub app_server: Option<AppServerConfig>,
     pub remote_runners: Option<RemoteRunnersConfig>,
@@ -846,6 +848,132 @@ impl Default for NotificationsConfig {
     }
 }
 
+/// `[lifecycle]` policy shared by TUI, CLI, and app-server shutdown paths.
+/// All fields are optional so existing configurations retain bounded defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LifecycleConfig {
+    /// Total bounded shutdown-drain budget in milliseconds.
+    pub shutdown_drain_timeout_ms: Option<u64>,
+    /// Time a local process may handle a cooperative stop before forced kill.
+    pub process_grace_timeout_ms: Option<u64>,
+    /// Time reserved to observe the forced-kill/reap path before task abort.
+    pub process_kill_timeout_ms: Option<u64>,
+    /// Whether thread/session terminal events cancel associated background tasks.
+    pub cancel_tasks_on_session_end: Option<bool>,
+    /// Number of completed process diagnostics retained in the in-memory process
+    /// registry. Durable lifecycle records are intentionally not pruned here.
+    pub max_completed_process_diagnostics: Option<usize>,
+}
+
+/// Canonical environment override for `[lifecycle].shutdown_drain_timeout_ms`.
+pub const RODER_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS_ENV: &str =
+    "RODER_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS";
+/// Canonical environment override for `[lifecycle].process_grace_timeout_ms`.
+pub const RODER_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS_ENV: &str =
+    "RODER_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS";
+/// Canonical environment override for `[lifecycle].process_kill_timeout_ms`.
+pub const RODER_LIFECYCLE_PROCESS_KILL_TIMEOUT_MS_ENV: &str =
+    "RODER_LIFECYCLE_PROCESS_KILL_TIMEOUT_MS";
+/// Canonical environment override for `[lifecycle].cancel_tasks_on_session_end`.
+pub const RODER_LIFECYCLE_CANCEL_TASKS_ON_SESSION_END_ENV: &str =
+    "RODER_LIFECYCLE_CANCEL_TASKS_ON_SESSION_END";
+/// Canonical environment override for
+/// `[lifecycle].max_completed_process_diagnostics`.
+pub const RODER_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS_ENV: &str =
+    "RODER_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS";
+
+pub const DEFAULT_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS: u64 = 5_000;
+pub const DEFAULT_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS: u64 = 250;
+pub const DEFAULT_LIFECYCLE_PROCESS_KILL_TIMEOUT_MS: u64 = 1_000;
+pub const DEFAULT_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS: usize = 64;
+pub const MAX_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS: u64 = 45_000;
+pub const MAX_LIFECYCLE_PROCESS_TIMEOUT_MS: u64 = 10_000;
+pub const MAX_LIFECYCLE_COMPLETED_PROCESS_DIAGNOSTICS: usize = 1_024;
+
+/// Effective, bounded lifecycle policy. This contains only public timing and
+/// boolean policy, never process identifiers or provider details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedLifecycleConfig {
+    pub shutdown_drain_timeout_ms: u64,
+    pub process_grace_timeout_ms: u64,
+    pub process_kill_timeout_ms: u64,
+    pub cancel_tasks_on_session_end: bool,
+    pub max_completed_process_diagnostics: usize,
+}
+
+impl Default for ResolvedLifecycleConfig {
+    fn default() -> Self {
+        Self {
+            shutdown_drain_timeout_ms: DEFAULT_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS,
+            process_grace_timeout_ms: DEFAULT_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS,
+            process_kill_timeout_ms: DEFAULT_LIFECYCLE_PROCESS_KILL_TIMEOUT_MS,
+            cancel_tasks_on_session_end: true,
+            max_completed_process_diagnostics: DEFAULT_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS,
+        }
+    }
+}
+
+/// Resolve lifecycle policy with canonical environment variables taking
+/// precedence over `[lifecycle]`. The legacy TUI setting and environment
+/// variable remain shutdown-timeout fallbacks only when the canonical setting
+/// is absent.
+pub fn resolve_lifecycle_config(
+    config: Option<&LifecycleConfig>,
+    legacy_tui: Option<&TuiConfig>,
+) -> ResolvedLifecycleConfig {
+    resolve_lifecycle_config_with(config, legacy_tui, |key| std::env::var(key).ok())
+}
+
+/// Testable [`resolve_lifecycle_config`] variant with an injected environment.
+pub fn resolve_lifecycle_config_with(
+    config: Option<&LifecycleConfig>,
+    legacy_tui: Option<&TuiConfig>,
+    env: impl Fn(&str) -> Option<String>,
+) -> ResolvedLifecycleConfig {
+    let config_shutdown = config.and_then(|config| config.shutdown_drain_timeout_ms);
+    let canonical_shutdown = env(RODER_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS_ENV)
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or(config_shutdown);
+    let legacy_shutdown = env("RODER_SHUTDOWN_DRAIN_TIMEOUT_MS")
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or_else(|| legacy_tui.and_then(|tui| tui.shutdown_drain_timeout_ms));
+    let shutdown_drain_timeout_ms = canonical_shutdown
+        .or(legacy_shutdown)
+        .unwrap_or(DEFAULT_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS)
+        .clamp(1, MAX_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS);
+
+    let process_grace_timeout_ms = env(RODER_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS_ENV)
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or_else(|| config.and_then(|config| config.process_grace_timeout_ms))
+        .unwrap_or(DEFAULT_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS)
+        .clamp(1, MAX_LIFECYCLE_PROCESS_TIMEOUT_MS)
+        .min(shutdown_drain_timeout_ms);
+    let process_kill_timeout_ms = env(RODER_LIFECYCLE_PROCESS_KILL_TIMEOUT_MS_ENV)
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or_else(|| config.and_then(|config| config.process_kill_timeout_ms))
+        .unwrap_or(DEFAULT_LIFECYCLE_PROCESS_KILL_TIMEOUT_MS)
+        .clamp(1, MAX_LIFECYCLE_PROCESS_TIMEOUT_MS)
+        .min(shutdown_drain_timeout_ms);
+    let cancel_tasks_on_session_end = env(RODER_LIFECYCLE_CANCEL_TASKS_ON_SESSION_END_ENV)
+        .and_then(|value| parse_bool(&value))
+        .or_else(|| config.and_then(|config| config.cancel_tasks_on_session_end))
+        .unwrap_or(true);
+    let max_completed_process_diagnostics =
+        env(RODER_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS_ENV)
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .or_else(|| config.and_then(|config| config.max_completed_process_diagnostics))
+            .unwrap_or(DEFAULT_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS)
+            .min(MAX_LIFECYCLE_COMPLETED_PROCESS_DIAGNOSTICS);
+
+    ResolvedLifecycleConfig {
+        shutdown_drain_timeout_ms,
+        process_grace_timeout_ms,
+        process_kill_timeout_ms,
+        cancel_tasks_on_session_end,
+        max_completed_process_diagnostics,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotificationSinkConfig {
     #[serde(default = "default_true")]
@@ -868,6 +996,9 @@ pub struct TuiConfig {
     pub diff: TuiDiffConfig,
     #[serde(default)]
     pub keymap: HashMap<String, Vec<String>>,
+    /// Maximum bounded wait after the local TUI restores the terminal and
+    /// requests runtime cleanup. `None` uses the CLI default of five seconds.
+    pub shutdown_drain_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -2033,6 +2164,7 @@ mod tests {
             tools: None,
             search_index: None,
             notifications: None,
+            lifecycle: None,
             tui: None,
             app_server: None,
             remote_runners: None,
@@ -2071,6 +2203,64 @@ mod tests {
     fn agent_swarm_config_resolves_defaults_when_unset() {
         let resolved = resolve_agent_swarm_config_with(None, |_| None);
         assert_eq!(resolved, roder_api::subagents::AgentSwarmConfig::default());
+    }
+
+    #[test]
+    fn lifecycle_config_prefers_canonical_values_and_bounds_timeouts() {
+        let lifecycle = LifecycleConfig {
+            shutdown_drain_timeout_ms: Some(20_000),
+            process_grace_timeout_ms: Some(500),
+            process_kill_timeout_ms: Some(800),
+            cancel_tasks_on_session_end: Some(false),
+            max_completed_process_diagnostics: Some(500),
+        };
+        let legacy_tui = TuiConfig {
+            shutdown_drain_timeout_ms: Some(4_000),
+            ..TuiConfig::default()
+        };
+        let env = std::collections::HashMap::from([
+            (RODER_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS_ENV, "9001"),
+            (RODER_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS_ENV, "99999"),
+            (RODER_LIFECYCLE_CANCEL_TASKS_ON_SESSION_END_ENV, "true"),
+            (
+                RODER_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS_ENV,
+                "99999",
+            ),
+            ("RODER_SHUTDOWN_DRAIN_TIMEOUT_MS", "100"),
+        ]);
+        let resolved = resolve_lifecycle_config_with(Some(&lifecycle), Some(&legacy_tui), |key| {
+            env.get(key).map(|value| value.to_string())
+        });
+
+        assert_eq!(resolved.shutdown_drain_timeout_ms, 9_001);
+        assert_eq!(resolved.process_grace_timeout_ms, 9_001);
+        assert_eq!(resolved.process_kill_timeout_ms, 800);
+        assert!(resolved.cancel_tasks_on_session_end);
+        assert_eq!(
+            resolved.max_completed_process_diagnostics,
+            MAX_LIFECYCLE_COMPLETED_PROCESS_DIAGNOSTICS
+        );
+    }
+
+    #[test]
+    fn lifecycle_config_uses_legacy_shutdown_only_when_canonical_is_absent() {
+        let legacy_tui = TuiConfig {
+            shutdown_drain_timeout_ms: Some(3_000),
+            ..TuiConfig::default()
+        };
+        let resolved = resolve_lifecycle_config_with(None, Some(&legacy_tui), |key| {
+            (key == "RODER_SHUTDOWN_DRAIN_TIMEOUT_MS").then(|| "4000".to_string())
+        });
+        assert_eq!(resolved.shutdown_drain_timeout_ms, 4_000);
+
+        let lifecycle = LifecycleConfig {
+            shutdown_drain_timeout_ms: Some(2_000),
+            ..LifecycleConfig::default()
+        };
+        let resolved = resolve_lifecycle_config_with(Some(&lifecycle), Some(&legacy_tui), |key| {
+            (key == "RODER_SHUTDOWN_DRAIN_TIMEOUT_MS").then(|| "4000".to_string())
+        });
+        assert_eq!(resolved.shutdown_drain_timeout_ms, 2_000);
     }
 
     #[test]

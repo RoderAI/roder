@@ -670,8 +670,6 @@ dependencies = [
 [[package]]
 name = "claude-code-sdk-rust"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e24022965ebe5b19679e9dcd4e73ca0e294af6bfa068a9a636c4452a0bfbb8fa"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3709,6 +3707,7 @@ dependencies = [
  "claude-code-sdk-rust",
  "futures",
  "roder-api",
+ "roder-core",
  "semver",
  "serde_json",
  "tokio",
@@ -4198,6 +4197,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "roder-api",
+ "roder-core",
  "semver",
  "serde",
  "serde_json",
@@ -4447,6 +4447,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "libc",
  "roder-api",
  "roder-ext-runner-unix-local",
  "roder-tasks",

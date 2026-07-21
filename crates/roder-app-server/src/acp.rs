@@ -2,7 +2,10 @@
 //!
 //! The app-server API is Roder-specific. This module exposes a small ACP v1
 //! facade by translating ACP sessions and prompt turns onto the public
-//! app-server JSON-RPC methods.
+//! app-server JSON-RPC methods. ACP cancellation is represented by the final
+//! `session/prompt` `stopReason: "cancelled"`; Roder-specific lifecycle,
+//! recovery, drain, and ownership diagnostics stay on the native app-server
+//! protocol because ACP v1 does not advertise a corresponding capability.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -227,6 +230,9 @@ where
                 .map_err(internal_error)?,
             )
             .await?;
+        // ACP has no lifecycle/recovery session update capability. The active
+        // session/prompt call observes the native terminal turn event and
+        // returns its standard `stopReason: "cancelled"` response instead.
         Ok(())
     }
 

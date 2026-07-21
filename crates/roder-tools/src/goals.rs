@@ -58,14 +58,14 @@ impl ToolExecutor for CreateGoalTool {
         ToolSpec {
             name: "create_goal".to_string(),
             description:
-                "Create a new active goal for this thread. Fails if a goal already exists."
+                "Create a new active goal for this thread. Fails only if an active goal already exists; completed, blocked, paused, or limited goals are replaced."
                     .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "objective": {
                         "type": "string",
-                        "description": "The concrete objective to start pursuing. Fails if a goal already exists."
+                        "description": "The concrete objective to start pursuing. Fails only while an active goal is still in progress."
                     },
                     "token_budget": {
                         "type": "integer",
@@ -87,10 +87,19 @@ impl ToolExecutor for CreateGoalTool {
         let args = parse::<CreateGoalArgs>(&call)?;
         validate_thread_goal_objective(&args.objective)?;
         let controller = ctx.require_goal_controller()?;
-        if let Some(_existing) = controller.get_thread_goal(&ctx.thread_id).await? {
+        // Only an in-progress active goal blocks create. Terminal / non-active
+        // states (complete, blocked, paused, limits) must be replaceable so a
+        // resumed session can start the next objective after the previous one
+        // finished. create_thread_goal already overwrites stored goal state.
+        if let Some(existing) = controller.get_thread_goal(&ctx.thread_id).await?
+            && existing.status.is_active()
+        {
             return Ok(error_result(
                 call,
-                "cannot create a new goal because this thread already has a goal".to_string(),
+                format!(
+                    "cannot create a new goal because this thread already has an active goal: {}",
+                    existing.objective
+                ),
             ));
         }
         let goal = match controller
@@ -348,7 +357,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_goal_fails_when_goal_exists() {
+    async fn create_goal_fails_when_active_goal_exists() {
         let controller = Arc::new(FakeGoalController::default());
         let create = CreateGoalTool;
 
@@ -377,10 +386,65 @@ mod tests {
 
         assert!(duplicate.is_error, "{duplicate:?}");
         assert!(
-            duplicate
-                .text
-                .contains("cannot create a new goal because this thread already has a goal")
+            duplicate.text.contains(
+                "cannot create a new goal because this thread already has an active goal"
+            ),
+            "{duplicate:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn create_goal_replaces_completed_goal() {
+        let controller = Arc::new(FakeGoalController::default());
+        let create = CreateGoalTool;
+        let update = UpdateGoalTool;
+
+        let original = create
+            .execute(
+                context(controller.clone()),
+                call("create_goal", json!({ "objective": "Finish phase 111" })),
+            )
+            .await
+            .unwrap();
+        assert!(!original.is_error);
+
+        let completed = update
+            .execute(
+                context(controller.clone()),
+                call("update_goal", json!({ "status": "complete" })),
+            )
+            .await
+            .unwrap();
+        assert!(!completed.is_error);
+        assert_eq!(completed.data["hasActiveGoal"], false);
+        assert_eq!(completed.data["goal"]["status"], "complete");
+
+        // Resume-session shape: completed goal is still stored on disk, but a
+        // new create_goal must succeed so the harness can start the next job.
+        let next = create
+            .execute(
+                context(controller.clone()),
+                call(
+                    "create_goal",
+                    json!({ "objective": "Ship the release", "token_budget": 24000 }),
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(!next.is_error, "create after complete failed: {next:?}");
+        assert_eq!(next.data["hasActiveGoal"], true);
+        assert_eq!(next.data["goal"]["status"], "active");
+        assert_eq!(next.data["goal"]["objective"], "Ship the release");
+        assert_eq!(next.data["goal"]["tokenBudget"], 24000);
+        assert_eq!(next.data["goal"]["tokensUsed"], 0);
+
+        let stored = controller
+            .get_thread_goal(&"thread-goals".to_string())
+            .await
+            .unwrap()
+            .expect("replacement goal should be stored");
+        assert_eq!(stored.objective, "Ship the release");
+        assert_eq!(stored.status, ThreadGoalStatus::Active);
     }
 
     fn call(name: &str, arguments: Value) -> ToolCall {

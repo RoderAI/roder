@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use anyhow::{Context, bail};
 use roder_api::processes::{
     ProcessDescriptor, ProcessOrigin, ProcessState, ProcessStopper, command_summary,
@@ -88,6 +91,19 @@ impl TaskExecutor for ProcessTaskExecutor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        // Run the child as a process-group leader. Shutdown signals can then
+        // cover descendants created by a shell task without touching the host
+        // process group.
+        unsafe {
+            command.as_std_mut().pre_exec(|| {
+                if libc::setpgid(0, 0) == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
 
         let mut child = command
             .spawn()
@@ -138,13 +154,17 @@ impl TaskExecutor for ProcessTaskExecutor {
         let (status, stopped_by_registry) = tokio::select! {
             status = child.wait() => (status.context("wait for process task")?, false),
             _ = stop_rx => {
-                child.kill().await.context("kill stopped process task")?;
+                let (status, stop_reason) = stop_local_process(
+                    &mut child,
+                    ctx.process_grace_timeout,
+                    ctx.process_kill_timeout,
+                ).await?;
                 if let Some(registry) = ctx.process_registry.as_ref() {
                     registry
-                        .mark_process_stopped(&process_id, Some("stop requested".to_string()))
+                        .mark_process_stopped(&process_id, Some(stop_reason))
                         .await?;
                 }
-                (child.wait().await.context("wait for stopped process task")?, true)
+                (status, true)
             }
         };
         stdout_task.await.context("join stdout reader")??;
@@ -167,6 +187,68 @@ impl TaskExecutor for ProcessTaskExecutor {
             }),
         })
     }
+}
+
+/// Stops a directly owned local child with a bounded graceful signal on Unix,
+/// then a bounded forced kill/reap fallback. The process registry is updated
+/// only after this function returns, so `Stopped` never means merely "signal
+/// sent" for a local child.
+async fn stop_local_process(
+    child: &mut tokio::process::Child,
+    grace_timeout: std::time::Duration,
+    kill_timeout: std::time::Duration,
+) -> anyhow::Result<(std::process::ExitStatus, String)> {
+    #[cfg(unix)]
+    if let Some(pid) = child.id()
+        && send_signal_to_process_group(pid, libc::SIGTERM)
+    {
+        match tokio::time::timeout(grace_timeout, child.wait()).await {
+            Ok(status) => {
+                return Ok((
+                    status.context("wait for SIGTERM-stopped process task")?,
+                    "stop requested (SIGTERM)".to_string(),
+                ));
+            }
+            Err(_) => {}
+        }
+    }
+
+    let status = tokio::time::timeout(kill_timeout, async {
+        let sent_group_kill = {
+            #[cfg(unix)]
+            {
+                child
+                    .id()
+                    .is_some_and(|pid| send_signal_to_process_group(pid, libc::SIGKILL))
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
+        };
+        if !sent_group_kill {
+            match child.kill().await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {}
+                Err(error) => return Err(error),
+            }
+        }
+        child.wait().await
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting for forced process kill"))?
+    .context("kill stopped process task")?;
+    Ok((
+        status,
+        "stop requested (forced kill after grace)".to_string(),
+    ))
+}
+
+#[cfg(unix)]
+fn send_signal_to_process_group(pid: u32, signal: libc::c_int) -> bool {
+    // SAFETY: the child is made a process-group leader in `pre_exec`. A
+    // negative PID targets only that child-owned group, never Roder's group.
+    unsafe { libc::kill(-(pid as libc::pid_t), signal) == 0 }
 }
 
 struct ChannelProcessStopper {

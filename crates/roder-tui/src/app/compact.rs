@@ -26,10 +26,12 @@ where
         {
             Ok(result) => {
                 if result.compacted {
-                    self.timeline.push_system(format!(
-                        "Context compacted ({} -> {} est. tokens).",
-                        result.estimated_tokens_before, result.estimated_tokens_after
-                    ));
+                    self.timeline
+                        .push_system(super::format_compaction_completed(
+                            Some(result.estimated_tokens_before),
+                            Some(result.estimated_tokens_after),
+                            None,
+                        ));
                 } else {
                     let reason = result
                         .reason

@@ -85,17 +85,17 @@ use roder_protocol::{
     JsonRpcRequest, KnowledgeDeleteParams, KnowledgeDeleteResult, KnowledgeLinkSetParams,
     KnowledgeListParams, KnowledgeListResult, KnowledgeReadParams, KnowledgeReadResult,
     KnowledgeRevisionsParams, KnowledgeRevisionsResult, KnowledgeSaveParams, KnowledgeSaveResult,
-    KnowledgeSearchParams, KnowledgeSearchResults, KnowledgeUpdateParams, MarketplacesAddParams,
-    MarketplacesAddResult, MarketplacesListResult, MarketplacesRefreshParams,
-    MarketplacesRefreshResult, MarketplacesRemoveParams, MarketplacesRemoveResult,
-    MarketplacesSearchParams, MarketplacesSearchResult, MediaAttachToTurnParams,
-    MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult, MediaImageGenerateResult,
-    MediaImageProvidersListResult, MediaListParams, MediaListResult, MediaReadParams,
-    MediaReadResult, MediaThumbnailParams, MediaThumbnailResult, MemoryDeleteParams,
-    MemoryDeleteResult, MemoryListParams, MemoryListResult, MemoryProviderListResult,
-    MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult,
-    MemoryRecallPreviewParams, MemoryRecallPreviewResult, MemorySaveParams, MemorySaveResult,
-    MemoryUpdateParams, ModelSelectChoice, ModelSelectParams, ModelSelectResult,
+    KnowledgeSearchParams, KnowledgeSearchResults, KnowledgeUpdateParams, LifecycleMetricsParams,
+    LifecycleMetricsResult, MarketplacesAddParams, MarketplacesAddResult, MarketplacesListResult,
+    MarketplacesRefreshParams, MarketplacesRefreshResult, MarketplacesRemoveParams,
+    MarketplacesRemoveResult, MarketplacesSearchParams, MarketplacesSearchResult,
+    MediaAttachToTurnParams, MediaAttachToTurnResult, MediaDeleteParams, MediaDeleteResult,
+    MediaImageGenerateResult, MediaImageProvidersListResult, MediaListParams, MediaListResult,
+    MediaReadParams, MediaReadResult, MediaThumbnailParams, MediaThumbnailResult,
+    MemoryDeleteParams, MemoryDeleteResult, MemoryListParams, MemoryListResult,
+    MemoryProviderListResult, MemoryQueryParams, MemoryQueryResult, MemoryReadParams,
+    MemoryReadResult, MemoryRecallPreviewParams, MemoryRecallPreviewResult, MemorySaveParams,
+    MemorySaveResult, MemoryUpdateParams, ModelSelectChoice, ModelSelectParams, ModelSelectResult,
     PlanReviewApproveParams, PlanReviewCommentParams, PlanReviewCommentResult,
     PlanReviewReadParams, PlanReviewReadResult, PluginDisableParams, PluginDisableResult,
     PluginInstallAllVariantsParams, PluginInstallAllVariantsResult, PluginInstallParams,
@@ -107,7 +107,8 @@ use roder_protocol::{
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult,
     RetrievalPromotedResult, RetrievalRecommendationsResult, RetrievalTurnParams,
     RunnersDeleteResult, RunnersListResult, RunnersSelectParams, RunnersSelectResult,
-    RunnersSessionResult, SearchIndexClearParams, SearchIndexClearResult, SearchIndexRebuildParams,
+    RunnersSessionResult, RuntimeDrainParams, RuntimeDrainResult, RuntimeDrainStatus,
+    SearchIndexClearParams, SearchIndexClearResult, SearchIndexRebuildParams,
     SearchIndexRebuildResult, SearchIndexStatusParams, SearchIndexStatusResult,
     SearchIndexStatusState, SearchIndexWarmupParams, SearchIndexWarmupResult, SettingsGetResult,
     SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
@@ -1251,6 +1252,54 @@ async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
             .any(|signal| signal.key == "profile" && signal.value == "coding")
     );
     let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
+async fn runtime_drain_reports_lifecycle_persistence_failure() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    // This store supports normal thread and event persistence but intentionally
+    // leaves extension-state persistence unsupported, exercising the drain's
+    // durable-proof failure path without making the turn itself fail.
+    builder.thread_store_factory(Arc::new(RecordingThreadStoreFactory::default()));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let thread = start_thread(&client).await;
+    let started = start_turn(&client, &thread.thread.id, "wait for persistence failure").await;
+
+    let drained: RuntimeDrainResult = request(
+        &client,
+        "runtime/drain",
+        Some(
+            serde_json::to_value(RuntimeDrainParams {
+                timeout_ms: Some(1_000),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(drained.status, RuntimeDrainStatus::PersistenceFailed);
+    assert_eq!(drained.interrupted_turn_ids, vec![started.turn_id]);
+    assert!(drained.remaining_turn_ids.is_empty());
+
+    let lifecycle_metrics: LifecycleMetricsResult = request(
+        &client,
+        "lifecycle/metrics",
+        Some(serde_json::to_value(LifecycleMetricsParams {}).unwrap()),
+    )
+    .await;
+    assert_eq!(lifecycle_metrics.metrics.shutdown_drain_count, 1);
+    assert_eq!(lifecycle_metrics.metrics.persistence_failed_count, 1);
+    assert!(
+        lifecycle_metrics
+            .metrics
+            .lifecycle_persistence_failure_count
+            >= 1,
+        "the durable lifecycle append failure must be observable"
+    );
 }
 
 #[tokio::test]
@@ -5779,6 +5828,279 @@ async fn thread_snapshots_overlay_runtime_active_turn_status() {
 }
 
 #[tokio::test]
+async fn turn_interrupt_reports_durable_lifecycle_state() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let thread_root = std::env::temp_dir().join(format!(
+        "roder-turn-lifecycle-read-{}",
+        uuid::Uuid::new_v4()
+    ));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
+    }));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+
+    let thread = start_thread(&client).await;
+    let thread_id = thread.thread.id.clone();
+    let started = start_turn(&client, &thread_id, "wait for cancellation").await;
+    wait_for_notification(
+        &mut notifications,
+        "turn/lifecycleUpdated",
+        Some(&thread_id),
+    )
+    .await;
+
+    let _: TurnInterruptResult = request(
+        &client,
+        "turn/interrupt",
+        Some(
+            serde_json::to_value(TurnInterruptParams {
+                thread_id: thread_id.clone(),
+                turn_id: Some(started.turn_id.clone()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    let requested = wait_for_notification(
+        &mut notifications,
+        "turn/lifecycleUpdated",
+        Some(&thread_id),
+    )
+    .await;
+    assert_eq!(requested.params["lifecycle"]["turnId"], started.turn_id);
+    assert_eq!(
+        requested.params["lifecycle"]["state"],
+        "interrupt_requested"
+    );
+    assert_eq!(requested.params["lifecycle"]["cleanup"], "requested");
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        read.lifecycle
+            .records
+            .iter()
+            .any(|record| record.turn_id == started.turn_id
+                && matches!(
+                    record.state,
+                    roder_api::lifecycle::TurnLifecycleState::InterruptRequested
+                        | roder_api::lifecycle::TurnLifecycleState::Interrupted
+                ))
+    );
+
+    let completed = wait_for_notification(
+        &mut notifications,
+        "turn/lifecycleUpdated",
+        Some(&thread_id),
+    )
+    .await;
+    assert_eq!(completed.params["lifecycle"]["turnId"], started.turn_id);
+    assert_eq!(completed.params["lifecycle"]["state"], "interrupted");
+    assert_eq!(completed.params["lifecycle"]["cleanup"], "unknown");
+    assert_eq!(
+        completed.params["lifecycle"]["ownership"],
+        "runtime_task_only"
+    );
+
+    let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
+async fn repeated_turn_interrupts_emit_one_terminal_interrupted_lifecycle() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let thread_root = std::env::temp_dir().join(format!(
+        "roder-turn-lifecycle-double-interrupt-{}",
+        uuid::Uuid::new_v4()
+    ));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
+    }));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+
+    let thread = start_thread(&client).await;
+    let thread_id = thread.thread.id.clone();
+    let started = start_turn(&client, &thread_id, "wait for repeated cancellation").await;
+    wait_for_notification(
+        &mut notifications,
+        "turn/lifecycleUpdated",
+        Some(&thread_id),
+    )
+    .await;
+
+    let params = serde_json::to_value(TurnInterruptParams {
+        thread_id: thread_id.clone(),
+        turn_id: Some(started.turn_id.clone()),
+    })
+    .unwrap();
+    let _: TurnInterruptResult = request(&client, "turn/interrupt", Some(params.clone())).await;
+    let _: TurnInterruptResult = request(&client, "turn/interrupt", Some(params)).await;
+
+    let mut requested = 0;
+    let mut interrupted = 0;
+    let mut completed = 0;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while interrupted == 0 {
+            let notification = notifications.recv().await.unwrap();
+            if notification.method != "turn/lifecycleUpdated"
+                || notification.params["lifecycle"]["turnId"] != started.turn_id
+            {
+                continue;
+            }
+            match notification.params["lifecycle"]["state"].as_str() {
+                Some("interrupt_requested") => requested += 1,
+                Some("interrupted") => interrupted += 1,
+                Some("completed") => completed += 1,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("interrupted lifecycle notification");
+    assert_eq!(requested, 1, "repeated interrupts must be idempotent");
+    assert_eq!(interrupted, 1, "exactly one terminal interrupt is expected");
+    assert_eq!(completed, 0, "interrupt must not transition to completed");
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let record = read
+        .lifecycle
+        .records
+        .iter()
+        .find(|record| record.turn_id == started.turn_id)
+        .expect("durable lifecycle record");
+    assert_eq!(
+        record.state,
+        roder_api::lifecycle::TurnLifecycleState::Interrupted
+    );
+
+    let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
+async fn runtime_drain_interrupts_pending_turn_and_reports_clean() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(PendingEngine));
+    let thread_root = std::env::temp_dir().join(format!(
+        "roder-runtime-drain-clean-{}",
+        uuid::Uuid::new_v4()
+    ));
+    builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+        base_path: thread_root.clone(),
+    }));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let thread = start_thread(&client).await;
+    let thread_id = thread.thread.id.clone();
+    let started = start_turn(&client, &thread_id, "wait for shutdown drain").await;
+
+    let drained: RuntimeDrainResult = request(
+        &client,
+        "runtime/drain",
+        Some(
+            serde_json::to_value(RuntimeDrainParams {
+                timeout_ms: Some(1_000),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(drained.status, RuntimeDrainStatus::Clean);
+    assert_eq!(drained.interrupted_turn_ids, vec![started.turn_id.clone()]);
+    assert!(drained.remaining_turn_ids.is_empty());
+
+    let lifecycle_metrics: LifecycleMetricsResult = request(
+        &client,
+        "lifecycle/metrics",
+        Some(serde_json::to_value(LifecycleMetricsParams {}).unwrap()),
+    )
+    .await;
+    assert_eq!(lifecycle_metrics.metrics.shutdown_drain_count, 1);
+    assert_eq!(lifecycle_metrics.metrics.clean_shutdown_count, 1);
+    assert_eq!(lifecycle_metrics.metrics.deadline_exceeded_count, 0);
+    assert_eq!(lifecycle_metrics.metrics.persistence_failed_count, 0);
+    let serialized_metrics = serde_json::to_string(&lifecycle_metrics).unwrap();
+    assert!(
+        !serialized_metrics.contains(thread_id.as_str())
+            && !serialized_metrics.contains(started.turn_id.as_str()),
+        "lifecycle metrics must remain identifier-free"
+    );
+
+    let read: ThreadReadResult = request(
+        &client,
+        "thread/read",
+        Some(
+            serde_json::to_value(ThreadReadParams {
+                thread_id: thread_id.clone(),
+                include_turns: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(read.lifecycle.records.iter().any(|record| {
+        record.turn_id == started.turn_id
+            && record.state == roder_api::lifecycle::TurnLifecycleState::Interrupted
+            && record.cleanup == roder_api::lifecycle::TurnCleanupState::Unknown
+            && record.ownership == roder_api::lifecycle::TurnCleanupOwnership::RuntimeTaskOnly
+            && record.reason == Some(roder_api::lifecycle::TurnLifecycleReason::Shutdown)
+    }));
+
+    let error = request_error(
+        &client,
+        "turn/start",
+        Some(
+            serde_json::to_value(TurnStartParams {
+                thread_id,
+                input: text_input("must not start while runtime is quiescing"),
+                prompt: None,
+                developer_context: None,
+                model_provider: None,
+                model: None,
+                reasoning: None,
+                policy_mode: None,
+                task_ledger_required: false,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(error.message.contains("quiescing"));
+
+    let _ = std::fs::remove_dir_all(thread_root);
+}
+
+#[tokio::test]
 async fn thread_read_includes_partial_reasoning_while_streaming() {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(ReasoningThenPendingEngine));
@@ -8638,6 +8960,107 @@ async fn processes_stop_all_stops_multiple_running_processes() {
     );
 }
 
+#[tokio::test]
+async fn runtime_drain_stops_registered_background_processes_and_quiesces_tasks() {
+    let workspace = std::env::temp_dir().join(format!(
+        "roder-runtime-drain-process-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let registry = build_default_registry(DefaultRegistryConfig {
+        workspace: Some(workspace.clone()),
+        ..isolated_default_registry_config()
+    })
+    .unwrap();
+    let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+
+    let submitted: TasksSubmitResult = request(
+        &client,
+        "tasks/submit",
+        Some(
+            serde_json::to_value(TasksSubmitParams {
+                executor_id: "process".to_string(),
+                input: serde_json::json!({
+                    "command": "sh",
+                    "args": ["-c", "printf 'drain-ready\\n'; sleep 5"],
+                    "cwd": ".",
+                }),
+                thread_id: Some("thread-runtime-drain".to_string()),
+                turn_id: Some("turn-runtime-drain".to_string()),
+                workspace: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    let process = wait_for_process_by_task(&client, &submitted.task.task_id).await;
+
+    let drained: RuntimeDrainResult = request(
+        &client,
+        "runtime/drain",
+        Some(
+            serde_json::to_value(RuntimeDrainParams {
+                timeout_ms: Some(1_000),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(drained.status, RuntimeDrainStatus::Clean);
+    assert!(
+        drained.quiesced_task_ids.contains(&submitted.task.task_id),
+        "drain did not capture submitted task: {drained:?}"
+    );
+    assert!(
+        drained.stopped_process_ids.contains(&process.process_id),
+        "drain did not request cooperative process stop: {drained:?}"
+    );
+    assert!(drained.remaining_process_ids.is_empty(), "{drained:?}");
+
+    let stopped: ProcessesGetResult = request(
+        &client,
+        "processes/get",
+        Some(
+            serde_json::to_value(ProcessesGetParams {
+                process_id: process.process_id.clone(),
+                output_bytes: Some(4096),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(matches!(
+        stopped.process.as_ref().map(|process| &process.state),
+        Some(roder_api::processes::ProcessState::Stopped)
+    ));
+
+    let submit_error = request_error(
+        &client,
+        "tasks/submit",
+        Some(
+            serde_json::to_value(TasksSubmitParams {
+                executor_id: "process".to_string(),
+                input: serde_json::json!({
+                    "command": "sh",
+                    "args": ["-c", "true"],
+                    "cwd": ".",
+                }),
+                thread_id: None,
+                turn_id: None,
+                workspace: Some(workspace.display().to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(submit_error.message.contains("quiescing"));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
 async fn wait_for_process_by_task(
     client: &LocalAppClient,
     task_id: &str,
@@ -8717,7 +9140,7 @@ async fn tools_call_can_create_and_get_goal() {
     assert!(
         duplicate
             .text
-            .contains("cannot create a new goal because this thread already has a goal")
+            .contains("cannot create a new goal because this thread already has an active goal")
     );
 
     let current: ToolCallResult = request(
@@ -8725,7 +9148,7 @@ async fn tools_call_can_create_and_get_goal() {
         "tools/call",
         Some(
             serde_json::to_value(ToolCallParams {
-                thread_id: thread_start.thread.id,
+                thread_id: thread_start.thread.id.clone(),
                 tool_name: "get_goal".to_string(),
                 arguments: serde_json::json!({}),
             })
@@ -8736,6 +9159,50 @@ async fn tools_call_can_create_and_get_goal() {
 
     assert!(!current.is_error, "get_goal failed: {current:?}");
     assert!(current.text.contains("Ship slash goal"));
+
+    let completed: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: thread_start.thread.id.clone(),
+                tool_name: "update_goal".to_string(),
+                arguments: serde_json::json!({ "status": "complete" }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        !completed.is_error,
+        "update_goal complete failed: {completed:?}"
+    );
+    assert_eq!(completed.data["hasActiveGoal"], false);
+
+    // Completed goals must not block a new create on resume / next objective.
+    let next: ToolCallResult = request(
+        &client,
+        "tools/call",
+        Some(
+            serde_json::to_value(ToolCallParams {
+                thread_id: thread_start.thread.id,
+                tool_name: "create_goal".to_string(),
+                arguments: serde_json::json!({
+                    "objective": "Ship the release",
+                    "token_budget": 24000,
+                }),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        !next.is_error,
+        "create_goal after complete failed: {next:?}"
+    );
+    assert!(next.text.contains("Ship the release"));
+    assert_eq!(next.data["hasActiveGoal"], true);
+    assert_eq!(next.data["goal"]["status"], "active");
 }
 
 #[tokio::test]

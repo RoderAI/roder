@@ -85,13 +85,53 @@ pub(crate) fn provider_metadata_has_compaction(metadata: &serde_json::Value) -> 
     metadata
         .get("output")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|output| {
-            output.iter().any(|item| {
-                item.get("type")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|kind| kind.contains("compaction"))
-            })
-        })
+        .is_some_and(|output| output.iter().any(is_provider_compaction_item))
+}
+
+pub(crate) fn is_provider_compaction_item(item: &serde_json::Value) -> bool {
+    item.get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| kind.contains("compaction"))
+}
+
+/// Build a minimal ProviderMetadata envelope that carries a server-side
+/// compaction item as the next-input boundary.
+pub(crate) fn provider_metadata_from_compaction_item(item: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "output": [item] })
+}
+
+/// Ensure `metadata.output` contains `compaction_item` (by id when present).
+/// Returns true when the item is present after this call.
+pub(crate) fn ensure_provider_metadata_compaction(
+    metadata: &mut serde_json::Value,
+    compaction_item: &serde_json::Value,
+) -> bool {
+    let Some(output) = metadata.as_object_mut().map(|object| {
+        object
+            .entry("output")
+            .or_insert_with(|| serde_json::json!([]))
+    }) else {
+        return false;
+    };
+    let Some(array) = output.as_array_mut() else {
+        *output = serde_json::json!([compaction_item.clone()]);
+        return true;
+    };
+    let already_present = match compaction_item
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(id) => array.iter().any(|item| {
+            item.get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|existing| existing == id)
+        }),
+        None => array.iter().any(is_provider_compaction_item),
+    };
+    if !already_present {
+        array.push(compaction_item.clone());
+    }
+    true
 }
 
 pub(crate) fn compaction_skip_reason(
@@ -480,6 +520,46 @@ mod tests {
         assert!(matches!(
             &trimmed[0],
             TranscriptItem::ContextCompaction(record) if record.summary == "summary two"
+        ));
+    }
+
+    #[test]
+    fn ensure_provider_metadata_compaction_injects_missing_item() {
+        let mut metadata = serde_json::json!({
+            "output": [{ "type": "function_call", "call_id": "c1", "name": "read" }]
+        });
+        let item = serde_json::json!({
+            "id": "cmp_1",
+            "type": "compaction",
+            "encrypted_content": "opaque"
+        });
+        assert!(ensure_provider_metadata_compaction(&mut metadata, &item));
+        let output = metadata["output"].as_array().unwrap();
+        assert_eq!(output.len(), 2);
+        assert!(provider_metadata_has_compaction(&metadata));
+        // Second ensure is idempotent by id.
+        assert!(ensure_provider_metadata_compaction(&mut metadata, &item));
+        assert_eq!(metadata["output"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn provider_metadata_from_compaction_item_is_a_boundary() {
+        let metadata = provider_metadata_from_compaction_item(serde_json::json!({
+            "id": "cmp_9",
+            "type": "compaction",
+            "encrypted_content": "x"
+        }));
+        assert!(provider_metadata_has_compaction(&metadata));
+        let items = vec![
+            TranscriptItem::UserMessage(UserMessage::text("old")),
+            TranscriptItem::ProviderMetadata(metadata),
+            TranscriptItem::UserMessage(UserMessage::text("new")),
+        ];
+        let trimmed = trim_to_last_compaction_boundary(items);
+        assert_eq!(trimmed.len(), 2);
+        assert!(matches!(
+            &trimmed[0],
+            TranscriptItem::ProviderMetadata(value) if provider_metadata_has_compaction(value)
         ));
     }
 

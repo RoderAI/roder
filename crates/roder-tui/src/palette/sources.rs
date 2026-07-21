@@ -1582,12 +1582,17 @@ mod tests {
 
         let active = entries
             .iter()
-            .find(|entry| {
-                entry.action == PaletteAction::SetWebSearchProvider("tavily".to_string())
-            })
+            .find(|entry| entry.action == PaletteAction::SetWebSearchProvider("tavily".to_string()))
             .expect("tavily provider row");
         assert!(active.item.title.contains("(active)"));
-        assert!(active.item.subtitle.as_deref().unwrap().contains("key configured"));
+        assert!(
+            active
+                .item
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .contains("key configured")
+        );
 
         let firecrawl = entries
             .iter()
@@ -1595,7 +1600,14 @@ mod tests {
                 entry.action == PaletteAction::SetWebSearchProvider("firecrawl".to_string())
             })
             .expect("firecrawl provider row");
-        assert!(firecrawl.item.subtitle.as_deref().unwrap().contains("no API key"));
+        assert!(
+            firecrawl
+                .item
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .contains("no API key")
+        );
     }
 
     #[test]

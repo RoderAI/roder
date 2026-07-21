@@ -42,7 +42,11 @@ impl TurnToolExecutor for NoopExecutor {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RODER_CLAUDE_CODE_CHROME_LIVE=1, an authenticated claude CLI, and a paired Chrome extension"]
 async fn live_claude_in_chrome_browser_tool_is_invoked() {
-    if std::env::var("RODER_CLAUDE_CODE_CHROME_LIVE").ok().as_deref() != Some("1") {
+    if std::env::var("RODER_CLAUDE_CODE_CHROME_LIVE")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
         eprintln!("set RODER_CLAUDE_CODE_CHROME_LIVE=1 to run the live Claude-in-Chrome test");
         return;
     }
@@ -55,7 +59,8 @@ async fn live_claude_in_chrome_browser_tool_is_invoked() {
     let request = AgentInferenceRequest {
         model: ModelSelection {
             provider: "claude-code".to_string(),
-            model: std::env::var("RODER_CLAUDE_CODE_MODEL").unwrap_or_else(|_| "sonnet".to_string()),
+            model: std::env::var("RODER_CLAUDE_CODE_MODEL")
+                .unwrap_or_else(|_| "sonnet".to_string()),
         },
         instructions: InstructionBundle {
             system: Some(

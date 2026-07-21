@@ -363,6 +363,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("knowledge/save", "knowledge", LocalState, NonIdempotent),
     method_spec!("knowledge/search", "knowledge", ReadOnly, Idempotent),
     method_spec!("knowledge/update", "knowledge", LocalState, NonIdempotent),
+    method_spec!("lifecycle/metrics", "lifecycle", ReadOnly, Idempotent),
     method_spec!(
         "marketplaces/add",
         "marketplaces",
@@ -679,10 +680,22 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         NonIdempotent
     ),
     method_spec!("thread/roadmap/open", "thread", LocalState, NonIdempotent),
-    method_spec!("thread/set_agent_swarm_mode", "thread", LocalState, NonIdempotent),
+    method_spec!(
+        "thread/set_agent_swarm_mode",
+        "thread",
+        LocalState,
+        NonIdempotent
+    ),
     method_spec!("thread/set_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/start", "thread", LocalState, NonIdempotent),
     method_spec!("thread/state", "thread", ReadOnly, Idempotent),
+    method_spec!(
+        "runtime/drain",
+        "runtime",
+        LocalState,
+        NonIdempotent,
+        ["turn/lifecycleUpdated", "turn/completed"]
+    ),
     method_spec!("tools/call", "tools", LocalState, NonIdempotent),
     method_spec!("tools/list", "tools", ReadOnly, Idempotent),
     method_spec!("tools/resolve", "tools", LocalState, NonIdempotent),

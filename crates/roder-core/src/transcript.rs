@@ -270,6 +270,7 @@ impl Runtime {
         let estimated_tokens = estimate_prompt_tokens(&working);
         let original_item_count = working.len() as u64;
         let original_estimated_tokens = estimated_tokens;
+        let compaction_started_at = std::time::Instant::now();
         self.emit(RoderEvent::ContextCompactionStarted(
             ContextCompactionStarted {
                 thread_id: thread_id.clone(),
@@ -306,6 +307,8 @@ impl Runtime {
         let mut compacted = vec![compaction];
         compacted.extend(suffix);
         self.record_compaction_hysteresis(thread_id, original_estimated_tokens);
+        let compacted_estimated_tokens = estimate_prompt_tokens(&compacted);
+        let duration_ms = u64::try_from(compaction_started_at.elapsed().as_millis()).ok();
         self.emit(RoderEvent::ContextCompactionRecorded(
             ContextCompactionRecorded {
                 thread_id: thread_id.clone(),
@@ -313,10 +316,11 @@ impl Runtime {
                 original_item_count,
                 original_estimated_tokens,
                 compacted_item_count: compacted.len() as u64,
-                compacted_estimated_tokens: estimate_prompt_tokens(&compacted),
+                compacted_estimated_tokens,
                 file_backed: cfg.file_backed_dynamic_context,
                 strategy: Some(strategy),
                 pruned_tool_count: Some(pruned_tool_count),
+                duration_ms,
                 timestamp: OffsetDateTime::now_utc(),
             },
         ))

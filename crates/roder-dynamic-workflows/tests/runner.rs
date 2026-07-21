@@ -220,6 +220,8 @@ async fn task_executor_runs_workflow_through_background_task_contract() {
                 runner_destination: None,
                 runner_session: None,
                 deadline: None,
+                process_grace_timeout: std::time::Duration::from_millis(250),
+                process_kill_timeout: std::time::Duration::from_secs(1),
                 metadata: serde_json::json!({}),
                 process_registry: None,
                 output: TaskOutputSink::default(),

@@ -413,6 +413,38 @@ Parallel tool calls are enabled by default. For OpenAI Responses-compatible prov
 
 The app-server run-control methods are `turn/start`, `turn/steer`, and `turn/interrupt`. `turn/start` and `turn/steer` accept `input` blocks such as `{ "type": "text", "text": "..." }`. `turn/start` also accepts per-turn `modelProvider`, `model`, `reasoning`, and `policyMode` overrides. Steering accepts `{ "threadId": "...", "expectedTurnId": "...", "input": [...] }`, emits `turn.steered`, and appends the steering message to the active turn before the next provider request.
 
+For controlled local shutdown, app-server clients can call `runtime/drain` with
+an optional `{ "timeoutMs": 5000 }`. It stops admitting new turns, requests
+interruption for locally owned active turns, and drains app-server-owned tasks
+and processes within a bounded 1..45000 ms budget. Inspect its `clean`,
+`deadline_exceeded`, or `persistence_failed` result rather than assuming all
+work stopped. `thread/read` returns a durable lifecycle snapshot,
+`turn/lifecycleUpdated` streams transitions, and `lifecycle/metrics` exposes
+redacted process-local drain and cleanup counters. See
+[`docs/app-server/api.md`](./docs/app-server/api.md) and
+[`docs/roder-lifecycle-recovery.md`](./docs/roder-lifecycle-recovery.md).
+
+The shared lifecycle policy uses a 5000 ms shutdown drain by default:
+
+```toml
+[lifecycle]
+shutdown_drain_timeout_ms = 5000
+process_grace_timeout_ms = 250
+process_kill_timeout_ms = 1000
+cancel_tasks_on_session_end = true
+max_completed_process_diagnostics = 64
+```
+
+Canonical environment overrides are `RODER_LIFECYCLE_SHUTDOWN_DRAIN_TIMEOUT_MS`,
+`RODER_LIFECYCLE_PROCESS_GRACE_TIMEOUT_MS`,
+`RODER_LIFECYCLE_PROCESS_KILL_TIMEOUT_MS`, and
+`RODER_LIFECYCLE_CANCEL_TASKS_ON_SESSION_END`, and
+`RODER_LIFECYCLE_MAX_COMPLETED_PROCESS_DIAGNOSTICS`. The legacy
+`[tui].shutdown_drain_timeout_ms` and `RODER_SHUTDOWN_DRAIN_TIMEOUT_MS` remain
+fallbacks only when the canonical lifecycle drain setting is absent. The CLI
+retains a final hard-exit guard after the bounded drain while optional
+subprocess providers establish equivalent cleanup semantics.
+
 `settings/get` returns runtime settings including hosted web search, shell command shell, default provider/model/reasoning/policy mode, and file-backed dynamic context. `settings/set_web_search` accepts `{ "mode": "cached" }`, `{ "mode": "live" }`, or `{ "mode": "disabled" }`; `settings/set_shell` accepts `{ "shell": "zsh" }` or another shell binary/path; `settings/set_file_backed_dynamic_context` accepts `{ "enabled": true }` or `{ "enabled": false }`. The TUI exposes these under the Ctrl+P settings menu and the Ctrl+K palette Settings source, and persists choices to `~/.roder/config.toml` when user config persistence is enabled.
 
 The command execution shell defaults to zsh on macOS and bash elsewhere, unless the user's login shell is zsh. To override it in config:
@@ -497,6 +529,16 @@ assistant text, reasoning text, and tool-call lifecycle updates. Protected tool
 calls are bridged to ACP `session/request_permission` client requests with
 `allow_once` and `reject_once` options, then resolved back through Roder's
 canonical approval path.
+
+`session/cancel` is an ACP notification. Roder maps it to its active native
+`turn/interrupt` operation and the outstanding `session/prompt` request returns
+`{ "stopReason": "cancelled" }` after the terminal turn event. ACP v1 does not
+define a capability for Roder's richer lifecycle data, so the ACP adapter does
+not emit `turn/lifecycleUpdated`, durable `recovery_needed` records,
+`runtime/drain` outcomes, `lifecycle/metrics`, or provider/process ownership and
+reaping diagnostics.
+Clients that need those details must use the native app-server JSON-RPC API;
+Roder does not advertise an ACP lifecycle or recovery capability.
 
 ---
 
