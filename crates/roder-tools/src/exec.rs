@@ -27,6 +27,7 @@ const DEFAULT_MAX_OUTPUT_TOKENS: usize = 6000;
 const MAX_BUFFER_BYTES: usize = 1024 * 1024;
 const DEADLINE_TIMEOUT_RESERVE_MS: u64 = 30_000;
 const MIN_DEADLINE_TIMEOUT_MS: u64 = 1_000;
+const MAX_REMOTE_COMMAND_TIMEOUT_MS: u64 = 600_000;
 
 pub(crate) fn register(
     registry: &mut ToolRegistry,
@@ -136,7 +137,7 @@ impl ToolExecutor for ExecCommandTool {
                     "timeout_ms": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional wall-clock timeout for the process."
+                        "description": "Optional wall-clock timeout for the process. Remote runner commands are capped at 600000ms."
                     }
                 },
                 "required": ["cmd"],
@@ -184,6 +185,7 @@ impl ToolExecutor for ExecCommandTool {
                 !tty,
                 "exec_command tty sessions are not supported on a remote runner workspace; use a non-interactive command"
             );
+            let timeout_ms = normalized_remote_timeout_ms(timeout_ms);
             let snapshot = run_remote_exec(
                 remote.session.clone(),
                 RemoteExecOptions {
@@ -878,6 +880,17 @@ fn effective_timeout_ms(
     }
 }
 
+/// Remote commands are one-shot operations rather than interactive sessions.
+/// Keep the provider request, local outer timeout, and reported metadata on the
+/// same finite bound even when the surrounding agent turn lasts for hours.
+fn normalized_remote_timeout_ms(timeout_ms: Option<u64>) -> Option<u64> {
+    Some(
+        timeout_ms
+            .unwrap_or(MAX_REMOTE_COMMAND_TIMEOUT_MS)
+            .min(MAX_REMOTE_COMMAND_TIMEOUT_MS),
+    )
+}
+
 fn exit_from_status(
     status: std::io::Result<std::process::ExitStatus>,
     timed_out: bool,
@@ -1118,6 +1131,23 @@ mod tests {
         assert_eq!(effective_timeout_ms(None, Some(5)), Some(1_000));
     }
 
+    #[test]
+    fn remote_timeout_is_always_finite_and_capped() {
+        assert_eq!(
+            normalized_remote_timeout_ms(None),
+            Some(MAX_REMOTE_COMMAND_TIMEOUT_MS)
+        );
+        assert_eq!(normalized_remote_timeout_ms(Some(42_000)), Some(42_000));
+        assert_eq!(
+            normalized_remote_timeout_ms(Some(MAX_REMOTE_COMMAND_TIMEOUT_MS)),
+            Some(MAX_REMOTE_COMMAND_TIMEOUT_MS)
+        );
+        assert_eq!(
+            normalized_remote_timeout_ms(Some(12 * 60 * 60 * 1000)),
+            Some(MAX_REMOTE_COMMAND_TIMEOUT_MS)
+        );
+    }
+
     #[tokio::test]
     async fn exec_command_clamps_missing_timeout_to_deadline_remaining() {
         let root = temp_workspace("roder-exec-deadline");
@@ -1189,6 +1219,37 @@ mod tests {
             command.cwd.as_deref(),
             Some(std::path::Path::new("/sandbox/workspace"))
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn remote_exec_normalizes_a_multi_hour_turn_deadline_before_dispatch() {
+        let root = temp_workspace("roder-exec-remote-long-turn");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager: Arc::new(ExecSessionManager::default()),
+            command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+
+        let result = tool
+            .execute(
+                remote_context(&root, state.clone()).with_deadline_remaining_seconds(12 * 60 * 60),
+                call("exec_command", json!({ "cmd": "ls" })),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert_eq!(
+            result.data["effective_timeout_ms"],
+            MAX_REMOTE_COMMAND_TIMEOUT_MS
+        );
+        let command = state.commands.lock().unwrap().first().cloned().unwrap();
+        assert_eq!(command.timeout_ms, Some(MAX_REMOTE_COMMAND_TIMEOUT_MS));
 
         let _ = std::fs::remove_dir_all(root);
     }
