@@ -12,9 +12,18 @@ Model labels use `<provider>/<model>`, for example:
 ```text
 opencode/gpt-5.5
 opencode/big-pickle
+opencode/deepseek-v4-flash
+opencode/mimo-v2.5-free
 opencode-go/kimi-k2.6
+opencode-go/deepseek-v4-flash
 opencode-go/qwen3.6-plus
 ```
+
+OpenCode Zen free models currently include `big-pickle`, `mimo-v2.5-free`,
+`nemotron-3-ultra-free`, and `north-mini-code-free`. Paid DeepSeek models use
+`deepseek-v4-flash` / `deepseek-v4-pro` on both Zen and Go. The older
+`deepseek-v4-flash-free` id is disabled upstream and is no longer in the built-in
+catalog.
 
 Kimi K2 models are also available directly via the dedicated `kimi-code` provider (`kimi-code/kimi-for-coding`), which authenticates against your Kimi Code subscription through device OAuth (managed API) or a Moonshot Open Platform API key. See `docs/roder-kimi-code-provider.md`.
 

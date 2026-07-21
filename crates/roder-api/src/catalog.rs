@@ -910,27 +910,45 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     opencode_model(
         PROVIDER_OPENCODE,
-        "deepseek-v4-flash-free",
-        "DeepSeek V4 Flash Free",
-        "OpenCode Zen free DeepSeek coding model.",
-        128_000,
-        REASONING_NONE,
-        &[],
-    ),
-    opencode_model(
-        PROVIDER_OPENCODE,
-        "minimax-m2.5-free",
-        "MiniMax M2.5 Free",
-        "OpenCode Zen free MiniMax coding model.",
+        "mimo-v2.5-free",
+        "MiMo V2.5 Free",
+        "OpenCode Zen free Xiaomi MiMo coding model.",
         256_000,
         REASONING_NONE,
         &[],
     ),
     opencode_model(
         PROVIDER_OPENCODE,
-        "nemotron-3-super-free",
-        "Nemotron 3 Super Free",
+        "nemotron-3-ultra-free",
+        "Nemotron 3 Ultra Free",
         "OpenCode Zen free Nemotron coding model.",
+        128_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "north-mini-code-free",
+        "North Mini Code Free",
+        "OpenCode Zen free North Mini coding model.",
+        128_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "deepseek-v4-flash",
+        "DeepSeek V4 Flash",
+        "OpenCode Zen DeepSeek coding model.",
+        128_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "deepseek-v4-pro",
+        "DeepSeek V4 Pro",
+        "OpenCode Zen DeepSeek Pro coding model.",
         128_000,
         REASONING_NONE,
         &[],
@@ -967,6 +985,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "deepseek-v4-flash",
         "DeepSeek V4 Flash",
         "OpenCode Go DeepSeek coding model.",
+        128_000,
+        REASONING_NONE,
+        &[],
+    ),
+    opencode_model(
+        PROVIDER_OPENCODE_GO,
+        "deepseek-v4-pro",
+        "DeepSeek V4 Pro",
+        "OpenCode Go DeepSeek Pro coding model.",
         128_000,
         REASONING_NONE,
         &[],
@@ -1835,13 +1862,16 @@ mod tests {
                 "gpt-5.5",
                 "gpt-5.3-codex-spark",
                 "big-pickle",
-                "deepseek-v4-flash-free",
-                "minimax-m2.5-free",
-                "nemotron-3-super-free",
+                "mimo-v2.5-free",
+                "nemotron-3-ultra-free",
+                "north-mini-code-free",
+                "deepseek-v4-flash",
+                "deepseek-v4-pro",
                 "kimi-k2.6",
                 "qwen3.6-plus",
                 "glm-5.1",
                 "deepseek-v4-flash",
+                "deepseek-v4-pro",
                 "kimi-for-coding",
                 "x-ai/grok-build-0.1",
                 "accounts/fireworks/models/qwen3-235b-a22b",
@@ -1898,8 +1928,8 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
-        assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
-        assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);

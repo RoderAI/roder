@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +22,10 @@ struct ServerState {
     by_external: HashMap<String, String>,
     files: HashMap<String, String>,
     processes: HashMap<String, FakeProcess>,
+    tagged_descendants: HashMap<String, String>,
+    fail_descendant_cleanup: bool,
+    fail_named_process_kill: bool,
+    cleanup_polls_before_terminal: usize,
 }
 
 #[derive(Clone)]
@@ -28,7 +34,9 @@ struct FakeProcess {
     stdout: String,
     status: String,
     polls: usize,
+    polls_before_terminal: usize,
     long_running: bool,
+    terminal_status: String,
 }
 
 impl FakeBlaxelServer {
@@ -87,6 +95,34 @@ impl FakeBlaxelServer {
             .requests
             .iter()
             .any(|request| request.starts_with("POST /process "))
+    }
+
+    pub fn has_tagged_descendant(&self) -> bool {
+        !self.state.lock().unwrap().tagged_descendants.is_empty()
+    }
+
+    pub fn has_file(&self, path: &str) -> bool {
+        self.state.lock().unwrap().files.contains_key(path)
+    }
+
+    pub fn fail_descendant_cleanup(&self, fail: bool) {
+        self.state.lock().unwrap().fail_descendant_cleanup = fail;
+    }
+
+    pub fn fail_named_process_kill(&self, fail: bool) {
+        self.state.lock().unwrap().fail_named_process_kill = fail;
+    }
+
+    pub fn set_cleanup_polls_before_terminal(&self, polls: usize) {
+        self.state.lock().unwrap().cleanup_polls_before_terminal = polls;
+    }
+
+    pub fn terminate_user_processes_without_exit(&self) {
+        for (name, process) in &mut self.state.lock().unwrap().processes {
+            if !name.starts_with("roder-cleanup-") {
+                process.status = "killed".to_string();
+            }
+        }
     }
 }
 
@@ -166,18 +202,69 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
             let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
             let command = parsed["command"].as_str().unwrap_or_default().to_string();
             let name = parsed["name"].as_str().unwrap_or("unnamed").to_string();
+            let is_cleanup = name.starts_with("roder-cleanup-");
+            let (cleanup_should_fail, cleanup_polls_before_terminal) = {
+                let guard = state.lock().unwrap();
+                (
+                    is_cleanup && guard.fail_descendant_cleanup,
+                    guard.cleanup_polls_before_terminal,
+                )
+            };
             let stdout = command
                 .split_once("; exec echo ")
                 .map(|(_, rest)| rest)
                 .map(|rest| format!("{rest}\n"))
                 .unwrap_or_default();
             let process = FakeProcess {
-                long_running: command.contains("long-running"),
+                long_running: command.contains("long-running")
+                    || command.contains("detached-signal-ignoring"),
                 command: command.clone(),
                 stdout: stdout.clone(),
                 status: "running".to_string(),
                 polls: 0,
+                polls_before_terminal: if is_cleanup {
+                    cleanup_polls_before_terminal.max(1)
+                } else {
+                    1
+                },
+                terminal_status: if cleanup_should_fail {
+                    "failed".to_string()
+                } else {
+                    "completed".to_string()
+                },
             };
+            if command.contains("detached-signal-ignoring") {
+                let environment = parsed["env"].as_object();
+                let tag = environment
+                    .and_then(|environment| environment.get("RODER_BLAXEL_COMMAND_TAG"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let marker = command
+                    .split_once("detached-signal-ignoring ")
+                    .map(|(_, marker)| marker.trim_matches('\'').to_string())
+                    .unwrap_or_else(|| "detached-leak.txt".to_string());
+                state
+                    .lock()
+                    .unwrap()
+                    .tagged_descendants
+                    .insert(tag.clone(), marker.clone());
+                let state = state.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1_500));
+                    let mut guard = state.lock().unwrap();
+                    if guard.tagged_descendants.contains_key(&tag) {
+                        guard.files.insert(marker, "ghost".to_string());
+                    }
+                });
+            }
+            if is_cleanup && !cleanup_should_fail {
+                state
+                    .lock()
+                    .unwrap()
+                    .tagged_descendants
+                    .retain(|tag, _| !command.contains(&format!("RODER_BLAXEL_COMMAND_TAG={tag}")));
+            }
             if command.contains("delayed-registration") {
                 let state = state.clone();
                 let delayed_name = name.clone();
@@ -215,8 +302,11 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
             let Some(process) = guard.processes.get_mut(name) else {
                 return ("404 Not Found", json_error("process not found"));
             };
-            if process.status == "running" && !process.long_running && process.polls > 0 {
-                process.status = "completed".to_string();
+            if process.status == "running"
+                && !process.long_running
+                && process.polls >= process.polls_before_terminal
+            {
+                process.status.clone_from(&process.terminal_status);
             }
             process.polls += 1;
             ("200 OK", process_json(name, process))
@@ -226,6 +316,12 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
                 .trim_start_matches("/process/")
                 .trim_end_matches("/kill");
             let mut guard = state.lock().unwrap();
+            if guard.fail_named_process_kill && !name.starts_with("roder-cleanup-") {
+                return (
+                    "503 Service Unavailable",
+                    json_error("named process kill unavailable"),
+                );
+            }
             let Some(process) = guard.processes.get_mut(name) else {
                 return ("404 Not Found", json_error("process not found"));
             };
@@ -291,10 +387,10 @@ fn json_error(message: &str) -> String {
 }
 
 fn process_json(name: &str, process: &FakeProcess) -> String {
-    let exit_code = if process.status == "completed" {
-        serde_json::json!(0)
-    } else {
-        serde_json::Value::Null
+    let exit_code = match process.status.as_str() {
+        "completed" => serde_json::json!(0),
+        "failed" => serde_json::json!(1),
+        _ => serde_json::Value::Null,
     };
     serde_json::json!({
         "command": process.command,
