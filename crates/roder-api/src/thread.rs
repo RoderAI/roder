@@ -410,6 +410,19 @@ pub trait ThreadStore: Send + Sync {
             .and_then(|snapshot| snapshot.metadata))
     }
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
+    /// Loads extension state without requiring callers to project a full thread snapshot.
+    ///
+    /// Stores with dedicated extension-state backing should override this method. The default
+    /// preserves compatibility for stores that only expose extension state through `load_thread`.
+    async fn load_extension_states(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        Ok(self
+            .load_thread(thread_id)
+            .await?
+            .map_or_else(Vec::new, |snapshot| snapshot.extension_states))
+    }
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
         let _ = thread_id;
         anyhow::bail!("thread store {} does not support archive", self.id())

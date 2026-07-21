@@ -498,6 +498,7 @@ pub async fn run_mock_lifecycle_test(spec: HostedRunnerSpec) {
             args: vec!["hi".to_string()],
             cwd: None,
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await
         .unwrap();

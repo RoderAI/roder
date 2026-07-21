@@ -180,6 +180,7 @@ where
                     model: None,
                     reasoning: None,
                     developer_context: None,
+                    mcp_auth_token: None,
                     policy_mode: None,
                     task_ledger_required: false,
                 })

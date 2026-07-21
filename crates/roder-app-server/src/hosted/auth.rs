@@ -1,7 +1,7 @@
 //! Hosted credential validation.
 //!
-//! Two credential families ship now, both validated before any JSON-RPC
-//! dispatch:
+//! Two built-in credential families ship now, both validated before any
+//! JSON-RPC dispatch:
 //!
 //! - **Static test keys** (`rk_test_*`): fixture credentials for tests and
 //!   local hosted-mode development; mapped explicitly to a principal.
@@ -9,12 +9,13 @@
 //!   SHA-256 hash of the secret is stored; records carry expiry and a
 //!   revocation flag.
 //!
-//! External-IdP JWT/JWKS validation is a deliberate follow-up: it needs a
-//! JWT dependency decision and an IdP to test against, and the gateway
-//! seam (`HostedAuthenticator::authenticate`) is where it slots in.
+//! Deployments can also register external bearer verifiers for credentials
+//! resolved by their own identity provider. External verifiers return a fully
+//! resolved request context, which allows tenant identity to be created
+//! dynamically rather than being limited to the static tenant registry.
 
 use std::collections::BTreeMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use roder_api::identity::{
     HostedRequestContext, HostedRole, HostedScope, PrincipalContext, TenantContext, TenantId,
@@ -68,10 +69,25 @@ pub struct ServiceAccountKey {
     pub token: String,
 }
 
+/// Resolves deployment-specific bearer credentials for hosted connections.
+///
+/// Implementations return `Ok(None)` when the credential does not belong to
+/// them. A recognized credential returns a fully resolved request context;
+/// built-in tenant registration is intentionally not required for that path.
+pub trait ExternalBearerVerifier: Send + Sync {
+    /// Verifies one bearer credential at the supplied authentication time.
+    fn verify_bearer(
+        &self,
+        token: &str,
+        now: OffsetDateTime,
+    ) -> Result<Option<HostedRequestContext>, HostedAuthError>;
+}
+
 #[derive(Default)]
 pub struct HostedAuthenticator {
     static_keys: RwLock<BTreeMap<String, PrincipalSeed>>,
     service_accounts: RwLock<BTreeMap<String, ServiceAccountRecord>>,
+    external_verifiers: RwLock<Vec<Arc<dyn ExternalBearerVerifier>>>,
 }
 
 fn sha256_hex(input: &str) -> String {
@@ -82,6 +98,14 @@ fn sha256_hex(input: &str) -> String {
 }
 
 impl HostedAuthenticator {
+    /// Registers an external bearer verifier.
+    ///
+    /// Verifiers run in registration order after the built-in credential
+    /// families decline the token. The first verifier to recognize it wins.
+    pub fn register_external_bearer_verifier(&self, verifier: Arc<dyn ExternalBearerVerifier>) {
+        self.external_verifiers.write().unwrap().push(verifier);
+    }
+
     /// Registers a static test key (must start with `rk_test_`).
     pub fn register_static_key(&self, token: &str, seed: PrincipalSeed) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -155,6 +179,12 @@ impl HostedAuthenticator {
             }
             (record.seed.clone(), format!("sa:{key_id}"))
         } else {
+            let verifiers = self.external_verifiers.read().unwrap().clone();
+            for verifier in verifiers {
+                if let Some(context) = verifier.verify_bearer(token, now)? {
+                    return Ok(context);
+                }
+            }
             return Err(HostedAuthError::Invalid);
         };
 

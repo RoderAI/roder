@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-sdk-rust"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["Pandelis Zembashis <p@ndel.is>"]
 description = "Async Rust SDK for the Claude Code CLI: streaming agent turns, tool use, and sessions."
@@ -34,3 +34,5 @@ otel = ["dep:opentelemetry"]
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[workspace]

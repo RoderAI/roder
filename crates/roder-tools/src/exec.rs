@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use roder_api::remote_runner::{RemoteRunnerSession, RunnerCommandRequest};
 use roder_api::tools::{
     ToolCall, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec,
 };
@@ -18,6 +19,7 @@ use crate::backend::WorkspaceBackendHandle;
 use crate::command_shell::{command_args_for_shell, shell_for_context};
 use crate::exec_output::{format_exec_output, trim_output_buffer_to_max_bytes, truncate_output};
 use crate::files::{parse, require_nonempty, result};
+use crate::remote_cancel::RemoteCancelOnDrop;
 use crate::workspace::Workspace;
 
 const DEFAULT_YIELD_MS: u64 = 1000;
@@ -150,9 +152,7 @@ impl ToolExecutor for ExecCommandTool {
     ) -> anyhow::Result<ToolResult> {
         ctx.require_workspace()?;
         ctx.require_process_runner()?;
-        // No interactive PTY/stdin transport exists over a remote runner session.
-        let workspace =
-            Workspace::local_from_context_or_fallback(&ctx, &self.workspace, "exec_command")?;
+        let workspace = Workspace::from_context_or_fallback(&ctx, &self.workspace)?;
         let args = parse::<ExecCommandArgs>(&call)?;
         let command = args.cmd.trim().to_string();
         require_nonempty(&command, "cmd")?;
@@ -163,11 +163,51 @@ impl ToolExecutor for ExecCommandTool {
         let shell = args
             .shell
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| shell_for_context(&ctx, &self.command_shell));
+            .unwrap_or_else(|| {
+                if ctx.handles.remote_workspace.is_some() {
+                    "sh".to_string()
+                } else {
+                    shell_for_context(&ctx, &self.command_shell)
+                }
+            });
         let login = args.login.unwrap_or(true);
         let tty = args.tty.unwrap_or(false);
         let timeout_ms = effective_timeout_ms(args.timeout_ms, ctx.deadline_remaining_seconds);
-        let cwd = workspace.display(&cwd_path);
+        let cwd = if workspace.is_remote() {
+            cwd_path.display().to_string()
+        } else {
+            workspace.display(&cwd_path)
+        };
+
+        if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
+            anyhow::ensure!(
+                !tty,
+                "exec_command tty sessions are not supported on a remote runner workspace; use a non-interactive command"
+            );
+            let snapshot = run_remote_exec(
+                remote.session.clone(),
+                RemoteExecOptions {
+                    command_id: call.id.clone(),
+                    command,
+                    cwd_path,
+                    cwd,
+                    shell,
+                    login,
+                    timeout_ms,
+                    max_output_tokens: args.max_output_tokens,
+                },
+            )
+            .await;
+            if let Some(backend) = self.backend.as_ref() {
+                backend.note_external_change();
+            }
+            return Ok(result(
+                call,
+                snapshot.text,
+                snapshot.data,
+                snapshot.is_error,
+            ));
+        }
         let (session_id, session) = spawn_exec_session(
             &self.manager,
             SpawnOptions {
@@ -244,6 +284,10 @@ impl ToolExecutor for WriteStdinTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         ctx.require_process_runner()?;
+        anyhow::ensure!(
+            ctx.handles.remote_workspace.is_none(),
+            "write_stdin is not supported on a remote runner workspace; remote exec_command calls are non-interactive"
+        );
         let args = parse::<WriteStdinArgs>(&call)?;
         let Some(session) = self
             .manager
@@ -337,6 +381,10 @@ impl ToolExecutor for UnifiedExecTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         ctx.require_process_runner()?;
+        anyhow::ensure!(
+            ctx.handles.remote_workspace.is_none(),
+            "unified_exec interactive sessions are not supported on a remote runner workspace; use exec_command for a one-shot command"
+        );
         let args = parse::<UnifiedExecArgs>(&call)?;
         require_nonempty(&args.input, "input")?;
         let session_id = match parse_session_id(args.session_id.as_ref()) {
@@ -450,6 +498,130 @@ struct SpawnOptions {
     login: bool,
     tty: bool,
     timeout_ms: Option<u64>,
+}
+
+struct RemoteExecOptions {
+    command_id: String,
+    command: String,
+    cwd_path: PathBuf,
+    cwd: String,
+    shell: String,
+    login: bool,
+    timeout_ms: Option<u64>,
+    max_output_tokens: Option<usize>,
+}
+
+async fn run_remote_exec(
+    session: Arc<dyn RemoteRunnerSession>,
+    options: RemoteExecOptions,
+) -> ExecSnapshot {
+    let started = Instant::now();
+    let mut cancel_on_drop = RemoteCancelOnDrop::new(session.clone(), options.command_id.clone());
+    let request = RunnerCommandRequest {
+        command_id: options.command_id.clone(),
+        program: options.shell.clone(),
+        args: command_args_for_shell(&options.shell, &options.command, options.login),
+        cwd: Some(options.cwd_path.clone()),
+        env: Vec::new(),
+        timeout_ms: options.timeout_ms,
+    };
+    let output = match options.timeout_ms {
+        Some(timeout_ms) => {
+            match tokio::time::timeout(
+                Duration::from_millis(timeout_ms),
+                session.run_command(request),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    return remote_exec_snapshot(
+                        options,
+                        started,
+                        -1,
+                        format!("command timed out after {timeout_ms} milliseconds"),
+                        true,
+                    );
+                }
+            }
+        }
+        None => session.run_command(request).await,
+    };
+    // The provider future completed and therefore owns any cleanup implied by
+    // its result, including an execution error. Keep the guard armed only when
+    // the future itself is dropped by a timeout or turn interruption.
+    cancel_on_drop.disarm();
+    match output {
+        Ok(output) => remote_exec_snapshot(
+            options,
+            started,
+            output.exit_code.unwrap_or(-1),
+            aggregate_remote_output(&output.stdout, &output.stderr),
+            false,
+        ),
+        Err(err) => remote_exec_snapshot(
+            options,
+            started,
+            -1,
+            format!("execution error: {err:#}"),
+            false,
+        ),
+    }
+}
+
+fn remote_exec_snapshot(
+    options: RemoteExecOptions,
+    started: Instant,
+    exit_code: i32,
+    output: String,
+    timed_out: bool,
+) -> ExecSnapshot {
+    let status = if timed_out {
+        "timed_out"
+    } else if exit_code == 0 {
+        "completed"
+    } else {
+        "failed"
+    };
+    let output = truncate_output(
+        &output,
+        options.max_output_tokens,
+        DEFAULT_MAX_OUTPUT_TOKENS,
+    );
+    let duration_ms = started.elapsed().as_millis() as u64;
+    ExecSnapshot {
+        text: format_exec_output(Some(exit_code), status, duration_ms, None, &output),
+        data: json!({
+            "command": options.command,
+            "cwd": options.cwd,
+            "shell": options.shell,
+            "session_id": serde_json::Value::Null,
+            "aggregated_output": output,
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
+            "effective_timeout_ms": options.timeout_ms,
+            "status": status,
+            "timed_out": timed_out,
+            "tty": false,
+        }),
+        is_error: status != "completed",
+    }
+}
+
+fn aggregate_remote_output(stdout: &str, stderr: &str) -> String {
+    let mut output = stdout.to_string();
+    if !stderr.is_empty() {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str(stderr);
+    }
+    let output = output.trim_end();
+    if output.is_empty() {
+        "(no output)".to_string()
+    } else {
+        output.to_string()
+    }
 }
 
 /// Spawns a command as a new tracked session and registers it with `manager`.
@@ -978,7 +1150,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exec_command_fails_clearly_on_a_remote_runner_workspace() {
+    async fn exec_command_routes_pwd_and_ls_to_remote_runner_workspace() {
         let root = temp_workspace("roder-exec-remote");
         std::fs::create_dir_all(&root).unwrap();
         let tool = ExecCommandTool {
@@ -998,19 +1170,287 @@ mod tests {
             },
         ));
 
+        let result = tool
+            .execute(
+                ctx,
+                call("exec_command", json!({ "cmd": "pwd; ls", "login": true })),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert_eq!(result.data["status"], "completed");
+        assert_eq!(result.data["cwd"], "/sandbox/workspace");
+        assert_eq!(result.data["session_id"], serde_json::Value::Null);
+        let command = state.commands.lock().unwrap().first().cloned().unwrap();
+        assert_eq!(command.program, "sh");
+        assert_eq!(command.args, vec!["-lc", "pwd; ls"]);
+        assert_eq!(
+            command.cwd.as_deref(),
+            Some(std::path::Path::new("/sandbox/workspace"))
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn exec_command_remote_failure_never_falls_back_to_local_process() {
+        let root = temp_workspace("roder-exec-remote-failure");
+        std::fs::create_dir_all(&root).unwrap();
+        let marker = root.join("must-not-exist");
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager: Arc::new(ExecSessionManager::default()),
+            command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        *state.command_error.lock().unwrap() = Some("runner transport failed".to_string());
+        let ctx = remote_context(&root, state.clone());
+
+        let result = tool
+            .execute(
+                ctx,
+                call(
+                    "exec_command",
+                    json!({ "cmd": format!("touch {}", marker.display()) }),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert_eq!(result.data["status"], "failed");
+        assert!(result.text.contains("runner transport failed"));
+        assert!(!marker.exists());
+        assert_eq!(state.commands.lock().unwrap().len(), 1);
+        assert!(state.cancelled_commands.lock().unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn exec_command_rejects_remote_tty_without_running_command() {
+        let root = temp_workspace("roder-exec-remote-tty");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager: Arc::new(ExecSessionManager::default()),
+            command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+
         let error = tool
-            .execute(ctx, call("exec_command", json!({ "cmd": "echo hi" })))
+            .execute(
+                remote_context(&root, state.clone()),
+                call("exec_command", json!({ "cmd": "bash", "tty": true })),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("tty sessions are not supported"));
+        assert!(state.commands.lock().unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn write_stdin_rejects_remote_interactive_continuation() {
+        let root = temp_workspace("roder-exec-remote-stdin");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = WriteStdinTool {
+            manager: Arc::new(ExecSessionManager::default()),
+            backend: None,
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+
+        let error = tool
+            .execute(
+                remote_context(&root, state.clone()),
+                call("write_stdin", json!({ "session_id": 1, "chars": "hi" })),
+            )
             .await
             .unwrap_err();
 
         assert!(
             error
                 .to_string()
-                .contains("exec_command is not supported on a remote runner workspace"),
-            "unexpected error: {error}"
+                .contains("remote exec_command calls are non-interactive")
         );
-        // Nothing may run locally or remotely.
         assert!(state.commands.lock().unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn exec_command_remote_timeout_is_bounded_and_cancellable() {
+        let root = temp_workspace("roder-exec-remote-timeout");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager: Arc::new(ExecSessionManager::default()),
+            command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        state
+            .command_delay_ms
+            .store(50, std::sync::atomic::Ordering::SeqCst);
+
+        let result = tool
+            .execute(
+                remote_context(&root, state.clone()),
+                call(
+                    "exec_command",
+                    json!({ "cmd": "sleep 10", "timeout_ms": 1 }),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert_eq!(result.data["status"], "timed_out");
+        assert_eq!(result.data["effective_timeout_ms"], 1);
+        assert_eq!(result.data["timed_out"], true);
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while state.cancelled_commands.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed-out command should request remote cancellation");
+        assert_eq!(
+            state.cancelled_commands.lock().unwrap().as_slice(),
+            ["call-exec_command"]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn exec_command_timeout_does_not_wait_for_stalled_remote_cancellation() {
+        let root = temp_workspace("roder-exec-remote-stalled-cancel");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager: Arc::new(ExecSessionManager::default()),
+            command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        state
+            .command_delay_ms
+            .store(50, std::sync::atomic::Ordering::SeqCst);
+        state
+            .cancel_never_resolves
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            tool.execute(
+                remote_context(&root, state.clone()),
+                call(
+                    "exec_command",
+                    json!({ "cmd": "sleep 10", "timeout_ms": 1 }),
+                ),
+            ),
+        )
+        .await
+        .expect("stalled cancellation must not extend the command timeout")
+        .unwrap();
+
+        assert!(result.is_error);
+        assert_eq!(result.data["status"], "timed_out");
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while state.cancelled_commands.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("remote cancellation should still be attempted");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn dropping_remote_exec_requests_cancellation() {
+        let root = temp_workspace("roder-exec-remote-drop-cancel");
+        std::fs::create_dir_all(&root).unwrap();
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        state
+            .command_delay_ms
+            .store(5_000, std::sync::atomic::Ordering::SeqCst);
+        let session: Arc<dyn RemoteRunnerSession> =
+            Arc::new(crate::remote_test_support::RecordingRunnerSession {
+                state: state.clone(),
+            });
+
+        let task = tokio::spawn(run_remote_exec(
+            session,
+            RemoteExecOptions {
+                command_id: "drop-exec-command".to_string(),
+                command: "sleep 10".to_string(),
+                cwd_path: root.clone(),
+                cwd: root.display().to_string(),
+                shell: "sh".to_string(),
+                login: false,
+                timeout_ms: None,
+                max_output_tokens: None,
+            },
+        ));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while state.commands.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("remote command should start before interruption");
+
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while state.cancelled_commands.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the remote command should request cancellation");
+        assert_eq!(
+            state.cancelled_commands.lock().unwrap().as_slice(),
+            ["drop-exec-command"]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn exec_command_remote_output_uses_exec_truncation_shape() {
+        let root = temp_workspace("roder-exec-remote-truncation");
+        std::fs::create_dir_all(&root).unwrap();
+        let tool = ExecCommandTool {
+            workspace: Workspace::new(root.clone()).unwrap(),
+            manager: Arc::new(ExecSessionManager::default()),
+            command_shell: roder_api::command_shell::default_command_shell(),
+            backend: None,
+        };
+        let state = Arc::new(crate::remote_test_support::RecordingRunnerState::default());
+        *state.command_stdout.lock().unwrap() = Some("x".repeat(128));
+
+        let result = tool
+            .execute(
+                remote_context(&root, state),
+                call(
+                    "exec_command",
+                    json!({ "cmd": "big-output", "max_output_tokens": 2 }),
+                ),
+            )
+            .await
+            .unwrap();
+
+        let output = result.data["aggregated_output"].as_str().unwrap();
+        assert!(output.starts_with("[120 bytes omitted]\n"));
+        assert!(output.ends_with("xxxxxxxx"));
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1034,6 +1474,19 @@ mod tests {
         )
         .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(workspace)))
         .with_process_runner(Arc::new(LocalProcessRunnerHandle))
+    }
+
+    fn remote_context(
+        workspace: &std::path::Path,
+        state: Arc<crate::remote_test_support::RecordingRunnerState>,
+    ) -> ToolExecutionContext {
+        context(workspace).with_remote_workspace(Arc::new(
+            roder_api::remote_runner::RemoteWorkspace {
+                session: Arc::new(crate::remote_test_support::RecordingRunnerSession { state }),
+                root: "/sandbox/workspace".into(),
+                read_roots: Vec::new(),
+            },
+        ))
     }
 
     fn temp_workspace(prefix: &str) -> std::path::PathBuf {

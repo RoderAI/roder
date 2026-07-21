@@ -308,7 +308,7 @@ impl ThreadStore for JsonlThreadStore {
         };
         let turns = project_turns_from_events(thread_id, &events);
         let item_events = self.load_item_events(thread_id).await?;
-        let extension_states = self.load_extension_states(thread_id).await?;
+        let extension_states = self.read_extension_states(thread_id).await?;
         Ok(Some(ThreadSnapshot {
             metadata,
             events,
@@ -330,6 +330,13 @@ impl ThreadStore for JsonlThreadStore {
             return Ok(None);
         }
         Ok(Some(self.load_or_infer_metadata(&dir, thread_id).await?))
+    }
+
+    async fn load_extension_states(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        self.read_extension_states(thread_id).await
     }
 
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
@@ -427,7 +434,7 @@ impl ThreadStore for JsonlThreadStore {
 }
 
 impl JsonlThreadStore {
-    async fn load_extension_states(
+    async fn read_extension_states(
         &self,
         thread_id: &ThreadId,
     ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
@@ -1558,6 +1565,40 @@ mod tests {
                 .is_some()
         );
 
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn extension_state_load_does_not_require_thread_snapshot_metadata() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-direct-extension-state-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-state-only".to_string();
+        store
+            .append_extension_state(
+                &thread_id,
+                &roder_api::extension_state::ExtensionStateRecord {
+                    extension_id: "demo".to_string(),
+                    key: "prefs".to_string(),
+                    scope: roder_api::extension_state::ExtensionStoreScope::Thread {
+                        thread_id: thread_id.clone(),
+                    },
+                    schema_version: 2,
+                    value: serde_json::json!({ "theme": "dark" }),
+                },
+            )
+            .await
+            .unwrap();
+
+        let states = ThreadStore::load_extension_states(&store, &thread_id)
+            .await
+            .unwrap();
+
+        assert_eq!(states.len(), 1);
         let _ = fs::remove_dir_all(base_path).await;
     }
 

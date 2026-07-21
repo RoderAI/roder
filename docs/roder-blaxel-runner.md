@@ -83,6 +83,21 @@ Memory and filesystem state survive standby automatically; there is no separate
 snapshot artifact, so `snapshots` is reported as unsupported. For durability
 beyond standby memory, attach a Blaxel [volume](https://docs.blaxel.ai/Volumes/Overview).
 
+### Command lifetime and cancellation
+
+Roder starts commands as uniquely named, detached Blaxel processes and polls
+their process record until it reaches a terminal state. This avoids Blaxel's
+60-second synchronous wait ceiling, so repository clones and builds can run for
+their real tool deadline.
+
+Every process also receives a finite server-side `keepAlive` lease. The lease
+matches the caller's command/deadline timeout when one is present and defaults
+to 10 minutes for internal runner operations without one. Tool timeout, turn
+interruption, or a dropped transport requests Blaxel's force-kill endpoint;
+Blaxel terminates the shell process group rather than leaving child processes
+mutating the checkout. The server lease remains the backstop if Roder cannot
+deliver that cancellation request.
+
 ## Driving the lifecycle
 
 App-server JSON-RPC methods (thread-scoped; params use `thread_id`):
@@ -112,8 +127,9 @@ timeout.
 ## Live smoke
 
 A gated end-to-end smoke (`RODER_LIVE_BLAXEL_RUNNER=1`, with `BLAXEL_API_KEY`
-and `BL_WORKSPACE` set) exercises create → exec → pause → resume → detach →
-rejoin → delete:
+and `BL_WORKSPACE` set) exercises create → exec → process-group cancellation
+(including proof that a delayed file mutation never lands) → pause → resume →
+detach → rejoin → delete:
 
 ```sh
 RODER_LIVE_BLAXEL_RUNNER=1 cargo test -p roder-ext-runner-blaxel --test live -- --ignored

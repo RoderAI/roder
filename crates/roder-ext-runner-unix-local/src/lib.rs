@@ -330,6 +330,7 @@ mod tests {
                 args: vec!["-lc".to_string(), "pwd && ls src".to_string()],
                 cwd: None,
                 env: Vec::new(),
+                timeout_ms: None,
             })
             .await
             .unwrap();

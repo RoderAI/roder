@@ -184,6 +184,25 @@ impl PostgresSessionStore {
         })
         .transpose()
     }
+
+    async fn load_extension_state_records(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        let state_rows = sqlx_core::query::query::<Postgres>("SELECT record FROM roder_session_extension_state WHERE tenant_id = $1 AND thread_id = $2 ORDER BY seq ASC")
+            .bind(&self.tenant_id).bind(thread_id).fetch_all(&self.pool).await?;
+        let raw_extension_states = state_rows
+            .into_iter()
+            .map(|row| {
+                let json: sqlx_core::types::Json<serde_json::Value> = row.try_get("record")?;
+                Ok(json.0)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(decode_extension_state_records(
+            thread_id,
+            raw_extension_states,
+        ))
+    }
 }
 
 #[async_trait::async_trait]
@@ -278,16 +297,7 @@ impl ThreadStore for PostgresSessionStore {
                 Ok(json.0)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let state_rows = sqlx_core::query::query::<Postgres>("SELECT record FROM roder_session_extension_state WHERE tenant_id = $1 AND thread_id = $2 ORDER BY seq ASC")
-            .bind(&self.tenant_id).bind(thread_id).fetch_all(&self.pool).await?;
-        let raw_extension_states = state_rows
-            .into_iter()
-            .map(|row| {
-                let json: sqlx_core::types::Json<serde_json::Value> = row.try_get("record")?;
-                Ok(json.0)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let extension_states = decode_extension_state_records(thread_id, raw_extension_states);
+        let extension_states = self.load_extension_state_records(thread_id).await?;
         Ok(Some(ThreadSnapshot {
             metadata: Some(metadata),
             events,
@@ -302,6 +312,13 @@ impl ThreadStore for PostgresSessionStore {
         thread_id: &ThreadId,
     ) -> anyhow::Result<Option<ThreadMetadata>> {
         self.load_metadata(thread_id).await
+    }
+
+    async fn load_extension_states(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        self.load_extension_state_records(thread_id).await
     }
 
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {

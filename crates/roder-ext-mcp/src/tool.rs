@@ -7,6 +7,7 @@ use roder_api::tools::{
 };
 
 use crate::client::{McpHttpClient, McpToolDescriptor};
+use crate::config::McpToolCallAuthMode;
 
 pub const MCP_TOOL_PROVIDER_ID: &str = "mcp-tools";
 
@@ -84,12 +85,17 @@ impl ToolExecutor for McpRemoteTool {
             serde_json::json!({})
         };
 
-        // Scope this call to the thread's MCP identity when the client forwarded
-        // a per-thread token at `thread/start`; otherwise use the configured
-        // process-wide credential.
-        let client = match roder_api::mcp_auth::thread_token(&ctx.thread_id) {
-            Some(token) => self.client.with_auth_token_override(token),
-            None => self.client.clone(),
+        let client = match execution_client(&self.client, &ctx.thread_id) {
+            Ok(client) => client,
+            Err(error) => {
+                return Ok(ToolResult {
+                    id: call.id,
+                    name: call.name,
+                    text: error.to_string(),
+                    data: serde_json::Value::Null,
+                    is_error: true,
+                });
+            }
         };
 
         match client.call_tool(&self.descriptor.name, arguments).await {
@@ -111,6 +117,21 @@ impl ToolExecutor for McpRemoteTool {
     }
 }
 
+fn execution_client(client: &McpHttpClient, thread_id: &str) -> anyhow::Result<McpHttpClient> {
+    match roder_api::mcp_auth::thread_token(thread_id) {
+        Some(token) => Ok(client.with_auth_token_override(token)),
+        None if client.config().tool_call_auth_mode
+            == McpToolCallAuthMode::ThreadScopedRequired =>
+        {
+            anyhow::bail!(
+                "MCP tool call blocked: server {} requires a thread-scoped authentication token",
+                client.config().name
+            )
+        }
+        None => Ok(client.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +142,18 @@ mod tests {
             mcp_tool_name("vex", "list_hosted_apps"),
             "mcp__vex__list_hosted_apps"
         );
+    }
+
+    #[test]
+    fn execution_client_rejects_missing_required_thread_token() {
+        let client = McpHttpClient::new(
+            crate::config::McpServerConfig::new("vex", "http://127.0.0.1:1/mcp")
+                .with_tool_call_auth_mode(McpToolCallAuthMode::ThreadScopedRequired),
+        )
+        .unwrap();
+
+        let error = execution_client(&client, "thread-without-token").unwrap_err();
+
+        assert!(error.to_string().contains("requires a thread-scoped"));
     }
 }

@@ -14,6 +14,7 @@ Roder-specific patch, initially 2026-07-15 and extended 2026-07-17:
 - add regressions proving receiver drop closes the transport and terminates then
   reaps an offline fake CLI child process.
 
-The patch is intentionally source-vendored so Roder's Cargo graph does not
-point to a developer-local checkout. Upstream changes should be contributed
-back and this override removed when a released version contains the fix.
+The patch was published as `claude-code-sdk-rust` 0.4.1 on 2026-07-21. Roder
+now consumes that registry release, so published downstream crates receive the
+same supervised cleanup API without a workspace-local Cargo override. Keep this
+copy as release provenance until the upstream repository history is reconciled.
