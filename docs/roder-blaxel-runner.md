@@ -93,10 +93,16 @@ their real tool deadline.
 Every process also receives a finite server-side `keepAlive` lease. The lease
 matches the caller's command/deadline timeout when one is present and defaults
 to 10 minutes for internal runner operations without one. Tool timeout, turn
-interruption, or a dropped transport requests Blaxel's force-kill endpoint;
-Blaxel terminates the shell process group rather than leaving child processes
-mutating the checkout. The server lease remains the backstop if Roder cannot
-deliver that cancellation request.
+interruption, or a dropped transport creates a cancellation tombstone and
+requests Blaxel's named-process kill endpoint. Each user command also receives
+a unique `RODER_BLAXEL_COMMAND_TAG` value (overriding a caller-supplied value),
+which its normal descendants inherit. A separate, untagged `/bin/sh` cleanup
+process scans exact entries in `/proc/*/environ`, sends TERM and then KILL to
+matching processes, and requires two tag-free scans before it succeeds. Roder
+reports cancellation only after that cleanup exits successfully; failures keep
+the tombstone and local process mapping available for retry. The server lease
+remains a backstop for the named supervisor, but is not treated as proof that a
+detached descendant stopped.
 
 ## Driving the lifecycle
 
@@ -127,9 +133,9 @@ timeout.
 ## Live smoke
 
 A gated end-to-end smoke (`RODER_LIVE_BLAXEL_RUNNER=1`, with `BLAXEL_API_KEY`
-and `BL_WORKSPACE` set) exercises create → exec → process-group cancellation
-(including proof that a delayed file mutation never lands) → pause → resume →
-detach → rejoin → delete:
+and `BL_WORKSPACE` set) exercises create → exec → tagged-descendant
+cancellation (including a ready, `setsid`, signal-ignoring child whose delayed
+file mutation must never land) → pause → resume → detach → rejoin → delete:
 
 ```sh
 RODER_LIVE_BLAXEL_RUNNER=1 cargo test -p roder-ext-runner-blaxel --test live -- --ignored

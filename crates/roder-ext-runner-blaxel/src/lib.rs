@@ -11,17 +11,18 @@ use roder_api::remote_runner::{
 };
 use semver::Version;
 
+mod cancellation;
 mod client;
 pub mod config;
 mod session;
 
+use cancellation::CANCELLATION_DIR;
 pub use client::{BlaxelClient, ProcessResponse, Sandbox, wait_until_ready};
 pub use config::{
     BASE_URL_ENV, BlaxelConfig, CleanupMode, DEFAULT_BASE_URL, EXTENSION_ID, LIVE_ENV, PROVIDER_ID,
     Redacted, TOKEN_ENV, WORKSPACE_ENV,
 };
 pub use session::BlaxelRunnerSession;
-use session::CANCELLATION_DIR;
 
 const READINESS_ATTEMPTS: u32 = 20;
 
@@ -292,10 +293,16 @@ async fn run_live_smoke() -> anyhow::Result<()> {
     println!("live exec stdout: {}", out.stdout.trim());
     anyhow::ensure!(out.stdout.trim() == "blaxel-live", "unexpected exec stdout");
 
-    // Cancellation force-kills the detached process group: a delayed write
-    // must never land after the caller interrupts the command.
-    let cancelled_marker = format!("cancelled-marker-{}.txt", uuid::Uuid::new_v4().simple());
-    let marker_command = format!("sleep 2; printf ghost > {cancelled_marker}");
+    // The child creates a new session and ignores cooperative signals. Blaxel's
+    // named-process DELETE kills its supervisor but must not leave this child
+    // alive long enough to perform the delayed write.
+    let marker_id = uuid::Uuid::new_v4().simple().to_string();
+    let ready_marker = format!("cancel-ready-{marker_id}.txt");
+    let cancelled_marker = format!("cancelled-marker-{marker_id}.txt");
+    let marker_command = format!(
+        "setsid sh -c 'trap \"\" TERM INT HUP; printf \"%s\" \"$$\" > {ready_marker}; sleep 5; \
+         printf ghost > {cancelled_marker}' >/dev/null 2>&1 & wait"
+    );
     let cancellation_session = session.clone();
     let cancelled = tokio::spawn(async move {
         cancellation_session
@@ -309,6 +316,28 @@ async fn run_live_smoke() -> anyhow::Result<()> {
             })
             .await
     });
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Ok(ready) = session
+                .read_file(RunnerFileReadRequest {
+                    path: ready_marker.clone().into(),
+                })
+                .await
+            {
+                break ready;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("detached cancellation child did not become ready"))?;
+    let child_pid = String::from_utf8(ready.contents)
+        .map_err(|error| anyhow::anyhow!("detached child wrote an invalid pid: {error}"))?;
+    anyhow::ensure!(
+        !child_pid.is_empty() && child_pid.bytes().all(|byte| byte.is_ascii_digit()),
+        "detached child wrote an invalid pid: {child_pid:?}"
+    );
+    let leak_deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(5_500);
     let mut killed = false;
     for _ in 0..20 {
         if session.cancel_command(&"smoke-cancel".to_string()).await? {
@@ -323,7 +352,21 @@ async fn run_live_smoke() -> anyhow::Result<()> {
         cancelled_output.exit_code != Some(0),
         "cancelled command unexpectedly completed successfully"
     );
-    tokio::time::sleep(std::time::Duration::from_millis(2_250)).await;
+    let pid_probe = session
+        .run_command(RunnerCommandRequest {
+            command_id: "smoke-cancel-pid-probe".to_string(),
+            program: "sh".to_string(),
+            args: vec!["-c".to_string(), format!("kill -0 {child_pid}")],
+            cwd: None,
+            env: Vec::new(),
+            timeout_ms: Some(2_000),
+        })
+        .await?;
+    anyhow::ensure!(
+        pid_probe.exit_code.is_some_and(|exit_code| exit_code != 0),
+        "detached child pid {child_pid} still exists after cancellation"
+    );
+    tokio::time::sleep_until(leak_deadline).await;
     anyhow::ensure!(
         session
             .read_file(RunnerFileReadRequest {
@@ -333,7 +376,7 @@ async fn run_live_smoke() -> anyhow::Result<()> {
             .is_err(),
         "cancelled command mutated the workspace after interruption"
     );
-    println!("live cancellation: killed process group, delayed marker absent");
+    println!("live cancellation: tagged descendants reaped, delayed marker absent");
 
     // File write then read round-trips through the per-sandbox filesystem API.
     session
