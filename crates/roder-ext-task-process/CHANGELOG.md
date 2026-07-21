@@ -1,3 +1,18 @@
+## 0.1.3 (2026-07-21)
+
+### Fixes
+
+#### Bound and cancel detached remote commands
+
+Remote command requests can now carry a wall-clock process lease. Remote shell
+and exec tools request provider cancellation when they time out or are dropped
+by turn interruption instead of allowing detached work to continue.
+
+The Blaxel runner starts every command as a uniquely named process with a
+finite server-side keep-alive timeout, polls the process API for commands that
+run beyond the synchronous 60-second window, advertises cancellation, and
+force-kills the process group when Roder cancels the command.
+
 ## 0.1.2 (2026-07-21)
 
 ### Fixes
