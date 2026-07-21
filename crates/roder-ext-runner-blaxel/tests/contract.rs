@@ -146,7 +146,13 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
             program: "echo".to_string(),
             args: vec!["hello".to_string(), "world".to_string()],
             cwd: None,
-            env: vec![("RUST_LOG".to_string(), "info".to_string())],
+            env: vec![
+                ("RUST_LOG".to_string(), "info".to_string()),
+                (
+                    "RODER_BLAXEL_COMMAND_TAG".to_string(),
+                    "user-controlled".to_string(),
+                ),
+            ],
             timeout_ms: None,
         })
         .await
@@ -167,6 +173,11 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
         process_body["name"]
             .as_str()
             .is_some_and(|name| name.starts_with("roder-") && name.len() == 38)
+    );
+    assert_eq!(process_body["env"]["RUST_LOG"], "info");
+    assert_ne!(
+        process_body["env"]["RODER_BLAXEL_COMMAND_TAG"],
+        "user-controlled"
     );
 
     // Write then read a file round-trips through the per-sandbox filesystem API.

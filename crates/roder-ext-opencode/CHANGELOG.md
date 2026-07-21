@@ -1,3 +1,21 @@
+## Unreleased
+
+### Fixes
+
+#### Coalesce parallel tool calls for longer OpenCode/DeepSeek rollouts
+
+OpenCode chat-completions requests now coalesce consecutive parallel tool calls
+into a single assistant `tool_calls` message and immediately pair each id with a
+`role: tool` result (or a placeholder). This matches the OpenAI-compatible
+invariant required by DeepSeek-backed OpenCode gateways and prevents
+`400 invalid_request_error` failures on multi-step tool turns.
+
+#### Clearer OpenCode provider error messages
+
+Chat Completions failures now surface structured OpenCode error details such as
+`ModelError: Model is disabled` and `CreditsError: No payment method` instead of
+only the raw status/body blob.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes

@@ -11,7 +11,8 @@ by turn interruption instead of allowing detached work to continue.
 The Blaxel runner starts every command as a uniquely named process with a
 finite server-side keep-alive timeout, polls the process API for commands that
 run beyond the synchronous 60-second window, advertises cancellation, and
-force-kills the process group when Roder cancels the command.
+terminates the named process when Roder cancels the command. Tagged descendant
+cleanup added later closes the gap for children detached from that supervisor.
 
 ## 0.1.2 (2026-06-30)
 
