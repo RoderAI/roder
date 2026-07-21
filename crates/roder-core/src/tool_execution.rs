@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use roder_api::ToolSchemaPolicy;
 use roder_api::artifacts::{ContextArtifactKind, format_artifact_reference};
 use roder_api::events::*;
 use roder_api::policy_mode::{PolicyDecision, PolicyMode};
+use roder_api::remote_runner::RunnerWorkspaceExecutionLeaseRequest;
 use roder_api::subagents::SubagentExitReason;
 use roder_api::tools::ToolCall;
 use roder_api::tools::ToolResult;
@@ -21,6 +23,10 @@ use crate::tool_validation::{
     emit_tool_validation_recorded, validate_tool_call_arguments, validation_error_tool_result,
 };
 use roder_api::artifacts::CreateArtifactRequest;
+
+const RUNNER_WORKSPACE_LEASE_ACQUIRE_TIMEOUT_MS: u64 = 60_000;
+const RUNNER_WORKSPACE_LEASE_CLEANUP_MARGIN_MS: u64 = 60_000;
+const RUNNER_WORKSPACE_LEASE_RELEASE_TIMEOUT_MS: u64 = 60_000;
 
 impl Runtime {
     pub(crate) async fn route_tool_call(
@@ -456,6 +462,56 @@ impl Runtime {
                 return Ok(item);
             }
         }
+        // A single native tool can expand into multiple runner primitives (for
+        // example, edit reads and then writes). Keep those primitives atomic
+        // across threads sharing the same remote session. Providers may add a
+        // remote lease below when the same durable workspace is reachable from
+        // multiple runtimes or replicas.
+        let runner_tool_execution_lock = match ctx.handles.remote_workspace.as_ref() {
+            Some(remote) => Some(
+                self.runner_tool_execution_lock(remote.session.as_ref())
+                    .await,
+            ),
+            None => None,
+        };
+        let runner_tool_execution_guard = match runner_tool_execution_lock {
+            Some(lock) => Some(lock.lock_owned().await),
+            None => None,
+        };
+
+        // Lazy provisioning and the local shared-session queue can consume a
+        // material part of the turn. Use that remaining time to bound optional
+        // provider-authoritative acquisition and its server-side lease.
+        ctx.deadline_remaining_seconds = crate::runtime::deadline_remaining_seconds(deadline);
+        let mut runner_workspace_execution_lease = None;
+        let mut runner_workspace_execution_lease_error = None;
+        if let Some(remote) = ctx.handles.remote_workspace.as_ref() {
+            let request = runner_workspace_execution_lease_request(ctx.deadline_remaining_seconds);
+            let acquire_timeout = Duration::from_millis(request.acquire_timeout_ms.max(1));
+            match tokio::time::timeout(
+                acquire_timeout,
+                remote.session.acquire_workspace_execution_lease(request),
+            )
+            .await
+            {
+                Ok(Ok(lease)) => runner_workspace_execution_lease = lease,
+                Ok(Err(err)) => {
+                    runner_workspace_execution_lease_error = Some(format!(
+                        "remote workspace execution lease is unavailable: {err}"
+                    ));
+                }
+                Err(_) => {
+                    runner_workspace_execution_lease_error = Some(format!(
+                        "timed out after {}ms acquiring the remote workspace execution lease",
+                        acquire_timeout.as_millis()
+                    ));
+                }
+            }
+        }
+        // Acquiring a provider fence can itself wait behind another replica.
+        // Tool command timeouts must use what remains after that wait.
+        ctx.deadline_remaining_seconds = crate::runtime::deadline_remaining_seconds(deadline);
+
         let workspace_change_baseline =
             crate::workspace_changes::WorkspaceChangeBaseline::capture_for_tool(
                 &tool_call,
@@ -477,26 +533,64 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        let result = if crate::agent_control_tools::is_agent_control_tool(&tool_call.name) {
+        let mut result = if let Some(error) = runner_workspace_execution_lease_error {
+            tool_execution_error(&tool_call, "workspace_execution_lease_unavailable", error)
+        } else if crate::agent_control_tools::is_agent_control_tool(&tool_call.name) {
             self.execute_agent_control_tool(thread_id, turn_id, &call, tool_call.arguments.clone())
                 .await
         } else {
-            match executor.execute(ctx, tool_call.clone()).await {
-                Ok(result) => result,
-                Err(err) => ToolResult {
-                    id: tool_call.id.clone(),
-                    name: tool_call.name.clone(),
-                    text: err.to_string(),
-                    data: serde_json::json!({
-                        "error": {
-                            "kind": "tool_execution_failed",
-                            "message": err.to_string(),
+            let execution = executor.execute(ctx, tool_call.clone());
+            tokio::pin!(execution);
+            let execution_result = match runner_workspace_execution_lease.as_ref() {
+                Some(lease) => {
+                    tokio::select! {
+                        biased;
+                        lease_lost = lease.wait_lost() => {
+                            let message = match lease_lost {
+                                Ok(()) => "remote workspace execution lease ended unexpectedly".to_string(),
+                                Err(err) => format!("remote workspace execution lease was lost: {err}"),
+                            };
+                            Err(("workspace_execution_lease_lost", message))
                         }
-                    }),
-                    is_error: true,
-                },
+                        result = &mut execution => {
+                            result.map_err(|err| ("tool_execution_failed", err.to_string()))
+                        }
+                    }
+                }
+                None => execution
+                    .await
+                    .map_err(|err| ("tool_execution_failed", err.to_string())),
+            };
+            match execution_result {
+                Ok(result) => result,
+                Err((kind, message)) => tool_execution_error(&tool_call, kind, message),
             }
         };
+
+        if let Some(lease) = runner_workspace_execution_lease {
+            let release = tokio::time::timeout(
+                Duration::from_millis(RUNNER_WORKSPACE_LEASE_RELEASE_TIMEOUT_MS),
+                lease.release(),
+            )
+            .await;
+            let release_error = match release {
+                Ok(Ok(())) => None,
+                Ok(Err(err)) => Some(err.to_string()),
+                Err(_) => Some(format!(
+                    "timed out after {RUNNER_WORKSPACE_LEASE_RELEASE_TIMEOUT_MS}ms"
+                )),
+            };
+            if let Some(error) = release_error {
+                result = tool_execution_error(
+                    &tool_call,
+                    "workspace_execution_lease_release_failed",
+                    format!(
+                        "tool execution returned, but the remote workspace execution lease could not be released: {error}"
+                    ),
+                );
+            }
+        }
+        drop(runner_tool_execution_guard);
         let result = self
             .resolve_user_input_request(thread_id, turn_id, result)
             .await?;
@@ -1165,6 +1259,41 @@ fn native_tool_uses_remote_workspace(name: &str) -> bool {
             | "unified_exec"
             | "view_image"
     ) || name.starts_with("design_")
+}
+
+fn runner_workspace_execution_lease_request(
+    deadline_remaining_seconds: Option<u64>,
+) -> RunnerWorkspaceExecutionLeaseRequest {
+    let remaining_ms = deadline_remaining_seconds.map(|seconds| seconds.saturating_mul(1_000));
+    let acquire_timeout_ms = remaining_ms
+        .map(|remaining| remaining.min(RUNNER_WORKSPACE_LEASE_ACQUIRE_TIMEOUT_MS))
+        .unwrap_or(RUNNER_WORKSPACE_LEASE_ACQUIRE_TIMEOUT_MS)
+        .max(1);
+    let lease_timeout_ms = remaining_ms.map(|remaining| {
+        remaining
+            .saturating_add(RUNNER_WORKSPACE_LEASE_CLEANUP_MARGIN_MS)
+            .max(1)
+    });
+    RunnerWorkspaceExecutionLeaseRequest {
+        execution_id: uuid::Uuid::new_v4().to_string(),
+        acquire_timeout_ms,
+        lease_timeout_ms,
+    }
+}
+
+fn tool_execution_error(tool_call: &ToolCall, kind: &str, message: String) -> ToolResult {
+    ToolResult {
+        id: tool_call.id.clone(),
+        name: tool_call.name.clone(),
+        text: message.clone(),
+        data: serde_json::json!({
+            "error": {
+                "kind": kind,
+                "message": message,
+            }
+        }),
+        is_error: true,
+    }
 }
 
 fn is_subagent_task_tool(name: &str) -> bool {
