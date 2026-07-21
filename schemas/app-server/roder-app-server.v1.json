@@ -1620,6 +1620,19 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "runtime/drain",
+      "paramsType": "RuntimeDrainParams",
+      "resultType": "RuntimeDrainResult",
+      "stability": "stable",
+      "featureGroup": "runtime",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "turn/lifecycleUpdated",
+        "turn/completed"
+      ]
+    },
+    {
       "method": "search_index/clear",
       "paramsType": "SearchIndexClearParams",
       "resultType": "SearchIndexClearResult",
@@ -2157,19 +2170,6 @@
       "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
-    },
-    {
-      "method": "runtime/drain",
-      "paramsType": "RuntimeDrainParams",
-      "resultType": "RuntimeDrainResult",
-      "stability": "stable",
-      "featureGroup": "runtime",
-      "idempotency": "nonIdempotent",
-      "sideEffect": "localState",
-      "notifications": [
-        "turn/lifecycleUpdated",
-        "turn/completed"
-      ]
     },
     {
       "method": "tools/call",

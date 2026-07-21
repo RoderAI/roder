@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: breaking changes bump the minor version).
 
+## [0.4.1] - 2026-07-21
+
+### Added
+
+- `ClaudeAgentClient::spawn_stream_message_supervised` returns the event stream
+  together with a cleanup handle that callers can await after cancellation.
+- `ClaudeAgentClient::run_client_stream` exposes explicit ownership of the
+  spawned stream lifecycle for hosts that supervise provider processes.
+
+### Fixed
+
+- Dropping a spawned stream now stops the reader task, disconnects the
+  transport, kills the owned Claude CLI child, and waits for it to exit instead
+  of leaking the subprocess.
+
 ## [0.4.0] - 2026-06-22
 
 ### Added
@@ -98,6 +113,7 @@ Upstream parity pass against the Python `claude-agent-sdk` **v0.2.106**
   servers, and local/session-store helpers.
 
 [0.3.0]: https://github.com/PandelisZ/claude-agent-sdk-rust/releases/tag/v0.3.0
+[0.4.1]: https://crates.io/crates/claude-code-sdk-rust/0.4.1
 [0.2.0]: https://crates.io/crates/claude-code-sdk-rust/0.2.0
 [0.1.1]: https://crates.io/crates/claude-code-sdk-rust/0.1.1
 [0.1.0]: https://crates.io/crates/claude-code-sdk-rust/0.1.0

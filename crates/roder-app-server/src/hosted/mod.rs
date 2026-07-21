@@ -18,9 +18,12 @@ pub mod runtime_pool;
 pub mod tenant;
 
 pub use audit::{AuditLog, AuditRecord};
-pub use auth::{HostedAuthError, HostedAuthenticator, ServiceAccountKey};
+pub use auth::{ExternalBearerVerifier, HostedAuthError, HostedAuthenticator, ServiceAccountKey};
 pub use authorization::authorize_method;
-pub use gateway::{HostedGatewayController, HostedGatewayOptions, serve_hosted_gateway};
+pub use gateway::{
+    AllowAllHostedRequestPolicy, HostedGatewayController, HostedGatewayOptions,
+    HostedRequestPolicy, HostedRequestPolicyDecision, serve_hosted_gateway,
+};
 pub use hook_delivery::{
     HookDeliveryConfig, HookDeliveryService, HookFailureMode, SIGNATURE_HEADER,
 };

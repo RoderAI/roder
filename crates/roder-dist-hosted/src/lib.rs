@@ -10,9 +10,9 @@ use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantConte
 use roder_app_server::hosted::auth::PrincipalSeed;
 use roder_app_server::hosted::runtime_pool::TenantAppServerFactory;
 use roder_app_server::hosted::{
-    AuditLog, HookDeliveryService, HookStore, HostedAuthenticator, HostedGatewayController,
-    HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry,
-    serve_hosted_gateway,
+    AllowAllHostedRequestPolicy, AuditLog, HookDeliveryService, HookStore, HostedAuthenticator,
+    HostedGatewayController, HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile,
+    RateLimitConfig, TenantRegistry, serve_hosted_gateway,
 };
 use roder_config::hosted::HostedConfig;
 
@@ -128,6 +128,7 @@ pub async fn launch(
             },
             hooks: Arc::new(HookStore::default()),
             hook_delivery: Arc::new(HookDeliveryService::new(Default::default())),
+            request_policy: Arc::new(AllowAllHostedRequestPolicy),
         },
     )
     .await

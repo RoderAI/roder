@@ -557,6 +557,7 @@ impl RunnerWorkspaceBackend {
                 args: vec!["-lc".to_string(), command],
                 cwd: Some(self.guard.root().to_path_buf()),
                 env: Vec::new(),
+                timeout_ms: None,
             })
             .await?;
         if output.exit_code != Some(0) {

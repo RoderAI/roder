@@ -163,13 +163,6 @@ roder-tools = { path = "crates/roder-tools", version = "0.1.0" }
 roder-tui = { path = "crates/roder-tui", version = "0.1.0" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
-[patch.crates-io]
-# `claude-code-sdk-rust` 0.4.0 leaks its spawned Claude CLI when a Roder turn
-# is cancelled. Keep this narrow MIT-licensed source patch portable until an
-# upstream release contains receiver-close-aware stream cleanup and
-# `kill_on_drop(true)` subprocess ownership. See vendor/.../RODER_PATCH.md.
-claude-code-sdk-rust = { path = "vendor/claude-code-sdk-rust" }
-
 [profile.dev]
 # Fast local builds: no debug info.
 debug = 0

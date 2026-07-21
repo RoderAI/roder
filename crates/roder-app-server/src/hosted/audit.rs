@@ -14,9 +14,9 @@ use time::OffsetDateTime;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditRecord {
-    /// `auth_ok`, `auth_failed`, `method_denied`, `rate_limited`,
-    /// `service_account_created`, `service_account_revoked`,
-    /// `admin_change`, `hook_change`.
+    /// `auth_ok`, `auth_failed`, `method_denied`, `request_policy_denied`,
+    /// `rate_limited`, `service_account_created`,
+    /// `service_account_revoked`, `admin_change`, `hook_change`.
     pub kind: String,
     /// Absent for failures that never resolved a tenant.
     #[serde(default, skip_serializing_if = "Option::is_none")]

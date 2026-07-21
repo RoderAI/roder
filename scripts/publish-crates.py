@@ -15,18 +15,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def publish_order() -> list[str]:
-    meta = json.loads(
-        subprocess.check_output(
-            ["cargo", "metadata", "--format-version", "1"],
-            cwd=REPO_ROOT,
-            text=True,
-        )
-    )
+def is_publishable_to_crates_io(package: dict[str, object]) -> bool:
+    registries = package.get("publish")
+    return registries is None or "crates-io" in registries
+
+
+def publish_order_from_metadata(meta: dict[str, object]) -> list[str]:
     members = {
         package["id"]: package
         for package in meta["packages"]
         if package["id"] in meta["workspace_members"]
+        and is_publishable_to_crates_io(package)
     }
     name_to_id = {package["name"]: package_id for package_id, package in members.items()}
     graph: dict[str, set[str]] = defaultdict(set)
@@ -37,8 +36,10 @@ def publish_order() -> list[str]:
         for dep in package.get("dependencies", []):
             dep_id = name_to_id.get(dep["name"])
             if dep_id and dep_id != package_id:
-                graph[dep_id].add(package_id)
-                indeg[package_id] += 1
+                dependents = graph[dep_id]
+                if package_id not in dependents:
+                    dependents.add(package_id)
+                    indeg[package_id] += 1
 
     queue = deque(
         sorted(
@@ -54,7 +55,30 @@ def publish_order() -> list[str]:
             indeg[nxt] -= 1
             if indeg[nxt] == 0:
                 queue.append(nxt)
+
+    if len(order) != len(members):
+        omitted = sorted(
+            members[package_id]["name"]
+            for package_id in members
+            if members[package_id]["name"] not in order
+        )
+        raise RuntimeError(
+            "publish order omitted publishable workspace members "
+            f"(dependency cycle or invalid graph): {', '.join(omitted)}"
+        )
+
     return order
+
+
+def publish_order() -> list[str]:
+    meta = json.loads(
+        subprocess.check_output(
+            ["cargo", "metadata", "--format-version", "1"],
+            cwd=REPO_ROOT,
+            text=True,
+        )
+    )
+    return publish_order_from_metadata(meta)
 
 
 def latest_published_version(name: str) -> str | None:

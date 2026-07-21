@@ -267,46 +267,16 @@ impl Runtime {
         if let Some(remaining) = crate::runtime::deadline_remaining_seconds(deadline) {
             ctx = ctx.with_deadline_remaining_seconds(remaining);
         }
-        /*
-         * A runner-bound thread must never fall back to local tool execution:
-         * a session-resolution failure becomes an error tool result instead of
-         * dispatching the call against the local filesystem.
-         */
-        match self.remote_workspace_for_thread(thread_id).await {
-            Ok(Some(remote)) => ctx = ctx.with_remote_workspace(remote),
-            Ok(None) => {}
-            Err(err) => {
-                let item = ToolResultRecord {
-                    id: call.id.clone(),
-                    name: Some(call.name.clone()),
-                    result: format!("remote runner workspace is unavailable: {err}"),
-                    display_payload: tool_display_payload(
-                        Some(&call.name),
-                        Some(&parsed_args),
-                        None,
-                    ),
-                    is_error: true,
-                };
-                self.persist_turn_item(
-                    thread_id,
-                    turn_id,
-                    &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
-                )
-                .await?;
-                self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
-                    thread_id: thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                    tool_id: call.id,
-                    tool_name: item.name.clone(),
-                    display_payload: item.display_payload.clone(),
-                    is_error: true,
-                    output: Some(item.result.clone()),
-                    timestamp: OffsetDateTime::now_utc(),
-                }))
-                .await;
-                return Ok(item);
-            }
-        }
+        let native_workspace_tool = native_tool_uses_remote_workspace(&tool_call.name);
+        let runner_binding = if native_workspace_tool {
+            Some(
+                self.runner_binding_for_thread(thread_id)
+                    .await
+                    .map_err(|err| format!("remote runner workspace is unavailable: {err}")),
+            )
+        } else {
+            None
+        };
         let decision = DefaultPolicyGate::new()
             .decide_with_contributors(&tool_call, mode, &ctx, &self.registry.policy_contributors)
             .await?;
@@ -366,10 +336,22 @@ impl Runtime {
             return Ok(item);
         }
 
-        let preview = file_change_preview(
-            &tool_call,
-            workspace.or(runtime_config.workspace.as_deref()),
-        );
+        // A preview reads the existing file synchronously. Only produce one
+        // when this call is known to use a permitted local workspace; remote
+        // and fail-closed hosted calls must not inspect the host filesystem.
+        let local_preview_allowed = match &runner_binding {
+            None => true,
+            Some(Ok(None)) => self.allows_local_workspaces(),
+            Some(Ok(Some(_))) | Some(Err(_)) => false,
+        };
+        let preview = if local_preview_allowed {
+            file_change_preview(
+                &tool_call,
+                workspace.or(runtime_config.workspace.as_deref()),
+            )
+        } else {
+            None
+        };
         if let Some(preview) = preview.clone() {
             self.emit(RoderEvent::FileChangePreviewReady(preview)).await;
         }
@@ -417,6 +399,63 @@ impl Runtime {
             return Ok(item);
         }
         ctx.effective_mode = self.effective_policy_mode_for_thread(thread_id).await;
+        /*
+         * Provision only when an approved native workspace tool is about to
+         * execute. Text-only, external/MCP, and runtime-control turns never
+         * touch the runner. A bound workspace tool must never fall back to
+         * local execution: resolution failures become error tool results.
+         */
+        if let Some(runner_binding) = runner_binding {
+            let workspace_error = match runner_binding {
+                Ok(Some(binding)) => match self
+                    .remote_workspace_for_binding(thread_id, binding)
+                    .await
+                {
+                    Ok(remote) => {
+                        ctx = ctx.with_remote_workspace(remote);
+                        None
+                    }
+                    Err(err) => Some(format!("remote runner workspace is unavailable: {err}")),
+                },
+                Ok(None) if self.allows_local_workspaces() => None,
+                Ok(None) => Some(
+                    "local workspace execution is disabled and the thread has no remote runner binding"
+                        .to_string(),
+                ),
+                Err(error) => Some(error),
+            };
+            if let Some(error) = workspace_error {
+                let item = ToolResultRecord {
+                    id: call.id.clone(),
+                    name: Some(call.name.clone()),
+                    result: error,
+                    display_payload: tool_display_payload(
+                        Some(&call.name),
+                        Some(&parsed_args),
+                        None,
+                    ),
+                    is_error: true,
+                };
+                self.persist_turn_item(
+                    thread_id,
+                    turn_id,
+                    &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
+                )
+                .await?;
+                self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: call.id,
+                    tool_name: item.name.clone(),
+                    display_payload: item.display_payload.clone(),
+                    is_error: true,
+                    output: Some(item.result.clone()),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                return Ok(item);
+            }
+        }
         let workspace_change_baseline =
             crate::workspace_changes::WorkspaceChangeBaseline::capture_for_tool(
                 &tool_call,
@@ -1107,6 +1146,25 @@ impl Runtime {
             is_error: false,
         })
     }
+}
+
+fn native_tool_uses_remote_workspace(name: &str) -> bool {
+    matches!(
+        name,
+        "read_file"
+            | "list_files"
+            | "write_file"
+            | "grep"
+            | "glob"
+            | "edit"
+            | "multi_edit"
+            | "apply_patch"
+            | "shell"
+            | "exec_command"
+            | "write_stdin"
+            | "unified_exec"
+            | "view_image"
+    ) || name.starts_with("design_")
 }
 
 fn is_subagent_task_tool(name: &str) -> bool {

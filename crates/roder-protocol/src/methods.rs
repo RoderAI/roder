@@ -537,6 +537,13 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("runners/session", "runners", ReadOnly, Idempotent),
     method_spec!("runners/snapshot", "runners", ReadOnly, Idempotent),
     method_spec!(
+        "runtime/drain",
+        "runtime",
+        LocalState,
+        NonIdempotent,
+        ["turn/lifecycleUpdated", "turn/completed"]
+    ),
+    method_spec!(
         "search_index/clear",
         "search-index",
         LocalState,
@@ -689,13 +696,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("thread/set_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/start", "thread", LocalState, NonIdempotent),
     method_spec!("thread/state", "thread", ReadOnly, Idempotent),
-    method_spec!(
-        "runtime/drain",
-        "runtime",
-        LocalState,
-        NonIdempotent,
-        ["turn/lifecycleUpdated", "turn/completed"]
-    ),
     method_spec!("tools/call", "tools", LocalState, NonIdempotent),
     method_spec!("tools/list", "tools", ReadOnly, Idempotent),
     method_spec!("tools/resolve", "tools", LocalState, NonIdempotent),

@@ -82,6 +82,7 @@ test("hosted client authenticates with a bearer header and serves typed helpers"
   const hosted = await HostedClient.connect({
     url: "wss://roder.example.test",
     token: "rk_test_sdk_token",
+    bearerAuth: "header",
     webSocketFactory,
   });
 
@@ -105,6 +106,49 @@ test("hosted client authenticates with a bearer header and serves typed helpers"
   await hosted.close();
 });
 
+test("hosted client uses browser-safe bearer subprotocols by default", async () => {
+  const previousWebSocket = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+  let socket: FakeHostedSocket | undefined;
+  let constructorArgumentCount = 0;
+
+  class BrowserHostedSocket extends FakeHostedSocket {
+    constructor(...args: [url: string, protocols: string[]]) {
+      constructorArgumentCount = args.length;
+      super(args[0], args[1], {});
+      socket = this;
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: BrowserHostedSocket,
+  });
+
+  try {
+    const hosted = await HostedClient.connect({
+      url: "wss://roder.example.test",
+      token: "rk_test_browser_token",
+    });
+    await hosted.whoami();
+
+    assert.equal(constructorArgumentCount, 2);
+    assert.deepEqual(socket?.protocols, [
+      "roder.remote.v1",
+      "bearer.rk_test_browser_token",
+    ]);
+    assert.ok(!socket?.url.includes("rk_test_browser_token"));
+
+    await hosted.close();
+  } finally {
+    if (previousWebSocket) {
+      Object.defineProperty(globalThis, "WebSocket", previousWebSocket);
+    } else {
+      Reflect.deleteProperty(globalThis, "WebSocket");
+    }
+  }
+});
+
 test("hosted client reconnects with a fresh token and never replays requests", async () => {
   const { sockets, webSocketFactory } = factoryCapture();
   const issued: string[] = [];
@@ -117,6 +161,7 @@ test("hosted client reconnects with a fresh token and never replays requests", a
       issued.push(token);
       return token;
     },
+    bearerAuth: "header",
     webSocketFactory,
   });
   await hosted.whoami();

@@ -12,6 +12,7 @@ mod hunk_output;
 mod media;
 mod paging;
 mod patch;
+mod remote_cancel;
 #[cfg(test)]
 mod remote_test_support;
 mod response_format;

@@ -231,6 +231,22 @@ async fn load_metadata_on(
     .transpose()
 }
 
+async fn load_extension_state_records_on(
+    pool: &Pool<MySql>,
+    tenant_id: &str,
+    thread_id: &str,
+) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+    let state_rows = sqlx_core::query::query::<MySql>("SELECT record FROM roder_session_extension_state WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
+        .bind(tenant_id).bind(thread_id).fetch_all(pool).await?;
+    state_rows
+        .into_iter()
+        .map(|row| {
+            let json: sqlx_core::types::Json<ExtensionStateRecord> = row.try_get("record")?;
+            Ok(json.0)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+}
+
 #[async_trait::async_trait]
 impl ThreadStore for MysqlSessionStore {
     fn id(&self) -> ThreadStoreId {
@@ -367,15 +383,8 @@ impl ThreadStore for MysqlSessionStore {
                         Ok(json.0)
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
-                let state_rows = sqlx_core::query::query::<MySql>("SELECT record FROM roder_session_extension_state WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
-                    .bind(&tenant_id).bind(&thread_id).fetch_all(&pool).await?;
-                let extension_states = state_rows
-                    .into_iter()
-                    .map(|row| {
-                        let json: sqlx_core::types::Json<ExtensionStateRecord> = row.try_get("record")?;
-                        Ok(json.0)
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let extension_states =
+                    load_extension_state_records_on(&pool, &tenant_id, &thread_id).await?;
                 Ok(Some(ThreadSnapshot {
                     metadata: Some(metadata),
                     events,
@@ -392,6 +401,20 @@ impl ThreadStore for MysqlSessionStore {
         thread_id: &ThreadId,
     ) -> anyhow::Result<Option<ThreadMetadata>> {
         self.load_metadata(thread_id).await
+    }
+
+    async fn load_extension_states(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        let pool = self.pool.clone();
+        let tenant_id = self.tenant_id.clone();
+        let thread_id = thread_id.clone();
+        self.executor
+            .run(
+                async move { load_extension_state_records_on(&pool, &tenant_id, &thread_id).await },
+            )
+            .await
     }
 
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {

@@ -127,6 +127,7 @@ async fn run_exec_session<C: AppClient>(
                 model: None,
                 reasoning: None,
                 developer_context: None,
+                mcp_auth_token: None,
                 policy_mode: None,
                 task_ledger_required: options.task_ledger_required,
             })?),

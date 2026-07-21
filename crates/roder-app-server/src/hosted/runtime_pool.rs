@@ -16,12 +16,13 @@
 //! their runtime without interrupting active work.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use crate::server::AppServer;
@@ -103,9 +104,16 @@ impl HostedRuntimePool {
     pub async fn lease(&self, tenant_id: &str) -> anyhow::Result<TenantLease> {
         let mut tenants = self.tenants.lock().await;
         if !tenants.contains_key(tenant_id) {
-            let data_dir = self.profile.data_root.join(sanitize_tenant_dir(tenant_id));
+            let data_dir = tenant_data_dir(&self.profile.data_root, tenant_id);
             std::fs::create_dir_all(&data_dir)?;
             let server = (self.factory)(tenant_id.to_string(), data_dir).await?;
+            // The gateway rejects obvious host-local workspace requests, but
+            // native workspace tools also enforce this policy inside the
+            // runtime. This closes paths that do not pass through those
+            // gateway DTO checks (for example tool calls produced by a turn).
+            server
+                .runtime
+                .set_allow_local_workspaces(self.profile.allow_local_workspaces);
             tenants.insert(
                 tenant_id.to_string(),
                 TenantEntry {
@@ -184,19 +192,33 @@ impl HostedRuntimePool {
     }
 }
 
-/// Tenant ids map onto directory names defensively (they originate from
-/// operator-configured registries, but path separators must never appear).
-fn sanitize_tenant_dir(tenant_id: &str) -> String {
-    tenant_id
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
+const HASHED_TENANT_DIR_NAMESPACE: &str = ".tenant-data-v2";
+const MAX_LEGACY_SAFE_TENANT_ID_BYTES: usize = 128;
+
+/// Maps tenant ids to path-safe, collision-resistant data directories.
+///
+/// Existing lowercase slug ids retain their original directory. Every other
+/// id lives under a reserved namespace and uses the full SHA-256 digest, so an
+/// arbitrary external identity cannot alias a legacy slug or another tenant
+/// by replacing path separators with punctuation.
+fn tenant_data_dir(data_root: &Path, tenant_id: &str) -> PathBuf {
+    if is_legacy_safe_tenant_id(tenant_id) {
+        return data_root.join(tenant_id);
+    }
+
+    let digest = Sha256::digest(tenant_id.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    data_root.join(HASHED_TENANT_DIR_NAMESPACE).join(digest)
+}
+
+fn is_legacy_safe_tenant_id(tenant_id: &str) -> bool {
+    !tenant_id.is_empty()
+        && tenant_id.len() <= MAX_LEGACY_SAFE_TENANT_ID_BYTES
+        && tenant_id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
         })
-        .collect()
 }
 
 #[cfg(test)]
@@ -204,8 +226,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tenant_dirs_are_path_safe() {
-        assert_eq!(sanitize_tenant_dir("tenant-a"), "tenant-a");
-        assert_eq!(sanitize_tenant_dir("../evil/../x"), "___evil____x");
+    fn tenant_dirs_are_path_safe_and_collision_resistant() {
+        let root = Path::new("/data/hosted");
+        assert_eq!(tenant_data_dir(root, "tenant-a"), root.join("tenant-a"));
+
+        let slash = tenant_data_dir(root, "a/b");
+        let underscore = tenant_data_dir(root, "a_b");
+        assert_ne!(slash, underscore, "a/b and a_b must never share state");
+        assert_eq!(
+            slash.parent(),
+            Some(root.join(HASHED_TENANT_DIR_NAMESPACE).as_path())
+        );
+
+        let traversal = tenant_data_dir(root, "../evil/../x");
+        assert!(traversal.starts_with(root.join(HASHED_TENANT_DIR_NAMESPACE)));
+        let digest = traversal.file_name().unwrap().to_string_lossy();
+        assert_eq!(digest.len(), 64);
+        assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+        assert_ne!(
+            tenant_data_dir(root, "Tenant"),
+            tenant_data_dir(root, "tenant")
+        );
     }
 }

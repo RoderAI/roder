@@ -456,6 +456,7 @@ mod tests {
                 args: vec!["-lc".to_string(), "echo hi".to_string()],
                 cwd: Some("subdir".into()),
                 env: vec![("A".to_string(), "B".to_string())],
+                timeout_ms: None,
             },
         );
 

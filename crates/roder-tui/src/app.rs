@@ -4079,6 +4079,7 @@ where
             model: None,
             reasoning: None,
             developer_context: None,
+            mcp_auth_token: None,
             policy_mode: Some(self.policy_mode),
             task_ledger_required: false,
         };

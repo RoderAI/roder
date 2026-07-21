@@ -71,6 +71,7 @@ export {
   type LocalProcessTransportOptions,
   type RequestOptions,
   type RoderTransport,
+  type WebSocketBearerAuth,
   type WebSocketFactory,
   type WebSocketLike,
   type WebSocketTransportOptions,

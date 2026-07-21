@@ -2,6 +2,25 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Credential source permitted for MCP tool execution.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolCallAuthMode {
+    /// Use a thread-scoped token when present, otherwise use the server's
+    /// configured credential.
+    #[default]
+    ConfiguredCredential,
+    /// Require a token registered for the executing thread. The configured
+    /// credential remains available for discovery only.
+    ThreadScopedRequired,
+}
+
+impl McpToolCallAuthMode {
+    fn is_default(&self) -> bool {
+        *self == Self::ConfiguredCredential
+    }
+}
+
 /// One MCP server reachable over streamable HTTP.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServerConfig {
@@ -17,6 +36,10 @@ pub struct McpServerConfig {
     /// config files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_token_env: Option<String>,
+    /// Credential policy for `tools/call`. Discovery always uses the
+    /// configured credential.
+    #[serde(default, skip_serializing_if = "McpToolCallAuthMode::is_default")]
+    pub tool_call_auth_mode: McpToolCallAuthMode,
     /// Extra headers added to every request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
@@ -32,6 +55,7 @@ impl McpServerConfig {
             url: url.into(),
             auth_token: None,
             auth_token_env: None,
+            tool_call_auth_mode: McpToolCallAuthMode::default(),
             headers: BTreeMap::new(),
             enabled_tools: Vec::new(),
         }
@@ -44,6 +68,11 @@ impl McpServerConfig {
 
     pub fn with_auth_token_env(mut self, var: impl Into<String>) -> Self {
         self.auth_token_env = Some(var.into());
+        self
+    }
+
+    pub fn with_tool_call_auth_mode(mut self, mode: McpToolCallAuthMode) -> Self {
+        self.tool_call_auth_mode = mode;
         self
     }
 
@@ -154,5 +183,34 @@ mod tests {
         config.enabled_tools = vec!["list_hosted_apps".to_string()];
         assert!(config.tool_enabled("list_hosted_apps"));
         assert!(!config.tool_enabled("create_hosted_app"));
+    }
+
+    #[test]
+    fn tool_call_auth_mode_defaults_to_configured_credential() {
+        let config: McpServerConfig = serde_json::from_value(serde_json::json!({
+            "name": "vex",
+            "url": "http://localhost/mcp"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            config.tool_call_auth_mode,
+            McpToolCallAuthMode::ConfiguredCredential
+        );
+    }
+
+    #[test]
+    fn deserializes_thread_scoped_tool_call_auth_mode() {
+        let config: McpServerConfig = serde_json::from_value(serde_json::json!({
+            "name": "vex",
+            "url": "http://localhost/mcp",
+            "tool_call_auth_mode": "thread_scoped_required"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            config.tool_call_auth_mode,
+            McpToolCallAuthMode::ThreadScopedRequired
+        );
     }
 }

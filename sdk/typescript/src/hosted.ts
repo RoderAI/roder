@@ -1,11 +1,12 @@
 // Hosted multi-tenant connection helpers (roadmap phase 72, Task 6).
 //
 // Hosted Roder authenticates at the WebSocket handshake with a bearer
-// credential (static key or `rk_sa_*` service-account key) in the
-// `Authorization` header — query-string credentials are always rejected by
-// the gateway. `HostedClient` wraps the standard RPC client with typed
-// helpers for `hosted/*` methods; raw JSON-RPC access stays available for
-// forward-compatible hosted methods via `client.rawRequest`.
+// credential (static key or `rk_sa_*` service-account key). Browser-safe
+// subprotocol auth is the default; header-capable native factories can opt
+// into Authorization header auth. Query-string credentials are always
+// rejected by the gateway. `HostedClient` wraps the standard RPC client with
+// typed helpers for `hosted/*` methods; raw JSON-RPC access stays available
+// for forward-compatible hosted methods via `client.rawRequest`.
 //
 // Token refresh/reconnect: connections are authenticated once at handshake
 // time, so refreshing a token means reconnecting. `reconnect()` builds a
@@ -15,7 +16,11 @@
 // caller, who knows whether the operation is idempotent.
 
 import { RoderRpcClient } from "./client.js";
-import { WebSocketTransport, type WebSocketFactory } from "./transports.js";
+import {
+  WebSocketTransport,
+  type WebSocketBearerAuth,
+  type WebSocketFactory,
+} from "./transports.js";
 
 export interface HostedConnectOptions {
   /** Gateway URL, e.g. `wss://roder.example.com`. */
@@ -27,7 +32,13 @@ export interface HostedConnectOptions {
    * over `token`. Use this for short-lived externally-issued tokens.
    */
   tokenProvider?: () => string | Promise<string>;
-  /** Extra auth headers supplied by an external auth layer. */
+  /**
+   * How `token` or `tokenProvider` credentials are sent. Defaults to
+   * browser-safe WebSocket subprotocol auth. Header auth requires a custom
+   * factory whose WebSocket implementation supports handshake headers.
+   */
+  bearerAuth?: WebSocketBearerAuth;
+  /** Extra auth headers supplied through a header-capable custom factory. */
   headers?: Record<string, string>;
   protocols?: string[];
   webSocketFactory?: WebSocketFactory;
@@ -129,6 +140,7 @@ async function hostedRpcClient(options: HostedConnectOptions): Promise<RoderRpcC
   const transport = new WebSocketTransport({
     url: options.url,
     token,
+    bearerAuth: options.bearerAuth ?? "subprotocol",
     protocols: options.protocols,
     webSocketFactory: options.webSocketFactory,
     headers: options.headers,

@@ -21,6 +21,7 @@ pub use config::{
     Redacted, TOKEN_ENV, WORKSPACE_ENV,
 };
 pub use session::BlaxelRunnerSession;
+use session::CANCELLATION_DIR;
 
 const READINESS_ATTEMPTS: u32 = 20;
 
@@ -68,8 +69,12 @@ impl Default for BlaxelRunnerProvider {
     fn default() -> Self {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(
+                client::HTTP_REQUEST_TIMEOUT_SECONDS,
+            ))
             .build()
-            .unwrap_or_default();
+            .expect("build Blaxel HTTP client");
         Self { http }
     }
 }
@@ -93,7 +98,7 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             file_write: true,
             port_preview: true,
             snapshots: false,
-            cancellation: false,
+            cancellation: true,
             artifact_export: false,
             mounts: RunnerMountCapabilities::default(),
             pausable: true,
@@ -144,16 +149,16 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             .clone()
             .unwrap_or_else(|| destination.id.clone());
         config.external_id = Some(external_id.clone());
-        let name = config
-            .sandbox_name
-            .clone()
-            .unwrap_or_else(|| sanitize_name(&format!("{}-{}", config.sandbox_name_prefix, external_id)));
+        let name = config.sandbox_name.clone().unwrap_or_else(|| {
+            sanitize_name(&format!("{}-{}", config.sandbox_name_prefix, external_id))
+        });
         config.sandbox_name = Some(name.clone());
 
         let client = self.client(&config);
         let sandbox = client.create_sandbox(&name, &config).await?;
         let (sandbox, endpoint) = wait_until_ready(&client, sandbox, READINESS_ATTEMPTS).await?;
         client.make_dir(&endpoint, &config.working_dir).await.ok();
+        client.make_dir(&endpoint, CANCELLATION_DIR).await?;
 
         Ok(Arc::new(BlaxelRunnerSession::new(
             client,
@@ -201,8 +206,13 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             }
         };
 
-        let external_id = sandbox.metadata.external_id.clone().or(config.external_id.clone());
+        let external_id = sandbox
+            .metadata
+            .external_id
+            .clone()
+            .or(config.external_id.clone());
         let (sandbox, endpoint) = wait_until_ready(&client, sandbox, READINESS_ATTEMPTS).await?;
+        client.make_dir(&endpoint, CANCELLATION_DIR).await?;
         Ok(Arc::new(BlaxelRunnerSession::new(
             client,
             &config,
@@ -241,14 +251,12 @@ pub fn sanitize_name(raw: &str) -> String {
 
 /// Opt-in live smoke (`RODER_LIVE_BLAXEL_RUNNER=1`) exercising create -> exec ->
 /// pause -> resume -> detach -> rejoin -> delete against a real Blaxel account.
-pub async fn run_live_smoke_if_enabled() {
+pub async fn run_live_smoke_if_enabled() -> anyhow::Result<()> {
     if std::env::var(LIVE_ENV).ok().as_deref() != Some("1") {
         eprintln!("set {LIVE_ENV}=1 to run the live blaxel runner smoke");
-        return;
+        return Ok(());
     }
-    if let Err(error) = run_live_smoke().await {
-        eprintln!("blaxel live smoke failed: {error:?}");
-    }
+    run_live_smoke().await
 }
 
 async fn run_live_smoke() -> anyhow::Result<()> {
@@ -278,10 +286,54 @@ async fn run_live_smoke() -> anyhow::Result<()> {
             args: vec!["blaxel-live".to_string()],
             cwd: None,
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await?;
     println!("live exec stdout: {}", out.stdout.trim());
     anyhow::ensure!(out.stdout.trim() == "blaxel-live", "unexpected exec stdout");
+
+    // Cancellation force-kills the detached process group: a delayed write
+    // must never land after the caller interrupts the command.
+    let cancelled_marker = format!("cancelled-marker-{}.txt", uuid::Uuid::new_v4().simple());
+    let marker_command = format!("sleep 2; printf ghost > {cancelled_marker}");
+    let cancellation_session = session.clone();
+    let cancelled = tokio::spawn(async move {
+        cancellation_session
+            .run_command(RunnerCommandRequest {
+                command_id: "smoke-cancel".to_string(),
+                program: "sh".to_string(),
+                args: vec!["-lc".to_string(), marker_command],
+                cwd: None,
+                env: Vec::new(),
+                timeout_ms: Some(10_000),
+            })
+            .await
+    });
+    let mut killed = false;
+    for _ in 0..20 {
+        if session.cancel_command(&"smoke-cancel".to_string()).await? {
+            killed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    anyhow::ensure!(killed, "live Blaxel command was not cancellable");
+    let cancelled_output = cancelled.await??;
+    anyhow::ensure!(
+        cancelled_output.exit_code != Some(0),
+        "cancelled command unexpectedly completed successfully"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(2_250)).await;
+    anyhow::ensure!(
+        session
+            .read_file(RunnerFileReadRequest {
+                path: cancelled_marker.into(),
+            })
+            .await
+            .is_err(),
+        "cancelled command mutated the workspace after interruption"
+    );
+    println!("live cancellation: killed process group, delayed marker absent");
 
     // File write then read round-trips through the per-sandbox filesystem API.
     session
@@ -296,7 +348,10 @@ async fn run_live_smoke() -> anyhow::Result<()> {
         })
         .await?;
     anyhow::ensure!(file.contents == b"hello blaxel", "file round-trip mismatch");
-    println!("live file read: {}", String::from_utf8_lossy(&file.contents));
+    println!(
+        "live file read: {}",
+        String::from_utf8_lossy(&file.contents)
+    );
 
     // Port preview returns a public preview URL.
     let preview = session
@@ -322,7 +377,10 @@ async fn run_live_smoke() -> anyhow::Result<()> {
         after.contents == b"hello blaxel",
         "rejoined sandbox lost filesystem state"
     );
-    println!("live rejoin read: {}", String::from_utf8_lossy(&after.contents));
+    println!(
+        "live rejoin read: {}",
+        String::from_utf8_lossy(&after.contents)
+    );
     rejoined.close().await?;
     println!("live smoke OK: exec, file rw, preview, pause/resume/detach/rejoin, delete");
     Ok(())

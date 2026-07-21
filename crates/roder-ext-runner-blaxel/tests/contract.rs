@@ -8,8 +8,8 @@ use roder_api::remote_runner::{
     RunnerFileWriteRequest, RunnerManifest, RunnerPortRequest, RunnerSessionState,
 };
 use roder_ext_runner_blaxel::config::{
-    BASE_URL_ENV, BL_TOKEN_ENV, RODER_BASE_URL_ENV, RODER_TOKEN_ENV, RODER_WORKSPACE_ENV, TOKEN_ENV,
-    WORKSPACE_ENV,
+    BASE_URL_ENV, BL_TOKEN_ENV, RODER_BASE_URL_ENV, RODER_TOKEN_ENV, RODER_WORKSPACE_ENV,
+    TOKEN_ENV, WORKSPACE_ENV,
 };
 use roder_ext_runner_blaxel::{
     BlaxelConfig, BlaxelRunnerExtension, BlaxelRunnerProvider, PROVIDER_ID, sanitize_name,
@@ -42,7 +42,9 @@ fn manifest_registration_exposes_blaxel_runner() {
     assert_eq!(manifest.id, "roder-ext-runner-blaxel");
     assert_eq!(
         manifest.provides,
-        vec![ProvidedService::RemoteRunnerProvider(PROVIDER_ID.to_string())]
+        vec![ProvidedService::RemoteRunnerProvider(
+            PROVIDER_ID.to_string()
+        )]
     );
     assert!(
         manifest
@@ -59,6 +61,7 @@ fn provider_advertises_pause_and_detach_capabilities() {
     assert!(capabilities.detachable);
     assert!(capabilities.command_exec);
     assert!(capabilities.port_preview);
+    assert!(capabilities.cancellation);
 }
 
 #[test]
@@ -95,7 +98,10 @@ fn config_precedence_and_redaction() {
 
 #[test]
 fn sanitize_name_enforces_blaxel_rules() {
-    assert_eq!(sanitize_name("roder-thread-ABC_123"), "roder-thread-abc-123");
+    assert_eq!(
+        sanitize_name("roder-thread-ABC_123"),
+        "roder-thread-abc-123"
+    );
     assert_eq!(sanitize_name("//weird**id//"), "weird-id");
     assert!(sanitize_name(&"x".repeat(80)).len() <= 49);
 }
@@ -141,11 +147,27 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
             args: vec!["hello".to_string(), "world".to_string()],
             cwd: None,
             env: vec![("RUST_LOG".to_string(), "info".to_string())],
+            timeout_ms: None,
         })
         .await
         .unwrap();
     assert_eq!(command.stdout, "hello world\n");
     assert_eq!(command.exit_code, Some(0));
+    let process_request = server
+        .requests()
+        .into_iter()
+        .find(|request| request.starts_with("POST /process "))
+        .expect("runner should start a named Blaxel process");
+    let process_body: serde_json::Value =
+        serde_json::from_str(process_request.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap();
+    assert_eq!(process_body["waitForCompletion"], false);
+    assert_eq!(process_body["keepAlive"], true);
+    assert_eq!(process_body["timeout"], 600);
+    assert!(
+        process_body["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("roder-") && name.len() == 38)
+    );
 
     // Write then read a file round-trips through the per-sandbox filesystem API.
     session
@@ -184,7 +206,10 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
     let detached = session.detach().await.unwrap();
     let detached_debug = serde_json::to_string(&detached).unwrap();
     assert!(!detached_debug.contains("test-token"));
-    assert_eq!(detached.metadata["sandbox_name"].as_str(), Some("roder-blaxel-dev"));
+    assert_eq!(
+        detached.metadata["sandbox_name"].as_str(),
+        Some("roder-blaxel-dev")
+    );
 
     // Rejoin reuses the same sandbox without creating a new one.
     let rejoined = provider.rejoin_session(detached).await.unwrap();
@@ -195,15 +220,131 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
 
     // Auth header present, token never serialized into a request body.
     let requests = server.requests();
-    assert!(
-        requests
-            .iter()
-            .any(|req| req.to_ascii_lowercase().contains("authorization: bearer test-token"))
-    );
+    assert!(requests.iter().any(|req| {
+        req.to_ascii_lowercase()
+            .contains("authorization: bearer test-token")
+    }));
     assert!(requests.iter().all(|req| {
         let body = req.split("\r\n\r\n").nth(1).unwrap_or_default();
         !body.contains("test-token")
     }));
+    clear_env();
+}
+
+#[tokio::test]
+async fn command_timeout_becomes_a_server_lease_and_cancel_kills_the_process() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+    }
+    let server = FakeBlaxelServer::start().await;
+    let provider = BlaxelRunnerProvider::default();
+    let session = provider
+        .create_session(RunnerDestination {
+            id: "blaxel-cancel".to_string(),
+            provider_id: PROVIDER_ID.to_string(),
+            config: serde_json::json!({
+                "base_url": server.base_url(),
+                "working_dir": "/home/user/roder",
+                "cleanup": "delete-on-close"
+            }),
+            default_manifest: RunnerManifest::default(),
+        })
+        .await
+        .unwrap();
+
+    let command_session = session.clone();
+    let command = tokio::spawn(async move {
+        command_session
+            .run_command(RunnerCommandRequest {
+                command_id: "cancel-me".to_string(),
+                program: "delayed-registration".to_string(),
+                args: vec!["long-running".to_string()],
+                cwd: None,
+                env: Vec::new(),
+                timeout_ms: Some(1_501),
+            })
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !server.has_process_request() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Blaxel process request should be sent before cancellation");
+    assert!(
+        !server.has_process(),
+        "test must cancel before Blaxel registers the process"
+    );
+
+    let duplicate = session
+        .run_command(RunnerCommandRequest {
+            command_id: "cancel-me".to_string(),
+            program: "echo".to_string(),
+            args: vec!["must-not-run".to_string()],
+            cwd: None,
+            env: Vec::new(),
+            timeout_ms: Some(1_000),
+        })
+        .await
+        .unwrap_err();
+    assert!(duplicate.to_string().contains("already active"));
+    assert!(
+        !server
+            .requests()
+            .iter()
+            .any(|request| request.starts_with("DELETE /process/")),
+        "rejecting a duplicate command id must not cancel the active command"
+    );
+
+    assert!(
+        session
+            .cancel_command(&"cancel-me".to_string())
+            .await
+            .unwrap()
+    );
+    let output = tokio::time::timeout(std::time::Duration::from_secs(2), command)
+        .await
+        .expect("killed process should reach a terminal result")
+        .unwrap()
+        .unwrap();
+    assert_eq!(output.exit_code, None);
+
+    let process_request = server
+        .requests()
+        .into_iter()
+        .find(|request| request.starts_with("POST /process "))
+        .unwrap();
+    let process_body: serde_json::Value =
+        serde_json::from_str(process_request.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap();
+    assert_eq!(process_body["timeout"], 2);
+    assert!(
+        server
+            .requests()
+            .iter()
+            .any(|request| request.starts_with("DELETE /process/roder-")
+                && request.contains("/kill HTTP/1.1"))
+    );
+    assert!(
+        server
+            .requests()
+            .iter()
+            .filter(|request| request.starts_with("DELETE /process/roder-"))
+            .count()
+            > 1,
+        "cancellation should retry through delayed process registration"
+    );
+    assert!(
+        server.requests().iter().any(|request| {
+            request.starts_with("DELETE /filesystem/")
+                && request.contains("roder-cancelled-processes")
+        }),
+        "settled cancellation tombstones should be removed"
+    );
+
+    session.close().await.unwrap();
     clear_env();
 }
 

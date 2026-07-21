@@ -108,6 +108,7 @@ async fn fake_lifecycle_command_files_checkpoint_and_cleanup_match_contract() {
             args: vec!["-c".to_string(), "print(2+2)".to_string()],
             cwd: None,
             env: vec![("RUST_LOG".to_string(), "info".to_string())],
+            timeout_ms: None,
         })
         .await
         .unwrap();

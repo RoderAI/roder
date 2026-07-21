@@ -245,6 +245,7 @@ async fn run_turn(client: &LocalAppClient, thread_id: &str) {
                 input: Vec::new(),
                 prompt: Some("Reply with exactly: ok".to_string()),
                 developer_context: None,
+                mcp_auth_token: None,
                 model_provider: None,
                 model: None,
                 reasoning: None,

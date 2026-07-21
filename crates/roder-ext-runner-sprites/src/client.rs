@@ -405,6 +405,7 @@ impl SpritesClient {
                     args: vec!["-lc".to_string(), script],
                     cwd: None,
                     env: Vec::new(),
+                    timeout_ms: None,
                 },
             )
             .await?;

@@ -949,6 +949,13 @@ pub struct TurnStartParams {
      */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub developer_context: Option<String>,
+    /**
+     * Per-turn MCP bearer token forwarded to MCP servers for this thread's
+     * subsequent tool calls. Refreshes the volatile thread credential without
+     * changing persisted thread metadata.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_auth_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_mode: Option<PolicyMode>,
     #[serde(default)]
@@ -4822,6 +4829,31 @@ mod tests {
             serde_json::to_value(&without)
                 .unwrap()
                 .get("developerContext")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn protocol_turn_start_params_round_trip_mcp_auth_token() {
+        let params: TurnStartParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "mcpAuthToken": "scoped-token"
+        }))
+        .unwrap();
+        assert_eq!(params.mcp_auth_token.as_deref(), Some("scoped-token"));
+
+        let encoded = serde_json::to_value(&params).unwrap();
+        assert_eq!(encoded["mcpAuthToken"], "scoped-token");
+
+        let without: TurnStartParams = serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1"
+        }))
+        .unwrap();
+        assert!(without.mcp_auth_token.is_none());
+        assert!(
+            serde_json::to_value(&without)
+                .unwrap()
+                .get("mcpAuthToken")
                 .is_none()
         );
     }

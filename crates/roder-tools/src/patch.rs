@@ -250,6 +250,7 @@ async fn apply_unified_patch_via_runner(
             args: vec!["-c".to_string(), script],
             cwd: Some(workspace.root().to_path_buf()),
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await?;
     let text = format!("{}{}", output.stdout, output.stderr)
@@ -284,6 +285,7 @@ async fn runner_path_exists(
             args: vec!["-e".to_string(), rel.to_string()],
             cwd: Some(workspace.root().to_path_buf()),
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await?;
     Ok(output.exit_code == Some(0))
@@ -301,6 +303,7 @@ async fn runner_remove_file(
             args: vec!["--".to_string(), rel.to_string()],
             cwd: Some(workspace.root().to_path_buf()),
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await?;
     if output.exit_code != Some(0) {
