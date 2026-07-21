@@ -149,6 +149,7 @@ pub struct RuntimeConfig {
     pub speed_policy: RuntimeSpeedPolicyConfig,
     pub dynamic_workflows: RuntimeDynamicWorkflowConfig,
     pub reliability: RuntimeReliabilityConfig,
+    /// Positive wall-clock limit for a turn in any runtime profile. `None` or zero is unbounded.
     pub turn_deadline_seconds: Option<u64>,
     pub remote_runner_destination: Option<RunnerDestination>,
     pub team_data_dir: Option<PathBuf>,
@@ -5500,9 +5501,6 @@ fn task_ledger_has_open_items(ledger: &str) -> bool {
 }
 
 fn turn_deadline_for_config(cfg: &RuntimeConfig) -> Option<OffsetDateTime> {
-    if !cfg.runtime_profile.is_non_interactive() {
-        return None;
-    }
     cfg.turn_deadline_seconds
         .filter(|seconds| *seconds > 0)
         .map(|seconds| OffsetDateTime::now_utc() + Duration::seconds(seconds as i64))
@@ -5957,6 +5955,34 @@ mod tests {
 
     fn test_workspace() -> String {
         std::env::current_dir().unwrap().display().to_string()
+    }
+
+    #[test]
+    fn interactive_explicit_turn_deadline_has_bounded_remaining_time() {
+        let config = RuntimeConfig {
+            runtime_profile: RuntimeProfile::Interactive,
+            turn_deadline_seconds: Some(60),
+            ..RuntimeConfig::default()
+        };
+
+        let deadline = turn_deadline_for_config(&config).expect("configured turn deadline");
+        let remaining = deadline_remaining_seconds(Some(deadline));
+
+        assert!(
+            matches!(remaining, Some(1..=60)),
+            "interactive deadline must be positive and no longer than configured: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn interactive_without_turn_deadline_stays_unbounded() {
+        let config = RuntimeConfig {
+            runtime_profile: RuntimeProfile::Interactive,
+            turn_deadline_seconds: None,
+            ..RuntimeConfig::default()
+        };
+
+        assert_eq!(turn_deadline_for_config(&config), None);
     }
 
     struct MetadataMissingStore;
