@@ -1,3 +1,15 @@
+## 0.1.3 (2026-07-21)
+
+### Features
+
+#### Fail closed when scoped MCP authentication is required
+
+MCP servers can now require a thread-scoped bearer token for tool execution
+while continuing to use their configured process credential for startup tool
+discovery. Calls without a thread credential are rejected locally before any
+HTTP request, preventing shared hosted services from falling back to a
+process-wide identity.
+
 ## 0.1.2 (2026-06-26)
 
 ### Features

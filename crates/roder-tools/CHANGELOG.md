@@ -1,3 +1,37 @@
+## 0.1.4 (2026-07-21)
+
+### Features
+
+#### Lazily initialize per-thread remote runners and support one-shot exec
+
+Runner-bound threads now create or resume their remote session only when an
+approved native workspace tool first executes. Concurrent first tool calls
+share one initialization, the live session is reused across later tools and
+turns, and its state is persisted before the first tool runs so a new process
+can rejoin it. Text-only and host-executed MCP turns do not wake a runner, and
+failed initialization remains retryable without falling back to local tools.
+
+`exec_command` now runs non-interactive one-shot commands through a remote
+runner with remote working-directory scoping, shell/login handling, deadlines,
+timeouts, output truncation, and the existing Codex-shaped result payload.
+Remote TTY and stdin-continuation requests fail clearly instead of executing
+on the host. Hosted runtimes can also disable local workspaces completely, so
+a missing or malformed runner binding fails closed before any native workspace
+tool can touch the host filesystem.
+
+### Fixes
+
+#### Bound and cancel detached remote commands
+
+Remote command requests can now carry a wall-clock process lease. Remote shell
+and exec tools request provider cancellation when they time out or are dropped
+by turn interruption instead of allowing detached work to continue.
+
+The Blaxel runner starts every command as a uniquely named process with a
+finite server-side keep-alive timeout, polls the process API for commands that
+run beyond the synchronous 60-second window, advertises cancellation, and
+force-kills the process group when Roder cancels the command.
+
 ## 0.1.3 (2026-07-21)
 
 ### Features
