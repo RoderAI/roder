@@ -11,8 +11,10 @@ Blaxel control-plane (`/sandboxes`) and per-sandbox REST APIs (process,
 filesystem, preview) and supports the full runner lifecycle: pause, resume,
 detach, and rejoin. Long-running commands use named process polling instead of
 the synchronous 60-second API window, and timeout or turn interruption
-force-kills the detached process group with a finite server-side lease as a
-backstop.
+terminates the named supervisor, then uses a separate untagged cleanup process
+to TERM/KILL every descendant carrying that command's unique environment tag.
+Cancellation succeeds only after no tagged process remains; the finite
+server-side lease bounds the named supervisor as a backstop.
 
 Credentials come from `BLAXEL_API_KEY` (or `BL_API_KEY`) plus `BL_WORKSPACE` and
 are never written to session state. See

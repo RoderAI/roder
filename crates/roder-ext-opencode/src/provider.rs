@@ -409,8 +409,10 @@ async fn send_chat_completion_request(
                 let retryable = policy
                     .provider_retry_status_codes
                     .contains(&status.as_u16());
-                last_error = Some(format!(
-                    "{provider_name} Chat Completions error {status}: {text}"
+                last_error = Some(format_chat_completion_error(
+                    provider_name,
+                    status,
+                    &text,
                 ));
                 if retryable && attempt < attempts {
                     push_retry_event(
@@ -535,6 +537,18 @@ fn chat_tool_choice(choice: &ToolChoice, tool_name_map: &ChatToolNameMap) -> Val
     }
 }
 
+/// Synthetic content used when a tool call has no recorded result. OpenAI-compatible
+/// chat completions (including OpenCode DeepSeek gateways) reject an assistant
+/// `tool_calls` message unless every id is answered by a following `role: tool`
+/// message.
+const MISSING_TOOL_RESULT_PLACEHOLDER: &str = "(no tool result was recorded for this call)";
+
+/// Build chat-completions `messages` from the transcript.
+///
+/// Longer tool rollouts (especially DeepSeek via OpenCode) require a strict shape:
+/// consecutive parallel `ToolCall` items coalesce into ONE assistant `tool_calls`
+/// message, immediately followed by one `role: tool` message per id. Orphan tool
+/// results are dropped so the request stays valid after compaction/replay.
 fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMap) -> Vec<Value> {
     let mut messages = Vec::new();
     if let Some(system) = &request.instructions.system {
@@ -543,7 +557,31 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
     if let Some(developer) = &request.instructions.developer {
         messages.push(json!({ "role": "system", "content": developer }));
     }
+
+    let mut results_by_id: HashMap<&str, &str> = HashMap::new();
     for item in &request.transcript {
+        if let TranscriptItem::ToolResult(result) = item {
+            results_by_id.insert(result.id.as_str(), result.result.as_str());
+        }
+    }
+
+    let mut pending_tool_calls: Vec<(String, Value)> = Vec::new();
+    for item in &request.transcript {
+        if let TranscriptItem::ToolCall(call) = item {
+            pending_tool_calls.push((
+                call.id.clone(),
+                json!({
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name_map.api_name(&call.name),
+                        "arguments": call.arguments,
+                    },
+                }),
+            ));
+            continue;
+        }
+        flush_pending_tool_calls(&mut messages, &mut pending_tool_calls, &results_by_id);
         match item {
             TranscriptItem::UserMessage(message) => {
                 messages.push(json!({ "role": "user", "content": message.text }));
@@ -553,26 +591,8 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                     messages.push(json!({ "role": "assistant", "content": message.text }));
                 }
             }
-            TranscriptItem::ToolCall(call) => {
-                messages.push(json!({
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": tool_name_map.api_name(&call.name),
-                            "arguments": call.arguments,
-                        },
-                    }],
-                }));
-            }
-            TranscriptItem::ToolResult(result) => {
-                messages.push(json!({
-                    "role": "tool",
-                    "tool_call_id": result.id,
-                    "content": result.result,
-                }));
+            TranscriptItem::ToolResult(_) => {
+                // Emitted with the coalesced assistant tool_calls message.
             }
             TranscriptItem::ContextCompaction(compaction) => {
                 messages.push(json!({ "role": "system", "content": compaction.summary }));
@@ -580,12 +600,76 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
             TranscriptItem::ReasoningSummary(summary) => {
                 messages.push(json!({ "role": "assistant", "content": summary.text }));
             }
-            TranscriptItem::FileChange(_)
+            TranscriptItem::ToolCall(_)
+            | TranscriptItem::FileChange(_)
             | TranscriptItem::Error(_)
             | TranscriptItem::ProviderMetadata(_) => {}
         }
     }
+    flush_pending_tool_calls(&mut messages, &mut pending_tool_calls, &results_by_id);
     messages
+}
+
+fn flush_pending_tool_calls(
+    messages: &mut Vec<Value>,
+    pending: &mut Vec<(String, Value)>,
+    results_by_id: &HashMap<&str, &str>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let tool_calls: Vec<Value> = pending.iter().map(|(_, call)| call.clone()).collect();
+    messages.push(json!({
+        "role": "assistant",
+        "content": Value::Null,
+        "tool_calls": tool_calls,
+    }));
+    for (id, _) in pending.drain(..) {
+        let content = results_by_id
+            .get(id.as_str())
+            .copied()
+            .unwrap_or(MISSING_TOOL_RESULT_PLACEHOLDER);
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": id,
+            "content": content,
+        }));
+    }
+}
+
+fn format_chat_completion_error(
+    provider_name: &str,
+    status: reqwest::StatusCode,
+    body: &str,
+) -> String {
+    let trimmed = body.trim();
+    let detail = parse_opencode_error_detail(trimmed).unwrap_or_else(|| {
+        if trimmed.is_empty() {
+            "empty response body".to_string()
+        } else if trimmed.len() <= 512 {
+            trimmed.to_string()
+        } else {
+            format!("{}…", &trimmed[..512])
+        }
+    });
+    format!("{provider_name} Chat Completions error {status}: {detail}")
+}
+
+fn parse_opencode_error_detail(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let error = value.get("error").unwrap_or(&value);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/error/error/message").and_then(Value::as_str))?;
+    let error_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/error/error/type").and_then(Value::as_str));
+    Some(match error_type {
+        Some(kind) if !kind.is_empty() => format!("{kind}: {message}"),
+        _ => message.to_string(),
+    })
 }
 
 #[derive(Debug)]
@@ -880,7 +964,9 @@ mod tests {
     };
     use roder_api::reliability::ReliabilityRequestPolicy;
     use roder_api::tools::{ToolChoice, ToolSpec};
-    use roder_api::transcript::{TranscriptItem, UserMessage};
+    use roder_api::transcript::{
+        AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -974,7 +1060,7 @@ mod tests {
         let request = AgentInferenceRequest {
             model: ModelSelection {
                 provider: PROVIDER_OPENCODE.to_string(),
-                model: "minimax-m2.5-free".to_string(),
+                model: "mimo-v2.5-free".to_string(),
             },
             instructions: InstructionBundle::default(),
             transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hi"))],
@@ -1014,7 +1100,7 @@ mod tests {
         }
         let request_body = server.request_body.await.unwrap();
 
-        assert_eq!(request_body["model"], "minimax-m2.5-free");
+        assert_eq!(request_body["model"], "mimo-v2.5-free");
         assert_eq!(request_body["stream"], true);
         assert_eq!(request_body["stream_options"]["include_usage"], true);
         assert_eq!(request_body["parallel_tool_calls"], false);
@@ -1081,7 +1167,7 @@ mod tests {
         let request = AgentInferenceRequest {
             model: ModelSelection {
                 provider: PROVIDER_OPENCODE.to_string(),
-                model: "minimax-m2.5-free".to_string(),
+                model: "mimo-v2.5-free".to_string(),
             },
             instructions: InstructionBundle {
                 system: None,
@@ -1147,7 +1233,7 @@ mod tests {
         let mut request = AgentInferenceRequest {
             model: ModelSelection {
                 provider: PROVIDER_OPENCODE.to_string(),
-                model: "minimax-m2.5-free".to_string(),
+                model: "mimo-v2.5-free".to_string(),
             },
             instructions: InstructionBundle::default(),
             transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hi"))],
@@ -1182,6 +1268,112 @@ mod tests {
             chat_tool_choice(&request.tool_choice, &tool_name_map)["function"]["name"],
             "exec_command"
         );
+    }
+
+    #[test]
+    fn deepseek_style_parallel_tool_calls_coalesce_for_longer_rollouts() {
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: PROVIDER_OPENCODE.to_string(),
+                model: "deepseek-v4-flash".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text(
+                    "inspect install scripts and summarize findings",
+                )),
+                TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "Reading the install and publish scripts.".to_string(),
+                    phase: None,
+                }),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "call_read_1".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{\"path\":\"scripts/install-roder.sh\"}".to_string(),
+                }),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "call_read_2".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{\"path\":\"scripts/publish-latest-roder.sh\"}".to_string(),
+                }),
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "call_read_1".to_string(),
+                    name: Some("read_file".to_string()),
+                    result: "install script contents".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "call_read_2".to_string(),
+                    name: Some("read_file".to_string()),
+                    result: "publish script contents".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+                TranscriptItem::UserMessage(UserMessage::text("continue with verification")),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "call_verify".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{\"path\":\"scripts/verify-latest-roder.sh\"}".to_string(),
+                }),
+                // Missing result should still produce a placeholder tool message.
+            ],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let messages = chat_messages(&request, &ChatToolNameMap::default());
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|message| message["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                "user",
+                "assistant",
+                "assistant",
+                "tool",
+                "tool",
+                "user",
+                "assistant",
+                "tool",
+            ]
+        );
+
+        let parallel = &messages[2];
+        assert_eq!(parallel["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(parallel["tool_calls"][0]["id"], "call_read_1");
+        assert_eq!(parallel["tool_calls"][1]["id"], "call_read_2");
+        assert!(parallel["content"].is_null());
+        assert_eq!(messages[3]["tool_call_id"], "call_read_1");
+        assert_eq!(messages[4]["tool_call_id"], "call_read_2");
+        assert_eq!(messages[6]["tool_calls"][0]["id"], "call_verify");
+        assert_eq!(messages[7]["content"], MISSING_TOOL_RESULT_PLACEHOLDER);
+    }
+
+    #[test]
+    fn formats_opencode_model_disabled_and_billing_errors() {
+        let disabled = format_chat_completion_error(
+            "OpenCode Zen",
+            reqwest::StatusCode::UNAUTHORIZED,
+            r#"{"type":"error","error":{"type":"ModelError","message":"Model is disabled"}}"#,
+        );
+        assert!(
+            disabled.contains("ModelError: Model is disabled"),
+            "{disabled}"
+        );
+
+        let billing = format_chat_completion_error(
+            "OpenCode Zen",
+            reqwest::StatusCode::UNAUTHORIZED,
+            r#"{"type":"error","error":{"type":"CreditsError","message":"No payment method. Add a payment method here: https://opencode.ai/billing"}}"#,
+        );
+        assert!(billing.contains("CreditsError: No payment method"), "{billing}");
     }
 
     struct CapturedChatServer {

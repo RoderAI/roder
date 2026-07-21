@@ -1,7 +1,5 @@
 mod fake_server;
 
-use std::sync::Mutex;
-
 use roder_api::extension::{ProvidedService, RoderExtension};
 use roder_api::remote_runner::{
     RemoteRunnerProvider, RunnerCommandRequest, RunnerDestination, RunnerFileReadRequest,
@@ -14,10 +12,11 @@ use roder_ext_runner_blaxel::config::{
 use roder_ext_runner_blaxel::{
     BlaxelConfig, BlaxelRunnerExtension, BlaxelRunnerProvider, PROVIDER_ID, sanitize_name,
 };
+use tokio::sync::Mutex;
 
 use fake_server::FakeBlaxelServer;
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 fn clear_env() {
     unsafe {
@@ -66,7 +65,7 @@ fn provider_advertises_pause_and_detach_capabilities() {
 
 #[test]
 fn config_precedence_and_redaction() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.blocking_lock();
     clear_env();
     unsafe {
         std::env::set_var(TOKEN_ENV, "base-token");
@@ -108,7 +107,7 @@ fn sanitize_name_enforces_blaxel_rules() {
 
 #[tokio::test]
 async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     clear_env();
     // The credential is sourced from the environment (as a destination
     // `secret_env` mapping would inject it), never persisted in state.
@@ -146,7 +145,13 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
             program: "echo".to_string(),
             args: vec!["hello".to_string(), "world".to_string()],
             cwd: None,
-            env: vec![("RUST_LOG".to_string(), "info".to_string())],
+            env: vec![
+                ("RUST_LOG".to_string(), "info".to_string()),
+                (
+                    "RODER_BLAXEL_COMMAND_TAG".to_string(),
+                    "user-controlled".to_string(),
+                ),
+            ],
             timeout_ms: None,
         })
         .await
@@ -167,6 +172,11 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
         process_body["name"]
             .as_str()
             .is_some_and(|name| name.starts_with("roder-") && name.len() == 38)
+    );
+    assert_eq!(process_body["env"]["RUST_LOG"], "info");
+    assert_ne!(
+        process_body["env"]["RODER_BLAXEL_COMMAND_TAG"],
+        "user-controlled"
     );
 
     // Write then read a file round-trips through the per-sandbox filesystem API.
@@ -233,7 +243,7 @@ async fn full_lifecycle_pause_resume_detach_rejoin_and_cleanup() {
 
 #[tokio::test]
 async fn command_timeout_becomes_a_server_lease_and_cancel_kills_the_process() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     clear_env();
     unsafe {
         std::env::set_var(TOKEN_ENV, "test-token");
@@ -350,7 +360,7 @@ async fn command_timeout_becomes_a_server_lease_and_cancel_kills_the_process() {
 
 #[tokio::test]
 async fn rejoin_recovers_via_external_id_when_name_is_lost() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     clear_env();
     unsafe {
         std::env::set_var(TOKEN_ENV, "test-token");
