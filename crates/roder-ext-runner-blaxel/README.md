@@ -16,6 +16,23 @@ to TERM/KILL every descendant carrying that command's unique environment tag.
 Cancellation succeeds only after no tagged process remains; the finite
 server-side lease bounds the named supervisor as a backstop.
 
+The cleanup proof requires a Linux sandbox image with `/proc`, Python 3 with
+`os.pidfd_open` and `signal.pidfd_send_signal`, and permission to read the
+environment of extant userspace processes. The scanner opens a pidfd before
+validating the exact NUL-delimited tag and signals through that pidfd, avoiding
+raw-PID reuse races. It skips only tasks positively identified as Linux kernel
+threads, which have no userspace environment. Missing pidfd support or an
+inaccessible userspace environment fails closed, so cancellation returns
+`false` and remains retryable. The live smoke verifies these requirements for
+the default Blaxel base image; custom images must provide them too.
+
+A positive named-process kill or terminal record permits the unique tombstone
+to be deleted after the bounded acknowledgement-retention window. If process
+registration only times out or is observed absent, the tombstone remains
+permanently to fence a late POST; only the local command mapping is reaped after
+the complete server-lease horizon. Persistent files under
+`/tmp/roder-cancelled-processes` are therefore intentional in that case.
+
 Credentials come from `BLAXEL_API_KEY` (or `BL_API_KEY`) plus `BL_WORKSPACE` and
 are never written to session state. See
 [`docs/roder-blaxel-runner.md`](https://github.com/RoderAI/roder/blob/master/docs/roder-blaxel-runner.md)

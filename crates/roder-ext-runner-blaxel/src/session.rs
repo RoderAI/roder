@@ -114,10 +114,12 @@ impl BlaxelRunnerSession {
     ) -> anyhow::Result<TrackedProcess> {
         let tracked = TrackedProcess::new(timeout_seconds);
         let mut processes = self.running_processes.lock().unwrap();
-        anyhow::ensure!(
-            !processes.contains_key(command_id),
-            "remote command id {command_id} is already active"
-        );
+        if let Some(current) = processes.get(command_id) {
+            anyhow::ensure!(
+                current.can_be_replaced(),
+                "remote command id {command_id} is already active"
+            );
+        }
         processes.insert(command_id.clone(), tracked.clone());
         Ok(tracked)
     }
