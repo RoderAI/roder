@@ -19,6 +19,7 @@ pub struct FakeBlaxelServer {
 struct ServerState {
     requests: Vec<String>,
     sandboxes: HashMap<String, Option<String>>,
+    sandbox_specs: HashMap<String, serde_json::Value>,
     by_external: HashMap<String, String>,
     files: HashMap<String, String>,
     processes: HashMap<String, FakeProcess>,
@@ -169,21 +170,40 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
             let external = parsed["metadata"]["externalId"]
                 .as_str()
                 .map(str::to_string);
-            {
+            let requested_spec = parsed
+                .get("spec")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let (external, spec) = {
                 let mut guard = state.lock().unwrap();
-                guard.sandboxes.insert(name.clone(), external.clone());
-                if let Some(ext) = &external {
-                    guard.by_external.insert(ext.clone(), name.clone());
+                // Match `createIfNotExist=true`: an existing sandbox is
+                // returned without mutating its current document.
+                if !guard.sandboxes.contains_key(&name) {
+                    guard.sandboxes.insert(name.clone(), external.clone());
+                    guard.sandbox_specs.insert(name.clone(), requested_spec);
+                    if let Some(ext) = &external {
+                        guard.by_external.insert(ext.clone(), name.clone());
+                    }
                 }
-            }
-            ("200 OK", sandbox_json(base, &name, external.as_deref()))
+                (
+                    guard.sandboxes.get(&name).cloned().flatten(),
+                    guard.sandbox_specs.get(&name).cloned(),
+                )
+            };
+            (
+                "200 OK",
+                sandbox_json(base, &name, external.as_deref(), spec.as_ref()),
+            )
         }
         ("GET", _) if path == "/health" => ("200 OK", "{}".to_string()),
         ("GET", _) if path.starts_with("/sandboxes/by-external-id/") => {
             let ext = path.trim_start_matches("/sandboxes/by-external-id/");
             let guard = state.lock().unwrap();
             match guard.by_external.get(ext) {
-                Some(name) => ("200 OK", sandbox_json(base, name, Some(ext))),
+                Some(name) => (
+                    "200 OK",
+                    sandbox_json(base, name, Some(ext), guard.sandbox_specs.get(name)),
+                ),
                 None => ("404 Not Found", json_error("no sandbox for external id")),
             }
         }
@@ -201,18 +221,54 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
                 .to_string(),
             )
         }
+        ("PUT", _) if path.starts_with("/sandboxes/") => {
+            let name = path.trim_start_matches("/sandboxes/").to_string();
+            let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+            let mut guard = state.lock().unwrap();
+            if !guard.sandboxes.contains_key(&name) {
+                return ("404 Not Found", json_error("sandbox not found"));
+            }
+            let external = parsed["metadata"]["externalId"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| guard.sandboxes.get(&name).cloned().flatten());
+            let spec = parsed
+                .get("spec")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            guard.sandboxes.insert(name.clone(), external.clone());
+            guard.sandbox_specs.insert(name.clone(), spec.clone());
+            if let Some(ext) = &external {
+                guard.by_external.insert(ext.clone(), name.clone());
+            }
+            (
+                "200 OK",
+                sandbox_json(base, &name, external.as_deref(), Some(&spec)),
+            )
+        }
         ("GET", _) if path.starts_with("/sandboxes/") => {
             let name = path.trim_start_matches("/sandboxes/");
             let guard = state.lock().unwrap();
             match guard.sandboxes.get(name) {
-                Some(external) => ("200 OK", sandbox_json(base, name, external.as_deref())),
+                Some(external) => (
+                    "200 OK",
+                    sandbox_json(
+                        base,
+                        name,
+                        external.as_deref(),
+                        guard.sandbox_specs.get(name),
+                    ),
+                ),
                 None => ("404 Not Found", json_error("sandbox not found")),
             }
         }
         ("DELETE", _) if path.starts_with("/sandboxes/") => {
             let name = path.trim_start_matches("/sandboxes/").to_string();
-            state.lock().unwrap().sandboxes.remove(&name);
-            ("200 OK", sandbox_json(base, &name, None))
+            let mut guard = state.lock().unwrap();
+            guard.sandboxes.remove(&name);
+            guard.sandbox_specs.remove(&name);
+            guard.by_external.retain(|_, mapped| mapped != &name);
+            ("200 OK", sandbox_json(base, &name, None, None))
         }
         ("POST", "/process") => {
             let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
@@ -236,7 +292,8 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
                 .unwrap_or_default();
             let process = FakeProcess {
                 long_running: command.contains("long-running")
-                    || command.contains("detached-signal-ignoring"),
+                    || command.contains("detached-signal-ignoring")
+                    || name.starts_with("roder-standby-grace-"),
                 command: command.clone(),
                 stdout: stdout.clone(),
                 status: "running".to_string(),
@@ -401,13 +458,29 @@ impl ParseJson for &str {
     }
 }
 
-fn sandbox_json(base: &str, name: &str, external: Option<&str>) -> String {
-    let mut metadata = serde_json::json!({ "name": name, "url": base });
+fn sandbox_json(
+    base: &str,
+    name: &str,
+    external: Option<&str>,
+    spec: Option<&serde_json::Value>,
+) -> String {
+    let mut metadata = serde_json::json!({
+        "name": name,
+        "displayName": format!("Sandbox {name}"),
+        "labels": { "test": "contract" },
+        "url": base,
+        "workspace": "fake-workspace",
+        "plan": "fake-plan"
+    });
     if let Some(ext) = external {
         metadata["externalId"] = serde_json::json!(ext);
     }
     serde_json::json!({
         "metadata": metadata,
+        "spec": spec.cloned().unwrap_or_else(|| serde_json::json!({})),
+        "events": [],
+        "expiresIn": 120,
+        "lastUsedAt": "2026-07-21T00:00:00Z",
         "state": "RUNNING",
         "status": "DEPLOYED"
     })

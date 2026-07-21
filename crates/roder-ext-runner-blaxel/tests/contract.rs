@@ -409,3 +409,258 @@ async fn rejoin_recovers_via_external_id_when_name_is_lost() {
     assert_eq!(rejoined.state().session_id, "roder-blaxel-dev");
     clear_env();
 }
+
+#[tokio::test]
+async fn lifecycle_is_created_and_reconciled_with_a_sanitized_update_document() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+    }
+    let server = FakeBlaxelServer::start().await;
+    let provider = BlaxelRunnerProvider::default();
+    let session = provider
+        .create_session(RunnerDestination {
+            id: "lifecycle-policy".to_string(),
+            provider_id: PROVIDER_ID.to_string(),
+            config: serde_json::json!({
+                "base_url": server.base_url(),
+                "image": "example/image:current",
+                "memory": 8192,
+                "region": "eu-lon-1",
+                "ttl": "30d",
+                "lifecycle": {
+                    "expiration_policies": [{ "type": "ttl-idle", "value": "7d" }]
+                }
+            }),
+            default_manifest: RunnerManifest::default(),
+        })
+        .await
+        .unwrap();
+
+    let requests = server.requests();
+    let create = requests
+        .iter()
+        .find(|request| request.starts_with("POST /sandboxes?"))
+        .expect("sandbox create request");
+    let create_body: serde_json::Value =
+        serde_json::from_str(create.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap();
+    assert_eq!(
+        create_body["spec"]["runtime"]["image"],
+        "example/image:current"
+    );
+    assert_eq!(create_body["spec"]["runtime"]["memory"], 8192);
+    assert_eq!(create_body["spec"]["runtime"]["ttl"], "30d");
+    assert_eq!(create_body["spec"]["region"], "eu-lon-1");
+    assert_eq!(
+        create_body["spec"]["lifecycle"],
+        serde_json::json!({
+            "expirationPolicies": [{
+                "action": "delete",
+                "type": "ttl-idle",
+                "value": "7d"
+            }]
+        })
+    );
+
+    let update = requests
+        .iter()
+        .find(|request| request.starts_with("PUT /sandboxes/roder-lifecycle-policy "))
+        .expect("lifecycle update request");
+    let update_body: serde_json::Value =
+        serde_json::from_str(update.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap();
+    assert_eq!(
+        update_body["spec"], create_body["spec"],
+        "lifecycle reconciliation must preserve the complete writable spec"
+    );
+    assert_eq!(
+        update_body["metadata"],
+        serde_json::json!({
+            "name": "roder-lifecycle-policy",
+            "displayName": "Sandbox roder-lifecycle-policy",
+            "externalId": "lifecycle-policy",
+            "labels": { "test": "contract" }
+        })
+    );
+    assert_eq!(update_body.as_object().unwrap().len(), 2);
+    for read_only in ["events", "expiresIn", "lastUsedAt", "state", "status"] {
+        assert!(update_body.get(read_only).is_none(), "included {read_only}");
+    }
+    for read_only in ["plan", "url", "workspace"] {
+        assert!(
+            update_body["metadata"].get(read_only).is_none(),
+            "included metadata.{read_only}"
+        );
+    }
+
+    let state = session.state();
+    assert_eq!(state.metadata["ttl"], "30d");
+    assert_eq!(
+        state.metadata["lifecycle"]["expiration_policies"][0]["type"],
+        "ttl-idle"
+    );
+    session.close().await.unwrap();
+    clear_env();
+}
+
+#[tokio::test]
+async fn rejoin_reconciles_mutable_lifecycle_without_replacing_the_sandbox() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+    }
+    let server = FakeBlaxelServer::start().await;
+    let provider = BlaxelRunnerProvider::default();
+    let session = provider
+        .create_session(RunnerDestination {
+            id: "mutable-lifecycle".to_string(),
+            provider_id: PROVIDER_ID.to_string(),
+            config: serde_json::json!({
+                "base_url": server.base_url(),
+                "working_dir": "/home/user/roder"
+            }),
+            default_manifest: RunnerManifest::default(),
+        })
+        .await
+        .unwrap();
+    session
+        .write_file(RunnerFileWriteRequest {
+            path: "uncommitted.txt".into(),
+            contents: b"preserve this checkout".to_vec(),
+        })
+        .await
+        .unwrap();
+    let mut state = session.detach().await.unwrap();
+    state.metadata["lifecycle"] = serde_json::json!({
+        "expiration_policies": [{ "type": "ttl-idle", "value": "7d" }]
+    });
+    drop(session);
+
+    let rejoined = provider.rejoin_session(state).await.unwrap();
+    assert_eq!(rejoined.state().session_id, "roder-mutable-lifecycle");
+    let preserved = rejoined
+        .read_file(RunnerFileReadRequest {
+            path: "uncommitted.txt".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(preserved.contents, b"preserve this checkout");
+
+    let requests = server.requests();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.starts_with("POST /sandboxes?"))
+            .count(),
+        1,
+        "rejoin must not create a new sandbox generation"
+    );
+    let update = requests
+        .iter()
+        .find(|request| request.starts_with("PUT /sandboxes/roder-mutable-lifecycle "))
+        .expect("rejoin lifecycle update request");
+    let update_body: serde_json::Value =
+        serde_json::from_str(update.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap();
+    assert_eq!(
+        update_body["spec"]["lifecycle"]["expirationPolicies"][0]["value"],
+        "7d"
+    );
+    rejoined.close().await.unwrap();
+    clear_env();
+}
+
+#[tokio::test]
+async fn standby_grace_is_bounded_replaced_and_rearmed_after_native_errors() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+    }
+    let server = FakeBlaxelServer::start().await;
+    let provider = BlaxelRunnerProvider::default();
+    let session = provider
+        .create_session(RunnerDestination {
+            id: "standby-grace".to_string(),
+            provider_id: PROVIDER_ID.to_string(),
+            config: serde_json::json!({
+                "base_url": server.base_url(),
+                "standby_after": "300s",
+                "working_dir": "/home/user/roder"
+            }),
+            default_manifest: RunnerManifest::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(session.state().metadata["standby_after"], "300s");
+
+    let missing = session
+        .read_file(RunnerFileReadRequest {
+            path: "missing.txt".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        missing.to_string().contains("read file failed"),
+        "native error was replaced: {missing:#}"
+    );
+    session
+        .write_file(RunnerFileWriteRequest {
+            path: "present.txt".into(),
+            contents: b"present".to_vec(),
+        })
+        .await
+        .unwrap();
+    session
+        .read_file(RunnerFileReadRequest {
+            path: "present.txt".into(),
+        })
+        .await
+        .unwrap();
+    session.pause().await.unwrap();
+
+    let requests = server.requests();
+    let grace_bodies: Vec<serde_json::Value> = requests
+        .iter()
+        .filter(|request| request.starts_with("POST /process "))
+        .map(|request| {
+            serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap()
+        })
+        .filter(|body: &serde_json::Value| {
+            body["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("roder-standby-grace-"))
+        })
+        .collect();
+    assert_eq!(
+        grace_bodies.len(),
+        4,
+        "create, failed read, write, and read should each leave one new grace lease"
+    );
+    let names: std::collections::HashSet<_> = grace_bodies
+        .iter()
+        .map(|body| body["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), grace_bodies.len());
+    for body in &grace_bodies {
+        assert_eq!(body["command"], "sleep 300");
+        assert_eq!(body["waitForCompletion"], false);
+        assert_eq!(body["keepAlive"], true);
+        assert_eq!(body["timeout"], 300);
+        assert_eq!(body["restartOnFailure"], false);
+    }
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| {
+                request.starts_with("DELETE /process/roder-standby-grace-")
+                    && request.contains("/kill HTTP/1.1")
+            })
+            .count(),
+        4,
+        "each previous/final grace lease should be stopped before replacement or pause"
+    );
+
+    session.close().await.unwrap();
+    clear_env();
+}

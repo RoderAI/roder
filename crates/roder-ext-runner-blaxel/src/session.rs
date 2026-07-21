@@ -14,7 +14,8 @@ use crate::cancellation::{
     cancellation_marker, shell_quote, tagged_environment,
 };
 use crate::client::BlaxelClient;
-use crate::config::{BlaxelConfig, CleanupMode, PROVIDER_ID};
+use crate::config::{BlaxelConfig, CleanupMode, PROVIDER_ID, SandboxLifecycle};
+use crate::standby::StandbyGrace;
 
 const DEFAULT_PROCESS_TIMEOUT_MS: u64 = 600_000;
 const MAX_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
@@ -39,8 +40,12 @@ pub struct BlaxelRunnerSession {
     region: Option<String>,
     image: String,
     memory_mb: u32,
+    ttl: Option<String>,
+    standby_after_seconds: Option<u64>,
+    lifecycle: Option<SandboxLifecycle>,
     inner: Mutex<Inner>,
     running_processes: RunningProcesses,
+    standby_grace: StandbyGrace,
 }
 
 impl BlaxelRunnerSession {
@@ -66,11 +71,15 @@ impl BlaxelRunnerSession {
             region: config.region.clone(),
             image: config.image.clone(),
             memory_mb: config.memory_mb,
+            ttl: config.ttl.clone(),
+            standby_after_seconds: config.standby_after_seconds,
+            lifecycle: config.lifecycle.clone(),
             inner: Mutex::new(Inner {
                 endpoint_url,
                 paused,
             }),
             running_processes: Default::default(),
+            standby_grace: StandbyGrace::new(config.standby_after_seconds),
         }
     }
 
@@ -80,6 +89,10 @@ impl BlaxelRunnerSession {
 
     fn set_paused(&self, paused: bool) {
         self.inner.lock().unwrap().paused = paused;
+    }
+
+    fn is_paused(&self) -> bool {
+        self.inner.lock().unwrap().paused
     }
 
     /// Return the endpoint, waking the sandbox first if it was paused.
@@ -93,6 +106,45 @@ impl BlaxelRunnerSession {
             self.set_paused(false);
         }
         Ok(endpoint)
+    }
+
+    /// End any previous post-operation lease before doing new work.
+    async fn begin_operation(&self) -> anyhow::Result<String> {
+        let endpoint = self.ensure_active().await?;
+        self.standby_grace.cancel(&self.client, &endpoint).await?;
+        Ok(endpoint)
+    }
+
+    async fn finish_operation(&self, endpoint: &str) -> anyhow::Result<()> {
+        if self.is_paused() {
+            return Ok(());
+        }
+        self.standby_grace.refresh(&self.client, endpoint).await
+    }
+
+    /// Re-arm grace after a completed native API attempt. If both the native
+    /// operation and grace refresh fail, preserve the operation's primary error.
+    async fn finish_attempt<T>(
+        &self,
+        endpoint: &str,
+        result: anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        match result {
+            Ok(value) => {
+                self.finish_operation(endpoint).await?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = self.finish_operation(endpoint).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Start the initial grace period after create/rejoin setup completes.
+    pub(crate) async fn refresh_standby_grace(&self) -> anyhow::Result<()> {
+        let endpoint = self.endpoint();
+        self.finish_operation(&endpoint).await
     }
 
     fn resolve_path(&self, path: &Path) -> String {
@@ -165,6 +217,15 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
         if let Some(region) = &self.region {
             metadata["region"] = json!(region);
         }
+        if let Some(ttl) = &self.ttl {
+            metadata["ttl"] = json!(ttl);
+        }
+        if let Some(seconds) = self.standby_after_seconds {
+            metadata["standby_after"] = json!(format!("{seconds}s"));
+        }
+        if let Some(lifecycle) = &self.lifecycle {
+            metadata["lifecycle"] = lifecycle.config_value();
+        }
         if let Some(external_id) = &self.external_id {
             metadata["external_id"] = json!(external_id);
         }
@@ -191,7 +252,13 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
             tracked.clone(),
             self.running_processes.clone(),
         );
-        let endpoint = self.ensure_active().await?;
+        let endpoint = match self.begin_operation().await {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                process_guard.complete();
+                return Err(error);
+            }
+        };
         if self
             .running_processes
             .lock()
@@ -215,6 +282,9 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
             .as_ref()
             .map(|cwd| self.resolve_path(cwd))
             .unwrap_or_else(|| self.working_dir.clone());
+        // If process execution errors, leave the guard armed: the remote
+        // process may still be running and cancellation must settle it before
+        // a post-operation standby lease is appropriate.
         let result = self
             .client
             .exec(
@@ -229,6 +299,7 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
         if result.exit_code.is_some() {
             process_guard.complete();
         }
+        self.finish_operation(&endpoint).await?;
         Ok(RunnerCommandResult {
             command_id: request.command_id,
             exit_code: result.exit_code,
@@ -238,22 +309,26 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
     }
 
     async fn cancel_command(&self, command_id: &RunnerCommandId) -> anyhow::Result<bool> {
-        Ok(cancel_registered_process(
+        let endpoint = self.begin_operation().await?;
+        let cancelled = cancel_registered_process(
             self.client.clone(),
-            self.endpoint(),
+            endpoint.clone(),
             self.running_processes.clone(),
             command_id.clone(),
         )
-        .await)
+        .await;
+        self.finish_operation(&endpoint).await?;
+        Ok(cancelled)
     }
 
     async fn read_file(
         &self,
         request: RunnerFileReadRequest,
     ) -> anyhow::Result<RunnerFileReadResult> {
-        let endpoint = self.ensure_active().await?;
+        let endpoint = self.begin_operation().await?;
         let path = self.resolve_path(&request.path);
-        let contents = self.client.read_file(&endpoint, &path).await?;
+        let result = self.client.read_file(&endpoint, &path).await;
+        let contents = self.finish_attempt(&endpoint, result).await?;
         Ok(RunnerFileReadResult {
             path: request.path,
             contents,
@@ -261,7 +336,7 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
     }
 
     async fn write_file(&self, request: RunnerFileWriteRequest) -> anyhow::Result<()> {
-        let endpoint = self.ensure_active().await?;
+        let endpoint = self.begin_operation().await?;
         let path = self.resolve_path(&request.path);
         if let Some(parent) = Path::new(&path).parent() {
             let parent = parent.to_string_lossy();
@@ -269,18 +344,20 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
                 self.client.make_dir(&endpoint, &parent).await.ok();
             }
         }
-        self.client
+        let result = self
+            .client
             .write_file(&endpoint, &path, &request.contents)
-            .await
+            .await;
+        self.finish_attempt(&endpoint, result).await
     }
 
     async fn expose_port(&self, request: RunnerPortRequest) -> anyhow::Result<RunnerPortResult> {
-        let endpoint = self.ensure_active().await?;
-        let _ = endpoint;
-        let url = self
+        let endpoint = self.begin_operation().await?;
+        let result = self
             .client
             .create_preview(&self.sandbox_name, request.port, true)
-            .await?;
+            .await;
+        let url = self.finish_attempt(&endpoint, result).await?;
         Ok(RunnerPortResult {
             port: request.port,
             url,
@@ -297,13 +374,21 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
         // Blaxel scales to standby once connections drop; mark intent so the
         // next operation wakes the sandbox.
         self.set_paused(true);
+        let endpoint = self.endpoint();
+        if let Err(error) = self.standby_grace.cancel(&self.client, &endpoint).await {
+            self.set_paused(false);
+            return Err(error);
+        }
         Ok(self.state())
     }
 
     async fn resume(&self) -> anyhow::Result<RunnerSessionState> {
         let endpoint = self.endpoint();
-        self.client.wake(&endpoint).await?;
-        self.set_paused(false);
+        let result = self.client.wake(&endpoint).await;
+        if result.is_ok() {
+            self.set_paused(false);
+        }
+        self.finish_attempt(&endpoint, result).await?;
         Ok(self.state())
     }
 
@@ -313,9 +398,15 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
     }
 
     async fn close(&self) -> anyhow::Result<()> {
+        self.set_paused(true);
+        let endpoint = self.endpoint();
+        let grace_result = self.standby_grace.cancel(&self.client, &endpoint).await;
         if self.cleanup.deletes_on_close() {
+            // Deleting the sandbox subsumes a failed process kill, and cleanup
+            // must not be skipped because the grace endpoint was unavailable.
             self.client.delete_sandbox(&self.sandbox_name).await?;
+            return Ok(());
         }
-        Ok(())
+        grace_result
     }
 }

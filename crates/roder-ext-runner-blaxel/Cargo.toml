@@ -16,7 +16,7 @@ roder-api.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 urlencoding.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
