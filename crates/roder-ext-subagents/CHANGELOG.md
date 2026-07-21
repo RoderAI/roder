@@ -1,3 +1,15 @@
+## 0.1.4 (2026-07-21)
+
+### Fixes
+
+#### Clarify subagent role selection and native full-history labels
+
+Model-facing subagent tools now advertise configured roles, reject lane names
+used as roles before fanout, and report lane/tool incompatibilities before a
+child agent runs. Native `spawn_agent` full-history forks now accept their
+advisory `agent_type` label while continuing to reject model, provider, and
+reasoning overrides.
+
 ## 0.1.3 (2026-06-26)
 
 ### Features
