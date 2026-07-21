@@ -233,7 +233,14 @@ async fn cancel_process_with_retry(
     endpoint: &str,
     tracked: &TrackedProcess,
 ) -> CancellationOutcome {
-    let supervisor = settle_supervisor(client, endpoint, &tracked.name).await;
+    // Sweep immediately so a detached signal-ignoring child cannot mutate the
+    // workspace while control-plane registration or DELETE is still racing.
+    // Settlement retains the tombstone, and the second sweep below is the
+    // authoritative proof after no tagged process can start late.
+    let (supervisor, _) = tokio::join!(
+        settle_supervisor(client, endpoint, &tracked.name),
+        cleanup_tagged_descendants(client, endpoint, &tracked.tag)
+    );
     if !supervisor.settled {
         return CancellationOutcome {
             cancelled: false,
@@ -366,16 +373,13 @@ async fn settle_supervisor(
                 Ok(Ok(()))
             );
         }
-        match tokio::time::timeout(
+        if let Ok(Ok(true)) = tokio::time::timeout(
             CANCEL_REQUEST_TIMEOUT,
             client.kill_process(endpoint, process_name),
         )
         .await
         {
-            Ok(Ok(true)) => {
-                return SupervisorOutcome { settled: true };
-            }
-            Ok(Ok(false)) | Ok(Err(_)) | Err(_) => {}
+            return SupervisorOutcome { settled: true };
         }
         if Instant::now() >= deadline {
             break;

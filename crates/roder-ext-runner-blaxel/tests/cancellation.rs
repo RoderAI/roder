@@ -1,6 +1,6 @@
 mod fake_server;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use roder_api::remote_runner::{
@@ -9,11 +9,12 @@ use roder_api::remote_runner::{
 };
 use roder_ext_runner_blaxel::config::TOKEN_ENV;
 use roder_ext_runner_blaxel::{BlaxelRunnerProvider, PROVIDER_ID};
+use tokio::sync::Mutex;
 
 use fake_server::FakeBlaxelServer;
 
 const COMMAND_TAG_ENV: &str = "RODER_BLAXEL_COMMAND_TAG";
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 async fn create_session(server: &FakeBlaxelServer) -> Arc<dyn RemoteRunnerSession> {
     BlaxelRunnerProvider::default()
@@ -90,7 +91,7 @@ fn tombstone_was_deleted(server: &FakeBlaxelServer) -> bool {
 
 #[tokio::test]
 async fn cancellation_overrides_the_user_tag_and_waits_for_untagged_cleanup() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
     let server = FakeBlaxelServer::start().await;
     let session = create_session(&server).await;
@@ -144,7 +145,7 @@ async fn cancellation_overrides_the_user_tag_and_waits_for_untagged_cleanup() {
                     .is_some_and(|name| name.starts_with("roder-cleanup-"))
             })
             .count(),
-        1
+        2
     );
     assert!(cleanup.get("env").is_none());
     assert!(
@@ -173,7 +174,7 @@ async fn cancellation_overrides_the_user_tag_and_waits_for_untagged_cleanup() {
 
 #[tokio::test]
 async fn failed_cleanup_returns_false_and_keeps_cancellation_retryable() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
     let server = FakeBlaxelServer::start().await;
     server.fail_descendant_cleanup(true);
@@ -216,7 +217,7 @@ async fn failed_cleanup_returns_false_and_keeps_cancellation_retryable() {
                     .is_some_and(|name| name.starts_with("roder-cleanup-"))
             })
             .count(),
-        2
+        4
     );
 
     session.close().await.unwrap();
@@ -225,7 +226,7 @@ async fn failed_cleanup_returns_false_and_keeps_cancellation_retryable() {
 
 #[tokio::test]
 async fn timed_out_public_cancel_keeps_provider_owned_cleanup_running() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
     let server = FakeBlaxelServer::start().await;
     server.set_cleanup_polls_before_terminal(8);
@@ -262,7 +263,7 @@ async fn timed_out_public_cancel_keeps_provider_owned_cleanup_running() {
 
 #[tokio::test]
 async fn dropped_run_command_uses_the_same_descendant_cleanup_path() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
     let server = FakeBlaxelServer::start().await;
     let session = create_session(&server).await;
@@ -292,7 +293,7 @@ async fn dropped_run_command_uses_the_same_descendant_cleanup_path() {
 
 #[tokio::test]
 async fn terminal_result_without_exit_code_still_cleans_descendants() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
     let server = FakeBlaxelServer::start().await;
     let session = create_session(&server).await;
@@ -317,6 +318,50 @@ async fn terminal_result_without_exit_code_still_cleans_descendants() {
     assert!(!server.has_file("server-killed-leak.txt"));
     assert!(!server.has_tagged_descendant());
 
+    session.close().await.unwrap();
+    unsafe { std::env::remove_var(TOKEN_ENV) };
+}
+
+#[tokio::test]
+async fn cleanup_starts_before_named_process_settlement_finishes() {
+    let _guard = ENV_LOCK.lock().await;
+    unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
+    let server = FakeBlaxelServer::start().await;
+    server.fail_named_process_kill(true);
+    let session = create_session(&server).await;
+    let command = start_detached_command(
+        &server,
+        &session,
+        "slow-settlement",
+        "slow-settlement-leak.txt",
+        Vec::new(),
+    )
+    .await;
+
+    let timed_out = tokio::time::timeout(
+        Duration::from_millis(25),
+        session.cancel_command(&"slow-settlement".to_string()),
+    )
+    .await;
+    assert!(timed_out.is_err());
+    wait_for(
+        || {
+            process_bodies(&server).iter().any(|body| {
+                body["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("roder-cleanup-"))
+            })
+        },
+        "early descendant cleanup did not start",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(1_600)).await;
+    assert!(!server.has_file("slow-settlement-leak.txt"));
+    assert!(!server.has_tagged_descendant());
+    assert!(!tombstone_was_deleted(&server));
+
+    command.abort();
+    let _ = command.await;
     session.close().await.unwrap();
     unsafe { std::env::remove_var(TOKEN_ENV) };
 }
