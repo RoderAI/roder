@@ -347,11 +347,18 @@ async fn command_timeout_becomes_a_server_lease_and_cancel_kills_the_process() {
         "cancellation should retry through delayed process registration"
     );
     assert!(
-        server.requests().iter().any(|request| {
+        session
+            .cancel_command(&"cancel-me".to_string())
+            .await
+            .unwrap(),
+        "settled cancellation remains idempotently acknowledged"
+    );
+    assert!(
+        !server.requests().iter().any(|request| {
             request.starts_with("DELETE /filesystem/")
                 && request.contains("roder-cancelled-processes")
         }),
-        "settled cancellation tombstones should be removed"
+        "acknowledgement retention must keep the unique tombstone"
     );
 
     session.close().await.unwrap();

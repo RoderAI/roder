@@ -300,8 +300,11 @@ async fn run_live_smoke() -> anyhow::Result<()> {
     let ready_marker = format!("cancel-ready-{marker_id}.txt");
     let cancelled_marker = format!("cancelled-marker-{marker_id}.txt");
     let marker_command = format!(
-        "setsid sh -c 'trap \"\" TERM INT HUP; printf \"%s\" \"$$\" > {ready_marker}; sleep 5; \
-         printf ghost > {cancelled_marker}' >/dev/null 2>&1 & wait"
+        "setsid sh -c 'trap \"\" TERM INT HUP; set -f; \
+         stat=$(cat /proc/$$/stat); fields=${{stat##*) }}; set -- $fields; \
+         test \"$#\" -ge 20 || exit 125; shift 19; start_time=$1; \
+         printf \"%s %s\" \"$$\" \"$start_time\" > {ready_marker}; \
+         sleep 5; printf ghost > {cancelled_marker}' >/dev/null 2>&1 & wait"
     );
     let cancellation_session = session.clone();
     let cancelled = tokio::spawn(async move {
@@ -331,11 +334,18 @@ async fn run_live_smoke() -> anyhow::Result<()> {
     })
     .await
     .map_err(|_| anyhow::anyhow!("detached cancellation child did not become ready"))?;
-    let child_pid = String::from_utf8(ready.contents)
-        .map_err(|error| anyhow::anyhow!("detached child wrote an invalid pid: {error}"))?;
+    let child_identity = String::from_utf8(ready.contents)
+        .map_err(|error| anyhow::anyhow!("detached child wrote an invalid identity: {error}"))?;
+    let mut identity_parts = child_identity.split_whitespace();
+    let child_pid = identity_parts.next().unwrap_or_default();
+    let child_start_time = identity_parts.next().unwrap_or_default();
     anyhow::ensure!(
-        !child_pid.is_empty() && child_pid.bytes().all(|byte| byte.is_ascii_digit()),
-        "detached child wrote an invalid pid: {child_pid:?}"
+        !child_pid.is_empty()
+            && child_pid.bytes().all(|byte| byte.is_ascii_digit())
+            && !child_start_time.is_empty()
+            && child_start_time.bytes().all(|byte| byte.is_ascii_digit())
+            && identity_parts.next().is_none(),
+        "detached child wrote an invalid pid/start-time identity: {child_identity:?}"
     );
     let leak_deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(5_500);
     let mut killed = false;
@@ -356,7 +366,14 @@ async fn run_live_smoke() -> anyhow::Result<()> {
         .run_command(RunnerCommandRequest {
             command_id: "smoke-cancel-pid-probe".to_string(),
             program: "sh".to_string(),
-            args: vec!["-c".to_string(), format!("kill -0 {child_pid}")],
+            args: vec![
+                "-c".to_string(),
+                format!(
+                    "set -f; stat=$(cat /proc/{child_pid}/stat 2>/dev/null) || exit 1; \
+                     fields=${{stat##*) }}; set -- $fields; test \"$#\" -ge 20 || exit 1; \
+                     shift 19; test \"$1\" = {child_start_time}"
+                ),
+            ],
             cwd: None,
             env: Vec::new(),
             timeout_ms: Some(2_000),
@@ -364,7 +381,7 @@ async fn run_live_smoke() -> anyhow::Result<()> {
         .await?;
     anyhow::ensure!(
         pid_probe.exit_code.is_some_and(|exit_code| exit_code != 0),
-        "detached child pid {child_pid} still exists after cancellation"
+        "detached child pid {child_pid} with start time {child_start_time} survived cancellation"
     );
     tokio::time::sleep_until(leak_deadline).await;
     anyhow::ensure!(
