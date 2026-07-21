@@ -141,7 +141,9 @@ class Roder < Formula
     else
       odie "Roder publishes signed macOS release binaries for Apple Silicon only; use --with-source for a local source build." unless OS.mac? && Hardware::CPU.arm?
 
-      bin.install "roder-aarch64-apple-darwin/roder" => "roder"
+      # Homebrew stages single-directory release archives in-place, so the
+      # binary is available as ./roder rather than ./roder-<triple>/roder.
+      bin.install "roder"
     end
   end
 
