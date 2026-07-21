@@ -1,3 +1,21 @@
+## 0.1.2 (2026-07-21)
+
+### Fixes
+
+#### Add bounded lifecycle recovery, cleanup proof, and shutdown diagnostics
+
+Roder now persists redacted per-turn lifecycle records, reconciles interrupted
+turns after restart, and reports bounded cleanup ownership rather than treating
+an aborted runtime task as proof that provider work was reaped. Local process
+tasks drain through graceful signal, forced kill, and reap; remote tasks use the
+remote runner cancellation API; and the Claude Code provider uses a vendored SDK
+cleanup path with offline real-child regression coverage.
+
+The app-server adds lifecycle notifications, `runtime/drain`, and
+`lifecycle/metrics`; the CLI and TUI expose durable recovery state. A shared
+`[lifecycle]` configuration controls shutdown budgets, task policy, bounded
+process diagnostics, and compatible legacy shutdown fallbacks.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
