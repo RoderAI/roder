@@ -1,3 +1,11 @@
+## 0.1.12 (2026-07-21)
+
+### Fixes
+
+#### Honor explicit turn deadlines in interactive runtimes
+
+Apply a configured wall-clock turn deadline to interactive profiles while preserving the unbounded default when no deadline is configured.
+
 ## 0.1.11 (2026-07-21)
 
 ### Fixes
