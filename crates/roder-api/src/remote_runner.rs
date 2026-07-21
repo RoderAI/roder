@@ -217,6 +217,41 @@ pub struct RunnerFileWriteRequest {
     pub contents: Vec<u8>,
 }
 
+/**
+ * Bounds for an optional provider-owned lease that serializes one complete
+ * workspace tool execution. The runtime supplies a unique id and enforces the
+ * acquisition timeout locally; providers should also enforce both bounds at
+ * the remote execution boundary so a crashed runtime cannot orphan a lock.
+ */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerWorkspaceExecutionLeaseRequest {
+    pub execution_id: String,
+    pub acquire_timeout_ms: u64,
+    /**
+     * Maximum lifetime for the acquired remote lease. `None` means the turn
+     * has no runtime deadline; providers must still choose a finite bound.
+     */
+    pub lease_timeout_ms: Option<u64>,
+}
+
+/**
+ * Provider-owned serialization fence held around one complete workspace tool
+ * execution. `wait_lost` must remain pending while the fence is authoritative
+ * and is cancellation-safe: the runtime selects it against tool execution.
+ *
+ * `release` is called after every normal tool result or error, including after
+ * `wait_lost` reports that the fence ended. Implementations must also fail
+ * closed when the guard or an in-progress release future is dropped (for
+ * example, keep a remotely bounded lease alive until in-flight operations are
+ * quiescent or its server-side timeout expires).
+ */
+#[async_trait::async_trait]
+pub trait RemoteWorkspaceExecutionLease: Send + Sync + 'static {
+    async fn wait_lost(&self) -> anyhow::Result<()>;
+
+    async fn release(self: Box<Self>) -> anyhow::Result<()>;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunnerPortRequest {
     pub port: u16,
@@ -304,6 +339,25 @@ pub trait RemoteRunnerProvider: Send + Sync + 'static {
 #[async_trait::async_trait]
 pub trait RemoteRunnerSession: Send + Sync + 'static {
     fn state(&self) -> RunnerSessionState;
+
+    /**
+     * Optionally acquire a provider-authoritative fence around a complete
+     * workspace tool execution. This complements the runtime's in-process
+     * session mutex for providers whose durable workspaces can be reached by
+     * multiple runtimes or replicas.
+     *
+     * Providers without a cross-process fence return `None`; they retain the
+     * runtime-local serialization behavior. Acquisition must be cancellation
+     * safe: if this future is dropped at the requested timeout, it must not
+     * leave an authoritative remote fence orphaned without its finite
+     * server-side expiry.
+     */
+    async fn acquire_workspace_execution_lease(
+        &self,
+        _request: RunnerWorkspaceExecutionLeaseRequest,
+    ) -> anyhow::Result<Option<Box<dyn RemoteWorkspaceExecutionLease>>> {
+        Ok(None)
+    }
 
     /**
      * Move the session toward a paused/standby state to save cost. Default is a

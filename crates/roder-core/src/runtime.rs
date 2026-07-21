@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 
 use anyhow::Context;
 use futures::StreamExt;
@@ -475,6 +475,11 @@ fn runtime_local_team_view(
     team
 }
 
+type RunnerToolExecutionKey = (String, String);
+type RunnerToolExecutionMutex = Mutex<()>;
+type RunnerToolExecutionLockRegistry =
+    Mutex<HashMap<RunnerToolExecutionKey, Weak<RunnerToolExecutionMutex>>>;
+
 pub struct Runtime {
     pub bus: EventBus,
     pub registry: ExtensionRegistry,
@@ -547,6 +552,13 @@ pub struct Runtime {
      * evicted so a later tool call can retry.
      */
     runner_sessions: Arc<Mutex<HashMap<ThreadId, Arc<RunnerSessionSlot>>>>,
+    /**
+     * Outer tool-call locks keyed by the actual remote session, not the
+     * per-thread destination id. Hosted runtimes are tenant-scoped, so this
+     * serializes threads that share one sandbox without coupling different
+     * tenants or independent runner sessions.
+     */
+    runner_tool_execution_locks: RunnerToolExecutionLockRegistry,
 }
 
 #[derive(Clone)]
@@ -698,6 +710,7 @@ impl Runtime {
             compaction_hysteresis: crate::compaction_runtime::compaction_hysteresis_state(),
             agent_swarm_modes: RwLock::new(HashMap::new()),
             runner_sessions: Arc::new(Mutex::new(HashMap::new())),
+            runner_tool_execution_locks: Mutex::new(HashMap::new()),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -2830,6 +2843,23 @@ impl Runtime {
             root: binding.workspace,
             read_roots: binding.read_roots,
         }))
+    }
+
+    pub(crate) async fn runner_tool_execution_lock(
+        &self,
+        session: &dyn RemoteRunnerSession,
+    ) -> Arc<RunnerToolExecutionMutex> {
+        let state = session.state();
+        let key = (state.provider_id, state.session_id);
+        let mut locks = self.runner_tool_execution_locks.lock().await;
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
     }
 
     async fn persist_runner_state(
