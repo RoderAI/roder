@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -6,9 +6,10 @@ use serde_json::{Value, json};
 
 use crate::config::BlaxelConfig;
 
+mod lifecycle;
+mod process;
+
 pub(crate) const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 30;
-const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const PROCESS_COMPLETION_GRACE: Duration = Duration::from_secs(30);
 
 /// Thin HTTP client for the Blaxel control plane (`/sandboxes`) and the
 /// per-sandbox REST API (process/filesystem/preview) reached through the
@@ -162,6 +163,9 @@ impl BlaxelClient {
         if let Some(region) = &config.region {
             spec["region"] = json!(region);
         }
+        if let Some(lifecycle) = &config.lifecycle {
+            spec["lifecycle"] = lifecycle.api_value();
+        }
         let body = json!({ "metadata": metadata, "spec": spec });
         let response = self
             .control(reqwest::Method::POST, "sandboxes?createIfNotExist=true")
@@ -261,98 +265,6 @@ impl BlaxelClient {
         // Any response means the VM resumed; non-2xx health is non-fatal.
         let _ = response.status();
         Ok(())
-    }
-
-    pub async fn exec(
-        &self,
-        endpoint: &str,
-        process_name: &str,
-        command: &str,
-        working_dir: Option<&str>,
-        env: &[(String, String)],
-        timeout_seconds: u64,
-    ) -> anyhow::Result<ProcessResponse> {
-        let mut body = json!({
-            "command": command,
-            "name": process_name,
-            "waitForCompletion": false,
-            "keepAlive": true,
-            "timeout": timeout_seconds.max(1),
-            "restartOnFailure": false,
-        });
-        if let Some(dir) = working_dir {
-            body["workingDir"] = json!(dir);
-        }
-        if !env.is_empty() {
-            let map: serde_json::Map<String, Value> = env
-                .iter()
-                .map(|(key, value)| (key.clone(), json!(value)))
-                .collect();
-            body["env"] = Value::Object(map);
-        }
-        let response = self
-            .sandbox(endpoint, reqwest::Method::POST, "process")
-            .json(&body)
-            .send()
-            .await
-            .context("exec blaxel process")?;
-        let mut process: ProcessResponse = decode(response, "exec process").await?;
-        let completion_deadline = Instant::now()
-            .checked_add(Duration::from_secs(timeout_seconds.max(1)))
-            .and_then(|deadline| deadline.checked_add(PROCESS_COMPLETION_GRACE))
-            .ok_or_else(|| anyhow::anyhow!("blaxel process lease is too large"))?;
-        while !process.is_terminal() {
-            if Instant::now() >= completion_deadline {
-                bail!("blaxel process {process_name} did not terminate within its server lease");
-            }
-            tokio::time::sleep(PROCESS_POLL_INTERVAL).await;
-            // Process creation and the read index are not atomic. Preserve the
-            // last known running state across a transient 404; cancellation is
-            // still addressable by the unique process name.
-            if let Some(observed) = self.get_process(endpoint, process_name).await? {
-                process = observed;
-            }
-        }
-        Ok(process)
-    }
-
-    pub async fn get_process(
-        &self,
-        endpoint: &str,
-        identifier: &str,
-    ) -> anyhow::Result<Option<ProcessResponse>> {
-        let response = self
-            .sandbox(
-                endpoint,
-                reqwest::Method::GET,
-                &format!("process/{}", urlencoding::encode(identifier)),
-            )
-            .send()
-            .await
-            .context("get blaxel process")?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        decode(response, "get process").await.map(Some)
-    }
-
-    /// Force-kill a process by name or pid. A missing process is already no
-    /// longer running, so it is reported as `false` rather than an error.
-    pub async fn kill_process(&self, endpoint: &str, identifier: &str) -> anyhow::Result<bool> {
-        let response = self
-            .sandbox(
-                endpoint,
-                reqwest::Method::DELETE,
-                &format!("process/{}/kill", urlencoding::encode(identifier)),
-            )
-            .send()
-            .await
-            .context("kill blaxel process")?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(false);
-        }
-        ensure_ok(response, "kill process").await?;
-        Ok(true)
     }
 
     pub async fn read_file(&self, endpoint: &str, path: &str) -> anyhow::Result<Vec<u8>> {

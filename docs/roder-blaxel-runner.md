@@ -31,7 +31,7 @@ default_destination = "blaxel-dev"
 [remote_runners.destinations.blaxel-dev]
 provider = "blaxel"
 secret_env = { BLAXEL_API_KEY = "BLAXEL_API_KEY", BL_WORKSPACE = "BL_WORKSPACE" }
-config = { image = "blaxel/base-image:latest", memory = 4096, region = "us-pdx-1", working_dir = "/home/user/roder", cleanup = "detach-on-close" }
+config = { image = "blaxel/base-image:latest", memory = 4096, region = "us-pdx-1", standby_after = "5m", lifecycle = { expiration_policies = [{ type = "ttl-idle", value = "7d" }] }, working_dir = "/home/user/roder", cleanup = "detach-on-close" }
 ```
 
 Config keys (all optional except where the sandbox cannot start without them):
@@ -45,11 +45,51 @@ Config keys (all optional except where the sandbox cannot start without them):
 | `memory` | `4096` | Memory in MB (also sets CPU) |
 | `region` | nearest | e.g. `us-pdx-1`, `eu-lon-1` |
 | `ttl` | none | Max-age before auto-deletion, e.g. `24h` |
+| `standby_after` | none | Keep the sandbox active after each operation, e.g. `5m`; `0s` disables and positive values are capped at `24h` |
+| `lifecycle` | unmanaged | Server-side expiration policies; see below |
 | `working_dir` | `/home/user/roder` | Sandbox working directory |
 | `cleanup` | see below | `delete-on-close`, `detach-on-close`, or `keep` |
 
 `cleanup` defaults to `delete-on-close` for freshly created sandboxes and
 `detach-on-close` when reusing an existing `sandbox_name`.
+
+### Standby grace and expiration policy
+
+`standby_after` accepts an integer duration with an `s`, `m`, `h`, `d`, or `w`
+suffix. For a positive value, Roder starts one bounded Blaxel `keepAlive`
+process after create, rejoin, and each completed runner operation. New work
+stops and replaces the previous lease. An unsuccessful filesystem or preview
+API attempt also best-effort re-arms the lease without hiding the operation's
+original error. Pause and close stop it immediately. If Roder exits, the
+server-side process timeout still bounds the lease. Once it finishes, Blaxel's
+normal standby delay applies. `standby_after = "0s"` explicitly disables the
+grace process and is equivalent to omitting the key.
+
+Lifecycle expiration is configured independently:
+
+```toml
+[remote_runners.destinations.blaxel-dev.config.lifecycle]
+expiration_policies = [
+  { type = "ttl-idle", value = "7d" },
+  { type = "ttl-max-age", value = "30d" },
+]
+```
+
+Each policy accepts only `type`, `value`, and optional `action = "delete"`;
+unknown keys, actions, and policy types are rejected. Values use the same
+integer duration units as `standby_after` and must be positive. At most one of
+each supported policy type is allowed:
+
+- `ttl-idle` deletes a sandbox after it has been unused for the duration.
+- `ttl-max-age` deletes it after the duration from creation.
+
+Roder sends these as `spec.lifecycle.expirationPolicies` when creating a
+sandbox. It also reconciles the lifecycle in place after create and every
+rejoin, including when `createIfNotExist` returns an existing sandbox. The
+update preserves the current runtime and the rest of the writable spec, so it
+does not replace the sandbox or its checkout. Omitting `lifecycle` leaves an
+existing lifecycle unmanaged; an explicit empty `expiration_policies = []`
+clears policies managed through this config.
 
 ### Routing tools into the sandbox
 
@@ -75,7 +115,8 @@ resuming on the next request. Roder maps the runner lifecycle onto this model:
 - **rejoin** — reattach to the same sandbox from persisted thread state. Roder
   prefers the persisted sandbox name and falls back to Blaxel's
   get-by-external-id lookup, so a non-terminated sandbox is recovered without
-  provisioning a new one.
+  provisioning a new one. Configured lifecycle expiration policies are
+  reconciled on that same sandbox generation.
 - **close** — honors `cleanup`: delete the sandbox (`delete-on-close`) or leave
   it on standby (`detach-on-close` / `keep`).
 

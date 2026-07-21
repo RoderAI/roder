@@ -15,12 +15,14 @@ mod cancellation;
 mod client;
 pub mod config;
 mod session;
+mod standby;
 
 use cancellation::CANCELLATION_DIR;
 pub use client::{BlaxelClient, ProcessResponse, Sandbox, wait_until_ready};
 pub use config::{
-    BASE_URL_ENV, BlaxelConfig, CleanupMode, DEFAULT_BASE_URL, EXTENSION_ID, LIVE_ENV, PROVIDER_ID,
-    Redacted, TOKEN_ENV, WORKSPACE_ENV,
+    BASE_URL_ENV, BlaxelConfig, CleanupMode, DEFAULT_BASE_URL, EXTENSION_ID, ExpirationPolicy,
+    ExpirationPolicyType, LIVE_ENV, MAX_STANDBY_AFTER_SECONDS, PROVIDER_ID, Redacted,
+    SandboxLifecycle, TOKEN_ENV, WORKSPACE_ENV,
 };
 pub use session::BlaxelRunnerSession;
 
@@ -157,11 +159,20 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
 
         let client = self.client(&config);
         let sandbox = client.create_sandbox(&name, &config).await?;
+        let sandbox = if let Some(lifecycle) = &config.lifecycle {
+            // `createIfNotExist=true` may have returned a persistent sandbox;
+            // reconcile mutable lifecycle policy without replacing it.
+            client
+                .update_sandbox_lifecycle(sandbox.name(), lifecycle)
+                .await?
+        } else {
+            sandbox
+        };
         let (sandbox, endpoint) = wait_until_ready(&client, sandbox, READINESS_ATTEMPTS).await?;
         client.make_dir(&endpoint, &config.working_dir).await.ok();
         client.make_dir(&endpoint, CANCELLATION_DIR).await?;
 
-        Ok(Arc::new(BlaxelRunnerSession::new(
+        let session = Arc::new(BlaxelRunnerSession::new(
             client,
             &config,
             destination.id,
@@ -169,7 +180,9 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             Some(external_id),
             endpoint,
             false,
-        )))
+        ));
+        session.refresh_standby_grace().await?;
+        Ok(session)
     }
 
     async fn resume_session(
@@ -207,6 +220,15 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             }
         };
 
+        let sandbox = if let Some(lifecycle) = &config.lifecycle {
+            // Mutable lifecycle policy is intentionally reapplied on every
+            // rejoin; this preserves the sandbox generation and its checkout.
+            client
+                .update_sandbox_lifecycle(sandbox.name(), lifecycle)
+                .await?
+        } else {
+            sandbox
+        };
         let external_id = sandbox
             .metadata
             .external_id
@@ -214,7 +236,7 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             .or(config.external_id.clone());
         let (sandbox, endpoint) = wait_until_ready(&client, sandbox, READINESS_ATTEMPTS).await?;
         client.make_dir(&endpoint, CANCELLATION_DIR).await?;
-        Ok(Arc::new(BlaxelRunnerSession::new(
+        let session = Arc::new(BlaxelRunnerSession::new(
             client,
             &config,
             state.destination_id,
@@ -222,7 +244,9 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             external_id,
             endpoint,
             false,
-        )))
+        ));
+        session.refresh_standby_grace().await?;
+        Ok(session)
     }
 }
 

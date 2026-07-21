@@ -16,6 +16,13 @@ to TERM/KILL every descendant carrying that command's unique environment tag.
 Cancellation succeeds only after no tagged process remains; the finite
 server-side lease bounds the named supervisor as a backstop.
 
+The provider can keep the sandbox active for a bounded interval after runner
+operations with `standby_after = "5m"`, replacing a single detached keep-alive
+lease and cancelling it on pause or close. It also supports validated Blaxel
+lifecycle expiration policies such as `{ type = "ttl-idle", value = "7d" }`.
+Policies are reconciled in place on create and rejoin, preserving persistent
+checkouts and uncommitted work instead of creating a new sandbox generation.
+
 The cleanup proof requires a Linux sandbox image with `/proc`, Python 3 with
 `os.pidfd_open` and `signal.pidfd_send_signal`, and permission to read the
 environment of extant userspace processes. The scanner opens a pidfd before
