@@ -326,6 +326,7 @@ async fn execute_remote_process_task(
             args: input.args.clone(),
             cwd: input.cwd.as_deref().map(PathBuf::from),
             env: input.env_overrides.clone().into_iter().collect(),
+            timeout_ms: None,
         })
         .await
     {

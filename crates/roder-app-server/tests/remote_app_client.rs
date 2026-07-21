@@ -161,6 +161,7 @@ async fn remote_controller_drives_a_full_turn_with_events_over_mtls() {
             model: None,
             reasoning: None,
             developer_context: None,
+            mcp_auth_token: None,
             policy_mode: None,
             task_ledger_required: false,
         })

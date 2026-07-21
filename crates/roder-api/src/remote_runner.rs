@@ -185,6 +185,11 @@ pub struct RunnerCommandRequest {
     pub cwd: Option<PathBuf>,
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// Optional wall-clock lease for the remote process. Providers should use
+    /// this as a server-side termination bound when their execution API can
+    /// outlive the client request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -429,6 +434,7 @@ mod tests {
             args: vec!["-lc".to_string(), "echo hi".to_string()],
             cwd: Some("workspace".into()),
             env: vec![("RUST_LOG".to_string(), "info".to_string())],
+            timeout_ms: None,
         };
         let port = RunnerPortResult {
             port: 3000,

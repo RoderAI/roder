@@ -510,6 +510,10 @@ pub struct Runtime {
     active_turns_changed: Notify,
     active_turn_selections: RwLock<HashMap<TurnId, ModelSelectionMode>>,
     active_turn_contexts: RwLock<HashMap<TurnId, InheritedTurnContext>>,
+    /// Process-local execution boundary. Local/CLI runtimes default to true;
+    /// hosted runtime pools set this false so missing runner metadata fails
+    /// closed instead of exposing the host workspace.
+    allow_local_workspaces: AtomicBool,
     // Spawn-time live authority retained for every reusable turn of a long-lived teammate.
     // This stays process-local because developer_context is explicitly volatile and must never
     // be persisted to thread state.
@@ -535,6 +539,58 @@ pub struct Runtime {
     /// team per-member policy-mode override idiom so swarm mode is per-thread
     /// like the other `thread/*` operations, without a separate runtime.
     agent_swarm_modes: RwLock<HashMap<ThreadId, bool>>,
+    /**
+     * Live remote-runner sessions keyed by thread. Each per-thread mutex is
+     * held across provider initialization, making the first workspace-tool
+     * access a singleflight while allowing unrelated threads to initialize in
+     * parallel. Failed initialization is shared with current waiters, then
+     * evicted so a later tool call can retry.
+     */
+    runner_sessions: Arc<Mutex<HashMap<ThreadId, Arc<RunnerSessionSlot>>>>,
+}
+
+#[derive(Clone)]
+struct CachedRunnerSession {
+    destination: RunnerDestination,
+    session: Arc<dyn RemoteRunnerSession>,
+}
+
+struct RunnerSessionSlot {
+    provider_id: String,
+    destination_id: String,
+    state: Mutex<RunnerSessionSlotState>,
+    initialized: Notify,
+}
+
+enum RunnerSessionSlotState {
+    Empty,
+    Initializing,
+    Ready(CachedRunnerSession),
+    Failed(Arc<str>),
+}
+
+impl RunnerSessionSlot {
+    fn empty(destination: &RunnerDestination) -> Self {
+        Self {
+            provider_id: destination.provider_id.clone(),
+            destination_id: destination.id.clone(),
+            state: Mutex::new(RunnerSessionSlotState::Empty),
+            initialized: Notify::new(),
+        }
+    }
+
+    fn ready(session: CachedRunnerSession) -> Self {
+        Self {
+            provider_id: session.destination.provider_id.clone(),
+            destination_id: session.destination.id.clone(),
+            state: Mutex::new(RunnerSessionSlotState::Ready(session)),
+            initialized: Notify::new(),
+        }
+    }
+
+    fn matches(&self, destination: &RunnerDestination) -> bool {
+        self.provider_id == destination.provider_id && self.destination_id == destination.id
+    }
 }
 
 impl Runtime {
@@ -618,6 +674,7 @@ impl Runtime {
             active_turns_changed: Notify::new(),
             active_turn_selections: RwLock::new(HashMap::new()),
             active_turn_contexts: RwLock::new(HashMap::new()),
+            allow_local_workspaces: AtomicBool::new(true),
             team_member_turn_contexts: Mutex::new(HashMap::new()),
             workspace: workspace.clone(),
             teams: TeamManager::new(
@@ -640,6 +697,7 @@ impl Runtime {
             event_sink_dispatcher: tokio::sync::OnceCell::new(),
             compaction_hysteresis: crate::compaction_runtime::compaction_hysteresis_state(),
             agent_swarm_modes: RwLock::new(HashMap::new()),
+            runner_sessions: Arc::new(Mutex::new(HashMap::new())),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -972,6 +1030,18 @@ impl Runtime {
 
     pub fn workspace(&self) -> PathBuf {
         self.workspace.clone()
+    }
+
+    /// Controls whether native workspace tools may execute without an
+    /// explicit remote-runner binding. Hosted runtimes disable this after
+    /// construction; ordinary local runtimes retain the compatible default.
+    pub fn set_allow_local_workspaces(&self, allowed: bool) {
+        self.allow_local_workspaces
+            .store(allowed, Ordering::Relaxed);
+    }
+
+    pub fn allows_local_workspaces(&self) -> bool {
+        self.allow_local_workspaces.load(Ordering::Relaxed)
     }
 
     pub async fn set_remote_runner_destination(&self, destination: Option<RunnerDestination>) {
@@ -1699,6 +1769,7 @@ impl Runtime {
                 .lock()
                 .await
                 .remove_thread(&thread_id.to_string());
+            self.evict_runner_session(&thread_id.to_string()).await;
         }
         Ok(archived)
     }
@@ -2418,10 +2489,8 @@ impl Runtime {
         let Some(store) = &self.thread_store else {
             return Ok(TurnLifecycleSnapshot::default());
         };
-        let Some(snapshot) = store.load_thread(thread_id).await? else {
-            return Ok(TurnLifecycleSnapshot::default());
-        };
-        Ok(turn_lifecycle_snapshot(&snapshot.extension_states))
+        let extension_states = store.load_extension_states(thread_id).await?;
+        Ok(turn_lifecycle_snapshot(&extension_states))
     }
 
     pub async fn load_thread(
@@ -2585,6 +2654,7 @@ impl Runtime {
             .map(|binding| binding.destination.clone())
             .or(self.config.read().await.remote_runner_destination.clone());
         let Some(destination) = destination else {
+            self.evict_runner_session(thread_id).await;
             return Ok(None);
         };
         let provider = self
@@ -2600,39 +2670,154 @@ impl Runtime {
                 )
             })?;
         let persisted_state = metadata.and_then(|metadata| metadata.runner_state);
-        let session = if let Some(state) = persisted_state
-            && state.provider_id == destination.provider_id
-            && state.destination_id == destination.id
-        {
-            match provider.resume_session(state).await {
-                Ok(session) => session,
-                Err(_) => provider.create_session(destination.clone()).await?,
+        let slot = {
+            let mut sessions = self.runner_sessions.lock().await;
+            match sessions.get(thread_id) {
+                Some(slot) if slot.matches(&destination) => slot.clone(),
+                _ => {
+                    let slot = Arc::new(RunnerSessionSlot::empty(&destination));
+                    sessions.insert(thread_id.clone(), slot.clone());
+                    slot
+                }
             }
-        } else {
-            provider.create_session(destination.clone()).await?
         };
-        Ok(Some((destination, session)))
+
+        loop {
+            let initialized = slot.initialized.notified();
+            let mut state = slot.state.lock().await;
+            match &*state {
+                RunnerSessionSlotState::Ready(cached) => {
+                    return Ok(Some((cached.destination.clone(), cached.session.clone())));
+                }
+                RunnerSessionSlotState::Failed(error) => {
+                    return Err(anyhow::anyhow!(error.to_string()));
+                }
+                RunnerSessionSlotState::Initializing => {
+                    drop(state);
+                    initialized.await;
+                }
+                RunnerSessionSlotState::Empty => {
+                    *state = RunnerSessionSlotState::Initializing;
+                    drop(state);
+                    self.spawn_runner_session_initialization(
+                        thread_id.clone(),
+                        destination.clone(),
+                        provider.clone(),
+                        persisted_state.clone(),
+                        slot.clone(),
+                    );
+                }
+            }
+        }
     }
 
-    /**
-     * Remote workspace for tool execution on a runner-bound thread. `None`
-     * for threads without an explicit binding, including threads on a
-     * runtime-level `runners/select` destination — those keep local tools.
-     */
-    pub(crate) async fn remote_workspace_for_thread(
+    fn spawn_runner_session_initialization(
+        &self,
+        thread_id: ThreadId,
+        destination: RunnerDestination,
+        provider: Arc<dyn RemoteRunnerProvider>,
+        persisted_state: Option<RunnerSessionState>,
+        slot: Arc<RunnerSessionSlot>,
+    ) {
+        let thread_store = self.thread_store.clone();
+        let runner_sessions = self.runner_sessions.clone();
+        // The task intentionally outlives the turn that first requested the
+        // workspace. Interrupting that turn must not strand the slot in
+        // `Initializing` and deadlock every later tool or lifecycle call.
+        drop(tokio::spawn(async move {
+            let initialized = async {
+                let session = if let Some(state) = persisted_state
+                    && state.provider_id == destination.provider_id
+                    && state.destination_id == destination.id
+                {
+                    match provider.resume_session(state).await {
+                        Ok(session) => session,
+                        Err(_) => provider.create_session(destination.clone()).await?,
+                    }
+                } else {
+                    provider.create_session(destination.clone()).await?
+                };
+                let resolved = (destination.clone(), session.clone());
+                // Persist before releasing the singleflight or dispatching
+                // the first tool. A later process can rejoin even if the turn
+                // that requested initialization has already been interrupted.
+                Self::persist_runner_state_in_store(
+                    thread_store.as_ref(),
+                    &thread_id,
+                    Some(&resolved),
+                )
+                .await?;
+                Ok::<_, anyhow::Error>(CachedRunnerSession {
+                    destination,
+                    session,
+                })
+            }
+            .await;
+
+            match initialized {
+                Ok(cached) => {
+                    *slot.state.lock().await = RunnerSessionSlotState::Ready(cached);
+                    slot.initialized.notify_waiters();
+                }
+                Err(error) => {
+                    let message: Arc<str> = Arc::from(format!("{error:#}"));
+                    *slot.state.lock().await = RunnerSessionSlotState::Failed(message);
+                    slot.initialized.notify_waiters();
+                    let mut sessions = runner_sessions.lock().await;
+                    let is_current = sessions
+                        .get(&thread_id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &slot));
+                    if is_current {
+                        sessions.remove(&thread_id);
+                    }
+                }
+            }
+        }));
+    }
+
+    async fn evict_runner_session(&self, thread_id: &ThreadId) {
+        self.runner_sessions.lock().await.remove(thread_id);
+    }
+
+    async fn cache_runner_session(
         &self,
         thread_id: &ThreadId,
-    ) -> anyhow::Result<Option<Arc<RemoteWorkspace>>> {
+        destination: RunnerDestination,
+        session: Arc<dyn RemoteRunnerSession>,
+    ) {
+        let cached = CachedRunnerSession {
+            destination,
+            session,
+        };
+        self.runner_sessions.lock().await.insert(
+            thread_id.clone(),
+            Arc::new(RunnerSessionSlot::ready(cached)),
+        );
+    }
+
+    /// Read a thread's explicit runner binding without creating or resuming a
+    /// session. Tool routing uses this before local previews so runner-backed
+    /// and fail-closed hosted calls never inspect the host workspace.
+    pub(crate) async fn runner_binding_for_thread(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<ThreadRunnerBinding>> {
         let Some(store) = &self.thread_store else {
             return Ok(None);
         };
-        let binding = store
+        Ok(store
             .load_thread_metadata(thread_id)
             .await?
-            .and_then(|metadata| metadata.runner_binding);
-        let Some(binding) = binding else {
-            return Ok(None);
-        };
+            .and_then(|metadata| metadata.runner_binding))
+    }
+
+    /// Resolve a previously-read binding into a live remote workspace. The
+    /// session remains lazy: callers invoke this only after policy approval.
+    pub(crate) async fn remote_workspace_for_binding(
+        &self,
+        thread_id: &ThreadId,
+        binding: ThreadRunnerBinding,
+    ) -> anyhow::Result<Arc<RemoteWorkspace>> {
         let session = self
             .runner_session_for_thread(thread_id)
             .await?
@@ -2640,11 +2825,11 @@ impl Runtime {
             .ok_or_else(|| {
                 anyhow::anyhow!("runner-bound thread {thread_id} has no runner session")
             })?;
-        Ok(Some(Arc::new(RemoteWorkspace {
+        Ok(Arc::new(RemoteWorkspace {
             session,
             root: binding.workspace,
             read_roots: binding.read_roots,
-        })))
+        }))
     }
 
     async fn persist_runner_state(
@@ -2652,10 +2837,18 @@ impl Runtime {
         thread_id: &ThreadId,
         runner: Option<&(RunnerDestination, Arc<dyn RemoteRunnerSession>)>,
     ) -> anyhow::Result<()> {
+        Self::persist_runner_state_in_store(self.thread_store.as_ref(), thread_id, runner).await
+    }
+
+    async fn persist_runner_state_in_store(
+        store: Option<&Arc<dyn ThreadStore>>,
+        thread_id: &ThreadId,
+        runner: Option<&(RunnerDestination, Arc<dyn RemoteRunnerSession>)>,
+    ) -> anyhow::Result<()> {
         let Some((destination, session)) = runner else {
             return Ok(());
         };
-        let Some(store) = &self.thread_store else {
+        let Some(store) = store else {
             return Ok(());
         };
         let Some(snapshot) = store.load_thread(thread_id).await? else {
@@ -2760,6 +2953,7 @@ impl Runtime {
             metadata.updated_at = OffsetDateTime::now_utc();
             store.update_thread_metadata(metadata).await?;
         }
+        self.evict_runner_session(thread_id).await;
         Ok(state)
     }
 
@@ -2803,8 +2997,10 @@ impl Runtime {
                 )
             })?;
         let session = provider.rejoin_session(state).await?;
-        self.persist_runner_state(thread_id, Some(&(destination, session.clone())))
+        self.persist_runner_state(thread_id, Some(&(destination.clone(), session.clone())))
             .await?;
+        self.cache_runner_session(thread_id, destination, session.clone())
+            .await;
         Ok(session.state())
     }
 
@@ -3497,7 +3693,6 @@ impl Runtime {
         let mut compacted_this_turn = transcript
             .iter()
             .any(crate::compaction::is_compaction_boundary);
-        let runner_session = self.runner_session_for_thread(&req.thread_id).await?;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
         let agent_swarm_mode_active = self
             .effective_agent_swarm_mode_for_thread(&req.thread_id)
@@ -4607,8 +4802,6 @@ impl Runtime {
             None,
         )
         .await?;
-        self.persist_runner_state(&req.thread_id, runner_session.as_ref())
-            .await?;
         Ok(TurnRunOutcome::Completed)
     }
 

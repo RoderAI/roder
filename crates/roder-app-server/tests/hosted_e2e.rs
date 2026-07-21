@@ -14,8 +14,9 @@ use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantConte
 use roder_app_server::AppServer;
 use roder_app_server::hosted::auth::PrincipalSeed;
 use roder_app_server::hosted::{
-    AuditLog, HookDeliveryService, HookStore, HostedAuthenticator, HostedGatewayOptions,
-    HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry, serve_hosted_gateway,
+    AllowAllHostedRequestPolicy, AuditLog, HookDeliveryService, HookStore, HostedAuthenticator,
+    HostedGatewayOptions, HostedRuntimePool, HostedRuntimeProfile, RateLimitConfig, TenantRegistry,
+    serve_hosted_gateway,
 };
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};
@@ -147,6 +148,7 @@ async fn hosted_e2e_two_tenants_service_account_hooks_and_isolation() {
             limits: RateLimitConfig::default(),
             hooks: Arc::new(HookStore::default()),
             hook_delivery: Arc::new(HookDeliveryService::new(Default::default())),
+            request_policy: Arc::new(AllowAllHostedRequestPolicy),
         },
     )
     .await

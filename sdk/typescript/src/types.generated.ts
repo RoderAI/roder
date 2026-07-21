@@ -926,6 +926,15 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "lifecycle/metrics",
+      "paramsType": "LifecycleMetricsParams",
+      "resultType": "LifecycleMetricsResult",
+      "stability": "stable",
+      "featureGroup": "lifecycle",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "marketplaces/add",
       "paramsType": "MarketplacesAddParams",
       "resultType": "MarketplacesAddResult",
@@ -1611,6 +1620,19 @@ export const appServerManifest = {
       "featureGroup": "runners",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "runtime/drain",
+      "paramsType": "RuntimeDrainParams",
+      "resultType": "RuntimeDrainResult",
+      "stability": "stable",
+      "featureGroup": "runtime",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "turn/lifecycleUpdated",
+        "turn/completed"
+      ]
     },
     {
       "method": "search_index/clear",
@@ -2784,6 +2806,7 @@ export const appServerMethods = [
   "knowledge/save",
   "knowledge/search",
   "knowledge/update",
+  "lifecycle/metrics",
   "marketplaces/add",
   "marketplaces/install_default",
   "marketplaces/list",
@@ -2860,6 +2883,7 @@ export const appServerMethods = [
   "runners/select",
   "runners/session",
   "runners/snapshot",
+  "runtime/drain",
   "search_index/clear",
   "search_index/rebuild",
   "search_index/status",

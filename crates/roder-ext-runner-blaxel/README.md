@@ -9,7 +9,10 @@ It runs a Roder thread's coding tools inside a [Blaxel sandbox](https://docs.bla
 milliseconds with its filesystem and processes intact. The provider drives the
 Blaxel control-plane (`/sandboxes`) and per-sandbox REST APIs (process,
 filesystem, preview) and supports the full runner lifecycle: pause, resume,
-detach, and rejoin.
+detach, and rejoin. Long-running commands use named process polling instead of
+the synchronous 60-second API window, and timeout or turn interruption
+force-kills the detached process group with a finite server-side lease as a
+backstop.
 
 Credentials come from `BLAXEL_API_KEY` (or `BL_API_KEY`) plus `BL_WORKSPACE` and
 are never written to session state. See

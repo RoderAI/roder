@@ -222,6 +222,7 @@ pub async fn run_live_smoke_if_enabled() {
             args: vec!["-c".to_string(), "print(2+2)".to_string()],
             cwd: None,
             env: Vec::new(),
+            timeout_ms: None,
         })
         .await
         .unwrap();
