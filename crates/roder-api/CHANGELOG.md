@@ -1,3 +1,69 @@
+## 0.1.11 (2026-07-21)
+
+### Features
+
+#### Freeform apply_patch on the Responses custom-tool channel
+
+Advertise `apply_patch` on the OpenAI Responses freeform/custom tool channel
+(`type:"custom"`) for the gpt-5.5 family, matching the channel the model was
+RL-trained to emit patches on. `ToolSpec` gains a `freeform_input_field` marker
+(default `None`, so ordinary function tools are unchanged); the Responses
+provider serializes marked tools as `type:"custom"`, parses `custom_tool_call`
+outputs into the normal tool-dispatch path, and replays their results as
+`custom_tool_call_output`. Non-gpt-5.5 models and every other provider keep the
+JSON `type:"function"` shape. The `apply_patch` handler accepts both the JSON
+`{ "patch": ... }` arguments and the raw freeform body.
+
+#### Add bounded lifecycle recovery, cleanup proof, and shutdown diagnostics
+
+Roder now persists redacted per-turn lifecycle records, reconciles interrupted
+turns after restart, and reports bounded cleanup ownership rather than treating
+an aborted runtime task as proof that provider work was reaped. Local process
+tasks drain through graceful signal, forced kill, and reap; remote tasks use the
+remote runner cancellation API; and the Claude Code provider uses a vendored SDK
+cleanup path with offline real-child regression coverage.
+
+The app-server adds lifecycle notifications, `runtime/drain`, and
+`lifecycle/metrics`; the CLI and TUI expose durable recovery state. A shared
+`[lifecycle]` configuration controls shutdown budgets, task policy, bounded
+process diagnostics, and compatible legacy shutdown fallbacks.
+
+#### Path-based `view_image` tool for vision tasks
+
+Adds a native `view_image(path)` tool that mirrors Codex's semantics: it reads
+an image file (png/jpeg/gif/webp, validated by magic bytes, capped at 10 MiB),
+base64-encodes it, and returns it as an image content block in the tool result
+so the model sees the pixels. It reads through the workspace backend, so it
+works against both local and remote-runner workspaces.
+
+- `roder-tools`: new `view_image` tool (registered alongside the builtin coding
+  tools); a `read_bytes` method on the workspace backend for binary reads; and
+  `media_attach` now degrades to actionable guidance (pointing at `view_image`)
+  instead of hard-failing when called without raw base64 bytes, so it no longer
+  burns the consecutive-tool-failure budget in headless/eval runs.
+- `roder-api`: `VIEW_IMAGE_DISPLAY_KEY`, a reserved `display_payload` key that
+  carries the image block from tool result to provider.
+- `roder-ext-openai-responses`: `function_call_output` now forwards a
+  `view_image` result as an `input_image` content block (when the model
+  supports images), falling back to the plain string output otherwise.
+
+### Fixes
+
+#### Fix provider compaction thrashing and show token/duration summaries
+
+Persist OpenAI/Codex compaction items as soon as the stream emits them so a
+later SSE decode failure cannot drop the boundary and re-compact every round.
+Surface before/after estimated tokens and elapsed time in the TUI and
+app-server item stream.
+
+#### Clarify subagent role selection and native full-history labels
+
+Model-facing subagent tools now advertise configured roles, reject lane names
+used as roles before fanout, and report lane/tool incompatibilities before a
+child agent runs. Native `spawn_agent` full-history forks now accept their
+advisory `agent_type` label while continuing to reject model, provider, and
+reasoning overrides.
+
 ## 0.1.10 (2026-07-10)
 
 ### Features

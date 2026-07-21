@@ -1,3 +1,59 @@
+## 0.1.3 (2026-07-21)
+
+### Features
+
+#### `unified_exec` tool for Codex tool-shape parity
+
+Adds `unified_exec`, a single-tool wrapper over the same `ExecSessionManager`
+that already backs `exec_command`/`write_stdin`, matching Codex's persistent
+PTY tool shape that gpt-5.5 was RL-trained on: `{ input, session_id?,
+timeout_ms? }`. Omitting `session_id` starts a new session running `input` as
+a shell command; passing one writes `input` to that session's stdin. Both
+cases return output collected up to `timeout_ms` (default 1000ms) plus the
+session ID if the command is still running — `timeout_ms` bounds the wait for
+output, it does not kill the process. `session_id` is accepted and returned as
+a string, matching Codex's wire shape, and a plain integer is still accepted
+on input. `exec_command` and `write_stdin` stay registered and unchanged; all
+three tools share the same session pool, so a session started by one can be
+driven by another.
+
+#### Path-based `view_image` tool for vision tasks
+
+Adds a native `view_image(path)` tool that mirrors Codex's semantics: it reads
+an image file (png/jpeg/gif/webp, validated by magic bytes, capped at 10 MiB),
+base64-encodes it, and returns it as an image content block in the tool result
+so the model sees the pixels. It reads through the workspace backend, so it
+works against both local and remote-runner workspaces.
+
+- `roder-tools`: new `view_image` tool (registered alongside the builtin coding
+  tools); a `read_bytes` method on the workspace backend for binary reads; and
+  `media_attach` now degrades to actionable guidance (pointing at `view_image`)
+  instead of hard-failing when called without raw base64 bytes, so it no longer
+  burns the consecutive-tool-failure budget in headless/eval runs.
+- `roder-api`: `VIEW_IMAGE_DISPLAY_KEY`, a reserved `display_payload` key that
+  carries the image block from tool result to provider.
+- `roder-ext-openai-responses`: `function_call_output` now forwards a
+  `view_image` result as an `input_image` content block (when the model
+  supports images), falling back to the plain string output otherwise.
+
+### Fixes
+
+#### Freeform apply_patch on the Responses custom-tool channel
+
+Advertise `apply_patch` on the OpenAI Responses freeform/custom tool channel
+(`type:"custom"`) for the gpt-5.5 family, matching the channel the model was
+RL-trained to emit patches on. `ToolSpec` gains a `freeform_input_field` marker
+(default `None`, so ordinary function tools are unchanged); the Responses
+provider serializes marked tools as `type:"custom"`, parses `custom_tool_call`
+outputs into the normal tool-dispatch path, and replays their results as
+`custom_tool_call_output`. Non-gpt-5.5 models and every other provider keep the
+JSON `type:"function"` shape. The `apply_patch` handler accepts both the JSON
+`{ "patch": ... }` arguments and the raw freeform body.
+
+#### Allow create_goal after a completed goal
+
+`create_goal` only fails while an active goal is in progress. Completed, blocked, paused, or limited goals can be replaced so resumed sessions can start the next objective.
+
 ## 0.1.2 (2026-06-26)
 
 ### Fixes
