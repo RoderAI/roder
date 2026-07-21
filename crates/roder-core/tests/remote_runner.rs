@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -10,10 +10,11 @@ use roder_api::events::RoderEvent;
 use roder_api::extension::{ExtensionRegistryBuilder, InferenceEngineId, ToolProviderId};
 use roder_api::inference::*;
 use roder_api::remote_runner::{
-    RemoteRunnerProvider, RemoteRunnerProviderId, RemoteRunnerSession, RunnerCapabilities,
-    RunnerCommandId, RunnerCommandRequest, RunnerCommandResult, RunnerDestination,
-    RunnerFileReadRequest, RunnerFileReadResult, RunnerFileWriteRequest, RunnerManifest,
-    RunnerPortRequest, RunnerPortResult, RunnerSessionState, RunnerSnapshotRef,
+    RemoteRunnerProvider, RemoteRunnerProviderId, RemoteRunnerSession,
+    RemoteWorkspaceExecutionLease, RunnerCapabilities, RunnerCommandId, RunnerCommandRequest,
+    RunnerCommandResult, RunnerDestination, RunnerFileReadRequest, RunnerFileReadResult,
+    RunnerFileWriteRequest, RunnerManifest, RunnerPortRequest, RunnerPortResult,
+    RunnerSessionState, RunnerSnapshotRef, RunnerWorkspaceExecutionLeaseRequest,
 };
 use roder_api::thread::ThreadStore;
 use roder_api::tools::{
@@ -46,6 +47,18 @@ struct MockRunnerState {
     create_started: tokio::sync::Notify,
     create_delay_ms: AtomicU64,
     create_failures_remaining: Mutex<usize>,
+    synchronize_reads: AtomicBool,
+    reads_started: AtomicU64,
+    first_read_started: tokio::sync::Notify,
+    second_read_started: tokio::sync::Notify,
+    workspace_leases_enabled: AtomicBool,
+    workspace_lease_lock: Arc<tokio::sync::Mutex<()>>,
+    workspace_lease_acquire_delay_ms: AtomicU64,
+    workspace_lease_requests: Mutex<Vec<RunnerWorkspaceExecutionLeaseRequest>>,
+    workspace_lease_acquisitions: AtomicU64,
+    workspace_lease_releases: AtomicU64,
+    workspace_lease_lost: AtomicBool,
+    workspace_lease_lost_notify: tokio::sync::Notify,
 }
 
 #[derive(Clone, Default)]
@@ -241,6 +254,32 @@ struct MockRunnerSession {
     paused: std::sync::atomic::AtomicBool,
 }
 
+struct MockWorkspaceExecutionLease {
+    state: Arc<MockRunnerState>,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+#[async_trait::async_trait]
+impl RemoteWorkspaceExecutionLease for MockWorkspaceExecutionLease {
+    async fn wait_lost(&self) -> anyhow::Result<()> {
+        loop {
+            let lost = self.state.workspace_lease_lost_notify.notified();
+            if self.state.workspace_lease_lost.load(Ordering::SeqCst) {
+                anyhow::bail!("mock provider dropped the workspace execution lease");
+            }
+            lost.await;
+        }
+    }
+
+    async fn release(mut self: Box<Self>) -> anyhow::Result<()> {
+        self.guard.take();
+        self.state
+            .workspace_lease_releases
+            .fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[async_trait::async_trait]
 impl RemoteRunnerSession for MockRunnerSession {
     fn state(&self) -> RunnerSessionState {
@@ -254,6 +293,35 @@ impl RemoteRunnerSession for MockRunnerSession {
                 "paused": self.paused.load(std::sync::atomic::Ordering::SeqCst),
             }),
         }
+    }
+
+    async fn acquire_workspace_execution_lease(
+        &self,
+        request: RunnerWorkspaceExecutionLeaseRequest,
+    ) -> anyhow::Result<Option<Box<dyn RemoteWorkspaceExecutionLease>>> {
+        if !self.state.workspace_leases_enabled.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let delay_ms = self
+            .state
+            .workspace_lease_acquire_delay_ms
+            .load(Ordering::SeqCst);
+        if delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+        let guard = self.state.workspace_lease_lock.clone().lock_owned().await;
+        self.state
+            .workspace_lease_requests
+            .lock()
+            .unwrap()
+            .push(request);
+        self.state
+            .workspace_lease_acquisitions
+            .fetch_add(1, Ordering::SeqCst);
+        Ok(Some(Box::new(MockWorkspaceExecutionLease {
+            state: self.state.clone(),
+            guard: Some(guard),
+        })))
     }
 
     async fn pause(&self) -> anyhow::Result<RunnerSessionState> {
@@ -301,6 +369,16 @@ impl RemoteRunnerSession for MockRunnerSession {
             .get(&key)
             .cloned()
             .unwrap_or_default();
+        if self.state.synchronize_reads.load(Ordering::SeqCst) {
+            let second_read_started = self.state.second_read_started.notified();
+            let read_index = self.state.reads_started.fetch_add(1, Ordering::SeqCst);
+            self.state.first_read_started.notify_waiters();
+            if read_index == 0 {
+                let _ = tokio::time::timeout(Duration::from_millis(250), second_read_started).await;
+            } else if read_index == 1 {
+                self.state.second_read_started.notify_waiters();
+            }
+        }
         Ok(RunnerFileReadResult {
             path: request.path,
             contents,
@@ -1007,6 +1085,16 @@ fn coding_tools_runtime(
     provider: MockRunnerProvider,
     rounds: Vec<Vec<InferenceEvent>>,
 ) -> Arc<Runtime> {
+    coding_tools_runtime_with_deadline(session_dir, scratch, provider, rounds, None)
+}
+
+fn coding_tools_runtime_with_deadline(
+    session_dir: PathBuf,
+    scratch: PathBuf,
+    provider: MockRunnerProvider,
+    rounds: Vec<Vec<InferenceEvent>>,
+    turn_deadline_seconds: Option<u64>,
+) -> Arc<Runtime> {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(ScriptedEngine {
         rounds: Mutex::new(rounds),
@@ -1023,6 +1111,12 @@ fn coding_tools_runtime(
             RuntimeConfig {
                 workspace: Some(scratch.display().to_string()),
                 policy_mode: roder_api::policy_mode::PolicyMode::Bypass,
+                runtime_profile: if turn_deadline_seconds.is_some() {
+                    roder_api::inference::RuntimeProfile::NonInteractive
+                } else {
+                    roder_api::inference::RuntimeProfile::Interactive
+                },
+                turn_deadline_seconds,
                 model_parallel_tool_calls: HashMap::from([("mock".to_string(), true)]),
                 ..RuntimeConfig::default()
             },
@@ -1169,6 +1263,376 @@ async fn concurrent_first_workspace_tools_initialize_one_runner_session() {
         .unwrap()
         .runner_state;
     assert!(persisted.is_some());
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn runner_tool_timeout_uses_deadline_remaining_after_lazy_provisioning() {
+    let session_dir = temp_dir("runner-deadline-sessions");
+    let scratch = temp_dir("runner-deadline-scratch");
+    let provider = MockRunnerProvider::default();
+    provider
+        .state
+        .create_delay_ms
+        .store(2_100, Ordering::SeqCst);
+    let runtime = coding_tools_runtime_with_deadline(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "deadline-exec",
+            "exec_command",
+            r#"{"cmd":"true"}"#,
+        )])],
+        Some(34),
+    );
+    let metadata = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+
+    let completed = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+
+    assert!(completed.iter().all(|call| !call.is_error));
+    let commands = provider.state.commands.lock().unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(
+        commands[0].timeout_ms,
+        Some(1_000),
+        "the command lease must exclude time spent provisioning the runner"
+    );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn runner_tool_timeout_uses_deadline_remaining_after_workspace_lease_wait() {
+    let session_dir = temp_dir("runner-lease-deadline-sessions");
+    let scratch = temp_dir("runner-lease-deadline-scratch");
+    let provider = MockRunnerProvider::default();
+    provider
+        .state
+        .workspace_leases_enabled
+        .store(true, Ordering::SeqCst);
+    provider
+        .state
+        .workspace_lease_acquire_delay_ms
+        .store(2_100, Ordering::SeqCst);
+    let runtime = coding_tools_runtime_with_deadline(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "lease-deadline-exec",
+            "exec_command",
+            r#"{"cmd":"true"}"#,
+        )])],
+        Some(34),
+    );
+    let metadata = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+
+    let completed = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+
+    assert!(completed.iter().all(|call| !call.is_error));
+    let commands = provider.state.commands.lock().unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(
+        commands[0].timeout_ms,
+        Some(1_000),
+        "the command lease must exclude time spent waiting for the workspace fence"
+    );
+    let lease_requests = provider.state.workspace_lease_requests.lock().unwrap();
+    assert_eq!(lease_requests.len(), 1);
+    assert!(lease_requests[0].acquire_timeout_ms > 0);
+    assert!(lease_requests[0].lease_timeout_ms.is_some());
+    assert_eq!(
+        provider
+            .state
+            .workspace_lease_releases
+            .load(Ordering::SeqCst),
+        1
+    );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn shared_runner_tool_calls_are_serialized_across_threads() {
+    let session_dir = temp_dir("runner-tool-serialization-sessions");
+    let scratch = temp_dir("runner-tool-serialization-scratch");
+    let provider = MockRunnerProvider::default();
+    provider
+        .state
+        .files
+        .lock()
+        .unwrap()
+        .insert("shared.txt".to_string(), b"alpha beta\n".to_vec());
+    provider
+        .state
+        .synchronize_reads
+        .store(true, Ordering::SeqCst);
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![
+            tool_call_round(&[(
+                "edit-alpha",
+                "edit",
+                r#"{"path":"shared.txt","old_string":"alpha","new_string":"ALPHA"}"#,
+            )]),
+            tool_call_round(&[(
+                "edit-beta",
+                "edit",
+                r#"{"path":"shared.txt","old_string":"beta","new_string":"BETA"}"#,
+            )]),
+            final_round(),
+            final_round(),
+        ],
+    );
+    let first = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+    let second = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+    let mut events = runtime.subscribe_events();
+
+    for thread_id in [&first.thread_id, &second.thread_id] {
+        runtime
+            .start_turn(StartTurnRequest {
+                thread_id: thread_id.clone(),
+                message: "edit the shared runner workspace".to_string(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: scratch.display().to_string(),
+                instructions: default_instructions(),
+                developer_context: None,
+                task_ledger_required: false,
+            })
+            .await
+            .unwrap();
+    }
+
+    let target_threads = HashMap::from([
+        (first.thread_id.clone(), false),
+        (second.thread_id.clone(), false),
+    ]);
+    let mut completed_threads = target_threads;
+    while completed_threads.values().any(|completed| !completed) {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event.event {
+            RoderEvent::TurnCompleted(completed) => {
+                if let Some(done) = completed_threads.get_mut(&completed.thread_id) {
+                    *done = true;
+                }
+            }
+            RoderEvent::TurnFailed(failed) if completed_threads.contains_key(&failed.thread_id) => {
+                panic!("turn failed: {}", failed.error)
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(*provider.state.created.lock().unwrap(), 2);
+    assert_eq!(
+        provider
+            .state
+            .files
+            .lock()
+            .unwrap()
+            .get("shared.txt")
+            .cloned(),
+        Some(b"ALPHA BETA\n".to_vec())
+    );
+
+    let _ = std::fs::remove_dir_all(session_dir);
+    let _ = std::fs::remove_dir_all(scratch);
+}
+
+#[tokio::test]
+async fn provider_workspace_lease_serializes_shared_session_across_runtimes() {
+    let first_session_dir = temp_dir("runner-cross-runtime-first-sessions");
+    let second_session_dir = temp_dir("runner-cross-runtime-second-sessions");
+    let first_scratch = temp_dir("runner-cross-runtime-first-scratch");
+    let second_scratch = temp_dir("runner-cross-runtime-second-scratch");
+    let provider = MockRunnerProvider::default();
+    provider
+        .state
+        .workspace_leases_enabled
+        .store(true, Ordering::SeqCst);
+    provider
+        .state
+        .files
+        .lock()
+        .unwrap()
+        .insert("shared.txt".to_string(), b"alpha beta\n".to_vec());
+    provider
+        .state
+        .synchronize_reads
+        .store(true, Ordering::SeqCst);
+    let first_runtime = coding_tools_runtime(
+        first_session_dir.clone(),
+        first_scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "edit-alpha",
+            "edit",
+            r#"{"path":"shared.txt","old_string":"alpha","new_string":"ALPHA"}"#,
+        )])],
+    );
+    let second_runtime = coding_tools_runtime(
+        second_session_dir.clone(),
+        second_scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "edit-beta",
+            "edit",
+            r#"{"path":"shared.txt","old_string":"beta","new_string":"BETA"}"#,
+        )])],
+    );
+    let first = first_runtime
+        .create_thread_with(mock_runner_thread_request(&first_scratch))
+        .await
+        .unwrap();
+    let second = second_runtime
+        .create_thread_with(mock_runner_thread_request(&second_scratch))
+        .await
+        .unwrap();
+
+    let (first_completed, second_completed) = tokio::join!(
+        run_turn_collecting_tool_calls(&first_runtime, &first.thread_id, &first_scratch),
+        run_turn_collecting_tool_calls(&second_runtime, &second.thread_id, &second_scratch),
+    );
+
+    assert!(first_completed.iter().all(|call| !call.is_error));
+    assert!(second_completed.iter().all(|call| !call.is_error));
+    assert_eq!(
+        provider
+            .state
+            .files
+            .lock()
+            .unwrap()
+            .get("shared.txt")
+            .cloned(),
+        Some(b"ALPHA BETA\n".to_vec())
+    );
+    assert_eq!(
+        provider
+            .state
+            .workspace_lease_acquisitions
+            .load(Ordering::SeqCst),
+        2
+    );
+    assert_eq!(
+        provider
+            .state
+            .workspace_lease_releases
+            .load(Ordering::SeqCst),
+        2
+    );
+
+    let _ = std::fs::remove_dir_all(first_session_dir);
+    let _ = std::fs::remove_dir_all(second_session_dir);
+    let _ = std::fs::remove_dir_all(first_scratch);
+    let _ = std::fs::remove_dir_all(second_scratch);
+}
+
+#[tokio::test]
+async fn lost_provider_workspace_lease_cancels_tool_before_its_write() {
+    let session_dir = temp_dir("runner-lost-lease-sessions");
+    let scratch = temp_dir("runner-lost-lease-scratch");
+    let provider = MockRunnerProvider::default();
+    provider
+        .state
+        .workspace_leases_enabled
+        .store(true, Ordering::SeqCst);
+    provider
+        .state
+        .synchronize_reads
+        .store(true, Ordering::SeqCst);
+    provider
+        .state
+        .files
+        .lock()
+        .unwrap()
+        .insert("shared.txt".to_string(), b"alpha\n".to_vec());
+    let runtime = coding_tools_runtime(
+        session_dir.clone(),
+        scratch.clone(),
+        provider.clone(),
+        vec![tool_call_round(&[(
+            "edit-alpha",
+            "edit",
+            r#"{"path":"shared.txt","old_string":"alpha","new_string":"ALPHA"}"#,
+        )])],
+    );
+    let metadata = runtime
+        .create_thread_with(mock_runner_thread_request(&scratch))
+        .await
+        .unwrap();
+    let runtime_for_turn = runtime.clone();
+    let thread_id = metadata.thread_id.clone();
+    let scratch_for_turn = scratch.clone();
+    let turn = tokio::spawn(async move {
+        run_turn_collecting_tool_calls(&runtime_for_turn, &thread_id, &scratch_for_turn).await
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let started = provider.state.first_read_started.notified();
+            if provider.state.reads_started.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            started.await;
+        }
+    })
+    .await
+    .expect("the edit should begin its read while holding the provider lease");
+    provider
+        .state
+        .workspace_lease_lost
+        .store(true, Ordering::SeqCst);
+    provider.state.workspace_lease_lost_notify.notify_waiters();
+
+    let completed = turn.await.unwrap();
+    let edit = completed
+        .iter()
+        .find(|call| call.tool_name.as_deref() == Some("edit"))
+        .expect("the lost-lease edit should produce a tool result");
+    assert!(edit.is_error);
+    assert!(edit.output.as_deref().unwrap().contains("lease was lost"));
+    assert_eq!(
+        provider
+            .state
+            .files
+            .lock()
+            .unwrap()
+            .get("shared.txt")
+            .cloned(),
+        Some(b"alpha\n".to_vec())
+    );
+    assert_eq!(
+        provider
+            .state
+            .workspace_lease_releases
+            .load(Ordering::SeqCst),
+        1
+    );
 
     let _ = std::fs::remove_dir_all(session_dir);
     let _ = std::fs::remove_dir_all(scratch);
