@@ -154,30 +154,25 @@ async fn cancellation_overrides_the_user_tag_and_waits_for_untagged_cleanup() {
             .is_some_and(|command| command.contains(&format!("{COMMAND_TAG_ENV}={tag}")))
     );
 
-    let requests = server.requests();
-    let cleanup_started = requests
-        .iter()
-        .position(|request| request.contains("roder-cleanup-"))
-        .unwrap();
-    let tombstone_deleted = requests
-        .iter()
-        .position(|request| {
-            request.starts_with("DELETE /filesystem/")
-                && request.contains("roder-cancelled-processes")
-        })
-        .unwrap();
-    assert!(cleanup_started < tombstone_deleted);
+    assert!(
+        session.cancel_command(&command_id).await.unwrap(),
+        "a confirmed cancellation must remain idempotently acknowledged"
+    );
+    assert!(
+        !tombstone_was_deleted(&server),
+        "the acknowledgement retention window must keep its unique tombstone"
+    );
 
     session.close().await.unwrap();
     unsafe { std::env::remove_var(TOKEN_ENV) };
 }
 
 #[tokio::test]
-async fn failed_cleanup_returns_false_and_keeps_cancellation_retryable() {
+async fn background_success_racing_a_retry_returns_true_and_stays_idempotent() {
     let _guard = ENV_LOCK.lock().await;
     unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
     let server = FakeBlaxelServer::start().await;
-    server.fail_descendant_cleanup(true);
+    server.fail_next_descendant_cleanups(2);
     let session = create_session(&server).await;
     let command = start_detached_command(
         &server,
@@ -194,30 +189,36 @@ async fn failed_cleanup_returns_false_and_keeps_cancellation_retryable() {
             .await
             .unwrap()
     );
-    command.await.unwrap().unwrap();
-    assert!(server.has_tagged_descendant());
     assert!(!tombstone_was_deleted(&server));
 
-    server.fail_descendant_cleanup(false);
+    wait_for(
+        || !server.has_tagged_descendant(),
+        "the prompt background sweep did not start",
+    )
+    .await;
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            session.cancel_command(&"retry-cleanup".to_string())
+        )
+        .await
+        .expect("the retry should join or observe the background acknowledgement")
+        .unwrap(),
+        "a background acknowledgement must win over an in-flight retry's result"
+    );
+    command.await.unwrap().unwrap();
+    tokio::time::sleep(Duration::from_millis(1_600)).await;
+    assert!(!server.has_file("retry-cleanup-leak.txt"));
     assert!(
         session
             .cancel_command(&"retry-cleanup".to_string())
             .await
-            .unwrap()
+            .unwrap(),
+        "a successful retry must leave an idempotent acknowledgement"
     );
-    tokio::time::sleep(Duration::from_millis(1_600)).await;
-    assert!(!server.has_file("retry-cleanup-leak.txt"));
-    assert!(tombstone_was_deleted(&server));
-    assert_eq!(
-        process_bodies(&server)
-            .iter()
-            .filter(|body| {
-                body["name"]
-                    .as_str()
-                    .is_some_and(|name| name.starts_with("roder-cleanup-"))
-            })
-            .count(),
-        4
+    assert!(
+        !tombstone_was_deleted(&server),
+        "successful cancellation retains its tombstone during acknowledgement retention"
     );
 
     session.close().await.unwrap();
@@ -247,15 +248,24 @@ async fn timed_out_public_cancel_keeps_provider_owned_cleanup_running() {
     .await;
     assert!(timed_out.is_err());
     command.await.unwrap().unwrap();
-    wait_for(|| tombstone_was_deleted(&server), "cleanup did not finish").await;
+    wait_for(
+        || !server.has_tagged_descendant(),
+        "provider-owned cleanup did not reap the descendant",
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(1_600)).await;
     assert!(!server.has_file("cancel-timeout-leak.txt"));
     assert!(
-        !session
-            .cancel_command(&"cancel-timeout".to_string())
-            .await
-            .unwrap()
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            session.cancel_command(&"cancel-timeout".to_string())
+        )
+        .await
+        .expect("the provider-owned cancellation should settle")
+        .unwrap(),
+        "a later retry must observe the retained acknowledgement"
     );
+    assert!(!tombstone_was_deleted(&server));
 
     session.close().await.unwrap();
     unsafe { std::env::remove_var(TOKEN_ENV) };
@@ -278,14 +288,19 @@ async fn dropped_run_command_uses_the_same_descendant_cleanup_path() {
 
     command.abort();
     let _ = command.await;
-    wait_for(
-        || tombstone_was_deleted(&server),
-        "drop cleanup did not finish",
-    )
-    .await;
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            session.cancel_command(&"drop-run".to_string())
+        )
+        .await
+        .expect("drop cleanup did not finish")
+        .unwrap()
+    );
     tokio::time::sleep(Duration::from_millis(1_600)).await;
     assert!(!server.has_file("drop-run-leak.txt"));
     assert!(!server.has_tagged_descendant());
+    assert!(!tombstone_was_deleted(&server));
 
     session.close().await.unwrap();
     unsafe { std::env::remove_var(TOKEN_ENV) };
@@ -309,15 +324,88 @@ async fn terminal_result_without_exit_code_still_cleans_descendants() {
     server.terminate_user_processes_without_exit();
     let output = command.await.unwrap().unwrap();
     assert_eq!(output.exit_code, None);
-    wait_for(
-        || tombstone_was_deleted(&server),
-        "terminal result did not trigger cleanup",
-    )
-    .await;
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            session.cancel_command(&"server-killed".to_string())
+        )
+        .await
+        .expect("terminal result did not trigger cleanup")
+        .unwrap()
+    );
     tokio::time::sleep(Duration::from_millis(1_600)).await;
     assert!(!server.has_file("server-killed-leak.txt"));
     assert!(!server.has_tagged_descendant());
+    assert!(!tombstone_was_deleted(&server));
 
+    session.close().await.unwrap();
+    unsafe { std::env::remove_var(TOKEN_ENV) };
+}
+
+#[tokio::test]
+async fn an_old_guard_cannot_cancel_a_reused_command_id_generation() {
+    let _guard = ENV_LOCK.lock().await;
+    unsafe { std::env::set_var(TOKEN_ENV, "test-token") };
+    let server = FakeBlaxelServer::start().await;
+    server.delay_killed_user_process_for_polls(20);
+    let session = create_session(&server).await;
+    let first = start_detached_command(
+        &server,
+        &session,
+        "reused-id",
+        "first-generation-leak.txt",
+        Vec::new(),
+    )
+    .await;
+
+    assert!(
+        session
+            .cancel_command(&"reused-id".to_string())
+            .await
+            .unwrap()
+    );
+    assert!(
+        !first.is_finished(),
+        "the fake must keep generation A's run future alive for the guard race"
+    );
+
+    let second = start_detached_command(
+        &server,
+        &session,
+        "reused-id",
+        "second-generation-leak.txt",
+        Vec::new(),
+    )
+    .await;
+    let second_name = process_bodies(&server)
+        .into_iter()
+        .rfind(|body| {
+            body["command"]
+                .as_str()
+                .is_some_and(|command| command.contains("detached-signal-ignoring"))
+        })
+        .and_then(|body| body["name"].as_str().map(str::to_string))
+        .unwrap();
+
+    first.abort();
+    let _ = first.await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !server.requests().iter().any(|request| {
+            request.starts_with(&format!("DELETE /process/{second_name}/kill "))
+        }),
+        "generation A's dropped guard must not cancel generation B"
+    );
+    assert!(!second.is_finished());
+
+    assert!(
+        session
+            .cancel_command(&"reused-id".to_string())
+            .await
+            .unwrap()
+    );
+    second.abort();
+    let _ = second.await;
     session.close().await.unwrap();
     unsafe { std::env::remove_var(TOKEN_ENV) };
 }
