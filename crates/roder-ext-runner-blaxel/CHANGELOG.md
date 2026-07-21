@@ -1,3 +1,13 @@
+## 0.1.5 (2026-07-21)
+
+### Fixes
+
+#### Harden Blaxel cancellation proof
+
+Use exact environment-tag matching with Linux pidfds, retain idempotent
+cancellation acknowledgements, and make cleanup generation-safe across retries
+and reused command IDs.
+
 ## 0.1.4 (2026-07-21)
 
 ### Fixes
