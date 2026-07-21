@@ -675,6 +675,7 @@ async fn codex_v2_full_history_child_treats_new_task_as_authoritative_assignment
             serde_json::json!({
                 "task_name": "typed_child",
                 "message": "Only audit typed envelope rendering; do not spawn subagents.",
+                "agent_type": "release-audit",
                 "fork_turns": "all"
             }),
         )
@@ -721,6 +722,7 @@ async fn codex_v2_full_history_child_treats_new_task_as_authoritative_assignment
     assert!(developer.contains("Forked conversation history is context only."));
     assert!(developer.contains("`Message Type: NEW_TASK` is the authoritative current assignment"));
     assert!(developer.contains("Do not repeat or continue parent orchestration"));
+    assert!(developer.contains("Your assigned agent type is \"release-audit\"."));
 
     let team = runtime
         .read_team(spawned.data["team_id"].as_str().unwrap())
@@ -1079,6 +1081,53 @@ async fn register_test_active_turn(runtime: &Arc<Runtime>, thread_id: &ThreadId,
             thread_id: thread_id.clone(),
             abort,
             steers: Arc::new(Mutex::new(Vec::new())),
+            drain: Arc::new(TurnDrainHandle {
+                thread_id: thread_id.clone(),
+                interrupt_requested: AtomicBool::new(false),
+                interrupt_reason: Mutex::new(None),
+                completed: AtomicBool::new(false),
+                completed_notify: Notify::new(),
+            }),
         },
     );
+}
+
+#[tokio::test]
+async fn runtime_drain_marks_stuck_turn_as_timed_out() {
+    let (runtime, thread_id, thread_root, team_root) = codex_v2_team_runtime("drain-timeout").await;
+    let turn_id = "drain-timeout-turn".to_string();
+    register_test_active_turn(&runtime, &thread_id, &turn_id).await;
+
+    let outcome = runtime
+        .drain_active_turns(std::time::Duration::from_millis(1))
+        .await;
+    assert_eq!(
+        outcome,
+        RuntimeDrainOutcome::DeadlineExceeded {
+            interrupted_turn_ids: vec![turn_id.clone()],
+            remaining_turn_ids: vec![turn_id.clone()],
+        }
+    );
+
+    let lifecycle = runtime.turn_lifecycle_snapshot(&thread_id).await.unwrap();
+    assert!(lifecycle.records.iter().any(|record| {
+        record.turn_id == turn_id
+            && record.state == TurnLifecycleState::InterruptRequested
+            && record.cleanup == TurnCleanupState::TimedOut
+            && record.reason == Some(TurnLifecycleReason::Shutdown)
+    }));
+    let metrics = runtime.lifecycle_metrics();
+    assert_eq!(metrics.shutdown_drain_count, 1);
+    assert_eq!(metrics.deadline_exceeded_count, 1);
+    assert_eq!(metrics.clean_shutdown_count, 0);
+    assert_eq!(metrics.persistence_failed_count, 0);
+    assert!(
+        metrics.shutdown_drain_duration_ms_total >= 1,
+        "deadline fixture must contribute a bounded drain duration"
+    );
+
+    runtime.turn_drains.write().await.remove(&turn_id);
+    runtime.resume_accepting_turns();
+    let _ = std::fs::remove_dir_all(thread_root);
+    let _ = std::fs::remove_dir_all(team_root);
 }

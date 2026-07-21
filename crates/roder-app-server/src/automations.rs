@@ -31,6 +31,8 @@ use crate::server::internal_error;
 pub struct AppServerFeatureConfig {
     pub automations: AutomationSupervisorConfig,
     pub workspace_registry_path: Option<PathBuf>,
+    /// Shared shutdown and background-task policy for this app-server instance.
+    pub lifecycle: roder_config::ResolvedLifecycleConfig,
 }
 
 impl AppServerFeatureConfig {
@@ -40,6 +42,7 @@ impl AppServerFeatureConfig {
         };
         Self {
             workspace_registry_path: None,
+            lifecycle: roder_config::ResolvedLifecycleConfig::default(),
             automations: AutomationSupervisorConfig {
                 enabled: config.automations.enabled,
                 server_id: config.automations.server_id.clone(),
@@ -94,7 +97,22 @@ impl AppServer {
             Arc::clone(&runtime),
             feature_config.automations.clone(),
         )));
-        let tasks = BackgroundRunner::new(task_registry, BackgroundRunnerConfig::default());
+        let tasks = BackgroundRunner::new(
+            task_registry,
+            BackgroundRunnerConfig {
+                auto_cancel_on_session_end: feature_config.lifecycle.cancel_tasks_on_session_end,
+                process_grace_timeout: std::time::Duration::from_millis(
+                    feature_config.lifecycle.process_grace_timeout_ms,
+                ),
+                process_kill_timeout: std::time::Duration::from_millis(
+                    feature_config.lifecycle.process_kill_timeout_ms,
+                ),
+                max_completed_process_diagnostics: feature_config
+                    .lifecycle
+                    .max_completed_process_diagnostics,
+                ..BackgroundRunnerConfig::default()
+            },
+        );
         let (protocol_notifications, _) = broadcast::channel(1024);
         if tokio::runtime::Handle::try_current().is_ok() {
             notifications::spawn_task_event_bridge(Arc::clone(&runtime), tasks.clone());
@@ -132,6 +150,11 @@ impl AppServer {
             protocol_default_model: RwLock::new(None),
             protocol_thread_models: RwLock::new(std::collections::HashMap::new()),
             protocol_notifications,
+            lifecycle_shutdown_drains: std::sync::atomic::AtomicUsize::new(0),
+            lifecycle_clean_shutdowns: std::sync::atomic::AtomicUsize::new(0),
+            lifecycle_deadline_exceeded: std::sync::atomic::AtomicUsize::new(0),
+            lifecycle_persistence_failed: std::sync::atomic::AtomicUsize::new(0),
+            lifecycle_shutdown_duration_ms_total: std::sync::atomic::AtomicUsize::new(0),
             workspaces: crate::workspaces::WorkspaceRegistry::new(workspace_registry_path),
             workspace_files,
             command_registry: tokio::sync::OnceCell::new(),

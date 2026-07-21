@@ -5,12 +5,13 @@
 
 use std::sync::Arc;
 
+use roder_api::lifecycle::TurnLifecycleSnapshot;
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_protocol::{
     ForksCreateParams, ForksCreateResult, ForksListParams, ForksListResult,
     ForksProvidersListResult, ForksRemoveParams, ForksRemoveResult, JsonRpcRequest,
     ThreadForkParams, ThreadForkResult, ThreadForkStatusParams, ThreadForkStatusResult,
-    ThreadRemoveForkParams, ThreadRemoveForkResult,
+    ThreadReadParams, ThreadReadResult, ThreadRemoveForkParams, ThreadRemoveForkResult,
 };
 
 use crate::{CliOptions, build_runtime_from_config, decode_response};
@@ -19,10 +20,11 @@ pub(crate) async fn run_thread_cli(args: &[String]) -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         Some("fork") => thread_fork(&args[1..]).await,
         Some("fork-status") => thread_fork_status(&args[1..]).await,
+        Some("lifecycle") => thread_lifecycle(&args[1..]).await,
         Some("remove-fork") => thread_remove_fork(&args[1..]).await,
         _ => {
             println!(
-                "Usage:\n  roder thread fork <thread-id> --name <name> [--from-turn <turn-id>] [--provider <id>]\n  roder thread fork-status <thread-id>\n  roder thread remove-fork <thread-id> --confirm-path <workspace-path>\n\nForks the conversation into a child thread backed by an isolated workspace\nfork (a Roder conversation/workspace fork, not a GitHub repository fork).\nProviders: see `roder forks providers`. Removal is destructive and requires\nthe exact fork workspace path as confirmation."
+                "Usage:\n  roder thread fork <thread-id> --name <name> [--from-turn <turn-id>] [--provider <id>]\n  roder thread fork-status <thread-id>\n  roder thread lifecycle <thread-id> [--json]\n  roder thread remove-fork <thread-id> --confirm-path <workspace-path>\n\nForks the conversation into a child thread backed by an isolated workspace\nfork (a Roder conversation/workspace fork, not a GitHub repository fork).\nUse `thread lifecycle` to inspect durable turn recovery records. Providers: see\n`roder forks providers`. Removal is destructive and requires the exact fork\nworkspace path as confirmation."
             );
             Ok(())
         }
@@ -152,6 +154,77 @@ async fn thread_fork_status(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn thread_lifecycle(args: &[String]) -> anyhow::Result<()> {
+    let Some(thread_id) = args.first().filter(|arg| !arg.starts_with('-')) else {
+        anyhow::bail!("usage: roder thread lifecycle <thread-id> [--json]");
+    };
+    let json = args.iter().any(|arg| arg == "--json");
+    let client = client().await?;
+    let result: ThreadReadResult = call(
+        &client,
+        "thread/read",
+        serde_json::to_value(ThreadReadParams {
+            thread_id: thread_id.clone(),
+            include_turns: false,
+        })?,
+    )
+    .await?;
+
+    if result.thread.is_none() {
+        anyhow::bail!("thread {thread_id:?} was not found");
+    }
+
+    if json {
+        println!(
+            "{}",
+            format_thread_lifecycle_json(thread_id, &result.lifecycle)?
+        );
+        return Ok(());
+    }
+
+    print!("{}", format_thread_lifecycle_text(&result.lifecycle));
+    Ok(())
+}
+
+fn format_thread_lifecycle_json(
+    thread_id: &str,
+    lifecycle: &TurnLifecycleSnapshot,
+) -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "threadId": thread_id,
+        "lifecycle": lifecycle,
+    }))?)
+}
+
+fn format_thread_lifecycle_text(lifecycle: &TurnLifecycleSnapshot) -> String {
+    let mut output = format!(
+        "corrupt_lifecycle_records\t{}\n",
+        lifecycle.corrupt_record_count
+    );
+    if lifecycle.records.is_empty() {
+        output.push_str("no lifecycle records\n");
+        return output;
+    }
+
+    output.push_str("turn\tstate\tcleanup\townership\treason\ttimestamp\n");
+    for record in &lifecycle.records {
+        let reason = record
+            .reason
+            .map(|reason| format!("{reason:?}"))
+            .unwrap_or_else(|| "-".to_string());
+        output.push_str(&format!(
+            "{}\t{:?}\t{:?}\t{:?}\t{}\t{}\n",
+            record.turn_id,
+            record.state,
+            record.cleanup,
+            record.ownership,
+            reason,
+            record.timestamp
+        ));
+    }
+    output
+}
+
 async fn thread_remove_fork(args: &[String]) -> anyhow::Result<()> {
     let Some(thread_id) = args.first().filter(|arg| !arg.starts_with('-')) else {
         anyhow::bail!("usage: roder thread remove-fork <thread-id> --confirm-path <path>");
@@ -278,6 +351,10 @@ async fn forks_remove(args: &[String]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::lifecycle::{
+        TurnCleanupOwnership, TurnCleanupState, TurnLifecycleReason, TurnLifecycleRecord,
+        TurnLifecycleState,
+    };
 
     #[test]
     fn forks_flag_parsing_supports_separate_and_equals_forms() {
@@ -290,5 +367,37 @@ mod tests {
         assert_eq!(flag_value(&args, "--name").as_deref(), Some("experiment"));
         assert_eq!(flag_value(&args, "--provider").as_deref(), Some("rift"));
         assert_eq!(flag_value(&args, "--confirm-path"), None);
+    }
+
+    #[test]
+    fn lifecycle_inspection_formats_machine_readable_and_text_output() {
+        let lifecycle = TurnLifecycleSnapshot {
+            records: vec![TurnLifecycleRecord {
+                thread_id: "thread-lifecycle".to_string(),
+                turn_id: "turn-lifecycle".to_string(),
+                state: TurnLifecycleState::RecoveryNeeded,
+                cleanup: TurnCleanupState::TimedOut,
+                reason: Some(TurnLifecycleReason::RuntimeRestart),
+                ownership: TurnCleanupOwnership::RuntimeTaskOnly,
+                timestamp: time::OffsetDateTime::UNIX_EPOCH,
+            }],
+            corrupt_record_count: 2,
+        };
+
+        let json = format_thread_lifecycle_json("thread-lifecycle", &lifecycle).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()["threadId"],
+            "thread-lifecycle"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()["lifecycle"]["corruptRecordCount"],
+            2
+        );
+
+        let text = format_thread_lifecycle_text(&lifecycle);
+        assert!(text.contains("corrupt_lifecycle_records\t2"));
+        assert!(text.contains("turn\tstate\tcleanup\townership\treason\ttimestamp"));
+        assert!(text.contains("turn-lifecycle\tRecoveryNeeded\tTimedOut"));
+        assert!(text.contains("RuntimeRestart"));
     }
 }

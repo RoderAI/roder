@@ -670,7 +670,10 @@ mod tests {
         // The CLI is told to wire the Claude-in-Chrome MCP server and to ignore
         // API-key auth so it falls back to subscription auth.
         assert_eq!(
-            options.env.get("CLAUDE_CODE_ENABLE_CFC").map(String::as_str),
+            options
+                .env
+                .get("CLAUDE_CODE_ENABLE_CFC")
+                .map(String::as_str),
             Some("1")
         );
         assert_eq!(

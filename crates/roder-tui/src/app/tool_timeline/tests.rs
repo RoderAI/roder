@@ -114,7 +114,9 @@ fn agent_swarm_running_row_shows_live_progress_then_final_grid() {
     );
     let lines = rendered_lines(&mut timeline);
     assert!(
-        lines.iter().any(|line| line.contains("swarm: completed: 3")),
+        lines
+            .iter()
+            .any(|line| line.contains("swarm: completed: 3")),
         "completed swarm should show the result summary; got {lines:?}"
     );
     assert!(
@@ -1750,8 +1752,20 @@ fn clicking_error_row_requests_detail_modal_with_body() {
         .expect("error row click should request detail modal");
     assert!(detail.failed);
     assert!(detail.command.is_none());
-    assert!(detail.output.as_deref().unwrap().contains("502 Bad Gateway"));
-    assert!(detail.output.as_deref().unwrap().contains("upstream timeout"));
+    assert!(
+        detail
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("502 Bad Gateway")
+    );
+    assert!(
+        detail
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("upstream timeout")
+    );
 }
 
 #[test]

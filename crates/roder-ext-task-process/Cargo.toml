@@ -24,6 +24,7 @@ docs_url = ""
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+libc.workspace = true
 roder-api.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }

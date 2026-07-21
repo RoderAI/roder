@@ -33,3 +33,6 @@ sqlx-postgres.workspace = true
 time = { workspace = true, features = ["serde-well-known"] }
 tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+roder-core.workspace = true

@@ -17,7 +17,8 @@ mod wait;
 use spec::{
     FOLLOWUP_TASK, INTERRUPT_AGENT, InterruptAgentArgs, LIST_AGENTS, ListAgentsArgs,
     MessageAgentArgs, SEND_MESSAGE, SPAWN_AGENT, SpawnAgentArgs, WAIT_AGENT,
-    full_history_overrides_present, normalize_fork_turns, normalized_optional, valid_task_name,
+    full_history_selection_overrides_present, normalize_fork_turns, normalized_optional,
+    valid_task_name,
 };
 pub(crate) use spec::{contribute_agent_control_tools, is_agent_control_tool};
 use targets::{
@@ -101,9 +102,8 @@ impl Runtime {
             Ok(fork_turns) => fork_turns,
             Err(message) => return control_error(call, "invalid_arguments", message),
         };
-        if full_history_overrides_present(
+        if full_history_selection_overrides_present(
             &fork_turns,
-            agent_type.as_deref(),
             model.as_deref(),
             model_provider.as_deref(),
             reasoning_effort.as_deref(),
@@ -111,7 +111,7 @@ impl Runtime {
             return control_error(
                 call,
                 "invalid_arguments",
-                "Full-history forked agents inherit the parent agent type, model, provider, and reasoning effort; omit agent_type, model, model_provider, and reasoning_effort, or spawn without a full-history fork.",
+                "Full-history forks inherit the parent model, provider, and reasoning effort. Omit model, model_provider, and reasoning_effort, or use fork_turns `none` or a positive integer. agent_type is only a collaboration label and is allowed with full history.",
             );
         }
         let (next, turn_id) = match self

@@ -170,6 +170,19 @@ impl InProcessDispatcher {
         Ok(child)
     }
 
+    fn preflight_request(&self, request: &SubagentRequest) -> anyhow::Result<()> {
+        let agent_type = request
+            .subagent_type
+            .as_deref()
+            .unwrap_or(self.config.default_agent.as_str());
+        let definition = self
+            .definitions
+            .get(agent_type)
+            .with_context(|| format!("unknown subagent type {agent_type:?}"))?;
+        self.filtered_tool_registry_for_request(definition, request)
+            .map(|_| ())
+    }
+
     fn filtered_tool_registry_for_request(
         &self,
         definition: &SubagentDefinition,
@@ -179,7 +192,15 @@ impl InProcessDispatcher {
         apply_explicit_tool_restriction(definition, &mut allow, request.tools.as_deref())?;
         apply_explicit_tool_restriction(definition, &mut allow, request.allowed_tools.as_deref())?;
         if let Some(lane) = request.lane {
+            let before_lane_filter = allow.len();
             apply_lane_tool_restriction(&mut allow, lane);
+            if before_lane_filter > 0 && allow.is_empty() {
+                bail!(
+                    "subagent {:?} has no tools compatible with the {} lane; lanes only restrict a role's declared tools. Choose a configured role with compatible tools or use spawn_agent for generic repository work",
+                    definition.agent_type,
+                    lane.as_str(),
+                );
+            }
         }
 
         let mut child = ToolRegistry::default();
@@ -227,6 +248,7 @@ impl InProcessDispatcher {
                 depth
             );
         }
+        self.preflight_request(&request)?;
 
         let trace_ids = TraceIds {
             trace_id: uuid::Uuid::new_v4().to_string(),
@@ -755,9 +777,11 @@ fn effective_lane_for_definition(
 }
 
 fn effective_max_concurrent(request: &SubagentRequest, lane: SubagentLane) -> usize {
+    let lane_cap = lane.preset().max_concurrent;
     request
         .max_concurrent
-        .unwrap_or_else(|| lane.preset().max_concurrent)
+        .map(|requested| requested.min(lane_cap))
+        .unwrap_or(lane_cap)
 }
 
 fn apply_explicit_tool_restriction(
@@ -948,11 +972,11 @@ mod handle_tests {
         // The child operates on the same workspace/process as the lead turn, so
         // its file/shell tools no longer fail with "workspace handle is not
         // available".
-        assert!(child.workspace.is_some(), "child keeps the workspace handle");
-        assert!(Arc::ptr_eq(
-            child.workspace.as_ref().unwrap(),
-            &workspace
-        ));
+        assert!(
+            child.workspace.is_some(),
+            "child keeps the workspace handle"
+        );
+        assert!(Arc::ptr_eq(child.workspace.as_ref().unwrap(), &workspace));
         assert!(child.process_runner.is_some());
         // Children must not carry the parent goal controller or trace sink.
         assert!(child.goal_controller.is_none());

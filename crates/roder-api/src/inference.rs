@@ -4,6 +4,7 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 
 use crate::extension::InferenceEngineId;
+use crate::lifecycle::TurnCleanupOwnership;
 use crate::reliability::ReliabilityRequestPolicy;
 use crate::tools::{ToolChoice, ToolSpec};
 use crate::transcript::TranscriptItem;
@@ -621,11 +622,25 @@ pub struct InferenceFailure {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompactionProgress {
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item_id: Option<String>,
+    /// Estimated prompt tokens before this compaction pass, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_before: Option<u32>,
+    /// Estimated prompt tokens after this compaction pass, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_after: Option<u32>,
+    /// Wall-clock duration of the compaction pass, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Opaque provider compaction output item (e.g. OpenAI `type: "compaction"`).
+    /// Runtime persists this as a transcript boundary even if the stream dies
+    /// before the full ProviderMetadata/response.completed frame arrives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -736,6 +751,24 @@ pub struct TurnToolOutcome {
 #[async_trait::async_trait]
 pub trait TurnToolExecutor: Send + Sync {
     async fn execute(&self, call: ToolCallCompleted) -> anyhow::Result<TurnToolOutcome>;
+
+    /// Registers provider-owned cleanup for the current turn. Most providers
+    /// do not own a local child process and therefore never call this. The
+    /// runtime uses a registered handle only after interrupting the turn, when
+    /// it can distinguish its own task ending from provider cleanup being
+    /// acknowledged.
+    fn register_provider_cleanup(&self, _cleanup: std::sync::Arc<dyn ProviderTurnCleanup>) {}
+}
+
+/// A provider-owned cleanup acknowledgement for one turn. Implementations must
+/// not expose OS handles or command lines through this public boundary.
+#[async_trait::async_trait]
+pub trait ProviderTurnCleanup: Send + Sync {
+    /// Returns the conservative ownership state before cleanup completes.
+    fn ownership(&self) -> TurnCleanupOwnership;
+
+    /// Resolves only after the provider has completed its owned cleanup path.
+    async fn wait_for_cleanup(&self) -> anyhow::Result<()>;
 }
 
 #[async_trait::async_trait]

@@ -445,11 +445,7 @@ impl ToolTimelineTool {
             && self.output.as_deref().is_none_or(|o| o.trim().is_empty())
             && let Some(progress) = self.swarm_progress
         {
-            let mut label = format!(
-                "swarm: {}/{} done",
-                progress.resolved(),
-                progress.total
-            );
+            let mut label = format!("swarm: {}/{} done", progress.resolved(), progress.total);
             if progress.failed > 0 || progress.aborted > 0 {
                 label.push_str(&format!(
                     " ({} ok, {} failed, {} aborted)",

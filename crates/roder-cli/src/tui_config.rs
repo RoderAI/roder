@@ -71,6 +71,7 @@ mod tests {
                     "palette/open".to_string(),
                     vec!["ctrl+k".to_string()],
                 )]),
+                shutdown_drain_timeout_ms: None,
             }),
             ..roder_config::Config::default()
         };

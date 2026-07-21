@@ -13,10 +13,10 @@ use roder_protocol::{
     TeamMemberStatusChangedNotification, TeamStartedNotification, Thread,
     ThreadGoalClearedNotification, ThreadGoalUpdatedNotification, ThreadStartedNotification,
     ThreadStatus, ThreadStatusChangedNotification, ToolExecutionRequestedNotification,
-    ToolExecutionResolvedNotification, Turn, TurnCompletedNotification, TurnStartedNotification,
-    UserInputRequestedNotification, UserInputResolvedNotification,
-    VerificationCompletedNotification, VerificationRequiredNotification,
-    VerificationSkippedNotification,
+    ToolExecutionResolvedNotification, Turn, TurnCompletedNotification,
+    TurnLifecycleUpdatedNotification, TurnStartedNotification, UserInputRequestedNotification,
+    UserInputResolvedNotification, VerificationCompletedNotification,
+    VerificationRequiredNotification, VerificationSkippedNotification,
 };
 use roder_tasks::BackgroundRunner;
 use time::OffsetDateTime;
@@ -101,6 +101,40 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                     &event.thread_id,
                     "running",
                     Some(event.turn_id.clone()),
+                ),
+            ]
+        }
+        RoderEvent::TurnLifecycleUpdated(event) => {
+            let (status, active_turn_id, active_flags) = match event.state {
+                roder_api::lifecycle::TurnLifecycleState::Running => {
+                    ("running", Some(event.turn_id.clone()), Vec::new())
+                }
+                roder_api::lifecycle::TurnLifecycleState::InterruptRequested => (
+                    "running",
+                    Some(event.turn_id.clone()),
+                    vec!["interrupting".to_string()],
+                ),
+                roder_api::lifecycle::TurnLifecycleState::Interrupted
+                | roder_api::lifecycle::TurnLifecycleState::Completed
+                | roder_api::lifecycle::TurnLifecycleState::Failed
+                | roder_api::lifecycle::TurnLifecycleState::RecoveryNeeded => {
+                    ("idle", None, Vec::new())
+                }
+            };
+            vec![
+                protocol_notification(
+                    "turn/lifecycleUpdated",
+                    TurnLifecycleUpdatedNotification {
+                        thread_id: event.thread_id.clone(),
+                        turn_id: event.turn_id.clone(),
+                        lifecycle: event.clone(),
+                    },
+                ),
+                thread_status_notification_with_flags(
+                    &event.thread_id,
+                    status,
+                    active_turn_id,
+                    active_flags,
                 ),
             ]
         }

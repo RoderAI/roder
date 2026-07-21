@@ -288,7 +288,10 @@ fn default_rate_limit_recovery_interval_ms() -> u64 {
 pub const AGENT_SWARM_MODE_REMINDER: &str = "Agent-swarm mode is active. When the task splits into \
 several similarly-shaped subtasks over different inputs, call the agent_swarm tool exactly once \
 with a prompt_template containing {{item}} and an items array (or resume_agent_ids), and make it \
-the only tool call in that response.";
+the only tool call in that response. agent_swarm dispatches configured roles only: its \
+subagent_type must exactly match a role advertised in the tool schema, and lane names such as \
+scout are not role IDs. Do not rely on a lane to add missing tools; for generic repository work \
+use spawn_agent when available.";
 
 /// Emitted when agent-swarm mode is toggled on a runtime/thread.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

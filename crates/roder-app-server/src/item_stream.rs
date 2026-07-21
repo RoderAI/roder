@@ -97,14 +97,68 @@ async fn item_event_kinds_for_event(
                 item: ThreadItem::Compaction {
                     id: compaction_item_id(&event.turn_id),
                     summary: format!(
-                        "Compacting {} prior items (~{} tokens)...",
-                        event.original_item_count, event.original_estimated_tokens
+                        "Compacting context... ({} items, ~{} tokens)",
+                        event.original_item_count,
+                        format_compact_token_count(u64::from(event.original_estimated_tokens))
                     ),
                     status: Some(ThreadItemStatus::InProgress),
                 },
             }],
         ))),
+        RoderEvent::ContextCompactionRecorded(event) => Ok(Some((
+            event.thread_id.clone(),
+            event.turn_id.clone(),
+            event.timestamp,
+            vec![ThreadItemEventKind::ItemCompleted {
+                item: ThreadItem::Compaction {
+                    id: compaction_item_id(&event.turn_id),
+                    summary: format_compaction_summary(
+                        event.original_estimated_tokens,
+                        event.compacted_estimated_tokens,
+                        event.duration_ms,
+                    ),
+                    status: Some(ThreadItemStatus::Completed),
+                },
+            }],
+        ))),
         _ => Ok(None),
+    }
+}
+
+fn format_compact_token_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        let floored_tenths = tokens / 100_000;
+        return format!("{}.{}M", floored_tenths / 10, floored_tenths % 10);
+    }
+    if tokens >= 1_000 {
+        return format!("{}K", tokens / 1_000);
+    }
+    tokens.to_string()
+}
+
+fn format_compaction_duration_ms(duration_ms: u64) -> String {
+    if duration_ms < 1_000 {
+        format!("{duration_ms}ms")
+    } else if duration_ms < 10_000 {
+        format!("{:.1}s", duration_ms as f64 / 1_000.0)
+    } else {
+        format!("{}s", duration_ms / 1_000)
+    }
+}
+
+fn format_compaction_summary(
+    tokens_before: u32,
+    tokens_after: u32,
+    duration_ms: Option<u64>,
+) -> String {
+    let before = format_compact_token_count(u64::from(tokens_before));
+    let after = format_compact_token_count(u64::from(tokens_after));
+    match duration_ms {
+        Some(ms) => format!(
+            "Context compacted: ~{before} → ~{after} tokens in {}",
+            format_compaction_duration_ms(ms)
+        ),
+        None => format!("Context compacted: ~{before} → ~{after} tokens"),
     }
 }
 
@@ -382,7 +436,7 @@ mod tests {
                     },
             } => {
                 assert_eq!(id, "turn-1-compaction");
-                assert!(summary.contains("Compacting 42 prior items"));
+                assert_eq!(summary, "Compacting context... (42 items, ~1K tokens)");
                 assert_eq!(status, &Some(ThreadItemStatus::InProgress));
             }
             other => panic!("expected in-progress compaction item, got {other:?}"),

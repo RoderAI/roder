@@ -35,6 +35,7 @@ Example:
 {
   "task_name": "reviewer",
   "message": "Review the current patch and report blocking risks.",
+  "agent_type": "release-audit",
   "fork_turns": "all"
 }
 ```
@@ -42,10 +43,11 @@ Example:
 Context and selection rules:
 
 - `fork_turns: "all"` is the default and passes all surrounding parent turns
-  available at spawn time. It inherits the parent agent type and live model
-  selection and rejects
-  `agent_type`, `model`, `model_provider`, or `reasoning_effort` overrides so the
-  copied context is not combined with a conflicting role or selection.
+  available at spawn time. It inherits the parent live model, provider, and
+  reasoning selection. `agent_type` is allowed as an advisory collaboration
+  label (for example, `release-audit`); it does not select a model, provider,
+  tool set, or configured `task` role. Full-history forks reject only `model`,
+  `model_provider`, and `reasoning_effort` overrides.
 - `fork_turns: "none"` starts with only the explicit child task and normal
   workspace/project instructions.
 - A positive decimal string such as `"3"` passes only the most recent three

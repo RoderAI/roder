@@ -1,5 +1,6 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -64,6 +65,10 @@ pub struct TaskExecutionContext {
     pub runner_destination: Option<RunnerDestination>,
     pub runner_session: Option<Arc<dyn RemoteRunnerSession>>,
     pub deadline: Option<OffsetDateTime>,
+    /// Bounded local-process graceful-stop budget selected by the task host.
+    pub process_grace_timeout: Duration,
+    /// Bounded local-process forced-kill/reap budget selected by the task host.
+    pub process_kill_timeout: Duration,
     pub metadata: serde_json::Value,
     pub process_registry: Option<Arc<dyn ProcessRegistrySink>>,
     pub output: TaskOutputSink,
@@ -99,6 +104,8 @@ impl fmt::Debug for TaskExecutionContext {
                 &self.runner_session.as_ref().map(|session| session.state()),
             )
             .field("deadline", &self.deadline)
+            .field("process_grace_timeout", &self.process_grace_timeout)
+            .field("process_kill_timeout", &self.process_kill_timeout)
             .field("metadata", &self.metadata)
             .field(
                 "process_registry",
@@ -354,6 +361,8 @@ mod tests {
                     runner_destination: None,
                     runner_session: None,
                     deadline: None,
+                    process_grace_timeout: Duration::from_millis(250),
+                    process_kill_timeout: Duration::from_secs(1),
                     metadata: serde_json::json!({}),
                     process_registry: None,
                     output: TaskOutputSink::default(),

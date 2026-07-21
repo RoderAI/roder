@@ -16,7 +16,7 @@ Input:
 ```json
 {
   "description": "short description for the whole swarm",
-  "subagent_type": "optional configured subagent type for every child",
+  "subagent_type": "optional exact configured role ID for every child",
   "prompt_template": "Read {{item}} and report one observation.",
   "items": ["src/a.rs", "src/b.rs"],
   "resume_agent_ids": { "existing-agent-id": "continue" }
@@ -33,6 +33,10 @@ Validation happens before any child is dispatched:
 - Resumed children are dispatched before new item-based spawns.
 - The total child count may not exceed `max_subagents` (default and hard cap
   `128`).
+- `subagent_type` must exactly match a configured role advertised by the tool.
+  It is not a lane name: `scout`, `editor`, `reviewer`, and `runner` do not
+  create generic worker roles. Use `spawn_agent` for generic repository work
+  when it is available.
 - `agent_swarm` should be the only tool call in a model response; run multiple
   swarms sequentially.
 

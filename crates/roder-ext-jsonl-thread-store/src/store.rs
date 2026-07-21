@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
 use roder_api::extension_state::ExtensionStateRecord;
+use roder_api::lifecycle::turn_lifecycle_corruption_marker;
 use roder_api::thread::{
     ThreadItemEvent, ThreadListOptions, ThreadListPage, ThreadMetadata, ThreadSnapshot,
     ThreadStore, ThreadStoreFactory, project_turns_from_events, validate_thread_workspace,
@@ -418,6 +419,9 @@ impl ThreadStore for JsonlThreadStore {
         file.write_all(&line)
             .await
             .with_context(|| format!("append extension state record to {}", file_path.display()))?;
+        file.sync_data()
+            .await
+            .with_context(|| format!("sync extension state record to {}", file_path.display()))?;
         Ok(())
     }
 }
@@ -438,6 +442,7 @@ impl JsonlThreadStore {
         let mut lines = reader.lines();
         let mut records = Vec::new();
         let mut line_number = 0usize;
+        let mut corrupt_record_count = 0usize;
         while let Some(line) = lines
             .next_line()
             .await
@@ -447,17 +452,23 @@ impl JsonlThreadStore {
             if line.trim().is_empty() {
                 continue;
             }
-            let stream =
-                serde_json::Deserializer::from_str(&line).into_iter::<ExtensionStateRecord>();
-            for record in stream {
-                records.push(record.with_context(|| {
-                    format!(
-                        "parse extension state record in {}:{}",
+            match serde_json::from_str::<ExtensionStateRecord>(&line) {
+                Ok(record) => records.push(record),
+                Err(error) => {
+                    corrupt_record_count = corrupt_record_count.saturating_add(1);
+                    eprintln!(
+                        "warning: skipped malformed extension state record in {}:{}: {error}",
                         file_path.display(),
                         line_number
-                    )
-                })?);
+                    );
+                }
             }
+        }
+        if corrupt_record_count > 0 {
+            records.push(turn_lifecycle_corruption_marker(
+                thread_id.clone(),
+                corrupt_record_count,
+            ));
         }
         Ok(records)
     }
@@ -1079,6 +1090,63 @@ mod tests {
         assert_eq!(snapshot.turns[0].turn_id, turn_id);
         assert_eq!(snapshot.turns[0].items.len(), 2);
         assert_eq!(snapshot.turns[0].completed_at, Some(now));
+
+        let _ = fs::remove_dir_all(base_path).await;
+    }
+
+    #[tokio::test]
+    async fn malformed_extension_state_is_retained_as_a_redacted_lifecycle_diagnostic() {
+        let base_path = std::env::temp_dir().join(format!(
+            "roder-jsonl-extension-state-corruption-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = JsonlThreadStore {
+            base_path: base_path.clone(),
+        };
+        let thread_id = "thread-state-corrupt".to_string();
+        let now = OffsetDateTime::UNIX_EPOCH;
+
+        store
+            .create_thread(ThreadMetadata {
+                thread_id: thread_id.clone(),
+                title: None,
+                workspace: test_workspace("workspace"),
+                workspace_id: None,
+                root_id: None,
+                provider: None,
+                model: None,
+                selection_mode: None,
+                tool_allowlist: Vec::new(),
+                developer_instructions: None,
+                external_tools: Vec::new(),
+                runner_destination: None,
+                runner_state: None,
+                runner_binding: None,
+                parent_thread_id: None,
+                forked_from_turn_id: None,
+                workspace_fork: None,
+                created_at: now,
+                updated_at: now,
+                message_count: 0,
+                usage: None,
+            })
+            .await
+            .unwrap();
+        fs::write(
+            store.thread_dir(&thread_id).join("extension_state.jsonl"),
+            b"{not-json}\n",
+        )
+        .await
+        .unwrap();
+
+        let snapshot = store.load_thread(&thread_id).await.unwrap().unwrap();
+        let lifecycle = roder_api::lifecycle::turn_lifecycle_snapshot(&snapshot.extension_states);
+
+        assert_eq!(lifecycle.corrupt_record_count, 1);
+        assert!(snapshot.extension_states.iter().any(|record| {
+            record.extension_id == roder_api::lifecycle::TURN_LIFECYCLE_EXTENSION_ID
+                && record.key == roder_api::lifecycle::TURN_LIFECYCLE_CORRUPTION_STATE_KEY
+        }));
 
         let _ = fs::remove_dir_all(base_path).await;
     }

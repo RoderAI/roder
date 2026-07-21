@@ -91,15 +91,13 @@ use roder_protocol::{
     SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
     SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
     SettingsSetWebSearchParams, SettingsSetWebSearchResult, ShellSettings,
-    SpeechProvidersListResult, WebSearchProviderStatus, WebSearchSettings, TasksGetParams,
-    TasksGetResult, TasksListResult, TeamReadParams,
+    SpeechProvidersListResult, TasksGetParams, TasksGetResult, TasksListResult, TeamReadParams,
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadResolveUserInputParams,
-    ThreadResolveUserInputResult, ThreadSetModeParams,
-    ThreadSetAgentSwarmModeResult, ThreadSetModeResult, ThreadStartParams, ThreadStartResult,
-    ThreadStateResult, Turn,
-    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WorkspaceCreateParams,
-    WorkspaceCreateResult, WorkspaceRootInput,
+    ThreadResolveUserInputResult, ThreadSetAgentSwarmModeResult, ThreadSetModeParams,
+    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, Turn,
+    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WebSearchProviderStatus,
+    WebSearchSettings, WorkspaceCreateParams, WorkspaceCreateResult, WorkspaceRootInput,
 };
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -978,10 +976,8 @@ impl UserInputDialogState {
     fn commit_current(&mut self) -> bool {
         let question = &self.questions[self.current];
         if let Some(option) = question.options.get(self.selected) {
-            self.answers.insert(
-                question.id.clone(),
-                Value::String(option.label.clone()),
-            );
+            self.answers
+                .insert(question.id.clone(), Value::String(option.label.clone()));
         }
         if self.current + 1 < self.questions.len() {
             self.current += 1;
@@ -1462,6 +1458,10 @@ where
     pending_plan_exit: Option<PendingPlanExitDescriptor>,
     current_goal: Option<ThreadGoal>,
     compaction_active: bool,
+    /// Wall-clock start of the active compaction pass (provider or local).
+    compaction_started_at: Option<Instant>,
+    /// Best-effort token estimate captured when compaction started.
+    compaction_tokens_before: Option<u32>,
     theme: Theme,
     /// Id of the currently-applied theme (basename of the `.css` file). `None`
     /// when running on the compiled-in baseline because no theme file was
@@ -1566,7 +1566,9 @@ where
                 .find(|member| member.id == member_id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("team member not found: {member_id}"))?;
-            let thread = thread_resume::load_thread(&client, &member.thread_id).await?;
+            let thread_read = thread_resume::read_thread(&client, &member.thread_id).await?;
+            let thread = thread_read.thread;
+            let lifecycle = thread_read.lifecycle;
             let thread_model = member
                 .model
                 .clone()
@@ -1615,14 +1617,15 @@ where
             app.team_ui.focus_member(&member_id);
             app.load_focused_team_timeline();
             if let Some(thread) = thread {
-                app.apply_thread(thread);
+                app.apply_thread_with_lifecycle(thread, lifecycle);
             }
             return Ok(app);
         }
 
         if let TuiStartup::ResumeThread(thread_id) = startup.clone() {
-            let thread = thread_resume::load_thread(&client, &thread_id)
-                .await?
+            let thread_read = thread_resume::read_thread(&client, &thread_id).await?;
+            let thread = thread_read
+                .thread
                 .ok_or_else(|| anyhow::anyhow!("thread not found: {}", short_id(&thread_id)))?;
             let provider = thread.model_provider.clone();
             let thread_model = if thread.model.trim().is_empty() {
@@ -1662,7 +1665,7 @@ where
                 },
             )
             .await?;
-            app.apply_thread(thread);
+            app.apply_thread_with_lifecycle(thread, thread_read.lifecycle);
             return Ok(app);
         }
 
@@ -1921,6 +1924,8 @@ where
             pending_plan_exit: policy_state.and_then(|state| state.pending_plan_exit),
             current_goal,
             compaction_active: false,
+            compaction_started_at: None,
+            compaction_tokens_before: None,
             theme,
             active_theme_id,
             theme_preview_baseline: None,
@@ -2333,8 +2338,39 @@ where
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
                         self.context_breakdown.begin_turn();
-                        self.compaction_active = false;
+                        self.clear_compaction_progress();
                         self.working_status_override = None;
+                    }
+                    RoderEvent::ContextCompactionStarted(ev) => {
+                        self.record_local_compaction_started(
+                            ev.original_estimated_tokens,
+                            Some(ev.original_item_count),
+                        );
+                    }
+                    RoderEvent::ContextCompactionRecorded(ev) => {
+                        self.record_local_compaction_completed(
+                            ev.original_estimated_tokens,
+                            ev.compacted_estimated_tokens,
+                            ev.duration_ms,
+                        );
+                    }
+                    RoderEvent::TurnLifecycleUpdated(ev)
+                        if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
+                    {
+                        match (ev.state, ev.cleanup) {
+                            (
+                                roder_api::lifecycle::TurnLifecycleState::InterruptRequested,
+                                roder_api::lifecycle::TurnCleanupState::TimedOut,
+                            ) => {
+                                self.working_status_override =
+                                    Some("Cleanup timed out — recovery needed".to_string());
+                            }
+                            (roder_api::lifecycle::TurnLifecycleState::InterruptRequested, _) => {
+                                self.working_status_override =
+                                    Some("Interrupt requested — cleaning up".to_string());
+                            }
+                            _ => {}
+                        }
                     }
                     RoderEvent::TurnCompleted(ev)
                         if self.active_turn_id.as_deref() == Some(&ev.turn_id) =>
@@ -2355,7 +2391,7 @@ where
                         self.current_turn_output_tokens = 0;
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
-                        self.compaction_active = false;
+                        self.clear_compaction_progress();
                         self.working_status_override = None;
                         self.submit_next_queued_prompt().await;
                     }
@@ -2371,7 +2407,7 @@ where
                         self.current_turn_output_tokens = 0;
                         self.current_turn_reasoning_tokens = None;
                         self.current_turn_total_tokens = 0;
-                        self.compaction_active = false;
+                        self.clear_compaction_progress();
                         self.working_status_override = None;
                     }
                     RoderEvent::ContextAssemblyStarted(ev) => {
@@ -2448,7 +2484,7 @@ where
                                 self.record_tool_completed(&tool_id, false, None);
                             }
                             roder_api::inference::InferenceEvent::Compaction(compaction) => {
-                                self.record_compaction_progress(&compaction.status);
+                                self.record_compaction_progress(&compaction);
                             }
                             roder_api::inference::InferenceEvent::ProviderMetadata(metadata) => {
                                 self.record_provider_metadata(&metadata);
@@ -2466,7 +2502,7 @@ where
                             self.current_turn_output_tokens = 0;
                             self.current_turn_reasoning_tokens = None;
                             self.current_turn_total_tokens = 0;
-                            self.compaction_active = false;
+                            self.clear_compaction_progress();
                             self.working_status_override = None;
                         }
                         self.timeline.push_error(ev.error);
@@ -2659,11 +2695,13 @@ where
             }
         }
 
-        // Best-effort: ask the backend to stop any in-flight turn before we tear
+        // Ask the backend to stop any in-flight turn before we tear
         // the terminal down. Providers (e.g. Claude Code) spawn a CLI subprocess
         // whose runtime tasks would otherwise keep the process alive after exit,
         // forcing a second Ctrl+C. Sending `turn/interrupt` lets the runtime
-        // cancel the inference stream and drop the child's reader task.
+        // cancel the inference stream and drop the child's reader task. The
+        // local CLI invokes `runtime/drain` after terminal restoration, where a
+        // bounded wait cannot leave the terminal in raw mode.
         self.shutdown_active_turn().await;
 
         // Clear the progress indicator before we tear down the terminal so we
@@ -2842,7 +2880,7 @@ where
         self.current_turn_output_tokens = 0;
         self.current_turn_reasoning_tokens = None;
         self.current_turn_total_tokens = 0;
-        self.compaction_active = false;
+        self.clear_compaction_progress();
         self.working_status_override = None;
         self.timeline.push_system(
             "recovered UI after a dropped turn-completion event (the backend turn may still be running)"
@@ -3888,58 +3926,63 @@ where
             self.record_error("roadmap worker monitor needs a selected worker".to_string());
             return;
         };
-        match thread_resume::load_thread(&self.client, &thread_id).await {
-            Ok(Some(thread)) => {
-                self.roadmap_mode = None;
-                self.apply_thread(thread);
-                self.timeline.push_system(format!(
-                    "monitoring roadmap worker {}.",
-                    short_id(&thread_id)
-                ));
-                self.push_event(format!(
-                    "monitoring roadmap worker {}",
-                    short_id(&thread_id)
-                ));
-            }
-            Ok(None) => {
-                self.push_event(format!(
-                    "roadmap worker {} had no thread; spawning replacement",
-                    short_id(&thread_id)
-                ));
-                if let Some(task_id) = task_id
-                    && let Some(roadmap) = self.roadmap_mode.as_mut()
-                {
-                    roadmap.focused_task_id = Some(task_id);
-                }
-                let Some(thread) = self.spawn_roadmap_worker().await else {
-                    self.record_error(format!(
-                        "roadmap worker thread not found: {}",
+        match thread_resume::read_thread(&self.client, &thread_id).await {
+            Ok(read) => match read.thread {
+                Some(thread) => {
+                    self.roadmap_mode = None;
+                    self.apply_thread_with_lifecycle(thread, read.lifecycle);
+                    self.timeline.push_system(format!(
+                        "monitoring roadmap worker {}.",
                         short_id(&thread_id)
                     ));
-                    return;
-                };
-                match thread_resume::load_thread(&self.client, &thread.thread_id).await {
-                    Ok(Some(protocol_thread)) => {
-                        let replacement_id = thread.thread_id.clone();
-                        self.roadmap_mode = None;
-                        self.apply_thread(protocol_thread);
-                        self.timeline.push_system(format!(
-                            "monitoring replacement roadmap worker {}.",
-                            short_id(&replacement_id)
-                        ));
-                        self.push_event(format!(
-                            "monitoring replacement roadmap worker {}",
-                            short_id(&replacement_id)
-                        ));
-                    }
-                    Ok(None) => self.record_error(format!(
-                        "replacement roadmap worker thread not found: {}",
-                        short_id(&thread.thread_id)
-                    )),
-                    Err(err) => self
-                        .record_error(format!("replacement roadmap worker monitor failed: {err}")),
+                    self.push_event(format!(
+                        "monitoring roadmap worker {}",
+                        short_id(&thread_id)
+                    ));
                 }
-            }
+                None => {
+                    self.push_event(format!(
+                        "roadmap worker {} had no thread; spawning replacement",
+                        short_id(&thread_id)
+                    ));
+                    if let Some(task_id) = task_id
+                        && let Some(roadmap) = self.roadmap_mode.as_mut()
+                    {
+                        roadmap.focused_task_id = Some(task_id);
+                    }
+                    let Some(thread) = self.spawn_roadmap_worker().await else {
+                        self.record_error(format!(
+                            "roadmap worker thread not found: {}",
+                            short_id(&thread_id)
+                        ));
+                        return;
+                    };
+                    match thread_resume::read_thread(&self.client, &thread.thread_id).await {
+                        Ok(read) => match read.thread {
+                            Some(protocol_thread) => {
+                                let replacement_id = thread.thread_id.clone();
+                                self.roadmap_mode = None;
+                                self.apply_thread_with_lifecycle(protocol_thread, read.lifecycle);
+                                self.timeline.push_system(format!(
+                                    "monitoring replacement roadmap worker {}.",
+                                    short_id(&replacement_id)
+                                ));
+                                self.push_event(format!(
+                                    "monitoring replacement roadmap worker {}",
+                                    short_id(&replacement_id)
+                                ));
+                            }
+                            None => self.record_error(format!(
+                                "replacement roadmap worker thread not found: {}",
+                                short_id(&thread.thread_id)
+                            )),
+                        },
+                        Err(err) => self.record_error(format!(
+                            "replacement roadmap worker monitor failed: {err}"
+                        )),
+                    }
+                }
+            },
             Err(err) => self.record_error(format!("roadmap worker monitor failed: {err}")),
         }
     }
@@ -5605,7 +5648,9 @@ where
                 self.timeline.push_system(format!(
                     "web search provider set to {provider} (external). Restart Roder to apply."
                 ));
-                self.push_event(format!("web search provider selected: {provider} (external)"));
+                self.push_event(format!(
+                    "web search provider selected: {provider} (external)"
+                ));
                 self.show_provider_popup = false;
             }
             Err(err) => {
@@ -6142,7 +6187,11 @@ where
             items.push(ProviderMenuItem::Section(
                 "External providers (applies on restart)".to_string(),
             ));
-            items.extend(providers.into_iter().map(ProviderMenuItem::WebSearchProvider));
+            items.extend(
+                providers
+                    .into_iter()
+                    .map(ProviderMenuItem::WebSearchProvider),
+            );
         }
         items.push(ProviderMenuItem::Back);
         self.provider_menu_items = items;
@@ -6866,23 +6915,85 @@ where
         });
     }
 
-    fn record_compaction_progress(&mut self, status: &str) {
-        match status {
+    fn clear_compaction_progress(&mut self) {
+        self.compaction_active = false;
+        self.compaction_started_at = None;
+        self.compaction_tokens_before = None;
+    }
+
+    fn estimated_context_tokens(&self) -> Option<u32> {
+        if self.context_window_tokens > 0 {
+            return u32::try_from(self.context_window_tokens).ok();
+        }
+        if self.current_turn_total_tokens > 0 {
+            return Some(self.current_turn_total_tokens);
+        }
+        None
+    }
+
+    fn record_local_compaction_started(&mut self, tokens_before: u32, item_count: Option<u64>) {
+        if !self.compaction_active {
+            self.timeline
+                .push_system(format_compaction_started(Some(tokens_before), item_count));
+        }
+        self.compaction_active = true;
+        self.compaction_started_at = Some(Instant::now());
+        self.compaction_tokens_before = Some(tokens_before);
+    }
+
+    fn record_local_compaction_completed(
+        &mut self,
+        tokens_before: u32,
+        tokens_after: u32,
+        duration_ms: Option<u64>,
+    ) {
+        let elapsed = duration_ms
+            .map(Duration::from_millis)
+            .or_else(|| self.compaction_started_at.map(|started| started.elapsed()));
+        self.timeline.push_system(format_compaction_completed(
+            Some(tokens_before),
+            Some(tokens_after),
+            elapsed,
+        ));
+        self.clear_compaction_progress();
+    }
+
+    fn record_compaction_progress(&mut self, progress: &roder_api::inference::CompactionProgress) {
+        match progress.status.as_str() {
             "started" => {
+                let tokens_before = progress
+                    .tokens_before
+                    .or_else(|| self.estimated_context_tokens());
                 if !self.compaction_active {
-                    self.timeline.push_system("Compacting context...");
+                    self.timeline
+                        .push_system(format_compaction_started(tokens_before, None));
                 }
                 self.compaction_active = true;
+                self.compaction_started_at = Some(Instant::now());
+                self.compaction_tokens_before = tokens_before;
             }
             "completed" => {
-                if self.compaction_active {
-                    self.timeline.push_system("Context compacted.");
+                if self.compaction_active || progress.tokens_after.is_some() {
+                    let tokens_before = progress
+                        .tokens_before
+                        .or(self.compaction_tokens_before)
+                        .or_else(|| self.estimated_context_tokens());
+                    let elapsed = progress
+                        .duration_ms
+                        .map(Duration::from_millis)
+                        .or_else(|| self.compaction_started_at.map(|started| started.elapsed()));
+                    self.timeline.push_system(format_compaction_completed(
+                        tokens_before,
+                        progress.tokens_after,
+                        elapsed,
+                    ));
                 }
-                self.compaction_active = false;
+                self.clear_compaction_progress();
             }
             other => {
                 self.timeline
                     .push_system(format!("Context compaction {other}."));
+                self.clear_compaction_progress();
             }
         }
     }
@@ -7411,6 +7522,68 @@ fn working_status_label(compaction_active: bool) -> &'static str {
         "Compacting context"
     } else {
         "Working"
+    }
+}
+
+pub(super) fn format_compaction_started(
+    tokens_before: Option<u32>,
+    item_count: Option<u64>,
+) -> String {
+    match (tokens_before, item_count) {
+        (Some(tokens), Some(items)) => format!(
+            "Compacting context... ({} items, ~{} tokens)",
+            items,
+            compact_token_count(u64::from(tokens))
+        ),
+        (Some(tokens), None) => format!(
+            "Compacting context... (~{} tokens)",
+            compact_token_count(u64::from(tokens))
+        ),
+        (None, Some(items)) => format!("Compacting context... ({items} items)"),
+        (None, None) => "Compacting context...".to_string(),
+    }
+}
+
+pub(super) fn format_compaction_completed(
+    tokens_before: Option<u32>,
+    tokens_after: Option<u32>,
+    elapsed: Option<Duration>,
+) -> String {
+    let mut parts = Vec::new();
+    match (tokens_before, tokens_after) {
+        (Some(before), Some(after)) => parts.push(format!(
+            "~{} → ~{} tokens",
+            compact_token_count(u64::from(before)),
+            compact_token_count(u64::from(after))
+        )),
+        (Some(before), None) => parts.push(format!(
+            "~{} tokens before",
+            compact_token_count(u64::from(before))
+        )),
+        (None, Some(after)) => parts.push(format!(
+            "~{} tokens after",
+            compact_token_count(u64::from(after))
+        )),
+        (None, None) => {}
+    }
+    if let Some(elapsed) = elapsed.filter(|elapsed| !elapsed.is_zero()) {
+        parts.push(format_compaction_elapsed(elapsed));
+    }
+    if parts.is_empty() {
+        "Context compacted.".to_string()
+    } else {
+        format!("Context compacted: {}.", parts.join(" · "))
+    }
+}
+
+fn format_compaction_elapsed(elapsed: Duration) -> String {
+    let total_millis = elapsed.as_millis();
+    if total_millis < 1_000 {
+        format!("{total_millis}ms")
+    } else if total_millis < 10_000 {
+        format!("{:.1}s", total_millis as f64 / 1_000.0)
+    } else {
+        format!("{}s", elapsed.as_secs())
     }
 }
 
@@ -10179,6 +10352,8 @@ mod tests {
             pending_plan_exit: None,
             current_goal: None,
             compaction_active: false,
+            compaction_started_at: None,
+            compaction_tokens_before: None,
             theme,
             active_theme_id: None,
             theme_preview_baseline: None,
@@ -10243,6 +10418,32 @@ mod tests {
                 finish_reason: None,
             }]),
         }
+    }
+
+    #[test]
+    fn resumed_thread_renders_durable_recovery_warning() {
+        let mut app = test_app();
+        app.apply_thread_with_lifecycle(
+            test_thread_with_items("thread-recovery", Vec::new()),
+            roder_api::lifecycle::TurnLifecycleSnapshot {
+                records: vec![roder_api::lifecycle::TurnLifecycleRecord::new(
+                    "thread-recovery".to_string(),
+                    "turn-recovery".to_string(),
+                    roder_api::lifecycle::TurnLifecycleState::RecoveryNeeded,
+                    roder_api::lifecycle::TurnCleanupState::Unknown,
+                    None,
+                    time::OffsetDateTime::UNIX_EPOCH,
+                )],
+                corrupt_record_count: 1,
+            },
+        );
+
+        let rendered = rendered_timeline_text(&mut app);
+
+        assert!(rendered.contains("Recovery warning: 1 turn was reconciled"));
+        assert!(rendered.contains("1 corrupt lifecycle record was skipped"));
+        assert!(rendered.contains("roder thread lifecycle"));
+        assert!(rendered.contains("thread-recovery --json"));
     }
 
     fn test_user_item(id: usize) -> Item {
@@ -11538,7 +11739,10 @@ mod tests {
             "turn-1".to_string(),
             &serde_json::json!([{ "id": "free", "question": "Anything?" }]),
         );
-        assert!(state.is_none(), "questions without options are not answerable");
+        assert!(
+            state.is_none(),
+            "questions without options are not answerable"
+        );
     }
 
     #[test]
@@ -11551,7 +11755,10 @@ mod tests {
         .unwrap();
         assert_eq!(state.selected, 0);
         state.select_previous();
-        assert_eq!(state.selected, 1, "up from the first option wraps to the last");
+        assert_eq!(
+            state.selected, 1,
+            "up from the first option wraps to the last"
+        );
         state.select_next();
         assert_eq!(state.selected, 0, "down wraps back to the first option");
     }
@@ -12062,6 +12269,34 @@ mod tests {
     fn working_status_label_reflects_server_side_compaction() {
         assert_eq!(working_status_label(false), "Working");
         assert_eq!(working_status_label(true), "Compacting context");
+    }
+
+    #[test]
+    fn compaction_messages_include_token_and_duration_summary() {
+        assert_eq!(
+            format_compaction_started(Some(120_000), Some(42)),
+            "Compacting context... (42 items, ~120K tokens)"
+        );
+        assert_eq!(
+            format_compaction_started(Some(18_500), None),
+            "Compacting context... (~18K tokens)"
+        );
+        assert_eq!(
+            format_compaction_completed(
+                Some(120_000),
+                Some(18_000),
+                Some(Duration::from_millis(1_400))
+            ),
+            "Context compacted: ~120K → ~18K tokens · 1.4s."
+        );
+        assert_eq!(
+            format_compaction_completed(Some(50_000), None, Some(Duration::from_millis(320))),
+            "Context compacted: ~50K tokens before · 320ms."
+        );
+        assert_eq!(
+            format_compaction_completed(None, None, None),
+            "Context compacted."
+        );
     }
 
     #[test]

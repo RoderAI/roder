@@ -1,8 +1,28 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Result of quiescing app-server-owned background work. A clean result means
+/// registered task processes reached a terminal process-registry state within
+/// the caller's deadline; generic task cancellation is reported separately
+/// because arbitrary executors do not all have a reaping acknowledgement.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackgroundDrainOutcome {
+    pub quiesced_task_ids: Vec<TaskId>,
+    pub cancelled_task_ids: Vec<TaskId>,
+    pub stopped_process_ids: Vec<ProcessId>,
+    pub remaining_process_ids: Vec<ProcessId>,
+}
+
+impl BackgroundDrainOutcome {
+    pub fn is_clean(&self) -> bool {
+        self.remaining_process_ids.is_empty()
+    }
+}
 
 use roder_api::events::{EventEnvelope, RoderEvent, ThreadId, TurnId};
 use roder_api::extension::TaskExecutorId;
+use roder_api::processes::{ProcessId, ProcessState};
 use roder_api::remote_runner::{RemoteRunnerSession, RunnerDestination};
 use roder_api::tasks::{
     TaskCancelled, TaskCompleted, TaskExecutionContext, TaskFailed, TaskHandle, TaskId, TaskOutput,
@@ -13,7 +33,7 @@ use tokio::sync::{Mutex, Semaphore, broadcast};
 use tokio::task::AbortHandle;
 
 use crate::log_buffer::{BoundedLogBuffer, TaskLogEntry};
-use crate::process_registry::ProcessRegistry;
+use crate::process_registry::{ProcessRegistry, ProcessRegistryConfig};
 use crate::registry::TaskExecutorRegistry;
 
 #[derive(Debug, Clone)]
@@ -21,6 +41,14 @@ pub struct BackgroundRunnerConfig {
     pub max_concurrent: usize,
     pub max_log_bytes: usize,
     pub auto_cancel_on_session_end: bool,
+    /// Time a local process executor may handle cooperative termination before
+    /// its own forced-kill path begins.
+    pub process_grace_timeout: std::time::Duration,
+    /// Time reserved to observe local forced-kill/reap before the runner aborts
+    /// a still-active task future.
+    pub process_kill_timeout: std::time::Duration,
+    /// Terminal process descriptors retained for bounded lifecycle diagnostics.
+    pub max_completed_process_diagnostics: usize,
 }
 
 impl Default for BackgroundRunnerConfig {
@@ -29,6 +57,9 @@ impl Default for BackgroundRunnerConfig {
             max_concurrent: 4,
             max_log_bytes: 64 * 1024,
             auto_cancel_on_session_end: true,
+            process_grace_timeout: std::time::Duration::from_millis(250),
+            process_kill_timeout: std::time::Duration::from_secs(1),
+            max_completed_process_diagnostics: 64,
         }
     }
 }
@@ -49,6 +80,11 @@ pub struct BackgroundRunner {
     registry: TaskExecutorRegistry,
     config: BackgroundRunnerConfig,
     semaphore: Arc<Semaphore>,
+    /// Serializes new task admission with a shutdown quiesce. Once quiesced,
+    /// callers receive a deterministic error instead of creating work outside
+    /// the bounded drain snapshot.
+    admission: Arc<Mutex<()>>,
+    accepting_tasks: Arc<AtomicBool>,
     tasks: Arc<Mutex<BTreeMap<TaskId, TaskRecord>>>,
     processes: ProcessRegistry,
     events: broadcast::Sender<RoderEvent>,
@@ -65,7 +101,10 @@ struct TaskRecord {
 impl BackgroundRunner {
     pub fn new(registry: TaskExecutorRegistry, config: BackgroundRunnerConfig) -> Self {
         let (events, _) = broadcast::channel(1024);
-        let processes = ProcessRegistry::default();
+        let processes = ProcessRegistry::new(ProcessRegistryConfig {
+            max_completed: config.max_completed_process_diagnostics,
+            ..ProcessRegistryConfig::default()
+        });
         if tokio::runtime::Handle::try_current().is_ok() {
             let mut process_events = processes.subscribe();
             let task_events = events.clone();
@@ -79,6 +118,8 @@ impl BackgroundRunner {
             registry,
             semaphore: Arc::new(Semaphore::new(config.max_concurrent.max(1))),
             config,
+            admission: Arc::new(Mutex::new(())),
+            accepting_tasks: Arc::new(AtomicBool::new(true)),
             tasks: Arc::new(Mutex::new(BTreeMap::new())),
             processes,
             events,
@@ -99,6 +140,11 @@ impl BackgroundRunner {
         input: serde_json::Value,
         options: TaskSubmitOptions,
     ) -> anyhow::Result<TaskHandle> {
+        let admission = self.admission.lock().await;
+        anyhow::ensure!(
+            self.accepting_tasks.load(Ordering::Acquire),
+            "background runner is quiescing and cannot accept new tasks"
+        );
         let executor_id = executor_id.into();
         let executor = self
             .registry
@@ -152,7 +198,121 @@ impl BackgroundRunner {
             }
         }
 
+        drop(admission);
         Ok(handle)
+    }
+
+    /// Rejects new work and returns the IDs of active tasks captured under the
+    /// same admission gate. Callers can stop child processes first, then cancel
+    /// these task joins without a new submission slipping into the gap.
+    pub async fn quiesce(&self) -> Vec<TaskId> {
+        let admission = self.admission.lock().await;
+        self.accepting_tasks.store(false, Ordering::Release);
+        let active_task_ids = self
+            .tasks
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, record)| {
+                !matches!(
+                    record.handle.state,
+                    TaskState::Completed | TaskState::Failed | TaskState::Cancelled
+                )
+            })
+            .map(|(task_id, _)| task_id.clone())
+            .collect();
+        drop(admission);
+        active_task_ids
+    }
+
+    /// Cancels the supplied task IDs, returning only IDs whose active task
+    /// state was transitioned to `Cancelled`.
+    pub async fn cancel_many(&self, task_ids: Vec<TaskId>, reason: Option<String>) -> Vec<TaskId> {
+        let mut cancelled = Vec::new();
+        for task_id in task_ids {
+            if self.cancel(&task_id, reason.clone()).await.unwrap_or(false) {
+                cancelled.push(task_id);
+            }
+        }
+        cancelled
+    }
+
+    /// Convenience shutdown helper for owners that do not need to order task
+    /// cancellation around registered process stoppers.
+    pub async fn cancel_all(&self, reason: Option<String>) -> Vec<TaskId> {
+        let task_ids = self.quiesce().await;
+        self.cancel_many(task_ids, reason).await
+    }
+
+    /// Quiesces background task admission, asks registered processes to stop
+    /// cooperatively, then falls back to task cancellation after a short grace
+    /// window. The deadline is bounded and the remaining process IDs preserve
+    /// enough diagnostic state for a later recovery inspection.
+    pub async fn drain(
+        &self,
+        timeout: std::time::Duration,
+        reason: Option<String>,
+    ) -> BackgroundDrainOutcome {
+        let started_at = tokio::time::Instant::now();
+        let quiesced_task_ids = self.quiesce().await;
+        let process_stop_results = self.processes.stop_all(reason.clone()).await;
+        let stopped_process_ids = process_stop_results
+            .iter()
+            .filter(|result| result.stopped)
+            .map(|result| result.process_id.clone())
+            .collect::<Vec<_>>();
+
+        let graceful_window = timeout.min(self.config.process_grace_timeout);
+        let mut remaining_process_ids = self.wait_for_active_processes(graceful_window).await;
+
+        if !remaining_process_ids.is_empty() {
+            let remaining_timeout = timeout.saturating_sub(started_at.elapsed());
+            let force_window = remaining_timeout.min(self.config.process_kill_timeout);
+            remaining_process_ids = self.wait_for_active_processes(force_window).await;
+        }
+        let cancelled_task_ids = self.cancel_many(quiesced_task_ids.clone(), reason).await;
+
+        if !remaining_process_ids.is_empty() {
+            let remaining_timeout = timeout.saturating_sub(started_at.elapsed());
+            remaining_process_ids = self.wait_for_active_processes(remaining_timeout).await;
+        }
+
+        BackgroundDrainOutcome {
+            quiesced_task_ids,
+            cancelled_task_ids,
+            stopped_process_ids,
+            remaining_process_ids,
+        }
+    }
+
+    /// Re-opens task admission after an embedding host deliberately keeps the
+    /// server alive following a bounded drain timeout.
+    pub fn resume_accepting_tasks(&self) {
+        self.accepting_tasks.store(true, Ordering::Release);
+    }
+
+    async fn wait_for_active_processes(&self, timeout: std::time::Duration) -> Vec<ProcessId> {
+        let started_at = tokio::time::Instant::now();
+        loop {
+            let remaining_process_ids = self
+                .processes
+                .list(false)
+                .await
+                .into_iter()
+                .filter(|process| {
+                    matches!(
+                        process.state,
+                        ProcessState::Starting | ProcessState::Running | ProcessState::Stopping
+                    )
+                })
+                .map(|process| process.process_id)
+                .collect::<Vec<_>>();
+            if remaining_process_ids.is_empty() || started_at.elapsed() >= timeout {
+                return remaining_process_ids;
+            }
+            let remaining_timeout = timeout.saturating_sub(started_at.elapsed());
+            tokio::time::sleep(remaining_timeout.min(std::time::Duration::from_millis(10))).await;
+        }
     }
 
     pub async fn cancel(&self, task_id: &str, reason: Option<String>) -> anyhow::Result<bool> {
@@ -298,6 +458,8 @@ impl BackgroundRunner {
             runner_destination: options.runner_destination,
             runner_session: options.runner_session,
             deadline: options.deadline,
+            process_grace_timeout: self.config.process_grace_timeout,
+            process_kill_timeout: self.config.process_kill_timeout,
             metadata: options.metadata,
             process_registry: Some(Arc::new(self.processes.clone())),
             output: TaskOutputSink::new(Arc::new(RunnerOutputWriter {

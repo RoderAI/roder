@@ -11,6 +11,7 @@ use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
     ContextArtifactKind,
 };
+use roder_api::lifecycle::{LifecycleMetricsSnapshot, TurnLifecycleRecord, TurnLifecycleSnapshot};
 
 use roder_api::automations::{
     AutomationConcurrencyPolicy, AutomationDefinition, AutomationId, AutomationProject,
@@ -59,7 +60,7 @@ use roder_api::processes::{ProcessDescriptor, ProcessId, ProcessOutput, ProcessS
 use roder_api::retrieval::{RetrievalMeasuredOutcome, RetrievalMode, RetrievalRoutePlan};
 use roder_api::skills::{Skill, SkillDescriptor, SkillExposure, SkillSelector};
 use roder_api::subagents::SubagentPermissionMode;
-use roder_api::tasks::{TaskHandle, TaskOutputStream};
+use roder_api::tasks::{TaskHandle, TaskId, TaskOutputStream};
 use roder_api::teams::{
     AgentTeamDisplayMode, TeamId, TeamMailboxMessage, TeamMemberDescriptor, TeamMemberId,
     TeamMemberStatus, TeamTaskDescriptor,
@@ -699,6 +700,8 @@ pub struct ThreadReadParams {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadReadResult {
     pub thread: Option<Thread>,
+    #[serde(default)]
+    pub lifecycle: TurnLifecycleSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -985,6 +988,66 @@ pub struct TurnInterruptParams {
 #[serde(rename_all = "camelCase")]
 pub struct TurnInterruptResult {
     pub turn_id: Option<TurnId>,
+}
+
+/// Requests a bounded runtime shutdown drain. It is intentionally distinct
+/// from `turn/interrupt`: it rejects new turns, interrupts all locally owned
+/// active turns, and waits for their runtime cleanup paths before reporting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDrainParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeDrainStatus {
+    Clean,
+    DeadlineExceeded,
+    PersistenceFailed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDrainResult {
+    pub status: RuntimeDrainStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interrupted_turn_ids: Vec<TurnId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining_turn_ids: Vec<TurnId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quiesced_task_ids: Vec<TaskId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cancelled_task_ids: Vec<TaskId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stopped_process_ids: Vec<ProcessId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining_process_ids: Vec<ProcessId>,
+}
+
+/// Read-only process-local lifecycle metrics. The fixed counter fields are
+/// deliberately redacted and never contain provider, command, process, thread,
+/// or turn identifiers.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleMetricsParams {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleMetricsResult {
+    pub metrics: LifecycleMetricsSnapshot,
+}
+
+/// Additive notification payload emitted whenever the runtime persists a
+/// lifecycle transition. It contains classifications and stable IDs only; no
+/// provider command line, process handle, or credential material is exposed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnLifecycleUpdatedNotification {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub lifecycle: TurnLifecycleRecord,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

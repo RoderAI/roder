@@ -9,6 +9,7 @@ use roder_api::subagents::{
 };
 
 use crate::agent_swarm::AgentSwarmTool;
+use crate::role_selection::{configured_role_catalog, validate_configured_subagent_type};
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
@@ -109,13 +110,16 @@ impl TaskTool {
 #[async_trait::async_trait]
 impl ToolExecutor for TaskTool {
     fn spec(&self) -> ToolSpec {
+        let roles = configured_role_catalog(&self.dispatcher.definitions());
         ToolSpec {
             name: self.name.clone(),
             description: match &self.fixed_subagent_type {
                 Some(agent_type) => {
                     format!("Dispatch the {agent_type} subagent and return its final message.")
                 }
-                None => "Dispatch a configured subagent and return its final message.".to_string(),
+                None => format!(
+                    "Dispatch a configured subagent and return its final message. Available exact role IDs and declared tools: {roles}. Lanes only restrict a selected role's tools; they do not create a role or grant tools. Use spawn_agent for generic repository work when available."
+                ),
             },
             parameters: json!({
                 "type": "object",
@@ -130,7 +134,7 @@ impl ToolExecutor for TaskTool {
                     },
                     "subagent_type": {
                         "type": "string",
-                        "description": "Optional configured subagent type."
+                        "description": format!("Optional exact configured role ID. Available roles: {roles}. Lane names such as scout are not role IDs.")
                     },
                     "model": {
                         "type": "string",
@@ -144,7 +148,7 @@ impl ToolExecutor for TaskTool {
                     "lane": {
                         "type": "string",
                         "enum": ["scout", "editor", "reviewer", "runner"],
-                        "description": "Optional execution lane preset for policy, concurrency, and summary expectations."
+                        "description": "Optional restrictive execution lane for policy, concurrency, and summary expectations. It intersects the selected role's declared tools and never grants additional tools."
                     },
                     "max_concurrent": {
                         "type": "integer",
@@ -194,6 +198,17 @@ impl ToolExecutor for TaskTool {
                 ));
             }
         };
+        let definitions = self.dispatcher.definitions();
+        if let Err(err) =
+            validate_configured_subagent_type(&definitions, request.subagent_type.as_deref())
+        {
+            return Ok(error_result(
+                call.id,
+                call.name,
+                "unknown_subagent_type",
+                err.to_string(),
+            ));
+        }
         if let Err(err) = validate_policy_mode(ctx.effective_mode, &request) {
             return Ok(error_result(
                 call.id,
@@ -202,7 +217,6 @@ impl ToolExecutor for TaskTool {
                 err.to_string(),
             ));
         }
-
         match self
             .dispatcher
             .dispatch_with_context(
@@ -376,6 +390,7 @@ fn classify_dispatch_error(message: &str) -> &'static str {
     } else if message.contains("not allowed by subagent")
         || message.contains("subagent tool")
         || message.contains("unavailable tool")
+        || message.contains("has no tools compatible with")
     {
         "tool_whitelist"
     } else if message.contains("timed out") || message.contains("timeout") {

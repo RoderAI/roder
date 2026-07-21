@@ -1001,21 +1001,16 @@ mod tests {
             "{messages:?}"
         );
         assert_eq!(messages[1]["role"], "user");
-        assert_eq!(
-            messages[1]["content"][0]["text"],
-            "continue after compact"
-        );
+        assert_eq!(messages[1]["content"][0]["text"], "continue after compact");
         assert!(
             !messages.iter().any(|message| {
-                message["content"]
-                    .as_array()
-                    .is_some_and(|content| {
-                        content.iter().any(|part| {
-                            part.get("text")
-                                .and_then(Value::as_str)
-                                .is_some_and(|text| text.contains("old history"))
-                        })
+                message["content"].as_array().is_some_and(|content| {
+                    content.iter().any(|part| {
+                        part.get("text")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| text.contains("old history"))
                     })
+                })
             }),
             "pre-compaction history must not be replayed: {messages:?}"
         );

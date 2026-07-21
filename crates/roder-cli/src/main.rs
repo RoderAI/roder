@@ -73,10 +73,11 @@ use roder_protocol::{
     MemoryQueryParams, MemoryQueryResult, MemoryReadParams, MemoryReadResult, MemorySaveParams,
     MemorySaveResult, MemoryUpdateParams, ProcessesGetParams, ProcessesGetResult,
     ProcessesListParams, ProcessesListResult, ProcessesStopAllParams, ProcessesStopAllResult,
-    ProcessesStopParams, ProcessesStopResult, TasksCancelParams, TasksCancelResult, TasksGetParams,
-    TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult, Thread,
-    ThreadListParams, ThreadListResult, WorkflowEnableParams, WorkflowEnableResult,
-    WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams, WorkflowScanResult,
+    ProcessesStopParams, ProcessesStopResult, RuntimeDrainStatus, TasksCancelParams,
+    TasksCancelResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
+    TasksSubmitResult, Thread, ThreadListParams, ThreadListResult, WorkflowEnableParams,
+    WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
+    WorkflowScanResult,
 };
 use roder_tui::{TuiApp, TuiRunOptions, TuiStartup};
 use roder_web_search::WebSearchProviderKind;
@@ -238,7 +239,10 @@ async fn run_cli() -> anyhow::Result<()> {
     let record_ui_frames = cli_options.record_ui_frames;
     let enable_chrome = args.iter().any(|arg| arg == "--chrome");
     let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
-    let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    let app_server = Arc::new(
+        AppServer::with_feature_config(runtime, resolve_local_app_server_feature_config()?)
+            .with_user_config_persistence(),
+    );
     let client = LocalAppClient::new(app_server.clone());
 
     if enable_chrome {
@@ -262,7 +266,8 @@ async fn run_cli() -> anyhow::Result<()> {
         startup = TuiStartup::ResumeThread(thread_id);
     }
 
-    if let Some(path) = record_api_transcript {
+    let tui_shutdown_drain_timeout = tui_shutdown_drain_timeout();
+    let drain_outcome = if let Some(path) = record_api_transcript {
         let recorder = TranscriptRecorder::default();
         push_transcript_header(&recorder)?;
         let recording_client = RecordingAppClient::new(client, recorder.clone(), "tui");
@@ -270,7 +275,7 @@ async fn run_cli() -> anyhow::Result<()> {
             recording_client,
             default_model,
             startup,
-            app_server,
+            app_server.clone(),
         )
         .await?;
         tui.run_with_options(TuiRunOptions {
@@ -278,21 +283,32 @@ async fn run_cli() -> anyhow::Result<()> {
             record_ui_frames,
         })
         .await?;
+        let outcome = app_server.drain_runtime(tui_shutdown_drain_timeout).await;
         print_tui_exit_summary(&tui);
         write_transcript(&path, &recorder)?;
         println!("Transcript: {}", path.display());
+        outcome
     } else {
         let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
         tui.run().await?;
+        let outcome = app_server.drain_runtime(tui_shutdown_drain_timeout).await;
         print_tui_exit_summary(&tui);
+        outcome
+    };
+
+    if drain_outcome.status != RuntimeDrainStatus::Clean {
+        eprintln!(
+            "warning: shutdown cleanup ended as {:?}: {} turn(s) and {} process(es) remain; resume affected threads or inspect /ps",
+            drain_outcome.status,
+            drain_outcome.remaining_turn_ids.len(),
+            drain_outcome.remaining_process_ids.len(),
+        );
     }
 
-    // The TUI has returned: the terminal is restored, the exit summary (and any
-    // transcript path) is printed, and user config is persisted synchronously on
-    // change. In-process providers (e.g. Claude Code) can leave subprocess reader
-    // tasks alive that would otherwise block the multi-thread runtime's drop,
-    // requiring a second Ctrl+C. Flush stdout and exit immediately so a single
-    // Ctrl+C fully tears the process down.
+    // The TUI has returned and the local runtime has had a bounded opportunity
+    // to interrupt and drain owned turn tasks. Keep this hard exit as a final
+    // process-wide guard until every optional third-party subprocess provider
+    // proves equivalent cleanup semantics.
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
@@ -550,7 +566,10 @@ async fn run_roadmap_tui(plan: Option<String>) -> anyhow::Result<()> {
         runtime.open_roadmap(path).await?;
         runtime.enter_roadmap_mode(path).await?;
     }
-    let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+    let app_server = Arc::new(
+        AppServer::with_feature_config(runtime, resolve_local_app_server_feature_config()?)
+            .with_user_config_persistence(),
+    );
     let client = LocalAppClient::new(app_server);
     let mut tui = Box::new(
         TuiApp::new_with_startup(
@@ -1000,7 +1019,10 @@ async fn run_team_cli(args: &[String]) -> anyhow::Result<()> {
                 anyhow::bail!("roder team attach requires --member <member-id>");
             };
             let (runtime, default_model) = build_runtime_from_config(CliOptions::default()).await?;
-            let app_server = Arc::new(AppServer::new(runtime).with_user_config_persistence());
+            let app_server = Arc::new(
+                AppServer::with_feature_config(runtime, resolve_local_app_server_feature_config()?)
+                    .with_user_config_persistence(),
+            );
             let client = LocalAppClient::new(app_server);
             let mut tui = TuiApp::new_with_startup(
                 client,
@@ -1795,6 +1817,16 @@ fn write_transcript(path: &Path, recorder: &TranscriptRecorder) -> anyhow::Resul
     Ok(())
 }
 
+fn tui_shutdown_drain_timeout() -> std::time::Duration {
+    let resolved = roder_config::load_config()
+        .ok()
+        .map(|config| {
+            roder_config::resolve_lifecycle_config(config.lifecycle.as_ref(), config.tui.as_ref())
+        })
+        .unwrap_or_default();
+    std::time::Duration::from_millis(resolved.shutdown_drain_timeout_ms)
+}
+
 fn print_tui_exit_summary<C>(tui: &TuiApp<C>)
 where
     C: roder_app_server::AppClient,
@@ -1987,9 +2019,16 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
 fn resolve_app_server_feature_config(
     options: &AppServerOptions,
 ) -> anyhow::Result<AppServerFeatureConfig> {
+    let mut features = resolve_local_app_server_feature_config()?;
+    apply_app_server_automation_overrides(&mut features, options)?;
+    Ok(features)
+}
+
+fn resolve_local_app_server_feature_config() -> anyhow::Result<AppServerFeatureConfig> {
     let cfg = roder_config::load_config()?;
     let mut features = AppServerFeatureConfig::from_config(cfg.app_server.as_ref());
-    apply_app_server_automation_overrides(&mut features, options)?;
+    features.lifecycle =
+        roder_config::resolve_lifecycle_config(cfg.lifecycle.as_ref(), cfg.tui.as_ref());
     Ok(features)
 }
 

@@ -11,11 +11,13 @@ for app, TUI, CLI, SDK, and sibling clients.
 | `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
 | `thread/start` | new chat | Create a Roder thread with typed `selection` or legacy `model`, optional `modelProvider`, optional `reasoning`, required absolute `cwd`, and `ephemeral`. | Returns a protocol `Thread` with `selectionMode`; missing, empty, or relative cwd is rejected. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder threads as stable protocol `Thread` objects. | Pagination cursors are reserved. |
-| `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found. |
+| `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found, plus a lifecycle snapshot with latest durable record per turn and a redacted corrupt-record count. |
 | `thread/archive` | archive/delete thread action | Archive a persisted thread and remove in-memory protocol state for that thread. | `thread/list` no longer returns archived threads. |
 | `turn/start` | send prompt | Start a Roder turn on `threadId`, or queue same-turn steering when a turn is already active. Accepts protocol `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications for new turns; active-turn steering continues the existing turn. |
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |
 | `turn/interrupt` | stop button | Interrupt the active turn for a thread; `turnId` is optional when there is a single active turn. | Uses the runtime interrupt path. |
+| `runtime/drain` | app/TUI shutdown | Stop admitting turns, interrupt locally owned turns, and boundedly drain runtime plus app-server-owned task/process work. | Omitted `timeoutMs` uses the effective lifecycle policy (5000 ms by default); explicit values are clamped to 1..45000. Result status is `clean`, `deadline_exceeded`, or `persistence_failed`. |
+| `lifecycle/metrics` | lifecycle health dashboard | Read fixed, redacted process-local counters for drain outcomes, lifecycle persistence, restart reconciliation, and provider cleanup proof. | Params are `{}`. It contains no provider, process, thread, turn, command, prompt, or credential identifiers. |
 | `model/list` | model picker | Return visible model descriptors with `id`, `name`, `modelProvider`, reasoning efforts, and default flags. | Protocol model-picker data. |
 | `model/select` | model picker | Select Manual provider/model/reasoning or a configured Auto routing option. | Manual bypasses routing; Auto routes normal turns through the selected router option. |
 | `workspace/files/status` | file tree/search bootstrap | Read app-server-owned file-index state for a workspace and optional root. | Returns `missing`, `building`, `ready`, `stale`, or `failed`. |
@@ -62,6 +64,7 @@ from the app-server process when persisted metadata is missing or invalid.
 | `item/reasoning/textDelta` | Full `ThreadItemEvent` envelope with `delta.type: "reasoningText"`; appends reasoning content to `event.itemId`. | Recorded public item event. |
 | `item/completed` | Full `ThreadItemEvent` envelope with `event.type: "itemCompleted"` and a typed `event.item`; completes the existing canonical item. Inference routing decisions complete a persisted `routingDecision` item. | Recorded public item event. |
 | `turn/completed` | `params.turn.id`; busy state clears when it matches the active turn. | Runtime turn completion. |
+| `turn/lifecycleUpdated` | Read `threadId`, `turnId`, and `lifecycle`; render lifecycle state independently of terminal transcript projection. | Runtime lifecycle transition. `interrupt_requested` keeps the thread running with active flag `interrupting`; terminal lifecycle states set the thread idle. |
 | `thread/status/changed` | `threadId`, `status`; sidebar status updates. `activeFlags` marks wait states such as `approvalRequired`, `userInputRequired`, and `planExitRequired`. | Runtime active/idle/wait state changes. |
 | `thread/approvalRequested` | `approvalId`, `toolId`, `toolName`, `threadId`, and `turnId`; clients should prompt and answer with `thread/resolve_approval`. | Runtime tool policy approval request. |
 | `thread/approvalResolved` | `approvalId`, `approved`, `threadId`, and `turnId`; clients clear the approval prompt. | Runtime tool policy approval resolution. |
@@ -92,6 +95,49 @@ launch an app-server with scheduler enablement; a TUI-local app-server should
 only read and manage automations unless explicitly launched with scheduler
 flags. See `docs/app-server/automations.md` for method payloads, missed-run
 behavior, and lease recovery.
+
+## Turn Lifecycle and Recovery
+
+`thread/read` returns an additive `lifecycle` object even when `includeTurns`
+is false:
+
+```json
+{
+  "records": [
+    {
+      "threadId": "thread-123",
+      "turnId": "turn-123",
+      "state": "recovery_needed",
+      "cleanup": "unknown",
+      "ownership": "runtime_task_only",
+      "reason": "runtime_restart",
+      "timestamp": "2026-07-17T12:00:00Z"
+    }
+  ],
+  "corruptRecordCount": 0
+}
+```
+
+States are `running`, `interrupt_requested`, `interrupted`, `completed`,
+`failed`, and `recovery_needed`. Cleanup states are `not_requested`,
+`requested`, `completed`, `timed_out`, and `unknown`. On a persisted-thread
+load, Roder converts a stale `running` or `interrupt_requested` record with no
+locally active turn to `recovery_needed`; a client must not render it as a
+completed turn or assume a provider stream remains resumable.
+
+`ownership` is `runtime_task_only`, `provider_cleanup_pending`, or
+`provider_cleanup_confirmed`. It is a redacted cleanup-proof classification:
+only `provider_cleanup_confirmed` means the provider supplied a completion
+acknowledgement for its owned cleanup path. It never exposes host process
+handles, command lines, credentials, or remote job identifiers.
+
+`corruptRecordCount` is a redacted count of invalid lifecycle extension records
+skipped during a tolerant load. It does not contain prompt, command, or secret
+content. `lifecycle/metrics` returns process-local fixed counters for drain
+outcomes, lifecycle persistence, restart reconciliation, and provider cleanup
+proof. It is a native Roder JSON-RPC API; ACP does not advertise an equivalent
+lifecycle capability. See `docs/app-server/api.md` for `runtime/drain`,
+`lifecycle/metrics`, and storage details.
 
 ## Schema Manifest
 

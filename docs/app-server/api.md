@@ -225,6 +225,8 @@ Threads and turns:
 | `turn/start` | Start a turn from rich text input. |
 | `turn/steer` | Add user input to an active turn. |
 | `turn/interrupt` | Interrupt an active turn. |
+| `runtime/drain` | Stop admitting turns and boundedly interrupt/drain locally owned runtime work. |
+| `lifecycle/metrics` | Read redacted process-local lifecycle counters. |
 | `thread/state` | Read policy mode and pending plan-exit state. |
 | `thread/set_mode` | Set the live policy mode. |
 | `thread/exit_plan` | Resolve a pending plan-exit request. |
@@ -1388,7 +1390,8 @@ Behavior:
 
 ### `thread/read`
 
-Purpose: Read one thread and optionally include turns/items.
+Purpose: Read one thread, optional turns/items, and its durable turn-lifecycle
+snapshot.
 
 Request:
 
@@ -1435,6 +1438,19 @@ Response:
         }
       }
     ]
+  },
+  "lifecycle": {
+    "records": [
+      {
+        "threadId": "thread-123",
+        "turnId": "turn-123",
+        "state": "completed",
+        "cleanup": "completed",
+        "ownership": "provider_cleanup_confirmed",
+        "timestamp": "2026-07-17T12:00:00Z"
+      }
+    ],
+    "corruptRecordCount": 0
   }
 }
 ```
@@ -1445,6 +1461,24 @@ Behavior:
 - Falls back to persisted thread metadata and then in-memory protocol threads.
 - Includes aggregate thread `usage` and per-turn `usage` when provider usage
   was reported; `cache_hit_rate` is `cached_prompt_tokens / prompt_tokens`.
+- `lifecycle.records` contains the latest valid durable lifecycle record for
+  each turn. A record has `threadId`, `turnId`, `state`, `cleanup`, `ownership`,
+  optional `reason`, and RFC 3339 `timestamp`.
+- `state` is one of `running`, `interrupt_requested`, `interrupted`,
+  `completed`, `failed`, or `recovery_needed`. `cleanup` is one of
+  `not_requested`, `requested`, `completed`, `timed_out`, or `unknown`.
+- `ownership` is `runtime_task_only`, `provider_cleanup_pending`, or
+  `provider_cleanup_confirmed`. It describes the strongest redacted cleanup
+  acknowledgement the runtime has observed; only
+  `provider_cleanup_confirmed` means a provider reported its owned cleanup path
+  complete. It is not a host-PID or remote-job inspection API.
+- Reading a persisted thread reconciles a durable `running` or
+  `interrupt_requested` record that has no locally active turn to
+  `recovery_needed` with reason `runtime_restart`. Clients must not render
+  those records as completed work.
+- `corruptRecordCount` is a redacted diagnostic count of malformed or invalid
+  lifecycle extension records skipped while loading. Valid records remain
+  readable; raw malformed payloads are not returned.
 - Returns `{"thread": null}` when the thread is unknown.
 
 ### `thread/archive`
@@ -1631,6 +1665,8 @@ Notifications:
   `thread/userInputRequested`, `thread/planExitRequested`, or
   `thread/toolExecutionRequested`, paired with their corresponding resolved
   notifications when the client answers
+- zero or more `turn/lifecycleUpdated` notifications as runtime lifecycle
+  state changes
 - terminal `turn/completed`
 - `thread/status/changed` with status `idle`
 
@@ -1689,11 +1725,116 @@ Behavior:
 - Uses `turnId` when supplied.
 - Otherwise looks up the active turn recorded by `turn/start`.
 - Removes the active-turn record after interrupting.
+- Requests interruption; it does not itself provide a bounded whole-runtime
+  drain result. Observe `turn/lifecycleUpdated` and terminal turn events for
+  the persisted cleanup outcome.
 
 Errors:
 
 - If no `turnId` is supplied and no active turn is known, returns code
   `-32602` with message `no active turn for thread ...`.
+
+### `runtime/drain`
+
+Purpose: Prepare a local app-server runtime for shutdown by rejecting new turns,
+interrupting active turns, and waiting for turn cleanup plus app-server-owned
+background task/process cleanup.
+
+Request:
+
+```json
+{
+  "timeoutMs": 5000
+}
+```
+
+`timeoutMs` is optional. When it is omitted, the app-server uses its effective
+`[lifecycle].shutdown_drain_timeout_ms` policy, which defaults to 5000 ms.
+Explicit values are clamped to the inclusive range 1 through 45000 ms.
+
+Response:
+
+```json
+{
+  "status": "clean",
+  "interruptedTurnIds": ["turn-123"],
+  "quiescedTaskIds": ["task-123"],
+  "cancelledTaskIds": [],
+  "stoppedProcessIds": ["process-123"]
+}
+```
+
+Behavior:
+
+- Stops accepting new turns in this runtime before it snapshots work to drain.
+- Requests shutdown interruption for all locally owned active turns and waits
+  for their runtime cleanup paths.
+- Drains app-server-owned background tasks and processes in parallel under the
+  same timeout budget.
+- Emits normal turn notifications, including `turn/lifecycleUpdated` and any
+  terminal `turn/completed` events produced before the deadline.
+- Repeated calls are safe; they continue draining the currently active or
+  already-draining local work.
+
+Result fields:
+
+- `status` is `clean`, `deadline_exceeded`, or `persistence_failed`.
+  `deadline_exceeded` also covers background task/process cleanup that did not
+  finish within the budget. `persistence_failed` means a lifecycle persistence
+  write failed during the drain.
+- `interruptedTurnIds` identifies turns selected for interruption.
+- `remainingTurnIds` and `remainingProcessIds`, when present, identify work
+  still owned by the runtime at the deadline.
+- `quiescedTaskIds`, `cancelledTaskIds`, and `stoppedProcessIds`, when present,
+  identify observed background cleanup actions. Empty arrays are omitted.
+
+This is a local runtime lifecycle operation, not a remote host or arbitrary OS
+process shutdown API.
+
+### `lifecycle/metrics`
+
+Purpose: Read fixed, redacted lifecycle counters for the current app-server
+process. This is an observability surface, not a thread or process inspection
+method.
+
+Request:
+
+```json
+{}
+```
+
+Response:
+
+```json
+{
+  "metrics": {
+    "shutdownDrainCount": 3,
+    "cleanShutdownCount": 2,
+    "deadlineExceededCount": 1,
+    "persistenceFailedCount": 0,
+    "restartReconciliationCount": 1,
+    "lifecyclePersistenceFailureCount": 0,
+    "shutdownDrainDurationMsTotal": 517,
+    "providerCleanupConfirmedCount": 1,
+    "providerCleanupTimedOutCount": 0,
+    "providerCleanupUnknownCount": 2
+  }
+}
+```
+
+Behavior:
+
+- All counters are process-local and start at zero when the app-server starts.
+- The drain outcome and duration counters cover the combined runtime and
+  app-server-owned background task/process drain result. Restart and provider
+  cleanup counters are reported by the runtime.
+- The field names are fixed. The response never contains provider names, command
+  lines, PIDs, process IDs, thread IDs, turn IDs, prompts, or credentials.
+- `providerCleanupConfirmedCount` records an explicit provider cleanup
+  acknowledgement. `providerCleanupTimedOutCount` and
+  `providerCleanupUnknownCount` make limitations visible; clients must inspect
+  each turn's durable lifecycle `ownership` value before claiming an external
+  child or remote job was reaped.
 
 ### `thread/state`
 
@@ -1890,6 +2031,33 @@ Behavior:
   `ready` or `failed` status.
 - Caches indexes per canonical root path. Switching A to B and back to A
   reuses the root cache when the root path is unchanged.
+
+`turn/lifecycleUpdated` is emitted whenever Roder records a lifecycle
+transition in the runtime. It carries stable identifiers and classifications only; provider
+command lines, process handles, and credentials are not exposed:
+
+```json
+{
+  "threadId": "thread-123",
+  "turnId": "turn-123",
+  "lifecycle": {
+    "threadId": "thread-123",
+    "turnId": "turn-123",
+    "state": "interrupt_requested",
+    "cleanup": "requested",
+    "ownership": "provider_cleanup_pending",
+    "reason": "user_interrupt",
+    "timestamp": "2026-07-17T12:00:00Z"
+  }
+}
+```
+
+Lifecycle `reason`, when present, is `user_interrupt`, `shutdown`,
+`deadline_exceeded`, `provider_failure`, `runtime_restart`, or
+`runtime_failure`. While `state` is `interrupt_requested`, the accompanying
+`thread/status/changed` notification remains `running` and includes the
+`interrupting` active flag. Terminal lifecycle states, including
+`recovery_needed`, produce idle thread status.
 - Selecting a different root or reordering roots does not invalidate identical
   root indexes.
 - Git repositories use an ignore-respecting tracked plus untracked file
@@ -5310,6 +5478,11 @@ Clients answer with `thread/exit_plan`. `thread/planExitResolved` echoes
 Ordering:
 
 - `turn/started` is emitted before terminal `turn/completed`.
+- `turn/lifecycleUpdated` is an additive lifecycle-state notification. Clients
+  should use it to show interruption and recovery progress, but should still
+  process terminal `turn/completed` normally. A `persistence_failed`
+  `runtime/drain` result means durable lifecycle writes failed during that
+  drain.
 - A running status notification is emitted when a turn starts.
 - Wait states keep `status.type` as `running` and set `activeFlags` to
   `approvalRequired`, `userInputRequired`, or `planExitRequired`.
@@ -5497,7 +5670,10 @@ Error conventions:
 
 Cancellation and interruption:
 
-- `turn/interrupt` calls the runtime interrupt path.
+- `turn/interrupt` calls the runtime interrupt path and requests turn cleanup.
+- `runtime/drain` rejects new turns, interrupts locally owned active turns, and
+  waits within its caller-supplied bounded deadline. Inspect its result rather
+  than assuming every child or background process was reaped.
 - `team/member/interrupt` interrupts only the selected member.
 - `tasks/cancel` cancels a background task and returns `{ "cancelled": bool }`.
 
@@ -5505,6 +5681,16 @@ Cancellation and interruption:
 
 - `thread/list` and `thread/read` use persisted threads first and in-memory
   protocol threads as a fallback.
+- Lifecycle records are extension state scoped to a turn. JSONL persistence
+  appends and syncs them in the thread's `extension_state.jsonl`; the
+  PostgreSQL session store appends them to its tenant-scoped extension-state
+  table. Both stores retain historical records, while `thread/read` returns
+  only the latest valid record per turn.
+- JSONL loading skips malformed extension-state lines, logs a local warning,
+  and reports the redacted count through `lifecycle.corruptRecordCount` without
+  making the enclosing thread unreadable. Other thread metadata/event
+  corruption can still make a thread unreadable according to that store's
+  normal validation rules.
 - `providers/select`, `settings/set_web_search`, `settings/set_shell`,
   `settings/set_default_mode`, and `settings/set_file_backed_dynamic_context`
   persist only when the app-server instance enables user-config persistence.
@@ -5538,9 +5724,14 @@ Cancellation and interruption:
 ### Resume a Thread
 
 1. Call `thread/read` with `includeTurns: true`.
-2. Render `thread.turns[].items`.
-3. Subscribe to notifications.
-4. Use `turn/start` for a new turn or `turn/steer` only when an active turn is
+2. Render `thread.turns[].items` and inspect `lifecycle.records` before
+   presenting interrupted work as complete. Treat `recovery_needed` as an
+   interrupted/recovery state, not an invitation to resume a prior provider
+   stream.
+3. Surface `lifecycle.corruptRecordCount` as a non-secret storage diagnostic
+   when nonzero.
+4. Subscribe to notifications.
+5. Use `turn/start` for a new turn or `turn/steer` only when an active turn is
    known.
 
 ### Stop Work

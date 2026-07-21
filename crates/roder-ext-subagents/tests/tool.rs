@@ -80,7 +80,8 @@ async fn task_tool_leaves_missing_subagent_type_for_dispatcher_fallback() {
 
 #[tokio::test]
 async fn task_tool_reports_unknown_subagent_type_as_stable_tool_error() {
-    let tool = TaskTool::canonical(Arc::new(FakeDispatcher::default()));
+    let dispatcher = Arc::new(FakeDispatcher::default());
+    let tool = TaskTool::canonical(dispatcher.clone());
 
     let result = tool
         .execute(
@@ -96,6 +97,35 @@ async fn task_tool_reports_unknown_subagent_type_as_stable_tool_error() {
 
     assert!(result.is_error);
     assert_eq!(result.data["error"]["kind"], "unknown_subagent_type");
+    assert!(dispatcher.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_tool_explains_that_lane_names_are_not_role_ids() {
+    let dispatcher = Arc::new(FakeDispatcher::default());
+    let tool = TaskTool::canonical(dispatcher.clone());
+
+    let result = tool
+        .execute(
+            context(),
+            call(json!({
+                "description": "Inspect files",
+                "prompt": "Find the entry point",
+                "subagent_type": "scout"
+            })),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert_eq!(result.data["error"]["kind"], "unknown_subagent_type");
+    assert!(
+        result.data["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Lane names are not roles")
+    );
+    assert!(dispatcher.requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -251,6 +281,7 @@ fn schema_snapshot_covers_model_facing_task_tool() {
     assert!(schema.contains(r#""max_concurrent":{"type":"integer""#));
     assert!(schema.contains(r#""minimum":1"#));
     assert!(schema.contains(r#""additionalProperties":false"#));
+    assert!(schema.contains("Available roles: explore [Read]; review [Read]"));
 }
 
 #[tokio::test]
@@ -286,8 +317,40 @@ async fn agent_swarm_tool_dispatches_children_in_order() {
 }
 
 #[tokio::test]
+async fn agent_swarm_rejects_lane_name_as_role_before_launching_children() {
+    let dispatcher = Arc::new(FakeDispatcher::default());
+    let tool = AgentSwarmTool::new(dispatcher.clone(), AgentSwarmConfig::default());
+
+    let result = tool
+        .execute(
+            context(),
+            agent_swarm_call(json!({
+                "description": "inspect fixtures",
+                "subagent_type": "scout",
+                "prompt_template": "Read {{item}} and report.",
+                "items": ["a.rs", "b.rs"]
+            })),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert_eq!(result.data["error"]["kind"], "unknown_subagent_type");
+    assert!(
+        result.data["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Lane names are not roles")
+    );
+    assert!(dispatcher.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn agent_swarm_tool_rejects_single_item_without_resume() {
-    let tool = AgentSwarmTool::new(Arc::new(FakeDispatcher::default()), AgentSwarmConfig::default());
+    let tool = AgentSwarmTool::new(
+        Arc::new(FakeDispatcher::default()),
+        AgentSwarmConfig::default(),
+    );
 
     let result = tool
         .execute(
