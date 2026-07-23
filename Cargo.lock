@@ -3324,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3370,7 +3370,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3740,7 +3740,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-deepseek"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4636,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4870,7 +4870,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "async-trait",
