@@ -12,14 +12,14 @@ readme = "README.md"
 id = "parallel-search"
 category = "tool-provider"
 display_name = "Parallel Search"
-description = "Parallel web search router for configured search providers."
+description = "Parallel.ai web search and URL extract tools."
 default_in_profiles = ["full"]
 required_env = []
-optional_env = []
+optional_env = ["PARALLEL_API_KEY", "PARALLEL_BASE_URL"]
 conflicts_with = []
 required_capabilities = ["network.web"]
 extension_path = "::ParallelSearchExtension::new"
-docs_url = ""
+docs_url = "https://docs.parallel.ai/search/search-quickstart"
 
 [dependencies]
 anyhow.workspace = true
