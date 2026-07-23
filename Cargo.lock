@@ -3324,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3558,7 +3558,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4147,7 +4147,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-parallel-search"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4636,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
