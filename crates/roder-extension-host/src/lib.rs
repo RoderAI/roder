@@ -4,10 +4,11 @@ use std::sync::{Arc, OnceLock};
 use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
-    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_FIREWORKS, PROVIDER_GEMINI,
-    PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
-    PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_VERTEX, PROVIDER_XAI,
-    PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
+    PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_DEEPSEEK, PROVIDER_FIREWORKS,
+    PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE,
+    PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD,
+    PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
+    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
 use roder_api::embeddings::EmbeddingProvider;
 use roder_api::extension::{
@@ -22,6 +23,7 @@ use roder_ext_anthropic::AnthropicExtension;
 use roder_ext_chrome::ChromeExtension;
 use roder_ext_claude_code::{ClaudeCodeConfig, ClaudeCodeExtension};
 use roder_ext_cursor::{CursorConfig, CursorExtension};
+use roder_ext_deepseek::{DeepSeekConfig, DeepSeekExtension};
 use roder_ext_fireworks::{FireworksConfig, FireworksExtension};
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
@@ -148,6 +150,8 @@ pub struct DefaultRegistryConfig {
     pub kimi_code_base_url: Option<String>,
     pub synthetic_api_key: Option<String>,
     pub synthetic_base_url: Option<String>,
+    pub deepseek_api_key: Option<String>,
+    pub deepseek_base_url: Option<String>,
     pub xiaomi_mimo_api_key: Option<String>,
     pub xiaomi_mimo_base_url: Option<String>,
     pub xiaomi_mimo_token_plan_api_key: Option<String>,
@@ -274,6 +278,8 @@ impl Default for DefaultRegistryConfig {
             kimi_code_base_url: None,
             synthetic_api_key: None,
             synthetic_base_url: None,
+            deepseek_api_key: None,
+            deepseek_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -460,6 +466,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(SyntheticExtension::new(SyntheticConfig {
         api_key: config.synthetic_api_key.clone(),
         base_url: config.synthetic_base_url.clone(),
+    }))?;
+    builder.install(DeepSeekExtension::new(DeepSeekConfig {
+        api_key: config.deepseek_api_key.clone(),
+        base_url: config.deepseek_base_url.clone(),
     }))?;
     for provider in config.custom_inference_providers {
         if known_provider_id(&provider.id) {
@@ -683,6 +693,9 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_CURSOR
             | PROVIDER_XIAOMI_MIMO
             | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
+            | PROVIDER_KIMI_CODE
+            | PROVIDER_SYNTHETIC
+            | PROVIDER_DEEPSEEK
     )
 }
 
@@ -1710,6 +1723,8 @@ mod tests {
             kimi_code_base_url: None,
             synthetic_api_key: None,
             synthetic_base_url: None,
+            deepseek_api_key: None,
+            deepseek_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -1862,6 +1877,50 @@ mod tests {
         })
         .unwrap();
         let engine = registry.inference_engine(PROVIDER_SYNTHETIC).unwrap();
+        assert_eq!(engine.metadata().auth_configured, Some(true));
+    }
+
+    #[test]
+    fn default_registry_installs_deepseek_provider_without_credentials() {
+        use roder_api::catalog::PROVIDER_DEEPSEEK;
+        use std::sync::OnceLock;
+
+        static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
+        CONFIG_ISOLATION.get_or_init(|| {
+            let temp = std::env::temp_dir().join(format!(
+                "roder-extension-host-deepseek-tests-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&temp);
+            std::fs::create_dir_all(&temp).unwrap();
+            // SAFETY: set once before any test reads the config; all tests run
+            // in the same process and never restore a real config dir.
+            unsafe {
+                std::env::set_var("RODER_CONFIG_DIR", &temp);
+            }
+        });
+
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let engine = registry
+            .inference_engine(PROVIDER_DEEPSEEK)
+            .expect("deepseek provider registered without credentials");
+
+        let metadata = engine.metadata();
+        assert_eq!(metadata.name, "DeepSeek Platform");
+        assert_eq!(metadata.auth_configured, Some(false));
+        assert_eq!(metadata.auth_label.as_deref(), Some("DEEPSEEK_API_KEY"));
+    }
+
+    #[test]
+    fn default_registry_deepseek_provider_reports_configured_with_key() {
+        use roder_api::catalog::PROVIDER_DEEPSEEK;
+
+        let registry = build_default_registry(DefaultRegistryConfig {
+            deepseek_api_key: Some("ds-secret".to_string()),
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+        let engine = registry.inference_engine(PROVIDER_DEEPSEEK).unwrap();
         assert_eq!(engine.metadata().auth_configured, Some(true));
     }
 

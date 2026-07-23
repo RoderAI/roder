@@ -22,6 +22,7 @@ roder-ext-anthropic.workspace = true
 roder-ext-chrome.workspace = true
 roder-ext-claude-code.workspace = true
 roder-ext-cursor.workspace = true
+roder-ext-deepseek.workspace = true
 roder-ext-fireworks.workspace = true
 roder-ext-firecrawl-search.workspace = true
 roder-ext-fork-rift.workspace = true
