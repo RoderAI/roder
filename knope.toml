@@ -151,6 +151,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-cursor/CHANGELOG.md"
 
+[packages."roder-ext-deepseek"]
+versioned_files = [
+    "crates/roder-ext-deepseek/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-deepseek/CHANGELOG.md"
+
 [packages."roder-ext-disk-context"]
 versioned_files = [
     "crates/roder-ext-disk-context/Cargo.toml",

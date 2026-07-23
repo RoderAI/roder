@@ -34,8 +34,8 @@ use evals::run_eval_cli;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
-    PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK, PROVIDER_OPENAI,
-    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
+    PROVIDER_DEEPSEEK, PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK,
+    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
     PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_VERTEX, PROVIDER_XAI,
     PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
 };
@@ -1273,6 +1273,8 @@ pub(crate) async fn build_runtime_from_config(
         kimi_code_base_url: keys.kimi_code_base_url,
         synthetic_api_key: keys.synthetic,
         synthetic_base_url: keys.synthetic_base_url,
+        deepseek_api_key: keys.deepseek,
+        deepseek_base_url: keys.deepseek_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         thread_dir: None,
         session_store,
@@ -2486,6 +2488,8 @@ struct ProviderKeys {
     kimi_code_base_url: Option<String>,
     synthetic: Option<String>,
     synthetic_base_url: Option<String>,
+    deepseek: Option<String>,
+    deepseek_base_url: Option<String>,
 }
 
 /**
@@ -2896,6 +2900,26 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.base_url.clone())
             .or_else(|| std::env::var("RODER_SYNTHETIC_BASE_URL").ok())
             .or_else(|| std::env::var("SYNTHETIC_BASE_URL").ok()),
+        deepseek: std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_DEEPSEEK_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_DEEPSEEK)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_DEEPSEEK)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        deepseek_base_url: cfg
+            .providers
+            .get(PROVIDER_DEEPSEEK)
+            .and_then(|p| p.base_url.clone())
+            .or_else(|| std::env::var("RODER_DEEPSEEK_BASE_URL").ok())
+            .or_else(|| std::env::var("DEEPSEEK_BASE_URL").ok()),
     }
 }
 
@@ -2944,6 +2968,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "xiaomi-mimo"
             | "xiaomi-mimo-token-plan"
             | "synthetic"
+            | "deepseek"
     )
 }
 
@@ -3439,7 +3464,9 @@ fn provider_can_be_registered(
         | PROVIDER_POOLSIDE
         | PROVIDER_XIAOMI_MIMO
         | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
-        | PROVIDER_KIMI_CODE => true,
+        | PROVIDER_KIMI_CODE
+        | PROVIDER_SYNTHETIC
+        | PROVIDER_DEEPSEEK => true,
         PROVIDER_CURSOR => keys.cursor.is_some() || keys.cursor_access_token.is_some(),
         PROVIDER_OPENAI => keys.openai.is_some(),
         PROVIDER_ANTHROPIC => keys.anthropic.is_some(),
@@ -3504,6 +3531,8 @@ mod tests {
             kimi_code_base_url: None,
             synthetic: None,
             synthetic_base_url: None,
+            deepseek: None,
+            deepseek_base_url: None,
         }
     }
 

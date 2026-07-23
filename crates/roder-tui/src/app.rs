@@ -9238,6 +9238,7 @@ fn provider_api_key_url(provider_id: &str) -> &'static str {
     match provider_id {
         "cursor" => "https://cursor.com/dashboard/integrations",
         "poolside" => "https://platform.poolside.ai/api-keys",
+        "deepseek" => "https://platform.deepseek.com/api_keys",
         _ => "https://opencode.ai/auth",
     }
 }
@@ -14007,6 +14008,10 @@ mod tests {
         assert_eq!(
             provider_api_key_url("cursor"),
             "https://cursor.com/dashboard/integrations"
+        );
+        assert_eq!(
+            provider_api_key_url("deepseek"),
+            "https://platform.deepseek.com/api_keys"
         );
     }
 
