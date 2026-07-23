@@ -1,0 +1,40 @@
+[package]
+name = "roder-ext-deepseek"
+version = "0.1.0"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[package.metadata.roder.distribution]
+id = "deepseek"
+category = "inference-engine"
+display_name = "DeepSeek Platform"
+description = "DeepSeek Platform API-key inference provider using OpenAI-compatible Chat Completions."
+default_in_profiles = []
+required_env = []
+optional_env = [
+    "DEEPSEEK_API_KEY",
+    "RODER_DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "RODER_DEEPSEEK_BASE_URL",
+]
+conflicts_with = []
+required_capabilities = ["network.api.deepseek.com"]
+extension_path = "::DeepSeekExtension::new"
+docs_url = "https://api-docs.deepseek.com/"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+roder-config.workspace = true
+roder-ext-openai-chat-completions.workspace = true
+semver.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "io-util", "net", "sync"] }
