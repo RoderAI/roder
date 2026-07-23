@@ -74,7 +74,7 @@ use crate::inference_routing::{
 };
 use crate::instructions::{
     apply_agent_swarm_mode, apply_codex_multi_agent_mode, apply_model_instruction_overlay,
-    apply_plan_mode, apply_runtime_profile, apply_task_ledger_required,
+    apply_parallel_web_tools, apply_plan_mode, apply_runtime_profile, apply_task_ledger_required,
     apply_thread_developer_instructions, apply_turn_developer_context,
 };
 use crate::policy_gate::DefaultPolicyGate;
@@ -4026,6 +4026,10 @@ impl Runtime {
                 .goals
                 .apply_goal_instructions(&req.thread_id, instructions)
                 .await?;
+            instructions = apply_parallel_web_tools(
+                instructions,
+                tools.iter().map(|spec| spec.name.as_str()),
+            );
             let mut request_metadata = serde_json::json!({});
             if let Some(decision) = &speed_policy_decision {
                 request_metadata["speedPolicy"] = serde_json::json!(decision);

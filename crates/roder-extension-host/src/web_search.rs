@@ -54,6 +54,15 @@ pub(crate) fn install_web_search(
             .clamp(1, WEB_SEARCH_MAX_RESULTS_LIMIT),
     }))?;
 
+    // Parallel contributes extract (plus namespaced search) in addition to the
+    // canonical web_search router. Install it for the selected Parallel provider
+    // even when namespaced_tools is off so parallel_extract is available.
+    if let (WebSearchRouterProvider::Parallel(provider_config), false) =
+        (&selected, config.namespaced_tools)
+    {
+        builder.install(ParallelSearchExtension::with_config(provider_config.clone()))?;
+    }
+
     if config.namespaced_tools {
         install_namespaced_web_search_tools(builder, &config)?;
     }
@@ -267,6 +276,25 @@ mod tests {
 
         assert!(names.contains(&"web_search".to_string()));
         assert!(names.contains(&"tavily_search".to_string()));
+    }
+
+    #[test]
+    fn parallel_provider_installs_extract_tool_without_namespaced_flag() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            web_search: Some(DefaultWebSearchConfig {
+                enabled: true,
+                provider: Some(WebSearchProviderKind::Parallel),
+                parallel: provider_with_key("parallel-key"),
+                ..DefaultWebSearchConfig::default()
+            }),
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+        let names = contributed_tool_names(&registry).unwrap();
+
+        assert!(names.contains(&"web_search".to_string()));
+        assert!(names.contains(&"parallel_search".to_string()));
+        assert!(names.contains(&"parallel_extract".to_string()));
     }
 
     #[test]
