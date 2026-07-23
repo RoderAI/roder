@@ -6,10 +6,12 @@ use crate::inference::{
 };
 
 pub mod image_models;
+mod deepseek;
 mod openai_codex;
 mod synthetic;
 mod xiaomi_mimo;
 
+pub use deepseek::{DEEPSEEK_DEFAULT_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_ENV_ALIASES};
 pub use image_models::{
     IMAGE_PROVIDER_GOOGLE, IMAGE_PROVIDER_OPENAI, ImageModelCatalogEntry,
     ImageProviderCatalogEntry, built_in_image_providers, image_model_descriptors,
@@ -40,6 +42,7 @@ pub const PROVIDER_XIAOMI_MIMO: &str = "xiaomi-mimo";
 pub const PROVIDER_XIAOMI_MIMO_TOKEN_PLAN: &str = "xiaomi-mimo-token-plan";
 pub const PROVIDER_KIMI_CODE: &str = "kimi-code";
 pub const PROVIDER_SYNTHETIC: &str = "synthetic";
+pub const PROVIDER_DEEPSEEK: &str = "deepseek";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -57,6 +60,7 @@ pub const PROVIDER_KIND_POOLSIDE: &str = "poolside";
 pub const PROVIDER_KIND_CURSOR: &str = "cursor";
 pub const PROVIDER_KIND_XIAOMI_MIMO: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 pub const PROVIDER_KIND_SYNTHETIC: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
+pub const PROVIDER_KIND_DEEPSEEK: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -502,6 +506,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     xiaomi_mimo::PAY_AS_YOU_GO_PROVIDER,
     xiaomi_mimo::TOKEN_PLAN_PROVIDER,
     synthetic::SYNTHETIC_PROVIDER,
+    deepseek::DEEPSEEK_PROVIDER,
     ProviderCatalogEntry {
         id: PROVIDER_KIMI_CODE,
         name: "Kimi Code",
@@ -1101,6 +1106,10 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     synthetic::HF_GLM_5_2,
     synthetic::HF_GPT_OSS_120B,
     synthetic::HF_QWEN3_5_397B_A17B,
+    deepseek::DEEPSEEK_CHAT,
+    deepseek::DEEPSEEK_REASONER,
+    deepseek::DEEPSEEK_V4_FLASH,
+    deepseek::DEEPSEEK_V4_PRO,
     ModelCatalogEntry {
         id: "composer-2.5",
         display_name: "Composer 2.5",
@@ -1636,6 +1645,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_XIAOMI_MIMO | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN => ProviderFamily::OpenAi,
         PROVIDER_KIMI_CODE => ProviderFamily::OpenAi,
         PROVIDER_SYNTHETIC => ProviderFamily::OpenAi,
+        PROVIDER_DEEPSEEK => ProviderFamily::OpenAi,
         _ => ProviderFamily::Mock,
     }
 }
@@ -1700,6 +1710,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
         "synthetic" | "synthetic-ai" | "synthetic_ai" | "synthetic.new" => {
             PROVIDER_SYNTHETIC.to_string()
         }
+        "deepseek" | "deepseek-platform" | "deepseek_platform" => PROVIDER_DEEPSEEK.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -1757,6 +1768,7 @@ mod tests {
                 "xiaomi-mimo",
                 "xiaomi-mimo-token-plan",
                 "synthetic",
+                "deepseek",
                 "kimi-code"
             ]
         );
@@ -1905,6 +1917,10 @@ mod tests {
                 "hf:zai-org/GLM-5.2",
                 "hf:openai/gpt-oss-120b",
                 "hf:Qwen/Qwen3.5-397B-A17B",
+                "deepseek-chat",
+                "deepseek-reasoner",
+                "deepseek-v4-flash",
+                "deepseek-v4-pro",
                 "composer-2.5",
                 "composer-2.5-fast",
                 "claude-fable-5",
@@ -1942,6 +1958,7 @@ mod tests {
         );
         assert_eq!(models_for_provider(PROVIDER_KIMI_CODE, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_SYNTHETIC, false).len(), 14);
+        assert_eq!(models_for_provider(PROVIDER_DEEPSEEK, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
     }
 
@@ -2076,6 +2093,33 @@ mod tests {
             272_000,
             1_000_000,
         );
+    }
+
+    #[test]
+    fn deepseek_catalog_defaults_to_chat_model() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_DEEPSEEK)
+            .expect("deepseek provider registered");
+        assert_eq!(provider.name, "DeepSeek Platform");
+        assert_eq!(provider.default_model, "deepseek-chat");
+        assert_eq!(
+            provider.base_url,
+            Some("https://api.deepseek.com/v1")
+        );
+        assert_eq!(provider.env_key, Some("DEEPSEEK_API_KEY"));
+        assert_eq!(normalize_provider_id("deepseek-platform"), PROVIDER_DEEPSEEK);
+        assert_eq!(
+            provider_family_for_provider(PROVIDER_DEEPSEEK),
+            ProviderFamily::OpenAi
+        );
+
+        let models = models_for_provider(PROVIDER_DEEPSEEK, false);
+        assert_eq!(models.len(), 4);
+        assert!(models.iter().any(|model| model.id == "deepseek-chat"));
+        assert!(models.iter().any(|model| model.id == "deepseek-reasoner"));
+        assert!(models.iter().any(|model| model.id == "deepseek-v4-flash"));
+        assert!(models.iter().any(|model| model.id == "deepseek-v4-pro"));
     }
 
     #[test]

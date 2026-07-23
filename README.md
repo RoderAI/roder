@@ -48,6 +48,7 @@ Quickstart for bundled chat providers:
 | Xiaomi MiMo Token Plan | `export MIMO_TOKEN_PLAN_API_KEY=tp-...` | `xiaomi-mimo-token-plan/mimo-v2.5-pro` |
 | Roder Cloud | `export RODER_CLOUD_API_KEY=...` and configure a base URL if needed | `roder-cloud/roder.cloud/free` |
 | Synthetic | `export SYNTHETIC_API_KEY=...` | `synthetic/syn:large:text` |
+| DeepSeek Platform | `export DEEPSEEK_API_KEY=...` | `deepseek/deepseek-chat` |
 
 Useful commands:
 
@@ -78,7 +79,8 @@ Detailed provider docs live in [`docs/roder-opencode-providers.md`](./docs/roder
 [`docs/roder-xai-grok-providers.md`](./docs/roder-xai-grok-providers.md),
 [`docs/roder-kimi-code-provider.md`](./docs/roder-kimi-code-provider.md),
 [`docs/roder-xiaomi-mimo-providers.md`](./docs/roder-xiaomi-mimo-providers.md),
-[`docs/roder-synthetic-provider.md`](./docs/roder-synthetic-provider.md), and
+[`docs/roder-synthetic-provider.md`](./docs/roder-synthetic-provider.md),
+[`docs/roder-deepseek-provider.md`](./docs/roder-deepseek-provider.md), and
 [`docs/roder-image-generation-providers.md`](./docs/roder-image-generation-providers.md).
 
 ---
