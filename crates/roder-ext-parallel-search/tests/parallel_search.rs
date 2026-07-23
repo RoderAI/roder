@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use roder_ext_parallel_search::client::{ParallelSearchConfig, ParallelSearchOptions};
-use roder_ext_parallel_search::{ParallelSearchClient, ParallelSearchTool};
+use roder_ext_parallel_search::{
+    ParallelExtractRequest, ParallelExtractTool, ParallelSearchClient, ParallelSearchTool,
+};
 use roder_web_search::WebSearchRequest;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -39,6 +41,9 @@ async fn objective_only_search_derives_queries_and_normalizes_excerpts() {
     assert_eq!(server.requests().await.len(), 1);
     assert_eq!(body["objective"], "Roder web search extension design");
     assert_eq!(body["search_queries"].as_array().unwrap().len(), 3);
+    assert_eq!(body["mode"], "advanced");
+    assert_eq!(body["advanced_settings"]["max_results"], 5);
+    assert!(body.get("max_results").is_none());
     assert_eq!(response.provider, "parallel");
     assert_eq!(response.results[0].url, "https://example.com/roder");
     assert_eq!(
@@ -76,6 +81,73 @@ async fn provider_search_queries_are_sent_unchanged() {
         body["search_queries"],
         json!(["first query", "second query"])
     );
+    assert_eq!(body["advanced_settings"]["max_results"], 5);
+}
+
+#[tokio::test]
+async fn advanced_settings_carry_domains_and_location() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        json!({
+            "results": [{ "url": "https://example.com/filtered", "excerpts": ["A", "B"] }]
+        }),
+    )])
+    .await;
+    let client = test_client(&server);
+    let mut request = WebSearchRequest::new("filter me");
+    request.max_results = 3;
+    request.include_domains = vec!["example.com".to_string()];
+    request.exclude_domains = vec!["spam.example".to_string()];
+    request.country = Some("US".to_string());
+
+    let response = client
+        .search(request, ParallelSearchOptions::default())
+        .await
+        .unwrap();
+    let body = server.json_body(0).await;
+
+    assert!(body.get("include_domains").is_none());
+    assert!(body.get("country").is_none());
+    assert_eq!(body["advanced_settings"]["max_results"], 3);
+    assert_eq!(
+        body["advanced_settings"]["source_policy"]["include_domains"],
+        json!(["example.com"])
+    );
+    assert_eq!(
+        body["advanced_settings"]["source_policy"]["exclude_domains"],
+        json!(["spam.example"])
+    );
+    assert_eq!(body["advanced_settings"]["location"], "us");
+    assert_eq!(
+        response.results[0].snippet.as_deref(),
+        Some("A\n\nB")
+    );
+}
+
+#[tokio::test]
+async fn object_warnings_and_array_usage_are_normalized() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        json!({
+            "search_id": "search_usage",
+            "results": [{ "url": "https://example.com/usage", "title": "Usage" }],
+            "warnings": [{ "type": "warning", "message": "partial corpus" }],
+            "usage": [{ "name": "sku_search", "count": 2 }]
+        }),
+    )])
+    .await;
+    let client = test_client(&server);
+
+    let response = client
+        .search(
+            WebSearchRequest::new("usage"),
+            ParallelSearchOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.warnings, vec!["partial corpus".to_string()]);
+    assert_eq!(response.usage.as_ref().and_then(|u| u.requests), Some(2));
 }
 
 #[tokio::test]
@@ -192,6 +264,129 @@ async fn malformed_response_is_an_error() {
         .to_string();
 
     assert!(error.contains("usable results"));
+}
+
+#[tokio::test]
+async fn extract_sends_urls_objective_and_full_content_settings() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        json!({
+            "extract_id": "extract_1",
+            "session_id": "session_1",
+            "results": [{
+                "url": "https://example.com/page",
+                "title": "Example",
+                "publish_date": "2026-01-02",
+                "excerpts": ["Focused excerpt"],
+                "full_content": "# Full page"
+            }],
+            "errors": [],
+            "usage": [{ "name": "sku_extract_excerpts", "count": 1 }]
+        }),
+    )])
+    .await;
+    let client = test_client(&server);
+    let request = ParallelExtractRequest {
+        urls: vec!["https://example.com/page".to_string()],
+        objective: Some("Summarize the page".to_string()),
+        search_queries: vec!["example page".to_string()],
+        max_chars_total: Some(1200),
+        session_id: Some("session_prior".to_string()),
+        full_content: true,
+        max_chars_per_result: Some(400),
+    };
+
+    let response = client.extract(request).await.unwrap();
+    let body = server.json_body(0).await;
+
+    assert_eq!(body["urls"], json!(["https://example.com/page"]));
+    assert_eq!(body["objective"], "Summarize the page");
+    assert_eq!(body["search_queries"], json!(["example page"]));
+    assert_eq!(body["max_chars_total"], 1200);
+    assert_eq!(body["session_id"], "session_prior");
+    assert_eq!(
+        body["advanced_settings"]["full_content"]["max_chars_per_result"],
+        400
+    );
+    assert_eq!(response.extract_id.as_deref(), Some("extract_1"));
+    assert_eq!(response.session_id.as_deref(), Some("session_1"));
+    assert_eq!(response.results[0].title.as_deref(), Some("Example"));
+    assert_eq!(
+        response.results[0].excerpts,
+        vec!["Focused excerpt".to_string()]
+    );
+    assert_eq!(
+        response.results[0].full_content.as_deref(),
+        Some("# Full page")
+    );
+    assert_eq!(response.usage.as_ref().and_then(|u| u.requests), Some(1));
+}
+
+#[tokio::test]
+async fn extract_tool_accepts_single_url_alias_and_renders_text() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        json!({
+            "extract_id": "extract_tool",
+            "results": [{
+                "url": "https://example.com/tool",
+                "title": "Tool Page",
+                "excerpts": ["Tool excerpt"]
+            }],
+            "errors": [{
+                "url": "https://example.com/missing",
+                "message": "not found"
+            }]
+        }),
+    )])
+    .await;
+    let tool = ParallelExtractTool::new(
+        ParallelSearchConfig::new("secret-test-key").with_base_url(server.base_url()),
+    )
+    .unwrap();
+    let call = roder_api::tools::ToolCall {
+        id: "call-extract".to_string(),
+        name: "parallel_extract".to_string(),
+        arguments: json!({
+            "url": "https://example.com/tool",
+            "query": "What is on the page?"
+        }),
+        raw_arguments: r#"{"url":"https://example.com/tool","query":"What is on the page?"}"#
+            .to_string(),
+        thread_id: "thread-1".to_string(),
+        turn_id: "turn-1".to_string(),
+    };
+
+    let result = roder_api::tools::ToolExecutor::execute(
+        &tool,
+        roder_api::tools::ToolExecutionContext::new(
+            "thread-1",
+            "turn-1",
+            roder_api::policy_mode::PolicyMode::Default,
+        ),
+        call,
+    )
+    .await
+    .unwrap();
+    let body = server.json_body(0).await;
+
+    assert_eq!(result.name, "parallel_extract");
+    assert!(!result.is_error);
+    assert!(result.text.contains("https://example.com/tool"));
+    assert!(result.text.contains("Tool excerpt"));
+    assert!(result.text.contains("not found"));
+    assert_eq!(body["urls"], json!(["https://example.com/tool"]));
+    assert_eq!(body["objective"], "What is on the page?");
+    assert_eq!(result.data["provider"], "parallel");
+    assert_eq!(result.data["provider_request_id"], "extract_tool");
+}
+
+#[tokio::test]
+async fn extract_rejects_empty_urls() {
+    let error = ParallelExtractRequest::from_tool_arguments(&json!({ "objective": "x" }))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("at least one url"));
 }
 
 fn test_client(server: &MockServer) -> ParallelSearchClient {

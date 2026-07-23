@@ -32,7 +32,9 @@ impl RoderExtension for ParallelSearchExtension {
             name: "Parallel Search".to_string(),
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
-            description: Some("Parallel.ai objective-oriented search tool provider".to_string()),
+            description: Some(
+                "Parallel.ai search and URL extract tool provider".to_string(),
+            ),
             provides: vec![ProvidedService::ToolProvider("parallel-search".to_string())],
             required_capabilities: vec![CapabilityRequest::new("network.web")],
         }
@@ -65,7 +67,7 @@ mod tests {
     }
 
     #[test]
-    fn installs_tool_contributor() {
+    fn installs_search_and_extract_tools() {
         let extension = ParallelSearchExtension::new("test-key");
         let mut builder = ExtensionRegistryBuilder::new();
 
@@ -74,5 +76,15 @@ mod tests {
 
         assert_eq!(registry.tools.len(), 1);
         assert_eq!(registry.tools[0].id(), "parallel-search");
+
+        let mut tool_registry = roder_api::tools::ToolRegistry::default();
+        registry.tools[0].contribute(&mut tool_registry).unwrap();
+        let names = tool_registry
+            .specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|name| name == "parallel_search"));
+        assert!(names.iter().any(|name| name == "parallel_extract"));
     }
 }
