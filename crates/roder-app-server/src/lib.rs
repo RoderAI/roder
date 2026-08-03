@@ -30,6 +30,7 @@ mod protocol_contract;
 pub mod remote;
 pub mod remote_client;
 mod retrieval;
+mod review;
 mod search_index;
 pub mod server;
 mod skills;

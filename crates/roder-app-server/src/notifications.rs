@@ -757,6 +757,18 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
         RoderEvent::KnowledgeLinked(event) => {
             vec![protocol_notification("knowledge/linked", event.clone())]
         }
+        RoderEvent::ReviewStarted(event) => {
+            vec![protocol_notification("review/started", event.clone())]
+        }
+        RoderEvent::ReviewCompleted(event) => {
+            vec![protocol_notification("review/completed", event.clone())]
+        }
+        RoderEvent::ReviewFailed(event) => {
+            vec![protocol_notification("review/failed", event.clone())]
+        }
+        RoderEvent::ReviewPublished(event) => {
+            vec![protocol_notification("review/published", event.clone())]
+        }
         _ => Vec::new(),
     }
 }

@@ -315,6 +315,7 @@ mod tests {
             "ps",
             "memory",
             "snapshot",
+            "review",
             "marketplace",
             "plugin",
             "packages",
@@ -334,6 +335,14 @@ mod tests {
                 .get("ps")
                 .and_then(|spec| spec.argument_hint.as_deref()),
             Some("all|stop <id>|stop-all --confirm|<id>")
+        );
+        assert_eq!(
+            registry
+                .get("review")
+                .and_then(|spec| spec.argument_hint.as_deref()),
+            Some(
+                "[--base <branch>] [--commit <sha>] [--uncommitted] [--publish <id>] [instructions]"
+            )
         );
         assert_eq!(
             registry

@@ -229,16 +229,16 @@ Review {{arguments}}.
         let user = dir.join("user");
         let workspace = dir.join("workspace");
         write(
-            &user.join("review.md"),
+            &user.join("audit.md"),
             "---\ndescription: user\n---\n\nUser body",
         );
         write(
-            &workspace.join("review.md"),
+            &workspace.join("audit.md"),
             "---\ndescription: workspace\n---\n\nWorkspace body",
         );
 
         let registry = CommandsRegistry::load(Some(&user), Some(&workspace), []).unwrap();
-        let spec = registry.get("review").unwrap();
+        let spec = registry.get("audit").unwrap();
         assert_eq!(spec.description.as_deref(), Some("workspace"));
         assert_eq!(spec.source, CommandSource::Workspace);
     }
@@ -247,13 +247,13 @@ Review {{arguments}}.
     fn loader_rejects_duplicate_workspace_command_names() {
         let dir = tempdir("loader_rejects_duplicate_workspace_command_names");
         let workspace = dir.join("workspace");
-        write(&workspace.join("one.md"), "---\nname: review\n---\n\nOne");
-        write(&workspace.join("two.md"), "---\nname: review\n---\n\nTwo");
+        write(&workspace.join("one.md"), "---\nname: audit\n---\n\nOne");
+        write(&workspace.join("two.md"), "---\nname: audit\n---\n\nTwo");
 
         let err = CommandsRegistry::load(None::<&PathBuf>, Some(&workspace), [])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("duplicate command `review`"), "{err}");
+        assert!(err.contains("duplicate command `audit`"), "{err}");
         assert!(err.contains("one.md") && err.contains("two.md"), "{err}");
     }
 

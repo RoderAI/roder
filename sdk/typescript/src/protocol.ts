@@ -163,3 +163,57 @@ export interface ExternalToolCall {
   /** Parsed JSON arguments from the model. */
   arguments: unknown;
 }
+
+/** Mirrors roder-api `ReviewPriority`; `p0` is the most severe. */
+export type ReviewPriority = "p0" | "p1" | "p2" | "p3";
+
+/** Mirrors roder-api `ReviewLineRange`; inclusive, 1-based. */
+export interface ReviewLineRange {
+  start: number;
+  end: number;
+}
+
+/** Mirrors roder-api `ReviewCodeLocation`. */
+export interface ReviewCodeLocation {
+  absoluteFilePath: string;
+  lineRange: ReviewLineRange;
+}
+
+/** Mirrors roder-api `ReviewFinding`. */
+export interface ReviewFinding {
+  title: string;
+  body: string;
+  confidenceScore?: number;
+  priority: ReviewPriority;
+  codeLocation: ReviewCodeLocation;
+}
+
+/** Mirrors roder-api `ReviewOutput`, the payload of `review/completed`. */
+export interface ReviewOutput {
+  findings: ReviewFinding[];
+  overallCorrectness?: string;
+  overallExplanation?: string;
+  overallConfidenceScore?: number;
+}
+
+/** Mirrors roder-api `ReviewTarget` (tagged by `kind`). */
+export type ReviewTarget =
+  | { kind: "uncommittedChanges" }
+  | { kind: "baseBranch"; branch: string }
+  | { kind: "commit"; sha: string; title?: string }
+  | { kind: "custom"; instructions: string };
+
+/** Mirrors roder-api `ReviewPublisherCapabilities`. */
+export interface ReviewPublisherCapabilities {
+  inlineComments: boolean;
+  summaryBody: boolean;
+  autodetectDestination: boolean;
+  dryRun: boolean;
+}
+
+/** Mirrors roder-api `ReviewPublisherDescriptor`. */
+export interface ReviewPublisherDescriptor {
+  id: string;
+  displayName: string;
+  capabilities: ReviewPublisherCapabilities;
+}
