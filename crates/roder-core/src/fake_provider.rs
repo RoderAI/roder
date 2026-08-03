@@ -30,6 +30,21 @@ impl InferenceEngine for FakeInferenceEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        // Checked first: a review turn replaces the system prompt with the
+        // rubric, so it must never fall through into the tool-calling branches.
+        if should_emit_review(&request) {
+            let stream = stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: FAKE_REVIEW_OUTPUT.to_string(),
+                    phase: None,
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ]);
+            return Ok(Box::pin(stream));
+        }
         if should_request_user_input(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
                 ToolCallCompleted {
@@ -297,6 +312,30 @@ impl InferenceEngine for FakeInferenceEngine {
 
         Ok(Box::pin(stream))
     }
+}
+
+/// Structured review the fake provider answers with, matching the serde shape
+/// of `roder_api::review::ReviewOutput`.
+const FAKE_REVIEW_OUTPUT: &str = r#"{
+  "findings": [
+    {
+      "title": "[P1] Off-by-one in the loop bound",
+      "body": "The loop overruns the slice.",
+      "confidenceScore": 0.8,
+      "priority": "p1",
+      "codeLocation": {
+        "absoluteFilePath": "/tmp/roder-review/src/lib.rs",
+        "lineRange": { "start": 10, "end": 12 }
+      }
+    }
+  ],
+  "overallCorrectness": "patch is incorrect",
+  "overallExplanation": "One blocking bug.",
+  "overallConfidenceScore": 0.7
+}"#;
+
+fn should_emit_review(request: &AgentInferenceRequest) -> bool {
+    prompt_contains(request, "FAKE_REVIEW_FINDINGS")
 }
 
 fn should_request_user_input(request: &AgentInferenceRequest) -> bool {

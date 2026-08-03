@@ -94,6 +94,12 @@ Known notification methods are normalized to SDK event names:
 | `plan_exit.requested` | `thread/planExitRequested` |
 | `plan_exit.resolved` | `thread/planExitResolved` |
 | `command.output_delta` | `command/exec/outputDelta` |
+| `review.started` | `review/started` |
+| `review.completed` | `review/completed` |
+| `review.failed` | `review/failed` |
+| `review.published` | `review/published` |
+
+The `approval.*`, `user_input.*`, `plan_exit.*`, `command.output_delta`, and `review.*` events are passthrough: they are named but carry only `raw`. Review payloads are the `roder_api::events` structs (`ReviewStarted`, `ReviewCompleted`, `ReviewFailed`, `ReviewPublished`); `ReviewOutput`, `ReviewFinding`, and the publisher descriptor types are exported from `@roderai/sdk` for typing `raw.params` by hand. See `docs/review.md`.
 
 In the TypeScript SDK the thread, turn, item, delta, and tool-execution events carry typed payloads (`Thread`, `Turn`, `ThreadItem`, `ThreadItemDelta`, `ExternalToolCall`, `TokenUsage`) alongside `raw`; the interfaces in `sdk/typescript/src/events.ts` mirror the Rust wire structs in `crates/roder-protocol/src/lib.rs` and `crates/roder-api/src/inference.rs`. The Python SDK keeps the untyped `{type, raw}` shape.
 

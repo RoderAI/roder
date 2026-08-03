@@ -73,6 +73,8 @@ pub struct Config {
     pub analytics: Option<analytics::AnalyticsConfig>,
     /// Workspace fork providers (`[forks]`).
     pub forks: Option<ForksConfig>,
+    /// Read-only code review and its publishers (`[review]`).
+    pub review: Option<ReviewConfig>,
     /// Remote agent-node connection profiles (`[[agent_nodes]]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_nodes: Vec<agent_node::AgentNodeProfile>,
@@ -90,6 +92,33 @@ pub struct ForksConfig {
     /// Overridable via `RODER_FORK_BASE_DIR`.
     #[serde(default)]
     pub base_dir: Option<String>,
+}
+
+/// `[review]` config block: the read-only review sub-turn and the publishers
+/// that can submit its findings.
+// `toml::Value` is not `Eq` (it can carry floats), so `[review]` is only
+// `PartialEq`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ReviewConfig {
+    /// Publisher id used when a publish request does not name one. Omit — or
+    /// set `"none"` — to require an explicit choice every time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_publisher: Option<String>,
+    /// Model override for the review turn; falls back to the thread's model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// `[review.publishers.<id>]`, one block per publisher, keyed by publisher
+    /// id. The shape of each block is owned by the publisher's own crate, so
+    /// adding a publisher never requires editing this struct.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub publishers: BTreeMap<String, toml::Value>,
+}
+
+impl ReviewConfig {
+    /// Raw `[review.publishers.<id>]` block, if the user configured one.
+    pub fn publisher(&self, id: &str) -> Option<&toml::Value> {
+        self.publishers.get(id)
+    }
 }
 
 /// Env override for the default fork provider.
@@ -2182,6 +2211,7 @@ mod tests {
             packages: None,
             analytics: None,
             forks: None,
+            review: None,
             agent_nodes: Vec::new(),
         };
         config.providers.insert(
@@ -2470,6 +2500,57 @@ mod tests {
 
         let empty: Config = toml::from_str("").unwrap();
         assert_eq!(default_fork_provider(&empty), "git-worktree");
+    }
+
+    #[test]
+    fn review_config_round_trips_through_toml() {
+        let config: Config = toml::from_str(
+            r#"
+            [review]
+            default_publisher = "github"
+            model = "opus"
+
+            [review.publishers.github]
+            mode = "auto"
+            event = "COMMENT"
+
+            [review.publishers.vex]
+            endpoint = "https://vex.example"
+            "#,
+        )
+        .unwrap();
+
+        let review = config.review.clone().expect("[review] block");
+        assert_eq!(review.default_publisher.as_deref(), Some("github"));
+        assert_eq!(review.model.as_deref(), Some("opus"));
+
+        // Publisher blocks stay opaque here: their shape belongs to the
+        // publisher's own crate, so a new publisher never edits this struct.
+        let github = review
+            .publisher("github")
+            .expect("[review.publishers.github]");
+        assert_eq!(
+            github.get("mode").and_then(toml::Value::as_str),
+            Some("auto")
+        );
+        assert_eq!(
+            github.get("event").and_then(toml::Value::as_str),
+            Some("COMMENT")
+        );
+        let vex = review.publisher("vex").expect("[review.publishers.vex]");
+        assert_eq!(
+            vex.get("endpoint").and_then(toml::Value::as_str),
+            Some("https://vex.example")
+        );
+        assert!(review.publisher("nope").is_none());
+
+        let encoded = toml::to_string_pretty(&config).unwrap();
+        let decoded: Config = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded.review, config.review);
+
+        // An absent block must stay absent rather than materializing defaults.
+        let empty: Config = toml::from_str("").unwrap();
+        assert!(empty.review.is_none());
     }
 
     #[test]

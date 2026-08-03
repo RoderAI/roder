@@ -507,6 +507,21 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ReadOnly,
         Idempotent
     ),
+    method_spec!(
+        "review/publish",
+        "review",
+        ExternalProcess,
+        NonIdempotent,
+        ["review/published"]
+    ),
+    method_spec!("review/publishers/list", "review", ReadOnly, Idempotent),
+    method_spec!(
+        "review/start",
+        "review",
+        LocalState,
+        NonIdempotent,
+        ["review/started", "review/completed", "review/failed"]
+    ),
     method_spec!("roadmap/create", "roadmap", LocalState, NonIdempotent),
     method_spec!("roadmap/list", "roadmap", ReadOnly, Idempotent),
     method_spec!("roadmap/patch", "roadmap", LocalState, NonIdempotent),

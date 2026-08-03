@@ -105,23 +105,25 @@ use roder_protocol::{
     ProcessesStopAllResult, ProcessesStopParams, ProcessesStopResult, ProviderAuthResult,
     ProviderClearParams, ProviderClearResult, ProviderConfigureParams, ProviderConfigureResult,
     ProviderSelectParams, ProviderSelectResult, ProvidersListResult, RetrievalMetricsResult,
-    RetrievalPromotedResult, RetrievalRecommendationsResult, RetrievalTurnParams,
-    RunnersDeleteResult, RunnersListResult, RunnersSelectParams, RunnersSelectResult,
-    RunnersSessionResult, RuntimeDrainParams, RuntimeDrainResult, RuntimeDrainStatus,
-    SearchIndexClearParams, SearchIndexClearResult, SearchIndexRebuildParams,
-    SearchIndexRebuildResult, SearchIndexStatusParams, SearchIndexStatusResult,
-    SearchIndexStatusState, SearchIndexWarmupParams, SearchIndexWarmupResult, SettingsGetResult,
-    SettingsSetDefaultModeParams, SettingsSetDefaultModeResult,
-    SettingsSetFileBackedDynamicContextParams, SettingsSetFileBackedDynamicContextResult,
-    SettingsSetSearchIndexParams, SettingsSetSearchIndexResult, SettingsSetShellParams,
-    SettingsSetShellResult, SettingsSetWebSearchParams, SettingsSetWebSearchResult,
-    SkillsListResult, SkillsSetEnabledParams, SkillsSetExposureParams, SkillsUpdateResult,
-    SubagentTraceReadParams, SubagentTraceReadResult, SubagentTracesListParams,
-    SubagentTracesListResult, TasksGetParams, TasksGetResult, TasksListResult, TasksSubmitParams,
-    TasksSubmitResult, TeamCleanupParams, TeamCleanupResult, TeamListParams, TeamListResult,
-    TeamMemberInterruptParams, TeamMemberInterruptResult, TeamMemberMessageParams,
-    TeamMemberMessageResult, TeamMemberStartParams, TeamMemberStartResult, TeamReadParams,
-    TeamReadResult, TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
+    RetrievalPromotedResult, RetrievalRecommendationsResult, RetrievalTurnParams, ReviewDelivery,
+    ReviewOutput, ReviewPriority, ReviewPublishParams, ReviewPublishersListResult,
+    ReviewStartParams, ReviewStartResult, ReviewTarget, RunnersDeleteResult, RunnersListResult,
+    RunnersSelectParams, RunnersSelectResult, RunnersSessionResult, RuntimeDrainParams,
+    RuntimeDrainResult, RuntimeDrainStatus, SearchIndexClearParams, SearchIndexClearResult,
+    SearchIndexRebuildParams, SearchIndexRebuildResult, SearchIndexStatusParams,
+    SearchIndexStatusResult, SearchIndexStatusState, SearchIndexWarmupParams,
+    SearchIndexWarmupResult, SettingsGetResult, SettingsSetDefaultModeParams,
+    SettingsSetDefaultModeResult, SettingsSetFileBackedDynamicContextParams,
+    SettingsSetFileBackedDynamicContextResult, SettingsSetSearchIndexParams,
+    SettingsSetSearchIndexResult, SettingsSetShellParams, SettingsSetShellResult,
+    SettingsSetWebSearchParams, SettingsSetWebSearchResult, SkillsListResult,
+    SkillsSetEnabledParams, SkillsSetExposureParams, SkillsUpdateResult, SubagentTraceReadParams,
+    SubagentTraceReadResult, SubagentTracesListParams, SubagentTracesListResult, TasksGetParams,
+    TasksGetResult, TasksListResult, TasksSubmitParams, TasksSubmitResult, TeamCleanupParams,
+    TeamCleanupResult, TeamListParams, TeamListResult, TeamMemberInterruptParams,
+    TeamMemberInterruptResult, TeamMemberMessageParams, TeamMemberMessageResult,
+    TeamMemberStartParams, TeamMemberStartResult, TeamReadParams, TeamReadResult,
+    TeamStartMemberParams, TeamStartParams, TeamStartResult, ThreadArchiveParams,
     ThreadArchiveResult, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoalClearParams,
     ThreadGoalClearResult, ThreadGoalGetParams, ThreadGoalGetResult, ThreadGoalSetParams,
     ThreadGoalSetResult, ThreadGoalStatus, ThreadItemStatus, ThreadListParams, ThreadListResult,
@@ -1439,6 +1441,201 @@ async fn thread_goal_methods_share_state_with_goal_tools() {
     )
     .await;
     assert!(get.goal.is_none());
+}
+
+/// Minimal version-control provider: a review needs one to resolve its target,
+/// and a stub keeps the test independent of the checkout's real git state.
+#[derive(Debug)]
+struct StubReviewVcs;
+
+#[async_trait::async_trait]
+impl roder_api::version_control::VcsProvider for StubReviewVcs {
+    fn id(&self) -> String {
+        "stub-review".to_string()
+    }
+
+    fn display_name(&self) -> String {
+        "Stub Review VCS".to_string()
+    }
+
+    async fn detect(
+        &self,
+        workspace_root: &std::path::Path,
+    ) -> Result<
+        Option<roder_api::version_control::VcsDetectionClaim>,
+        roder_api::version_control::VcsError,
+    > {
+        Ok(Some(roder_api::version_control::VcsDetectionClaim {
+            workspace: roder_api::version_control::VcsWorkspace {
+                root: workspace_root.to_path_buf(),
+                id: Some("headsha".to_string()),
+            },
+            priority: 1,
+            metadata: serde_json::Value::Null,
+        }))
+    }
+
+    async fn status(
+        &self,
+        request: roder_api::version_control::VcsStatusRequest,
+    ) -> Result<roder_api::version_control::VcsStatus, roder_api::version_control::VcsError> {
+        Ok(roder_api::version_control::VcsStatus {
+            provider: roder_api::version_control::VcsProviderIdentity {
+                id: self.id(),
+                display_name: self.display_name(),
+            },
+            workspace: roder_api::version_control::VcsWorkspace {
+                root: request.workspace_root,
+                id: Some("headsha".to_string()),
+            },
+            active_line: None,
+            base: Some(roder_api::version_control::VcsBase {
+                ref_name: Some("origin/main".to_string()),
+                sha: Some("basesha".to_string()),
+            }),
+            capabilities: roder_api::version_control::VcsCapabilities::default(),
+            changed_file_count: 0,
+        })
+    }
+
+    async fn list_changes(
+        &self,
+        _request: roder_api::version_control::VcsListChangesRequest,
+    ) -> Result<Vec<roder_api::version_control::VcsChangedFile>, roder_api::version_control::VcsError>
+    {
+        Ok(Vec::new())
+    }
+
+    async fn read_changed_content(
+        &self,
+        request: roder_api::version_control::VcsReadChangedContentRequest,
+    ) -> Result<
+        roder_api::version_control::VcsChangedContentPage,
+        roder_api::version_control::VcsError,
+    > {
+        Ok(roder_api::version_control::VcsChangedContentPage {
+            path: request.path,
+            content: None,
+            offset: 0,
+            total_lines: 0,
+            next_offset: None,
+            binary: false,
+        })
+    }
+}
+
+#[tokio::test]
+async fn review_start_streams_findings_and_publish_reports_no_publisher() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.version_control_provider(Arc::new(StubReviewVcs));
+    let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut notifications = client.subscribe_notifications();
+    let thread = start_thread(&client).await.thread;
+
+    let publishers: ReviewPublishersListResult =
+        request(&client, "review/publishers/list", None).await;
+    assert!(
+        publishers.publishers.is_empty(),
+        "no review publisher extension is installed in this registry"
+    );
+
+    let started: ReviewStartResult = request(
+        &client,
+        "review/start",
+        Some(
+            serde_json::to_value(ReviewStartParams {
+                thread_id: thread.id.clone(),
+                target: ReviewTarget::Custom {
+                    instructions: "FAKE_REVIEW_FINDINGS review the working diff".to_string(),
+                },
+                delivery: ReviewDelivery::Detached,
+                publish: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_ne!(
+        started.review_thread_id, thread.id,
+        "a review runs on a detached child thread"
+    );
+    assert!(
+        started.output.is_none(),
+        "detached delivery returns before the findings exist"
+    );
+
+    let started_notification =
+        wait_for_notification(&mut notifications, "review/started", Some(&thread.id)).await;
+    assert_eq!(started_notification.params["reviewId"], started.review_id);
+    assert_eq!(
+        started_notification.params["reviewThreadId"],
+        started.review_thread_id
+    );
+
+    let completed =
+        wait_for_notification(&mut notifications, "review/completed", Some(&thread.id)).await;
+    assert_eq!(completed.params["reviewId"], started.review_id);
+    let output: ReviewOutput = serde_json::from_value(completed.params["output"].clone()).unwrap();
+    assert_eq!(output.findings.len(), 1);
+    assert_eq!(output.findings[0].priority, ReviewPriority::P1);
+    assert_eq!(
+        output.findings[0].code_location.line_range.end, 12,
+        "the structured location must survive the parse ladder"
+    );
+    assert_eq!(
+        output.overall_correctness.as_deref(),
+        Some("patch is incorrect")
+    );
+
+    let missing_publisher = request_error(
+        &client,
+        "review/publish",
+        Some(
+            serde_json::to_value(ReviewPublishParams {
+                review_id: started.review_id.clone(),
+                publisher_id: None,
+                finding_indexes: None,
+                destination: None,
+                dry_run: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(
+        missing_publisher
+            .message
+            .contains("no review publisher is installed"),
+        "unexpected error: {}",
+        missing_publisher.message
+    );
+
+    let unknown_review = request_error(
+        &client,
+        "review/publish",
+        Some(
+            serde_json::to_value(ReviewPublishParams {
+                review_id: "review-that-never-ran".to_string(),
+                publisher_id: None,
+                finding_indexes: None,
+                destination: None,
+                dry_run: true,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(unknown_review.code, -32602);
+    assert!(
+        unknown_review
+            .message
+            .contains("is not in this session's history"),
+        "unexpected error: {}",
+        unknown_review.message
+    );
 }
 
 #[tokio::test]

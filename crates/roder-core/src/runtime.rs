@@ -104,7 +104,7 @@ const RELIABILITY_CONTINUATION_PROMPT: &str = "Verify the task is fully complete
 /// thinking rows from the live view. Sized for generous headroom across bursts
 /// and brief render stalls.
 const EVENT_BUS_CAPACITY: usize = 16_384;
-const FINAL_ANSWER_PHASE: &str = "final_answer";
+pub(crate) const FINAL_ANSWER_PHASE: &str = "final_answer";
 pub(crate) const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
 const TASK_LEDGER_COMPLETION_REMINDER_LIMIT: u8 = 2;
 const TASK_LEDGER_SCOREABLE_CHECKPOINT_SECONDS: u64 = 180;
@@ -155,6 +155,8 @@ pub struct RuntimeConfig {
     pub team_data_dir: Option<PathBuf>,
     pub roadmap_data_dir: Option<PathBuf>,
     pub media_generation: crate::media_generation::RuntimeMediaGenerationConfig,
+    /// `[review]` settings: the review sub-turn and its publishers.
+    pub review: crate::review::RuntimeReviewConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -188,6 +190,7 @@ impl Default for RuntimeConfig {
             team_data_dir: None,
             roadmap_data_dir: None,
             media_generation: crate::media_generation::RuntimeMediaGenerationConfig::default(),
+            review: crate::review::RuntimeReviewConfig::default(),
         }
     }
 }
@@ -528,6 +531,9 @@ pub struct Runtime {
     teams: TeamManager,
     agent_team_spawn_lock: Mutex<()>,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
+    /// Completed reviews, most recent last, so a later publish can resolve a
+    /// review id back to its findings. Bounded; see `review::run`.
+    pub(crate) reviews: Mutex<Vec<crate::review::ReviewRecord>>,
     pub(crate) goals: Arc<RuntimeGoalController>,
     context_artifacts: roder_api::artifacts::ContextArtifactStore,
     pub(crate) thread_store: Option<Arc<dyn ThreadStore>>,
@@ -698,6 +704,7 @@ impl Runtime {
                 workspace,
                 roadmap_data_dir,
             )),
+            reviews: Mutex::new(Vec::new()),
             goals,
             context_artifacts,
             thread_store,

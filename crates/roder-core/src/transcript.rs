@@ -612,6 +612,7 @@ mod tests {
                 team_data_dir: None,
                 roadmap_data_dir: None,
                 media_generation: Default::default(),
+                review: Default::default(),
             },
         )
         .unwrap();
@@ -731,6 +732,7 @@ mod tests {
                 team_data_dir: None,
                 roadmap_data_dir: None,
                 media_generation: Default::default(),
+                review: Default::default(),
             },
         )
         .unwrap();
@@ -1096,6 +1098,7 @@ mod tests {
                 remote_runner_destination: None,
                 team_data_dir: None,
                 media_generation: Default::default(),
+                review: Default::default(),
             },
         )
         .unwrap();

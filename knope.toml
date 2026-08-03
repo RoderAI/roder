@@ -200,6 +200,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-git/CHANGELOG.md"
 
+[packages."roder-ext-github-review"]
+versioned_files = [
+    "crates/roder-ext-github-review/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-github-review/CHANGELOG.md"
+
 [packages."roder-ext-google-embeddings"]
 versioned_files = [
     "crates/roder-ext-google-embeddings/Cargo.toml",
