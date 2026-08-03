@@ -27,6 +27,7 @@ use roder_ext_deepseek::{DeepSeekConfig, DeepSeekExtension};
 use roder_ext_fireworks::{FireworksConfig, FireworksExtension};
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
+use roder_ext_github_review::{GithubReviewConfig, GithubReviewExtension};
 use roder_ext_google_embeddings::{
     DEFAULT_ENDPOINT as GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT, GoogleEmbeddingProvider,
     GoogleEmbeddingsConfig, GoogleEmbeddingsExtension,
@@ -79,10 +80,12 @@ use semver::Version;
 mod context;
 pub mod discovery_catalog;
 pub mod marketplace;
+mod review;
 mod subagents;
 mod web_search;
 pub mod workflow_import;
 
+pub use review::github_review_config;
 pub use subagents::DefaultSubagentsConfig;
 pub use web_search::{DefaultWebSearchConfig, DefaultWebSearchProviderConfig};
 
@@ -173,6 +176,8 @@ pub struct DefaultRegistryConfig {
     /// Process-hosted extensions from `[[process_extensions]]` config;
     /// enabled entries are installed through `roder-ext-process-host`.
     pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
+    /// `[review.publishers.github]` settings for the GitHub review publisher.
+    pub github_review: GithubReviewConfig,
 }
 
 /// Out-of-tree extensions installed after the built-in set. Supplied by
@@ -295,6 +300,7 @@ impl Default for DefaultRegistryConfig {
             inference_router: None,
             extra_extensions: ExtraExtensions::default(),
             process_extensions: Vec::new(),
+            github_review: GithubReviewConfig::default(),
         }
     }
 }
@@ -338,6 +344,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(CodexOAuthProviderExtension)?;
     builder.install(GitExtension)?;
     builder.install(roder_ext_fork_rift::RiftForkExtension::default())?;
+    // Registered unconditionally: whether `gh` or a token is usable is decided
+    // when a publish is attempted, so an unconfigured install reports a precise
+    // error instead of vanishing from `review/publishers/list`.
+    builder.install(GithubReviewExtension::new(config.github_review.clone()))?;
 
     builder.install(OpenAiSpeechExtension::new(
         config
@@ -1488,6 +1498,17 @@ mod tests {
     }
 
     #[test]
+    fn default_registry_installs_the_github_review_publisher() {
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let publisher = registry
+            .review_publisher("github")
+            .expect("github review publisher registered");
+        let capabilities = publisher.descriptor().capabilities;
+        assert!(capabilities.inline_comments);
+        assert!(capabilities.dry_run);
+    }
+
+    #[test]
     fn default_registry_installs_enabled_process_extensions() {
         let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../roder-ext-process-host/tests/fixtures");
@@ -1740,6 +1761,7 @@ mod tests {
             inference_router: None,
             extra_extensions: ExtraExtensions::default(),
             process_extensions: Vec::new(),
+            github_review: GithubReviewConfig::default(),
         })
         .unwrap();
         for provider in [

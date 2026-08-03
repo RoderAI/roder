@@ -546,7 +546,14 @@ fn run_app_server_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
         .name("roder-app-server".to_string())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
+            // Multi-thread, not current-thread: providers that bridge a
+            // synchronous callback back into async work call
+            // `tokio::task::block_in_place`, which panics outright on a
+            // current-thread runtime (`roder-ext-claude-code` does this for
+            // every tool call it routes through Roder's executor). The TUI
+            // entry point is already multi-thread; this keeps the app-server
+            // able to host the same providers.
+            tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .expect("app-server tokio runtime")
@@ -1289,6 +1296,7 @@ pub(crate) async fn build_runtime_from_config(
         remote_runner_destination: remote_runner_destination.clone(),
         inference_router: cfg.inference_router.clone(),
         extra_extensions,
+        github_review: roder_extension_host::github_review_config(cfg.review.as_ref())?,
         process_extensions: packages::merged_process_extensions(
             cfg.process_extensions.clone(),
             workspace.as_deref(),
@@ -1333,6 +1341,7 @@ pub(crate) async fn build_runtime_from_config(
             team_data_dir: Some(config_dir.join("teams")),
             roadmap_data_dir: Some(config_dir.clone()),
             media_generation: resolve_media_generation_config(cfg.media.as_ref()),
+            review: resolve_review_config(cfg.review.as_ref()),
         },
     )?);
     let skills_registry = roder_config::build_skills_registry(
@@ -1342,6 +1351,15 @@ pub(crate) async fn build_runtime_from_config(
     runtime.set_skills(skills_registry).await;
 
     Ok((runtime, default_model))
+}
+
+fn resolve_review_config(
+    cfg: Option<&roder_config::ReviewConfig>,
+) -> roder_core::review::RuntimeReviewConfig {
+    roder_core::review::RuntimeReviewConfig {
+        default_publisher: cfg.and_then(|cfg| cfg.default_publisher.clone()),
+        model: cfg.and_then(|cfg| cfg.model.clone()),
+    }
 }
 
 fn resolve_zerolang_config(

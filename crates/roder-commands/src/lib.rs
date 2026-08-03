@@ -87,6 +87,11 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
             "Create a scoped provider history snapshot using the bound VCS snapshot skill. Inspect the current VCS state, include only requested changes, and report the snapshot outcome.",
         ),
         (
+            "review",
+            "Review the working diff or a base branch and pick findings.",
+            "Review the requested change read-only and report structured findings. Do not edit, create, or delete files: inspect the diff, judge correctness against the author's intent, and report only defects you can point at a concrete file and line for.",
+        ),
+        (
             "marketplace",
             "Manage plugin marketplaces.",
             "Use the Roder marketplace app-server methods to list default marketplaces, install one or all defaults, add local marketplaces, refresh catalogs, and search de-duplicated plugin results. Interpret arguments as a marketplace command, for example: list, install-default all, add <id> --kind <kind> --path <path>, refresh <id>, search <query>, or show <marketplace-id> <plugin-id>.",
@@ -142,6 +147,10 @@ pub fn built_in_commands() -> Vec<CommandSpec> {
                 Some("list|install|remove|update|enable|disable|approve|sync [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "review" => Some(
+                "[--base <branch>] [--commit <sha>] [--uncommitted] [--publish <id>] [instructions]"
+                    .to_string(),
+            ),
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             "webwright:run" => Some("<natural-language web task>".to_string()),

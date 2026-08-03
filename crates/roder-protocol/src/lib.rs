@@ -58,6 +58,11 @@ use roder_api::plan_review::{
 use roder_api::policy_mode::PolicyMode;
 use roder_api::processes::{ProcessDescriptor, ProcessId, ProcessOutput, ProcessStopResult};
 use roder_api::retrieval::{RetrievalMeasuredOutcome, RetrievalMode, RetrievalRoutePlan};
+pub use roder_api::review::{
+    ReviewCodeLocation, ReviewDelivery, ReviewDestination, ReviewFinding, ReviewLineRange,
+    ReviewOutput, ReviewPriority, ReviewPublishResult, ReviewPublishSkip,
+    ReviewPublisherCapabilities, ReviewPublisherDescriptor, ReviewTarget,
+};
 use roder_api::skills::{Skill, SkillDescriptor, SkillExposure, SkillSelector};
 use roder_api::subagents::SubagentPermissionMode;
 use roder_api::tasks::{TaskHandle, TaskId, TaskOutputStream};
@@ -3369,6 +3374,60 @@ pub struct RetrievalPromotedResult {
     pub turn_id: TurnId,
     pub states: Vec<RetrievalPromotedCapabilityState>,
     pub summary: RetrievalDebugSummary,
+}
+
+/// Starts a read-only review sub-turn on a detached child of `threadId`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewStartParams {
+    pub thread_id: ThreadId,
+    #[serde(default)]
+    pub target: ReviewTarget,
+    #[serde(default)]
+    pub delivery: ReviewDelivery,
+    /// Publish the findings as soon as the review completes. Only honoured for
+    /// `inline` delivery; detached callers publish once `review/completed`
+    /// arrives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish: Option<ReviewDestination>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewStartResult {
+    /// The turn inside `reviewThreadId`, not a turn on the requesting thread.
+    pub turn_id: TurnId,
+    pub review_id: String,
+    pub review_thread_id: ThreadId,
+    /// Present for `inline` delivery only; detached callers read the findings
+    /// from the `review/completed` notification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<ReviewOutput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<ReviewPublishResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewPublishParams {
+    pub review_id: String,
+    /// Overrides `destination.publisherId`. Omit when exactly one publisher is
+    /// registered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher_id: Option<String>,
+    /// Indices into the review's findings; omit to publish all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_indexes: Option<Vec<usize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination: Option<ReviewDestination>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewPublishersListResult {
+    pub publishers: Vec<ReviewPublisherDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

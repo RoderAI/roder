@@ -31,6 +31,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Browse and search the project knowledge base.",
         ),
         ("snapshot", "Create a scoped VCS snapshot."),
+        (
+            "review",
+            "Review the working diff or a base branch and pick findings.",
+        ),
         ("marketplace", "Manage plugin marketplaces."),
         (
             "plugin",
@@ -67,6 +71,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
                 Some("preview|install|install-all|list|disable|uninstall [args]".to_string())
             }
             "ps" => Some("all|stop <id>|stop-all --confirm|<id>".to_string()),
+            "review" => Some(
+                "[--base <branch>] [--commit <sha>] [--uncommitted] [--publish <id>] [instructions]"
+                    .to_string(),
+            ),
             "knowledge" => Some("[list [kind]|search <text>|read <id>]".to_string()),
             "chrome" => Some("[status|enable|disable|reconnect|pair|panel]".to_string()),
             "voice" => Some("[hold|tap|off|status]".to_string()),
@@ -192,6 +200,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/ps [all|stop <id>|stop-all --confirm] - Inspect and stop Roder-owned processes."
             .to_string(),
         "/snapshot [path-or-message] - Create a scoped VCS snapshot.".to_string(),
+        "/review [--base <branch>] [--commit <sha>] [--publish <id>] [instructions] - Review a change read-only and pick findings to publish.".to_string(),
         "/marketplace <command> - Manage plugin marketplaces.".to_string(),
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
         "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
@@ -217,6 +226,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "marketplace"
                 | "plugin"
                 | "snapshot"
+                | "review"
                 | "voice"
                 | "agent-swarm"
                 | "swarm"
@@ -334,6 +344,7 @@ mod tests {
                 "memory",
                 "knowledge",
                 "snapshot",
+                "review",
                 "marketplace",
                 "plugin",
                 "remote",
@@ -362,6 +373,15 @@ mod tests {
                 .find(|command| command.name == "snapshot")
                 .and_then(|command| command.argument_hint.as_deref()),
             Some("[path-or-message]")
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .find(|command| command.name == "review")
+                .and_then(|command| command.argument_hint.as_deref()),
+            Some(
+                "[--base <branch>] [--commit <sha>] [--uncommitted] [--publish <id>] [instructions]"
+            )
         );
         assert_eq!(
             commands

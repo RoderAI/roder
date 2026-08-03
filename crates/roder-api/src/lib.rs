@@ -35,6 +35,7 @@ pub mod processes;
 pub mod reliability;
 pub mod remote_runner;
 pub mod retrieval;
+pub mod review;
 pub mod skills;
 pub mod speech;
 pub mod subagents;

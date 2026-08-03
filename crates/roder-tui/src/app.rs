@@ -24,6 +24,8 @@ mod progress;
 #[allow(dead_code)]
 mod remote;
 mod remote_node;
+mod review;
+mod review_panel;
 mod roadmap_workspace;
 mod runner;
 mod scroll_accel;
@@ -126,6 +128,7 @@ use plan_panel::{
 use plugin_browser::PluginBrowserState;
 use progress::{ProgressReporter, TerminalProgress};
 use remote::{RemotePanelController, render_remote_panel_lines};
+use review_panel::{ReviewPanelState, findings_transcript};
 use roadmap_workspace::{RoadmapWorkspaceMeta, render_roadmap_workspace};
 use roder_roadmap::ThreadAttachment;
 use scroll_accel::ScrollSettings;
@@ -1435,6 +1438,14 @@ where
     tool_detail_modal: Option<ToolDetailModal>,
     plugin_browser: Option<PluginBrowserState>,
     chrome_panel: Option<chrome::ChromePanelState>,
+    /// Findings of the most recent completed review, awaiting keep/drop.
+    review_panel: Option<ReviewPanelState>,
+    /// Publisher preselected by `/review --publish <id>`; `None` lets the
+    /// server pick when exactly one publisher is installed.
+    review_publisher: Option<String>,
+    /// Label carried by `review.started`, reused as the transcript heading
+    /// when the findings land.
+    review_label: Option<String>,
     remote_panel: RemotePanelController,
     roadmap_mode: Option<RoadmapModeState>,
     /// Persistent agent-swarm mode (roadmap 104): when on, normal prompts are
@@ -1900,6 +1911,9 @@ where
             tool_detail_modal: None,
             plugin_browser: None,
             chrome_panel: None,
+            review_panel: None,
+            review_publisher: None,
+            review_label: None,
             remote_panel,
             roadmap_mode: None,
             swarm_mode: false,
@@ -2065,6 +2079,16 @@ where
                                     Some(ConfirmDialogState::new(ConfirmDialog::Exit));
                             } else {
                                 self.handle_chrome_panel_key(key).await;
+                            }
+                        } else if self.review_panel.is_some() {
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && key.code == KeyCode::Char('c')
+                            {
+                                self.review_panel = None;
+                                self.confirm_dialog =
+                                    Some(ConfirmDialogState::new(ConfirmDialog::Exit));
+                            } else {
+                                self.handle_review_panel_key(key).await;
                             }
                         } else if self.workflows.overlay_visible() {
                             if self.handle_workflow_key(key).await {
@@ -2638,6 +2662,26 @@ where
                     RoderEvent::SubagentTraceFailed(ev) => {
                         self.timeline.record_subagent_trace_failed(ev.summary);
                     }
+                    RoderEvent::ReviewStarted(ev) if ev.thread_id == self.thread_id => {
+                        self.review_label = Some(ev.label);
+                    }
+                    RoderEvent::ReviewCompleted(ev) if ev.thread_id == self.thread_id => {
+                        // Render into the timeline as well as the panel: the
+                        // panel is dismissable, the transcript is not.
+                        let label = self
+                            .review_label
+                            .take()
+                            .unwrap_or_else(|| ev.review_id.clone());
+                        self.timeline
+                            .push_system(findings_transcript(&label, &ev.output));
+                        self.review_panel = Some(ReviewPanelState::new(ev.review_id, ev.output));
+                    }
+                    RoderEvent::ReviewFailed(ev) if ev.thread_id == self.thread_id => {
+                        self.record_error(format!("review failed: {}", ev.error));
+                    }
+                    RoderEvent::ReviewStarted(_)
+                    | RoderEvent::ReviewCompleted(_)
+                    | RoderEvent::ReviewFailed(_) => {}
                     RoderEvent::PlanReviewCreated(ev) => {
                         self.timeline.record_plan_review_created(ev.review);
                     }
@@ -3349,6 +3393,9 @@ where
             }
             "remote" => {
                 self.run_remote_slash_command(&args).await;
+            }
+            "review" => {
+                self.run_review_slash_command(&args).await;
             }
             "chrome" => {
                 self.run_chrome_slash_command(&args).await;
@@ -4678,6 +4725,9 @@ where
         }
         if self.chrome_panel.is_some() {
             self.render_chrome_panel(f, area);
+        }
+        if self.review_panel.is_some() {
+            self.render_review_panel(f, area);
         }
         if let Some(dialog) = self.confirm_dialog.clone() {
             self.render_confirm_dialog(f, area, dialog);
@@ -10329,6 +10379,9 @@ mod tests {
             tool_detail_modal: None,
             plugin_browser: None,
             chrome_panel: None,
+            review_panel: None,
+            review_publisher: None,
+            review_label: None,
             remote_panel: RemotePanelController::with_listen(
                 server,
                 "ws://127.0.0.1:0".to_string(),
