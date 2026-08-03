@@ -3838,6 +3838,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-github-review"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "which 8.0.4",
+]
+
+[[package]]
 name = "roder-ext-google-embeddings"
 version = "0.1.1"
 dependencies = [
@@ -4658,6 +4674,7 @@ dependencies = [
  "roder-ext-fork-rift",
  "roder-ext-gemini",
  "roder-ext-git",
+ "roder-ext-github-review",
  "roder-ext-google-embeddings",
  "roder-ext-google-images",
  "roder-ext-google-speech",
@@ -4714,6 +4731,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "toml",
 ]
 
 [[package]]

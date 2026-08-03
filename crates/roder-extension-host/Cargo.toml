@@ -27,6 +27,7 @@ roder-ext-fireworks.workspace = true
 roder-ext-firecrawl-search.workspace = true
 roder-ext-fork-rift.workspace = true
 roder-ext-git.workspace = true
+roder-ext-github-review.workspace = true
 roder-ext-process-host.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-google-embeddings.workspace = true
@@ -85,3 +86,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

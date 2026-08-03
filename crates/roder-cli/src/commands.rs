@@ -322,9 +322,9 @@ mod tests {
         let root = temp_root("commands_registry_loads_workspace_overrides");
         let user = root.join("user");
         let workspace = root.join("workspace");
-        write(&user.join("review.md"), "---\ndescription: user\n---\nUser");
+        write(&user.join("audit.md"), "---\ndescription: user\n---\nUser");
         write(
-            &workspace.join("review.md"),
+            &workspace.join("audit.md"),
             "---\ndescription: workspace\n---\nWorkspace",
         );
         let cfg = roder_config::Config {
@@ -338,7 +338,7 @@ mod tests {
 
         let registry = load_registry(&cfg).unwrap();
         assert_eq!(
-            registry.get("review").unwrap().description.as_deref(),
+            registry.get("audit").unwrap().description.as_deref(),
             Some("workspace")
         );
     }
@@ -367,13 +367,13 @@ mod tests {
         )
         .unwrap();
 
-        write(&root.join("review.md"), "---\n---\nReview");
+        write(&root.join("audit.md"), "---\n---\nAudit");
         assert_reloads_after_debounce(&mut watcher, &clock, 0);
 
-        write(&root.join("review.md"), "---\n---\nReview again");
+        write(&root.join("audit.md"), "---\n---\nAudit again");
         assert_reloads_after_debounce(&mut watcher, &clock, 100);
 
-        fs::remove_file(root.join("review.md")).unwrap();
+        fs::remove_file(root.join("audit.md")).unwrap();
         assert_reloads_after_debounce(&mut watcher, &clock, 200);
     }
 

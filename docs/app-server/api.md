@@ -347,6 +347,9 @@ Review, hunks, workflow imports, media, and memory:
 | `plan/review/rewrite` | Request a plan rewrite and steer the turn. |
 | `plan/review/approve` | Approve a plan review. |
 | `plan/review/reject` | Reject a plan review. |
+| `review/start` | Run a read-only code review sub-turn and emit structured findings. |
+| `review/publish` | Submit a completed review's findings through a review publisher. |
+| `review/publishers/list` | List installed review publishers and their capabilities. |
 | `vcs/status` | Read active version-control provider status and capabilities. |
 | `vcs/changes/list` | List live provider changes against the resolved base. |
 | `vcs/changes/read` | Read paged changed content for one provider-relative file. |
@@ -3237,6 +3240,209 @@ Behavior:
 - `approve` and `reject` emit runtime events.
 - Unknown review ids for mutating methods return code `-32602`.
 
+### Code review methods
+
+Purpose: Run a read-only reviewer over a change and hand its structured
+findings to a review publisher. Full feature guide: `docs/review.md`.
+
+#### `review/start`
+
+Purpose: Review a diff on a detached, read-only child of `threadId` and emit
+structured findings.
+
+Request:
+
+```json
+{
+  "method": "review/start",
+  "params": {
+    "threadId": "thread-123",
+    "target": { "kind": "baseBranch", "branch": "main" },
+    "delivery": "detached"
+  }
+}
+```
+
+Response (detached):
+
+```json
+{
+  "turnId": "turn-9f2c",
+  "reviewId": "1f0c5b2e-3a44-4f2e-9c1a-1b1f0f2d0a11",
+  "reviewThreadId": "thread-124"
+}
+```
+
+`target` defaults to `{ "kind": "uncommittedChanges" }` and accepts:
+
+```json
+{ "kind": "uncommittedChanges" }
+{ "kind": "baseBranch", "branch": "main" }
+{ "kind": "commit", "sha": "9f2c1ab", "title": "Add retry backoff" }
+{ "kind": "custom", "instructions": "focus on the retry loop" }
+```
+
+`delivery` is `"inline"` (default) or `"detached"`. Inline delivery blocks
+until the review finishes and adds `output` to the result; detached delivery
+returns as soon as the review turn is admitted and leaves `output` unset, so
+the caller reads the findings from `review/completed`. The TUI always uses
+`"detached"` to keep the composer responsive.
+
+Inline result:
+
+```json
+{
+  "turnId": "turn-9f2c",
+  "reviewId": "1f0c5b2e-3a44-4f2e-9c1a-1b1f0f2d0a11",
+  "reviewThreadId": "thread-124",
+  "output": {
+    "findings": [
+      {
+        "title": "[P1] Retry loop never resets the backoff",
+        "body": "Markdown explaining why this is a problem.",
+        "confidenceScore": 0.82,
+        "priority": "p1",
+        "codeLocation": {
+          "absoluteFilePath": "/Users/me/project/crates/runner/src/retry.rs",
+          "lineRange": { "start": 120, "end": 124 }
+        }
+      }
+    ],
+    "overallCorrectness": "patch is incorrect",
+    "overallExplanation": "The backoff never resets between attempts.",
+    "overallConfidenceScore": 0.82
+  }
+}
+```
+
+Behavior:
+
+- The review runs as one turn on a new thread whose `rootId` is `threadId`,
+  with the review rubric replacing the system prompt and a read-only tool
+  allowlist (`read_file`, `list_files`, `grep`, `glob`, `shell`). No write,
+  patch, process, or agent-spawning tool is reachable, and the global policy
+  mode is never modified.
+- `turnId` identifies the turn inside `reviewThreadId`, not a turn on the
+  requesting thread.
+- When the review completes, a synthetic user message and a rendered summary
+  are appended to the **requesting** thread's transcript.
+- Completed reviews are retained in memory (most recent 64) so `review/publish`
+  can resolve them by `reviewId`. They do not survive an app-server restart.
+- `publish` (a `ReviewDestination`) publishes as soon as the review completes
+  and adds `published` to the result. It is only honoured for `"inline"`
+  delivery.
+- Emits `review/started`, then `review/completed` or `review/failed`.
+
+Errors:
+
+- `-32602` when `threadId` is unknown, or when `publish` is combined with
+  `"detached"` delivery.
+- `-32603` when the requesting thread already has an active turn, when no
+  version control provider claims the workspace, or when the review turn
+  fails. A failed review also emits `review/failed`.
+
+#### `review/publish`
+
+Purpose: Submit a completed review's findings through an installed publisher.
+
+Request:
+
+```json
+{
+  "method": "review/publish",
+  "params": {
+    "reviewId": "1f0c5b2e-3a44-4f2e-9c1a-1b1f0f2d0a11",
+    "publisherId": "github",
+    "findingIndexes": [0, 2],
+    "destination": { "target": "RoderAI/roder#38" },
+    "dryRun": true
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "publisherId": "github",
+  "url": "https://github.com/RoderAI/roder/pull/38",
+  "publishedFindings": 1,
+  "skipped": [
+    {
+      "findingIndex": 2,
+      "reason": "crates/roder-core/src/runtime.rs:900 is outside the pull request diff hunks"
+    }
+  ],
+  "payloadPreview": { "commit_id": "f11326ad", "event": "COMMENT", "comments": [] }
+}
+```
+
+Behavior:
+
+- `findingIndexes` are indexes into the review's `findings` in report order;
+  omit to publish all of them.
+- `publisherId` overrides `destination.publisherId`. When neither is given the
+  server falls back to `[review].default_publisher`, then to the only installed
+  publisher.
+- `destination` is free-form (`{ publisherId, target, options }`); each
+  publisher interprets `target` and `options`. The GitHub publisher accepts
+  `owner/repo#123`, `owner/repo/123`, or a pull request URL, and autodetects
+  the pull request for the current branch when `target` is omitted.
+- `dryRun: true` returns the exact request body in `payloadPreview` and
+  performs no remote write.
+- Findings a publisher cannot anchor are reported in `skipped` rather than
+  failing the call; the GitHub publisher moves them into the review summary
+  body. `publishedFindings` counts anchored inline comments only, so
+  `publishedFindings + skipped.length` equals the number of findings submitted.
+- Emits `review/published`, including for dry runs (`dryRun: true` in the
+  payload).
+
+Errors:
+
+- `-32602` when `reviewId` is not in this session's history, when a
+  `findingIndexes` entry is out of range, when the named publisher is not
+  installed, when several publishers are installed and none was named, or when
+  no publisher is installed at all.
+- `-32603` when the publisher itself fails: an unresolvable destination, a
+  missing token or `gh` binary, or a remote rejection. GitHub's `errors[]` are
+  surfaced verbatim in the message.
+
+#### `review/publishers/list`
+
+Purpose: Discover which review publishers are installed and what they support.
+
+Request:
+
+```json
+{ "method": "review/publishers/list", "params": {} }
+```
+
+Response:
+
+```json
+{
+  "publishers": [
+    {
+      "id": "github",
+      "displayName": "GitHub pull request review",
+      "capabilities": {
+        "inlineComments": true,
+        "summaryBody": true,
+        "autodetectDestination": true,
+        "dryRun": true
+      }
+    }
+  ]
+}
+```
+
+Behavior:
+
+- Read-only. Returns every registered publisher regardless of whether it is
+  currently configured; an unconfigured publisher reports its own precise error
+  at publish time rather than disappearing from this list.
+- `publishers` is empty when no publisher extension is installed.
+
 ### Hunk methods
 
 Purpose: List, read, and rollback recorded file hunks.
@@ -5574,6 +5780,113 @@ Methods:
 `automations/needsInput` is emitted in addition to `automations/runFailed` when
 an automation turn is interrupted because it requested approval or user input.
 
+### Code review notifications
+
+`review/start` and `review/publish` emit four notifications. All payloads are
+the corresponding `roder_api::events` structs serialized camelCase. `threadId`
+is always the **requesting** thread; `reviewThreadId` is the detached thread the
+reviewer runs in, and `turnId` is the review turn inside it.
+
+`review/started` — emitted once the review turn is admitted, before any model
+output:
+
+```json
+{
+  "method": "review/started",
+  "params": {
+    "threadId": "thread-123",
+    "turnId": "turn-9f2c",
+    "reviewId": "1f0c5b2e-3a44-4f2e-9c1a-1b1f0f2d0a11",
+    "reviewThreadId": "thread-124",
+    "target": { "kind": "baseBranch", "branch": "main" },
+    "label": "changes against 'main'",
+    "timestamp": "2026-08-03T10:15:00Z"
+  }
+}
+```
+
+`review/completed` — terminal success; carries the parsed findings:
+
+```json
+{
+  "method": "review/completed",
+  "params": {
+    "threadId": "thread-123",
+    "turnId": "turn-9f2c",
+    "reviewId": "1f0c5b2e-3a44-4f2e-9c1a-1b1f0f2d0a11",
+    "reviewThreadId": "thread-124",
+    "output": {
+      "findings": [
+        {
+          "title": "[P1] Retry loop never resets the backoff",
+          "body": "Markdown explaining why this is a problem.",
+          "confidenceScore": 0.82,
+          "priority": "p1",
+          "codeLocation": {
+            "absoluteFilePath": "/Users/me/project/crates/runner/src/retry.rs",
+            "lineRange": { "start": 120, "end": 124 }
+          }
+        }
+      ],
+      "overallCorrectness": "patch is incorrect",
+      "overallExplanation": "The backoff never resets between attempts.",
+      "overallConfidenceScore": 0.82
+    },
+    "timestamp": "2026-08-03T10:16:44Z"
+  }
+}
+```
+
+`review/failed` — terminal failure. `turnId` and `reviewThreadId` are omitted
+when the review failed before its turn was admitted:
+
+```json
+{
+  "method": "review/failed",
+  "params": {
+    "threadId": "thread-123",
+    "turnId": "turn-9f2c",
+    "reviewId": "1f0c5b2e-3a44-4f2e-9c1a-1b1f0f2d0a11",
+    "reviewThreadId": "thread-124",
+    "error": "review turn failed: provider request timed out",
+    "timestamp": "2026-08-03T10:16:44Z"
+  }
+}
+```
+
+`review/published` — emitted by `review/publish`, including dry runs:
+
+```json
+{
+  "method": "review/published",
+  "params": {
+    "threadId": "thread-123",
+    "reviewId": "1f0c5b2e-3a44-4f2e-9c1a-1b1f0f2d0a11",
+    "publisherId": "github",
+    "url": "https://github.com/RoderAI/roder/pull/38",
+    "publishedFindings": 1,
+    "skipped": [{ "findingIndex": 2, "reason": "outside the pull request diff hunks" }],
+    "dryRun": false,
+    "timestamp": "2026-08-03T10:17:10Z"
+  }
+}
+```
+
+Ordering and terminal behavior:
+
+- `review/started` always precedes `review/completed` or `review/failed` for
+  the same `reviewId`, and exactly one of the two terminal notifications is
+  emitted.
+- Findings are only available after `review/completed`. Detached callers should
+  wait for it before calling `review/publish`; inline callers get the same
+  payload in the `review/start` result.
+- Turn-level notifications for the review itself (`turn/started`, `item/*`,
+  `turn/completed`) are emitted for `reviewThreadId`, so clients that filter by
+  the requesting thread will not see them.
+- `review/published` may be emitted repeatedly for one `reviewId` — publishing
+  is idempotent from Roder's side only in the sense that it re-sends; each call
+  creates a new remote review.
+
 ### Advanced artifact notifications
 
 The app-server forwards these event families as same-named JSON-RPC
@@ -5775,6 +6088,19 @@ Cancellation and interruption:
 4. Use `roadmap/task/update` with an `evidence` string before setting `checked: true`.
 5. Use `roadmap/thread/attach` or `thread/attach` to connect existing threads.
 6. ACP roadmap methods are not advertised; unsupported ACP roadmap requests return JSON-RPC method-not-found.
+
+### Review a Change and Publish Findings
+
+1. Ensure the thread has no active turn (`review/start` rejects otherwise).
+2. Call `review/start` with `{ "threadId", "target": { "kind": "baseBranch", "branch": "main" }, "delivery": "detached" }`.
+3. Wait for `review/completed` matching the returned `reviewId`; render
+   `output.findings`.
+4. Call `review/publishers/list` to pick a publisher (skip when only one is
+   installed or `[review].default_publisher` is set).
+5. Call `review/publish` with `dryRun: true` and inspect `payloadPreview` plus
+   `skipped`.
+6. Repeat without `dryRun`, passing `findingIndexes` for the subset the user
+   kept, and read `url` from the result.
 
 ### Memories
 

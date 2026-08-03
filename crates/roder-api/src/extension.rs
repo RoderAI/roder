@@ -28,6 +28,7 @@ pub type InteractiveRegionHandlerId = String;
 pub type SpeechTranscriberId = String;
 pub type SpeechSynthesizerId = String;
 pub type VersionControlProviderId = crate::version_control::VcsProviderId;
+pub type ReviewPublisherId = crate::review::ReviewPublisherId;
 
 pub const SUPPORTED_EXTENSION_API_VERSION: &str = "0.1.0";
 
@@ -58,6 +59,7 @@ pub enum ProvidedService {
     StatusSegment(crate::tui_status::StatusSegmentId),
     PaletteSource(crate::tui_status::PaletteSourceId),
     CodeIndexProvider(crate::code_index::CodeIndexProviderId),
+    ReviewPublisher(ReviewPublisherId),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +121,7 @@ pub struct ExtensionRegistry {
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
     pub code_index_providers: Vec<Arc<dyn crate::code_index::CodeIndexProvider>>,
+    pub review_publishers: Vec<Arc<dyn crate::review::ReviewPublisher>>,
 }
 
 impl ExtensionRegistry {
@@ -178,6 +181,17 @@ impl ExtensionRegistry {
             .iter()
             .find(|provider| provider.descriptor().id == id)
             .cloned()
+    }
+
+    pub fn review_publisher(&self, id: &str) -> Option<Arc<dyn crate::review::ReviewPublisher>> {
+        self.review_publishers
+            .iter()
+            .find(|publisher| publisher.descriptor().id == id)
+            .cloned()
+    }
+
+    pub fn review_publishers(&self) -> &[Arc<dyn crate::review::ReviewPublisher>] {
+        &self.review_publishers
     }
 
     pub fn provided_services(&self) -> Vec<ProvidedService> {
@@ -250,6 +264,7 @@ pub struct ExtensionRegistryBuilder {
     pub status_segments: Vec<crate::tui_status::StatusSegment>,
     pub palette_sources: Vec<crate::tui_status::PaletteSourceDescriptor>,
     pub code_index_providers: Vec<Arc<dyn crate::code_index::CodeIndexProvider>>,
+    pub review_publishers: Vec<Arc<dyn crate::review::ReviewPublisher>>,
 }
 
 impl Default for ExtensionRegistryBuilder {
@@ -289,6 +304,7 @@ impl ExtensionRegistryBuilder {
             status_segments: Vec::new(),
             palette_sources: Vec::new(),
             code_index_providers: Vec::new(),
+            review_publishers: Vec::new(),
         }
     }
 
@@ -353,6 +369,7 @@ impl ExtensionRegistryBuilder {
             status_segments: self.status_segments,
             palette_sources: self.palette_sources,
             code_index_providers: self.code_index_providers,
+            review_publishers: self.review_publishers,
         })
     }
 
@@ -499,6 +516,10 @@ impl ExtensionRegistryBuilder {
 
     pub fn code_index_provider(&mut self, provider: Arc<dyn crate::code_index::CodeIndexProvider>) {
         self.code_index_providers.push(provider);
+    }
+
+    pub fn review_publisher(&mut self, publisher: Arc<dyn crate::review::ReviewPublisher>) {
+        self.review_publishers.push(publisher);
     }
 
     fn validate(&self) -> anyhow::Result<RegistryValidation> {
@@ -769,6 +790,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
             .iter()
             .map(|service| ProvidedService::CodeIndexProvider(service.id())),
     );
+    services.extend(
+        builder
+            .review_publishers
+            .iter()
+            .map(|service| ProvidedService::ReviewPublisher(service.descriptor().id)),
+    );
     Ok(services)
 }
 
@@ -860,6 +887,7 @@ fn service_label(service: &ProvidedService) -> String {
         ProvidedService::StatusSegment(id) => format!("StatusSegment({id})"),
         ProvidedService::PaletteSource(id) => format!("PaletteSource({id})"),
         ProvidedService::CodeIndexProvider(id) => format!("CodeIndexProvider({id})"),
+        ProvidedService::ReviewPublisher(id) => format!("ReviewPublisher({id})"),
     }
 }
 

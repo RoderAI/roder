@@ -19,6 +19,7 @@ mod plan_review;
 pub mod policy_gate;
 mod reliability;
 mod retrieval_metrics;
+pub mod review;
 mod roadmap;
 pub mod runtime;
 mod skills;

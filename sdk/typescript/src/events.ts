@@ -97,6 +97,10 @@ export type RawEventType =
   | "plan_exit.requested"
   | "plan_exit.resolved"
   | "command.output_delta"
+  | "review.started"
+  | "review.completed"
+  | "review.failed"
+  | "review.published"
   | "raw.notification";
 
 export interface RawNotificationEvent {
@@ -126,6 +130,10 @@ const PASSTHROUGH_TYPES: Record<string, Exclude<RawEventType, "raw.notification"
   "thread/planExitRequested": "plan_exit.requested",
   "thread/planExitResolved": "plan_exit.resolved",
   "command/exec/outputDelta": "command.output_delta",
+  "review/started": "review.started",
+  "review/completed": "review.completed",
+  "review/failed": "review.failed",
+  "review/published": "review.published",
 };
 
 /**

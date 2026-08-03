@@ -941,6 +941,20 @@ impl AppServer {
                 })
                 .await
             }
+            "review/start" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_review_start(p).await },
+                )
+                .await
+            }
+            "review/publish" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_review_publish(p).await
+                })
+                .await
+            }
+            "review/publishers/list" => self.handle_review_publishers_list().await,
             "tasks/submit" => {
                 self.decode_and(
                     req.params,
@@ -5781,7 +5795,7 @@ fn team_descriptor(team: TeamState) -> TeamDescriptor {
     }
 }
 
-fn invalid_params_error(err: impl std::fmt::Display) -> JsonRpcError {
+pub(crate) fn invalid_params_error(err: impl std::fmt::Display) -> JsonRpcError {
     let details = format!("{err:#}");
     JsonRpcError {
         code: -32602,

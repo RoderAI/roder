@@ -48,6 +48,7 @@ use crate::retrieval::{
     RetrievalDiscoveryItemPromoted, RetrievalPromotionSkipped, RetrievalResultUsed,
     RetrievalRouteAccepted, RetrievalRouteFailed, RetrievalRouteIgnored, RetrievalRoutePlanned,
 };
+use crate::review::{ReviewId, ReviewOutput, ReviewPublishSkip, ReviewPublisherId, ReviewTarget};
 use crate::skills::{
     SkillActivationResolved, SkillAutoActivated, SkillConfigApplied, SkillIndexRendered,
     SkillInvoked, SkillSkipped, SkillsCatalogLoaded,
@@ -1234,6 +1235,66 @@ pub struct RoadmapChanged {
     pub timestamp: OffsetDateTime,
 }
 
+/// A review runs in its own detached thread, so `thread_id` is the thread the
+/// review was requested from, `review_thread_id` is the detached thread, and
+/// `turn_id` is the review turn inside it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewStarted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub review_id: ReviewId,
+    pub review_thread_id: ThreadId,
+    pub target: ReviewTarget,
+    pub label: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewCompleted {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub review_id: ReviewId,
+    pub review_thread_id: ThreadId,
+    pub output: ReviewOutput,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewFailed {
+    pub thread_id: ThreadId,
+    /// Absent when the review failed before its turn was admitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    pub review_id: ReviewId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_thread_id: Option<ThreadId>,
+    pub error: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewPublished {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<ThreadId>,
+    pub review_id: ReviewId,
+    pub publisher_id: ReviewPublisherId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub published_findings: usize,
+    #[serde(default)]
+    pub skipped: Vec<ReviewPublishSkip>,
+    pub dry_run: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoderEvent {
     RuntimeStarted(RuntimeStarted),
@@ -1429,6 +1490,10 @@ pub enum RoderEvent {
     TeamDisplayModeChanged(TeamDisplayModeChanged),
     TeamTaskChanged(TeamTaskChanged),
     TeamCleanupCompleted(TeamCleanupCompleted),
+    ReviewStarted(ReviewStarted),
+    ReviewCompleted(ReviewCompleted),
+    ReviewFailed(ReviewFailed),
+    ReviewPublished(ReviewPublished),
 }
 
 impl RoderEvent {
@@ -1631,6 +1696,10 @@ impl RoderEvent {
             RoderEvent::TeamDisplayModeChanged(_) => "team.display_mode_changed",
             RoderEvent::TeamTaskChanged(_) => "team.task_changed",
             RoderEvent::TeamCleanupCompleted(_) => "team.cleanup_completed",
+            RoderEvent::ReviewStarted(_) => "review.started",
+            RoderEvent::ReviewCompleted(_) => "review.completed",
+            RoderEvent::ReviewFailed(_) => "review.failed",
+            RoderEvent::ReviewPublished(_) => "review.published",
         }
     }
 
@@ -1763,6 +1832,10 @@ impl RoderEvent {
             | RoderEvent::TeamDisplayModeChanged(_)
             | RoderEvent::TeamTaskChanged(_)
             | RoderEvent::TeamCleanupCompleted(_) => EventSource::Core,
+            RoderEvent::ReviewStarted(_)
+            | RoderEvent::ReviewCompleted(_)
+            | RoderEvent::ReviewFailed(_) => EventSource::Core,
+            RoderEvent::ReviewPublished(_) => EventSource::Extension,
             _ => EventSource::Core,
         }
     }
@@ -1961,6 +2034,10 @@ impl RoderEvent {
             RoderEvent::WorkflowRunStopped(e) => e.thread_id.as_ref(),
             RoderEvent::WorkflowRunCompleted(e) => e.thread_id.as_ref(),
             RoderEvent::WorkflowRunFailed(e) => e.thread_id.as_ref(),
+            RoderEvent::ReviewStarted(e) => Some(&e.thread_id),
+            RoderEvent::ReviewCompleted(e) => Some(&e.thread_id),
+            RoderEvent::ReviewFailed(e) => Some(&e.thread_id),
+            RoderEvent::ReviewPublished(e) => e.thread_id.as_ref(),
         }
     }
 
@@ -2158,6 +2235,10 @@ impl RoderEvent {
             RoderEvent::WorkflowRunStopped(e) => e.turn_id.as_ref(),
             RoderEvent::WorkflowRunCompleted(e) => e.turn_id.as_ref(),
             RoderEvent::WorkflowRunFailed(e) => e.turn_id.as_ref(),
+            RoderEvent::ReviewStarted(e) => Some(&e.turn_id),
+            RoderEvent::ReviewCompleted(e) => Some(&e.turn_id),
+            RoderEvent::ReviewFailed(e) => e.turn_id.as_ref(),
+            RoderEvent::ReviewPublished(_) => None,
         }
     }
 }

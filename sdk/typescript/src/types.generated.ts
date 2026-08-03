@@ -1451,6 +1451,41 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "review/publish",
+      "paramsType": "ReviewPublishParams",
+      "resultType": "ReviewPublishResult",
+      "stability": "stable",
+      "featureGroup": "review",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess",
+      "notifications": [
+        "review/published"
+      ]
+    },
+    {
+      "method": "review/publishers/list",
+      "paramsType": "ReviewPublishersListParams",
+      "resultType": "ReviewPublishersListResult",
+      "stability": "stable",
+      "featureGroup": "review",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "review/start",
+      "paramsType": "ReviewStartParams",
+      "resultType": "ReviewStartResult",
+      "stability": "stable",
+      "featureGroup": "review",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState",
+      "notifications": [
+        "review/started",
+        "review/completed",
+        "review/failed"
+      ]
+    },
+    {
       "method": "roadmap/create",
       "paramsType": "RoadmapCreateParams",
       "resultType": "RoadmapCreateResult",
@@ -2864,6 +2899,9 @@ export const appServerMethods = [
   "retrieval/metrics",
   "retrieval/promoted",
   "retrieval/recommendations",
+  "review/publish",
+  "review/publishers/list",
+  "review/start",
   "roadmap/create",
   "roadmap/list",
   "roadmap/patch",

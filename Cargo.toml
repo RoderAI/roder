@@ -98,6 +98,7 @@ roder-ext-gemini = { path = "crates/roder-ext-gemini", version = "0.1.0" }
 roder-ext-fireworks = { path = "crates/roder-ext-fireworks", version = "0.1.0" }
 roder-ext-firecrawl-search = { path = "crates/roder-ext-firecrawl-search", version = "0.1.0" }
 roder-ext-git = { path = "crates/roder-ext-git", version = "0.1.0" }
+roder-ext-github-review = { path = "crates/roder-ext-github-review", version = "0.1.0" }
 roder-ext-google-embeddings = { path = "crates/roder-ext-google-embeddings", version = "0.1.0" }
 roder-ext-google-images = { path = "crates/roder-ext-google-images", version = "0.1.0" }
 roder-ext-honcho = { path = "crates/roder-ext-honcho", version = "0.1.0" }
