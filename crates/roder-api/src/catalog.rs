@@ -391,7 +391,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_GEMINI,
         name: "Gemini",
         kind: PROVIDER_KIND_GEMINI,
-        default_model: "gemini-3.6-flash",
+        default_model: "gemini-3.5-flash",
         base_url: None,
         env_key: Some("GEMINI_API_TOKEN"),
         env_aliases: GEMINI_ENV_ALIASES,
@@ -402,7 +402,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_VERTEX,
         name: "Vertex AI",
         kind: PROVIDER_KIND_VERTEX,
-        default_model: "gemini-3.6-flash",
+        default_model: "gemini-3.5-flash",
         base_url: None,
         env_key: Some("GOOGLE_APPLICATION_CREDENTIALS"),
         env_aliases: VERTEX_ENV_ALIASES,
@@ -468,7 +468,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_FIREWORKS,
         name: "Fireworks AI",
         kind: PROVIDER_KIND_FIREWORKS,
-        default_model: "accounts/fireworks/models/kimi-k3",
+        default_model: "accounts/fireworks/models/qwen3-235b-a22b",
         base_url: Some("https://api.fireworks.ai/inference/v1"),
         env_key: Some("FIREWORKS_API_KEY"),
         env_aliases: &["RODER_FIREWORKS_API_KEY"],
@@ -699,27 +699,12 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_HIGH,
         OPUS_REASONING,
     ),
-    // Current Gemini generateContent chat models (live Models API input limits).
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-3.6-flash",
-        "Gemini 3.6 Flash",
-        "Latest high-efficiency Gemini Flash model for coding, agentic workflows, and multimodal prompts.",
-        REASONING_MEDIUM,
-    ),
     gemini_model(
         PROVIDER_GEMINI,
         "gemini-3.5-flash",
         "Gemini 3.5 Flash",
         "Stable Gemini Flash model for agentic coding, tool use, and long-horizon workflows.",
         REASONING_MEDIUM,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-3.5-flash-lite",
-        "Gemini 3.5 Flash-Lite",
-        "Lightweight Gemini 3.5 Flash model for low-latency coding and agent interactions.",
-        REASONING_LOW,
     ),
     gemini_model(
         PROVIDER_GEMINI,
@@ -737,80 +722,17 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     gemini_model(
         PROVIDER_GEMINI,
-        "gemini-3-pro-preview",
-        "Gemini 3 Pro Preview",
-        "Gemini 3 Pro preview for complex reasoning, coding, and long-context agent workflows.",
-        REASONING_HIGH,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
         "gemini-3-flash-preview",
         "Gemini 3 Flash Preview",
-        "Fast Gemini 3 Flash preview for everyday coding, tool use, and multimodal prompts.",
+        "Fast Gemini model for everyday coding, tool use, and multimodal prompts.",
         REASONING_MEDIUM,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-3.1-flash-lite",
-        "Gemini 3.1 Flash-Lite",
-        "Stable lightweight Gemini 3.1 Flash-Lite model for low-latency coding and agent interactions.",
-        REASONING_LOW,
     ),
     gemini_model(
         PROVIDER_GEMINI,
         "gemini-3.1-flash-lite-preview",
         "Gemini 3.1 Flash-Lite Preview",
-        "Lightweight Gemini preview model for low-latency coding and agent interactions.",
+        "Lightweight Gemini model for low-latency coding and agent interactions.",
         REASONING_LOW,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-2.5-pro",
-        "Gemini 2.5 Pro",
-        "Gemini 2.5 Pro for complex coding and reasoning workflows.",
-        REASONING_HIGH,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-2.5-flash",
-        "Gemini 2.5 Flash",
-        "Gemini 2.5 Flash for fast everyday coding and tool use.",
-        REASONING_MEDIUM,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-2.5-flash-lite",
-        "Gemini 2.5 Flash-Lite",
-        "Lightweight Gemini 2.5 Flash model for the lowest-latency interactions.",
-        REASONING_LOW,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-flash-latest",
-        "Gemini Flash Latest",
-        "Google rolling alias for the latest Gemini Flash generateContent model.",
-        REASONING_MEDIUM,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-flash-lite-latest",
-        "Gemini Flash-Lite Latest",
-        "Google rolling alias for the latest Gemini Flash-Lite generateContent model.",
-        REASONING_LOW,
-    ),
-    gemini_model(
-        PROVIDER_GEMINI,
-        "gemini-pro-latest",
-        "Gemini Pro Latest",
-        "Google rolling alias for the latest Gemini Pro generateContent model.",
-        REASONING_HIGH,
-    ),
-    gemini_model(
-        PROVIDER_VERTEX,
-        "gemini-3.6-flash",
-        "Gemini 3.6 Flash",
-        "Latest high-efficiency Gemini Flash model on Vertex AI for coding and agentic workflows.",
-        REASONING_MEDIUM,
     ),
     gemini_model(
         PROVIDER_VERTEX,
@@ -821,13 +743,6 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     gemini_model(
         PROVIDER_VERTEX,
-        "gemini-3.5-flash-lite",
-        "Gemini 3.5 Flash-Lite",
-        "Lightweight Gemini 3.5 Flash model on Vertex AI for low-latency coding and agent interactions.",
-        REASONING_LOW,
-    ),
-    gemini_model(
-        PROVIDER_VERTEX,
         "gemini-3.1-pro-preview",
         "Gemini 3.1 Pro Preview",
         "Gemini model on Vertex AI for complex coding, long context, and tool-heavy agent workflows.",
@@ -835,51 +750,16 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     gemini_model(
         PROVIDER_VERTEX,
-        "gemini-3-pro-preview",
-        "Gemini 3 Pro Preview",
-        "Gemini 3 Pro preview on Vertex AI for complex reasoning, coding, and long-context workflows.",
-        REASONING_HIGH,
-    ),
-    gemini_model(
-        PROVIDER_VERTEX,
         "gemini-3-flash-preview",
         "Gemini 3 Flash Preview",
-        "Fast Gemini 3 Flash preview on Vertex AI for everyday coding, tool use, and multimodal prompts.",
+        "Fast Gemini model on Vertex AI for everyday coding, tool use, and multimodal prompts.",
         REASONING_MEDIUM,
-    ),
-    gemini_model(
-        PROVIDER_VERTEX,
-        "gemini-3.1-flash-lite",
-        "Gemini 3.1 Flash-Lite",
-        "Stable lightweight Gemini 3.1 Flash-Lite model on Vertex AI for low-latency coding.",
-        REASONING_LOW,
     ),
     gemini_model(
         PROVIDER_VERTEX,
         "gemini-3.1-flash-lite-preview",
         "Gemini 3.1 Flash-Lite Preview",
-        "Lightweight Gemini preview model on Vertex AI for low-latency coding and agent interactions.",
-        REASONING_LOW,
-    ),
-    gemini_model(
-        PROVIDER_VERTEX,
-        "gemini-2.5-pro",
-        "Gemini 2.5 Pro",
-        "Gemini 2.5 Pro on Vertex AI for complex coding and reasoning workflows.",
-        REASONING_HIGH,
-    ),
-    gemini_model(
-        PROVIDER_VERTEX,
-        "gemini-2.5-flash",
-        "Gemini 2.5 Flash",
-        "Gemini 2.5 Flash on Vertex AI for fast everyday coding and tool use.",
-        REASONING_MEDIUM,
-    ),
-    gemini_model(
-        PROVIDER_VERTEX,
-        "gemini-2.5-flash-lite",
-        "Gemini 2.5 Flash-Lite",
-        "Lightweight Gemini 2.5 Flash model on Vertex AI for the lowest-latency interactions.",
+        "Lightweight Gemini model on Vertex AI for low-latency coding and agent interactions.",
         REASONING_LOW,
     ),
     xai_model(
@@ -1157,96 +1037,23 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         edit_tool: Some(EDIT_TOOL_PATCH),
         hidden: false,
     },
-    // Fireworks serverless models. context_window values come from live
-    // GET https://api.fireworks.ai/inference/v1/models where available.
-    fireworks_model(
-        "accounts/fireworks/models/kimi-k3",
-        "Kimi K3",
-        "Moonshot Kimi K3 on Fireworks for complex coding and long-horizon agentic work.",
-        1_048_576,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/routers/kimi-k3-fast",
-        "Kimi K3 Fast",
-        "Fireworks fast router for Kimi K3 with lower latency serverless routing.",
-        1_048_576,
-        REASONING_LOW,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/kimi-k2p6",
-        "Kimi K2.6",
-        "Moonshot Kimi K2.6 on Fireworks for coding and tool-heavy agent workflows.",
-        262_144,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/kimi-k2p7-code",
-        "Kimi K2.7 Code",
-        "Moonshot Kimi K2.7 Code on Fireworks optimized for software engineering tasks.",
-        262_144,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/qwen3p7-plus",
-        "Qwen3.7 Plus",
-        "Qwen3.7 Plus on Fireworks for coding, vision, and general agent workflows.",
-        262_144,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/deepseek-v4-pro",
-        "DeepSeek V4 Pro",
-        "DeepSeek V4 Pro on Fireworks for complex reasoning and coding.",
-        1_048_576,
-        REASONING_HIGH,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/deepseek-v4-flash",
-        "DeepSeek V4 Flash",
-        "DeepSeek V4 Flash on Fireworks for fast coding and tool use.",
-        1_048_576,
-        REASONING_LOW,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/glm-5p2",
-        "GLM 5.2",
-        "Zhipu GLM 5.2 on Fireworks for coding and agentic workflows.",
-        1_048_576,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/gpt-oss-120b",
-        "GPT-OSS 120B",
-        "OpenAI gpt-oss-120b on Fireworks for open-weight coding and tool use.",
-        131_072,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/minimax-m2p7",
-        "MiniMax M2.7",
-        "MiniMax M2.7 on Fireworks for general coding and chat workflows.",
-        196_608,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
-    fireworks_model(
-        "accounts/fireworks/models/minimax-m3",
-        "MiniMax M3",
-        "MiniMax M3 on Fireworks for higher-capability coding and agent workflows.",
-        512_000,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
+    ModelCatalogEntry {
+        id: "accounts/fireworks/models/qwen3-235b-a22b",
+        display_name: "Qwen3 235B A22B",
+        description: "Fireworks Responses-capable serverless model with client-executed function tool support.",
+        provider: PROVIDER_FIREWORKS,
+        default_reasoning: REASONING_NONE,
+        supported_reasoning: &[],
+        context_window: 131_072,
+        max_context_window: 131_072,
+        auto_compact_token_limit: 0,
+        supports_compaction: false,
+        supports_images: false,
+        supports_tools: true,
+        supports_structured: true,
+        edit_tool: Some(EDIT_TOOL_PATCH),
+        hidden: false,
+    },
     roder_cloud_model(
         "roder.cloud/free",
         "Roder Free",
@@ -1593,33 +1400,6 @@ const fn gemini_model(
         supports_tools: true,
         supports_structured: true,
         edit_tool: Some("edit"),
-        hidden: false,
-    }
-}
-
-const fn fireworks_model(
-    id: &'static str,
-    display_name: &'static str,
-    description: &'static str,
-    context_window: u32,
-    default_reasoning: &'static str,
-    supported_reasoning: &'static [ReasoningOption],
-) -> ModelCatalogEntry {
-    ModelCatalogEntry {
-        id,
-        display_name,
-        description,
-        provider: PROVIDER_FIREWORKS,
-        default_reasoning,
-        supported_reasoning,
-        context_window,
-        max_context_window: context_window,
-        auto_compact_token_limit: context_window.saturating_mul(9) / 10,
-        supports_compaction: false,
-        supports_images: true,
-        supports_tools: true,
-        supports_structured: true,
-        edit_tool: Some(EDIT_TOOL_EDIT),
         hidden: false,
     }
 }
@@ -2168,14 +1948,14 @@ mod tests {
         assert_eq!(models_for_codex(false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 7);
-        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 15);
-        assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 11);
+        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
+        assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 8);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
-        assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 11);
+        assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 9);
@@ -2665,25 +2445,18 @@ mod tests {
 
         assert_eq!(
             provider.default_model,
-            "accounts/fireworks/models/kimi-k3"
+            "accounts/fireworks/models/qwen3-235b-a22b"
         );
         assert_eq!(provider.env_key, Some("FIREWORKS_API_KEY"));
         assert_eq!(provider.env_aliases, &["RODER_FIREWORKS_API_KEY"]);
 
         let model = lookup_model_for_provider(PROVIDER_FIREWORKS, provider.default_model).unwrap();
         assert_eq!(model.provider, PROVIDER_FIREWORKS);
-        assert_eq!(model.context_window, 1_048_576);
         assert!(model.supports_tools);
         assert!(model.supports_structured);
         assert_eq!(
             provider_family_for_provider(PROVIDER_FIREWORKS),
             ProviderFamily::OpenAi
-        );
-        assert_eq!(
-            lookup_model("accounts/fireworks/models/minimax-m3")
-                .unwrap()
-                .context_window,
-            512_000
         );
     }
 
