@@ -1,3 +1,15 @@
+## 0.1.17 (2026-08-04)
+
+### Fixes
+
+#### Recover from Grok prompt-length overflows and advertise xhigh
+
+Detect xAI/Grok `maximum prompt length` (and related context-overflow) errors as
+context-limit failures, then force-compact and retry the live turn in place
+(with a second attempt that strips the last bulky item). Compaction summary
+inference shrinks its head and falls back to deterministic summaries when the
+summary request itself overflows. Grok reasoning catalogs now include `xhigh`.
+
 ## 0.1.16 (2026-08-03)
 
 ### Features
