@@ -116,27 +116,55 @@ impl Runtime {
         if head.is_empty() {
             return Ok(None);
         }
-        let draft = self
-            .run_compaction_summary_inference(
-                provider,
-                model,
-                build_compaction_summary_prompt(head, preserve_hint),
-            )
-            .await?;
+        // Prefer a full-head LLM snapshot; if the summary request itself hits the
+        // provider prompt limit, shrink the head and retry once, then fall back
+        // to deterministic summarization.
+        let mut summary_head = head.to_vec();
+        let draft = loop {
+            match self
+                .run_compaction_summary_inference(
+                    provider,
+                    model,
+                    build_compaction_summary_prompt(&summary_head, preserve_hint),
+                )
+                .await
+            {
+                Ok(draft) => break draft,
+                Err(err)
+                    if crate::compaction::is_context_limit_failure_message(&err.to_string()) =>
+                {
+                    if summary_head.len() <= 1 {
+                        return Ok(None);
+                    }
+                    // Drop the oldest half so the summary prompt fits.
+                    let keep_from = summary_head.len() / 2;
+                    summary_head = summary_head.split_off(keep_from);
+                    continue;
+                }
+                Err(_) => {
+                    // Non-context failures already fall through to deterministic
+                    // summaries via Ok(None) below when the provider returns empty.
+                    return Ok(None);
+                }
+            }
+        };
         let Some(draft) = draft else {
             return Ok(None);
         };
         if !accept_llm_compaction_summary(head, &draft) {
             return Ok(None);
         }
-        let verified = self
+        let verified = match self
             .run_compaction_summary_inference(
                 provider,
                 model,
                 build_compaction_verify_prompt(&draft),
             )
-            .await?
-            .unwrap_or(draft.clone());
+            .await
+        {
+            Ok(Some(text)) => text,
+            Ok(None) | Err(_) => draft.clone(),
+        };
         if accept_llm_compaction_summary(head, &verified) {
             Ok(Some(verified))
         } else if accept_llm_compaction_summary(head, &draft) {
@@ -189,7 +217,12 @@ impl Runtime {
                     text.push_str(&delta)
                 }
                 InferenceEvent::Failed(failure) => {
-                    anyhow::bail!("compaction summary inference failed: {}", failure.message);
+                    if crate::compaction::is_context_limit_failure_message(&failure.message) {
+                        anyhow::bail!("{}", failure.message);
+                    }
+                    // Non-context provider failures should not abort the parent
+                    // turn compaction path — fall back to deterministic summary.
+                    return Ok(None);
                 }
                 InferenceEvent::Completed(_) => break,
                 _ => {}

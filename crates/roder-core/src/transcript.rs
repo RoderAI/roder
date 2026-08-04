@@ -782,6 +782,9 @@ mod tests {
             "Prompt is too long: 1048576 tokens > 1000000 maximum",
             "API Error: 400 prompt too long",
             "Your input exceeds the context window of this model.",
+            r#"xAI Responses error: OpenAI Responses error 400 Bad Request: {"code":"invalid-argument","error":"This model's maximum prompt length is 500000 but the request contains 501133 tokens."}"#,
+            "context_length_exceeded",
+            "This model's maximum context length is 128000 tokens",
         ] {
             let items = vec![TranscriptItem::Error(ErrorRecord {
                 message: message.to_string(),
