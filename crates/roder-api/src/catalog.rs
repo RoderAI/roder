@@ -271,6 +271,10 @@ pub const XAI_CONFIGURABLE_REASONING: &[ReasoningOption] = &[
         effort: REASONING_HIGH,
         description: "High xAI reasoning effort",
     },
+    ReasoningOption {
+        effort: REASONING_XHIGH,
+        description: "Extra-high xAI reasoning effort",
+    },
 ];
 
 pub const XAI_REASONING: &[ReasoningOption] = &[
@@ -285,6 +289,10 @@ pub const XAI_REASONING: &[ReasoningOption] = &[
     ReasoningOption {
         effort: REASONING_HIGH,
         description: "High xAI reasoning effort",
+    },
+    ReasoningOption {
+        effort: REASONING_XHIGH,
+        description: "Extra-high xAI reasoning effort",
     },
 ];
 
@@ -2386,7 +2394,7 @@ mod tests {
                 .iter()
                 .map(|option| option.effort.as_str())
                 .collect::<Vec<_>>(),
-            vec![REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH]
+            vec![REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH, REASONING_XHIGH]
         );
 
         let grok43 = models_for_provider(PROVIDER_XAI, false)
@@ -2405,7 +2413,8 @@ mod tests {
                 REASONING_NONE,
                 REASONING_LOW,
                 REASONING_MEDIUM,
-                REASONING_HIGH
+                REASONING_HIGH,
+                REASONING_XHIGH
             ]
         );
 
