@@ -1,7 +1,6 @@
 ---
 roder-api: patch
 roder-core: patch
-roder-ext-xai: patch
 roder: patch
 ---
 
