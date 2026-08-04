@@ -434,18 +434,89 @@ fn estimate_text_tokens(text: &str) -> u32 {
     chars_to_tokens(text.len())
 }
 
+/// True when a provider/runtime error indicates the prompt exceeded the model
+/// context / maximum prompt length. Used to force emergency compaction and
+/// same-turn recovery.
+pub(crate) fn is_context_limit_failure_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("context window")
+        || message.contains("input exceeds")
+        || message.contains("response.incomplete")
+        || message.contains("prompt is too long")
+        || message.contains("prompt too long")
+        // xAI / Grok Responses: "This model's maximum prompt length is 500000
+        // but the request contains 501133 tokens."
+        || message.contains("maximum prompt length")
+        || message.contains("max prompt length")
+        || message.contains("prompt length is")
+        || (message.contains("prompt length") && message.contains("token"))
+        || (message.contains("request contains") && message.contains("token") && message.contains("maximum"))
+        || message.contains("context_length_exceeded")
+        || message.contains("context length exceeded")
+        || message.contains("maximum context length")
+        || message.contains("max context length")
+}
+
 pub(crate) fn transcript_contains_context_limit_failure(items: &[TranscriptItem]) -> bool {
     items.iter().any(|item| {
         let TranscriptItem::Error(error) = item else {
             return false;
         };
-        let message = error.message.to_ascii_lowercase();
-        message.contains("context window")
-            || message.contains("input exceeds")
-            || message.contains("response.incomplete")
-            || message.contains("prompt is too long")
-            || message.contains("prompt too long")
+        is_context_limit_failure_message(&error.message)
     })
+}
+
+/// Drop one bulky non-boundary item so a second compaction/retry can fit under
+/// the provider prompt limit. Prefers the newest tool/assistant/reasoning item
+/// before the active user turn (or before a trailing error), and never removes
+/// compaction boundaries or the latest user message when alternatives exist.
+pub(crate) fn strip_last_message_before_error(items: Vec<TranscriptItem>) -> Vec<TranscriptItem> {
+    if items.len() < 2 {
+        return items;
+    }
+    let mut out = items;
+
+    // Keep the latest user prompt when possible — stripping it loses the turn.
+    let latest_user = out
+        .iter()
+        .rposition(|item| matches!(item, TranscriptItem::UserMessage(_)));
+
+    let is_strippable = |item: &TranscriptItem| {
+        !matches!(
+            item,
+            TranscriptItem::ContextCompaction(_)
+                | TranscriptItem::ProviderMetadata(_)
+                | TranscriptItem::Error(_)
+        )
+    };
+
+    // Prefer stripping the newest bulky item before the latest user message.
+    let strip_at = latest_user
+        .and_then(|user_idx| {
+            out[..user_idx]
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, item)| is_strippable(item))
+                .map(|(idx, _)| idx)
+        })
+        .or_else(|| {
+            // No prior work — strip newest strippable item that is not the sole
+            // trailing user message.
+            out.iter()
+                .enumerate()
+                .rev()
+                .find(|(idx, item)| {
+                    is_strippable(item)
+                        && latest_user.is_none_or(|user_idx| *idx != user_idx || out.len() > 2)
+                })
+                .map(|(idx, _)| idx)
+        });
+
+    if let Some(idx) = strip_at {
+        out.remove(idx);
+    }
+    out
 }
 
 pub(crate) fn truncate(text: &str) -> String {
@@ -483,7 +554,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn provider_metadata_is_excluded_from_prompt_token_estimates() {
+    fn xai_maximum_prompt_length_errors_are_context_limit_failures() {
+        assert!(is_context_limit_failure_message(
+            r#"xAI Responses error: OpenAI Responses error 400 Bad Request: {"code":"invalid-argument","error":"This model's maximum prompt length is 500000 but the request contains 501133 tokens."}"#
+        ));
+    }
+
+    #[test]
+    fn strip_last_message_before_error_drops_item_ahead_of_latest_user() {
+        let items = vec![
+            TranscriptItem::UserMessage(UserMessage::text("old")),
+            TranscriptItem::AssistantMessage(AssistantMessage {
+                text: "bulky".to_string(),
+                phase: None,
+            }),
+            TranscriptItem::UserMessage(UserMessage::text("continue")),
+            TranscriptItem::Error(ErrorRecord {
+                message: "maximum prompt length".to_string(),
+            }),
+        ];
+        let stripped = strip_last_message_before_error(items);
+        assert_eq!(stripped.len(), 3);
+        assert!(matches!(
+            &stripped[0],
+            TranscriptItem::UserMessage(message) if message.text == "old"
+        ));
+        assert!(matches!(
+            &stripped[1],
+            TranscriptItem::UserMessage(message) if message.text == "continue"
+        ));
+        assert!(matches!(&stripped[2], TranscriptItem::Error(_)));
+    }
+
+    #[test]
+        fn provider_metadata_is_excluded_from_prompt_token_estimates() {
         let items = vec![
             TranscriptItem::UserMessage(UserMessage::text("hello")),
             TranscriptItem::ProviderMetadata(serde_json::json!({

@@ -3756,6 +3756,7 @@ impl Runtime {
         let mut task_ledger_scoreable_checkpoints = 0_u8;
         let mut empty_tool_call_nudges_used = 0_u32;
         let mut provider_stream_retry_attempts = 0_u32;
+        let mut context_limit_recovery_attempts = 0_u32;
         let mut routing_candidates = None;
         let routing_transcript_start = transcript.len().saturating_sub(1);
         let mut routing_escalations = 0_u32;
@@ -4139,7 +4140,28 @@ impl Runtime {
                 &transcript,
             ) {
                 match tokio::time::timeout_at(deadline_instant(deadline), stream_future).await {
-                    Ok(stream) => stream?,
+                    Ok(stream) => match stream {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            let error = err.to_string();
+                            if self
+                                .try_recover_from_context_limit(
+                                    &req.thread_id,
+                                    &turn_id,
+                                    &provider,
+                                    &model,
+                                    &error,
+                                    &mut transcript,
+                                    &mut compacted_this_turn,
+                                    &mut context_limit_recovery_attempts,
+                                )
+                                .await?
+                            {
+                                continue 'tool_rounds;
+                            }
+                            return Err(err);
+                        }
+                    },
                     Err(_) => {
                         if runtime_profile == RuntimeProfile::Eval
                             && !deadline_finalization_requested
@@ -4180,7 +4202,28 @@ impl Runtime {
                     }
                 }
             } else {
-                stream_future.await?
+                match stream_future.await {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        let error = err.to_string();
+                        if self
+                            .try_recover_from_context_limit(
+                                &req.thread_id,
+                                &turn_id,
+                                &provider,
+                                &model,
+                                &error,
+                                &mut transcript,
+                                &mut compacted_this_turn,
+                                &mut context_limit_recovery_attempts,
+                            )
+                            .await?
+                        {
+                            continue 'tool_rounds;
+                        }
+                        return Err(err);
+                    }
+                }
             };
             let mut assistant_text = String::new();
             let mut phase_messages = Vec::<AssistantMessage>::new();
@@ -4292,6 +4335,21 @@ impl Runtime {
                                 continue 'tool_rounds;
                             }
                         }
+                        if self
+                            .try_recover_from_context_limit(
+                                &req.thread_id,
+                                &turn_id,
+                                &provider,
+                                &model,
+                                &error,
+                                &mut transcript,
+                                &mut compacted_this_turn,
+                                &mut context_limit_recovery_attempts,
+                            )
+                            .await?
+                        {
+                            continue 'tool_rounds;
+                        }
                         self.emit(RoderEvent::TurnFailed(TurnFailed {
                             thread_id: req.thread_id.clone(),
                             turn_id: turn_id.clone(),
@@ -4355,6 +4413,21 @@ impl Runtime {
                     InferenceEvent::Failed(failure) => {
                         speed_policy.record_failure();
                         let error = failure.message;
+                        if self
+                            .try_recover_from_context_limit(
+                                &req.thread_id,
+                                &turn_id,
+                                &provider,
+                                &model,
+                                &error,
+                                &mut transcript,
+                                &mut compacted_this_turn,
+                                &mut context_limit_recovery_attempts,
+                            )
+                            .await?
+                        {
+                            continue 'tool_rounds;
+                        }
                         self.persist_turn_item(
                             &req.thread_id,
                             &turn_id,
@@ -4942,6 +5015,102 @@ impl Runtime {
         }
 
         Ok(results)
+    }
+
+
+    /// On provider context/prompt-length failures, force-compact (and if needed
+    /// strip the last bulky item) then retry the current tool round instead of
+    /// failing the turn. Bounded so a permanently oversized suffix still stops.
+    async fn try_recover_from_context_limit(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        provider: &str,
+        model: &str,
+        error: &str,
+        transcript: &mut Vec<TranscriptItem>,
+        compacted_this_turn: &mut bool,
+        recovery_attempts: &mut u32,
+    ) -> anyhow::Result<bool> {
+        const MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS: u32 = 2;
+        if !crate::compaction::is_context_limit_failure_message(error) {
+            return Ok(false);
+        }
+        if *recovery_attempts >= MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS {
+            return Ok(false);
+        }
+        *recovery_attempts = recovery_attempts.saturating_add(1);
+
+        let error_item = TranscriptItem::Error(ErrorRecord {
+            message: error.to_string(),
+        });
+        self.persist_turn_item(thread_id, turn_id, &error_item)
+            .await?;
+        transcript.push(error_item);
+
+        // After the first failed recovery, drop the item ahead of the latest
+        // user/error so a second compact can succeed when the suffix itself is
+        // still oversized (e.g. a huge tool result right before the prompt).
+        if *recovery_attempts > 1 {
+            *transcript = crate::compaction::strip_last_message_before_error(std::mem::take(transcript));
+        }
+
+        let force_options = crate::compaction::CompactionOptions {
+            allow_repeat: true,
+            force: true,
+            hysteresis_baseline: None,
+            preserve_hint: Some(
+                "Recover from a provider context/prompt-length limit; preserve the active user goal and recent tool outcomes."
+                    .to_string(),
+            ),
+        };
+        let before_len = transcript.len();
+        let before_tokens = crate::compaction::estimate_prompt_tokens(transcript);
+        *transcript = self
+            .compact_transcript_if_needed(
+                thread_id,
+                turn_id,
+                provider,
+                model,
+                std::mem::take(transcript),
+                force_options,
+            )
+            .await?;
+        let after_tokens = crate::compaction::estimate_prompt_tokens(transcript);
+        *compacted_this_turn = *compacted_this_turn
+            || transcript
+                .iter()
+                .any(crate::compaction::is_compaction_boundary);
+
+        self.emit(RoderEvent::ReliabilityRetryRecorded(
+            ReliabilityRetryRecorded {
+                context: ReliabilityContext {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    provider: Some(provider.to_string()),
+                    model: Some(model.to_string()),
+                    ..ReliabilityContext::default()
+                },
+                error_class: ReliabilityErrorClass::ProviderError,
+                decision: ReliabilityRetryDecision::Retry,
+                attempt: *recovery_attempts,
+                max_attempts: MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS,
+                delay_ms: Some(0),
+                details: ReliabilityDetails::redacted(format!(
+                    "context_limit_recovery: compact {before_tokens}->{after_tokens} tokens (items {before_len}->{}); {error}",
+                    transcript.len()
+                )),
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+
+        // If force-compact did not shrink anything and we still have budget,
+        // strip once more so the next round is not identical.
+        if after_tokens >= before_tokens && *recovery_attempts < MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS {
+            *transcript = crate::compaction::strip_last_message_before_error(std::mem::take(transcript));
+        }
+        Ok(true)
     }
 
     async fn fail_turn_with_error(

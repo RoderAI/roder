@@ -549,6 +549,11 @@ struct PhasePreservingEngine {
 
 struct FailingStreamStartEngine;
 
+struct ContextLimitRecoveringEngine {
+    requests: Mutex<Vec<AgentInferenceRequest>>,
+}
+
+
 #[async_trait::async_trait]
 impl InferenceEngine for ErrorRecoveringEngine {
     fn id(&self) -> InferenceEngineId {
@@ -667,6 +672,69 @@ impl InferenceEngine for PhasePreservingEngine {
             ]
         };
         Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+
+#[async_trait::async_trait]
+impl InferenceEngine for ContextLimitRecoveringEngine {
+    fn id(&self) -> InferenceEngineId {
+        PROVIDER_MOCK.to_string()
+    }
+
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities::coding_agent_default()
+    }
+
+    async fn list_models(
+        &self,
+        _ctx: InferenceProviderContext<'_>,
+    ) -> anyhow::Result<Vec<ModelDescriptor>> {
+        Ok(Vec::new())
+    }
+
+    async fn stream_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<InferenceEventStream> {
+        let mut requests = self.requests.lock().unwrap();
+        // Compaction summary requests must not consume the recovery budget.
+        if request
+            .metadata
+            .get("roderCompactionSummary")
+            .and_then(|value| value.as_bool())
+            == Some(true)
+        {
+            return Ok(Box::pin(stream::iter(vec![
+                Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text: "<state_snapshot>\ngoal: recover\nconstraints: none\nprogress: compacted\ndecisions: none\nfiles_and_artifacts: none\nopen_questions: none\nnext_steps: continue\n</state_snapshot>".to_string(),
+                    phase: Some("final_answer".to_string()),
+                })),
+                Ok(InferenceEvent::Completed(CompletionMetadata {
+                    stop_reason: Some("stop".to_string()),
+                    provider_response_id: None,
+                })),
+            ])));
+        }
+        requests.push(request);
+        let attempt = requests.len();
+        drop(requests);
+        if attempt == 1 {
+            return Err(anyhow::Error::msg(
+                "xAI Responses error: OpenAI Responses error 400 Bad Request: This model's maximum prompt length is 500000 but the request contains 501133 tokens.",
+            ));
+        }
+        Ok(Box::pin(stream::iter(vec![
+            Ok(InferenceEvent::MessageDelta(MessageDelta {
+                text: "recovered after compact".to_string(),
+                phase: Some("final_answer".to_string()),
+            })),
+            Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: Some("resp_context_recovered".to_string()),
+            })),
+        ])))
     }
 }
 
@@ -922,6 +990,88 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
             break;
         }
     }
+}
+
+
+#[tokio::test]
+async fn context_limit_stream_start_errors_auto_compact_and_retry() {
+    let engine = Arc::new(ContextLimitRecoveringEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "gpt-5.5".to_string(),
+                file_backed_dynamic_context: true,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_context_limit_recovery".to_string(),
+            message: "continue after overflow".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            reasoning_override: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
+            instructions: default_instructions(),
+            developer_context: None,
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+
+    let mut saw_retry = false;
+    let completed = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event.event {
+            roder_api::events::RoderEvent::ReliabilityRetryRecorded(retry)
+                if retry.details.message.contains("context_limit_recovery") =>
+            {
+                saw_retry = true;
+            }
+            roder_api::events::RoderEvent::TurnCompleted(done)
+                if done.thread_id == "thread_context_limit_recovery" =>
+            {
+                break true;
+            }
+            roder_api::events::RoderEvent::TurnFailed(failed)
+                if failed.thread_id == "thread_context_limit_recovery" =>
+            {
+                panic!("turn failed instead of recovering: {}", failed.error);
+            }
+            _ => {}
+        }
+    };
+    assert!(completed, "turn should complete after context-limit recovery");
+
+    assert!(saw_retry, "expected a context_limit_recovery retry event");
+    let requests = engine.requests.lock().unwrap();
+    assert!(
+        requests.len() >= 2,
+        "provider should be retried after compact, got {}",
+        requests.len()
+    );
+    assert!(
+        requests[1].transcript.iter().any(|item| {
+            matches!(item, TranscriptItem::ContextCompaction(_))
+                || matches!(item, TranscriptItem::Error(_))
+        }),
+        "retry request should reflect recovery state: {:?}",
+        requests[1].transcript
+    );
 }
 
 #[tokio::test]
