@@ -1,3 +1,20 @@
+## 0.1.5 (2026-08-05)
+
+### Features
+
+#### Add Ultra mode as a first-class multi-agent mode for any model
+
+Make Codex Ultra's proactive multi-agent policy a concrete Roder mode
+(`/ultra`, `thread/set_ultra_mode`, `settings/get.ultraMode`,
+`ultra/modeChanged`), available for every model — not only Sol/Terra Ultra
+reasoning effort. Sol/Terra Ultra effort still maps to max wire effort and
+enables proactive multi-agent without requiring the mode flag.
+
+Also: `task` / `agent_swarm` children inherit the parent thread's live
+provider+model (so SuperGrok stays on grok-4.5), and lane `max_concurrent`
+can be raised per request for large fanouts instead of hard-failing at the
+old scout cap of 4.
+
 ## 0.1.4 (2026-07-21)
 
 ### Fixes
