@@ -9,6 +9,11 @@ Roder has two subagent surfaces:
 The agent-control tools are model-facing. App-server clients use the corresponding
 `team/*` methods documented in `docs/app-server/api.md`.
 
+**Ultra mode** (`/ultra`, `thread/set_ultra_mode`) injects proactive multi-agent
+policy so the model uses these tools without waiting for an explicit user
+request for delegation. It works for any model; Codex Sol/Terra Ultra reasoning
+effort also enables the same policy. See [`docs/ultra-mode.md`](./ultra-mode.md).
+
 | Tool | Purpose |
 | --- | --- |
 | `spawn_agent` | Create a teammate, start its first turn, and return its canonical task path. |

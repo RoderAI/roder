@@ -12,7 +12,14 @@ pub struct SubagentRequest {
     pub description: String,
     pub prompt: String,
     pub subagent_type: Option<String>,
+    /// Optional model id. When omitted, the dispatcher prefers the parent
+    /// thread's live selection (when provided) over startup defaults.
     pub model: Option<String>,
+    /// Optional inference provider id (for example `supergrok`, `codex`).
+    /// When omitted with `model`, children inherit the parent thread provider
+    /// so `task` / `agent_swarm` stay on the same backend as the lead turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     pub tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<SubagentLane>,
@@ -51,7 +58,9 @@ impl SubagentLane {
             Self::Scout => SubagentLanePreset {
                 lane: self,
                 description: "Read and search without changing state.",
-                max_concurrent: 4,
+                // Default fanout for parallel research/review. Leads can raise
+                // further per-request via `max_concurrent` (hard-capped later).
+                max_concurrent: 12,
                 timeout_seconds: 120,
                 allowed_tools: &[
                     "Read",
@@ -66,7 +75,7 @@ impl SubagentLane {
             Self::Editor => SubagentLanePreset {
                 lane: self,
                 description: "Make a bounded file-change slice.",
-                max_concurrent: 2,
+                max_concurrent: 4,
                 timeout_seconds: 180,
                 allowed_tools: &[
                     "Read",
@@ -85,7 +94,7 @@ impl SubagentLane {
             Self::Reviewer => SubagentLanePreset {
                 lane: self,
                 description: "Review and verify with evidence.",
-                max_concurrent: 2,
+                max_concurrent: 8,
                 timeout_seconds: 120,
                 allowed_tools: &[
                     "Read",
@@ -293,6 +302,14 @@ subagent_type must exactly match a role advertised in the tool schema, and lane 
 scout are not role IDs. Do not rely on a lane to add missing tools; for generic repository work \
 use spawn_agent when available.";
 
+/// Canonical ultra-mode reminder for one-shot `/ultra <prompt>` turns. Persistent
+/// ultra mode injects proactive multi-agent policy server-side instead of
+/// prepending this to the user-visible transcript.
+pub const ULTRA_MODE_REMINDER: &str = "Ultra mode is active for this task. Prefer proactive, \
+bounded multi-agent delegation via spawn_agent (and agent_swarm when many similar items apply) \
+whenever parallel work would materially improve speed or quality. Keep the lead focused on \
+orchestration, synthesis, and decisions the workers cannot make alone.";
+
 /// Emitted when agent-swarm mode is toggled on a runtime/thread.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentSwarmModeChanged {
@@ -301,6 +318,20 @@ pub struct AgentSwarmModeChanged {
     pub turn_id: Option<TurnId>,
     pub enabled: bool,
     pub trigger: AgentSwarmModeTrigger,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: time::OffsetDateTime,
+}
+
+/// Emitted when ultra mode is toggled on a runtime/thread. Ultra mode enables
+/// proactive multi-agent delegation for any model (not only Codex Sol/Terra
+/// Ultra effort).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UltraModeChanged {
+    pub thread_id: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
+    pub enabled: bool,
+    pub trigger: UltraModeTrigger,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: time::OffsetDateTime,
 }
@@ -470,6 +501,31 @@ impl AgentSwarmModeTrigger {
     /// One-shot triggers auto-exit at the end of the relevant turn.
     pub fn should_auto_exit(self) -> bool {
         matches!(self, Self::Task | Self::Tool)
+    }
+}
+
+/// How ultra mode was entered. `manual` is a persistent `/ultra on` toggle;
+/// `task` is a one-shot `/ultra <prompt>`. Only `manual` stays active across
+/// turns. Selecting Codex Sol/Terra Ultra reasoning still enables proactive
+/// multi-agent for that model without flipping this mode flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UltraModeTrigger {
+    Manual,
+    Task,
+}
+
+impl UltraModeTrigger {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Task => "task",
+        }
+    }
+
+    /// One-shot triggers auto-exit at the end of the relevant turn.
+    pub fn should_auto_exit(self) -> bool {
+        matches!(self, Self::Task)
     }
 }
 
@@ -973,6 +1029,7 @@ mod tests {
                     prompt: "Find the API entrypoint".to_string(),
                     subagent_type: Some("explore".to_string()),
                     model: Some("test-model".to_string()),
+                    provider: None,
                     tools: Some(vec!["Read".to_string()]),
                     lane: None,
                     max_concurrent: None,

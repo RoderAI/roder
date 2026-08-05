@@ -708,6 +708,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
+    method_spec!("thread/set_ultra_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/set_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/start", "thread", LocalState, NonIdempotent),
     method_spec!("thread/state", "thread", ReadOnly, Idempotent),

@@ -151,3 +151,10 @@ mixes it with other tools, or contains more than one `agent_swarm` call, the
 runtime denies the whole batch and returns an error tool result (with actionable
 retry text) for every call, so each `tool_call_id` is answered and the model
 re-issues `agent_swarm` by itself.
+
+## Relationship to Ultra mode
+
+Agent-swarm and [Ultra mode](./ultra-mode.md) compose. Ultra enables proactive
+multi-agent use of `spawn_agent` / agent-control tools for open-ended parallel
+work; agent-swarm nudges the model toward the homogeneous `agent_swarm` fanout
+tool for many similarly-shaped items. Enable both when a large task needs both.

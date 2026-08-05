@@ -143,6 +143,10 @@ pub struct ToolExecutionHandles {
     pub goal_controller: Option<Arc<dyn ThreadGoalController>>,
     /// Live swarm-progress publisher for the `agent_swarm` tool.
     pub swarm_progress_sink: Option<Arc<dyn crate::subagents::AgentSwarmProgressSink>>,
+    /// Parent turn's concrete model selection so `task` / `agent_swarm`
+    /// children inherit the live provider+model instead of process startup
+    /// defaults (for example SuperGrok/grok-4.5 rather than gpt-5.5).
+    pub parent_model_selection: Option<crate::inference::ModelSelection>,
 }
 
 impl fmt::Debug for ToolExecutionHandles {
@@ -155,6 +159,7 @@ impl fmt::Debug for ToolExecutionHandles {
             .field("context_artifacts", &self.context_artifacts.is_some())
             .field("goal_controller", &self.goal_controller.is_some())
             .field("swarm_progress_sink", &self.swarm_progress_sink.is_some())
+            .field("parent_model_selection", &self.parent_model_selection)
             .finish()
     }
 }
@@ -259,6 +264,14 @@ impl ToolExecutionContext {
 
     pub fn with_goal_controller(mut self, controller: Arc<dyn ThreadGoalController>) -> Self {
         self.handles.goal_controller = Some(controller);
+        self
+    }
+
+    pub fn with_parent_model_selection(
+        mut self,
+        selection: crate::inference::ModelSelection,
+    ) -> Self {
+        self.handles.parent_model_selection = Some(selection);
         self
     }
 

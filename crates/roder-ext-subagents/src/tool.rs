@@ -118,7 +118,7 @@ impl ToolExecutor for TaskTool {
                     format!("Dispatch the {agent_type} subagent and return its final message.")
                 }
                 None => format!(
-                    "Dispatch a configured subagent and return its final message. Available exact role IDs and declared tools: {roles}. Lanes only restrict a selected role's tools; they do not create a role or grant tools. Use spawn_agent for generic repository work when available."
+                    "Dispatch a configured subagent and return its final message. Children inherit the parent thread's live provider/model unless model is overridden. When fanout is large, set max_concurrent to the requested parallel count. Available exact role IDs and declared tools: {roles}. Lanes only restrict a selected role's tools; they do not create a role or grant tools. Use spawn_agent for generic repository work when available."
                 ),
             },
             parameters: json!({
@@ -153,7 +153,7 @@ impl ToolExecutor for TaskTool {
                     "max_concurrent": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional lane-local concurrency cap for this request."
+                        "description": "Optional concurrency target for this request's lane. Raises the lane default when the user asks to spawn many agents in parallel (for example 10-20). Capped by the dispatcher global limit."
                     },
                     "allowed_tools": {
                         "type": "array",
@@ -188,7 +188,10 @@ impl ToolExecutor for TaskTool {
     ) -> anyhow::Result<ToolResult> {
         let request = match parse_task_request(call.arguments, self.fixed_subagent_type.as_deref())
         {
-            Ok(request) => request,
+            Ok(request) => apply_parent_model_selection(
+                request,
+                ctx.handles.parent_model_selection.as_ref(),
+            ),
             Err(err) => {
                 return Ok(error_result(
                     call.id,
@@ -267,6 +270,7 @@ fn parse_task_request(
             .map(str::to_string)
             .or(args.subagent_type),
         model: args.model,
+        provider: None,
         tools: args.tools,
         lane: args.lane,
         max_concurrent: args.max_concurrent,
@@ -275,6 +279,25 @@ fn parse_task_request(
         inputs: args.inputs,
         timeout_seconds: args.timeout_seconds,
     })
+}
+
+/// Fill unset model/provider from the parent turn so children stay on the
+/// lead's live selection (for example `supergrok/grok-4.5`) instead of the
+/// process-start subagent defaults.
+pub(crate) fn apply_parent_model_selection(
+    mut request: SubagentRequest,
+    parent: Option<&roder_api::inference::ModelSelection>,
+) -> SubagentRequest {
+    let Some(parent) = parent else {
+        return request;
+    };
+    if request.model.is_none() {
+        request.model = Some(parent.model.clone());
+    }
+    if request.provider.is_none() {
+        request.provider = Some(parent.provider.clone());
+    }
+    request
 }
 
 fn validate_policy_mode(mode: PolicyMode, request: &SubagentRequest) -> anyhow::Result<()> {

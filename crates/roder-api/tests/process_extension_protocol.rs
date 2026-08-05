@@ -461,6 +461,7 @@ fn subagent_dispatch_payloads_use_canonical_json_names() {
             prompt: "Fix the flaky test".to_string(),
             subagent_type: Some("cursor-cloud".to_string()),
             model: Some("composer-2.5".to_string()),
+            provider: None,
             tools: None,
             lane: None,
             max_concurrent: None,

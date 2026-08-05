@@ -68,6 +68,7 @@ pub(crate) fn plan_agents(
                 prompt: launch.prompt.clone(),
                 subagent_type: None,
                 model: launch.model.clone(),
+                provider: None,
                 tools: None,
                 lane: Some(lane),
                 max_concurrent: Some(execution.definition.limits.max_concurrent_agents as usize),

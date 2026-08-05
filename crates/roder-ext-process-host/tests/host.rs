@@ -455,6 +455,7 @@ fn sample_subagent_request(
         prompt: prompt.to_string(),
         subagent_type: Some("fake-remote".to_string()),
         model: Some("fake-model".to_string()),
+        provider: None,
         tools: None,
         lane: None,
         max_concurrent: None,

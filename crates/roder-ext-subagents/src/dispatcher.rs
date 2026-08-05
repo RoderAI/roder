@@ -90,7 +90,7 @@ impl Default for InProcessDispatcherConfig {
             default_agent: "explore".to_string(),
             default_provider: None,
             default_model: "mock".to_string(),
-            max_concurrent: 2,
+            max_concurrent: 16,
             max_depth: 1,
             default_timeout_seconds: 180,
             include_child_transcript: false,
@@ -259,7 +259,18 @@ impl InProcessDispatcher {
             thread_id: parent_thread_id.clone(),
             turn_id: parent_turn_id.clone(),
         };
-        let lane = effective_lane(&request);
+        // Resolve the role before lane accounting so ReadOnly/AutoEdit/Default
+        // definitions do not all collapse onto the Scout lane cap when the
+        // model omits an explicit `lane` argument.
+        let agent_type = request
+            .subagent_type
+            .as_deref()
+            .unwrap_or(self.config.default_agent.as_str());
+        let definition = self
+            .definitions
+            .get(agent_type)
+            .with_context(|| format!("unknown subagent type {agent_type:?}"))?;
+        let lane = effective_lane_for_definition(&request, definition);
         let started_at = Instant::now();
         emit_trace_created(
             trace_sink.as_deref(),
@@ -307,7 +318,7 @@ impl InProcessDispatcher {
         let lane_guard = match ActiveLaneGuard::try_acquire(
             self.active_lanes.clone(),
             lane,
-            effective_max_concurrent(&request, lane),
+            effective_max_concurrent(&request, lane, self.config.max_concurrent),
         ) {
             Ok(guard) => guard,
             Err(err) => {
@@ -415,21 +426,33 @@ impl InProcessDispatcher {
             .with_context(|| format!("unknown subagent type {agent_type:?}"))?;
         let tools = self.filtered_tool_registry_for_request(definition, &request)?;
         let lane = effective_lane_for_definition(&request, definition);
+        // Prefer explicit request selection, then role definition model, then the
+        // dispatcher startup default. Provider follows the same order so a live
+        // parent thread on SuperGrok/Grok is not forced onto the process default
+        // (often openai/gpt-5.5) when the model omits overrides.
         let model = request
             .model
             .clone()
             .or_else(|| definition.model.clone())
             .unwrap_or_else(|| self.config.default_model.clone());
-        let engine = self
-            .config
-            .default_provider
+        let requested_provider = request
+            .provider
             .as_deref()
+            .or(self.config.default_provider.as_deref());
+        let engine = requested_provider
             .and_then(|provider| self.engines.get(provider))
             .or_else(|| self.engines.default_engine())
             .with_context(|| {
                 format!("no inference engine registered for subagent {agent_type:?}")
             })?;
         let provider = engine.id();
+        if let Some(requested) = requested_provider
+            && requested != provider.as_str()
+        {
+            bail!(
+                "subagent provider {requested:?} is not registered; available engine was {provider:?}"
+            );
+        }
         let thread_id = trace_ids.child_thread_id.clone();
         let turn_id = trace_ids.child_turn_id.clone();
         let parent = ParentTurnRef {
@@ -761,10 +784,6 @@ impl Drop for ActiveLaneGuard {
     }
 }
 
-fn effective_lane(request: &SubagentRequest) -> SubagentLane {
-    request.lane.unwrap_or(SubagentLane::Scout)
-}
-
 fn effective_lane_for_definition(
     request: &SubagentRequest,
     definition: &SubagentDefinition,
@@ -776,12 +795,32 @@ fn effective_lane_for_definition(
     })
 }
 
-fn effective_max_concurrent(request: &SubagentRequest, lane: SubagentLane) -> usize {
-    let lane_cap = lane.preset().max_concurrent;
-    request
-        .max_concurrent
-        .map(|requested| requested.min(lane_cap))
-        .unwrap_or(lane_cap)
+/// Absolute safety ceiling for a single lane, even when the lead requests a
+/// very large fanout ("spawn 50 agents"). Keeps process memory bounded.
+const LANE_MAX_CONCURRENT_HARD_CEILING: usize = 32;
+
+/// Resolve how many concurrent children a lane may run for this request.
+///
+/// The lane preset is the **default** for Scout/Editor/Reviewer. When the lead
+/// passes `max_concurrent` (for example after the user says "spawn 20 agents"),
+/// that value is honored up to the dispatcher global cap and the hard ceiling.
+/// Runner stays hard-capped at its preset because concurrent shells are unsafe
+/// by default.
+fn effective_max_concurrent(
+    request: &SubagentRequest,
+    lane: SubagentLane,
+    dispatcher_cap: usize,
+) -> usize {
+    let default_cap = lane.preset().max_concurrent.max(1);
+    let requested = request.max_concurrent.unwrap_or(default_cap).max(1);
+    let ceiling = match lane {
+        SubagentLane::Runner => default_cap,
+        SubagentLane::Scout | SubagentLane::Editor | SubagentLane::Reviewer => dispatcher_cap
+            .max(default_cap)
+            .min(LANE_MAX_CONCURRENT_HARD_CEILING)
+            .max(1),
+    };
+    requested.min(ceiling)
 }
 
 fn apply_explicit_tool_restriction(
@@ -901,6 +940,7 @@ fn child_tool_handles(parent: &ToolExecutionHandles) -> ToolExecutionHandles {
         goal_controller: None,
         // Children do not publish swarm progress (only the lead swarm does).
         swarm_progress_sink: None,
+        parent_model_selection: parent.parent_model_selection.clone(),
     }
 }
 
@@ -981,5 +1021,71 @@ mod handle_tests {
         // Children must not carry the parent goal controller or trace sink.
         assert!(child.goal_controller.is_none());
         assert!(child.subagent_trace_sink.is_none());
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use roder_api::subagents::{SubagentLane, SubagentRequest};
+
+    use super::{LANE_MAX_CONCURRENT_HARD_CEILING, effective_max_concurrent};
+
+    fn request_with_max(max: Option<usize>) -> SubagentRequest {
+        SubagentRequest {
+            description: "fanout".to_string(),
+            prompt: "go".to_string(),
+            subagent_type: None,
+            model: None,
+            provider: None,
+            tools: None,
+            lane: None,
+            max_concurrent: max,
+            allowed_tools: None,
+            parent_deadline_seconds: None,
+            inputs: None,
+            timeout_seconds: None,
+        }
+    }
+
+    #[test]
+    fn scout_default_allows_parallel_research_fanout() {
+        let request = request_with_max(None);
+        assert_eq!(
+            effective_max_concurrent(&request, SubagentLane::Scout, 16),
+            SubagentLane::Scout.preset().max_concurrent
+        );
+        assert!(SubagentLane::Scout.preset().max_concurrent >= 10);
+    }
+
+    #[test]
+    fn scout_max_concurrent_request_can_raise_lane_default() {
+        let request = request_with_max(Some(20));
+        assert_eq!(
+            effective_max_concurrent(&request, SubagentLane::Scout, 16),
+            16,
+            "dispatcher global cap still bounds the raise"
+        );
+        assert_eq!(
+            effective_max_concurrent(&request, SubagentLane::Scout, 32),
+            20
+        );
+    }
+
+    #[test]
+    fn scout_max_concurrent_never_exceeds_hard_ceiling() {
+        let request = request_with_max(Some(200));
+        assert_eq!(
+            effective_max_concurrent(&request, SubagentLane::Scout, 200),
+            LANE_MAX_CONCURRENT_HARD_CEILING
+        );
+    }
+
+    #[test]
+    fn runner_lane_stays_hard_capped_at_preset() {
+        let request = request_with_max(Some(8));
+        assert_eq!(
+            effective_max_concurrent(&request, SubagentLane::Runner, 16),
+            SubagentLane::Runner.preset().max_concurrent
+        );
     }
 }
