@@ -229,6 +229,8 @@ Threads and turns:
 | `lifecycle/metrics` | Read redacted process-local lifecycle counters. |
 | `thread/state` | Read policy mode and pending plan-exit state. |
 | `thread/set_mode` | Set the live policy mode. |
+| `thread/set_agent_swarm_mode` | Enable or disable agent-swarm mode (global or per-thread). |
+| `thread/set_ultra_mode` | Enable or disable ultra mode (proactive multi-agent for any model). |
 | `thread/exit_plan` | Resolve a pending plan-exit request. |
 | `thread/resolve_approval` | Resolve a pending tool approval request. |
 | `thread/resolve_user_input` | Resolve a pending model-requested user input request. |
@@ -1020,6 +1022,8 @@ Response:
   "default_model": "gpt-5.5",
   "default_reasoning": "medium",
   "default_mode": "default",
+  "agent_swarm_mode": false,
+  "ultra_mode": false,
   "file_backed_dynamic_context": true
 }
 ```
@@ -1034,6 +1038,12 @@ Notes:
 - `default_provider`, `default_model`, `default_reasoning`, and `default_mode`
   initialize client controls; per-turn overrides are supplied to `turn/start`.
 - `default_mode` is a `PolicyMode` value from `roder-api`.
+- `agent_swarm_mode` is the runtime-global agent-swarm mode default; use
+  `thread/set_agent_swarm_mode` with an optional `threadId` for per-thread
+  overrides (see [`docs/agent-swarm-mode.md`](../agent-swarm-mode.md)).
+- `ultra_mode` is the runtime-global ultra mode default (proactive multi-agent
+  for any model); use `thread/set_ultra_mode` with an optional `threadId` for
+  per-thread overrides (see [`docs/ultra-mode.md`](../ultra-mode.md)).
 - `file_backed_dynamic_context` controls whether long tool output, command
   output, and compaction source material are written to context artifacts.
 
@@ -1886,6 +1896,39 @@ Response:
   "mode": "accept_edits"
 }
 ```
+
+### `thread/set_ultra_mode`
+
+Purpose: Enable or disable ultra mode (proactive multi-agent policy for any
+model). See [`docs/ultra-mode.md`](../ultra-mode.md).
+
+Request:
+
+```json
+{
+  "enabled": true,
+  "trigger": "manual",
+  "threadId": "thread-123"
+}
+```
+
+Response:
+
+```json
+{
+  "enabled": true,
+  "threadId": "thread-123"
+}
+```
+
+Notes:
+
+- `trigger` is `manual` (persistent toggle) or `task` (one-shot). Defaults to
+  `manual`.
+- When `threadId` is set, the toggle is a per-thread override and does not
+  change the runtime-global default exposed by `settings/get`.
+- When `threadId` is omitted, the runtime-global default is toggled.
+- Emits `UltraModeChanged` / notification `ultra/modeChanged`.
 
 ### `thread/exit_plan`
 
@@ -5901,6 +5944,8 @@ notifications:
   tool fan-out; `progress` carries an incremental
   `{ total, completed, failed, aborted }` snapshot after each child resolves.
   Per-child detail still flows through the `turn/subagentTrace*` family.
+- Ultra mode: `ultra/modeChanged` reports ultra-mode toggles (proactive
+  multi-agent for any model; see [`docs/ultra-mode.md`](../ultra-mode.md)).
 - Plan review: `plan/reviewCreated`, `plan/reviewStatusChanged`,
   `plan/reviewCommentAdded`, `plan/reviewRewritten`,
   `plan/reviewApproved`, `plan/reviewRejected`.

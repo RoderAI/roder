@@ -577,6 +577,12 @@ impl AppServer {
                 })
                 .await
             }
+            "thread/set_ultra_mode" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_set_ultra_mode(p).await
+                })
+                .await
+            }
             "thread/exit_plan" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_exit_plan(p).await
@@ -2404,6 +2410,7 @@ impl AppServer {
             default_reasoning: Runtime::effective_reasoning_for_config(&cfg),
             default_mode: cfg.policy_mode,
             agent_swarm_mode: cfg.agent_swarm_mode,
+            ultra_mode: cfg.ultra_mode,
             file_backed_dynamic_context: cfg.file_backed_dynamic_context,
         })
         .unwrap())
@@ -3241,6 +3248,31 @@ impl AppServer {
                 .agent_swarm_mode
         };
         Ok(serde_json::to_value(ThreadSetAgentSwarmModeResult {
+            enabled,
+            thread_id: params.thread_id,
+        })
+        .unwrap())
+    }
+
+    async fn handle_thread_set_ultra_mode(
+        &self,
+        params: ThreadSetUltraModeParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        // A `threadId` scopes the toggle to a single thread (so it does not leak
+        // into other threads sharing the runtime); without it the runtime-global
+        // default is toggled.
+        let enabled = if let Some(thread_id) = params.thread_id.as_deref() {
+            self.runtime
+                .set_ultra_mode_for_thread(thread_id, params.enabled, params.trigger)
+                .await
+        } else {
+            self.runtime
+                .set_ultra_mode(params.enabled, params.trigger)
+                .await
+                .map_err(internal_error)?
+                .ultra_mode
+        };
+        Ok(serde_json::to_value(ThreadSetUltraModeResult {
             enabled,
             thread_id: params.thread_id,
         })

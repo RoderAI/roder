@@ -52,6 +52,9 @@ pub fn finalize_cursor_models(mut models: Vec<ModelDescriptor>) -> Vec<ModelDesc
 
 /// Backfill curated metadata (especially reasoning options) onto models loaded
 /// from a stale cache or live discovery that omitted catalog fields.
+///
+/// When both live and catalog expose efforts, union them so a partial live
+/// picker response cannot drop catalog-advertised levels such as `max`.
 pub fn enrich_models_from_catalog(mut models: Vec<ModelDescriptor>) -> Vec<ModelDescriptor> {
     let curated: HashMap<String, ModelDescriptor> = models_for_provider(PROVIDER_CURSOR, false)
         .into_iter()
@@ -61,8 +64,9 @@ pub fn enrich_models_from_catalog(mut models: Vec<ModelDescriptor>) -> Vec<Model
         let Some(curated) = curated.get(&model.id) else {
             continue;
         };
-        if model.supported_reasoning.is_empty() && !curated.supported_reasoning.is_empty() {
-            model.supported_reasoning = curated.supported_reasoning.clone();
+        if !curated.supported_reasoning.is_empty() {
+            model.supported_reasoning =
+                merge_reasoning_options(&curated.supported_reasoning, &model.supported_reasoning);
         }
         if model.default_reasoning.is_none() {
             model.default_reasoning = curated.default_reasoning.clone();
@@ -75,6 +79,23 @@ pub fn enrich_models_from_catalog(mut models: Vec<ModelDescriptor>) -> Vec<Model
         }
     }
     models
+}
+
+fn merge_reasoning_options(
+    preferred: &[ReasoningEffortDescriptor],
+    extra: &[ReasoningEffortDescriptor],
+) -> Vec<ReasoningEffortDescriptor> {
+    let mut merged = preferred.to_vec();
+    for option in extra {
+        if !merged
+            .iter()
+            .any(|existing| existing.effort == option.effort)
+        {
+            merged.push(option.clone());
+        }
+    }
+    merged.sort_by_key(|option| reasoning_effort_sort_key(&option.effort));
+    merged
 }
 
 fn append_fast_variants(models: &mut Vec<ModelDescriptor>) {
@@ -634,6 +655,58 @@ mod tests {
         let opus = &models[0];
         assert!(!opus.supported_reasoning.is_empty());
         assert_eq!(opus.default_reasoning.as_deref(), Some("high"));
+        assert!(
+            opus.supported_reasoning
+                .iter()
+                .any(|effort| effort.effort == "max"),
+            "opus catalog includes max"
+        );
+    }
+
+    #[test]
+    fn enrich_models_from_catalog_restores_max_for_sonnet() {
+        let models = enrich_models_from_catalog(vec![ModelDescriptor {
+            id: "claude-sonnet-4-6".to_string(),
+            name: "claude-sonnet-4-6".to_string(),
+            context_window: Some(1_000_000),
+            default_reasoning: None,
+            supported_reasoning: Vec::new(),
+        }]);
+        let sonnet = &models[0];
+        let efforts: Vec<_> = sonnet
+            .supported_reasoning
+            .iter()
+            .map(|effort| effort.effort.as_str())
+            .collect();
+        assert!(
+            efforts.contains(&"max"),
+            "Cursor sonnet must advertise max so thinking menus can offer it; got {efforts:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_models_from_catalog_unions_partial_live_efforts_with_max() {
+        let models = enrich_models_from_catalog(vec![ModelDescriptor {
+            id: "claude-opus-4-8".to_string(),
+            name: "Opus".to_string(),
+            context_window: None,
+            default_reasoning: Some("high".to_string()),
+            // Live picker returned a partial ladder without max.
+            supported_reasoning: vec![ReasoningEffortDescriptor {
+                effort: "high".to_string(),
+                description: "high reasoning".to_string(),
+            }],
+        }]);
+        let efforts: Vec<_> = models[0]
+            .supported_reasoning
+            .iter()
+            .map(|effort| effort.effort.as_str())
+            .collect();
+        assert!(
+            efforts.contains(&"max"),
+            "partial live efforts must not drop catalog max; got {efforts:?}"
+        );
+        assert!(efforts.contains(&"high"));
     }
 
     #[test]

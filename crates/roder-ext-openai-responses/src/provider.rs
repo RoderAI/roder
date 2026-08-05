@@ -1,6 +1,6 @@
 use roder_api::catalog::{
     PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI,
-    REASONING_MAX, REASONING_ULTRA, lookup_model_for_provider, models_for_provider,
+    REASONING_MAX, REASONING_ULTRA, lookup_model, lookup_model_for_provider, models_for_provider,
 };
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
@@ -195,16 +195,17 @@ impl OpenAiResponsesEngine {
             "store": false,
             "stream": true,
         });
+        // OpenAI + xAI/SuperGrok accept top-level `instructions`. OpenRouter and
+        // Fireworks instead receive system/developer text as leading input
+        // messages (see response_input_items_with_options). Stable system +
+        // developer content must both reach the wire here — ultra mode, plan
+        // mode, goals, and agent-control policy all live in `developer`.
         if !matches!(
             options.profile,
             ResponsesProviderProfile::OpenRouter | ResponsesProviderProfile::Fireworks
-        ) && let Some(system) = request
-            .instructions
-            .system
-            .as_deref()
-            .filter(|s| !s.is_empty())
+        ) && let Some(instructions) = stable_responses_instructions(request)
         {
-            body["instructions"] = json!(system);
+            body["instructions"] = json!(instructions);
         }
         if let Some(max_tokens) = request.output.max_tokens {
             body["max_output_tokens"] = json!(max_tokens);
@@ -444,7 +445,16 @@ fn models_from_response(body: ModelsResponse) -> Vec<ModelDescriptor> {
         .into_iter()
         .filter_map(|model| {
             let id = model.id.trim();
-            (!id.is_empty()).then(|| ModelDescriptor {
+            if id.is_empty() {
+                return None;
+            }
+            // Prefer built-in catalog metadata (context window + reasoning
+            // ladder including max/ultra) when we already know the model id;
+            // discovery responses never carry effort menus.
+            if let Some(catalog) = lookup_model(id) {
+                return Some(ModelDescriptor::from(catalog));
+            }
+            Some(ModelDescriptor {
                 id: id.to_string(),
                 name: model.name.unwrap_or_else(|| id.to_string()),
                 context_window: model.context_length,
@@ -2206,6 +2216,8 @@ fn response_input_items_with_options(
         profile,
         ResponsesProviderProfile::OpenRouter | ResponsesProviderProfile::Fireworks
     ) {
+        // These profiles do not use top-level `instructions`; fold the full
+        // InstructionBundle into leading system-role input messages.
         let mut instruction_items = Vec::new();
         if let Some(system) = request
             .instructions
@@ -2231,16 +2243,53 @@ fn response_input_items_with_options(
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            instruction_items.push(system_input_message(&format!(
-                "Developer context (this turn):\n{context}"
-            )));
+            instruction_items.push(developer_context_input_message(context));
         }
         if !instruction_items.is_empty() {
             instruction_items.extend(items);
             items = instruction_items;
         }
+    } else if let Some(context) = request
+        .instructions
+        .developer_context
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        // Keep per-turn developer_context out of the stable top-level
+        // `instructions` prefix so prompt-cache breakpoints survive. Render it
+        // as a leading input message after instructions/system+developer.
+        let mut with_context = vec![developer_context_input_message(context)];
+        with_context.extend(items);
+        items = with_context;
     }
     items
+}
+
+/// Stable system + developer text for the Responses top-level `instructions`
+/// field (OpenAI, Codex, xAI, SuperGrok). Omits per-turn `developer_context`.
+fn stable_responses_instructions(request: &AgentInferenceRequest) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(system) = request
+        .instructions
+        .system
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(system.to_string());
+    }
+    if let Some(developer) = request
+        .instructions
+        .developer
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("Developer instructions:\n{developer}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
 }
 
 fn system_input_message(text: &str) -> Value {
@@ -2249,6 +2298,10 @@ fn system_input_message(text: &str) -> Value {
         "role": "system",
         "content": [{ "type": "input_text", "text": text }]
     })
+}
+
+fn developer_context_input_message(context: &str) -> Value {
+    system_input_message(&format!("Developer context (this turn):\n{context}"))
 }
 
 fn user_message_content(
@@ -2645,6 +2698,33 @@ mod tests {
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "custom-alpha");
         assert_eq!(models[0].name, "Custom Alpha");
+    }
+
+    #[tokio::test]
+    async fn model_discovery_attaches_catalog_max_thinking_for_known_ids() {
+        let base_url = spawn_models_server(vec![(
+            "/models",
+            200,
+            r#"{"data":[{"id":"gpt-5.6-sol","name":"Sol From API"}]}"#,
+        )])
+        .await;
+
+        let models = discover_models(&base_url, Some("secret")).await.unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-5.6-sol");
+        let efforts: Vec<_> = models[0]
+            .supported_reasoning
+            .iter()
+            .map(|effort| effort.effort.as_str())
+            .collect();
+        assert!(
+            efforts.contains(&"max"),
+            "known Sol discovery should expose max thinking; got {efforts:?}"
+        );
+        assert!(
+            efforts.contains(&"ultra"),
+            "known Sol discovery should expose ultra; got {efforts:?}"
+        );
     }
 
     #[tokio::test]
@@ -3208,6 +3288,65 @@ mod tests {
         assert_eq!(body["input"][0]["role"], "user");
         assert_eq!(body["input"][1]["role"], "assistant");
         assert_eq!(body["input"][1]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn maps_developer_and_ultra_policy_into_openai_instructions() {
+        let mut request = request();
+        request.instructions.developer = Some(
+            "Proactive multi-agent delegation is active.\n\nAgent-control workflow:\n- spawn_agent"
+                .to_string(),
+        );
+        request.instructions.developer_context =
+            Some("Per-turn identity for /root/lead".to_string());
+
+        let body = OpenAiResponsesEngine::map_request(&request);
+        let instructions = body["instructions"].as_str().expect("instructions");
+        assert!(instructions.contains("be helpful"));
+        assert!(instructions.contains("Developer instructions:"));
+        assert!(instructions.contains("Proactive multi-agent delegation is active"));
+        assert!(instructions.contains("spawn_agent"));
+        assert!(
+            !instructions.contains("Per-turn identity"),
+            "developer_context must stay out of the stable instructions prefix"
+        );
+        assert_eq!(body["input"][0]["role"], "system");
+        assert_eq!(
+            body["input"][0]["content"][0]["text"],
+            "Developer context (this turn):\nPer-turn identity for /root/lead"
+        );
+        assert_eq!(body["input"][1]["role"], "user");
+    }
+
+    #[test]
+    fn xai_and_supergrok_mapping_includes_developer_ultra_policy() {
+        let mut request = request();
+        request.model.provider = PROVIDER_SUPERGROK.to_string();
+        request.model.model = "grok-4.5".to_string();
+        request.instructions.developer = Some(
+            "Proactive multi-agent delegation is active. Prefer spawn_agent for parallel work."
+                .to_string(),
+        );
+        request.instructions.developer_context = Some("child path /root/probe".to_string());
+
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::Xai,
+                thread_id: Some("thread-ultra"),
+            },
+        );
+
+        let instructions = body["instructions"].as_str().expect("xai instructions");
+        assert!(instructions.contains("be helpful"));
+        assert!(instructions.contains("Developer instructions:"));
+        assert!(instructions.contains("Proactive multi-agent delegation is active"));
+        assert!(instructions.contains("spawn_agent"));
+        assert!(!instructions.contains("child path /root/probe"));
+        assert_eq!(
+            body["input"][0]["content"][0]["text"],
+            "Developer context (this turn):\nchild path /root/probe"
+        );
     }
 
     #[test]
@@ -3841,6 +3980,8 @@ mod tests {
         request.model.provider = PROVIDER_OPENROUTER.to_string();
         request.model.model = "x-ai/grok-build-0.1".to_string();
         request.runtime.prompt_cache_key = Some("cache-key".to_string());
+        request.instructions.developer =
+            Some("Proactive multi-agent delegation is active.".to_string());
 
         let (body, _) = OpenAiResponsesEngine::map_request_with_options(
             &request,
@@ -3856,6 +3997,13 @@ mod tests {
         assert!(body.get("instructions").is_none());
         assert_eq!(body["input"][0]["role"], "system");
         assert_eq!(body["input"][0]["content"][0]["text"], "be helpful");
+        assert_eq!(body["input"][1]["role"], "system");
+        assert!(
+            body["input"][1]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Proactive multi-agent delegation is active")
+        );
         assert!(body.get("include").is_none());
     }
 

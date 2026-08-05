@@ -488,6 +488,9 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 event.clone(),
             )]
         }
+        RoderEvent::UltraModeChanged(event) => {
+            vec![protocol_notification("ultra/modeChanged", event.clone())]
+        }
         RoderEvent::AgentSwarmStarted(event) => {
             vec![protocol_notification("agentSwarm/started", event.clone())]
         }

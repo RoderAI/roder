@@ -205,10 +205,19 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
         InProcessDispatcherConfig {
             max_concurrent: 4,
             default_timeout_seconds: 10,
+            default_agent: "runner".to_string(),
             ..InProcessDispatcherConfig::default()
         },
         engine.clone(),
     ));
+
+    let runner_request = || SubagentRequest {
+        subagent_type: Some("runner".to_string()),
+        lane: Some(SubagentLane::Runner),
+        // Even if the lead asks for more, Runner stays hard-capped at 1.
+        max_concurrent: Some(8),
+        ..request()
+    };
 
     let first = {
         let dispatcher = dispatcher.clone();
@@ -217,11 +226,7 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
                 .dispatch(
                     "parent".to_string(),
                     "turn-1".to_string(),
-                    SubagentRequest {
-                        lane: Some(SubagentLane::Runner),
-                        max_concurrent: Some(8),
-                        ..request()
-                    },
+                    runner_request(),
                 )
                 .await
         })
@@ -234,17 +239,57 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
         .dispatch(
             "parent".to_string(),
             "turn-2".to_string(),
-            SubagentRequest {
-                lane: Some(SubagentLane::Runner),
-                max_concurrent: Some(8),
-                ..request()
-            },
+            runner_request(),
         )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("runner lane max_concurrent"));
     engine.release.store(true, Ordering::SeqCst);
     first.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn scout_max_concurrent_can_raise_above_lane_default() {
+    let engine = Arc::new(BlockingEngine::default());
+    let dispatcher = Arc::new(dispatcher_with_config_and_engine(
+        InProcessDispatcherConfig {
+            max_concurrent: 16,
+            default_timeout_seconds: 10,
+            ..InProcessDispatcherConfig::default()
+        },
+        engine.clone(),
+    ));
+
+    // Hold one scout slot open, then launch more than the old hard cap of 4
+    // with an explicit max_concurrent raise. All should be admitted.
+    let mut handles = Vec::new();
+    for index in 0..6 {
+        let dispatcher = dispatcher.clone();
+        handles.push(tokio::spawn(async move {
+            dispatcher
+                .dispatch(
+                    "parent".to_string(),
+                    format!("turn-{index}"),
+                    SubagentRequest {
+                        lane: Some(SubagentLane::Scout),
+                        max_concurrent: Some(10),
+                        ..request()
+                    },
+                )
+                .await
+        }));
+    }
+
+    // Wait until several children are in-flight (BlockingEngine blocks until
+    // release). If the old hard cap still applied, later tasks would error.
+    while engine.calls.load(Ordering::SeqCst) < 6 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    engine.release.store(true, Ordering::SeqCst);
+    for handle in handles {
+        handle.await.unwrap().unwrap();
+    }
+    assert_eq!(engine.calls.load(Ordering::SeqCst), 6);
 }
 
 #[tokio::test]
@@ -504,7 +549,13 @@ fn dispatcher_with_config_and_engine(
 ) -> InProcessDispatcher {
     let mut registry = InferenceEngineRegistry::new();
     registry.insert(engine);
-    InProcessDispatcher::new(config, vec![definition()], registry, tool_registry()).unwrap()
+    InProcessDispatcher::new(
+        config,
+        vec![definition(), runner_definition()],
+        registry,
+        tool_registry(),
+    )
+    .unwrap()
 }
 
 fn definition() -> SubagentDefinition {
@@ -520,12 +571,26 @@ fn definition() -> SubagentDefinition {
     }
 }
 
+fn runner_definition() -> SubagentDefinition {
+    SubagentDefinition {
+        agent_type: "runner".to_string(),
+        description: "Runner".to_string(),
+        tools: vec!["Shell".to_string()],
+        model: Some("mock".to_string()),
+        system_prompt: Some("System".to_string()),
+        permission_mode: SubagentPermissionMode::Default,
+        max_turns: Some(4),
+        max_result_chars: None,
+    }
+}
+
 fn request() -> SubagentRequest {
     SubagentRequest {
         description: "check".to_string(),
         prompt: "inspect".to_string(),
         subagent_type: Some("explore".to_string()),
         model: None,
+        provider: None,
         tools: None,
         lane: None,
         max_concurrent: None,

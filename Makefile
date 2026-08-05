@@ -9,6 +9,10 @@ MODEL ?=
 REASONING ?=
 LISTEN ?= stdio://
 VERSION ?=
+# Respect CARGO_TARGET_DIR when set (e.g. ~/.cargo-target.noindex); default to ./target.
+CARGO_TARGET_DIR ?= target
+CARGO_DEBUG_BIN := $(CARGO_TARGET_DIR)/debug/roder
+CARGO_RELEASE_BIN := $(CARGO_TARGET_DIR)/release/roder
 
 .PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock
 
@@ -30,8 +34,8 @@ cargo-unlock:
 		echo "Refusing: cargo/rustc still running for this repo. Check: pgrep -fl '$(CURDIR)/target'" >&2; \
 		exit 1; \
 	fi
-	@rm -f target/debug/.cargo-lock target/release/.cargo-lock
-	@echo "Removed target/debug and target/release .cargo-lock files."
+	@rm -f "$(CARGO_TARGET_DIR)/debug/.cargo-lock" "$(CARGO_TARGET_DIR)/release/.cargo-lock"
+	@echo "Removed $(CARGO_TARGET_DIR)/debug and $(CARGO_TARGET_DIR)/release .cargo-lock files."
 
 cargo-unlock-help:
 	@echo "If make build says 'Blocking waiting for file lock on artifact directory':"
@@ -51,7 +55,7 @@ build:
 	@mkdir -p $(dir $(BINARY))
 	cargo build -p roder --bin roder
 	rm -f "$(BINARY)"
-	cp target/debug/roder "$(BINARY)"
+	cp "$(CARGO_DEBUG_BIN)" "$(BINARY)"
 	@if [ "$$(uname)" = "Darwin" ]; then \
 		codesign -f -s - "$(BINARY)" 2>/dev/null || true; \
 	fi
@@ -59,7 +63,7 @@ build:
 install:
 	cargo build --release -p roder --bin roder
 	$(INSTALL) -d "$(BINDIR)"
-	$(INSTALL) -m 0755 target/release/roder "$(BINDIR)/$(INSTALL_BIN)"
+	$(INSTALL) -m 0755 "$(CARGO_RELEASE_BIN)" "$(BINDIR)/$(INSTALL_BIN)"
 	@if [ "$(LEGACY_INSTALL_BIN)" != "$(INSTALL_BIN)" ] && [ -e "$(BINDIR)/$(LEGACY_INSTALL_BIN)" ]; then \
 		rm -f "$(BINDIR)/$(LEGACY_INSTALL_BIN)"; \
 	fi

@@ -269,6 +269,7 @@
               "thread/resolve_user_input",
               "thread/roadmap/open",
               "thread/set_agent_swarm_mode",
+              "thread/set_ultra_mode",
               "thread/set_mode",
               "thread/start",
               "thread/state",
