@@ -1,3 +1,17 @@
+## 0.1.7 (2026-08-05)
+
+### Fixes
+
+#### Fixes
+
+##### Include developer/ultra policy in OpenAI and xAI Responses `instructions`
+
+Join stable `system` + `developer` into the Responses top-level `instructions`
+field for OpenAI, Codex, xAI, and SuperGrok so ultra-mode multi-agent policy,
+plan mode, goals, and other developer-slot addenda actually reach the model.
+Keep per-turn `developer_context` as a leading input message outside the
+stable prefix.
+
 ## 0.1.6 (2026-07-21)
 
 ### Features
