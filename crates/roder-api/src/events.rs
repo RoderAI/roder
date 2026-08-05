@@ -55,7 +55,7 @@ use crate::skills::{
 };
 use crate::subagents::{
     AgentSwarmCompleted, AgentSwarmModeChanged, AgentSwarmProgress, AgentSwarmStarted,
-    SubagentExitReason,
+    SubagentExitReason, UltraModeChanged,
 };
 use crate::task_ledger::TaskLedgerItem;
 use crate::teams::{
@@ -1348,6 +1348,7 @@ pub enum RoderEvent {
     AgentSwarmStarted(AgentSwarmStarted),
     AgentSwarmProgress(AgentSwarmProgress),
     AgentSwarmCompleted(AgentSwarmCompleted),
+    UltraModeChanged(UltraModeChanged),
     PolicyExitPlanRequested(PolicyExitPlanRequested),
     PolicyExitPlanResolved(PolicyExitPlanResolved),
     ToolCallStarted(ToolCallStarted),
@@ -1554,6 +1555,7 @@ impl RoderEvent {
             RoderEvent::AgentSwarmStarted(_) => "agent_swarm.started",
             RoderEvent::AgentSwarmProgress(_) => "agent_swarm.progress",
             RoderEvent::AgentSwarmCompleted(_) => "agent_swarm.completed",
+            RoderEvent::UltraModeChanged(_) => "ultra.mode_changed",
             RoderEvent::PolicyExitPlanRequested(_) => "policy.exit_plan_requested",
             RoderEvent::PolicyExitPlanResolved(_) => "policy.exit_plan_resolved",
             RoderEvent::ToolCallStarted(_) => "tool.call_started",
@@ -1890,6 +1892,7 @@ impl RoderEvent {
             RoderEvent::AgentSwarmStarted(e) => Some(&e.thread_id),
             RoderEvent::AgentSwarmProgress(e) => Some(&e.thread_id),
             RoderEvent::AgentSwarmCompleted(e) => Some(&e.thread_id),
+            RoderEvent::UltraModeChanged(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.thread_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.thread_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.thread_id),
@@ -2089,6 +2092,7 @@ impl RoderEvent {
             RoderEvent::AgentSwarmStarted(e) => Some(&e.turn_id),
             RoderEvent::AgentSwarmProgress(e) => Some(&e.turn_id),
             RoderEvent::AgentSwarmCompleted(e) => Some(&e.turn_id),
+            RoderEvent::UltraModeChanged(e) => e.turn_id.as_ref(),
             RoderEvent::PolicyExitPlanRequested(e) => Some(&e.turn_id),
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.turn_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.turn_id),

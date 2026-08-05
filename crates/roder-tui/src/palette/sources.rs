@@ -824,20 +824,39 @@ pub fn model_source(providers: &ProvidersListResult) -> StaticPaletteSource {
                 &model,
                 &model,
                 provider.description.clone(),
+                None,
             ));
             continue;
         }
         for model in &provider.models {
+            let model_label = if model.name.is_empty() {
+                model.id.as_str()
+            } else {
+                model.name.as_str()
+            };
+            // Bare model row: opens the thinking submenu when efforts exist.
+            let base_subtitle = if model.supported_reasoning.is_empty() {
+                provider.description.clone()
+            } else {
+                Some("Choose thinking effort (max/ultra listed when supported)".to_string())
+            };
             entries.push(model_entry(
                 &provider.id,
                 &model.id,
-                if model.name.is_empty() {
-                    &model.id
-                } else {
-                    &model.name
-                },
-                provider.description.clone(),
+                model_label,
+                base_subtitle,
+                None,
             ));
+            // Expand advertised efforts so Max is searchable in the palette.
+            for effort in &model.supported_reasoning {
+                entries.push(model_entry(
+                    &provider.id,
+                    &model.id,
+                    model_label,
+                    Some(effort.description.clone()),
+                    Some(effort.effort.clone()),
+                ));
+            }
         }
     }
     StaticPaletteSource::new("models", "Models", entries)
@@ -1249,19 +1268,44 @@ fn model_entry(
     provider_id: &str,
     model_id: &str,
     model_label: &str,
-    provider_description: Option<String>,
+    subtitle: Option<String>,
+    reasoning: Option<String>,
 ) -> (PaletteItem, PaletteAction) {
+    let (id, title, keywords) = if let Some(effort) = reasoning.as_deref() {
+        (
+            format!("{provider_id}:{model_id}:{effort}"),
+            format!("{provider_id}/{model_label} · {effort}"),
+            vec![
+                provider_id.to_string(),
+                model_id.to_string(),
+                effort.to_string(),
+                "thinking".to_string(),
+                "reasoning".to_string(),
+            ],
+        )
+    } else {
+        (
+            format!("{provider_id}:{model_id}"),
+            format!("{provider_id}/{model_label}"),
+            vec![
+                provider_id.to_string(),
+                model_id.to_string(),
+                "thinking".to_string(),
+            ],
+        )
+    };
     (
         PaletteItem {
-            id: format!("{provider_id}:{model_id}"),
-            title: format!("{provider_id}/{model_label}"),
-            subtitle: provider_description,
-            keywords: vec![provider_id.to_string(), model_id.to_string()],
+            id,
+            title,
+            subtitle,
+            keywords,
             icon: Some('*'),
         },
         PaletteAction::SwitchModel {
             provider: provider_id.to_string(),
             model: model_id.to_string(),
+            reasoning,
         },
     )
 }
@@ -1300,6 +1344,7 @@ fn web_search_mode_id(mode: HostedWebSearchMode) -> &'static str {
 mod tests {
     use roder_api::inference::{
         HostedWebSearchMode, InferenceCapabilities, ModelDescriptor, ProviderAuthType,
+        ReasoningEffortDescriptor,
     };
     use roder_api::marketplace::{
         MarketplaceDescriptor, MarketplaceKind, MarketplaceSource, MarketplaceState,
@@ -1308,8 +1353,8 @@ mod tests {
     use roder_api::speech::{SpeechCapabilities, SpeechModelDescriptor};
     use roder_api::subagents::SubagentPermissionMode;
     use roder_protocol::{
-        ProviderDescriptor, RunnerProviderDescriptor, RunnerStatus, SpeechProviderDescriptor,
-        SpeechProvidersListResult,
+        ProviderDescriptor, ProvidersListResult, RunnerProviderDescriptor, RunnerStatus,
+        SpeechProviderDescriptor, SpeechProvidersListResult,
     };
 
     use super::*;
@@ -1465,7 +1510,8 @@ mod tests {
             source.entries()[0].action,
             PaletteAction::SwitchModel {
                 provider: "mock".to_string(),
-                model: "mock-small".to_string()
+                model: "mock-small".to_string(),
+                reasoning: None,
             }
         );
         assert!(
@@ -1474,9 +1520,81 @@ mod tests {
                     == PaletteAction::SwitchModel {
                         provider: "openrouter".to_string(),
                         model: "x-ai/grok-build-0.1".to_string(),
+                        reasoning: None,
                     }
             }),
             "slash-bearing OpenRouter model id should stay in the model field"
+        );
+    }
+
+    #[test]
+    fn model_source_expands_max_thinking_when_advertised() {
+        let source = model_source(&ProvidersListResult {
+            active_provider: "codex".to_string(),
+            active_model: "gpt-5.6-sol".to_string(),
+            active_reasoning: "low".to_string(),
+            selection_mode: None,
+            routing_options: Vec::new(),
+            providers: vec![ProviderDescriptor {
+                id: "codex".to_string(),
+                name: "Codex".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::OAuth,
+                auth_label: None,
+                authenticated: true,
+                auth_detail: None,
+                recommended: true,
+                sort_order: 0,
+                capabilities: InferenceCapabilities::coding_agent_default(),
+                models: vec![ModelDescriptor {
+                    id: "gpt-5.6-sol".to_string(),
+                    name: "GPT-5.6-Sol".to_string(),
+                    context_window: Some(272_000),
+                    default_reasoning: Some("low".to_string()),
+                    supported_reasoning: vec![
+                        ReasoningEffortDescriptor {
+                            effort: "xhigh".to_string(),
+                            description: "Extra high".to_string(),
+                        },
+                        ReasoningEffortDescriptor {
+                            effort: "max".to_string(),
+                            description: "Maximum reasoning depth for the hardest problems"
+                                .to_string(),
+                        },
+                        ReasoningEffortDescriptor {
+                            effort: "ultra".to_string(),
+                            description: "Maximum reasoning with automatic task delegation"
+                                .to_string(),
+                        },
+                    ],
+                }],
+            }],
+        });
+
+        let entries = source.entries();
+        let efforts: Vec<_> = entries
+            .iter()
+            .filter_map(|entry| match &entry.action {
+                PaletteAction::SwitchModel {
+                    reasoning: Some(effort),
+                    ..
+                } => Some(effort.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            efforts.contains(&"max"),
+            "palette should expose max thinking when the model advertises it; got {efforts:?}"
+        );
+        assert!(
+            efforts.contains(&"ultra"),
+            "palette should also expose ultra when advertised; got {efforts:?}"
+        );
+        assert!(
+            entries.iter().any(|entry| {
+                entry.item.title.contains("· max") || entry.item.id.ends_with(":max")
+            }),
+            "max row title/id should be visible in the palette list"
         );
     }
 

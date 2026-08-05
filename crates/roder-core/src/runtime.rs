@@ -144,6 +144,11 @@ pub struct RuntimeConfig {
     /// injects the swarm reminder into each turn's developer instructions so any
     /// client benefits, not just the TUI.
     pub agent_swarm_mode: bool,
+    /// Whether ultra mode is active. When on, the runtime injects proactive
+    /// multi-agent delegation policy for any model (not only Codex Sol/Terra
+    /// Ultra effort). Selecting Ultra reasoning on Sol/Terra still enables
+    /// proactive multi-agent for that model without requiring this flag.
+    pub ultra_mode: bool,
     pub runtime_profile: RuntimeProfile,
     pub inference_router: RuntimeInferenceRouterConfig,
     pub speed_policy: RuntimeSpeedPolicyConfig,
@@ -180,6 +185,7 @@ impl Default for RuntimeConfig {
             workspace: None,
             policy_mode: PolicyMode::Default,
             agent_swarm_mode: false,
+            ultra_mode: false,
             runtime_profile: RuntimeProfile::Interactive,
             inference_router: RuntimeInferenceRouterConfig::default(),
             speed_policy: RuntimeSpeedPolicyConfig::default(),
@@ -551,6 +557,10 @@ pub struct Runtime {
     /// team per-member policy-mode override idiom so swarm mode is per-thread
     /// like the other `thread/*` operations, without a separate runtime.
     agent_swarm_modes: RwLock<HashMap<ThreadId, bool>>,
+    /// Per-thread ultra mode overrides. A thread present in this map uses its
+    /// stored value; absent threads fall back to the runtime-global
+    /// `RuntimeConfig.ultra_mode` default.
+    ultra_modes: RwLock<HashMap<ThreadId, bool>>,
     /**
      * Live remote-runner sessions keyed by thread. Each per-thread mutex is
      * held across provider initialization, making the first workspace-tool
@@ -717,6 +727,7 @@ impl Runtime {
             event_sink_dispatcher: tokio::sync::OnceCell::new(),
             compaction_hysteresis: crate::compaction_runtime::compaction_hysteresis_state(),
             agent_swarm_modes: RwLock::new(HashMap::new()),
+            ultra_modes: RwLock::new(HashMap::new()),
             runner_sessions: Arc::new(Mutex::new(HashMap::new())),
             runner_tool_execution_locks: Mutex::new(HashMap::new()),
         };
@@ -1198,6 +1209,69 @@ impl Runtime {
             return enabled;
         }
         self.status().await.agent_swarm_mode
+    }
+
+    /// Toggle ultra mode for the runtime. When enabled, proactive multi-agent
+    /// policy is injected into each turn's developer instructions for any
+    /// model, so every app-server/SDK client gets it (not only the TUI).
+    pub async fn set_ultra_mode(
+        &self,
+        enabled: bool,
+        trigger: roder_api::subagents::UltraModeTrigger,
+    ) -> anyhow::Result<RuntimeConfig> {
+        let mut cfg = self.config.write().await;
+        cfg.ultra_mode = enabled;
+        let next = cfg.clone();
+        drop(cfg);
+        self.emit(RoderEvent::UltraModeChanged(
+            roder_api::subagents::UltraModeChanged {
+                thread_id: "runtime".to_string(),
+                turn_id: None,
+                enabled,
+                trigger,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        Ok(next)
+    }
+
+    /// Toggle ultra mode for a single thread. The override is stored per thread
+    /// so toggling on one thread does not leak proactive multi-agent policy into
+    /// other threads sharing the runtime; absent threads fall back to the
+    /// runtime-global default.
+    pub async fn set_ultra_mode_for_thread(
+        &self,
+        thread_id: &str,
+        enabled: bool,
+        trigger: roder_api::subagents::UltraModeTrigger,
+    ) -> bool {
+        {
+            let mut modes = self.ultra_modes.write().await;
+            modes.insert(thread_id.to_string(), enabled);
+        }
+        self.emit(RoderEvent::UltraModeChanged(
+            roder_api::subagents::UltraModeChanged {
+                thread_id: thread_id.to_string(),
+                turn_id: None,
+                enabled,
+                trigger,
+                timestamp: OffsetDateTime::now_utc(),
+            },
+        ))
+        .await;
+        enabled
+    }
+
+    /// Resolve whether ultra mode is active for `thread_id`: the per-thread
+    /// override when present, otherwise the runtime-global default. The turn
+    /// loop uses this (together with Sol/Terra Ultra effort) to decide whether
+    /// to inject proactive multi-agent policy.
+    pub async fn effective_ultra_mode_for_thread(&self, thread_id: &str) -> bool {
+        if let Some(enabled) = self.ultra_modes.read().await.get(thread_id).copied() {
+            return enabled;
+        }
+        self.status().await.ultra_mode
     }
 
     pub async fn set_hosted_web_search(
@@ -2594,7 +2668,7 @@ impl Runtime {
         Ok(self.workspace.display().to_string())
     }
 
-    async fn selection_mode_for_thread(
+    pub(crate) async fn selection_mode_for_thread(
         &self,
         thread_id: &ThreadId,
     ) -> anyhow::Result<Option<ModelSelectionMode>> {
@@ -2615,6 +2689,31 @@ impl Runtime {
                         _ => None,
                     })
             }))
+    }
+
+    /// Concrete provider/model for configured-role subagents (`task`,
+    /// `agent_swarm`). Prefers the live parent turn selection so children stay
+    /// on SuperGrok/Grok (or whatever the lead is using) instead of process
+    /// startup defaults such as openai/gpt-5.5.
+    pub(crate) async fn parent_model_selection_for_subagents(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+    ) -> Option<roder_api::inference::ModelSelection> {
+        if let Some(selection) = self.active_turn_selections.read().await.get(turn_id).cloned() {
+            return Some(selection.concrete_selection());
+        }
+        if let Ok(Some(selection)) = self.selection_mode_for_thread(thread_id).await {
+            return Some(selection.concrete_selection());
+        }
+        let cfg = self.status().await;
+        if cfg.default_provider.trim().is_empty() || cfg.default_model.trim().is_empty() {
+            return None;
+        }
+        Some(roder_api::inference::ModelSelection {
+            provider: cfg.default_provider,
+            model: cfg.default_model,
+        })
     }
 
     /// Per-thread tool allowlist, developer instructions, and external tools persisted at thread creation.
@@ -3735,6 +3834,7 @@ impl Runtime {
         let agent_swarm_mode_active = self
             .effective_agent_swarm_mode_for_thread(&req.thread_id)
             .await;
+        let ultra_mode_active = self.effective_ultra_mode_for_thread(&req.thread_id).await;
         let thread_overrides = self.thread_turn_overrides(&req.thread_id).await?;
         let mut final_assistant_text = String::new();
         let mut final_phase_messages = Vec::<AssistantMessage>::new();
@@ -4024,11 +4124,19 @@ impl Runtime {
             if agent_swarm_mode_active {
                 instructions = apply_agent_swarm_mode(instructions);
             }
-            if model_supports_reasoning_effort(&model, REASONING_ULTRA) {
-                instructions = apply_codex_multi_agent_mode(
-                    instructions,
-                    request_reasoning.level.as_deref() == Some(REASONING_ULTRA),
-                );
+            // Ultra mode (any model) enables proactive multi-agent policy.
+            // Codex Sol/Terra Ultra effort still does too without requiring the
+            // mode flag. Models that advertise Ultra effort keep the
+            // explicit-request-only policy on lower efforts when ultra mode is
+            // off; other models get multi-agent policy only when ultra mode is on.
+            let model_has_ultra_effort =
+                model_supports_reasoning_effort(&model, REASONING_ULTRA);
+            let effort_is_ultra =
+                request_reasoning.level.as_deref() == Some(REASONING_ULTRA);
+            let proactive_multi_agent = ultra_mode_active || effort_is_ultra;
+            if ultra_mode_active || model_has_ultra_effort {
+                instructions =
+                    apply_codex_multi_agent_mode(instructions, proactive_multi_agent);
             }
             instructions = self
                 .goals
@@ -7520,6 +7628,7 @@ mod tests {
                 RuntimeConfig {
                     policy_mode: PolicyMode::Bypass,
                     agent_swarm_mode: false,
+                    ultra_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -8082,6 +8191,49 @@ mod tests {
             .unwrap_or_default();
         assert!(!developer.contains("Do not spawn sub-agents unless"));
         assert!(!developer.contains("Proactive multi-agent delegation is active"));
+    }
+
+    #[tokio::test]
+    async fn ultra_mode_enables_proactive_multi_agent_for_any_model() {
+        // Luna has no Ultra effort, but ultra mode still injects proactive policy.
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.6-luna".to_string(),
+            reasoning: Some(roder_api::catalog::REASONING_MAX.to_string()),
+            ultra_mode: true,
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        let developer = request
+            .instructions
+            .developer
+            .as_deref()
+            .expect("ultra mode developer instructions");
+        assert!(developer.contains("Proactive multi-agent delegation is active"));
+        assert!(developer.contains("spawn_agent"));
+    }
+
+    #[tokio::test]
+    async fn ultra_mode_overrides_explicit_request_only_on_sol() {
+        // Medium Sol effort is normally explicit-request-only; ultra mode flips
+        // it to proactive without requiring Ultra reasoning effort.
+        let request = captured_profile_request(RuntimeConfig {
+            default_provider: roder_api::catalog::PROVIDER_MOCK.to_string(),
+            default_model: "gpt-5.6-sol".to_string(),
+            reasoning: Some(roder_api::catalog::REASONING_MEDIUM.to_string()),
+            ultra_mode: true,
+            ..RuntimeConfig::default()
+        })
+        .await;
+
+        let developer = request
+            .instructions
+            .developer
+            .as_deref()
+            .expect("ultra mode sol developer instructions");
+        assert!(developer.contains("Proactive multi-agent delegation is active"));
+        assert!(!developer.contains("Do not spawn sub-agents unless"));
     }
 
     #[tokio::test]
@@ -9183,6 +9335,7 @@ mod tests {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
                     agent_swarm_mode: false,
+                    ultra_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -9257,6 +9410,7 @@ mod tests {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
                     agent_swarm_mode: false,
+                    ultra_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -9333,6 +9487,7 @@ mod tests {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
                     agent_swarm_mode: false,
+                    ultra_mode: false,
                     turn_deadline_seconds: Some(120),
                     ..RuntimeConfig::default()
                 },
@@ -9460,6 +9615,7 @@ mod tests {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
                     agent_swarm_mode: false,
+                    ultra_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -9539,6 +9695,7 @@ mod tests {
                     runtime_profile: RuntimeProfile::Eval,
                     policy_mode: PolicyMode::Bypass,
                     agent_swarm_mode: false,
+                    ultra_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -9704,6 +9861,7 @@ mod tests {
                 RuntimeConfig {
                     policy_mode: PolicyMode::Bypass,
                     agent_swarm_mode: false,
+                    ultra_mode: false,
                     ..RuntimeConfig::default()
                 },
             )
@@ -9834,5 +9992,63 @@ mod tests {
             saw,
             "expected an AgentSwarmModeChanged event for the thread"
         );
+    }
+
+    #[tokio::test]
+    async fn ultra_mode_override_is_per_thread() {
+        let runtime = Runtime::fake().unwrap();
+        let trigger = roder_api::subagents::UltraModeTrigger::Manual;
+
+        assert!(!runtime.effective_ultra_mode_for_thread("thread-a").await);
+        assert!(!runtime.effective_ultra_mode_for_thread("thread-b").await);
+
+        assert!(
+            runtime
+                .set_ultra_mode_for_thread("thread-a", true, trigger)
+                .await
+        );
+        assert!(runtime.effective_ultra_mode_for_thread("thread-a").await);
+        assert!(!runtime.effective_ultra_mode_for_thread("thread-b").await);
+
+        runtime.set_ultra_mode(true, trigger).await.unwrap();
+        runtime
+            .set_ultra_mode_for_thread("thread-b", false, trigger)
+            .await;
+        assert!(
+            !runtime.effective_ultra_mode_for_thread("thread-b").await,
+            "explicit per-thread off overrides the global on default"
+        );
+        assert!(
+            runtime.effective_ultra_mode_for_thread("thread-c").await,
+            "threads without an override follow the runtime-global default"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_ultra_mode_for_thread_emits_event_with_real_thread_id() {
+        let runtime = Runtime::fake().unwrap();
+        let mut events = runtime.subscribe_events();
+        runtime
+            .set_ultra_mode_for_thread(
+                "thread-ultra",
+                true,
+                roder_api::subagents::UltraModeTrigger::Task,
+            )
+            .await;
+        let mut saw = false;
+        for _ in 0..8 {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let RoderEvent::UltraModeChanged(event) = envelope.event {
+                assert_eq!(event.thread_id, "thread-ultra");
+                assert!(event.enabled);
+                assert_eq!(event.trigger, roder_api::subagents::UltraModeTrigger::Task);
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "expected an UltraModeChanged event for the thread");
     }
 }

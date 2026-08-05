@@ -26,6 +26,9 @@ pub enum PaletteAction {
     SwitchModel {
         provider: String,
         model: String,
+        /// When set, apply this reasoning effort with the model. When omitted
+        /// and the model advertises efforts, the TUI opens the thinking menu.
+        reasoning: Option<String>,
     },
     SetPolicyMode(PolicyMode),
     SetWebSearchMode(HostedWebSearchMode),

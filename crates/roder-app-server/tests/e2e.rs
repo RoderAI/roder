@@ -129,7 +129,8 @@ use roder_protocol::{
     ThreadGoalSetResult, ThreadGoalStatus, ThreadItemStatus, ThreadListParams, ThreadListResult,
     ThreadReadParams, ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetAgentSwarmModeParams,
-    ThreadSetAgentSwarmModeResult, ThreadSetModeParams, ThreadSetModeResult, ThreadStartParams,
+    ThreadSetAgentSwarmModeResult, ThreadSetModeParams, ThreadSetModeResult,
+    ThreadSetUltraModeParams, ThreadSetUltraModeResult, ThreadStartParams,
     ThreadStartResult, ThreadStateResult, ToolCallParams, ToolCallResult, ToolsListResult,
     ToolsResolveParams, ToolsResolveResult, TurnInputItem, TurnInterruptParams,
     TurnInterruptResult, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
@@ -10375,6 +10376,100 @@ async fn thread_agent_swarm_mode_is_scoped_per_thread() {
     let settings: SettingsGetResult = request(&client, "settings/get", None).await;
     assert!(
         !settings.agent_swarm_mode,
+        "a per-thread toggle must not change the global default"
+    );
+}
+
+#[tokio::test]
+async fn thread_ultra_mode_can_be_set_and_observed() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(app_server(runtime));
+    let client = LocalAppClient::new(server);
+    let mut events = client.subscribe_events();
+    let mut notifications = client.subscribe_notifications();
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.ultra_mode);
+
+    let changed: ThreadSetUltraModeResult = request(
+        &client,
+        "thread/set_ultra_mode",
+        Some(
+            serde_json::to_value(ThreadSetUltraModeParams {
+                enabled: true,
+                trigger: roder_api::subagents::UltraModeTrigger::Manual,
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(changed.enabled);
+
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(settings.ultra_mode);
+
+    let mut saw_changed = false;
+    for _ in 0..8 {
+        let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let roder_api::events::RoderEvent::UltraModeChanged(event) = envelope.event {
+            saw_changed = event.enabled;
+            break;
+        }
+    }
+    assert!(saw_changed);
+
+    let notification = wait_for_notification(&mut notifications, "ultra/modeChanged", None).await;
+    assert_eq!(notification.params["enabled"], serde_json::json!(true));
+
+    let changed: ThreadSetUltraModeResult = request(
+        &client,
+        "thread/set_ultra_mode",
+        Some(
+            serde_json::to_value(ThreadSetUltraModeParams {
+                enabled: false,
+                trigger: roder_api::subagents::UltraModeTrigger::Manual,
+                thread_id: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(!changed.enabled);
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(!settings.ultra_mode);
+}
+
+#[tokio::test]
+async fn thread_ultra_mode_is_scoped_per_thread() {
+    let runtime = Arc::new(Runtime::fake().unwrap());
+    let server = Arc::new(app_server(runtime.clone()));
+    let client = LocalAppClient::new(server);
+
+    let changed: ThreadSetUltraModeResult = request(
+        &client,
+        "thread/set_ultra_mode",
+        Some(
+            serde_json::to_value(ThreadSetUltraModeParams {
+                enabled: true,
+                trigger: roder_api::subagents::UltraModeTrigger::Manual,
+                thread_id: Some("thread-a".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+    assert!(changed.enabled);
+    assert_eq!(changed.thread_id.as_deref(), Some("thread-a"));
+
+    assert!(runtime.effective_ultra_mode_for_thread("thread-a").await);
+    assert!(!runtime.effective_ultra_mode_for_thread("thread-b").await);
+    let settings: SettingsGetResult = request(&client, "settings/get", None).await;
+    assert!(
+        !settings.ultra_mode,
         "a per-thread toggle must not change the global default"
     );
 }

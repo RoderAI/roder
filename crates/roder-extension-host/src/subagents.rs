@@ -35,7 +35,7 @@ impl Default for DefaultSubagentsConfig {
             default_agent: "explore".to_string(),
             default_provider: None,
             default_model: "mock".to_string(),
-            max_concurrent: 2,
+            max_concurrent: 16,
             max_depth: 1,
             default_timeout_seconds: 180,
             include_child_transcript: false,

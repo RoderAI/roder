@@ -4034,6 +4034,8 @@ pub struct SettingsGetResult {
     pub default_mode: PolicyMode,
     #[serde(default)]
     pub agent_swarm_mode: bool,
+    #[serde(default)]
+    pub ultra_mode: bool,
     pub file_backed_dynamic_context: bool,
 }
 
@@ -4155,6 +4157,34 @@ fn default_agent_swarm_trigger() -> roder_api::subagents::AgentSwarmModeTrigger 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadSetAgentSwarmModeResult {
+    pub enabled: bool,
+    /// Echoes the thread the toggle was scoped to, when it was per-thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetUltraModeParams {
+    pub enabled: bool,
+    /// How ultra mode was entered: `manual` (persistent toggle) or `task`
+    /// (one-shot prompt).
+    #[serde(default = "default_ultra_mode_trigger")]
+    pub trigger: roder_api::subagents::UltraModeTrigger,
+    /// Thread to scope ultra mode to. When set, the toggle is stored as a
+    /// per-thread override so it does not leak into other threads sharing the
+    /// runtime. When omitted, the runtime-global default is toggled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+}
+
+fn default_ultra_mode_trigger() -> roder_api::subagents::UltraModeTrigger {
+    roder_api::subagents::UltraModeTrigger::Manual
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetUltraModeResult {
     pub enabled: bool,
     /// Echoes the thread the toggle was scoped to, when it was per-thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]

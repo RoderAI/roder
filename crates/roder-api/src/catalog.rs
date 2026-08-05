@@ -1168,8 +1168,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Anthropic Claude Sonnet 4.6 routed through Cursor's AgentService.",
         1_000_000,
         900_000,
-        REASONING_NONE,
-        &[],
+        REASONING_MEDIUM,
+        SONNET_REASONING,
     ),
     cursor_model(
         "gpt-5.5",
@@ -2550,13 +2550,26 @@ mod tests {
             ]
         );
 
-        // Non-Opus Cursor models remain effort-free for now.
+        // Sonnet 4.6 on Cursor advertises the same effort ladder as Anthropic
+        // (including max), so Ctrl+P / thinking menus can offer it.
         let sonnet = models_for_provider(PROVIDER_CURSOR, false)
             .into_iter()
             .find(|model| model.id == "claude-sonnet-4-6")
             .expect("cursor catalog should expose claude-sonnet-4-6");
-        assert_eq!(sonnet.default_reasoning, None);
-        assert!(sonnet.supported_reasoning.is_empty());
+        assert_eq!(sonnet.default_reasoning.as_deref(), Some(REASONING_MEDIUM));
+        assert_eq!(
+            sonnet
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_MAX
+            ]
+        );
     }
 
     #[test]

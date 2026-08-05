@@ -97,6 +97,7 @@ use roder_protocol::{
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadResolveUserInputParams,
     ThreadResolveUserInputResult, ThreadSetAgentSwarmModeResult, ThreadSetModeParams,
+    ThreadSetUltraModeResult,
     ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, Turn,
     TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WebSearchProviderStatus,
     WebSearchSettings, WorkspaceCreateParams, WorkspaceCreateResult, WorkspaceRootInput,
@@ -192,6 +193,9 @@ const AGENT_SWARM_REMINDER: &str = "Agent-swarm mode is active. When this task s
 several similarly-shaped subtasks over different inputs, call the agent_swarm tool exactly once \
 with a prompt_template containing {{item}} and an items array (or resume_agent_ids), and make it \
 the only tool call in that response.";
+/// One-shot ultra reminder for `/ultra <prompt>`. Persistent ultra mode injects
+/// proactive multi-agent policy server-side instead.
+const ULTRA_MODE_REMINDER: &str = roder_api::subagents::ULTRA_MODE_REMINDER;
 const MAX_VISIBLE_INLINE_COMPLETIONS: usize = 12;
 const MAX_FILE_COMPLETION_CACHE: usize = 1_000;
 const RESUME_VISIBLE_TAIL_ITEMS: usize = 160;
@@ -1451,6 +1455,9 @@ where
     /// Persistent agent-swarm mode (roadmap 104): when on, normal prompts are
     /// prefixed with a swarm reminder nudging the model to use `agent_swarm`.
     swarm_mode: bool,
+    /// Persistent ultra mode: when on, the runtime injects proactive multi-agent
+    /// policy for any model (not only Codex Sol/Terra Ultra effort).
+    ultra_mode: bool,
     image_attachments: Vec<ImageAttachment>,
     last_image_attachment_remove_buttons: Vec<ImageAttachmentRemoveButton>,
     last_queued_prompt_buttons: Vec<QueuedPromptButton>,
@@ -1917,6 +1924,7 @@ where
             remote_panel,
             roadmap_mode: None,
             swarm_mode: false,
+            ultra_mode: false,
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
             last_queued_prompt_buttons: Vec::new(),
@@ -3406,6 +3414,9 @@ where
             "agent-swarm" | "swarm" => {
                 self.run_agent_swarm_slash_command(&args).await;
             }
+            "ultra" => {
+                self.run_ultra_slash_command(&args).await;
+            }
             "knowledge" => {
                 self.run_knowledge_slash_command(&args).await;
             }
@@ -3485,14 +3496,92 @@ where
     }
 
     /// Label for the active agent mode shown next to the policy/security mode
-    /// in the composer title (e.g. "Bypass - Agent Swarm"). Returns `None` when
-    /// no agent mode is set. Review mode will add its branch when it lands.
+    /// in the composer title (e.g. "Bypass - Ultra · Agent Swarm"). Returns
+    /// `None` when no agent mode is set.
     fn active_agent_mode_label(&self) -> Option<&'static str> {
-        if self.swarm_mode {
-            Some("Agent Swarm")
-        } else {
-            None
+        match (self.ultra_mode, self.swarm_mode) {
+            (true, true) => Some("Ultra · Agent Swarm"),
+            (true, false) => Some("Ultra"),
+            (false, true) => Some("Agent Swarm"),
+            (false, false) => None,
         }
+    }
+
+    /// Handle `/ultra`: toggle persistent ultra mode (proactive multi-agent for
+    /// any model), force on/off/status, or run a one-shot ultra prompt.
+    async fn run_ultra_slash_command(&mut self, args: &str) {
+        let trimmed = args.trim();
+        match trimmed.to_ascii_lowercase().as_str() {
+            "" => {
+                self.set_ultra_mode(!self.ultra_mode).await;
+            }
+            "on" => {
+                self.set_ultra_mode(true).await;
+            }
+            "off" => {
+                self.set_ultra_mode(false).await;
+            }
+            "status" => {
+                let state = if self.ultra_mode { "on" } else { "off" };
+                self.timeline
+                    .push_system(format!("Ultra mode is {state}."));
+                self.push_event("slash command: /ultra status".to_string());
+            }
+            _ => {
+                let pending = PendingPrompt::with_images(
+                    format!("/ultra {trimmed}"),
+                    format!("{ULTRA_MODE_REMINDER}\n\n{trimmed}"),
+                    Vec::new(),
+                );
+                if self.active_turn_id.is_some() {
+                    self.steer_prepared_prompt(pending);
+                } else {
+                    self.start_prepared_prompt(pending).await;
+                }
+                self.push_event("slash command: /ultra (task)".to_string());
+            }
+        }
+    }
+
+    async fn set_ultra_mode(&mut self, enabled: bool) {
+        if self.ultra_mode == enabled {
+            let state = if enabled { "on" } else { "off" };
+            self.timeline
+                .push_system(format!("Ultra mode is already {state}."));
+            return;
+        }
+        let res = self
+            .client
+            .send_request(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!("thread/set_ultra_mode")),
+                method: "thread/set_ultra_mode".to_string(),
+                params: Some(serde_json::json!({
+                    "enabled": enabled,
+                    "trigger": "manual",
+                    "threadId": self.thread_id,
+                })),
+            })
+            .await;
+        match decode_response::<ThreadSetUltraModeResult>(res) {
+            Ok(result) => self.ultra_mode = result.enabled,
+            Err(err) => {
+                self.record_error(format!("thread/set_ultra_mode failed: {err}"));
+                return;
+            }
+        }
+        if self.ultra_mode {
+            self.timeline.push_system(
+                "Ultra mode on. Turns now use proactive multi-agent delegation for \
+                 the active model; use /ultra off to disable.",
+            );
+        } else {
+            self.timeline.push_system("Ultra mode off.");
+        }
+        self.push_event(format!(
+            "slash command: /ultra {}",
+            if self.ultra_mode { "on" } else { "off" }
+        ));
     }
 
     async fn set_swarm_mode(&mut self, enabled: bool) {
@@ -10389,6 +10478,7 @@ mod tests {
             ),
             roadmap_mode: None,
             swarm_mode: false,
+            ultra_mode: false,
             image_attachments: Vec::new(),
             last_image_attachment_remove_buttons: Vec::new(),
             last_queued_prompt_buttons: Vec::new(),
@@ -10608,6 +10698,17 @@ mod tests {
         assert_eq!(app.active_agent_mode_label(), Some("Agent Swarm"));
         app.swarm_mode = false;
         assert_eq!(app.active_agent_mode_label(), None);
+    }
+
+    #[test]
+    fn active_agent_mode_label_includes_ultra() {
+        let mut app = test_app();
+        app.ultra_mode = true;
+        assert_eq!(app.active_agent_mode_label(), Some("Ultra"));
+        app.swarm_mode = true;
+        assert_eq!(app.active_agent_mode_label(), Some("Ultra · Agent Swarm"));
+        app.ultra_mode = false;
+        assert_eq!(app.active_agent_mode_label(), Some("Agent Swarm"));
     }
 
     #[tokio::test]
@@ -14028,6 +14129,61 @@ mod tests {
             &app.provider_menu_items[0],
             ProviderMenuItem::Reasoning(choice) if choice.effort == "high"
         ));
+    }
+
+    #[test]
+    fn thinking_menu_includes_max_when_model_advertises_it() {
+        let mut app = test_app();
+        let mut option = test_provider_option("codex", "Codex", "gpt-5.6-sol");
+        option.default_reasoning = Some("low".to_string());
+        option.reasoning_options = vec![
+            ReasoningEffortDescriptor {
+                effort: "xhigh".to_string(),
+                description: "Extra high".to_string(),
+            },
+            ReasoningEffortDescriptor {
+                effort: "max".to_string(),
+                description: "Maximum reasoning depth for the hardest problems".to_string(),
+            },
+            ReasoningEffortDescriptor {
+                effort: "ultra".to_string(),
+                description: "Maximum reasoning with automatic task delegation".to_string(),
+            },
+        ];
+
+        app.open_reasoning_submenu(option);
+
+        let efforts: Vec<_> = app
+            .provider_menu_items
+            .iter()
+            .filter_map(|item| match item {
+                ProviderMenuItem::Reasoning(choice) => Some(choice.effort.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            efforts.contains(&"max"),
+            "Ctrl+P thinking menu must list max when advertised; got {efforts:?}"
+        );
+        assert!(
+            efforts.contains(&"ultra"),
+            "Ctrl+P thinking menu must list ultra when advertised; got {efforts:?}"
+        );
+        let labels: Vec<_> = app
+            .provider_menu_items
+            .iter()
+            .filter_map(|item| match item {
+                ProviderMenuItem::Reasoning(choice) => Some(format!(
+                    "{} - {}",
+                    choice.effort, choice.description
+                )),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            labels.iter().any(|label| label.starts_with("max -")),
+            "max should render as a selectable thinking-menu row; got {labels:?}"
+        );
     }
 
     #[test]
