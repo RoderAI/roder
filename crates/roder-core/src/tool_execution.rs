@@ -273,6 +273,14 @@ impl Runtime {
         if let Some(remaining) = crate::runtime::deadline_remaining_seconds(deadline) {
             ctx = ctx.with_deadline_remaining_seconds(remaining);
         }
+        // task / agent_swarm children should inherit the live parent turn
+        // selection (supergrok/grok-4.5, etc.), not the process-start defaults.
+        if let Some(selection) = self
+            .parent_model_selection_for_subagents(thread_id, turn_id)
+            .await
+        {
+            ctx = ctx.with_parent_model_selection(selection);
+        }
         let native_workspace_tool = native_tool_uses_remote_workspace(&tool_call.name);
         let runner_binding = if native_workspace_tool {
             Some(

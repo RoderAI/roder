@@ -102,6 +102,7 @@ impl TaskExecutor for SubagentTaskExecutor {
                     prompt: input.prompt,
                     subagent_type: input.subagent_type,
                     model: input.model,
+                    provider: None,
                     tools: input.tools,
                     lane: input.lane,
                     max_concurrent: input.max_concurrent,

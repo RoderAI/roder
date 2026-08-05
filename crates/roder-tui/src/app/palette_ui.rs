@@ -341,14 +341,57 @@ where
             PaletteAction::SwitchThread(thread_id) => {
                 self.load_thread(thread_id).await;
             }
-            PaletteAction::SwitchModel { provider, model } => {
-                self.select_provider_model_params(ProviderSelectParams {
-                    provider,
-                    model: Some(model),
-                    reasoning: None,
-                    thread_id: Some(self.focused_thread_id().to_string()),
-                })
-                .await;
+            PaletteAction::SwitchModel {
+                provider,
+                model,
+                reasoning,
+            } => {
+                if let Some(effort) = reasoning {
+                    self.select_provider_model_params(ProviderSelectParams {
+                        provider,
+                        model: Some(model),
+                        reasoning: Some(effort),
+                        thread_id: Some(self.focused_thread_id().to_string()),
+                    })
+                    .await;
+                } else {
+                    // Match Ctrl+P model picker: open the thinking submenu when
+                    // the model advertises efforts (including max).
+                    match self.providers_list().await {
+                        Ok(list) => {
+                            self.model_options = provider_options_from_list(&list);
+                            self.provider_choices = provider_choices_from_list(&list);
+                            if let Some(option) = self
+                                .model_options
+                                .iter()
+                                .find(|option| {
+                                    option.provider_id == provider && option.model_id == model
+                                })
+                                .cloned()
+                            {
+                                self.select_provider_model(option).await;
+                            } else {
+                                self.select_provider_model_params(ProviderSelectParams {
+                                    provider,
+                                    model: Some(model),
+                                    reasoning: None,
+                                    thread_id: Some(self.focused_thread_id().to_string()),
+                                })
+                                .await;
+                            }
+                        }
+                        Err(err) => {
+                            self.record_error(format!("providers/list failed: {err}"));
+                            self.select_provider_model_params(ProviderSelectParams {
+                                provider,
+                                model: Some(model),
+                                reasoning: None,
+                                thread_id: Some(self.focused_thread_id().to_string()),
+                            })
+                            .await;
+                        }
+                    }
+                }
             }
             PaletteAction::SetPolicyMode(mode) => {
                 self.set_policy_mode(mode, "palette mode switcher").await;

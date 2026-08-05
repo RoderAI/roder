@@ -2180,6 +2180,15 @@
       "sideEffect": "localState"
     },
     {
+      "method": "thread/set_ultra_mode",
+      "paramsType": "ThreadSetUltraModeParams",
+      "resultType": "ThreadSetUltraModeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/set_mode",
       "paramsType": "ThreadSetModeParams",
       "resultType": "ThreadSetModeResult",

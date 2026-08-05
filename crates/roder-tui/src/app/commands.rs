@@ -52,6 +52,10 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Toggle agent-swarm mode or run one task in swarm mode.",
         ),
         ("swarm", "Alias for /agent-swarm."),
+        (
+            "ultra",
+            "Toggle ultra mode (proactive multi-agent) for any model.",
+        ),
         ("deep-research", "Run a multi-agent deep research workflow."),
         ("workflows", "Open dynamic workflow runs and controls."),
         ("webwright", "Inspect Webwright workspace progress."),
@@ -80,6 +84,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "voice" => Some("[hold|tap|off|status]".to_string()),
             "roadmap" => Some("[plan]".to_string()),
             "agent-swarm" | "swarm" => Some("[on|off|status|<prompt>]".to_string()),
+            "ultra" => Some("[on|off|status|<prompt>]".to_string()),
             "deep-research" => Some("<question>".to_string()),
             "workflows" => {
                 Some("[list|<run-id>|pause|resume|stop|save|restart-agent|scripts]".to_string())
@@ -205,6 +210,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
         "/plugin <command> - Manage marketplace plugin installs.".to_string(),
         "/voice [hold|tap|off|status] - Toggle voice dictation into the composer.".to_string(),
         "/agent-swarm [on|off|status|<prompt>] - Toggle agent-swarm mode or run one swarm task (alias: /swarm).".to_string(),
+        "/ultra [on|off|status|<prompt>] - Toggle ultra mode (proactive multi-agent) for any model.".to_string(),
         "/deep-research <question> - Run a multi-agent deep research workflow.".to_string(),
         "/workflows [list|<run-id>|pause|resume|stop|save|restart-agent|scripts] - Open workflow runs and controls.".to_string(),
         "/webwright [inspect|tail] <workspace> - Inspect Webwright progress and artifacts."
@@ -230,6 +236,7 @@ pub(super) fn help_text(commands: &[CommandDescriptor]) -> String {
                 | "voice"
                 | "agent-swarm"
                 | "swarm"
+                | "ultra"
                 | "deep-research"
                 | "workflows"
                 | "webwright"

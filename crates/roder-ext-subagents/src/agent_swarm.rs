@@ -546,6 +546,9 @@ pub struct DispatcherChildLauncher {
     description: String,
     subagent_type: Option<String>,
     timeout_seconds: Option<u64>,
+    /// Live parent provider/model inherited when children omit overrides.
+    parent_model: Option<String>,
+    parent_provider: Option<String>,
 }
 
 impl DispatcherChildLauncher {
@@ -568,7 +571,8 @@ impl AgentSwarmChildLauncher for DispatcherChildLauncher {
             description: self.child_description(&spec),
             prompt: spec.prompt.clone(),
             subagent_type: self.subagent_type.clone(),
-            model: None,
+            model: self.parent_model.clone(),
+            provider: self.parent_provider.clone(),
             tools: None,
             lane: None,
             max_concurrent: None,
@@ -727,6 +731,7 @@ impl ToolExecutor for AgentSwarmTool {
                 ));
             }
         };
+        let parent_selection = ctx.handles.parent_model_selection.clone();
         let launcher: Arc<dyn AgentSwarmChildLauncher> = Arc::new(DispatcherChildLauncher {
             dispatcher: self.dispatcher.clone(),
             parent_thread_id: ctx.thread_id.clone(),
@@ -736,6 +741,8 @@ impl ToolExecutor for AgentSwarmTool {
             description: request.description.clone(),
             subagent_type: request.subagent_type.clone(),
             timeout_seconds: self.config.child_timeout_seconds,
+            parent_model: parent_selection.as_ref().map(|s| s.model.clone()),
+            parent_provider: parent_selection.as_ref().map(|s| s.provider.clone()),
         });
 
         // When the runtime supplied a progress sink, publish a live tick as each
