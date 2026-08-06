@@ -177,14 +177,29 @@ fn cursor_color(theme: Theme) -> Color {
 }
 
 fn composer_key_inserts_newline(key: KeyEvent) -> bool {
+    // Shift+Enter (Kitty CSI-u / enhanced keyboards).
     if key.code == KeyCode::Enter {
-        return key.modifiers.contains(KeyModifiers::SHIFT);
+        return key.modifiers.contains(KeyModifiers::SHIFT)
+            || key.modifiers.contains(KeyModifiers::ALT);
     }
 
-    matches!(key.code, KeyCode::Char('m' | 'M'))
-        && key.modifiers.contains(KeyModifiers::CONTROL)
-        && key.modifiers.contains(KeyModifiers::SHIFT)
-        && !key.modifiers.contains(KeyModifiers::ALT)
+    // Fallback encodings used when the terminal cannot report Shift+Enter:
+    // - Ctrl+J / Ctrl+Enter: classic terminal newline (LF)
+    // - Ctrl+Shift+M: some terminals encode Shift+Enter this way
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    if alt {
+        return false;
+    }
+
+    match key.code {
+        KeyCode::Char('j' | 'J') if ctrl && !shift => true,
+        KeyCode::Char('m' | 'M') if ctrl && shift => true,
+        // Some stacks surface bare LF as Char('\n').
+        KeyCode::Char('\n') => true,
+        _ => false,
+    }
 }
 
 fn handle_command_key(composer: &mut TextArea<'_>, key: KeyEvent) -> Option<ComposerKeyAction> {
@@ -357,6 +372,36 @@ mod tests {
             ComposerKeyAction::Edited
         );
 
+        assert_eq!(composer_text(&composer), "first\n");
+    }
+
+    #[test]
+    fn ctrl_j_inserts_newline_as_terminal_fallback() {
+        let mut composer = TextArea::default();
+        composer.insert_str("first");
+
+        assert_eq!(
+            handle_composer_key(
+                &mut composer,
+                KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)
+            ),
+            ComposerKeyAction::Edited
+        );
+        assert_eq!(composer_text(&composer), "first\n");
+    }
+
+    #[test]
+    fn alt_enter_inserts_newline() {
+        let mut composer = TextArea::default();
+        composer.insert_str("first");
+
+        assert_eq!(
+            handle_composer_key(
+                &mut composer,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+            ),
+            ComposerKeyAction::Edited
+        );
         assert_eq!(composer_text(&composer), "first\n");
     }
 

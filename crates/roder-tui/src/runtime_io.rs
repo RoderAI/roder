@@ -213,11 +213,18 @@ fn recorded_modifiers(modifiers: KeyModifiers) -> Vec<String> {
 pub struct TerminalSession {
     terminal: LiveTerminal,
     keyboard_enhancements_active: bool,
+    tmux_keys: TmuxExtendedKeysGuard,
     restored: bool,
 }
 
 impl TerminalSession {
     pub fn enter() -> anyhow::Result<Self> {
+        // Prefer CSI-u modified-key reporting inside tmux so Shift+Enter is
+        // distinguishable from Enter (crossterm understands CSI 13;2u, but drops
+        // the default xterm form CSI 27;2;13~). Existing panes only pick this up
+        // after a respawn, so we may re-exec once via tmux.
+        tmux_ensure_extended_keys_for_shift_enter()?;
+        let tmux_keys = TmuxExtendedKeysGuard::apply();
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(
@@ -231,6 +238,7 @@ impl TerminalSession {
         Ok(Self {
             terminal,
             keyboard_enhancements_active,
+            tmux_keys,
             restored: false,
         })
     }
@@ -255,8 +263,201 @@ impl TerminalSession {
         )?;
         execute!(self.terminal.backend_mut(), LeaveAlternateScreen)?;
         self.terminal.show_cursor()?;
+        self.tmux_keys.restore();
         self.restored = true;
         Ok(())
+    }
+}
+
+/// Env marker set on the one-time tmux respawn so we do not loop.
+const TMUX_KEYS_READY_ENV: &str = "RODER_TMUX_KEYS_READY";
+
+/// Ensure this tmux pane can distinguish Shift+Enter from Enter.
+///
+/// tmux only applies `extended-keys` to panes created (or respawned) after the
+/// option is set. When Roder starts in an existing pane with the option off,
+/// we set the session options and respawn once into the same pane.
+fn tmux_ensure_extended_keys_for_shift_enter() -> anyhow::Result<()> {
+    if std::env::var_os("TMUX").is_none() {
+        return Ok(());
+    }
+    if std::env::var_os(TMUX_KEYS_READY_ENV).is_some() {
+        // Pane was recreated with the right key mode; TerminalSession::enter
+        // still installs the restore guard.
+        return Ok(());
+    }
+
+    let mode = tmux_display("#{pane_key_mode}").unwrap_or_default();
+    let already_ext = mode.starts_with("Ext");
+    let keys = tmux_show_option("extended-keys").unwrap_or_else(|| "off".to_string());
+    let format = tmux_show_option("extended-keys-format").unwrap_or_else(|| "xterm".to_string());
+    if already_ext && keys == "always" && format == "csi-u" {
+        return Ok(());
+    }
+
+    // Capture previous values for restore after the respawned process exits.
+    // Persist them in env so the child guard can restore on exit.
+    if std::env::var_os("RODER_TMUX_PREV_EXTENDED_KEYS").is_none() {
+        // SAFETY: single-threaded startup before any threads spawn.
+        unsafe {
+            std::env::set_var("RODER_TMUX_PREV_EXTENDED_KEYS", &keys);
+            std::env::set_var("RODER_TMUX_PREV_EXTENDED_KEYS_FORMAT", &format);
+        }
+    }
+
+    let _ = tmux_set_option("extended-keys", "always");
+    let _ = tmux_set_option("extended-keys-format", "csi-u");
+
+    if already_ext {
+        return Ok(());
+    }
+
+    tmux_respawn_self_for_extended_keys()?;
+    // respawn -k replaces this process; if we get here, fall through and run
+    // without enhanced keys (Ctrl+J still works for newlines).
+    Ok(())
+}
+
+fn tmux_respawn_self_for_extended_keys() -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut cmd = std::process::Command::new("tmux");
+    cmd.arg("respawn-pane");
+    cmd.arg("-k");
+    cmd.arg("-e");
+    cmd.arg(format!("{TMUX_KEYS_READY_ENV}=1"));
+    if let Ok(prev) = std::env::var("RODER_TMUX_PREV_EXTENDED_KEYS") {
+        cmd.arg("-e");
+        cmd.arg(format!("RODER_TMUX_PREV_EXTENDED_KEYS={prev}"));
+    }
+    if let Ok(prev) = std::env::var("RODER_TMUX_PREV_EXTENDED_KEYS_FORMAT") {
+        cmd.arg("-e");
+        cmd.arg(format!("RODER_TMUX_PREV_EXTENDED_KEYS_FORMAT={prev}"));
+    }
+    // Preserve cwd.
+    if let Ok(cwd) = std::env::current_dir() {
+        cmd.arg("-c");
+        cmd.arg(cwd);
+    }
+    cmd.arg("--");
+    cmd.arg(exe);
+    cmd.args(args);
+    let status = cmd.status()?;
+    if status.success() {
+        // Parent is being replaced; exit so we do not double-run the TUI.
+        std::process::exit(0);
+    }
+    Ok(())
+}
+
+/// While Roder is full-screen inside tmux, force modified-key reporting so
+/// Shift+Enter reaches the app as a distinct key event.
+///
+/// Restores the previous session values on exit. No-op when not running under
+/// tmux or when the `tmux` binary is unavailable.
+struct TmuxExtendedKeysGuard {
+    previous_keys: Option<String>,
+    previous_format: Option<String>,
+    active: bool,
+}
+
+impl TmuxExtendedKeysGuard {
+    fn apply() -> Self {
+        if std::env::var_os("TMUX").is_none() {
+            return Self {
+                previous_keys: None,
+                previous_format: None,
+                active: false,
+            };
+        }
+        Self::apply_options_only()
+    }
+
+    fn apply_options_only() -> Self {
+        let previous_keys = std::env::var("RODER_TMUX_PREV_EXTENDED_KEYS")
+            .ok()
+            .or_else(|| tmux_show_option("extended-keys"))
+            .unwrap_or_else(|| "off".to_string());
+        let previous_format = std::env::var("RODER_TMUX_PREV_EXTENDED_KEYS_FORMAT")
+            .ok()
+            .or_else(|| tmux_show_option("extended-keys-format"))
+            .unwrap_or_else(|| "xterm".to_string());
+        // `always` reports modified keys even without a keyboard-protocol
+        // negotiation. `csi-u` matches Kitty-style CSI 13;2u that crossterm
+        // already parses (the xterm form CSI 27;2;13~ is dropped by 0.29).
+        let set_keys = tmux_set_option("extended-keys", "always");
+        let set_format = tmux_set_option("extended-keys-format", "csi-u");
+        if !set_keys && !set_format {
+            return Self {
+                previous_keys: None,
+                previous_format: None,
+                active: false,
+            };
+        }
+        Self {
+            previous_keys: Some(previous_keys),
+            previous_format: Some(previous_format),
+            active: true,
+        }
+    }
+
+    fn restore(&mut self) {
+        if !self.active {
+            return;
+        }
+        if let Some(value) = self.previous_keys.take() {
+            let _ = tmux_set_option("extended-keys", &value);
+        }
+        if let Some(value) = self.previous_format.take() {
+            let _ = tmux_set_option("extended-keys-format", &value);
+        }
+        self.active = false;
+    }
+}
+
+impl Drop for TmuxExtendedKeysGuard {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
+fn tmux_show_option(name: &str) -> Option<String> {
+    let output = std::process::Command::new("tmux")
+        .args(["show-options", "-qv", name])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn tmux_set_option(name: &str, value: &str) -> bool {
+    std::process::Command::new("tmux")
+        .args(["set-option", name, value])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn tmux_display(format: &str) -> Option<String> {
+    let output = std::process::Command::new("tmux")
+        .args(["display-message", "-p", format])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 
