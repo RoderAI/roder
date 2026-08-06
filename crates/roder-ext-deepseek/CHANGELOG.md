@@ -1,4 +1,14 @@
 # Changelog
+## 0.1.2 (2026-08-06)
+
+### Fixes
+
+#### Fix DeepSeek thinking mode reasoning in Ctrl+P and tool rollouts
+
+DeepSeek models advertise real thinking efforts again, stream
+`reasoning_content`, send the DeepSeek `thinking` toggle, and pass CoT back on
+tool-call turns.
+
 ## 0.1.1 (2026-07-23)
 
 ### Features
