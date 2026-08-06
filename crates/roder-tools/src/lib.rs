@@ -784,6 +784,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(home);
     }
 
+    #[cfg(not(windows))]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn builtin_coding_tools_read_file_expands_user_scheme() {
+        let _guard = env_lock().lock().unwrap();
+        let previous_home = std::env::var_os("HOME");
+        let previous_userprofile = std::env::var_os("USERPROFILE");
+        let root = test_workspace("user-scheme-root");
+        let home = test_workspace("user-scheme-home");
+        let skill = home.join(".codex").join("skills").join("roadmap");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "roadmap body").unwrap();
+        let mut registry = ToolRegistry::default();
+        BuiltinCodingToolsContributor::new(root.clone())
+            .unwrap()
+            .contribute(&mut registry)
+            .unwrap();
+
+        // SAFETY: this test holds a process-wide mutex while mutating HOME.
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("USERPROFILE", &home);
+        }
+        let read = run_tool(
+            &registry,
+            &root,
+            "read_file",
+            json!({ "path": "user://.codex/skills/roadmap/SKILL.md" }),
+        )
+        .await;
+        restore_home(previous_home);
+        restore_userprofile(previous_userprofile);
+
+        assert!(
+            read.text.contains("roadmap body"),
+            "unexpected read_file output: {}",
+            read.text
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
     #[tokio::test]
     async fn builtin_coding_tools_can_restrict_paths_to_workspace() {
         let root = test_workspace("path-safety");

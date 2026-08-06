@@ -51,7 +51,7 @@ impl ToolExecutor for ViewImageTool {
             name: "view_image".to_string(),
             description: "View an image file (png, jpeg, gif, or webp) so you can see its contents. \
                 Provide the path to a local image and it is attached to the conversation as an image \
-                you can inspect. Relative paths resolve from the workspace root."
+                you can inspect. Relative paths resolve from the workspace root; `user://` maps to $HOME and `workspace://` maps to the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",

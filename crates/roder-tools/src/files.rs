@@ -37,12 +37,15 @@ impl ToolExecutor for ReadFileTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".to_string(),
-            description: "Read a UTF-8 text file, optionally by line range. Relative paths resolve from the workspace root."
+            description: "Read a UTF-8 text file, optionally by line range. Relative paths resolve from the workspace root; `user://` maps to $HOME and `workspace://` maps to the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
+                    "path": {
+                        "type": "string",
+                        "description": "File path. Relative paths resolve from the workspace root; absolute paths, `~/...`, `user://...` ($HOME), and `workspace://...` are also accepted."
+                    },
                     "start_line": { "type": "integer", "minimum": 1 },
                     "limit": {
                         "type": "integer",
@@ -121,12 +124,16 @@ impl ToolExecutor for ListFilesTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "list_files".to_string(),
-            description: "List direct children of a directory with paginated output. Relative paths resolve from the workspace root."
+            description: "List direct children of a directory with paginated output. Relative paths resolve from the workspace root; `user://` maps to $HOME and `workspace://` maps to the workspace root."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "default": "." },
+                    "path": {
+                        "type": "string",
+                        "default": ".",
+                        "description": "Directory path. Relative paths resolve from the workspace root; absolute paths, `~/...`, `user://...` ($HOME), and `workspace://...` are also accepted."
+                    },
                     "offset": {
                         "type": "integer",
                         "minimum": 0,

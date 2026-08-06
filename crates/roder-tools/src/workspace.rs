@@ -100,6 +100,10 @@ mod tests {
         assert!(escape.to_string().contains("outside workspace"));
         let home = workspace.resolve_existing("~/secrets").unwrap_err();
         assert!(home.to_string().contains("not supported"));
+        let user_scheme = workspace
+            .resolve_existing("user://.codex/skills/demo/SKILL.md")
+            .unwrap_err();
+        assert!(user_scheme.to_string().contains("not supported"));
     }
 
     #[test]
@@ -178,6 +182,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn path_schemes_expand_user_and_workspace_prefixes() {
+        let root = temp_workspace("roder-path-schemes");
+        let skill_dir = root.join(".agents").join("skills").join("review");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "body").unwrap();
+
+        let home = temp_workspace("roder-path-schemes-home");
+        let user_skill = home.join(".codex").join("skills").join("roadmap");
+        std::fs::create_dir_all(&user_skill).unwrap();
+        std::fs::write(user_skill.join("SKILL.md"), "user").unwrap();
+
+        let previous_home = std::env::var_os("HOME");
+        // SAFETY: unit test mutates HOME only for this process-local assertion.
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+
+        let workspace = Workspace::new(root.clone()).unwrap();
+        let resolved_user = workspace
+            .resolve_existing("user://.codex/skills/roadmap/SKILL.md")
+            .unwrap();
+        let resolved_workspace = workspace
+            .resolve_existing("workspace://.agents/skills/review/SKILL.md")
+            .unwrap();
+
+        match previous_home {
+            Some(value) => unsafe {
+                std::env::set_var("HOME", value);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
+        }
+
+        assert_eq!(
+            resolved_user,
+            user_skill.join("SKILL.md").canonicalize().unwrap()
+        );
+        assert_eq!(
+            resolved_workspace,
+            skill_dir.join("SKILL.md").canonicalize().unwrap()
+        );
+        assert_eq!(
+            workspace.resolve_for_write("workspace://notes.txt").unwrap(),
+            root.canonicalize().unwrap().join("notes.txt")
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn expand_home_maps_user_scheme_to_home_directory() {
+        let home = home_dir().unwrap();
+        assert_eq!(expand_home("user://").unwrap(), home);
+        assert_eq!(
+            expand_home("user://.codex/skills/demo/SKILL.md").unwrap(),
+            home.join(".codex/skills/demo/SKILL.md")
+        );
+        assert_eq!(expand_home("~/.roder").unwrap(), home.join(".roder"));
+    }
+
     fn temp_workspace(prefix: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -197,7 +265,27 @@ pub(crate) fn expand_home(input: &str) -> anyhow::Result<PathBuf> {
         return Ok(home.join(rest));
     }
 
+    // Codex-style home alias used by skill canonical paths (`user://.codex/skills/...`).
+    if input == "user://" {
+        return home_dir();
+    }
+    if let Some(rest) = input.strip_prefix("user://") {
+        let home = home_dir()?;
+        let rest = rest.trim_start_matches('/');
+        if rest.is_empty() {
+            return Ok(home);
+        }
+        return Ok(home.join(rest));
+    }
+
     Ok(PathBuf::from(input))
+}
+
+pub(crate) fn is_home_relative(input: &str) -> bool {
+    input == "~"
+        || input.starts_with("~/")
+        || input == "user://"
+        || input.starts_with("user://")
 }
 
 fn home_dir() -> anyhow::Result<PathBuf> {
@@ -370,9 +458,37 @@ impl Workspace {
         if trimmed.is_empty() {
             bail!("path is required");
         }
-        // `~` would expand to the local home, not the runner's; reject it.
-        if self.remote && (trimmed == "~" || trimmed.starts_with("~/")) {
+        // Home aliases would expand to the local home, not the runner's; reject them.
+        if self.remote && is_home_relative(trimmed) {
             bail!("home-relative paths are not supported on a remote runner workspace: {trimmed}");
+        }
+        // Codex-style workspace alias used by skill canonical paths.
+        if trimmed == "workspace://" || trimmed == "workspace:///" {
+            return Ok(self.root.clone());
+        }
+        if let Some(rest) = trimmed.strip_prefix("workspace://") {
+            // Join component-wise so an absolute-looking rest cannot replace the root,
+            // while still honoring `.` / `..` under the workspace.
+            let mut path = self.root.clone();
+            for component in Path::new(rest).components() {
+                match component {
+                    Component::Normal(part) => path.push(part),
+                    Component::ParentDir => {
+                        if path == self.root || !path.starts_with(&self.root) {
+                            bail!("path escapes workspace root");
+                        }
+                        if !path.pop() {
+                            bail!("path escapes filesystem root");
+                        }
+                        if !path.starts_with(&self.root) {
+                            path = self.root.clone();
+                        }
+                    }
+                    Component::CurDir => {}
+                    Component::Prefix(_) | Component::RootDir => {}
+                }
+            }
+            return Ok(path);
         }
         let path = expand_home(trimmed)?;
         if path.is_absolute() {
