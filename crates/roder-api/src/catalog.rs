@@ -954,8 +954,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "DeepSeek V4 Flash",
         "OpenCode Zen DeepSeek coding model.",
         128_000,
-        REASONING_NONE,
-        &[],
+        REASONING_HIGH,
+        deepseek::DEEPSEEK_REASONING,
     ),
     opencode_model(
         PROVIDER_OPENCODE,
@@ -963,8 +963,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "DeepSeek V4 Pro",
         "OpenCode Zen DeepSeek Pro coding model.",
         128_000,
-        REASONING_NONE,
-        &[],
+        REASONING_HIGH,
+        deepseek::DEEPSEEK_REASONING,
     ),
     opencode_model(
         PROVIDER_OPENCODE_GO,
@@ -999,8 +999,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "DeepSeek V4 Flash",
         "OpenCode Go DeepSeek coding model.",
         128_000,
-        REASONING_NONE,
-        &[],
+        REASONING_HIGH,
+        deepseek::DEEPSEEK_REASONING,
     ),
     opencode_model(
         PROVIDER_OPENCODE_GO,
@@ -1008,8 +1008,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "DeepSeek V4 Pro",
         "OpenCode Go DeepSeek Pro coding model.",
         128_000,
-        REASONING_NONE,
-        &[],
+        REASONING_HIGH,
+        deepseek::DEEPSEEK_REASONING,
     ),
     opencode_model(
         PROVIDER_KIMI_CODE,
@@ -2128,6 +2128,37 @@ mod tests {
         assert!(models.iter().any(|model| model.id == "deepseek-reasoner"));
         assert!(models.iter().any(|model| model.id == "deepseek-v4-flash"));
         assert!(models.iter().any(|model| model.id == "deepseek-v4-pro"));
+
+        let flash = models
+            .iter()
+            .find(|model| model.id == "deepseek-v4-flash")
+            .expect("flash model");
+        assert_eq!(flash.default_reasoning, Some(REASONING_HIGH.to_string()));
+        assert_eq!(
+            flash
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_NONE,
+                REASONING_LOW,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ]
+        );
+
+        let chat = models
+            .iter()
+            .find(|model| model.id == "deepseek-chat")
+            .expect("chat model");
+        assert_eq!(chat.default_reasoning, Some(REASONING_NONE.to_string()));
+        assert!(
+            chat.supported_reasoning
+                .iter()
+                .any(|option| option.effort == REASONING_HIGH)
+        );
     }
 
     #[test]

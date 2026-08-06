@@ -4796,6 +4796,18 @@ impl Runtime {
                     compacted_this_turn = true;
                 }
             }
+            // Persist CoT before tool calls so providers that require
+            // `reasoning_content` on tool-call assistant turns (DeepSeek) can
+            // replay it on the next request. Without this, multi-step tool
+            // rollouts drop the thinking block and the API returns 400.
+            if !reasoning_text.is_empty() {
+                let item = TranscriptItem::ReasoningSummary(ReasoningSummary {
+                    text: std::mem::take(&mut reasoning_text),
+                });
+                self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                    .await?;
+                transcript.push(item);
+            }
             for call in &tool_calls {
                 let tool_item = TranscriptItem::ToolCall(ToolCallRecord {
                     id: call.id.clone(),
