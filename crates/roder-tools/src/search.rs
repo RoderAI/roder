@@ -43,7 +43,7 @@ impl ToolExecutor for GrepTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "grep".to_string(),
-            description: "Search text files for a regular expression (default) or literal query with paginated output. Relative paths resolve from the workspace root; absolute paths are searched directly."
+            description: "Search text files for a regular expression (default) or literal query with paginated output. Relative paths resolve from the workspace root; absolute paths, `~/...`, `user://...` ($HOME), and `workspace://...` are also accepted."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -52,7 +52,7 @@ impl ToolExecutor for GrepTool {
                     "path": {
                         "type": "string",
                         "default": ".",
-                        "description": "Directory or file to search. Relative paths resolve from the workspace root; an absolute path is searched directly."
+                        "description": "Directory or file to search. Relative paths resolve from the workspace root; absolute paths, `~/...`, `user://...` ($HOME), and `workspace://...` are also accepted."
                     },
                     "regex": {
                         "type": "boolean",
@@ -458,13 +458,19 @@ pub(crate) fn prepare_glob_pattern(
     pattern: &str,
 ) -> anyhow::Result<PreparedGlobPattern> {
     let trimmed = pattern.trim();
-    if workspace.is_remote() && (trimmed == "~" || trimmed.starts_with("~/")) {
+    if workspace.is_remote() && crate::workspace::is_home_relative(trimmed) {
         anyhow::bail!(
             "home-relative glob patterns are not supported on a remote runner workspace: {trimmed}"
         );
     }
-    let expanded = if trimmed == "~" || trimmed.starts_with("~/") {
+    let expanded = if crate::workspace::is_home_relative(trimmed) {
         crate::workspace::expand_home(trimmed)?
+            .to_string_lossy()
+            .into_owned()
+    } else if trimmed == "workspace://" || trimmed.starts_with("workspace://") {
+        // Reuse workspace path resolution so absolute/`..` tails cannot escape.
+        workspace
+            .resolve_for_write(trimmed)?
             .to_string_lossy()
             .into_owned()
     } else {
