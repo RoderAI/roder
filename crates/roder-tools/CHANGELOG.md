@@ -1,3 +1,13 @@
+## 0.1.6 (2026-08-06)
+
+### Fixes
+
+#### Expand Codex-style `user://` tool paths to `$HOME`
+
+File lookup tools resolve skill-style `user://...` paths against the home
+directory and `workspace://...` against the workspace root, so agents can open
+canonical skill paths instead of treating the scheme as a literal relative path.
+
 ## 0.1.5 (2026-07-21)
 
 ### Fixes
