@@ -64,6 +64,10 @@ const COMPOSER_IDLE_SHORTCUTS: &[Shortcut] = &[
         action: "newline",
     },
     Shortcut {
+        keys: "ctrl+j",
+        action: "newline",
+    },
+    Shortcut {
         keys: "/",
         action: "commands",
     },
@@ -92,6 +96,10 @@ const COMPOSER_RUNNING_SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         keys: "shift+enter",
+        action: "newline",
+    },
+    Shortcut {
+        keys: "ctrl+j",
         action: "newline",
     },
     Shortcut {
