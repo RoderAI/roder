@@ -29,6 +29,10 @@ pub struct ChatCompletionsRequestConfig {
     pub headers: Vec<(String, String)>,
     pub max_tokens_field: MaxTokensField,
     pub thinking_disabled: bool,
+    /// When true, emit DeepSeek-style `thinking: { type: enabled|disabled }`
+    /// from [`AgentInferenceRequest::reasoning`] (in addition to
+    /// `reasoning_effort` when enabled).
+    pub include_thinking_param: bool,
     /// When false, omit `stream_options` (some providers reject it on managed APIs).
     pub include_stream_usage: bool,
     /// When false, omit `parallel_tool_calls` even when tools are present.
@@ -48,6 +52,7 @@ impl ChatCompletionsRequestConfig {
             headers: Vec::new(),
             max_tokens_field: MaxTokensField::MaxTokens,
             thinking_disabled: false,
+            include_thinking_param: false,
             include_stream_usage: true,
             include_parallel_tool_calls: true,
         }
@@ -68,6 +73,7 @@ impl ChatCompletionsRequestConfig {
             headers: Vec::new(),
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             thinking_disabled: true,
+            include_thinking_param: false,
             include_stream_usage: true,
             include_parallel_tool_calls: true,
         }
@@ -89,8 +95,18 @@ pub async fn stream_chat_completions(
     }
     if config.thinking_disabled {
         body["thinking"] = json!({ "type": "disabled" });
-    }
-    if request.reasoning.enabled {
+    } else if config.include_thinking_param {
+        // DeepSeek thinking mode: toggle + effort
+        // (https://api-docs.deepseek.com/guides/thinking_mode/).
+        if request.reasoning.enabled {
+            body["thinking"] = json!({ "type": "enabled" });
+            if let Some(level) = request.reasoning.level.as_deref() {
+                body["reasoning_effort"] = json!(map_thinking_effort(level));
+            }
+        } else {
+            body["thinking"] = json!({ "type": "disabled" });
+        }
+    } else if request.reasoning.enabled {
         if let Some(level) = request.reasoning.level.as_deref() {
             body["reasoning_effort"] = json!(level);
         }
@@ -332,6 +348,10 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
     }
 
     let mut pending_tool_calls: Vec<(String, Value)> = Vec::new();
+    // DeepSeek requires `reasoning_content` on assistant messages that issued
+    // tool calls; keep CoT from ReasoningSummary items until the next assistant
+    // / tool_calls message can carry it.
+    let mut pending_reasoning: Option<String> = None;
     for item in &request.transcript {
         if let TranscriptItem::ToolCall(call) = item {
             pending_tool_calls.push((
@@ -347,15 +367,37 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
             ));
             continue;
         }
-        flush_pending_tool_calls(&mut messages, &mut pending_tool_calls, &results_by_id);
+        flush_pending_tool_calls(
+            &mut messages,
+            &mut pending_tool_calls,
+            &results_by_id,
+            &mut pending_reasoning,
+        );
         match item {
             TranscriptItem::UserMessage(message) => {
+                // A new user turn ends any leftover CoT that was not attached to
+                // a tool-call assistant message (DeepSeek ignores non-tool CoT).
+                pending_reasoning = None;
                 messages.push(json!({ "role": "user", "content": message.text }));
             }
             TranscriptItem::AssistantMessage(message) => {
-                if !message.text.is_empty() {
-                    messages.push(json!({ "role": "assistant", "content": message.text }));
+                if message.text.is_empty() && pending_reasoning.is_none() {
+                    continue;
                 }
+                let mut assistant = json!({
+                    "role": "assistant",
+                    "content": if message.text.is_empty() {
+                        Value::Null
+                    } else {
+                        Value::String(message.text.clone())
+                    },
+                });
+                if let Some(reasoning) = pending_reasoning.take() {
+                    if !reasoning.is_empty() {
+                        assistant["reasoning_content"] = json!(reasoning);
+                    }
+                }
+                messages.push(assistant);
             }
             TranscriptItem::ToolResult(_) => {
                 // Real results are emitted alongside their assistant tool_calls
@@ -363,10 +405,22 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                 // call is an orphan result; dropping it keeps the request valid.
             }
             TranscriptItem::ContextCompaction(compaction) => {
+                pending_reasoning = None;
                 messages.push(json!({ "role": "system", "content": compaction.summary }));
             }
             TranscriptItem::ReasoningSummary(summary) => {
-                messages.push(json!({ "role": "assistant", "content": summary.text }));
+                if summary.text.is_empty() {
+                    continue;
+                }
+                match pending_reasoning.as_mut() {
+                    Some(existing) => {
+                        if !existing.is_empty() {
+                            existing.push_str("\n\n");
+                        }
+                        existing.push_str(&summary.text);
+                    }
+                    None => pending_reasoning = Some(summary.text.clone()),
+                }
             }
             TranscriptItem::ToolCall(_)
             | TranscriptItem::FileChange(_)
@@ -374,7 +428,12 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
             | TranscriptItem::ProviderMetadata(_) => {}
         }
     }
-    flush_pending_tool_calls(&mut messages, &mut pending_tool_calls, &results_by_id);
+    flush_pending_tool_calls(
+        &mut messages,
+        &mut pending_tool_calls,
+        &results_by_id,
+        &mut pending_reasoning,
+    );
     messages
 }
 
@@ -386,16 +445,42 @@ fn flush_pending_tool_calls(
     messages: &mut Vec<Value>,
     pending: &mut Vec<(String, Value)>,
     results_by_id: &HashMap<&str, &str>,
+    pending_reasoning: &mut Option<String>,
 ) {
     if pending.is_empty() {
         return;
     }
     let tool_calls: Vec<Value> = pending.iter().map(|(_, call)| call.clone()).collect();
-    messages.push(json!({
+
+    // Fold a trailing plain assistant message into the tool_calls message so
+    // content + reasoning_content + tool_calls share one assistant turn (DeepSeek).
+    let mut content = Value::Null;
+    let mut reasoning_from_assistant = None;
+    if let Some(last) = messages.last()
+        && last.get("role").and_then(Value::as_str) == Some("assistant")
+        && last.get("tool_calls").is_none()
+    {
+        content = last.get("content").cloned().unwrap_or(Value::Null);
+        reasoning_from_assistant = last
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        messages.pop();
+    }
+
+    let mut assistant = json!({
         "role": "assistant",
-        "content": Value::Null,
+        "content": content,
         "tool_calls": tool_calls,
-    }));
+    });
+    let reasoning = pending_reasoning
+        .take()
+        .or(reasoning_from_assistant)
+        .filter(|text| !text.is_empty());
+    if let Some(reasoning) = reasoning {
+        assistant["reasoning_content"] = json!(reasoning);
+    }
+    messages.push(assistant);
     for (id, _) in pending.drain(..) {
         let content = results_by_id
             .get(id.as_str())
@@ -406,6 +491,15 @@ fn flush_pending_tool_calls(
             "tool_call_id": id,
             "content": content,
         }));
+    }
+}
+
+/// Map Roder effort labels onto DeepSeek thinking-mode wire values.
+fn map_thinking_effort(level: &str) -> &str {
+    match level {
+        "minimal" | "medium" => "high",
+        "ultra" => "max",
+        other => other,
     }
 }
 
@@ -473,21 +567,22 @@ mod tests {
 
         let messages = chat_messages(&request, &ChatToolNameMap::default());
 
-        // user, assistant text, ONE assistant tool_calls message (both ids),
+        // user + ONE assistant message carrying content + both tool_calls,
         // then the two tool results — not two separate tool_calls messages.
         let roles: Vec<&str> = messages
             .iter()
             .map(|m| m["role"].as_str().unwrap_or_default())
             .collect();
-        assert_eq!(roles, ["user", "assistant", "assistant", "tool", "tool"]);
+        assert_eq!(roles, ["user", "assistant", "tool", "tool"]);
 
-        let tool_call_message = &messages[2];
+        let tool_call_message = &messages[1];
+        assert_eq!(tool_call_message["content"], "On it.");
         let calls = tool_call_message["tool_calls"].as_array().unwrap();
         assert_eq!(calls.len(), 2, "both parallel calls share one message");
         assert_eq!(calls[0]["id"], "write_file:0");
         assert_eq!(calls[1]["id"], "write_file:1");
-        assert_eq!(messages[3]["tool_call_id"], "write_file:0");
-        assert_eq!(messages[4]["tool_call_id"], "write_file:1");
+        assert_eq!(messages[2]["tool_call_id"], "write_file:0");
+        assert_eq!(messages[3]["tool_call_id"], "write_file:1");
 
         // Interleaved call/result pairs stay valid too (one call per message).
         let interleaved = AgentInferenceRequest {
@@ -526,6 +621,90 @@ mod tests {
             .collect();
         assert_eq!(roles, ["assistant", "tool", "assistant", "tool"]);
         assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reasoning_summary_attaches_to_tool_call_assistant_message() {
+        use roder_api::transcript::{ReasoningSummary, ToolCallRecord, ToolResultRecord};
+
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "deepseek".to_string(),
+                model: "deepseek-v4-pro".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("weather?")),
+                TranscriptItem::ReasoningSummary(ReasoningSummary {
+                    text: "Need the weather tool.".to_string(),
+                }),
+                TranscriptItem::ToolCall(ToolCallRecord {
+                    id: "weather:0".to_string(),
+                    name: "get_weather".to_string(),
+                    arguments: "{\"city\":\"Hangzhou\"}".to_string(),
+                }),
+                TranscriptItem::ToolResult(ToolResultRecord {
+                    id: "weather:0".to_string(),
+                    name: Some("get_weather".to_string()),
+                    result: "cloudy".to_string(),
+                    display_payload: None,
+                    is_error: false,
+                }),
+            ],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig {
+                enabled: true,
+                level: Some("high".to_string()),
+            },
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let messages = chat_messages(&request, &ChatToolNameMap::default());
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["reasoning_content"], "Need the weather tool.");
+        assert!(messages[1].get("tool_calls").is_some());
+        assert_eq!(messages[2]["role"], "tool");
+    }
+
+    #[test]
+    fn reasoning_summary_attaches_to_following_assistant_message() {
+        use roder_api::transcript::{AssistantMessage, ReasoningSummary};
+
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "deepseek".to_string(),
+                model: "deepseek-reasoner".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![
+                TranscriptItem::UserMessage(UserMessage::text("2+2?")),
+                TranscriptItem::ReasoningSummary(ReasoningSummary {
+                    text: "Simple arithmetic.".to_string(),
+                }),
+                TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "4".to_string(),
+                    phase: None,
+                }),
+            ],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig {
+                enabled: true,
+                level: Some("high".to_string()),
+            },
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let messages = chat_messages(&request, &ChatToolNameMap::default());
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["content"], "4");
+        assert_eq!(messages[1]["reasoning_content"], "Simple arithmetic.");
     }
 
     #[test]
@@ -671,6 +850,59 @@ mod tests {
         assert_eq!(body["max_completion_tokens"], 32);
         assert_eq!(body["thinking"], json!({ "type": "disabled" }));
         assert_eq!(body["tools"][0]["function"]["name"], "run_command");
+    }
+
+    #[tokio::test]
+    async fn stream_chat_completions_emits_thinking_toggle_when_configured() {
+        let server = spawn_chat_server(
+            "/chat/completions",
+            "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think \",\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}\r\n\r\ndata: [DONE]\r\n\r\n",
+        )
+        .await;
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "deepseek".to_string(),
+                model: "deepseek-v4-flash".to_string(),
+            },
+            instructions: InstructionBundle::default(),
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hello"))],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            reasoning: ReasoningConfig {
+                enabled: true,
+                level: Some("medium".to_string()),
+            },
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: json!({}),
+        };
+
+        let mut config =
+            ChatCompletionsRequestConfig::bearer("DeepSeek Platform", server.base_url.clone(), "k");
+        config.include_thinking_param = true;
+
+        let mut stream = stream_chat_completions(config, request).await.unwrap();
+        let mut saw_reasoning = false;
+        let mut saw_message = false;
+        while let Some(event) = stream.next().await {
+            match event.unwrap() {
+                roder_api::inference::InferenceEvent::ReasoningDelta(delta) => {
+                    assert_eq!(delta.text, "think ");
+                    saw_reasoning = true;
+                }
+                roder_api::inference::InferenceEvent::MessageDelta(delta) => {
+                    assert_eq!(delta.text, "hi");
+                    saw_message = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_reasoning);
+        assert!(saw_message);
+        let (_, body) = server.request.await.unwrap();
+        assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+        // medium is not a DeepSeek wire effort; map to high.
+        assert_eq!(body["reasoning_effort"], "high");
     }
 
     #[tokio::test]
