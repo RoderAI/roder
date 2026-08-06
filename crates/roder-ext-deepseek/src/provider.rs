@@ -74,7 +74,7 @@ impl InferenceEngine for DeepSeekInferenceEngine {
             streaming: true,
             tool_calls: true,
             parallel_tool_calls: true,
-            reasoning_summaries: false,
+            reasoning_summaries: true,
             structured_output: true,
             image_input: false,
             prompt_cache: true,
@@ -118,11 +118,11 @@ impl InferenceEngine for DeepSeekInferenceEngine {
             )
         };
         let base_url = self.base_url();
-        stream_chat_completions(
-            ChatCompletionsRequestConfig::bearer(PROVIDER_NAME, base_url, api_key),
-            request,
-        )
-        .await
+        let mut config = ChatCompletionsRequestConfig::bearer(PROVIDER_NAME, base_url, api_key);
+        // DeepSeek thinking mode needs the explicit `thinking` toggle plus
+        // `reasoning_effort` (see api-docs.deepseek.com/guides/thinking_mode).
+        config.include_thinking_param = true;
+        stream_chat_completions(config, request).await
     }
 }
 

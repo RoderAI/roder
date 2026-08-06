@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use roder_api::inference::{
-    CompletionMetadata, InferenceEvent, MessageDelta, TokenUsage, ToolCallCompleted,
+    CompletionMetadata, InferenceEvent, MessageDelta, ReasoningDelta, TokenUsage, ToolCallCompleted,
 };
 use serde_json::{Value, json};
 
@@ -101,6 +101,15 @@ impl ChatStreamState {
         };
 
         let mut events = Vec::new();
+        // DeepSeek and other OpenAI-compatible thinking models stream CoT on
+        // `reasoning_content` (sometimes `reasoning`) alongside `content`.
+        if let Some(reasoning) = first_string(delta, &["reasoning_content", "reasoning"])
+            && !reasoning.is_empty()
+        {
+            events.push(InferenceEvent::ReasoningDelta(ReasoningDelta {
+                text: reasoning.to_string(),
+            }));
+        }
         if let Some(content) = delta.get("content").and_then(Value::as_str)
             && !content.is_empty()
         {
@@ -185,6 +194,10 @@ fn extract_chat_usage(value: &Value) -> Option<TokenUsage> {
 
 fn number_to_u32(value: Option<&Value>) -> Option<u32> {
     value?.as_u64().and_then(|n| u32::try_from(n).ok())
+}
+
+fn first_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|key| value.get(*key).and_then(Value::as_str))
 }
 
 fn sse_frame_boundary(buffer: &str) -> Option<(usize, usize)> {

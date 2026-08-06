@@ -1,6 +1,6 @@
 use super::{
-    ModelCatalogEntry, PROVIDER_DEEPSEEK, PROVIDER_KIND_DEEPSEEK, ProviderCatalogEntry,
-    REASONING_MEDIUM, REASONING_NONE, STANDARD_REASONING,
+    ModelCatalogEntry, PROVIDER_DEEPSEEK, PROVIDER_KIND_DEEPSEEK, ProviderCatalogEntry, REASONING_HIGH,
+    REASONING_LOW, REASONING_MAX, REASONING_NONE, REASONING_XHIGH, ReasoningOption,
 };
 
 /// Default OpenAI-compatible Chat Completions base URL for DeepSeek Platform.
@@ -24,6 +24,34 @@ pub(crate) const DEEPSEEK_PROVIDER: ProviderCatalogEntry = ProviderCatalogEntry 
     supports_websockets: false,
 };
 
+/// DeepSeek thinking-mode efforts from the Platform API docs.
+///
+/// Wire values are `low` / `high` / `max` (plus `xhigh`, which DeepSeek maps
+/// per-model). `none` disables thinking via `thinking: { type: "disabled" }`.
+/// Default effort is `high` when thinking is enabled.
+pub const DEEPSEEK_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_NONE,
+        description: "Disable DeepSeek thinking mode",
+    },
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Low DeepSeek thinking effort",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "High DeepSeek thinking effort (API default)",
+    },
+    ReasoningOption {
+        effort: REASONING_XHIGH,
+        description: "Extra-high DeepSeek thinking effort",
+    },
+    ReasoningOption {
+        effort: REASONING_MAX,
+        description: "Maximum DeepSeek thinking effort",
+    },
+];
+
 pub(crate) const DEEPSEEK_CHAT: ModelCatalogEntry = model(
     "deepseek-chat",
     "DeepSeek Chat",
@@ -32,7 +60,7 @@ pub(crate) const DEEPSEEK_CHAT: ModelCatalogEntry = model(
     8_192,
     false,
     REASONING_NONE,
-    &[],
+    DEEPSEEK_REASONING,
 );
 
 pub(crate) const DEEPSEEK_REASONER: ModelCatalogEntry = model(
@@ -42,30 +70,30 @@ pub(crate) const DEEPSEEK_REASONER: ModelCatalogEntry = model(
     128_000,
     64_000,
     false,
-    REASONING_MEDIUM,
-    STANDARD_REASONING,
+    REASONING_HIGH,
+    DEEPSEEK_REASONING,
 );
 
 pub(crate) const DEEPSEEK_V4_FLASH: ModelCatalogEntry = model(
     "deepseek-v4-flash",
     "DeepSeek V4 Flash",
-    "DeepSeek V4 Flash coding/chat model.",
+    "DeepSeek V4 Flash coding/chat model with optional thinking mode.",
     128_000,
     8_192,
     false,
-    REASONING_NONE,
-    &[],
+    REASONING_HIGH,
+    DEEPSEEK_REASONING,
 );
 
 pub(crate) const DEEPSEEK_V4_PRO: ModelCatalogEntry = model(
     "deepseek-v4-pro",
     "DeepSeek V4 Pro",
-    "DeepSeek V4 Pro coding/reasoning model.",
+    "DeepSeek V4 Pro coding/reasoning model with thinking mode.",
     128_000,
     64_000,
     false,
-    REASONING_MEDIUM,
-    STANDARD_REASONING,
+    REASONING_HIGH,
+    DEEPSEEK_REASONING,
 );
 
 const fn model(

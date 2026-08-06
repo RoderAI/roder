@@ -82,9 +82,9 @@ Roder ships these built-in DeepSeek Platform models offline:
 | Model id            | Display name       | Notes                                      |
 | ------------------- | ------------------ | ------------------------------------------ |
 | `deepseek-chat`     | DeepSeek Chat      | Default non-thinking chat alias            |
-| `deepseek-reasoner` | DeepSeek Reasoner  | Thinking/reasoner alias                    |
-| `deepseek-v4-flash` | DeepSeek V4 Flash  | Fast coding/chat model                     |
-| `deepseek-v4-pro`   | DeepSeek V4 Pro    | Higher-capability coding/reasoning model   |
+| `deepseek-reasoner` | DeepSeek Reasoner  | Thinking/reasoner alias (default `high`)   |
+| `deepseek-v4-flash` | DeepSeek V4 Flash  | Fast coding model with thinking (default `high`) |
+| `deepseek-v4-pro`   | DeepSeek V4 Pro    | Higher-capability thinking model (default `high`) |
 
 Use labels such as:
 
@@ -95,6 +95,26 @@ Use labels such as:
 
 Model ids are preserved exactly on the wire.
 
+## Thinking mode
+
+DeepSeek thinking mode is controlled from the Ctrl+P reasoning menu:
+
+| Roder effort | Wire behavior |
+| --- | --- |
+| `none` | `thinking: { "type": "disabled" }` |
+| `low` / `high` / `xhigh` / `max` | `thinking: { "type": "enabled" }` + `reasoning_effort` |
+| `medium` (if set elsewhere) | mapped to wire `high` |
+
+Streaming CoT arrives as `delta.reasoning_content` and is shown as reasoning in
+the TUI. When the model issues tool calls, Roder stores that CoT and passes it
+back on later turns as `reasoning_content` on the assistant `tool_calls`
+message (required by DeepSeek).
+
+Default efforts:
+
+- `deepseek-chat` → `none` (non-thinking alias)
+- `deepseek-reasoner`, `deepseek-v4-flash`, `deepseek-v4-pro` → `high`
+
 ## Requests
 
 Roder routes DeepSeek through the shared OpenAI Chat Completions transport:
@@ -104,15 +124,19 @@ POST /chat/completions
 Authorization: Bearer <DEEPSEEK_API_KEY>
 ```
 
-Example request body shape:
+Example request body shape (thinking enabled):
 
 ```json
 {
-  "model": "deepseek-chat",
-  "stream": true
+  "model": "deepseek-v4-pro",
+  "stream": true,
+  "thinking": { "type": "enabled" },
+  "reasoning_effort": "high"
 }
 ```
 
 ## Docs
 
 Upstream API reference: https://api-docs.deepseek.com/
+
+Thinking mode guide: https://api-docs.deepseek.com/guides/thinking_mode/

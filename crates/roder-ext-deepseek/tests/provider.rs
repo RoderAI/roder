@@ -117,6 +117,55 @@ async fn stream_turn_sends_bearer_auth_and_model_id() {
 }
 
 #[tokio::test]
+async fn stream_turn_enables_thinking_mode_with_effort() {
+    let server = spawn_chat_server(
+        "/chat/completions",
+        "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"reasoning_content\":\"cot\",\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+    )
+    .await;
+    let engine = DeepSeekInferenceEngine::new(DeepSeekConfig {
+        api_key: Some("ds-secret-key".to_string()),
+        base_url: Some(server.base_url.clone()),
+    });
+
+    let mut request = text_request("deepseek-v4-pro");
+    request.reasoning = ReasoningConfig {
+        enabled: true,
+        level: Some("high".to_string()),
+    };
+    let mut stream = engine.stream_turn(turn_context(), request).await.unwrap();
+    while stream.next().await.is_some() {}
+    let (_, body) = server.request.await.unwrap();
+
+    assert_eq!(body["model"], "deepseek-v4-pro");
+    assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+    assert_eq!(body["reasoning_effort"], "high");
+}
+
+#[tokio::test]
+async fn stream_turn_disables_thinking_when_reasoning_off() {
+    let server = spawn_chat_server(
+        "/chat/completions",
+        "data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+    )
+    .await;
+    let engine = DeepSeekInferenceEngine::new(DeepSeekConfig {
+        api_key: Some("ds-secret-key".to_string()),
+        base_url: Some(server.base_url.clone()),
+    });
+
+    let mut stream = engine
+        .stream_turn(turn_context(), text_request("deepseek-chat"))
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+    let (_, body) = server.request.await.unwrap();
+
+    assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+    assert!(body.get("reasoning_effort").is_none());
+}
+
+#[tokio::test]
 async fn stream_turn_preserves_reasoner_model_id() {
     let server = spawn_chat_server(
         "/chat/completions",
