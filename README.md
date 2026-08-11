@@ -1,5 +1,7 @@
 # Roder
 
+ello gov 
+
 **Rust Coder.** A Rust-native, extension-first agent harness for coding agents, research systems, reinforcement-learning environments, and AI-native developer tools.
 
 > Roder is the core harness. Everything else is a distribution, extension, provider, policy, interface, or experiment.
