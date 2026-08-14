@@ -64,6 +64,7 @@ pub fn enrich_models_from_catalog(mut models: Vec<ModelDescriptor>) -> Vec<Model
         let Some(curated) = curated.get(&model.id) else {
             continue;
         };
+
         if !curated.supported_reasoning.is_empty() {
             model.supported_reasoning =
                 merge_reasoning_options(&curated.supported_reasoning, &model.supported_reasoning);
@@ -259,7 +260,9 @@ fn merge_live_into_catalog(live: Vec<AvailableModel>) -> Vec<ModelDescriptor> {
     finalize_cursor_models(models)
 }
 
-fn inferred_reasoning_from_live_variants(live: &[AvailableModel]) -> BTreeMap<String, BTreeSet<String>> {
+fn inferred_reasoning_from_live_variants(
+    live: &[AvailableModel],
+) -> BTreeMap<String, BTreeSet<String>> {
     let mut inferred: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for model in live {
         if !model.supports_agent {
@@ -279,10 +282,7 @@ fn inferred_reasoning_from_live_variants(live: &[AvailableModel]) -> BTreeMap<St
             continue;
         }
         if let Some(effort) = picker_effort_token(raw_id) {
-            inferred
-                .entry(base)
-                .or_default()
-                .insert(effort);
+            inferred.entry(base).or_default().insert(effort);
         }
     }
     inferred
@@ -711,8 +711,14 @@ mod tests {
 
     #[test]
     fn picker_effort_token_normalizes_cursor_variant_suffixes() {
-        assert_eq!(picker_effort_token("gpt-5.5-extra-high"), Some("xhigh".to_string()));
-        assert_eq!(picker_effort_token("claude-opus-4-8-high"), Some("high".to_string()));
+        assert_eq!(
+            picker_effort_token("gpt-5.5-extra-high"),
+            Some("xhigh".to_string())
+        );
+        assert_eq!(
+            picker_effort_token("claude-opus-4-8-high"),
+            Some("high".to_string())
+        );
         assert_eq!(picker_effort_token("composer-2.5-fast"), None);
     }
 
@@ -762,5 +768,23 @@ mod tests {
         assert_eq!(gpt9.supported_reasoning.len(), 1);
         assert_eq!(gpt9.supported_reasoning[0].effort, "high");
         assert!(!ids.contains(&"embedding-x"));
+    }
+
+    #[test]
+    fn fallback_catalog_includes_latest_gemini_and_grok_models() {
+        let models = fallback_models();
+        let gemini = models
+            .iter()
+            .find(|model| model.id == "gemini-3.7-flash")
+            .expect("Gemini 3.7 Flash in Cursor catalog");
+        assert_eq!(gemini.context_window, Some(1_000_000));
+        assert_eq!(gemini.default_reasoning.as_deref(), Some("high"));
+
+        let grok = models
+            .iter()
+            .find(|model| model.id == "grok-4.6")
+            .expect("Grok 4.6 in Cursor catalog");
+        assert_eq!(grok.context_window, Some(256_000));
+        assert_eq!(grok.default_reasoning.as_deref(), Some("high"));
     }
 }

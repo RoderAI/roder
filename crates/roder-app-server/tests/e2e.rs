@@ -130,14 +130,13 @@ use roder_protocol::{
     ThreadReadParams, ThreadReadResult, ThreadResolveApprovalParams, ThreadResolveApprovalResult,
     ThreadResolveUserInputParams, ThreadResolveUserInputResult, ThreadSetAgentSwarmModeParams,
     ThreadSetAgentSwarmModeResult, ThreadSetModeParams, ThreadSetModeResult,
-    ThreadSetUltraModeParams, ThreadSetUltraModeResult, ThreadStartParams,
-    ThreadStartResult, ThreadStateResult, ToolCallParams, ToolCallResult, ToolsListResult,
-    ToolsResolveParams, ToolsResolveResult, TurnInputItem, TurnInterruptParams,
-    TurnInterruptResult, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
-    WebwrightArtifactsResult, WebwrightExportParams, WebwrightExportResult,
-    WebwrightLatestRunResult, WebwrightPrepareParams, WebwrightPrepareResult,
-    WebwrightReportResult, WebwrightRerunParams, WebwrightRerunResult, WebwrightSetupParams,
-    WebwrightSetupResult, WebwrightVerifyResult, WebwrightVisualJudgeParams,
+    ThreadSetUltraModeParams, ThreadSetUltraModeResult, ThreadStartParams, ThreadStartResult,
+    ThreadStateResult, ToolCallParams, ToolCallResult, ToolsListResult, ToolsResolveParams,
+    ToolsResolveResult, TurnInputItem, TurnInterruptParams, TurnInterruptResult, TurnStartParams,
+    TurnStartResult, TurnSteerParams, TurnSteerResult, WebwrightArtifactsResult,
+    WebwrightExportParams, WebwrightExportResult, WebwrightLatestRunResult, WebwrightPrepareParams,
+    WebwrightPrepareResult, WebwrightReportResult, WebwrightRerunParams, WebwrightRerunResult,
+    WebwrightSetupParams, WebwrightSetupResult, WebwrightVerifyResult, WebwrightVisualJudgeParams,
     WebwrightVisualJudgeResult, WebwrightWorkspaceParams, WorkflowEnableParams,
     WorkflowEnableResult, WorkflowPreviewParams, WorkflowPreviewResult, WorkflowScanParams,
     WorkflowScanResult, WorkspaceChangesListParams, WorkspaceChangesListResult,
@@ -4005,12 +4004,7 @@ async fn providers_list_exposes_xai_and_supergrok_auth_metadata() {
         .find(|provider| provider.id == PROVIDER_SUPERGROK)
         .expect("supergrok provider should be listed");
     assert_eq!(supergrok.auth_type, ProviderAuthType::OAuth);
-    assert!(
-        supergrok
-            .models
-            .iter()
-            .any(|model| model.id == "grok-build-0.1")
-    );
+    assert!(supergrok.models.iter().any(|model| model.id == "grok-4.6"));
     assert!(
         supergrok
             .models
@@ -4236,7 +4230,7 @@ async fn providers_list_exposes_poolside_api_key_models() {
 }
 
 #[tokio::test]
-async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
+async fn providers_list_exposes_openrouter_grok_46_model_without_auth() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
     let cache_path = std::env::temp_dir().join(format!(
         "roder-openrouter-provider-list-e2e-{}.json",
@@ -4260,7 +4254,7 @@ async fn providers_list_exposes_openrouter_grok_build_model_without_auth() {
         openrouter
             .models
             .iter()
-            .any(|model| model.id == "x-ai/grok-build-0.1")
+            .any(|model| model.id == "x-ai/grok-4.6")
     );
 }
 
@@ -4328,8 +4322,8 @@ async fn providers_select_preserves_openrouter_slash_bearing_model_id() {
         Some(
             serde_json::to_value(ProviderSelectParams {
                 provider: PROVIDER_OPENROUTER.to_string(),
-                model: Some("x-ai/grok-build-0.1".to_string()),
-                reasoning: Some("low".to_string()),
+                model: Some("x-ai/grok-4.6".to_string()),
+                reasoning: Some("high".to_string()),
                 thread_id: None,
             })
             .unwrap(),
@@ -4338,8 +4332,8 @@ async fn providers_select_preserves_openrouter_slash_bearing_model_id() {
     .await;
 
     assert_eq!(selected.provider, PROVIDER_OPENROUTER);
-    assert_eq!(selected.model, "x-ai/grok-build-0.1");
-    assert_eq!(selected.reasoning, "low");
+    assert_eq!(selected.model, "x-ai/grok-4.6");
+    assert_eq!(selected.reasoning, "high");
 }
 
 #[tokio::test]
