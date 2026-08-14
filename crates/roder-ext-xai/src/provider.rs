@@ -115,24 +115,11 @@ mod tests {
             .iter()
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(
-            ids,
-            vec!["grok-4.5", "grok-build-0.1", "grok-composer-2.5-fast"]
-        );
+        assert_eq!(ids, vec!["grok-4.6", "grok-composer-2.5-fast"]);
 
-        let grok45 = models
-            .iter()
-            .find(|model| model.id == "grok-4.5")
-            .unwrap();
-        assert_eq!(grok45.name, "Grok 4.5");
-        assert_eq!(grok45.context_window, Some(500_000));
-
-        let build = models
-            .iter()
-            .find(|model| model.id == "grok-build-0.1")
-            .unwrap();
-        assert_eq!(build.name, "Grok Build 0.1");
-        assert_eq!(build.context_window, Some(500_000));
+        let grok46 = models.iter().find(|model| model.id == "grok-4.6").unwrap();
+        assert_eq!(grok46.name, "Grok 4.6");
+        assert_eq!(grok46.context_window, Some(500_000));
 
         let composer = models
             .iter()

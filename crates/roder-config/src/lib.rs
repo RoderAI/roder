@@ -2597,7 +2597,7 @@ mod tests {
         let config: Config = toml::from_str(
             r#"
             provider = "openrouter"
-            model = "x-ai/grok-build-0.1"
+            model = "x-ai/grok-4.6"
 
             [providers.openrouter]
             api_key_env = "OPENROUTER_API_KEY"
@@ -2610,7 +2610,7 @@ mod tests {
 
         let provider = config.providers.get("openrouter").unwrap();
         assert_eq!(config.provider.as_deref(), Some("openrouter"));
-        assert_eq!(config.model.as_deref(), Some("x-ai/grok-build-0.1"));
+        assert_eq!(config.model.as_deref(), Some("x-ai/grok-4.6"));
         assert_eq!(provider.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
         assert_eq!(
             provider.base_url.as_deref(),

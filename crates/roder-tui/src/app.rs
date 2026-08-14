@@ -97,10 +97,10 @@ use roder_protocol::{
     TeamReadResult, Thread, ThreadExitPlanParams, ThreadExitPlanResult, ThreadGoal,
     ThreadResolveApprovalParams, ThreadResolveApprovalResult, ThreadResolveUserInputParams,
     ThreadResolveUserInputResult, ThreadSetAgentSwarmModeResult, ThreadSetModeParams,
-    ThreadSetUltraModeResult,
-    ThreadSetModeResult, ThreadStartParams, ThreadStartResult, ThreadStateResult, Turn,
-    TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams, WebSearchProviderStatus,
-    WebSearchSettings, WorkspaceCreateParams, WorkspaceCreateResult, WorkspaceRootInput,
+    ThreadSetModeResult, ThreadSetUltraModeResult, ThreadStartParams, ThreadStartResult,
+    ThreadStateResult, Turn, TurnInputItem, TurnInterruptParams, TurnStartParams, TurnSteerParams,
+    WebSearchProviderStatus, WebSearchSettings, WorkspaceCreateParams, WorkspaceCreateResult,
+    WorkspaceRootInput,
 };
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -3523,8 +3523,7 @@ where
             }
             "status" => {
                 let state = if self.ultra_mode { "on" } else { "off" };
-                self.timeline
-                    .push_system(format!("Ultra mode is {state}."));
+                self.timeline.push_system(format!("Ultra mode is {state}."));
                 self.push_event("slash command: /ultra status".to_string());
             }
             _ => {
@@ -10385,8 +10384,8 @@ mod tests {
             "roder.cloud/free"
         );
         assert_eq!(
-            provider_model_label("openrouter", "x-ai/grok-build-0.1"),
-            "openrouter/x-ai/grok-build-0.1"
+            provider_model_label("openrouter", "x-ai/grok-4.6"),
+            "openrouter/x-ai/grok-4.6"
         );
         assert_eq!(provider_model_label("codex", "gpt-5.5"), "codex/gpt-5.5");
         assert_eq!(provider_model_label("mock", "mock"), "mock/mock");
@@ -14173,10 +14172,9 @@ mod tests {
             .provider_menu_items
             .iter()
             .filter_map(|item| match item {
-                ProviderMenuItem::Reasoning(choice) => Some(format!(
-                    "{} - {}",
-                    choice.effort, choice.description
-                )),
+                ProviderMenuItem::Reasoning(choice) => {
+                    Some(format!("{} - {}", choice.effort, choice.description))
+                }
                 _ => None,
             })
             .collect();

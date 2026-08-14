@@ -355,7 +355,7 @@ impl ResponsesToolNameMap {
 }
 
 fn xai_supports_reasoning(model: &str) -> bool {
-    model == "grok-4.5"
+    model == "grok-4.6"
         || model == "grok-4.3"
         || model == "grok-4.20-0309-reasoning"
         || model.starts_with("grok-4.20-multi-agent-")
@@ -2757,16 +2757,16 @@ mod tests {
         let base_url = spawn_models_server(vec![(
             "/models",
             200,
-            r#"{"data":[{"id":"x-ai/grok-build-0.1","name":"Grok Build 0.1","context_length":256000}]}"#,
+            r#"{"data":[{"id":"x-ai/grok-4.6","name":"Grok 4.6","context_length":500000}]}"#,
         )])
         .await;
 
         let models = discover_models(&base_url, Some("secret")).await.unwrap();
 
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0].id, "x-ai/grok-build-0.1");
-        assert_eq!(models[0].name, "Grok Build 0.1");
-        assert_eq!(models[0].context_window, Some(256_000));
+        assert_eq!(models[0].id, "x-ai/grok-4.6");
+        assert_eq!(models[0].name, "Grok 4.6");
+        assert_eq!(models[0].context_window, Some(500_000));
     }
 
     #[tokio::test]
@@ -3335,7 +3335,7 @@ mod tests {
     fn xai_and_supergrok_mapping_includes_developer_ultra_policy() {
         let mut request = request();
         request.model.provider = PROVIDER_SUPERGROK.to_string();
-        request.model.model = "grok-4.5".to_string();
+        request.model.model = "grok-4.6".to_string();
         request.instructions.developer = Some(
             "Proactive multi-agent delegation is active. Prefer spawn_agent for parallel work."
                 .to_string(),
@@ -3991,7 +3991,7 @@ mod tests {
     fn profile_openrouter_preserves_slash_model_and_omits_openai_encrypted_reasoning() {
         let mut request = request();
         request.model.provider = PROVIDER_OPENROUTER.to_string();
-        request.model.model = "x-ai/grok-build-0.1".to_string();
+        request.model.model = "x-ai/grok-4.6".to_string();
         request.runtime.prompt_cache_key = Some("cache-key".to_string());
         request.instructions.developer =
             Some("Proactive multi-agent delegation is active.".to_string());
@@ -4004,7 +4004,7 @@ mod tests {
             },
         );
 
-        assert_eq!(body["model"], "x-ai/grok-build-0.1");
+        assert_eq!(body["model"], "x-ai/grok-4.6");
         assert_eq!(body["reasoning"], json!({ "effort": "medium" }));
         assert_eq!(body["prompt_cache_key"], "cache-key");
         assert!(body.get("instructions").is_none());

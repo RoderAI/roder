@@ -35,9 +35,10 @@ use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
     PROVIDER_DEEPSEEK, PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK,
-    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
-    PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_VERTEX, PROVIDER_XAI,
-    PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, normalize_provider_id,
+    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
+    PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC,
+    PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
+    normalize_provider_id,
 };
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
@@ -3752,9 +3753,9 @@ mod tests {
     #[test]
     fn openrouter_provider_slash_model_preserves_provider_prefixed_model_id() {
         let (provider, model) =
-            resolve_provider_model(Some("openrouter/x-ai/grok-build-0.1".to_string()), None);
+            resolve_provider_model(Some("openrouter/x-ai/grok-4.6".to_string()), None);
         assert_eq!(provider, PROVIDER_OPENROUTER);
-        assert_eq!(model.as_deref(), Some("x-ai/grok-build-0.1"));
+        assert_eq!(model.as_deref(), Some("x-ai/grok-4.6"));
     }
 
     #[test]

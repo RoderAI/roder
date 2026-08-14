@@ -1496,10 +1496,10 @@ mod tests {
                     sort_order: 18,
                     capabilities: InferenceCapabilities::text_only(),
                     models: vec![ModelDescriptor {
-                        id: "x-ai/grok-build-0.1".to_string(),
-                        name: "Grok Build 0.1".to_string(),
-                        context_window: Some(256_000),
-                        default_reasoning: Some("low".to_string()),
+                        id: "x-ai/grok-4.6".to_string(),
+                        name: "Grok 4.6".to_string(),
+                        context_window: Some(500_000),
+                        default_reasoning: Some("high".to_string()),
                         supported_reasoning: Vec::new(),
                     }],
                 },
@@ -1519,7 +1519,7 @@ mod tests {
                 entry.action
                     == PaletteAction::SwitchModel {
                         provider: "openrouter".to_string(),
-                        model: "x-ai/grok-build-0.1".to_string(),
+                        model: "x-ai/grok-4.6".to_string(),
                         reasoning: None,
                     }
             }),
