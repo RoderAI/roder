@@ -172,7 +172,11 @@ async fn handle_gemini_stream(
                     .contains(&status.as_u16());
                 last_error = Some(format!("Gemini error {status}: {text}"));
                 if retryable && attempt < attempts {
-                    retry_events.push(provider_retry_metadata(attempt, &provider_retry_status_cause(status.as_u16()), &policy));
+                    retry_events.push(provider_retry_metadata(
+                        attempt,
+                        &provider_retry_status_cause(status.as_u16()),
+                        &policy,
+                    ));
                     retry_sleep(&policy, attempt).await;
                     continue;
                 }
@@ -192,7 +196,9 @@ async fn handle_gemini_stream(
     let response = match response_opt {
         Some(res) => res,
         None => {
-            anyhow::bail!(last_error.unwrap_or_else(|| "Gemini stream connection failed".to_string()))
+            anyhow::bail!(
+                last_error.unwrap_or_else(|| "Gemini stream connection failed".to_string())
+            )
         }
     };
 
@@ -237,7 +243,7 @@ async fn handle_gemini_stream(
 
                     let text = extract_candidate_text(&value);
                     let thinking = extract_candidate_thinking(&value);
-                    
+
                     if !thinking.is_empty() {
                         let _ = tx.send(Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
                             text: thinking,
@@ -944,6 +950,24 @@ mod tests {
         assert_eq!(gemini_thinking_config(Some("xhigh")), None);
         assert_eq!(gemini_thinking_config(Some("none")), None);
         assert_eq!(gemini_thinking_config(None), None);
+    }
+
+    #[tokio::test]
+    async fn gemini_lists_37_flash_with_one_million_token_context() {
+        let models = GeminiEngine::new(None)
+            .list_models(InferenceProviderContext {
+                provider_id: PROVIDER_GEMINI,
+            })
+            .await
+            .unwrap();
+        let flash = models
+            .iter()
+            .find(|model| model.id == "gemini-3.7-flash")
+            .expect("Gemini 3.7 Flash in catalog");
+
+        assert_eq!(flash.name, "Gemini 3.7 Flash");
+        assert_eq!(flash.context_window, Some(1_048_576));
+        assert_eq!(flash.default_reasoning.as_deref(), Some("high"));
     }
 
     #[test]

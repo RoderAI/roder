@@ -5,8 +5,8 @@ use crate::inference::{
     ModelSchemaPolicy, ProviderFamily, ReasoningEffortDescriptor,
 };
 
-pub mod image_models;
 mod deepseek;
+pub mod image_models;
 mod openai_codex;
 mod synthetic;
 mod xiaomi_mimo;
@@ -413,7 +413,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_XAI,
         name: "xAI",
         kind: PROVIDER_KIND_XAI,
-        default_model: "grok-4.5",
+        default_model: "grok-4.6",
         base_url: Some("https://api.x.ai/v1"),
         env_key: Some("XAI_API_KEY"),
         env_aliases: XAI_ENV_ALIASES,
@@ -424,7 +424,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_SUPERGROK,
         name: "SuperGrok",
         kind: PROVIDER_KIND_XAI,
-        default_model: "grok-4.5",
+        default_model: "grok-4.6",
         base_url: Some("https://api.x.ai/v1"),
         env_key: None,
         env_aliases: &[],
@@ -457,7 +457,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_OPENROUTER,
         name: "OpenRouter",
         kind: PROVIDER_KIND_OPENROUTER,
-        default_model: "x-ai/grok-build-0.1",
+        default_model: "x-ai/grok-4.6",
         base_url: Some("https://openrouter.ai/api/v1"),
         env_key: Some("OPENROUTER_API_KEY"),
         env_aliases: &["RODER_OPENROUTER_API_KEY"],
@@ -708,6 +708,13 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     gemini_model(
         PROVIDER_GEMINI,
+        "gemini-3.7-flash",
+        "Gemini 3.7 Flash",
+        "Google's latest speed-tier Gemini model for high-throughput agentic coding, tool use, and long-context workflows.",
+        REASONING_HIGH,
+    ),
+    gemini_model(
+        PROVIDER_GEMINI,
         "gemini-3.1-pro-preview",
         "Gemini 3.1 Pro Preview",
         "Gemini model for complex coding, long context, and tool-heavy agent workflows.",
@@ -743,6 +750,13 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     gemini_model(
         PROVIDER_VERTEX,
+        "gemini-3.7-flash",
+        "Gemini 3.7 Flash",
+        "Google's latest speed-tier Gemini model on Vertex AI for high-throughput agentic coding, tool use, and long-context workflows.",
+        REASONING_HIGH,
+    ),
+    gemini_model(
+        PROVIDER_VERTEX,
         "gemini-3.1-pro-preview",
         "Gemini 3.1 Pro Preview",
         "Gemini model on Vertex AI for complex coding, long context, and tool-heavy agent workflows.",
@@ -764,9 +778,9 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     xai_model(
         PROVIDER_XAI,
-        "grok-4.5",
-        "Grok 4.5",
-        "xAI flagship model for coding, agentic tasks, knowledge work, and configurable reasoning.",
+        "grok-4.6",
+        "Grok 4.6",
+        "xAI's flagship model for coding, long-running agents, knowledge work, and configurable reasoning.",
         500_000,
         REASONING_HIGH,
         XAI_REASONING,
@@ -819,23 +833,12 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     xai_model(
         PROVIDER_SUPERGROK,
-        "grok-4.5",
-        "Grok 4.5",
-        "SuperGrok OAuth access to xAI Grok 4.5 for coding, agentic tasks, and knowledge work.",
+        "grok-4.6",
+        "Grok 4.6",
+        "SuperGrok OAuth access to xAI's flagship coding and long-running agent model.",
         500_000,
         REASONING_HIGH,
         XAI_REASONING,
-        true,
-        false,
-    ),
-    xai_model(
-        PROVIDER_SUPERGROK,
-        "grok-build-0.1",
-        "Grok Build 0.1",
-        "SuperGrok OAuth access to xAI Grok Build, optimized for agentic coding and software engineering workflows.",
-        500_000,
-        REASONING_LOW,
-        XAI_CONFIGURABLE_REASONING,
         true,
         false,
     ),
@@ -1021,15 +1024,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         &[],
     ),
     ModelCatalogEntry {
-        id: "x-ai/grok-build-0.1",
-        display_name: "Grok Build 0.1",
-        description: "OpenRouter route for xAI's fast coding model for agentic software engineering workflows.",
+        id: "x-ai/grok-4.6",
+        display_name: "Grok 4.6",
+        description: "OpenRouter route for xAI's flagship model for coding and long-running agent workflows.",
         provider: PROVIDER_OPENROUTER,
-        default_reasoning: REASONING_LOW,
+        default_reasoning: REASONING_HIGH,
         supported_reasoning: OPENROUTER_REASONING,
-        context_window: 256_000,
-        max_context_window: 256_000,
-        auto_compact_token_limit: 230_400,
+        context_window: 500_000,
+        max_context_window: 500_000,
+        auto_compact_token_limit: 450_000,
         supports_compaction: true,
         supports_images: true,
         supports_tools: true,
@@ -1196,6 +1199,24 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         1_048_576,
         943_718,
         REASONING_MEDIUM,
+        GEMINI_REASONING,
+    ),
+    cursor_model(
+        "grok-4.6",
+        "Grok 4.6",
+        "xAI Grok 4.6 routed through Cursor's AgentService for long-running coding and knowledge-work agents.",
+        256_000,
+        230_400,
+        REASONING_HIGH,
+        STANDARD_REASONING,
+    ),
+    cursor_model(
+        "gemini-3.7-flash",
+        "Gemini 3.7 Flash",
+        "Google Gemini 3.7 Flash routed through Cursor's AgentService for high-throughput agentic coding.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
         GEMINI_REASONING,
     ),
     cursor_model(
@@ -1863,21 +1884,22 @@ mod tests {
                 "claude-opus-4-8",
                 "claude-fable-5",
                 "gemini-3.5-flash",
+                "gemini-3.7-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3.1-pro-preview-customtools",
                 "gemini-3-flash-preview",
                 "gemini-3.1-flash-lite-preview",
                 "gemini-3.5-flash",
+                "gemini-3.7-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3-flash-preview",
                 "gemini-3.1-flash-lite-preview",
-                "grok-4.5",
+                "grok-4.6",
                 "grok-4.3",
                 "grok-4.20-multi-agent-0309",
                 "grok-4.20-0309-reasoning",
                 "grok-4.20-0309-non-reasoning",
-                "grok-4.5",
-                "grok-build-0.1",
+                "grok-4.6",
                 "grok-composer-2.5-fast",
                 "gpt-5.5",
                 "gpt-5.3-codex-spark",
@@ -1893,7 +1915,7 @@ mod tests {
                 "deepseek-v4-flash",
                 "deepseek-v4-pro",
                 "kimi-for-coding",
-                "x-ai/grok-build-0.1",
+                "x-ai/grok-4.6",
                 "accounts/fireworks/models/qwen3-235b-a22b",
                 "roder.cloud/free",
                 "roder.cloud/openai/gpt-5.5",
@@ -1937,6 +1959,8 @@ mod tests {
                 "gpt-5.5",
                 "gpt-5.5-fast",
                 "gemini-3.1-pro-preview",
+                "grok-4.6",
+                "gemini-3.7-flash",
                 "grok-4.3",
             ]
         );
@@ -1948,17 +1972,17 @@ mod tests {
         assert_eq!(models_for_codex(false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 7);
-        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 5);
-        assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 6);
+        assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 5);
-        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
+        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 8);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
-        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 9);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 11);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
         assert_eq!(
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
@@ -2111,12 +2135,12 @@ mod tests {
             .expect("deepseek provider registered");
         assert_eq!(provider.name, "DeepSeek Platform");
         assert_eq!(provider.default_model, "deepseek-chat");
-        assert_eq!(
-            provider.base_url,
-            Some("https://api.deepseek.com/v1")
-        );
+        assert_eq!(provider.base_url, Some("https://api.deepseek.com/v1"));
         assert_eq!(provider.env_key, Some("DEEPSEEK_API_KEY"));
-        assert_eq!(normalize_provider_id("deepseek-platform"), PROVIDER_DEEPSEEK);
+        assert_eq!(
+            normalize_provider_id("deepseek-platform"),
+            PROVIDER_DEEPSEEK
+        );
         assert_eq!(
             provider_family_for_provider(PROVIDER_DEEPSEEK),
             ProviderFamily::OpenAi
@@ -2377,17 +2401,12 @@ mod tests {
     }
 
     #[test]
-    fn supergrok_catalog_exposes_build_and_composer_with_expected_context_windows() {
-        let grok45 = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-4.5").unwrap();
-        assert_eq!(grok45.display_name, "Grok 4.5");
-        assert_eq!(grok45.context_window, 500_000);
-        assert_eq!(grok45.auto_compact_token_limit, 450_000);
-        assert_eq!(grok45.default_reasoning, REASONING_HIGH);
-
-        let build = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-build-0.1").unwrap();
-        assert_eq!(build.display_name, "Grok Build 0.1");
-        assert_eq!(build.context_window, 500_000);
-        assert_eq!(build.auto_compact_token_limit, 450_000);
+    fn supergrok_catalog_exposes_grok_46_and_composer_with_expected_context_windows() {
+        let grok46 = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-4.6").unwrap();
+        assert_eq!(grok46.display_name, "Grok 4.6");
+        assert_eq!(grok46.context_window, 500_000);
+        assert_eq!(grok46.auto_compact_token_limit, 450_000);
+        assert_eq!(grok46.default_reasoning, REASONING_HIGH);
 
         let composer =
             lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-composer-2.5-fast").unwrap();
@@ -2403,29 +2422,30 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             visible,
-            vec![
-                "grok-4.5".to_string(),
-                "grok-build-0.1".to_string(),
-                "grok-composer-2.5-fast".to_string()
-            ]
+            vec!["grok-4.6".to_string(), "grok-composer-2.5-fast".to_string()]
         );
     }
 
     #[test]
     fn xai_catalog_entries_match_current_grok_contract() {
-        let grok45 = models_for_provider(PROVIDER_XAI, false)
+        let grok46 = models_for_provider(PROVIDER_XAI, false)
             .into_iter()
-            .find(|model| model.id == "grok-4.5")
+            .find(|model| model.id == "grok-4.6")
             .unwrap();
-        assert_eq!(grok45.context_window, Some(500_000));
-        assert_eq!(grok45.default_reasoning.as_deref(), Some(REASONING_HIGH));
+        assert_eq!(grok46.context_window, Some(500_000));
+        assert_eq!(grok46.default_reasoning.as_deref(), Some(REASONING_HIGH));
         assert_eq!(
-            grok45
+            grok46
                 .supported_reasoning
                 .iter()
                 .map(|option| option.effort.as_str())
                 .collect::<Vec<_>>(),
-            vec![REASONING_LOW, REASONING_MEDIUM, REASONING_HIGH, REASONING_XHIGH]
+            vec![
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH
+            ]
         );
 
         let grok43 = models_for_provider(PROVIDER_XAI, false)

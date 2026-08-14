@@ -1,6 +1,6 @@
 #[tokio::test]
 #[ignore = "requires RODER_OPENROUTER_LIVE=1 and OPENROUTER_API_KEY"]
-async fn live_openrouter_grok_build_minimal_responses_smoke() {
+async fn live_openrouter_grok_46_minimal_responses_smoke() {
     if std::env::var("RODER_OPENROUTER_LIVE").ok().as_deref() != Some("1") {
         eprintln!("skipping live OpenRouter smoke; set RODER_OPENROUTER_LIVE=1");
         return;
@@ -12,8 +12,8 @@ async fn live_openrouter_grok_build_minimal_responses_smoke() {
         eprintln!("skipping live OpenRouter smoke; OPENROUTER_API_KEY is not set");
         return;
     };
-    let model = std::env::var("OPENROUTER_LIVE_MODEL")
-        .unwrap_or_else(|_| "x-ai/grok-build-0.1".to_string());
+    let model =
+        std::env::var("OPENROUTER_LIVE_MODEL").unwrap_or_else(|_| "x-ai/grok-4.6".to_string());
     let base_url = std::env::var("OPENROUTER_BASE_URL")
         .unwrap_or_else(|_| "https://openrouter.ai/api/v1".to_string())
         .trim_end_matches('/')
