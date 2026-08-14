@@ -1860,6 +1860,17 @@ impl Runtime {
             false
         };
         if archived {
+            let workspace = self.config.read().await.workspace.clone();
+            crate::hooks::run_lifecycle(
+                self,
+                &thread_id.to_string(),
+                &"session-end".to_string(),
+                workspace.as_deref(),
+                "SessionEnd",
+                Some("clear"),
+                serde_json::json!({"reason": "archive"}),
+            )
+            .await;
             self.thread_item_cache
                 .lock()
                 .await
@@ -2700,7 +2711,13 @@ impl Runtime {
         thread_id: &ThreadId,
         turn_id: &TurnId,
     ) -> Option<roder_api::inference::ModelSelection> {
-        if let Some(selection) = self.active_turn_selections.read().await.get(turn_id).cloned() {
+        if let Some(selection) = self
+            .active_turn_selections
+            .read()
+            .await
+            .get(turn_id)
+            .cloned()
+        {
             return Some(selection.concrete_selection());
         }
         if let Ok(Some(selection)) = self.selection_mode_for_thread(thread_id).await {
@@ -3767,6 +3784,16 @@ impl Runtime {
             )),
         )
         .await?;
+        crate::hooks::run_lifecycle(
+            self,
+            &req.thread_id,
+            &turn_id,
+            Some(&req.workspace),
+            "UserPromptSubmit",
+            None,
+            serde_json::json!({"prompt": req.message}),
+        )
+        .await;
         if let Some(ack) = initial_mailbox_ack {
             self.teams
                 .mark_mailbox_messages_delivered(&ack.team_id, &turn_id, &ack.message_ids)
@@ -4129,23 +4156,18 @@ impl Runtime {
             // mode flag. Models that advertise Ultra effort keep the
             // explicit-request-only policy on lower efforts when ultra mode is
             // off; other models get multi-agent policy only when ultra mode is on.
-            let model_has_ultra_effort =
-                model_supports_reasoning_effort(&model, REASONING_ULTRA);
-            let effort_is_ultra =
-                request_reasoning.level.as_deref() == Some(REASONING_ULTRA);
+            let model_has_ultra_effort = model_supports_reasoning_effort(&model, REASONING_ULTRA);
+            let effort_is_ultra = request_reasoning.level.as_deref() == Some(REASONING_ULTRA);
             let proactive_multi_agent = ultra_mode_active || effort_is_ultra;
             if ultra_mode_active || model_has_ultra_effort {
-                instructions =
-                    apply_codex_multi_agent_mode(instructions, proactive_multi_agent);
+                instructions = apply_codex_multi_agent_mode(instructions, proactive_multi_agent);
             }
             instructions = self
                 .goals
                 .apply_goal_instructions(&req.thread_id, instructions)
                 .await?;
-            instructions = apply_parallel_web_tools(
-                instructions,
-                tools.iter().map(|spec| spec.name.as_str()),
-            );
+            instructions =
+                apply_parallel_web_tools(instructions, tools.iter().map(|spec| spec.name.as_str()));
             let mut request_metadata = serde_json::json!({});
             if let Some(decision) = &speed_policy_decision {
                 request_metadata["speedPolicy"] = serde_json::json!(decision);
@@ -5137,7 +5159,6 @@ impl Runtime {
         Ok(results)
     }
 
-
     /// On provider context/prompt-length failures, force-compact (and if needed
     /// strip the last bulky item) then retry the current tool round instead of
     /// failing the turn. Bounded so a permanently oversized suffix still stops.
@@ -5172,7 +5193,8 @@ impl Runtime {
         // user/error so a second compact can succeed when the suffix itself is
         // still oversized (e.g. a huge tool result right before the prompt).
         if *recovery_attempts > 1 {
-            *transcript = crate::compaction::strip_last_message_before_error(std::mem::take(transcript));
+            *transcript =
+                crate::compaction::strip_last_message_before_error(std::mem::take(transcript));
         }
 
         let force_options = crate::compaction::CompactionOptions {
@@ -5227,8 +5249,10 @@ impl Runtime {
 
         // If force-compact did not shrink anything and we still have budget,
         // strip once more so the next round is not identical.
-        if after_tokens >= before_tokens && *recovery_attempts < MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS {
-            *transcript = crate::compaction::strip_last_message_before_error(std::mem::take(transcript));
+        if after_tokens >= before_tokens && *recovery_attempts < MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS
+        {
+            *transcript =
+                crate::compaction::strip_last_message_before_error(std::mem::take(transcript));
         }
         Ok(true)
     }
@@ -5537,6 +5561,7 @@ impl Runtime {
     }
 
     pub async fn emit(&self, event: RoderEvent) -> EventEnvelope {
+        self.dispatch_local_hook_lifecycle(&event).await;
         if let Some(record) = Self::lifecycle_record_for_event(&event) {
             let _ = self.persist_turn_lifecycle_record(&record).await;
         }
@@ -5562,6 +5587,79 @@ impl Runtime {
             dispatcher.dispatch(&envelope, &self.bus);
         }
         envelope
+    }
+
+    async fn dispatch_local_hook_lifecycle(&self, event: &RoderEvent) {
+        let (thread_id, turn_id, name, matcher, input) = match event {
+            RoderEvent::TurnStarted(event) => (
+                &event.thread_id,
+                &event.turn_id,
+                "SessionStart",
+                Some("startup"),
+                serde_json::json!({"source":"turn"}),
+            ),
+            RoderEvent::TurnCompleted(event) => (
+                &event.thread_id,
+                &event.turn_id,
+                "Stop",
+                None,
+                serde_json::json!({"finishReason":event.finish_reason}),
+            ),
+            RoderEvent::TurnFailed(event) => (
+                &event.thread_id,
+                &event.turn_id,
+                "Stop",
+                None,
+                serde_json::json!({"error":event.error}),
+            ),
+            RoderEvent::ContextCompactionStarted(event) => (
+                &event.thread_id,
+                &event.turn_id,
+                "PreCompact",
+                None,
+                serde_json::json!({"originalItemCount":event.original_item_count,"originalEstimatedTokens":event.original_estimated_tokens}),
+            ),
+            RoderEvent::ContextCompactionRecorded(event) => (
+                &event.thread_id,
+                &event.turn_id,
+                "PostCompact",
+                None,
+                serde_json::json!({"compactedItemCount":event.compacted_item_count,"compactedEstimatedTokens":event.compacted_estimated_tokens}),
+            ),
+            RoderEvent::SubagentStarted(event) => (
+                &event.parent_thread_id,
+                &event.parent_turn_id,
+                "SubagentStart",
+                Some(event.agent_type.as_str()),
+                serde_json::json!({"subagentThreadId":event.thread_id,"agentType":event.agent_type,"description":event.description}),
+            ),
+            RoderEvent::SubagentCompleted(event) => (
+                &event.parent_thread_id,
+                &event.parent_turn_id,
+                "SubagentStop",
+                Some(event.agent_type.as_str()),
+                serde_json::json!({"subagentThreadId":event.thread_id,"agentType":event.agent_type,"exitReason":event.exit_reason}),
+            ),
+            RoderEvent::SubagentFailed(event) => (
+                &event.parent_thread_id,
+                &event.parent_turn_id,
+                "SubagentStop",
+                Some(event.agent_type.as_str()),
+                serde_json::json!({"subagentThreadId":event.thread_id,"agentType":event.agent_type,"error":event.error}),
+            ),
+            _ => return,
+        };
+        let workspace = self.config.read().await.workspace.clone();
+        crate::hooks::run_lifecycle(
+            self,
+            thread_id,
+            turn_id,
+            workspace.as_deref(),
+            name,
+            matcher,
+            input,
+        )
+        .await;
     }
 
     /// Records a projected thread item event and persists it through the configured thread store.

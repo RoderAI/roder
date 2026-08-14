@@ -10,6 +10,7 @@ mod event_sink_dispatch;
 pub mod fake_provider;
 pub mod forks;
 mod goals;
+pub mod hooks;
 pub mod inference_routing;
 mod instructions;
 pub mod media_artifacts;

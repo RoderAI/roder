@@ -76,6 +76,9 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 roder_protocol::InferenceRoutingDecisionEvent::from(event.clone()),
             )]
         }
+        RoderEvent::HookRunRecorded(event) => {
+            vec![protocol_notification("hook/run", event.clone())]
+        }
         RoderEvent::TurnStarted(event) => {
             let turn = Turn {
                 id: event.turn_id.clone(),

@@ -263,11 +263,58 @@ impl Runtime {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
         };
+        let workspace_root = workspace.or(runtime_config.workspace.as_deref());
+        let tool_call = match crate::hooks::run_pre_tool_use(
+            self,
+            thread_id,
+            turn_id,
+            workspace_root,
+            &tool_call,
+        )
+        .await
+        {
+            crate::hooks::PreToolUseResult::Continue(arguments) => ToolCall {
+                raw_arguments: serde_json::to_string(&arguments)?,
+                arguments,
+                ..tool_call
+            },
+            crate::hooks::PreToolUseResult::Denied(reason) => {
+                let item = ToolResultRecord {
+                    id: tool_call.id.clone(),
+                    name: Some(tool_call.name.clone()),
+                    result: format!("hook denied tool call: {reason}"),
+                    display_payload: tool_display_payload(
+                        Some(&tool_call.name),
+                        Some(&tool_call.arguments),
+                        None,
+                    ),
+                    is_error: true,
+                };
+                self.persist_turn_item(
+                    thread_id,
+                    turn_id,
+                    &roder_api::transcript::TranscriptItem::ToolResult(item.clone()),
+                )
+                .await?;
+                self.emit(RoderEvent::ToolCallCompleted(ToolCallCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_id: tool_call.id,
+                    tool_name: item.name.clone(),
+                    display_payload: item.display_payload.clone(),
+                    is_error: true,
+                    output: Some(item.result.clone()),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                return Ok(item);
+            }
+        };
         let mut ctx = self.tool_execution_context(
             thread_id.clone(),
             turn_id.clone(),
             mode,
-            workspace.or(runtime_config.workspace.as_deref()),
+            workspace_root,
             Some(&runtime_config.command_shell),
         );
         if let Some(remaining) = crate::runtime::deadline_remaining_seconds(deadline) {
@@ -602,6 +649,15 @@ impl Runtime {
         let result = self
             .resolve_user_input_request(thread_id, turn_id, result)
             .await?;
+        crate::hooks::run_post_tool_use(
+            self,
+            thread_id,
+            turn_id,
+            workspace.or(runtime_config.workspace.as_deref()),
+            &tool_call,
+            &result.text,
+        )
+        .await;
         // Long-lived collaboration controls have their own team lifecycle events. Projecting
         // their tool result through the legacy one-shot task bridge would emit a synthetic
         // SubagentCompleted immediately after spawn_agent returns, while the agent is still
@@ -1053,6 +1109,17 @@ impl Runtime {
                 tx,
             },
         );
+        let runtime_config = self.status().await;
+        crate::hooks::run_lifecycle(
+            self,
+            thread_id,
+            turn_id,
+            runtime_config.workspace.as_deref(),
+            "PermissionRequest",
+            Some(&call.name),
+            serde_json::json!({"toolName": call.name, "toolInput": call.arguments, "reason": reason}),
+        )
+        .await;
         self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),

@@ -2545,6 +2545,26 @@ where
                             tool_entry_from_display_payload(Some(ev.tool_name), ev.display_payload),
                         );
                     }
+                    RoderEvent::HookRunRecorded(ev) => {
+                        let hook_id = format!(
+                            "hook:{}:{}:{}",
+                            ev.tool_id,
+                            ev.hook_event_name,
+                            ev.timestamp.unix_timestamp_nanos()
+                        );
+                        self.record_tool_requested_with_id(
+                            hook_id.clone(),
+                            fallback_entry(format!(
+                                "hook {} [{}] {} on {}",
+                                ev.hook_event_name, ev.status, ev.handler_type, ev.tool_name
+                            )),
+                        );
+                        self.record_tool_completed(
+                            &hook_id,
+                            ev.status != "success",
+                            ev.output.or_else(|| Some(ev.detail)),
+                        );
+                    }
                     RoderEvent::PolicyDecisionRecorded(ev) => match ev.decision {
                         PolicyDecision::Denied { reason } => {
                             self.record_tool_completed(&ev.tool_id, true, None);

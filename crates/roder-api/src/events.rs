@@ -97,6 +97,23 @@ pub struct RuntimeStarted {
     pub timestamp: OffsetDateTime,
 }
 
+/// A local project hook execution. Hook output is truncated before recording.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookRunRecorded {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub tool_name: String,
+    pub hook_event_name: String,
+    pub handler_type: String,
+    pub status: String,
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionRegistered {
     pub extension_id: ExtensionId,
@@ -1319,6 +1336,7 @@ pub enum RoderEvent {
     InferenceStarted(InferenceStarted),
     InferenceEventReceived(InferenceEventReceived),
     ToolCallRequested(ToolCallRequested),
+    HookRunRecorded(HookRunRecorded),
     ToolCallValidationRecorded(ToolCallValidationRecorded),
     ReliabilityFailureRecorded(ReliabilityFailureRecorded),
     ReliabilityRetryRecorded(ReliabilityRetryRecorded),
@@ -1524,6 +1542,7 @@ impl RoderEvent {
             RoderEvent::InferenceStarted(_) => "inference.started",
             RoderEvent::InferenceEventReceived(_) => "inference.event_received",
             RoderEvent::ToolCallRequested(_) => "tool.call_requested",
+            RoderEvent::HookRunRecorded(_) => "hook.run_recorded",
             RoderEvent::ToolCallValidationRecorded(_) => "tool.call_validation",
             RoderEvent::ReliabilityFailureRecorded(_) => "reliability.failure",
             RoderEvent::ReliabilityRetryRecorded(_) => "reliability.retry",
@@ -1863,6 +1882,7 @@ impl RoderEvent {
             RoderEvent::InferenceStarted(e) => Some(&e.thread_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.thread_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.thread_id),
+            RoderEvent::HookRunRecorded(e) => Some(&e.thread_id),
             RoderEvent::ToolCallValidationRecorded(e) => Some(&e.thread_id),
             RoderEvent::ReliabilityFailureRecorded(e) => Some(&e.context.thread_id),
             RoderEvent::ReliabilityRetryRecorded(e) => Some(&e.context.thread_id),
@@ -2063,6 +2083,7 @@ impl RoderEvent {
             RoderEvent::InferenceStarted(e) => Some(&e.turn_id),
             RoderEvent::InferenceEventReceived(e) => Some(&e.turn_id),
             RoderEvent::ToolCallRequested(e) => Some(&e.turn_id),
+            RoderEvent::HookRunRecorded(e) => Some(&e.turn_id),
             RoderEvent::ToolCallValidationRecorded(e) => Some(&e.turn_id),
             RoderEvent::ReliabilityFailureRecorded(e) => Some(&e.context.turn_id),
             RoderEvent::ReliabilityRetryRecorded(e) => Some(&e.context.turn_id),
