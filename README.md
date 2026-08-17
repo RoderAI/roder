@@ -2,6 +2,8 @@
 
 **Rust Coder.** A Rust-native, extension-first agent harness for coding agents, research systems, reinforcement-learning environments, and AI-native developer tools.
 
+test
+
 > Roder is the core harness. Everything else is a distribution, extension, provider, policy, interface, or experiment.
 
 Roder is not just another coding agent. It is the substrate underneath them — a stable, strongly typed Rust runtime that handles inference orchestration, tool execution, capability-scoped filesystem and process access, context assembly, thread persistence, checkpointing, policy enforcement, event streaming, and replay, with extension points designed so that new model APIs, storage systems, context engines, sandbox backends, UIs, and training environments can be added without forking the core.
