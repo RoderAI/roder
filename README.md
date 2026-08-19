@@ -641,3 +641,4 @@ Roder is licensed under the MIT License. See [`LICENCE`](./LICENCE).
 ### PostgreSQL session storage
 
 Roder uses local JSONL thread storage by default. Operators can opt into tenant-scoped PostgreSQL session storage with `RODER_SESSION_STORE=postgres`, `RODER_POSTGRES_SESSION_URL`, and `RODER_POSTGRES_SESSION_TENANT`, or the equivalent `[sessions]` config. See `docs/roder-postgresql-session-store.md` for setup, migration, and troubleshooting details.
+test3
