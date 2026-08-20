@@ -1,3 +1,11 @@
+## 0.1.8 (2026-08-20)
+
+### Fixes
+
+#### Explain streamed response failures
+
+Include the response read failure kind, configured idle timeout, safe provider request identifier, and bounded cause chain when a Responses stream fails.
+
 ## 0.1.7 (2026-08-05)
 
 ### Fixes
