@@ -6,18 +6,21 @@ pub(crate) fn gemini_schema(mut schema: Value) -> Value {
 }
 
 /// Gemini's `generateContent` accepts a strict OpenAPI-style proto subset:
-/// JSON-schema keywords like `const`, `examples`, `$schema`, and union
-/// `type` arrays are rejected with HTTP 400 for the whole request, so they
-/// must be stripped or rewritten before the call.
+/// JSON-schema keywords like `const`, `examples`, `$schema`, `uniqueItems`,
+/// and union `type` arrays are rejected with HTTP 400 for the whole request,
+/// so they must be stripped or rewritten before the call.
 fn strip_unsupported_schema_fields(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("additionalProperties");
             object.remove("examples");
             object.remove("$schema");
+            object.remove("uniqueItems");
             object.retain(|key, _| !key.starts_with("x-"));
-            // `const: V` -> `enum: [V]` (proto has no const field).
+            // Gemini enums accept strings only, so non-string constants cannot
+            // retain their value constraint in the provider schema.
             if let Some(const_value) = object.remove("const")
+                && const_value.is_string()
                 && !object.contains_key("enum")
             {
                 object.insert("enum".to_string(), Value::Array(vec![const_value]));
@@ -125,6 +128,40 @@ mod tests {
         assert_eq!(
             schema.pointer("/properties/steps/items/oneOf/0/properties/op/enum"),
             Some(&json!(["create"]))
+        );
+    }
+
+    #[test]
+    fn rewrites_change_tour_schema_for_gemini() {
+        let schema = gemini_schema(json!({
+            "type": "object",
+            "properties": {
+                "evidence_refs": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": { "type": "string" }
+                },
+                "schema_version": {
+                    "type": "integer",
+                    "const": 1
+                }
+            }
+        }));
+
+        assert_eq!(
+            schema,
+            json!({
+                "type": "object",
+                "properties": {
+                    "evidence_refs": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
+                    "schema_version": {
+                        "type": "integer"
+                    }
+                }
+            })
         );
     }
 }

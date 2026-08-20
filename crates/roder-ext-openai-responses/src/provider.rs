@@ -1,3 +1,4 @@
+use crate::stream_diagnostics::ResponseStreamDiagnostics;
 use roder_api::catalog::{
     PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI,
     REASONING_MAX, REASONING_ULTRA, lookup_model, lookup_model_for_provider, models_for_provider,
@@ -837,6 +838,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
             response.response,
             tool_name_map.api_name_to_tool_name,
             response.retry_events,
+            response.idle_timeout,
             continuation,
         ))
     }
@@ -845,6 +847,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
 struct RetriedResponse {
     response: reqwest::Response,
     retry_events: Vec<Value>,
+    idle_timeout: Duration,
 }
 
 async fn send_responses_request(
@@ -899,6 +902,7 @@ async fn send_responses_request_with_idle_timeout(
                 return Ok(RetriedResponse {
                     response,
                     retry_events,
+                    idle_timeout,
                 });
             }
             Ok(Ok(response)) => {
@@ -1178,6 +1182,7 @@ fn stream_responses_sse_with_client_tool_search(
     response: reqwest::Response,
     tool_name_map: HashMap<String, String>,
     retry_events: Vec<Value>,
+    mut idle_timeout: Duration,
     mut continuation: Option<ClientToolSearchContext>,
 ) -> InferenceEventStream {
     Box::pin(async_stream::try_stream! {
@@ -1189,6 +1194,7 @@ fn stream_responses_sse_with_client_tool_search(
 
         let mut response = response;
         for _round in 0..=MAX_CLIENT_TOOL_SEARCH_ROUNDS {
+            let diagnostics = ResponseStreamDiagnostics::from_response(&response, idle_timeout);
             let mut chunks = response.bytes_stream();
             let mut buffer = String::new();
             let mut state = ResponsesStreamState {
@@ -1197,7 +1203,7 @@ fn stream_responses_sse_with_client_tool_search(
             };
 
             while let Some(chunk) = chunks.next().await {
-                let chunk = chunk?;
+                let chunk = chunk.map_err(|error| diagnostics.read_error(error))?;
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
                 while let Some((frame, consumed)) = take_sse_frame(&buffer) {
                     buffer.drain(..consumed);
@@ -1319,6 +1325,7 @@ fn stream_responses_sse_with_client_tool_search(
             for retry_event in retried.retry_events {
                 yield InferenceEvent::ProviderMetadata(retry_event);
             }
+            idle_timeout = retried.idle_timeout;
             response = retried.response;
         }
     })
@@ -2860,6 +2867,7 @@ mod tests {
             response.response,
             HashMap::new(),
             response.retry_events,
+            response.idle_timeout,
             Some(ClientToolSearchContext {
                 base_url: base_url.clone(),
                 api_key: "secret".to_string(),
@@ -2999,16 +3007,20 @@ mod tests {
             response.response,
             HashMap::new(),
             Vec::new(),
+            response.idle_timeout,
             None,
         );
         let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .expect("silent responses stream should surface an idle timeout");
 
-        assert!(
-            next.expect("stream should yield the timeout error")
-                .is_err(),
-            "silent responses stream should yield an error"
+        let error = next
+            .expect("stream should yield the timeout error")
+            .expect_err("silent responses stream should yield an error");
+
+        assert_eq!(
+            error.to_string(),
+            "Responses stream read failed: kind=timeout; idle_timeout_ms=50; provider_request_id=req_timeout_test; cause=error decoding response body: request or response body error: operation timed out"
         );
     }
 
@@ -3234,6 +3246,7 @@ mod tests {
             let response = concat!(
                 "HTTP/1.1 200 OK\r\n",
                 "content-type: text/event-stream\r\n",
+                "x-request-id: req_timeout_test\r\n",
                 "connection: keep-alive\r\n",
                 "\r\n"
             );
