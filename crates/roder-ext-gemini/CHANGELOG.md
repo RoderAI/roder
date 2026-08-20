@@ -1,3 +1,11 @@
+## 0.1.2 (2026-08-20)
+
+### Fixes
+
+#### Accept more tool schemas in Gemini
+
+Remove unsupported `uniqueItems` fields and avoid converting non-string constants into invalid Gemini enum values.
+
 ## 0.1.1 (2026-06-15)
 
 ### Fixes
