@@ -4034,6 +4034,7 @@ async fn providers_list_exposes_current_codex_subscription_roster_and_ultra_sele
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>(),
         vec![
+            "gpt-6-astra",
             "gpt-5.6-sol",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
