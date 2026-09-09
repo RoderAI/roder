@@ -138,7 +138,7 @@ impl AnthropicEngine {
         }
         if !request.tools.is_empty() {
             body["tools"] = json!(anthropic_tools(request));
-            body["tool_choice"] = anthropic_tool_choice(&request.tool_choice);
+            body["tool_choice"] = anthropic_tool_choice(&request.tool_choice, &request.model.model);
         }
         if let Some(trigger) = anthropic_compaction_trigger(request) {
             body["context_management"] = json!({
@@ -337,15 +337,30 @@ fn is_anthropic_compaction_boundary(item: &roder_api::transcript::TranscriptItem
     )
 }
 
-fn anthropic_tool_choice(choice: &roder_api::tools::ToolChoice) -> Value {
+fn anthropic_tool_choice(choice: &roder_api::tools::ToolChoice, model: &str) -> Value {
+    let forced_ok = anthropic_model_supports_forced_tool_choice(model);
     match choice {
         roder_api::tools::ToolChoice::Auto => json!({ "type": "auto" }),
-        roder_api::tools::ToolChoice::Any => json!({ "type": "any" }),
         roder_api::tools::ToolChoice::None => json!({ "type": "none" }),
-        roder_api::tools::ToolChoice::Specific(name) => {
+        roder_api::tools::ToolChoice::Any if forced_ok => json!({ "type": "any" }),
+        roder_api::tools::ToolChoice::Specific(name) if forced_ok => {
             json!({ "type": "tool", "name": anthropic_tool_name(name) })
         }
+        // Models that reject forced tool choice still call the tool when it is
+        // the only sensible move; falling back to `auto` keeps the turn alive
+        // instead of failing the whole request with a 400.
+        _ => json!({ "type": "auto" }),
     }
+}
+
+/**
+ * Whether a Claude model accepts forced tool choice (`{"type": "any"}` and
+ * `{"type": "tool", ...}`). Fable 5.1 rejects both with
+ * `tool_choice: type "tool" and "any" are not supported for this model.`;
+ * every earlier Claude model in the catalog still accepts them.
+ */
+fn anthropic_model_supports_forced_tool_choice(model: &str) -> bool {
+    !model.starts_with("claude-fable-5-1")
 }
 
 /// Anthropic rejects tool names outside ^[a-zA-Z0-9_-]{1,128}$, but roder tool
@@ -933,6 +948,36 @@ mod tests {
         let body = AnthropicEngine::map_request(&request);
         assert_eq!(body["tools"][0]["name"], "webwright__run_script");
         assert_eq!(body["tool_choice"]["name"], "webwright__run_script");
+    }
+
+    #[test]
+    fn fable_5_1_downgrades_forced_tool_choice_to_auto() {
+        let tools = vec![ToolSpec {
+            name: "webwright.run_script".to_string(),
+            description: "Run a webwright script".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "script": { "type": "string" } },
+                "required": ["script"]
+            }),
+        }];
+        let mut request = request();
+        request.model.model = "claude-fable-5-1".to_string();
+        request.tools = tools;
+        request.tool_choice = ToolChoice::Specific("webwright.run_script".to_string());
+
+        let body = AnthropicEngine::map_request(&request);
+        assert_eq!(body["tool_choice"]["type"], "auto");
+        assert!(body["tool_choice"].get("name").is_none());
+
+        request.tool_choice = ToolChoice::Any;
+        let body = AnthropicEngine::map_request(&request);
+        assert_eq!(body["tool_choice"]["type"], "auto");
+
+        // Fable 5 keeps the forced form.
+        request.model.model = "claude-fable-5".to_string();
+        let body = AnthropicEngine::map_request(&request);
+        assert_eq!(body["tool_choice"]["type"], "any");
     }
 
     #[test]
