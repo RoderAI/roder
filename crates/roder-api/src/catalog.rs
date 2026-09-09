@@ -529,6 +529,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
 ];
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
+    openai_codex::GPT_6_ASTRA,
     openai_codex::GPT_56_SOL,
     openai_codex::GPT_56_TERRA,
     openai_codex::GPT_56_LUNA,
@@ -585,6 +586,16 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         edit_tool: Some("patch"),
         hidden: true,
     },
+    anthropic_model(
+        "claude-fable-5-1",
+        "Claude Fable 5.1",
+        "Anthropic's most capable widely released model; successor to Fable 5 for frontier reasoning and long-horizon agentic work.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+        true,
+    ),
     anthropic_model(
         "claude-fable-5",
         "Claude Fable 5",
@@ -699,6 +710,22 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_HIGH,
         OPUS_REASONING,
     ),
+    claude_code_model(
+        "claude-fable-5-1",
+        "Claude Code Fable 5.1",
+        "Claude Fable 5.1 through the local Claude Code harness.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        OPUS_REASONING,
+    ),
+    gemini_model(
+        PROVIDER_GEMINI,
+        "gemini-3.8-flash",
+        "Gemini 3.8 Flash",
+        "Google's most intelligent Flash model for long-horizon software engineering, autonomous agents, and complex workflows.",
+        REASONING_MEDIUM,
+    ),
     gemini_model(
         PROVIDER_GEMINI,
         "gemini-3.5-flash",
@@ -740,6 +767,13 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Gemini 3.1 Flash-Lite Preview",
         "Lightweight Gemini model for low-latency coding and agent interactions.",
         REASONING_LOW,
+    ),
+    gemini_model(
+        PROVIDER_VERTEX,
+        "gemini-3.8-flash",
+        "Gemini 3.8 Flash",
+        "Google's most intelligent Flash model on Vertex AI for long-horizon software engineering and autonomous agents.",
+        REASONING_MEDIUM,
     ),
     gemini_model(
         PROVIDER_VERTEX,
@@ -1856,6 +1890,22 @@ mod tests {
     }
 
     #[test]
+    fn gemini_38_flash_is_offered_on_both_google_providers() {
+        for provider in [PROVIDER_GEMINI, PROVIDER_VERTEX] {
+            let model = lookup_model_for_provider(provider, "gemini-3.8-flash").unwrap();
+            assert_eq!(model.provider, provider);
+            assert_eq!(model.display_name, "Gemini 3.8 Flash");
+            assert_eq!(model.context_window, 1_048_576);
+            assert_eq!(model.auto_compact_token_limit, 943_718);
+            assert_eq!(model.default_reasoning, REASONING_MEDIUM);
+            assert!(model.supports_tools);
+            assert!(model.supports_structured);
+            assert!(model.supports_images);
+            assert!(!model.hidden);
+        }
+    }
+
+    #[test]
     fn catalog_contains_gode_visible_models() {
         let ids = built_in_models(false)
             .into_iter()
@@ -1864,6 +1914,7 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "gpt-6-astra",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
@@ -1871,6 +1922,7 @@ mod tests {
                 "gpt-5.4",
                 "gpt-5.4-mini",
                 "gpt-5.3-codex-spark",
+                "claude-fable-5-1",
                 "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-opus-4-7",
@@ -1883,12 +1935,15 @@ mod tests {
                 "claude-sonnet-4-6",
                 "claude-opus-4-8",
                 "claude-fable-5",
+                "claude-fable-5-1",
+                "gemini-3.8-flash",
                 "gemini-3.5-flash",
                 "gemini-3.7-flash",
                 "gemini-3.1-pro-preview",
                 "gemini-3.1-pro-preview-customtools",
                 "gemini-3-flash-preview",
                 "gemini-3.1-flash-lite-preview",
+                "gemini-3.8-flash",
                 "gemini-3.5-flash",
                 "gemini-3.7-flash",
                 "gemini-3.1-pro-preview",
@@ -1968,12 +2023,12 @@ mod tests {
 
     #[test]
     fn provider_model_lists_match_gode_catalog() {
-        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 6);
-        assert_eq!(models_for_codex(false).len(), 7);
-        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 5);
-        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 7);
-        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 6);
-        assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 5);
+        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 7);
+        assert_eq!(models_for_codex(false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 6);
+        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 7);
+        assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 8);
@@ -2010,6 +2065,7 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "gpt-6-astra",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
@@ -2064,6 +2120,21 @@ mod tests {
             assert!(!model.hidden, "{id} visibility");
         };
 
+        assert_model(
+            "gpt-6-astra",
+            "GPT-6-Astra",
+            "OpenAI's most capable model, built for the hardest end-to-end work.",
+            REASONING_HIGH,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            1_050_000,
+            1_050_000,
+        );
         assert_model(
             "gpt-5.6-sol",
             "GPT-5.6-Sol",
@@ -2310,6 +2381,37 @@ mod tests {
         // client-side compaction at the auto-compact threshold.
         assert!(!haiku.supports_compaction);
         assert_eq!(haiku.auto_compact_token_limit, 180_000);
+    }
+
+    #[test]
+    fn claude_fable_5_1_is_offered_directly_and_through_the_claude_code_harness() {
+        let direct = lookup_model_for_provider(PROVIDER_ANTHROPIC, "claude-fable-5-1").unwrap();
+        assert_eq!(direct.display_name, "Claude Fable 5.1");
+        assert_eq!(direct.context_window, 1_000_000);
+        assert_eq!(direct.auto_compact_token_limit, 900_000);
+        assert_eq!(direct.default_reasoning, REASONING_HIGH);
+        assert!(direct.supports_compaction);
+        assert_eq!(
+            direct
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort)
+                .collect::<Vec<_>>(),
+            vec![
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX
+            ]
+        );
+
+        let harness = lookup_model_for_provider(PROVIDER_CLAUDE_CODE, "claude-fable-5-1").unwrap();
+        assert_eq!(harness.provider, PROVIDER_CLAUDE_CODE);
+        assert_eq!(harness.context_window, 1_000_000);
+        // The Claude Code provider replays the whole transcript, so Roder
+        // compacts client-side rather than deferring to server-side compaction.
+        assert!(!harness.supports_compaction);
     }
 
     #[test]

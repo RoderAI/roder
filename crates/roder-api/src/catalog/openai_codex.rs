@@ -54,6 +54,39 @@ const GPT_56_LUNA_REASONING: &[ReasoningOption] = &[
     },
 ];
 
+const GPT_6_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Fast responses with lighter reasoning",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Balances speed and reasoning depth for everyday tasks",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "Greater reasoning depth for complex problems",
+    },
+    ReasoningOption {
+        effort: REASONING_XHIGH,
+        description: "Extra high reasoning depth for complex problems",
+    },
+    ReasoningOption {
+        effort: REASONING_MAX,
+        description: "Maximum reasoning depth for the hardest problems",
+    },
+];
+
+pub(super) const GPT_6_ASTRA: ModelCatalogEntry = openai_codex_model(
+    "gpt-6-astra",
+    "GPT-6-Astra",
+    "OpenAI's most capable model, built for the hardest end-to-end work.",
+    REASONING_HIGH,
+    GPT_6_REASONING,
+    1_050_000,
+    1_050_000,
+);
+
 pub(super) const GPT_56_SOL: ModelCatalogEntry = openai_codex_model(
     "gpt-5.6-sol",
     "GPT-5.6-Sol",
