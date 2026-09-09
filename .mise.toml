@@ -4,7 +4,9 @@ rust = "1.95.0"
 uv = "0.11.7"
 
 [env]
-# Homebrew lld (user-installed); mise enter ensures these bins are on PATH.
+# Homebrew lld (user-installed, macOS); mise enter ensures these bins are on
+# PATH. Missing entries are ignored, so this is inert on Linux, where lld comes
+# from the system package manager instead.
 _.path = [
     "{{env.HOME}}/opt/homebrew/opt/lld/bin",
     "{{env.HOME}}/opt/homebrew/bin",
@@ -13,8 +15,11 @@ _.path = [
 LLD_PREFIX = "{{env.HOME}}/opt/homebrew/opt/lld"
 
 [hooks]
-# Ensure brew lld is present when entering the project directory.
-enter = "command -v lld >/dev/null 2>&1 || brew install lld"
+# Ensure a linker is present when entering the project directory. .cargo/config.toml
+# links Linux builds through `clang -fuse-ld=lld`, so a missing lld fails every
+# build with "invalid linker name in argument '-fuse-ld=lld'". Installing it needs
+# root on Linux, so name the command instead of failing the hook.
+enter = "sh scripts/ensure-lld.sh"
 
 [tasks.build]
 description = "Build the local roder binary used by tests"
@@ -45,9 +50,9 @@ description = "Run unit tests only (skip integration binaries)"
 run = "make test-fast"
 
 [tasks."rust:setup"]
-description = "Install Rust build tools (nextest) and ensure brew lld"
+description = "Install Rust build tools (nextest) and ensure a working linker"
 run = [
-    "brew list lld >/dev/null 2>&1 || brew install lld",
+    "sh scripts/ensure-lld.sh",
     "make dev-deps",
 ]
 
