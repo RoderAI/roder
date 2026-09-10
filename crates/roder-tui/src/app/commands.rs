@@ -360,6 +360,7 @@ mod tests {
                 "roadmap",
                 "agent-swarm",
                 "swarm",
+                "ultra",
                 "deep-research",
                 "workflows",
                 "webwright",
