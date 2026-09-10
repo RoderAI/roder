@@ -252,6 +252,60 @@ async fn targetless_wait_prioritizes_live_agents_over_stale_terminal_results() {
 }
 
 #[tokio::test]
+async fn wait_agent_observes_mailbox_activity_queued_before_subscription() {
+    let (runtime, parent_thread_id, thread_root, team_root) =
+        lifecycle_runtime("wait-pending-steer", Arc::new(PendingInferenceEngine)).await;
+    let parent_turn_id = runtime
+        .start_turn(StartTurnRequest {
+            thread_id: parent_thread_id.clone(),
+            message: "coordinate the review".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            reasoning_override: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
+            instructions: crate::default_instructions(),
+            developer_context: None,
+            task_ledger_required: false,
+        })
+        .await
+        .unwrap();
+    let team = spawn_idle_member(&runtime, &parent_thread_id, &parent_turn_id, "reviewer").await;
+    let member = team.members.last().unwrap().clone();
+    runtime
+        .queue_team_member_message(
+            &member.thread_id,
+            &team.id,
+            &team.members[0].id,
+            "agent update".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        execute_control_tool(
+            &runtime,
+            &parent_thread_id,
+            &parent_turn_id,
+            "wait_agent",
+            serde_json::json!({ "target": member.thread_id.clone(), "timeout_ms": 10_000 }),
+        ),
+    )
+    .await
+    .expect("pending mailbox activity should wake wait_agent without waiting for its timeout");
+
+    assert!(!result.is_error, "{}", result.text);
+    assert_eq!(result.data["timed_out"], false);
+    assert_eq!(result.data["activity"], "mailbox_or_steer");
+    runtime
+        .interrupt_turn(parent_thread_id, parent_turn_id)
+        .await
+        .unwrap();
+    cleanup(thread_root, team_root);
+}
+
+#[tokio::test]
 async fn failed_agent_preserves_partial_final_message_and_error() {
     let (runtime, parent_thread_id, thread_root, team_root) =
         lifecycle_runtime("partial-failure", Arc::new(PartialFailureInferenceEngine)).await;
