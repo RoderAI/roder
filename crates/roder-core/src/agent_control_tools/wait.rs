@@ -81,7 +81,11 @@ impl Runtime {
                 }),
             );
         }
-        if self.has_pending_turn_steers(parent_turn_id).await {
+        // Both halves matter: a steer covers activity already delivered into the
+        // turn, the mailbox covers activity queued before delivery could run.
+        if self.has_pending_turn_steers(parent_turn_id).await
+            || self.has_pending_mailbox_activity(parent_thread_id).await
+        {
             return wait_activity_result(call, parent_thread_id, parent_turn_id, targets);
         }
 
