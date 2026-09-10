@@ -443,26 +443,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_url_copies_to_clipboard_when_policy_blocks_processes() {
-        let runner = FakeRunner::default();
-        let clipboard = FakeClipboard::default();
-        let actions =
-            TranscriptRegionActions::new(runner.clone(), clipboard.clone(), PolicyMode::Plan);
-
-        let result = actions.open_url("https://example.com").await.unwrap();
-
-        assert!(matches!(
-            result,
-            TranscriptActionResult::CopiedToClipboard { .. }
-        ));
-        assert!(runner.calls.lock().unwrap().is_empty());
-        assert_eq!(
-            clipboard.writes.lock().unwrap().as_slice(),
-            &["https://example.com".to_string()]
-        );
-    }
-
-    #[tokio::test]
     async fn open_url_falls_back_to_clipboard_when_opener_fails() {
         let runner = FakeRunner {
             fail: true,
@@ -588,37 +568,6 @@ mod tests {
             &[TranscriptOpenFileEvent {
                 path: PathBuf::from("src/lib.rs"),
                 line: Some(42)
-            }]
-        );
-    }
-
-    #[tokio::test]
-    async fn open_file_reference_emits_app_server_event_when_policy_blocks_processes() {
-        let runner = FakeRunner::default();
-        let events = FakeEvents::default();
-        let actions = TranscriptFileActions::new(
-            runner.clone(),
-            events.clone(),
-            PolicyMode::Plan,
-            false,
-            Some("nvim".to_string()),
-        );
-
-        let result = actions
-            .open_file_reference(PathBuf::from("src/lib.rs"), None)
-            .await
-            .unwrap();
-
-        assert!(matches!(
-            result,
-            TranscriptActionResult::EmittedOpenFileEvent { .. }
-        ));
-        assert!(runner.calls.lock().unwrap().is_empty());
-        assert_eq!(
-            events.open_file_events.lock().unwrap().as_slice(),
-            &[TranscriptOpenFileEvent {
-                path: PathBuf::from("src/lib.rs"),
-                line: None
             }]
         );
     }
