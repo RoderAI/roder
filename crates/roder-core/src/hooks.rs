@@ -4,6 +4,7 @@
 //! are diagnostic and fail open; only an explicit `PreToolUse` deny blocks a
 //! tool call.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -39,14 +40,14 @@ pub enum PreToolUseResult {
 /// is the decision, not the prose: a blank reason must still block.
 const DEFAULT_DENIAL_REASON: &str = "denied by PreToolUse hook";
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HooksFile {
     #[serde(default)]
     hooks: HookEvents,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 struct HookEvents {
     #[serde(rename = "PreToolUse", default)]
     pre_tool_use: Vec<MatcherGroup>,
@@ -130,7 +131,7 @@ impl HookEvents {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MatcherGroup {
     #[serde(default)]
@@ -201,8 +202,10 @@ pub async fn run_pre_tool_use(
     workspace: Option<&str>,
     call: &ToolCall,
 ) -> PreToolUseResult {
+    let (handlers, problems) = matching_handlers(workspace, "PreToolUse", Some(&call.name));
+    report_matcher_problems(runtime, thread_id, turn_id, call, "PreToolUse", problems);
     let mut rewritten: Option<Value> = None;
-    for handler in matching_handlers(workspace, "PreToolUse", Some(&call.name)) {
+    for handler in handlers {
         // Rebuilt per handler: a chain of rewriting hooks must each see the
         // input as the previous hook left it, not the model's original.
         let payload = hook_payload(
@@ -249,7 +252,9 @@ pub async fn run_post_tool_use(
         call,
         json!({"toolOutput": output}),
     );
-    for handler in matching_handlers(workspace, "PostToolUse", Some(&call.name)) {
+    let (handlers, problems) = matching_handlers(workspace, "PostToolUse", Some(&call.name));
+    report_matcher_problems(runtime, thread_id, turn_id, call, "PostToolUse", problems);
+    for handler in handlers {
         let _ = run_handler(
             runtime,
             thread_id,
@@ -281,11 +286,42 @@ pub async fn run_lifecycle(
         turn_id: turn_id.clone(),
     };
     let payload = hook_payload(thread_id, turn_id, workspace, event, &call, input);
-    for handler in matching_handlers(workspace, event, matcher) {
+    let (handlers, problems) = matching_handlers(workspace, event, matcher);
+    report_matcher_problems(runtime, thread_id, turn_id, &call, event, problems);
+    for handler in handlers {
         let _ = run_handler(
             runtime, thread_id, turn_id, &call, event, &handler, &payload,
         )
         .await;
+    }
+}
+
+/// Surface matchers that could not be compiled. Without this an unparseable
+/// matcher silently disabled its hook, which is the one failure a diagnostics
+/// feature must not swallow.
+fn report_matcher_problems(
+    runtime: &Runtime,
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    call: &ToolCall,
+    event: &str,
+    problems: Vec<String>,
+) {
+    for problem in problems {
+        runtime
+            .bus
+            .emit(RoderEvent::HookRunRecorded(HookRunRecorded {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                hook_event_name: event.to_string(),
+                handler_type: "matcher".to_string(),
+                status: "failed".to_string(),
+                detail: problem,
+                output: None,
+                timestamp: OffsetDateTime::now_utc(),
+            }));
     }
 }
 
@@ -303,7 +339,7 @@ async fn run_handler(
     handler: &HookHandler,
     payload: &Value,
 ) -> HookOutcome {
-    let (handler_type, detail, timeout_seconds, output) = match handler {
+    let (handler_type, detail, context_limit, status_override, output) = match handler {
         HookHandler::Command {
             command,
             command_windows,
@@ -317,7 +353,6 @@ async fn run_handler(
             } else {
                 command.as_str()
             };
-            let _ = additional_context_limit;
             if *asynchronous {
                 let mut process = Command::new("sh");
                 process
@@ -336,7 +371,8 @@ async fn run_handler(
                     status_message
                         .clone()
                         .unwrap_or_else(|| command.to_string()),
-                    *timeout_seconds,
+                    *additional_context_limit,
+                    None,
                     process
                         .spawn()
                         .map(|_| "async hook started".to_string())
@@ -388,7 +424,8 @@ async fn run_handler(
                     status_message
                         .clone()
                         .unwrap_or_else(|| command.to_string()),
-                    *timeout_seconds,
+                    *additional_context_limit,
+                    None,
                     output,
                 )
             }
@@ -416,7 +453,8 @@ async fn run_handler(
             (
                 "mcp_tool",
                 status_message.clone().unwrap_or(tool_name),
-                *timeout_seconds,
+                None,
+                None,
                 output,
             )
         }
@@ -425,24 +463,40 @@ async fn run_handler(
                 .as_ref()
                 .map(|prompt| expand_string(prompt, payload))
                 .ok_or_else(|| "Codex-compatible prompt handler has no prompt text".to_string());
-            ("prompt", "prompt hook".to_string(), None, output)
+            (
+                "prompt",
+                "prompt hook".to_string(),
+                None,
+                Some("skipped"),
+                output,
+            )
         }
         HookHandler::Agent { prompt } => {
             let output = prompt
                 .as_ref()
                 .map(|prompt| expand_string(prompt, payload))
                 .ok_or_else(|| "Codex-compatible agent handler has no prompt text".to_string());
-            ("agent", "agent hook".to_string(), None, output)
+            (
+                "agent",
+                "agent hook".to_string(),
+                None,
+                Some("skipped"),
+                output,
+            )
         }
     };
-    let _ = timeout_seconds;
     let (status, text) = match output {
-        Ok(text) => ("success", text),
+        Ok(text) => (status_override.unwrap_or("success"), text),
         Err(error) => ("failed", error),
     };
-    let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    let (denial, updated_input) = parse_pre_tool_use_output(&parsed);
-    let output = truncate(&text);
+    // Only a handler that actually ran can answer the permission contract; a
+    // skipped prompt/agent handler must never be read as a decision.
+    let (denial, updated_input) = if status_override.is_some() {
+        (None, None)
+    } else {
+        parse_pre_tool_use_output(&serde_json::from_str(&text).unwrap_or(Value::Null))
+    };
+    let output = truncate(&text, context_limit);
     // Bypass Runtime::emit to avoid lifecycle hooks recursively observing their own diagnostics.
     runtime
         .bus
@@ -517,34 +571,86 @@ fn hook_payload(
     json!({"hookEventName": event, "sessionId": thread_id, "turnId": turn_id, "cwd": workspace.unwrap_or(""), "workspaceRoot": workspace.unwrap_or(""), "toolName": call.name, "toolUseId": call.id, "toolInput": input})
 }
 
+/// Handlers selected for this event, plus any matchers that could not be used.
 fn matching_handlers(
     workspace: Option<&str>,
     event: &str,
     matcher_input: Option<&str>,
-) -> Vec<HookHandler> {
+) -> (Vec<HookHandler>, Vec<String>) {
     let Some((path, _)) = workspace.and_then(|workspace| hooks_path(Path::new(workspace))) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    let Ok(file) = std::fs::read(path)
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<HooksFile>(&raw).ok())
-        .ok_or(())
-    else {
-        return Vec::new();
+    let Some(file) = load_hooks_file(&path) else {
+        return (Vec::new(), Vec::new());
     };
-    file.hooks
-        .groups_for(event)
-        .iter()
-        .filter(|group| matcher_matches(group.matcher.as_deref(), matcher_input))
-        .flat_map(|group| group.hooks.iter().cloned())
-        .collect()
+    let mut handlers = Vec::new();
+    let mut problems = Vec::new();
+    for group in file.hooks.groups_for(event) {
+        match matcher_matches(group.matcher.as_deref(), matcher_input) {
+            Ok(true) => handlers.extend(group.hooks.iter().cloned()),
+            Ok(false) => {}
+            Err(problem) => problems.push(problem),
+        }
+    }
+    (handlers, problems)
 }
 
-fn matcher_matches(matcher: Option<&str>, input: Option<&str>) -> bool {
+/// Parsed `hooks.json`, memoised on the file's modified time and length.
+///
+/// Dispatch reads the file on every hook run — twice per tool call plus each
+/// lifecycle event — so an unchanged file is parsed once and cloned after that.
+/// An edit changes at least one of mtime or length, which drops the entry.
+fn load_hooks_file(path: &Path) -> Option<HooksFile> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<PathBuf, CachedHooksFile>>> =
+        std::sync::OnceLock::new();
+    let metadata = std::fs::metadata(path).ok()?;
+    let stamp = (
+        metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|since| since.as_nanos()),
+        metadata.len(),
+    );
+
+    let cache = CACHE.get_or_init(Default::default);
+    if let Ok(cache) = cache.lock()
+        && let Some(cached) = cache.get(path)
+        && cached.stamp == stamp
+    {
+        return Some(cached.file.clone());
+    }
+
+    let file = serde_json::from_slice::<HooksFile>(&std::fs::read(path).ok()?).ok()?;
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(
+            path.to_path_buf(),
+            CachedHooksFile {
+                stamp,
+                file: file.clone(),
+            },
+        );
+    }
+    Some(file)
+}
+
+struct CachedHooksFile {
+    stamp: (Option<u128>, u64),
+    file: HooksFile,
+}
+
+/// Whether a matcher selects this input, or the reason it could not be used.
+///
+/// An unparseable matcher used to read as "no match", silently disabling the
+/// hook. Callers now surface the error through the same diagnostic channel the
+/// hook runs report on.
+fn matcher_matches(matcher: Option<&str>, input: Option<&str>) -> Result<bool, String> {
     let Some(matcher) = matcher else {
-        return true;
+        return Ok(true);
     };
-    input.is_some_and(|input| regex::Regex::new(matcher).is_ok_and(|regex| regex.is_match(input)))
+    let regex = regex::Regex::new(matcher)
+        .map_err(|error| format!("invalid matcher {matcher:?}: {error}"))?;
+    Ok(input.is_some_and(|input| regex.is_match(input)))
 }
 
 fn hooks_path(workspace: &Path) -> Option<(PathBuf, &'static str)> {
@@ -591,8 +697,22 @@ fn expand_string(value: &str, payload: &Value) -> String {
     result
 }
 
-fn truncate(value: &str) -> String {
-    value.chars().take(MAX_OUTPUT_BYTES).collect()
+/// Trim recorded hook output to a byte budget, honouring a handler's
+/// `additionalContextLimit` when it asks for less than the global cap.
+///
+/// Counting chars against a byte budget let multi-byte output reach four times
+/// the intended size, so this cuts on the nearest char boundary at or below the
+/// limit instead.
+fn truncate(value: &str, limit: Option<usize>) -> String {
+    let budget = limit.unwrap_or(MAX_OUTPUT_BYTES).min(MAX_OUTPUT_BYTES);
+    if value.len() <= budget {
+        return value.to_string();
+    }
+    let mut end = budget;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
 
 #[cfg(test)]
@@ -610,9 +730,13 @@ mod tests {
 
     #[test]
     fn matcher_uses_codex_regex_semantics() {
-        assert!(matcher_matches(Some("Read|Write"), Some("Write")));
-        assert!(!matcher_matches(Some("Read"), Some("Write")));
-        assert!(matcher_matches(None, Some("anything")));
+        assert_eq!(matcher_matches(Some("Read|Write"), Some("Write")), Ok(true));
+        assert_eq!(matcher_matches(Some("Read"), Some("Write")), Ok(false));
+        assert_eq!(matcher_matches(None, Some("anything")), Ok(true));
+
+        // An unusable matcher reports itself instead of quietly not matching.
+        let problem = matcher_matches(Some("Read("), Some("Read")).unwrap_err();
+        assert!(problem.contains("invalid matcher"), "{problem}");
     }
 
     #[test]
@@ -640,6 +764,24 @@ mod tests {
                 .and_then(Value::as_str),
             Some("safe")
         );
+    }
+
+    #[test]
+    fn truncate_respects_a_byte_budget_and_char_boundaries() {
+        // Multi-byte input used to slip through at up to 4x the cap because the
+        // budget counted chars.
+        let wide = "\u{4e2d}".repeat(MAX_OUTPUT_BYTES);
+        let trimmed = truncate(&wide, None);
+        assert!(trimmed.len() <= MAX_OUTPUT_BYTES, "{}", trimmed.len());
+        assert!(
+            trimmed.chars().all(|c| c == '\u{4e2d}'),
+            "cut mid-character"
+        );
+
+        // additionalContextLimit narrows the budget but can never widen it.
+        assert_eq!(truncate("abcdef", Some(3)), "abc");
+        assert_eq!(truncate("abcdef", Some(usize::MAX)).len(), 6);
+        assert_eq!(truncate("abc", None), "abc");
     }
 
     #[test]
