@@ -104,6 +104,11 @@ const RELIABILITY_CONTINUATION_PROMPT: &str = "Verify the task is fully complete
 /// thinking rows from the live view. Sized for generous headroom across bursts
 /// and brief render stalls.
 const EVENT_BUS_CAPACITY: usize = 16_384;
+
+/// Turn id reported to session-scoped local hooks. `SessionStart` and
+/// `SessionEnd` bracket the session rather than any one turn, but the hook
+/// payload carries a turn id, so they share this synthetic value.
+const SESSION_HOOK_TURN_ID: &str = "session";
 pub(crate) const FINAL_ANSWER_PHASE: &str = "final_answer";
 pub(crate) const TASK_LEDGER_TOOL_NAME: &str = "task_ledger.update";
 const TASK_LEDGER_COMPLETION_REMINDER_LIMIT: u8 = 2;
@@ -1864,7 +1869,7 @@ impl Runtime {
             crate::hooks::run_lifecycle(
                 self,
                 &thread_id.to_string(),
-                &"session-end".to_string(),
+                &SESSION_HOOK_TURN_ID.to_string(),
                 workspace.as_deref(),
                 "SessionEnd",
                 Some("clear"),
@@ -5590,13 +5595,25 @@ impl Runtime {
     }
 
     async fn dispatch_local_hook_lifecycle(&self, event: &RoderEvent) {
+        // SessionStart belongs to the session, not the turn: firing it from
+        // TurnStarted re-ran setup hooks on every user message. ThreadCreated
+        // and ThreadLoaded carry no turn id, so they borrow a synthetic one the
+        // way the SessionEnd path does.
+        let session_turn_id = SESSION_HOOK_TURN_ID.to_string();
         let (thread_id, turn_id, name, matcher, input) = match event {
-            RoderEvent::TurnStarted(event) => (
+            RoderEvent::ThreadCreated(event) => (
                 &event.thread_id,
-                &event.turn_id,
+                &session_turn_id,
                 "SessionStart",
                 Some("startup"),
-                serde_json::json!({"source":"turn"}),
+                serde_json::json!({"source":"startup"}),
+            ),
+            RoderEvent::ThreadLoaded(event) => (
+                &event.thread_id,
+                &session_turn_id,
+                "SessionStart",
+                Some("resume"),
+                serde_json::json!({"source":"resume"}),
             ),
             RoderEvent::TurnCompleted(event) => (
                 &event.thread_id,
