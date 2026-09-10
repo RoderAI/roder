@@ -205,6 +205,21 @@ impl TeamManager {
         Ok(pending)
     }
 
+    /// Whether any undelivered mailbox message is addressed to this member.
+    ///
+    /// Read-only on purpose: unlike [`Self::reserve_pending_mailbox_messages`]
+    /// it takes no reservation, so a waiter can ask "is there anything for me?"
+    /// without consuming the queue it is about to be woken for.
+    pub async fn has_pending_mailbox_messages(&self, team_id: &str, member_id: &str) -> bool {
+        let mut teams = self.teams.write().await;
+        let Ok(Some(team)) = self.load_locked(&mut teams, team_id).await else {
+            return false;
+        };
+        team.mailbox
+            .into_iter()
+            .any(|message| message.to_member_id == member_id && !message.delivered)
+    }
+
     pub async fn release_mailbox_reservations_for_turn(&self, turn_id: &TurnId) {
         self.mailbox_reservations
             .write()

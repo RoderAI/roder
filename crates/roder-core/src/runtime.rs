@@ -539,7 +539,7 @@ pub struct Runtime {
     // be persisted to thread state.
     team_member_turn_contexts: Mutex<HashMap<ThreadId, InheritedTurnContext>>,
     workspace: PathBuf,
-    teams: TeamManager,
+    pub(crate) teams: TeamManager,
     agent_team_spawn_lock: Mutex<()>,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
     /// Completed reviews, most recent last, so a later publish can resolve a

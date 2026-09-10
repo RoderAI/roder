@@ -11,6 +11,32 @@ pub(super) struct AgentTarget {
 }
 
 impl Runtime {
+    /// Whether a mailbox message is waiting for this thread's own team member.
+    ///
+    /// `has_pending_turn_steers` only sees messages that delivery has already
+    /// converted into turn steers. A message queued while the recipient's turn
+    /// is not yet registered stays in the mailbox undelivered, so a waiter that
+    /// consulted the steer queue alone could sleep through it.
+    pub(super) async fn has_pending_mailbox_activity(&self, thread_id: &ThreadId) -> bool {
+        for team in self.caller_agents(thread_id).await {
+            let Some(member) = team
+                .members
+                .iter()
+                .find(|member| member.thread_id == *thread_id)
+            else {
+                continue;
+            };
+            if self
+                .teams
+                .has_pending_mailbox_messages(&team.id, &member.id)
+                .await
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) async fn caller_agents(&self, parent_thread_id: &ThreadId) -> Vec<TeamState> {
         self.list_teams()
             .await
