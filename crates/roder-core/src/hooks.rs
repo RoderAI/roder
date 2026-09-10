@@ -29,9 +29,15 @@ pub struct HookInspection {
 
 #[derive(Debug, Clone)]
 pub enum PreToolUseResult {
-    Continue(Value),
+    /// `Some` only when a hook rewrote the tool input; `None` leaves the call
+    /// (and its original `raw_arguments`) exactly as the model produced it.
+    Continue(Option<Value>),
     Denied(String),
 }
+
+/// Stand-in reason when a hook denies a call without explaining why. The denial
+/// is the decision, not the prose: a blank reason must still block.
+const DEFAULT_DENIAL_REASON: &str = "denied by PreToolUse hook";
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -195,16 +201,18 @@ pub async fn run_pre_tool_use(
     workspace: Option<&str>,
     call: &ToolCall,
 ) -> PreToolUseResult {
-    let payload = hook_payload(
-        thread_id,
-        turn_id,
-        workspace,
-        "PreToolUse",
-        call,
-        call.arguments.clone(),
-    );
-    let mut input = call.arguments.clone();
+    let mut rewritten: Option<Value> = None;
     for handler in matching_handlers(workspace, "PreToolUse", Some(&call.name)) {
+        // Rebuilt per handler: a chain of rewriting hooks must each see the
+        // input as the previous hook left it, not the model's original.
+        let payload = hook_payload(
+            thread_id,
+            turn_id,
+            workspace,
+            "PreToolUse",
+            call,
+            rewritten.clone().unwrap_or_else(|| call.arguments.clone()),
+        );
         let outcome = run_handler(
             runtime,
             thread_id,
@@ -219,10 +227,10 @@ pub async fn run_pre_tool_use(
             return PreToolUseResult::Denied(denial);
         }
         if let Some(updated) = outcome.updated_input {
-            input = updated;
+            rewritten = Some(updated);
         }
     }
-    PreToolUseResult::Continue(input)
+    PreToolUseResult::Continue(rewritten)
 }
 
 pub async fn run_post_tool_use(
@@ -474,7 +482,10 @@ fn parse_pre_tool_use_output(parsed: &Value) -> (Option<String>, Option<Value>) 
             .map(str::to_string);
         let updated = output.get("updatedInput").cloned();
         return match decision {
-            Some("deny") => (reason, None),
+            Some("deny") => (
+                Some(reason.unwrap_or_else(|| DEFAULT_DENIAL_REASON.to_string())),
+                None,
+            ),
             Some("allow") => (None, updated),
             _ => (None, None),
         };
@@ -483,13 +494,14 @@ fn parse_pre_tool_use_output(parsed: &Value) -> (Option<String>, Option<Value>) 
         .get("decision")
         .and_then(Value::as_str)
         .filter(|decision| *decision == "deny" || *decision == "block")
-        .and_then(|_| {
+        .map(|_| {
             parsed
                 .get("reason")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|reason| !reason.is_empty())
                 .map(str::to_string)
+                .unwrap_or_else(|| DEFAULT_DENIAL_REASON.to_string())
         });
     (denial, parsed.get("updatedInput").cloned())
 }
@@ -650,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_pre_tool_use_output_requires_nested_allow_or_denial_reason() {
+    fn codex_pre_tool_use_output_honours_nested_allow_and_deny() {
         let deny: Value = serde_json::from_str(
             r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"do not run"}}"#,
         )
@@ -673,10 +685,46 @@ mod tests {
             Some("echo safe")
         );
 
-        let invalid: Value = serde_json::from_str(
+        // A deny with a blank reason is still a deny: the decision blocks the
+        // call and a stand-in reason is supplied for the transcript.
+        let blank_reason: Value = serde_json::from_str(
             r#"{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":" "}}"#,
         )
         .unwrap();
-        assert_eq!(parse_pre_tool_use_output(&invalid), (None, None));
+        assert_eq!(
+            parse_pre_tool_use_output(&blank_reason).0.as_deref(),
+            Some(DEFAULT_DENIAL_REASON)
+        );
+
+        let no_reason: Value =
+            serde_json::from_str(r#"{"hookSpecificOutput":{"permissionDecision":"deny"}}"#)
+                .unwrap();
+        assert_eq!(
+            parse_pre_tool_use_output(&no_reason).0.as_deref(),
+            Some(DEFAULT_DENIAL_REASON)
+        );
+
+        // An unrecognised decision still falls through without blocking.
+        let unknown: Value =
+            serde_json::from_str(r#"{"hookSpecificOutput":{"permissionDecision":"ask"}}"#).unwrap();
+        assert_eq!(parse_pre_tool_use_output(&unknown), (None, None));
+    }
+
+    #[test]
+    fn legacy_top_level_deny_blocks_without_a_reason() {
+        for raw in [
+            r#"{"decision":"deny"}"#,
+            r#"{"decision":"block","reason":"   "}"#,
+        ] {
+            let parsed: Value = serde_json::from_str(raw).unwrap();
+            assert_eq!(
+                parse_pre_tool_use_output(&parsed).0.as_deref(),
+                Some(DEFAULT_DENIAL_REASON),
+                "{raw} must block"
+            );
+        }
+
+        let allowed: Value = serde_json::from_str(r#"{"decision":"approve"}"#).unwrap();
+        assert_eq!(parse_pre_tool_use_output(&allowed).0, None);
     }
 }

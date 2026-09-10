@@ -273,7 +273,10 @@ impl Runtime {
         )
         .await
         {
-            crate::hooks::PreToolUseResult::Continue(arguments) => ToolCall {
+            // Only a hook-supplied rewrite re-serializes the arguments; an
+            // unhooked call keeps the model's original `raw_arguments` string.
+            crate::hooks::PreToolUseResult::Continue(None) => tool_call,
+            crate::hooks::PreToolUseResult::Continue(Some(arguments)) => ToolCall {
                 raw_arguments: serde_json::to_string(&arguments)?,
                 arguments,
                 ..tool_call
