@@ -1,3 +1,23 @@
+## 0.1.18 (2026-09-12)
+
+### Features
+
+- Add Codex-compatible local project hooks with lifecycle diagnostics and expandable TUI output.
+
+### Fixes
+
+#### Add Gemini 3.7 Flash and Grok 4.6 to provider model catalogs
+
+Expose Gemini 3.7 Flash and Grok 4.6 through native, Cursor, xAI, SuperGrok,
+and OpenRouter integrations with provider-specific context windows and
+reasoning controls. Retire Grok 4.5 and Grok Build from active catalogs.
+
+#### Repair three stale TUI tests. The slash-command catalog gained `/ultra` without
+
+its expected list being updated, and two transcript-action tests asserted a
+policy mode that blocks process spawning — no such mode exists any more, and
+both branches they covered are already tested elsewhere.
+
 ## 0.1.17 (2026-08-06)
 
 ### Fixes
