@@ -1,3 +1,13 @@
+## 0.1.7 (2026-09-12)
+
+### Fixes
+
+#### Add Gemini 3.7 Flash and Grok 4.6 to provider model catalogs
+
+Expose Gemini 3.7 Flash and Grok 4.6 through native, Cursor, xAI, SuperGrok,
+and OpenRouter integrations with provider-specific context windows and
+reasoning controls. Retire Grok 4.5 and Grok Build from active catalogs.
+
 ## 0.1.6 (2026-08-03)
 
 ### Features
