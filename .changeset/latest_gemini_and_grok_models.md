@@ -1,7 +1,7 @@
 ---
 roder-api: patch
 roder-app-server: patch
-roder-cli: patch
+roder: patch
 roder-ext-cursor: patch
 roder-ext-gemini: patch
 roder-ext-openai-responses: patch
