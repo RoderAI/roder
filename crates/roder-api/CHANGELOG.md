@@ -1,3 +1,27 @@
+## 0.1.20 (2026-09-12)
+
+### Features
+
+- Add Codex-compatible local project hooks with lifecycle diagnostics and expandable TUI output.
+
+#### Add GPT-6 Astra, Gemini 3.8 Flash, and Claude Fable 5.1
+
+Expose `gpt-6-astra` (1.05M context, efforts up to `max`) on the OpenAI/Codex
+catalog, `gemini-3.8-flash` on both the Gemini API and Vertex AI providers, and
+`claude-fable-5-1` on the direct Anthropic provider and through the local Claude
+Code harness. Provider defaults are unchanged.
+
+Fable 5.1 rejects forced tool choice, so the Anthropic request mapping now sends
+`tool_choice: auto` for that model instead of `any`/`tool`.
+
+### Fixes
+
+#### Add Gemini 3.7 Flash and Grok 4.6 to provider model catalogs
+
+Expose Gemini 3.7 Flash and Grok 4.6 through native, Cursor, xAI, SuperGrok,
+and OpenRouter integrations with provider-specific context windows and
+reasoning controls. Retire Grok 4.5 and Grok Build from active catalogs.
+
 ## 0.1.19 (2026-08-06)
 
 ### Fixes

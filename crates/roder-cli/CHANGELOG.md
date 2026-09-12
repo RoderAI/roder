@@ -1,3 +1,20 @@
+## 0.1.24 (2026-09-12)
+
+### Fixes
+
+#### Add Gemini 3.7 Flash and Grok 4.6 to provider model catalogs
+
+Expose Gemini 3.7 Flash and Grok 4.6 through native, Cursor, xAI, SuperGrok,
+and OpenRouter integrations with provider-specific context windows and
+reasoning controls. Retire Grok 4.5 and Grok Build from active catalogs.
+
+#### Ship local hooks, new frontier models, and wait_agent mailbox wakeup
+
+The `roder` CLI now includes Codex-compatible local project hooks (session-scoped
+`SessionStart`, deny/chaining fixes, tighter diagnostics), Gemini 3.7/3.8 Flash,
+Grok 4.6, GPT-6 Astra, and Claude Fable 5.1, plus a `wait_agent` fix so mailbox
+activity queued before the waiter starts is observed.
+
 ## 0.1.23 (2026-08-06)
 
 ### Fixes
