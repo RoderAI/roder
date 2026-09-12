@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
@@ -529,6 +529,12 @@ pub struct Runtime {
     provider_cleanup_unknown: AtomicUsize,
     active_turns_changed: Notify,
     active_turn_selections: RwLock<HashMap<TurnId, ModelSelectionMode>>,
+    /// Threads that have already dispatched a `SessionStart` local hook.
+    ///
+    /// `ThreadCreated` fires once, but `ThreadLoaded` fires on every read of the
+    /// thread from its store, so without this a session ran its setup hooks
+    /// several times — including after the turn had already stopped.
+    session_hook_started: RwLock<HashSet<ThreadId>>,
     active_turn_contexts: RwLock<HashMap<TurnId, InheritedTurnContext>>,
     /// Process-local execution boundary. Local/CLI runtimes default to true;
     /// hosted runtime pools set this false so missing runner metadata fails
@@ -707,6 +713,7 @@ impl Runtime {
             provider_cleanup_unknown: AtomicUsize::new(0),
             active_turns_changed: Notify::new(),
             active_turn_selections: RwLock::new(HashMap::new()),
+            session_hook_started: RwLock::new(HashSet::new()),
             active_turn_contexts: RwLock::new(HashMap::new()),
             allow_local_workspaces: AtomicBool::new(true),
             team_member_turn_contexts: Mutex::new(HashMap::new()),
@@ -5666,6 +5673,10 @@ impl Runtime {
             ),
             _ => return,
         };
+        // One SessionStart per session, whichever event opened it.
+        if name == "SessionStart" && !self.claim_session_hook_start(thread_id).await {
+            return;
+        }
         let workspace = self.config.read().await.workspace.clone();
         crate::hooks::run_lifecycle(
             self,
@@ -5677,6 +5688,15 @@ impl Runtime {
             input,
         )
         .await;
+    }
+
+    /// Claim the single `SessionStart` dispatch for a thread, returning whether
+    /// this caller won it.
+    pub(crate) async fn claim_session_hook_start(&self, thread_id: &ThreadId) -> bool {
+        self.session_hook_started
+            .write()
+            .await
+            .insert(thread_id.clone())
     }
 
     /// Records a projected thread item event and persists it through the configured thread store.
