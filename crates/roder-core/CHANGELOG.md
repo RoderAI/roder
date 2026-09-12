@@ -1,3 +1,61 @@
+## 0.1.18 (2026-09-12)
+
+### Features
+
+- Add Codex-compatible local project hooks with lifecycle diagnostics and expandable TUI output.
+
+### Fixes
+
+#### Fix local hook denials, chaining, and session scope
+
+- A `PreToolUse` deny with a blank or missing reason no longer falls open. The
+  denial is the decision, not the prose; a bare `permissionDecision: "deny"`
+  (and the legacy top-level `decision`) now blocks the call and supplies a
+  stand-in reason for the transcript.
+- Chained `PreToolUse` hooks each see the input as the previous hook left it.
+  The payload was built once from the model's original arguments, so a second
+  rewriting hook was handed stale input.
+- `SessionStart` fires once per session instead of once per turn. It now hangs
+  off `ThreadCreated` (`startup`) and `ThreadLoaded` (`resume`) rather than
+  `TurnStarted`, which re-ran setup hooks on every user message.
+- A tool call with no matching hook keeps the model's original `raw_arguments`
+  string. Every call was being re-serialized from parsed JSON whether or not a
+  hook ran.
+
+#### Fire the `SessionStart` local hook once per session
+
+`SessionStart` hung off `ThreadLoaded`, which is emitted on every read of a
+thread from its store, so a single `roder exec` run executed its setup hooks
+four times — including once after the turn had already stopped. The dispatch is
+now claimed once per thread, whichever event opens the session.
+
+#### Wake `wait_agent` on mailbox activity queued before it starts waiting
+
+`wait_agent` checked `has_pending_turn_steers`, which only sees activity that
+delivery already converted into a turn steer. A message queued while the
+recipient's turn was not yet registered stayed in the mailbox undelivered, so
+the waiter slept through it and returned only on timeout. It now also consults
+the mailbox directly, and the lifecycle test removed for flaking is restored —
+it passes 20 runs in a row.
+
+#### Remove the flaky `wait_agent_observes_mailbox_activity_queued_before_subscription`
+
+lifecycle test. It failed roughly one run in four because the wakeup it asserts
+is genuinely racy, not because the test was written wrong — see the changeset
+body for the underlying gap.
+
+#### Tighten local hook output, matchers, and inert handlers
+
+- `additionalContextLimit` is honoured instead of parsed and dropped, and output
+  is trimmed to a byte budget on a char boundary. The cap counted chars, so
+  multi-byte output reached four times its intended size.
+- An unparseable `matcher` reports itself as a failed hook run rather than
+  silently disabling its hook.
+- `prompt` and `agent` handlers record as `skipped`, not `success`, and can no
+  longer be read as a permission decision.
+- `hooks.json` is parsed once per file version rather than on every dispatch,
+  keyed on modified time and length.
+
 ## 0.1.17 (2026-08-06)
 
 ### Fixes
