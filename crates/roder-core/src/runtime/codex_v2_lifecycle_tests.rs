@@ -252,6 +252,28 @@ async fn targetless_wait_prioritizes_live_agents_over_stale_terminal_results() {
 }
 
 #[tokio::test]
+async fn session_start_hook_is_claimed_once_per_thread() {
+    let (runtime, thread_id, thread_root, team_root) =
+        lifecycle_runtime("session-start-once", Arc::new(PendingInferenceEngine)).await;
+
+    // Creating the thread already emitted ThreadCreated, which opened the
+    // session, so the claim for it is spent.
+    assert!(
+        !runtime.claim_session_hook_start(&thread_id).await,
+        "ThreadCreated should already have claimed this session"
+    );
+
+    // A fresh session claims once; the repeat ThreadLoaded events that fire on
+    // every read of a thread from its store must not re-run SessionStart hooks.
+    let fresh = "session-start-dedup".to_string();
+    assert!(runtime.claim_session_hook_start(&fresh).await);
+    assert!(!runtime.claim_session_hook_start(&fresh).await);
+    assert!(!runtime.claim_session_hook_start(&fresh).await);
+
+    cleanup(thread_root, team_root);
+}
+
+#[tokio::test]
 async fn wait_agent_observes_mailbox_activity_queued_before_subscription() {
     let (runtime, parent_thread_id, thread_root, team_root) =
         lifecycle_runtime("wait-pending-steer", Arc::new(PendingInferenceEngine)).await;
