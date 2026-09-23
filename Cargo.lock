@@ -3370,7 +3370,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3395,7 +3395,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3558,7 +3558,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3646,7 +3646,7 @@ dependencies = [
 
 [[package]]
 name = "roder-evals"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4102,7 +4102,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-responses"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-stream",
