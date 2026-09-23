@@ -53,6 +53,7 @@ async fn eval_deadline_finalization_disables_tools_and_completes_turn() {
             instructions: InstructionBundle::default(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -137,6 +138,7 @@ async fn eval_deadline_finalization_interrupts_model_stream_at_reserve() {
             instructions: InstructionBundle::default(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -211,6 +213,7 @@ async fn provider_without_tool_capability_receives_no_tools() {
             instructions: InstructionBundle::default(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

@@ -289,6 +289,7 @@ async fn wait_agent_observes_mailbox_activity_queued_before_subscription() {
             instructions: crate::default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

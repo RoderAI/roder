@@ -818,6 +818,7 @@ async fn run_turn_continues_after_tool_result() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -910,6 +911,7 @@ async fn run_turn_executes_parallel_tool_call_batch_concurrently() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -975,6 +977,7 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1026,6 +1029,7 @@ async fn context_limit_stream_start_errors_auto_compact_and_retry() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1127,6 +1131,7 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1145,6 +1150,73 @@ async fn commentary_phase_messages_are_preserved_for_next_provider_request() {
         "second request should preserve commentary assistant message: {:?}",
         requests[1].transcript
     );
+}
+
+#[tokio::test]
+async fn per_turn_service_tier_reaches_every_inference_round() {
+    let engine = Arc::new(PhasePreservingEngine {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    builder.tool_contributor(Arc::new(EchoContributor));
+    let runtime = Arc::new(
+        Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                default_provider: PROVIDER_MOCK.to_string(),
+                default_model: "mock".to_string(),
+                reasoning: None,
+                auto_compact_token_limit: None,
+                file_backed_dynamic_context: true,
+                hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
+                model_edit_tools: std::collections::HashMap::new(),
+                model_parallel_tool_calls: std::collections::HashMap::new(),
+                model_profiles: std::collections::HashMap::new(),
+                tool_allowlist: Vec::new(),
+                command_shell: roder_api::command_shell::default_command_shell(),
+                workspace: None,
+                policy_mode: roder_api::policy_mode::PolicyMode::Default,
+                runtime_profile: roder_api::inference::RuntimeProfile::Interactive,
+                speed_policy: Default::default(),
+                dynamic_workflows: Default::default(),
+                reliability: Default::default(),
+                turn_deadline_seconds: None,
+                remote_runner_destination: None,
+                team_data_dir: None,
+                roadmap_data_dir: None,
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let mut events = runtime.subscribe_events();
+
+    runtime
+        .start_turn(StartTurnRequest {
+            thread_id: "thread_service_tier".to_string(),
+            message: "inspect".to_string(),
+            images: Vec::new(),
+            provider_override: None,
+            model_override: None,
+            reasoning_override: None,
+            workspace: std::env::current_dir().unwrap().display().to_string(),
+
+            instructions: default_instructions(),
+            developer_context: None,
+            task_ledger_required: false,
+            service_tier_override: Some("priority".to_string()),
+        })
+        .await
+        .unwrap();
+
+    wait_for_completed(&mut events, "thread_service_tier").await;
+
+    let requests = engine.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        assert_eq!(request.runtime.service_tier.as_deref(), Some("priority"));
+    }
 }
 
 #[tokio::test]
@@ -1176,6 +1248,7 @@ async fn steer_turn_is_included_in_next_provider_request() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1261,6 +1334,7 @@ async fn runtime_advertises_apply_patch_for_default_edit_models() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1315,6 +1389,7 @@ async fn runtime_keeps_apply_patch_for_edit_profile_models() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1441,6 +1516,7 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1585,6 +1661,7 @@ async fn tool_execution_errors_are_returned_to_model() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1660,6 +1737,7 @@ async fn run_turn_allows_more_than_eight_tool_rounds() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1732,6 +1810,7 @@ async fn unknown_tool_completion_is_marked_as_error() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

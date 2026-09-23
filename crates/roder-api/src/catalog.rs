@@ -2151,6 +2151,36 @@ mod tests {
             1_050_000,
         );
         assert_model(
+            "gpt-6-sol",
+            "GPT-6-Sol",
+            "GPT-6 agentic coding model balancing capability and cost.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            372_000,
+            372_000,
+        );
+        assert_model(
+            "gpt-6-luna",
+            "GPT-6-Luna",
+            "Fast and affordable GPT-6 agentic coding model.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            372_000,
+            372_000,
+        );
+        assert_model(
             "gpt-5.6-sol",
             "GPT-5.6-Sol",
             "Latest frontier agentic coding model.",

@@ -3434,6 +3434,7 @@ impl AppServer {
                 instructions: default_instructions(),
                 developer_context: params.developer_context,
                 task_ledger_required: params.task_ledger_required,
+                service_tier_override: None,
             })
             .await
             .map_err(internal_error)?;
@@ -4100,6 +4101,7 @@ impl AppServer {
                 instructions: default_instructions(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .map_err(internal_error)?;

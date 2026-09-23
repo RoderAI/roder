@@ -223,6 +223,13 @@ pub struct StartTurnRequest {
      */
     pub developer_context: Option<String>,
     pub task_ledger_required: bool,
+    /**
+     * Per-turn provider service tier (OpenAI `service_tier`, e.g.
+     * `"priority"` for Fast mode). Carried to every inference round of the
+     * turn as `RuntimeHints::service_tier`; `None` keeps the provider
+     * default. Providers without a tier concept ignore it.
+     */
+    pub service_tier_override: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2205,6 +2212,7 @@ impl Runtime {
                     .as_ref()
                     .and_then(|context| context.developer_context.clone()),
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await?;
         Ok(turn_id)
@@ -4253,6 +4261,7 @@ impl Runtime {
                     speed_policy: speed_policy_decision,
                     reliability: Some(cfg.reliability.clone().into()),
                     deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
+                    service_tier: req.service_tier_override.clone(),
                     ..RuntimeHints::default()
                 },
                 metadata: request_metadata,
@@ -6557,6 +6566,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -6654,6 +6664,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -6840,6 +6851,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -7677,6 +7689,7 @@ mod tests {
                 },
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -7798,6 +7811,7 @@ mod tests {
                 },
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -7921,6 +7935,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -8071,6 +8086,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -8184,6 +8200,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -8416,6 +8433,7 @@ mod tests {
                     instructions: InstructionBundle::default(),
                     developer_context,
                     task_ledger_required: false,
+                    service_tier_override: None,
                 })
                 .await
                 .unwrap();
@@ -8545,6 +8563,7 @@ mod tests {
                 instructions: crate::instructions::default_instructions(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -8686,6 +8705,7 @@ mod tests {
                 instructions: crate::default_instructions(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9059,6 +9079,7 @@ mod tests {
                 },
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9273,6 +9294,7 @@ mod tests {
                     instructions: InstructionBundle::default(),
                     developer_context: None,
                     task_ledger_required: false,
+                    service_tier_override: None,
                 })
                 .await
                 .unwrap();
@@ -9406,6 +9428,7 @@ mod tests {
                 },
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9501,6 +9524,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: true,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9576,6 +9600,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: true,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9654,6 +9679,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: true,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9781,6 +9807,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9861,6 +9888,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -9948,6 +9976,7 @@ mod tests {
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();

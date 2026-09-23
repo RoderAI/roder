@@ -1034,6 +1034,7 @@ async fn start_pending_parent_turn(
             },
             developer_context: authority.map(|(_, context)| context.to_string()),
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap()

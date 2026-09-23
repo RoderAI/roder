@@ -267,6 +267,7 @@ async fn conversation_fork_creates_isolated_child_with_seeded_transcript() {
             instructions: roder_core::default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

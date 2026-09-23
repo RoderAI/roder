@@ -459,6 +459,15 @@ pub struct RuntimeHints {
     pub deadline_remaining_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reliability: Option<ReliabilityRequestPolicy>,
+    /**
+     * Provider service tier requested for this call (OpenAI `service_tier`,
+     * e.g. `"priority"` for Fast mode, `"flex"`, `"default"`, `"auto"`).
+     * `None` leaves the provider default. Providers that have no tier
+     * concept ignore it; the tier actually served is reported on
+     * `TokenUsage::service_tier`.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -535,6 +544,16 @@ pub struct TokenUsage {
     pub cache_creation_prompt_tokens: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_hit_rate: Option<f64>,
+    /**
+     * Service tier the provider reports it actually served this step with
+     * (OpenAI `response.service_tier`). A request for a faster tier may be
+     * downgraded under load and reported here as `"default"`, which is what
+     * the step is billed at. `None` when the provider did not report one.
+     * When usage is aggregated with `add_assign`, the most recently reported
+     * tier wins; consumers needing per-step precision read per-step usage.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
 }
 
 impl TokenUsage {
@@ -546,7 +565,13 @@ impl TokenUsage {
             cached_prompt_tokens: 0,
             cache_creation_prompt_tokens: 0,
             cache_hit_rate: cache_hit_rate(prompt_tokens, 0),
+            service_tier: None,
         }
+    }
+
+    pub fn with_service_tier(mut self, service_tier: Option<String>) -> Self {
+        self.service_tier = service_tier;
+        self
     }
 
     pub fn with_cached_prompt_tokens(mut self, cached_prompt_tokens: u32) -> Self {
@@ -573,6 +598,9 @@ impl TokenUsage {
             .cache_creation_prompt_tokens
             .saturating_add(usage.cache_creation_prompt_tokens);
         self.cache_hit_rate = cache_hit_rate(self.prompt_tokens, self.cached_prompt_tokens);
+        if usage.service_tier.is_some() {
+            self.service_tier.clone_from(&usage.service_tier);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -834,6 +862,40 @@ mod tests {
             ..TokenUsage::default()
         };
         assert!(!creation_only.is_empty());
+    }
+
+    #[test]
+    fn service_tier_fields_default_when_absent_from_older_payloads() {
+        let hints: RuntimeHints = serde_json::from_value(serde_json::json!({
+            "trace_id": null,
+            "prompt_cache_key": null,
+            "auto_compact_token_limit": null
+        }))
+        .unwrap();
+        assert_eq!(hints.service_tier, None);
+        assert!(
+            serde_json::to_value(&hints)
+                .unwrap()
+                .get("service_tier")
+                .is_none()
+        );
+
+        let usage: TokenUsage = serde_json::from_value(serde_json::json!({
+            "prompt_tokens": 1,
+            "completion_tokens": 2,
+            "total_tokens": 3
+        }))
+        .unwrap();
+        assert_eq!(usage.service_tier, None);
+    }
+
+    #[test]
+    fn token_usage_keeps_the_most_recently_reported_service_tier() {
+        let mut usage = TokenUsage::new(10, 1, 11).with_service_tier(Some("priority".into()));
+        usage.add_assign(&TokenUsage::new(10, 1, 11));
+        assert_eq!(usage.service_tier.as_deref(), Some("priority"));
+        usage.add_assign(&TokenUsage::new(10, 1, 11).with_service_tier(Some("default".into())));
+        assert_eq!(usage.service_tier.as_deref(), Some("default"));
     }
 
     #[test]

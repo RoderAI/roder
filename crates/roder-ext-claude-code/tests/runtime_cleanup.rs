@@ -171,6 +171,7 @@ async fn runtime_interrupt_reaps_claude_cli_before_confirming_cleanup() {
             instructions: InstructionBundle::default(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .expect("start Claude Code turn");

@@ -42,6 +42,7 @@ async fn run_fake_turn(runtime: &Arc<Runtime>) -> (String, String) {
             instructions: roder_core::default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
