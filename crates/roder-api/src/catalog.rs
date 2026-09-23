@@ -530,6 +530,8 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     openai_codex::GPT_6_ASTRA,
+    openai_codex::GPT_6_SOL,
+    openai_codex::GPT_6_LUNA,
     openai_codex::GPT_56_SOL,
     openai_codex::GPT_56_TERRA,
     openai_codex::GPT_56_LUNA,
@@ -1915,6 +1917,8 @@ mod tests {
             ids,
             vec![
                 "gpt-6-astra",
+                "gpt-6-sol",
+                "gpt-6-luna",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
@@ -2023,8 +2027,8 @@ mod tests {
 
     #[test]
     fn provider_model_lists_match_gode_catalog() {
-        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 7);
-        assert_eq!(models_for_codex(false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 9);
+        assert_eq!(models_for_codex(false).len(), 10);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 8);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 7);
@@ -2066,6 +2070,8 @@ mod tests {
             ids,
             vec![
                 "gpt-6-astra",
+                "gpt-6-sol",
+                "gpt-6-luna",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
@@ -2134,6 +2140,36 @@ mod tests {
             ],
             1_050_000,
             1_050_000,
+        );
+        assert_model(
+            "gpt-6-sol",
+            "GPT-6-Sol",
+            "GPT-6 agentic coding model balancing capability and cost.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            372_000,
+            372_000,
+        );
+        assert_model(
+            "gpt-6-luna",
+            "GPT-6-Luna",
+            "Fast and affordable GPT-6 agentic coding model.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            372_000,
+            372_000,
         );
         assert_model(
             "gpt-5.6-sol",

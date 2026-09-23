@@ -102,6 +102,7 @@ async fn saved_knowledge_is_recalled_into_provider_requests() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

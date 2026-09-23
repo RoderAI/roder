@@ -132,6 +132,7 @@ pub async fn execute_automation_task(
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await?;
 

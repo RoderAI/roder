@@ -48,6 +48,7 @@ async fn eval_runtime_retries_transient_provider_stream_decode_failure() {
             instructions: InstructionBundle::default(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

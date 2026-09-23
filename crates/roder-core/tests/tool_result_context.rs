@@ -135,6 +135,7 @@ async fn oversized_tool_result_is_capped_before_next_provider_request() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

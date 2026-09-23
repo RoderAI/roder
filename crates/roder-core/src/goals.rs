@@ -339,6 +339,7 @@ impl Runtime {
                 instructions: crate::default_instructions(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await?;
         Ok(Some(turn_id))

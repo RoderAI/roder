@@ -1150,6 +1150,7 @@ async fn run_turn_collecting_tool_calls(
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -1420,6 +1421,7 @@ async fn shared_runner_tool_calls_are_serialized_across_threads() {
                 instructions: default_instructions(),
                 developer_context: None,
                 task_ledger_required: false,
+                service_tier_override: None,
             })
             .await
             .unwrap();
@@ -1785,6 +1787,7 @@ async fn interrupted_turn_does_not_strand_runner_initialization() {
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -2205,6 +2208,7 @@ async fn start_and_wait(
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

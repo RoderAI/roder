@@ -131,6 +131,7 @@ async fn start_cleanup_turn(
             instructions: Default::default(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

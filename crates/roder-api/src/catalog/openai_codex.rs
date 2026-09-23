@@ -87,6 +87,26 @@ pub(super) const GPT_6_ASTRA: ModelCatalogEntry = openai_codex_model(
     1_050_000,
 );
 
+pub(super) const GPT_6_SOL: ModelCatalogEntry = openai_codex_model(
+    "gpt-6-sol",
+    "GPT-6-Sol",
+    "GPT-6 agentic coding model balancing capability and cost.",
+    REASONING_MEDIUM,
+    GPT_6_REASONING,
+    372_000,
+    372_000,
+);
+
+pub(super) const GPT_6_LUNA: ModelCatalogEntry = openai_codex_model(
+    "gpt-6-luna",
+    "GPT-6-Luna",
+    "Fast and affordable GPT-6 agentic coding model.",
+    REASONING_MEDIUM,
+    GPT_56_LUNA_REASONING,
+    372_000,
+    372_000,
+);
+
 pub(super) const GPT_56_SOL: ModelCatalogEntry = openai_codex_model(
     "gpt-5.6-sol",
     "GPT-5.6-Sol",
