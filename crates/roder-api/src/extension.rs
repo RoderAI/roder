@@ -34,6 +34,7 @@ pub const SUPPORTED_EXTENSION_API_VERSION: &str = "0.1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ProvidedService {
+    AgentBackend(String),
     InferenceEngine(InferenceEngineId),
     InferenceRouter(InferenceRouterId),
     ContextProvider(ContextProviderId),
@@ -97,6 +98,7 @@ pub struct ExtensionRegistry {
     pub manifests: Vec<ExtensionManifest>,
     pub capability_statuses: BTreeMap<ExtensionId, Vec<CapabilityStatus>>,
     pub inference_engines: Vec<Arc<dyn crate::inference::InferenceEngine>>,
+    pub agent_backends: Vec<Arc<dyn crate::backend::AgentBackend>>,
     pub inference_routers: Vec<Arc<dyn crate::inference_routing::InferenceRouter>>,
     pub context_providers: Vec<Arc<dyn crate::context::ContextProvider>>,
     pub context_planners: Vec<Arc<dyn crate::context::ContextPlanner>>,
@@ -125,6 +127,12 @@ pub struct ExtensionRegistry {
 }
 
 impl ExtensionRegistry {
+    pub fn agent_backend(&self, id: &str) -> Option<Arc<dyn crate::backend::AgentBackend>> {
+        self.agent_backends
+            .iter()
+            .find(|backend| backend.id() == id)
+            .cloned()
+    }
     pub fn media_generator(
         &self,
         id: &str,
@@ -240,6 +248,7 @@ pub struct ExtensionRegistryBuilder {
     granted_capabilities: BTreeMap<ExtensionId, BTreeSet<String>>,
     denied_capabilities: BTreeMap<ExtensionId, BTreeMap<String, String>>,
     pub inference_engines: Vec<Arc<dyn crate::inference::InferenceEngine>>,
+    pub agent_backends: Vec<Arc<dyn crate::backend::AgentBackend>>,
     pub inference_routers: Vec<Arc<dyn crate::inference_routing::InferenceRouter>>,
     pub context_providers: Vec<Arc<dyn crate::context::ContextProvider>>,
     pub context_planners: Vec<Arc<dyn crate::context::ContextPlanner>>,
@@ -280,6 +289,7 @@ impl ExtensionRegistryBuilder {
             granted_capabilities: BTreeMap::new(),
             denied_capabilities: BTreeMap::new(),
             inference_engines: Vec::new(),
+            agent_backends: Vec::new(),
             inference_routers: Vec::new(),
             context_providers: Vec::new(),
             context_planners: Vec::new(),
@@ -345,6 +355,7 @@ impl ExtensionRegistryBuilder {
             manifests: self.manifests,
             capability_statuses: validation.capability_statuses,
             inference_engines: self.inference_engines,
+            agent_backends: self.agent_backends,
             inference_routers: self.inference_routers,
             context_providers: self.context_providers,
             context_planners: self.context_planners,
@@ -399,6 +410,10 @@ impl ExtensionRegistryBuilder {
 
     pub fn inference_engine(&mut self, engine: Arc<dyn crate::inference::InferenceEngine>) {
         self.inference_engines.push(engine);
+    }
+
+    pub fn agent_backend(&mut self, backend: Arc<dyn crate::backend::AgentBackend>) {
+        self.agent_backends.push(backend);
     }
 
     pub fn inference_router(&mut self, router: Arc<dyn crate::inference_routing::InferenceRouter>) {
@@ -642,6 +657,12 @@ fn actual_services(builder: &ExtensionRegistryBuilder) -> anyhow::Result<Vec<Pro
     let mut services = Vec::new();
     services.extend(
         builder
+            .agent_backends
+            .iter()
+            .map(|service| ProvidedService::AgentBackend(service.id().to_string())),
+    );
+    services.extend(
+        builder
             .inference_engines
             .iter()
             .map(|service| ProvidedService::InferenceEngine(service.id())),
@@ -858,6 +879,7 @@ fn validate_capabilities(
 
 fn service_label(service: &ProvidedService) -> String {
     match service {
+        ProvidedService::AgentBackend(id) => format!("AgentBackend({id})"),
         ProvidedService::InferenceEngine(id) => format!("InferenceEngine({id})"),
         ProvidedService::InferenceRouter(id) => format!("InferenceRouter({id})"),
         ProvidedService::ContextProvider(id) => format!("ContextProvider({id})"),

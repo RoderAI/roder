@@ -94,6 +94,7 @@ struct RoadmapThreadParams {
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
+    pub(crate) agent_backend: Option<crate::backend::AgentBackendBridge>,
     pub(crate) workflows: crate::workflows::AppWorkflowService,
     pub(crate) tasks: BackgroundRunner,
     pub(crate) persist_user_config: bool,
@@ -158,6 +159,11 @@ impl AppServer {
         Self::with_feature_config(runtime, AppServerFeatureConfig::default())
     }
 
+    pub fn with_agent_backend(mut self, backend: Arc<dyn roder_api::backend::AgentBackend>) -> Self {
+        self.agent_backend = Some(crate::backend::AgentBackendBridge::new(backend, self.runtime.clone()));
+        self
+    }
+
     pub fn with_user_config_persistence(mut self) -> Self {
         self.persist_user_config = true;
         self
@@ -168,6 +174,14 @@ impl AppServer {
     }
 
     pub async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
+        if let Some(backend) = &self.agent_backend
+            && let Some(result) = backend.handle(&req).await
+        {
+            return match result {
+                Ok(val) => JsonRpcResponse { jsonrpc: "2.0".into(), id: req.id, result: Some(val), error: None },
+                Err(err) => JsonRpcResponse { jsonrpc: "2.0".into(), id: req.id, result: None, error: Some(err) },
+            };
+        }
         let result = match req.method.as_str() {
             "initialize" => self.handle_initialize().await,
             "extensions/list" => self.handle_extensions_list().await,

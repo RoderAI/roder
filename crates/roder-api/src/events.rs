@@ -550,6 +550,16 @@ pub struct ToolCallCompleted {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolOutputDelta {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub tool_id: String,
+    pub delta: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolOutputTruncated {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
@@ -1371,6 +1381,7 @@ pub enum RoderEvent {
     PolicyExitPlanResolved(PolicyExitPlanResolved),
     ToolCallStarted(ToolCallStarted),
     ToolCallCompleted(ToolCallCompleted),
+    ToolOutputDelta(ToolOutputDelta),
     ToolOutputTruncated(ToolOutputTruncated),
     SubagentStarted(SubagentStarted),
     SubagentMessage(SubagentMessage),
@@ -1579,6 +1590,7 @@ impl RoderEvent {
             RoderEvent::PolicyExitPlanResolved(_) => "policy.exit_plan_resolved",
             RoderEvent::ToolCallStarted(_) => "tool.call_started",
             RoderEvent::ToolCallCompleted(_) => "tool.call_completed",
+            RoderEvent::ToolOutputDelta(_) => "tool.output_delta",
             RoderEvent::ToolOutputTruncated(_) => "tool.output_truncated",
             RoderEvent::SubagentStarted(_) => "subagent.started",
             RoderEvent::SubagentMessage(_) => "subagent.message",
@@ -1738,6 +1750,7 @@ impl RoderEvent {
             | RoderEvent::ToolCallValidationRecorded(_)
             | RoderEvent::ToolCallStarted(_)
             | RoderEvent::ToolCallCompleted(_) => EventSource::Tool,
+            RoderEvent::ToolOutputDelta(_) => EventSource::Tool,
             RoderEvent::SubagentStarted(_)
             | RoderEvent::SubagentMessage(_)
             | RoderEvent::SubagentToolCall(_)
@@ -1917,6 +1930,7 @@ impl RoderEvent {
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.thread_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.thread_id),
             RoderEvent::ToolCallCompleted(e) => Some(&e.thread_id),
+            RoderEvent::ToolOutputDelta(e) => Some(&e.thread_id),
             RoderEvent::ToolOutputTruncated(e) => Some(&e.thread_id),
             RoderEvent::SubagentStarted(e) => Some(&e.thread_id),
             RoderEvent::SubagentMessage(e) => Some(&e.thread_id),
@@ -2118,6 +2132,7 @@ impl RoderEvent {
             RoderEvent::PolicyExitPlanResolved(e) => Some(&e.turn_id),
             RoderEvent::ToolCallStarted(e) => Some(&e.turn_id),
             RoderEvent::ToolCallCompleted(e) => Some(&e.turn_id),
+            RoderEvent::ToolOutputDelta(e) => Some(&e.turn_id),
             RoderEvent::ToolOutputTruncated(e) => Some(&e.turn_id),
             RoderEvent::SubagentStarted(e) => Some(&e.turn_id),
             RoderEvent::SubagentMessage(e) => Some(&e.turn_id),

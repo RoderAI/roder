@@ -13,6 +13,7 @@ repository = "https://github.com/RoderAI/roder"
 readme = "README.md"
 
 [workspace.dependencies]
+roder-ext-codex-backend = { path = "crates/roder-ext-codex-backend", version = "0.1.0" }
 anyhow = "1.0.102"
 agent-client-protocol-schema = "0.13.8"
 async-trait = "0.1.89"

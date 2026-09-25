@@ -5,6 +5,7 @@ use crate::inference::{
     ModelSchemaPolicy, ProviderFamily, ReasoningEffortDescriptor,
 };
 
+mod anthropic;
 mod deepseek;
 pub mod image_models;
 mod openai_codex;
@@ -71,7 +72,7 @@ pub const REASONING_XHIGH: &str = "xhigh";
 pub const REASONING_MAX: &str = "max";
 pub const REASONING_ULTRA: &str = "ultra";
 
-pub const DEFAULT_MODEL_ID: &str = "gpt-5.6-sol";
+pub const DEFAULT_MODEL_ID: &str = "gpt-6-sol";
 pub const EDIT_TOOL_PATCH: &str = "patch";
 pub const EDIT_TOOL_EDIT: &str = "edit";
 
@@ -369,7 +370,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_ANTHROPIC,
         name: "Anthropic",
         kind: PROVIDER_KIND_ANTHROPIC,
-        default_model: "claude-sonnet-4-6",
+        default_model: "claude-sonnet-5",
         base_url: Some("https://api.anthropic.com"),
         env_key: Some("ANTHROPIC_API_KEY"),
         env_aliases: &[],
@@ -530,6 +531,8 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     openai_codex::GPT_6_ASTRA,
+    openai_codex::GPT_6_SOL,
+    openai_codex::GPT_6_LUNA,
     openai_codex::GPT_56_SOL,
     openai_codex::GPT_56_TERRA,
     openai_codex::GPT_56_LUNA,
@@ -586,6 +589,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         edit_tool: Some("patch"),
         hidden: true,
     },
+    anthropic::OPUS_55,
+    anthropic::SONNET_5,
     anthropic_model(
         "claude-fable-5-1",
         "Claude Fable 5.1",
@@ -647,6 +652,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         // Live API rejects the compaction edit for Haiku 4.5 with 400.
         false,
     ),
+    anthropic::CLAUDE_CODE_OPUS_55,
+    anthropic::CLAUDE_CODE_SONNET_5,
     claude_code_model(
         "fable",
         "Claude Code Fable",
@@ -1915,6 +1922,8 @@ mod tests {
             ids,
             vec![
                 "gpt-6-astra",
+                "gpt-6-sol",
+                "gpt-6-luna",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
@@ -1922,12 +1931,16 @@ mod tests {
                 "gpt-5.4",
                 "gpt-5.4-mini",
                 "gpt-5.3-codex-spark",
+                "claude-opus-5-5",
+                "claude-sonnet-5",
                 "claude-fable-5-1",
                 "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
+                "claude-opus-5-5",
+                "claude-sonnet-5",
                 "fable",
                 "sonnet",
                 "opus",
@@ -2023,10 +2036,10 @@ mod tests {
 
     #[test]
     fn provider_model_lists_match_gode_catalog() {
-        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 7);
-        assert_eq!(models_for_codex(false).len(), 8);
-        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 6);
-        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 9);
+        assert_eq!(models_for_codex(false).len(), 10);
+        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 10);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 5);
@@ -2055,7 +2068,7 @@ mod tests {
             .iter()
             .find(|provider| provider.id == PROVIDER_CODEX)
             .expect("codex provider");
-        assert_eq!(codex_provider.default_model, "gpt-5.6-sol");
+        assert_eq!(codex_provider.default_model, "gpt-6-sol");
 
         let ids = models_for_codex(false)
             .into_iter()
@@ -2066,6 +2079,8 @@ mod tests {
             ids,
             vec![
                 "gpt-6-astra",
+                "gpt-6-sol",
+                "gpt-6-luna",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",

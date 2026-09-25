@@ -30,6 +30,7 @@ roder-usage-analytics.workspace = true
 roder-core.workspace = true
 roder-evals.workspace = true
 roder-ext-anthropic.workspace = true
+roder-ext-codex-backend.workspace = true
 roder-ext-disk-context.workspace = true
 roder-ext-gemini.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
