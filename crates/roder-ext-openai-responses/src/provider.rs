@@ -615,7 +615,10 @@ fn openai_provider_native_tool_search(request: &AgentInferenceRequest) -> bool {
  * live request mapping.
  */
 pub fn openai_model_supports_tool_search(model: &str) -> bool {
-    model.starts_with("gpt-5.4") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.6")
+    model.starts_with("gpt-5.4")
+        || model.starts_with("gpt-5.5")
+        || model.starts_with("gpt-5.6")
+        || model.starts_with("gpt-6-")
 }
 
 /**
@@ -2648,6 +2651,13 @@ mod tests {
         assert_eq!(body["tools"][0]["defer_loading"], true);
         assert_eq!(body["tools"][1], json!({ "type": "tool_search" }));
         assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn gpt_6_supports_provider_native_tool_search() {
+        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+            assert!(openai_model_supports_tool_search(model));
+        }
     }
 
     #[test]

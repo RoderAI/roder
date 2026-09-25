@@ -1361,6 +1361,11 @@ Behavior:
 
 Purpose: Bootstrap or refresh a thread list.
 
+When started with `roder app-server --backend codex`, Roder serves this method
+from Codex's stored thread list for the current directory and merges sessions
+opened in this app-server process. `thread/read` resumes a Codex thread id and
+maps its saved turns into Roder items.
+
 Request:
 
 ```json
@@ -6036,6 +6041,28 @@ Cancellation and interruption:
 - `tasks/cancel` cancels a background task and returns `{ "cancelled": bool }`.
 
 ## Persistence and Contract Notes
+
+### Agent backend selection
+
+`roder app-server --backend codex` keeps the Roder JSON-RPC surface while
+Codex owns inference and tool execution. `thread/start`, `thread/read`,
+`thread/list`, `thread/archive`, `turn/start`, `turn/steer`, `turn/interrupt`,
+`thread/resolve_approval`, and `thread/resolve_user_input` are routed through
+the backend adapter. Clients receive the usual Roder turn, item, and approval
+notifications. Codex command output additionally streams as
+`thread/toolOutputDelta` with `threadId`, `turnId`, `toolId`, and `delta`;
+completed file edits emit `thread/fileChanged` with `threadId`, `turnId`,
+`path`, and `changeType`. A permission request from Codex uses the existing
+Roder approval method and dialog. Codex `thread/tokenUsage/updated` is mapped
+to Roder usage events and the completed turn's `usage`; the TUI token counters
+update from those events. `initialize`, `model/list`, `providers/list`,
+`providers/select`, and `model/select` are backed by Codex's model catalog.
+Other Roder app-server methods continue to
+be served by Roder.
+
+The selected Roder policy mode is sent to Codex as approval and sandbox
+settings when starting a thread or turn. Codex threads remain stored by Codex;
+Roder's native thread persistence is not used for their conversation history.
 
 - `thread/list` and `thread/read` use persisted threads first and in-memory
   protocol threads as a fallback.

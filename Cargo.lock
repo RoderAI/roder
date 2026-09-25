@@ -3341,6 +3341,7 @@ dependencies = [
  "roder-core",
  "roder-evals",
  "roder-ext-anthropic",
+ "roder-ext-codex-backend",
  "roder-ext-disk-context",
  "roder-ext-gemini",
  "roder-ext-jsonl-thread-store",
@@ -3716,6 +3717,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "which 8.0.4",
+]
+
+[[package]]
+name = "roder-ext-codex-backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

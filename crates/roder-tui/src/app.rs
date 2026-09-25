@@ -2659,6 +2659,13 @@ where
                     RoderEvent::ToolCallCompleted(ev) => {
                         self.record_tool_completed(&ev.tool_id, ev.is_error, ev.output);
                     }
+                    RoderEvent::ToolOutputDelta(ev) => {
+                        if let Some(timeline) = self.team_timeline_for_thread_mut(&ev.thread_id) {
+                            timeline.record_tool_output_delta(&ev.tool_id, &ev.delta);
+                        } else {
+                            self.timeline.record_tool_output_delta(&ev.tool_id, &ev.delta);
+                        }
+                    }
                     RoderEvent::ThreadGoalUpdated(ev) if ev.thread_id == self.thread_id => {
                         self.current_goal = Some(ev.goal);
                     }
