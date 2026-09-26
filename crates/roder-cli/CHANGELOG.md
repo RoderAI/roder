@@ -1,3 +1,57 @@
+## 0.1.25 (2026-09-26)
+
+### Features
+
+#### Select Codex as a complete agent backend for Roder
+
+Add an extension service for complete agent backends and a Codex app-server implementation. Roder app-server maps its thread, turn, streaming event, and approval APIs to Codex, so existing Roder clients and the TUI can use Codex as the agent runtime.
+
+Refresh GPT-6 and Claude Opus 5.5/Sonnet 5 catalog entries and map Codex token usage into Roder's turn counters.
+
+### Fixes
+
+#### Per-turn OpenAI service tier (Fast mode), and GPT-6 Sol and Luna
+
+A caller can now choose the OpenAI service tier for a turn.
+`StartTurnRequest::service_tier_override` (for example `"priority"` for Fast
+mode) is carried to every inference round of the turn as
+`RuntimeHints::service_tier`. The OpenAI Responses provider sends it as the
+top-level `service_tier` request field only on the OpenAI profile; OpenRouter,
+xAI, and Fireworks never receive it. `None` keeps the provider default.
+
+The tier OpenAI reports it actually served (`response.service_tier`) is recorded
+on `TokenUsage::service_tier`, so a biller can tell a request that ran fast from
+one that was downgraded to `"default"` under load. Both new fields are optional
+and default to absent when older payloads are deserialized.
+
+`StartTurnRequest` gains a public field, so code that builds it with a struct
+literal must add `service_tier_override: None`.
+
+The OpenAI/Codex catalog adds `gpt-6-sol` (efforts `low` through `max`, like
+`gpt-6-astra`) and `gpt-6-luna` (efforts `low` through `max`, like
+`gpt-5.6-luna`), so per-turn reasoning validation accepts them.
+
+#### Persist browser pairing across Roder restarts
+
+Pairing the browser extension used to last exactly as long as one Roder process:
+`/remote` minted a fresh random token on every start and listened on an
+OS-assigned port, so the endpoint and token the extension had stored were both
+dead after a restart and the user had to walk the `/pair` flow again.
+
+The token and the bound loopback port are now stored in
+`<config-dir>/remote-pairing.json` (owner-only, never logged) and reused, and a
+Roder that finds that file brings the listener back up on the same endpoint at
+startup. Pair once and later runs reconnect with no user action. `/remote
+regenerate` — new alias `/remote unpair` — rotates the token and revokes every
+paired browser; a remembered port that is already taken falls back to an
+ephemeral port, which is then remembered in turn.
+
+Also fixes a stack overflow that aborted the TUI on its first turn. `main` used
+a bare `#[tokio::main]`, so the agent-loop future ran on a worker thread with
+tokio's 2 MiB default stack — the Windows main, the roadmap TUI and the
+app-server already spawn themselves on 32 MiB for exactly this reason. All the
+Roder runtimes now set that stack size for their worker threads too.
+
 ## 0.1.24 (2026-09-12)
 
 ### Fixes

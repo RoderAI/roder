@@ -1,3 +1,13 @@
+## 0.1.6 (2026-09-26)
+
+### Fixes
+
+#### Add Grok 4.7 to the xAI and SuperGrok catalogs
+
+`grok-4.7` (500k context, high reasoning by default) is now listed for both the
+`xai` and `supergrok` providers and is their default model, matching xAI's
+current published roster.
+
 ## 0.1.5 (2026-09-12)
 
 ### Fixes
