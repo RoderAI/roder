@@ -414,7 +414,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_XAI,
         name: "xAI",
         kind: PROVIDER_KIND_XAI,
-        default_model: "grok-4.6",
+        default_model: "grok-4.7",
         base_url: Some("https://api.x.ai/v1"),
         env_key: Some("XAI_API_KEY"),
         env_aliases: XAI_ENV_ALIASES,
@@ -425,7 +425,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_SUPERGROK,
         name: "SuperGrok",
         kind: PROVIDER_KIND_XAI,
-        default_model: "grok-4.6",
+        default_model: "grok-4.7",
         base_url: Some("https://api.x.ai/v1"),
         env_key: None,
         env_aliases: &[],
@@ -819,6 +819,17 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     xai_model(
         PROVIDER_XAI,
+        "grok-4.7",
+        "Grok 4.7",
+        "xAI's most capable model for coding, chat, long-running agents, and configurable reasoning.",
+        500_000,
+        REASONING_HIGH,
+        XAI_REASONING,
+        true,
+        false,
+    ),
+    xai_model(
+        PROVIDER_XAI,
         "grok-4.6",
         "Grok 4.6",
         "xAI's flagship model for coding, long-running agents, knowledge work, and configurable reasoning.",
@@ -869,6 +880,17 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         2_000_000,
         REASONING_NONE,
         XAI_NO_REASONING,
+        true,
+        false,
+    ),
+    xai_model(
+        PROVIDER_SUPERGROK,
+        "grok-4.7",
+        "Grok 4.7",
+        "SuperGrok OAuth access to xAI's most capable coding and long-running agent model.",
+        500_000,
+        REASONING_HIGH,
+        XAI_REASONING,
         true,
         false,
     ),
@@ -1962,11 +1984,13 @@ mod tests {
                 "gemini-3.1-pro-preview",
                 "gemini-3-flash-preview",
                 "gemini-3.1-flash-lite-preview",
+                "grok-4.7",
                 "grok-4.6",
                 "grok-4.3",
                 "grok-4.20-multi-agent-0309",
                 "grok-4.20-0309-reasoning",
                 "grok-4.20-0309-non-reasoning",
+                "grok-4.7",
                 "grok-4.6",
                 "grok-composer-2.5-fast",
                 "gpt-5.5",
@@ -2042,8 +2066,8 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 10);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 6);
-        assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 5);
-        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 2);
+        assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 6);
+        assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 8);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
@@ -2152,33 +2176,35 @@ mod tests {
         );
         assert_model(
             "gpt-6-sol",
-            "GPT-6-Sol",
-            "GPT-6 agentic coding model balancing capability and cost.",
+            "GPT-6 Sol",
+            "Agentic coding model balancing intelligence and cost.",
             REASONING_MEDIUM,
             &[
+                REASONING_NONE,
                 REASONING_LOW,
                 REASONING_MEDIUM,
                 REASONING_HIGH,
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            372_000,
-            372_000,
+            1_050_000,
+            1_050_000,
         );
         assert_model(
             "gpt-6-luna",
-            "GPT-6-Luna",
-            "Fast and affordable GPT-6 agentic coding model.",
+            "GPT-6 Luna",
+            "Efficient model for focused, high-volume tasks.",
             REASONING_MEDIUM,
             &[
+                REASONING_NONE,
                 REASONING_LOW,
                 REASONING_MEDIUM,
                 REASONING_HIGH,
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            372_000,
-            372_000,
+            1_050_000,
+            1_050_000,
         );
         assert_model(
             "gpt-5.6-sol",
@@ -2548,7 +2574,13 @@ mod tests {
     }
 
     #[test]
-    fn supergrok_catalog_exposes_grok_46_and_composer_with_expected_context_windows() {
+    fn supergrok_catalog_exposes_grok_47_46_and_composer_with_expected_context_windows() {
+        let grok47 = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-4.7").unwrap();
+        assert_eq!(grok47.display_name, "Grok 4.7");
+        assert_eq!(grok47.context_window, 500_000);
+        assert_eq!(grok47.auto_compact_token_limit, 450_000);
+        assert_eq!(grok47.default_reasoning, REASONING_HIGH);
+
         let grok46 = lookup_model_for_provider(PROVIDER_SUPERGROK, "grok-4.6").unwrap();
         assert_eq!(grok46.display_name, "Grok 4.6");
         assert_eq!(grok46.context_window, 500_000);
@@ -2569,7 +2601,11 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             visible,
-            vec!["grok-4.6".to_string(), "grok-composer-2.5-fast".to_string()]
+            vec![
+                "grok-4.7".to_string(),
+                "grok-4.6".to_string(),
+                "grok-composer-2.5-fast".to_string(),
+            ]
         );
     }
 

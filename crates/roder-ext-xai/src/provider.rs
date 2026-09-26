@@ -115,7 +115,7 @@ mod tests {
             .iter()
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["grok-4.6", "grok-composer-2.5-fast"]);
+        assert_eq!(ids, vec!["grok-4.7", "grok-4.6", "grok-composer-2.5-fast"]);
 
         let grok46 = models.iter().find(|model| model.id == "grok-4.6").unwrap();
         assert_eq!(grok46.name, "Grok 4.6");
