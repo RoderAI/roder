@@ -3330,7 +3330,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.25"
+version = "0.2.0"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3377,7 +3377,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.1.22"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3402,7 +3402,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3461,7 +3461,7 @@ dependencies = [
 
 [[package]]
 name = "roder-automations"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3478,7 +3478,7 @@ dependencies = [
 
 [[package]]
 name = "roder-code-index"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "ignore",
@@ -3507,7 +3507,7 @@ dependencies = [
 
 [[package]]
 name = "roder-commands"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -3521,7 +3521,7 @@ dependencies = [
 
 [[package]]
 name = "roder-config"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -3539,7 +3539,7 @@ dependencies = [
 
 [[package]]
 name = "roder-configure"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -3551,7 +3551,7 @@ dependencies = [
 
 [[package]]
 name = "roder-context"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3566,7 +3566,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.1.20"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3599,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "roder-dist-hosted"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -3619,7 +3619,7 @@ dependencies = [
 
 [[package]]
 name = "roder-dynamic-workflows"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3634,7 +3634,7 @@ dependencies = [
 
 [[package]]
 name = "roder-edit-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3645,7 +3645,7 @@ dependencies = [
 
 [[package]]
 name = "roder-edit-wasm"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-edit-core",
@@ -3656,7 +3656,7 @@ dependencies = [
 
 [[package]]
 name = "roder-evals"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -3677,7 +3677,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-anthropic"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3695,7 +3695,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-chrome"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3713,7 +3713,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-claude-code"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3730,7 +3730,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-codex-backend"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3742,7 +3742,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-cursor"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3764,7 +3764,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-deepseek"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3779,7 +3779,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-disk-context"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -3790,7 +3790,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-firecrawl-search"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3805,7 +3805,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-fireworks"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3820,7 +3820,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-fork-rift"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3834,7 +3834,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-gemini"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3849,7 +3849,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-git"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3863,7 +3863,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-github-review"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3879,7 +3879,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-google-embeddings"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3893,7 +3893,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-google-images"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3908,7 +3908,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-google-speech"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3924,7 +3924,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-honcho"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3942,7 +3942,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-inference-router"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3955,7 +3955,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-jev"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3973,7 +3973,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-jsonl-thread-store"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3988,7 +3988,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-kimi-code"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4005,7 +4005,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-knowledge-md"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4022,7 +4022,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-mcp"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4036,7 +4036,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-memory"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4053,7 +4053,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-mysql-session"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4070,7 +4070,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-notify-desktop"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4084,7 +4084,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-notify-terminal"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4097,7 +4097,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-chat-completions"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4113,7 +4113,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-embeddings"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4127,7 +4127,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-images"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4142,7 +4142,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-responses"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4162,7 +4162,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-speech"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4176,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-opencode"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openrouter"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4208,7 +4208,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-parallel-search"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4223,7 +4223,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-perplexity-search"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4238,7 +4238,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-plan-mode"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4252,7 +4252,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-poolside"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4270,7 +4270,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-postgres-session"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4288,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-process-host"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4305,7 +4305,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-roder-cloud"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4321,7 +4321,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-blaxel"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4337,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-cloudflare"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4348,7 +4348,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-daytona"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4359,7 +4359,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-docker"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4371,7 +4371,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-e2b"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4382,7 +4382,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-hosted-common"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4396,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-modal"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4407,7 +4407,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-runloop"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4418,7 +4418,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-sprites"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4438,7 +4438,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-unix-local"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4450,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-vercel"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4461,7 +4461,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-subagents"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4477,7 +4477,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-synthetic"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4494,7 +4494,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-synthetic-search"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4509,7 +4509,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-task-ledger"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4522,7 +4522,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-task-process"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4540,7 +4540,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-task-subagent"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4554,7 +4554,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-tavily-search"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4569,7 +4569,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-verification"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4582,7 +4582,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-vertex"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4602,7 +4602,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-web-search"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4620,7 +4620,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-webwright"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4636,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-xai"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4649,7 +4649,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-xiaomi-mimo"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4667,7 +4667,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-zeroentropy-embeddings"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4682,7 +4682,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-zerolang"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4697,7 +4697,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4783,7 +4783,7 @@ dependencies = [
 
 [[package]]
 name = "roder-inference"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4794,7 +4794,7 @@ dependencies = [
 
 [[package]]
 name = "roder-memory"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4805,7 +4805,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4818,7 +4818,7 @@ dependencies = [
 
 [[package]]
 name = "roder-roadmap"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4832,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "roder-sandbox"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4853,7 +4853,7 @@ dependencies = [
 
 [[package]]
 name = "roder-skills"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4882,7 +4882,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tasks"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4903,7 +4903,7 @@ dependencies = [
 
 [[package]]
 name = "roder-thread-store"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4914,7 +4914,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tools"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4935,7 +4935,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.19"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4966,7 +4966,7 @@ dependencies = [
 
 [[package]]
 name = "roder-usage-analytics"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
