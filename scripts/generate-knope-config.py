@@ -119,11 +119,31 @@ def cargo_packages() -> list[tuple[str, Path]]:
     return packages
 
 
+def crate_dependency_files(packages: list[tuple[str, Path]]) -> dict[str, set[tuple[str, str]]]:
+    names = {name for name, _ in packages}
+    files = {name: set() for name in names}
+    for _, manifest in packages:
+        with (REPO_ROOT / manifest).open("rb") as source:
+            config = tomllib.load(source)
+        scopes = [config, *config.get("target", {}).values()]
+        for scope in scopes:
+            for table in ("dependencies", "dev-dependencies", "build-dependencies"):
+                for alias, dependency in scope.get(table, {}).items():
+                    if isinstance(dependency, dict) and dependency.get("workspace"):
+                        continue
+                    name = dependency.get("package", alias) if isinstance(dependency, dict) else alias
+                    if name in names:
+                        files[name].add((manifest.as_posix(), alias))
+    return files
+
+
 def render() -> str:
     lines = [HEADER]
     with (REPO_ROOT / "Cargo.toml").open("rb") as source:
         workspace_dependencies = tomllib.load(source)["workspace"]["dependencies"]
-    for name, manifest in cargo_packages():
+    packages = cargo_packages()
+    dependency_files = crate_dependency_files(packages)
+    for name, manifest in packages:
         crate_dir = manifest.parent.as_posix()
         lines.append(f'[packages."{name}"]')
         lines.append("versioned_files = [")
@@ -132,6 +152,8 @@ def render() -> str:
         dependency = workspace_dependencies.get(name)
         if isinstance(dependency, dict) and "path" in dependency:
             lines.append(f'    {{ path = "Cargo.toml", dependency = "{name}" }},')
+        for path, alias in sorted(dependency_files[name]):
+            lines.append(f'    {{ path = "{path}", dependency = "{alias}" }},')
         lines.append("]")
         lines.append(f'changelog = "{crate_dir}/CHANGELOG.md"')
         lines.append("")

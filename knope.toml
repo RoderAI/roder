@@ -358,6 +358,7 @@ versioned_files = [
     "crates/roder-ext-openai-chat-completions/Cargo.toml",
     "Cargo.lock",
     { path = "Cargo.toml", dependency = "roder-ext-openai-chat-completions" },
+    { path = "crates/roder-ext-kimi-code/Cargo.toml", dependency = "roder-ext-openai-chat-completions" },
 ]
 changelog = "crates/roder-ext-openai-chat-completions/CHANGELOG.md"
 
@@ -747,6 +748,8 @@ versioned_files = [
     "crates/roder-tasks/Cargo.toml",
     "Cargo.lock",
     { path = "Cargo.toml", dependency = "roder-tasks" },
+    { path = "crates/roder-ext-task-process/Cargo.toml", dependency = "roder-tasks" },
+    { path = "crates/roder-ext-task-subagent/Cargo.toml", dependency = "roder-tasks" },
 ]
 changelog = "crates/roder-tasks/CHANGELOG.md"
 
