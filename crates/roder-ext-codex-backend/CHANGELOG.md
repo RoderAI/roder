@@ -1,14 +1,8 @@
----
-roder-api: minor
-roder-app-server: minor
-roder-ext-codex-backend: minor
-roder-ext-openai-responses: patch
-roder-ext-anthropic: patch
-roder-tui: minor
-roder: minor
----
+## 0.1.1 (2026-09-26)
 
-# Select Codex as a complete agent backend for Roder
+### Features
+
+#### Select Codex as a complete agent backend for Roder
 
 Add an extension service for complete agent backends and a Codex app-server implementation. Roder app-server maps its thread, turn, streaming event, and approval APIs to Codex, so existing Roder clients and the TUI can use Codex as the agent runtime.
 

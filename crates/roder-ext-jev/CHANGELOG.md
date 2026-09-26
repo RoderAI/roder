@@ -1,10 +1,8 @@
----
-roder-ext-jev: minor
-roder-extension-host: minor
-roder-app-server: patch
----
+## 0.1.1 (2026-09-26)
 
-# Add Jev Ultrafast as a browser tool provider
+### Features
+
+#### Add Jev Ultrafast as a browser tool provider
 
 Expose a bounded `jev_browse` tool backed by the upstream Jev CDP agent, with
 Roder policy approval and a provider-configured `JEV_API_KEY`.

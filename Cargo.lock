@@ -3324,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3371,7 +3371,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3396,7 +3396,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3560,7 +3560,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3648,7 +3648,7 @@ dependencies = [
 
 [[package]]
 name = "roder-evals"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -3669,7 +3669,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-anthropic"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3687,7 +3687,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-chrome"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-claude-code"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3722,7 +3722,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-codex-backend"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3947,7 +3947,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-jev"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4133,7 +4133,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-responses"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4624,7 +4624,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-xai"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4685,7 +4685,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4792,7 +4792,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4922,7 +4922,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
