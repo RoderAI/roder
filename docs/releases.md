@@ -29,7 +29,7 @@ Optional longer description in Markdown.
 - File name: anything ending in `.md`, e.g. `.changeset/fix_cheese_distribution.md`.
 - Package names are the keys in `knope.toml` (crate names for Rust;
   `roder-sdk-typescript`, `roder-sdk-python`, `roder-edit-tools` for the SDKs).
-- Bump types: `major`, `minor`, or `patch`.
+- Bump types: `major`, `minor`, or `patch`. Knope treats 0.x versions as `0.<breaking>.<feature/fix>`: use `major` for a breaking 0.1 → 0.2 release; `minor` and `patch` both increment the final component. See [Knope semantic versioning](https://knope.tech/reference/concepts/semantic-versioning/).
 - The summary becomes the changelog / release-notes entry.
 - Interactive alternative: install knope and run `knope document-change`.
 - Do **not** put non-changeset files (e.g. a README) in `.changeset/` — knope
@@ -59,7 +59,7 @@ Bypasses:
 1. PRs merge to `master`, each carrying changesets.
 2. `prepare-release.yml` runs on every push to `master`: knope combines all
    pending changesets, bumps each affected package's version (crate
-   `Cargo.toml` + `Cargo.lock`, `package.json` + `package-lock.json`,
+   `Cargo.toml` + `Cargo.lock` and workspace dependency requirements, `package.json` + `package-lock.json`,
    `pyproject.toml`), writes per-package `CHANGELOG.md` entries, deletes the
    consumed changesets, and force-pushes the `knope/release` branch with an
    open release preview PR.
@@ -163,7 +163,7 @@ steps are only needed for recovery.
 Before publishing crates to crates.io later:
 
 1. Add publish metadata (description, license, repository) to public crates.
-2. Add registry versions to internal workspace dependencies, for example
+2. Keep registry version requirements aligned with package releases. The generator includes workspace dependency entries in each package's versioned files. When a shared crate receives a breaking version bump, include its reverse dependency closure in the release so registry builds use one compatible API. For example
    `roder-api = { path = "crates/roder-api", version = "0.1.0" }`, and
    extend the knope config generator to keep those dependency versions
    updated (`{ path = "Cargo.toml", dependency = "roder-api" }`).

@@ -68,3 +68,9 @@ Machine-readable counts and source fingerprint: [verification JSON](responses-lo
 - Luna HTTP: 2/2 on current and 2/2 on frozen baseline. Current WebSocket: 2/2; native compaction continuity: 1/1. No patch errors in these live fixtures. Held-open SSE: 20/20 each, median 200.833 ms baseline and 40.705 ms current.
 - Optional public transport checks: ACP 4/4, patch contracts 2/2, steering 2/2 and app-server E2E 126 passed, one ignored. Three failures also reproduced on the frozen baseline were filtered for this final run: `providers_clear_removes_api_key` (saved Cursor login state), `runners_methods_list_select_status_and_delete_destination` (runner token expectation) and `tools_list_discovers_configured_web_search_without_secret_material` (an authentication label in the payload). The initial current and baseline unfiltered runs retain those same failures; the final filtered pass does not imply a clean unfiltered suite.
 - The changeset names all eight modified released packages. Its committed branch coverage is checked against the frozen baseline. A full Terminal-Bench quality run, source landing and deployment remain separate activities from this audit goal.
+
+## Release follow-up
+
+The two config/authentication-dependent unit failures are fixed: registry configuration tests run in isolated child processes and provider selection tests supply explicit authentication state. The shell-include integration expectation now matches the current Plan process policy. A fresh unfiltered `cargo test --workspace --locked --no-fail-fast` run passed: 3,163 test executions, zero failures and 55 ignored.
+
+The release changeset includes the reverse dependency closure of the shared API changes. Knope now updates workspace dependency requirements alongside crate versions, preventing registry builds from selecting old API implementations. The verified release preview targets Roder 0.2.0 and its dependent crates. Registry README and publish-order gates pass.

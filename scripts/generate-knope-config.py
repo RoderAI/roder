@@ -121,12 +121,17 @@ def cargo_packages() -> list[tuple[str, Path]]:
 
 def render() -> str:
     lines = [HEADER]
+    with (REPO_ROOT / "Cargo.toml").open("rb") as source:
+        workspace_dependencies = tomllib.load(source)["workspace"]["dependencies"]
     for name, manifest in cargo_packages():
         crate_dir = manifest.parent.as_posix()
         lines.append(f'[packages."{name}"]')
         lines.append("versioned_files = [")
         lines.append(f'    "{manifest.as_posix()}",')
         lines.append('    "Cargo.lock",')
+        dependency = workspace_dependencies.get(name)
+        if isinstance(dependency, dict) and "path" in dependency:
+            lines.append(f'    {{ path = "Cargo.toml", dependency = "{name}" }},')
         lines.append("]")
         lines.append(f'changelog = "{crate_dir}/CHANGELOG.md"')
         lines.append("")

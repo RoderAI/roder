@@ -1,4 +1,6 @@
 mod codex_oauth;
+#[cfg(test)]
+mod test_config;
 use codex_oauth::CodexOAuthInferenceEngine;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -1573,6 +1575,9 @@ mod tests {
 
     #[test]
     fn default_roder_home_dir_uses_home_roder() {
+        if test_config::run_in_child("tests::default_roder_home_dir_uses_home_roder", true) {
+            return;
+        }
         let rendered = roder_home_dir()
             .unwrap()
             .to_string_lossy()
@@ -1801,22 +1806,12 @@ mod tests {
     #[test]
     fn default_registry_installs_synthetic_provider_without_credentials() {
         use roder_api::catalog::PROVIDER_SYNTHETIC;
-        use std::sync::OnceLock;
-
-        static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
-        CONFIG_ISOLATION.get_or_init(|| {
-            let temp = std::env::temp_dir().join(format!(
-                "roder-extension-host-synthetic-tests-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&temp);
-            std::fs::create_dir_all(&temp).unwrap();
-            // SAFETY: set once before any test reads the config; all tests run
-            // in the same process and never restore a real config dir.
-            unsafe {
-                std::env::set_var("RODER_CONFIG_DIR", &temp);
-            }
-        });
+        if test_config::run_in_child(
+            "tests::default_registry_installs_synthetic_provider_without_credentials",
+            false,
+        ) {
+            return;
+        }
 
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
         let engine = registry
@@ -1844,22 +1839,12 @@ mod tests {
     #[test]
     fn default_registry_installs_deepseek_provider_without_credentials() {
         use roder_api::catalog::PROVIDER_DEEPSEEK;
-        use std::sync::OnceLock;
-
-        static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
-        CONFIG_ISOLATION.get_or_init(|| {
-            let temp = std::env::temp_dir().join(format!(
-                "roder-extension-host-deepseek-tests-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&temp);
-            std::fs::create_dir_all(&temp).unwrap();
-            // SAFETY: set once before any test reads the config; all tests run
-            // in the same process and never restore a real config dir.
-            unsafe {
-                std::env::set_var("RODER_CONFIG_DIR", &temp);
-            }
-        });
+        if test_config::run_in_child(
+            "tests::default_registry_installs_deepseek_provider_without_credentials",
+            false,
+        ) {
+            return;
+        }
 
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
         let engine = registry
