@@ -345,7 +345,7 @@ async fn turn_start_during_active_tool_call_steers_same_turn_after_tool_result()
     )
     .await;
 
-    release_tool.notify_waiters();
+    release_tool.notify_one();
     wait_for_event(&mut events, &thread.thread.id, "turn.completed").await;
 
     assert_eq!(

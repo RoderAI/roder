@@ -100,7 +100,13 @@ pub(crate) fn from_core(
         plan_step_id: None,
         timeline_event_id: None,
         checkpoint_id: None,
-        rollback: HunkRollbackState::Available,
+        rollback: if hunk.reverse_patch.is_some() {
+            HunkRollbackState::Available
+        } else {
+            HunkRollbackState::Unavailable {
+                reason: "No exact reverse patch is available".into(),
+            }
+        },
         reverse_patch: hunk.reverse_patch,
         created_at: OffsetDateTime::UNIX_EPOCH,
     }

@@ -1,0 +1,199 @@
+{
+  "live": true,
+  "results": [
+    {
+      "fixture": "update-unicode",
+      "model": "gpt-6-luna",
+      "reasoning": "low",
+      "duration_ms": 6017.928917,
+      "first_event_ms": 548.567084,
+      "first_tool_start_ms": 2028.3458749999998,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 5755,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 5633,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 5707,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 5632,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 3,
+      "transport_events": [
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": false,
+          "incremental": false
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        }
+      ],
+      "failure": null,
+      "checks": [
+        {
+          "path": "src/settings.txt",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": {
+        "prompt_tokens": 23022,
+        "completion_tokens": 133,
+        "total_tokens": 23155,
+        "cached_prompt_tokens": 21504,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate": 0.9340630701068544
+      }
+    },
+    {
+      "fixture": "move-add-delete",
+      "model": "gpt-6-luna",
+      "reasoning": "low",
+      "duration_ms": 10138.840375,
+      "first_event_ms": 406.453375,
+      "first_tool_start_ms": 3922.819,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 5859,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 6737,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 5786,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 6346,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 8,
+      "transport_events": [
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": false,
+          "incremental": false
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        }
+      ],
+      "failure": null,
+      "checks": [
+        {
+          "path": "source.txt",
+          "passed": true
+        },
+        {
+          "path": "destination.txt",
+          "passed": true
+        },
+        {
+          "path": "obsolete.txt",
+          "passed": true
+        },
+        {
+          "path": "nested/new.txt",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": {
+        "prompt_tokens": 23867,
+        "completion_tokens": 313,
+        "total_tokens": 24180,
+        "cached_prompt_tokens": 21504,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate": 0.900993002891021
+      }
+    }
+  ]
+}

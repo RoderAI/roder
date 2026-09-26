@@ -633,6 +633,11 @@ impl InProcessDispatcher {
                     | InferenceEvent::HostedToolCallCompleted(_)
                     | InferenceEvent::Compaction(_)
                     | InferenceEvent::ProviderMetadata(_) => {}
+                    InferenceEvent::OutputItemCompleted(item) => {
+                        model_transcript.push(TranscriptItem::ProviderMetadata(
+                            serde_json::json!({"output":[item]}),
+                        ));
+                    }
                 }
             }
 

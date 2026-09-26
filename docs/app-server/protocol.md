@@ -197,3 +197,9 @@ Model picker clients should call `providers/list` for real providers plus the
 `routingOptions` sibling list. Auto options are selected with `model/select`
 using `{ "type": "auto", "optionId": "..." }`; they are not fake provider or
 model ids.
+
+## Apply-patch generation progress
+
+`item/applyPatch/progress` carries proposed file changes and the patch text while a custom-tool call is generated. `complete` reports whether the patch text is complete; execution and approval remain separate. Requested line fragments are not complete file contents. Actual changes and partial failures are reported by tool completion and `hunk/recorded`. ACP clients receive standard tool-call updates with `rawInput.patch`. See [the API reference](api.md#itemapplypatchprogress) for the payload and interruption behavior.
+
+Native manual compaction is task scoped and requires an idle task. `thread/compact` reports `reason: "turn_active"` when a turn is still running. Opaque compaction windows are persisted as provider state and are replayed intact; see the Responses recovery contract in `api.md`.

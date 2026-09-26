@@ -40,6 +40,9 @@ struct GrepTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for GrepTool {
+    fn supports_eager_execution(&self) -> bool {
+        true
+    }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "grep".to_string(),
@@ -177,6 +180,9 @@ struct GlobTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for GlobTool {
+    fn supports_eager_execution(&self) -> bool {
+        true
+    }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "glob".to_string(),

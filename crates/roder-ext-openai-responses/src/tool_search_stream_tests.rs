@@ -57,7 +57,7 @@ fn maps_tool_search_call_items_to_hosted_tool_lifecycle() {
         }),
     );
     let events = events_from_sse_event(&done, &mut state);
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     let InferenceEvent::HostedToolCallCompleted(completed) = &events[0] else {
         panic!("expected hosted tool completion, got {events:?}");
     };
@@ -113,14 +113,15 @@ fn searched_tool_selection_executes_through_normal_tool_call_lifecycle() {
             "arguments": "{\"path\":\"a.txt\"}"
         }),
     );
-    assert_eq!(
-        events_from_sse_event(&args_done, &mut state),
-        vec![InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-            id: "call_1".to_string(),
-            name: "edit_file".to_string(),
-            arguments: "{\"path\":\"a.txt\"}".to_string(),
-        })]
+    assert!(events_from_sse_event(&args_done, &mut state).is_empty());
+    let done = sse(
+        "response.output_item.done",
+        json!({"type":"response.output_item.done",
+        "item":{"id":"item_fc1","type":"function_call","call_id":"call_1","name":"edit_file"}}),
     );
+    let events = events_from_sse_event(&done, &mut state);
+    assert!(matches!(&events[0], InferenceEvent::ToolCallCompleted(call)
+        if call.id == "call_1" && call.arguments == "{\"path\":\"a.txt\"}"));
 }
 
 #[test]
@@ -189,19 +190,20 @@ fn client_executed_tool_search_items_pend_without_completing() {
                 "id": "ts_7",
                 "type": "tool_search_call",
                 "status": "completed",
-                "query": "deploy"
+                "execution": "client", "call_id": "search_7", "arguments": { "query": "deploy" }
             }
         }),
     );
     let events = events_from_sse_event(&done, &mut state);
     assert_eq!(
         events,
-        vec![InferenceEvent::HostedToolCallStarted(
-            HostedToolCallStarted {
+        vec![
+            InferenceEvent::HostedToolCallStarted(HostedToolCallStarted {
                 id: "ts_7".to_string(),
                 name: "tool_search".to_string(),
-            }
-        )],
+            }),
+            InferenceEvent::OutputItemCompleted(done.data["item"].clone())
+        ],
         "no completion is emitted before the local search runs"
     );
     assert_eq!(state.pending_client_tool_searches.len(), 1);
@@ -219,7 +221,7 @@ fn client_executed_tool_search_items_pend_without_completing() {
                     "id": "ts_7",
                     "type": "tool_search_call",
                     "status": "completed",
-                    "query": "deploy"
+                    "execution": "client", "call_id": "search_7", "arguments": { "query": "deploy" }
                 }]
             }
         }),

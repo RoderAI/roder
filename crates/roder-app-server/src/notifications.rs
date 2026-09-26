@@ -70,14 +70,20 @@ pub(crate) fn thread_started_notification(thread: Thread) -> JsonRpcNotification
 
 pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRpcNotification> {
     match event {
-        RoderEvent::ToolOutputDelta(event) => vec![protocol_notification("thread/toolOutputDelta", serde_json::json!({
-            "threadId": event.thread_id, "turnId": event.turn_id,
-            "toolId": event.tool_id, "delta": event.delta,
-        }))],
-        RoderEvent::FileChanged(event) => vec![protocol_notification("thread/fileChanged", serde_json::json!({
-            "threadId": event.thread_id, "turnId": event.turn_id,
-            "path": event.path, "changeType": event.change_type,
-        }))],
+        RoderEvent::ToolOutputDelta(event) => vec![protocol_notification(
+            "thread/toolOutputDelta",
+            serde_json::json!({
+                "threadId": event.thread_id, "turnId": event.turn_id,
+                "toolId": event.tool_id, "delta": event.delta,
+            }),
+        )],
+        RoderEvent::FileChanged(event) => vec![protocol_notification(
+            "thread/fileChanged",
+            serde_json::json!({
+                "threadId": event.thread_id, "turnId": event.turn_id,
+                "path": event.path, "changeType": event.change_type,
+            }),
+        )],
         RoderEvent::InferenceRoutingDecision(event) => {
             vec![protocol_notification(
                 "inference/routing/decision",
@@ -563,6 +569,10 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
         RoderEvent::PlanReviewRejected(event) => {
             vec![protocol_notification("plan/reviewRejected", event.clone())]
         }
+        RoderEvent::PatchProgress(event) => vec![protocol_notification(
+            "item/applyPatch/progress",
+            event.clone(),
+        )],
         RoderEvent::HunkRecorded(event) => {
             vec![protocol_notification("hunk/recorded", event.clone())]
         }

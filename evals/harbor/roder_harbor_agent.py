@@ -30,7 +30,7 @@ from roder_harbor_agent_config import (
     reliability_config_toml,
     speed_policy_config_toml,
 )
-from roder_harbor_agent_settings import parse_agent_settings
+from roder_harbor_agent_settings import DEFAULT_MODEL, parse_agent_settings
 from roder_harbor_run_script import build_run_agent_commands
 from roder_plan_first import (
     implementation_prompt_for_instruction,
@@ -68,7 +68,7 @@ class RoderCli(BaseInstalledAgent):
 
     def __init__(self, model_name: str | None = None, *args, **kwargs):
         super().__init__(
-            model_name=model_name or kwargs.get("default_model") or "codex/gpt-5.5",
+            model_name=model_name or kwargs.get("default_model") or DEFAULT_MODEL,
             *args,
             **kwargs,
         )
@@ -130,7 +130,7 @@ class RoderCli(BaseInstalledAgent):
             raise RuntimeError(f"Roder install failed with status {result.return_code}")
 
     def _resolved_provider_model(self) -> tuple[str, str]:
-        model_name = self.model_name or "codex/gpt-5.5"
+        model_name = self.model_name or DEFAULT_MODEL
         if "/" in model_name:
             provider, model = model_name.split("/", 1)
         else:

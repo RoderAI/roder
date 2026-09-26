@@ -2,7 +2,7 @@
   "id": "catalog-redaction",
   "title": "Internal-only catalog metadata never reaches the provider request body",
   "provider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-luna",
   "mode": "provider_native",
   "catalog": {
     "tools": [

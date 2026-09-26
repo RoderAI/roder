@@ -16,10 +16,18 @@ use crate::compaction::{
 };
 use crate::runtime::Runtime;
 
+#[derive(Default)]
+pub(crate) struct CompactionState {
+    tokens: u32,
+    generation: u64,
+}
+
 impl Runtime {
     pub(crate) fn record_compaction_hysteresis(&self, thread_id: &ThreadId, trigger_tokens: u32) {
         if let Ok(mut state) = self.compaction_hysteresis.lock() {
-            state.insert(thread_id.clone(), trigger_tokens);
+            let state = state.entry(thread_id.clone()).or_default();
+            state.tokens = trigger_tokens;
+            state.generation = state.generation.wrapping_add(1);
         }
     }
 
@@ -27,7 +35,15 @@ impl Runtime {
         self.compaction_hysteresis
             .lock()
             .ok()
-            .and_then(|state| state.get(thread_id).copied())
+            .and_then(|state| state.get(thread_id).map(|state| state.tokens))
+    }
+
+    pub(crate) fn compaction_generation(&self, thread_id: &ThreadId) -> u64 {
+        self.compaction_hysteresis
+            .lock()
+            .ok()
+            .and_then(|state| state.get(thread_id).map(|state| state.generation))
+            .unwrap_or(0)
     }
 
     pub(crate) fn compaction_options_for_turn(
@@ -49,9 +65,19 @@ impl Runtime {
         turn_id: &TurnId,
         preserve_hint: Option<String>,
     ) -> anyhow::Result<ForceCompactOutcome> {
+        let _thread_admission = self.thread_admission(thread_id).await;
         let cfg = self.status().await;
-        let provider = cfg.default_provider.clone();
-        let model = cfg.default_model.clone();
+        let selection = self
+            .parent_model_selection_for_subagents(thread_id, turn_id)
+            .await;
+        let provider = selection
+            .as_ref()
+            .map(|selection| selection.provider.clone())
+            .unwrap_or(cfg.default_provider.clone());
+        let model = selection
+            .as_ref()
+            .map(|selection| selection.model.clone())
+            .unwrap_or(cfg.default_model.clone());
         let transcript = self.transcript_for_force_compact(thread_id).await?;
         if transcript.is_empty() {
             return Ok(ForceCompactOutcome {
@@ -62,6 +88,18 @@ impl Runtime {
             });
         }
         let estimated_before = estimate_prompt_tokens(&transcript);
+        // Manual compaction runs only on an idle task. A second sampling
+        // request against a snapshot taken during tool execution can omit
+        // effects that complete before the boundary is committed.
+        if self.active_turn_for_thread(thread_id).await.is_some() {
+            return Ok(ForceCompactOutcome {
+                compacted: false,
+                reason: Some("turn_active".into()),
+                estimated_tokens_before: estimated_before,
+                estimated_tokens_after: estimated_before,
+            });
+        }
+
         let compacted = self
             .compact_transcript_if_needed(
                 thread_id,
@@ -82,7 +120,7 @@ impl Runtime {
             compacted: estimated_after < estimated_before
                 || compacted
                     .iter()
-                    .any(|item| matches!(item, TranscriptItem::ContextCompaction(_))),
+                    .any(crate::compaction::is_compaction_boundary),
             reason: None,
             estimated_tokens_before: estimated_before,
             estimated_tokens_after: estimated_after,
@@ -108,6 +146,8 @@ impl Runtime {
 
     pub(crate) async fn summarize_compaction_head(
         &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
         provider: &str,
         model: &str,
         head: &[TranscriptItem],
@@ -123,6 +163,8 @@ impl Runtime {
         let draft = loop {
             match self
                 .run_compaction_summary_inference(
+                    thread_id,
+                    turn_id,
                     provider,
                     model,
                     build_compaction_summary_prompt(&summary_head, preserve_hint),
@@ -156,6 +198,8 @@ impl Runtime {
         }
         let verified = match self
             .run_compaction_summary_inference(
+                thread_id,
+                turn_id,
                 provider,
                 model,
                 build_compaction_verify_prompt(&draft),
@@ -176,6 +220,8 @@ impl Runtime {
 
     async fn run_compaction_summary_inference(
         &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
         provider: &str,
         model: &str,
         prompt: String,
@@ -205,12 +251,13 @@ impl Runtime {
             metadata: serde_json::json!({ "roderCompactionSummary": true }),
         };
         let ctx = InferenceTurnContext {
-            thread_id: &"compaction-summary".to_string(),
-            turn_id: &"compaction-summary".to_string(),
+            thread_id,
+            turn_id,
             tool_executor: None,
         };
         let mut stream = engine.stream_turn(ctx, request).await?;
         let mut text = String::new();
+        let mut completed = false;
         while let Some(event) = stream.next().await {
             match event? {
                 InferenceEvent::MessageDelta(MessageDelta { text: delta, .. }) => {
@@ -224,11 +271,14 @@ impl Runtime {
                     // turn compaction path — fall back to deterministic summary.
                     return Ok(None);
                 }
-                InferenceEvent::Completed(_) => break,
+                InferenceEvent::Completed(_) => {
+                    completed = true;
+                    break;
+                }
                 _ => {}
             }
         }
-        if text.trim().is_empty() {
+        if !completed || text.trim().is_empty() {
             Ok(None)
         } else {
             Ok(Some(text.trim().to_string()))
@@ -244,6 +294,6 @@ pub struct ForceCompactOutcome {
     pub estimated_tokens_after: u32,
 }
 
-pub(crate) fn compaction_hysteresis_state() -> Mutex<HashMap<ThreadId, u32>> {
+pub(crate) fn compaction_hysteresis_state() -> Mutex<HashMap<ThreadId, CompactionState>> {
     Mutex::new(HashMap::new())
 }

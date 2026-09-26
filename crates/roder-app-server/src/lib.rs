@@ -1,9 +1,9 @@
 pub mod acp;
 pub mod agent_node;
 mod artifact;
-mod backend;
 mod automation_worker;
 mod automations;
+mod backend;
 mod chrome;
 pub mod client;
 mod code_index;
@@ -26,6 +26,7 @@ mod media_generation;
 mod method_manifest;
 mod notifications;
 mod packages;
+mod patch_progress;
 mod processes;
 mod protocol_contract;
 pub mod remote;

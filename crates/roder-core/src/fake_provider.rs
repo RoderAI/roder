@@ -5,6 +5,7 @@ use roder_api::inference::*;
 use roder_api::transcript::TranscriptItem;
 
 mod tbench_diagnostics;
+mod tool_stream;
 
 pub struct FakeInferenceEngine;
 
@@ -64,7 +65,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_call_external_tool(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -74,7 +75,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     arguments: serde_json::json!({ "query": "thread status" }).to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_update_task_ledger(&request) {
             let complete = prompt_contains(&request, "FAKE_TASK_LEDGER_COMPLETE");
@@ -85,11 +86,11 @@ impl InferenceEngine for FakeInferenceEngine {
                     arguments: task_ledger_arguments(complete),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if let Some(tool_call) = tbench_diagnostics::next_tool_call(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(tool_call))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_write_file(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -103,7 +104,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_grep(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -119,7 +120,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_zerolang_graph_dump(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -132,7 +133,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_zerolang_edit(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -154,7 +155,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_discovery_read(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -169,7 +170,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_discovery_search(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -183,7 +184,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_spawn_fake_agent(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -197,7 +198,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_list_fake_agents(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -207,7 +208,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     arguments: "{}".to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_message_fake_agent(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -221,7 +222,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_wait_fake_agent(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -235,7 +236,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_close_fake_agent(&request) {
             let stream = stream::iter(vec![Ok(InferenceEvent::ToolCallCompleted(
@@ -248,7 +249,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     .to_string(),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_complete_verification(&request) {
             let failed = prompt_contains(&request, "FAKE_VERIFICATION_FAILED");
@@ -259,7 +260,7 @@ impl InferenceEngine for FakeInferenceEngine {
                     arguments: verification_arguments(failed),
                 },
             ))]);
-            return Ok(Box::pin(stream));
+            return Ok(tool_stream::completed(stream));
         }
         if should_summarize_compaction(&request) {
             let summary = if prompt_contains(&request, "Review the state snapshot") {

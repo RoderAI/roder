@@ -5960,6 +5960,46 @@ Ordering and terminal behavior:
   is idempotent from Roder's side only in the sense that it re-sends; each call
   creates a new remote review.
 
+### `item/applyPatch/progress`
+
+Emitted while an `apply_patch` call is generated and once its valid patch text is complete. These are proposed changes. Execution still requires the normal tool validation, workspace authorization, and approval decision. Filesystem outcomes arrive through tool completion and `hunk/recorded`.
+
+```json
+{
+  "method": "item/applyPatch/progress",
+  "params": {
+    "threadId": "thread-123",
+    "turnId": "turn-456",
+    "toolId": "patch-1",
+    "patch": "*** Begin Patch\n*** Add File: hello.txt\n+hello\n*** End Patch",
+    "changes": [
+      {"path": "hello.txt", "changeType": "add", "oldLines": [], "newLines": ["hello"]}
+    ],
+    "complete": true
+  }
+}
+```
+
+`changes` contains the currently parsed file operations. `changeType` is `add`, `update`, or `delete`; updates may include `moveTo`. `oldLines` and `newLines` contain requested context/removal/addition lines, not complete file contents. Delete previews have no source text. No filesystem reads are performed to generate these previews.
+
+Custom-channel input can produce throttled incremental previews (`complete: false`). Function-channel JSON arguments produce a preview after the complete patch is parsed. A malformed patch produces no final preview and fails through normal tool execution. Generation can be interrupted after any preview, so `complete: true` does not promise that execution follows. ACP projects this notification into a standard `tool_call_update` containing `rawInput.patch`, without claiming execution completion.
+
+### Responses request and recovery behavior
+
+Responses retries preserve typed provider errors and honor valid `Retry-After` deadlines. Quota, authentication, invalid-request, tool-search exhaustion, and request-budget errors fail without a transient retry. Steering preempts unfinished sampling and retry waits. Completed output items remain in replay history; unfinished deltas do not. Read-only tools that explicitly opt in may execute while sampling continues when the model permits parallel tools and the advertised toolset has no exclusive swarm batch.
+
+The client measures serialized request bytes, including schemas, opaque provider items, and base64 image URLs. `RODER_RESPONSES_MAX_REQUEST_BYTES` sets a positive byte limit; the default is 15 MiB as a client guard, not a claim about every backend's limit. When needed, previously viewed tool images are omitted from the outgoing request while retaining the newest tool image and canonical history. User image attachments are retained. A request still over the limit fails with `request_too_large` before submission. Request-budget metadata reports byte/image counts and omitted tool images without including their contents.
+
+Manual compaction uses the target task's active or saved provider/model selection.
+
+On official OpenAI and Codex endpoints, tasks without HTTP `context_management` use pooled WebSocket sessions by default. `RODER_RESPONSES_TRANSPORT=http|websocket` selects a transport explicitly. Other endpoints default to HTTP. An unsupported WebSocket handshake falls back to HTTP for five minutes; authentication and quota failures remain errors. A previous response is used only when request settings and the complete history prefix match exactly. Changed instructions, tools, models, steering history, or compaction cause a full request. Interrupted sessions discard the socket and continuation. Credentials and account headers participate in session identity and are not emitted in metadata.
+
+Codex tasks use client-triggered native compaction at their configured watermark. Manual `thread/compact` uses the task's saved selection and the real task/turn IDs. Native Codex compaction carries model-visible tools and instructions through a Responses compaction trigger; OpenAI uses `/responses/compact`. The API's complete returned window is retained verbatim, including items before its opaque boundary, as required by the [OpenAI compaction contract](https://developers.openai.com/api/docs/guides/compaction). Unsupported providers use local summaries; an oversized native window permits the local recovery path. Authentication, quota, and malformed native responses are reported instead of being hidden by that fallback. Completed Codex boundaries are durable before terminal completion, and retries resume from that window. New input preempts native compaction and its backoff. Compaction usage contributes to task usage and goal accounting.
+
+Manual compaction requires an idle task. If a turn is active, `thread/compact` returns `compacted: false` and `reason: "turn_active"`, preventing a snapshot from omitting tool effects that finish during compaction. Proposed or unfinished tool calls are not retained as completed effects. New turns for the same task wait until manual compaction commits its boundary; other tasks continue independently.
+
+Context token estimates include opaque provider state and conservative image estimates; they remain estimates rather than billing figures. Serialized request guards measure actual bytes. Failure metadata preserves typed causes, provider codes, HTTP status, safe request IDs, response IDs, and remaining retry advice without including credentials. Flex capacity failures are terminal for the current sampling policy.
+
 ### Advanced artifact notifications
 
 The app-server forwards these event families as same-named JSON-RPC

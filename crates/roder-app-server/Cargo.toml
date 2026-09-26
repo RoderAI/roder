@@ -9,6 +9,10 @@ authors.workspace = true
 readme = "README.md"
 autotests = false
 
+[[test]]
+name = "patch_contract"
+path = "tests/patch_contract.rs"
+
 [features]
 # Opt in for the large JSON-RPC integration suite (tests/e2e.rs).
 e2e-tests = []

@@ -1,13 +1,7 @@
-use std::path::Path;
-use std::process::Stdio;
-
-use roder_api::remote_runner::{
-    RemoteRunnerSession, RunnerCommandRequest, RunnerFileReadRequest, RunnerFileWriteRequest,
-};
+use roder_api::remote_runner::RemoteRunnerSession;
 use roder_api::tools::{ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, ToolSpec};
 use serde::Deserialize;
-use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt;
+use serde_json::json;
 
 use crate::backend::{WorkspaceBackendHandle, backend_from_context_or_fallback};
 use crate::files::{parse, result};
@@ -24,7 +18,7 @@ impl ToolExecutor for ApplyPatchTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "apply_patch".to_string(),
-            description: "Apply a unified patch in the workspace.".to_string(),
+            description: "Edit files using the *** Begin Patch / *** End Patch format with Add File, Delete File, Update File, and optional Move to and @@ context markers.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -56,27 +50,53 @@ impl ToolExecutor for ApplyPatchTool {
                 ));
             }
         };
-        if patch.trim().is_empty() {
-            return Ok(result(
-                call,
-                "failed to apply patch: patch is required".to_string(),
-                json!({ "error": { "kind": "empty_patch" } }),
-                true,
-            ));
-        }
-
-        let hunks = hunk_records_from_patch(&ctx, &call, &patch).unwrap_or_default();
         let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
         let outcome = backend.apply_patch(&patch).await;
 
         match outcome {
-            Ok(text) => Ok(result(call, text, json!({ "hunks": hunks }), false)),
-            Err(err) => Ok(result(
-                call,
-                format!("failed to apply patch: {err}"),
-                json!({ "error": { "kind": "apply_patch_failed", "message": err.to_string() } }),
-                true,
-            )),
+            Ok(outcome) => {
+                let hunks = outcome
+                    .hunks()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, hunk)| hunk_output::from_core(&ctx, &call, index, hunk))
+                    .collect::<Vec<_>>();
+                Ok(result(
+                    call,
+                    outcome.summary,
+                    json!({ "hunks": hunks, "changesExact": outcome.exact }),
+                    false,
+                ))
+            }
+            Err(err) => {
+                let partial = err
+                    .downcast_ref::<roder_edit_core::patch::PatchFailure>()
+                    .map(|failure| &failure.partial);
+                let hunks = partial
+                    .map(|outcome| {
+                        outcome
+                            .hunks()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, hunk)| hunk_output::from_core(&ctx, &call, index, hunk))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let prefix = if err
+                    .downcast_ref::<roder_edit_core::patch::ParseError>()
+                    .is_some()
+                {
+                    "apply_patch verification failed"
+                } else {
+                    "failed to apply patch"
+                };
+                Ok(result(
+                    call,
+                    format!("{prefix}: {err}"),
+                    json!({ "hunks": hunks, "changesExact": partial.is_none_or(|outcome| outcome.exact), "error": { "kind": "apply_patch_failed", "message": err.to_string() } }),
+                    true,
+                ))
+            }
         }
     }
 }
@@ -86,369 +106,28 @@ struct ApplyPatchArgs {
     patch: String,
 }
 
-/**
- * Extracts the patch text from a tool call, accepting BOTH channels:
- * - JSON function arguments `{ "patch": "..." }` (every non-freeform provider);
- * - the Responses freeform/custom channel, where the provider wraps the raw
- *   patch string as `{ "input": "..." }`.
- *
- * A bare JSON string body is also treated as raw patch text.
- */
+// Providers normalize both function and custom calls to the canonical patch field.
 fn patch_text_from_call(call: &ToolCall) -> anyhow::Result<String> {
-    if let Some(object) = call.arguments.as_object() {
-        for key in ["patch", "input", "raw"] {
-            if let Some(text) = object.get(key).and_then(Value::as_str) {
-                return Ok(text.to_string());
-            }
-        }
-    }
-    if let Some(text) = call.arguments.as_str() {
-        return Ok(text.to_string());
-    }
     Ok(parse::<ApplyPatchArgs>(call)?.patch)
 }
 
-fn is_codex_patch(patch: &str) -> bool {
-    roder_edit_core::patch::is_codex_patch(patch)
-}
-
+#[cfg(test)]
 fn hunk_records_from_patch(
     ctx: &ToolExecutionContext,
     call: &ToolCall,
     patch: &str,
 ) -> anyhow::Result<Vec<roder_api::plan_review::HunkRecord>> {
-    if !is_codex_patch(patch) {
-        return Ok(Vec::new());
-    }
-    let mut records = Vec::new();
-    for hunk in roder_edit_core::patch::codex_patch_hunks(patch)? {
-        records.push(hunk_output::from_core(ctx, call, records.len(), hunk));
-    }
-    Ok(records)
+    roder_edit_core::patch::codex_patch_hunks(patch)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, hunk)| Ok(hunk_output::from_core(ctx, call, index, hunk)))
+        .collect()
 }
 
 pub(crate) async fn apply_patch_to_workspace(
     workspace: &Workspace,
     patch: &str,
-) -> anyhow::Result<String> {
-    if is_codex_patch(patch) {
-        apply_codex_patch(workspace, patch).await
-    } else {
-        apply_unified_patch(workspace, patch).await
-    }
-}
-
-/**
- * Applies a patch entirely through a remote runner session so nothing touches
- * the local filesystem. Codex patches are replayed as read/write/delete
- * operations; unified patches are uploaded to a temp file inside the
- * workspace and applied with `git apply` on the runner.
- */
-pub(crate) async fn apply_patch_to_runner_workspace(
-    workspace: &Workspace,
-    session: &dyn RemoteRunnerSession,
-    patch: &str,
-) -> anyhow::Result<String> {
-    if is_codex_patch(patch) {
-        apply_codex_patch_via_runner(workspace, session, patch).await
-    } else {
-        apply_unified_patch_via_runner(workspace, session, patch).await
-    }
-}
-
-async fn apply_codex_patch_via_runner(
-    workspace: &Workspace,
-    session: &dyn RemoteRunnerSession,
-    patch: &str,
-) -> anyhow::Result<String> {
-    let changes = roder_edit_core::patch::parse_codex_patch(patch)?;
-    if changes.is_empty() {
-        anyhow::bail!("no changes found");
-    }
-    let mut summaries = Vec::new();
-    for change in changes {
-        let rel = workspace.display(&workspace.resolve_for_write(&change.path)?);
-        match change.op {
-            roder_edit_core::patch::CodexPatchOp::Add => {
-                if runner_path_exists(workspace, session, &rel).await? {
-                    anyhow::bail!("{} already exists", change.path);
-                }
-                session
-                    .write_file(RunnerFileWriteRequest {
-                        path: rel.clone().into(),
-                        contents: join_patch_lines(&change.lines).into_bytes(),
-                    })
-                    .await?;
-                summaries.push(format!("Added {rel}"));
-            }
-            roder_edit_core::patch::CodexPatchOp::Delete => {
-                runner_remove_file(workspace, session, &rel).await?;
-                summaries.push(format!("Deleted {rel}"));
-            }
-            roder_edit_core::patch::CodexPatchOp::Update => {
-                let read = session
-                    .read_file(RunnerFileReadRequest {
-                        path: rel.clone().into(),
-                    })
-                    .await?;
-                let mut text = String::from_utf8(read.contents)?;
-                for hunk in &change.hunks {
-                    let old_text = hunk.old_lines.join("\n");
-                    let new_text = hunk.new_lines.join("\n");
-                    if old_text.is_empty() {
-                        text = format!("{new_text}{text}");
-                        continue;
-                    }
-                    let Some(index) = text.find(&old_text) else {
-                        anyhow::bail!("expected hunk not found in {}:\n{old_text}", change.path);
-                    };
-                    text.replace_range(index..index + old_text.len(), &new_text);
-                }
-                let target = match &change.move_to {
-                    Some(move_to) => workspace.display(&workspace.resolve_for_write(move_to)?),
-                    None => rel.clone(),
-                };
-                session
-                    .write_file(RunnerFileWriteRequest {
-                        path: target.clone().into(),
-                        contents: text.into_bytes(),
-                    })
-                    .await?;
-                if target != rel {
-                    runner_remove_file(workspace, session, &rel).await?;
-                    summaries.push(format!("Moved {rel} to {target}"));
-                } else {
-                    summaries.push(format!("Updated {rel}"));
-                }
-            }
-        }
-    }
-    Ok(format!("Success. {}", summaries.join("\n")))
-}
-
-async fn apply_unified_patch_via_runner(
-    workspace: &Workspace,
-    session: &dyn RemoteRunnerSession,
-    patch: &str,
-) -> anyhow::Result<String> {
-    validate_unified_patch_paths(workspace, patch)?;
-    /*
-     * The patch is piped to `git apply` through the shell (mirroring the
-     * local stdin path) instead of staged as a temp file: runner workspaces
-     * may be auto-committed after every request (hosted sandboxes that snapshot the workspace), where a
-     * temp file would pollute the repo history and a failed cleanup would
-     * turn a successful apply into a tool error.
-     */
-    let script = format!(
-        "printf '%s' {} | git apply --whitespace=nowarn -",
-        crate::backend::shell_quote(patch)
-    );
-    let output = session
-        .run_command(RunnerCommandRequest {
-            command_id: "apply-patch".to_string(),
-            program: "sh".to_string(),
-            args: vec!["-c".to_string(), script],
-            cwd: Some(workspace.root().to_path_buf()),
-            env: Vec::new(),
-            timeout_ms: None,
-        })
-        .await?;
-    let text = format!("{}{}", output.stdout, output.stderr)
-        .trim()
-        .to_string();
-    if output.exit_code != Some(0) {
-        anyhow::bail!(
-            "{}",
-            if text.is_empty() {
-                format!("git apply exited with {:?}", output.exit_code)
-            } else {
-                text
-            }
-        );
-    }
-    Ok(if text.is_empty() {
-        "Success. Applied patch".to_string()
-    } else {
-        text
-    })
-}
-
-async fn runner_path_exists(
-    workspace: &Workspace,
-    session: &dyn RemoteRunnerSession,
-    rel: &str,
-) -> anyhow::Result<bool> {
-    let output = session
-        .run_command(RunnerCommandRequest {
-            command_id: "apply-patch-stat".to_string(),
-            program: "test".to_string(),
-            args: vec!["-e".to_string(), rel.to_string()],
-            cwd: Some(workspace.root().to_path_buf()),
-            env: Vec::new(),
-            timeout_ms: None,
-        })
-        .await?;
-    Ok(output.exit_code == Some(0))
-}
-
-async fn runner_remove_file(
-    workspace: &Workspace,
-    session: &dyn RemoteRunnerSession,
-    rel: &str,
-) -> anyhow::Result<()> {
-    let output = session
-        .run_command(RunnerCommandRequest {
-            command_id: "apply-patch-delete".to_string(),
-            program: "rm".to_string(),
-            args: vec!["--".to_string(), rel.to_string()],
-            cwd: Some(workspace.root().to_path_buf()),
-            env: Vec::new(),
-            timeout_ms: None,
-        })
-        .await?;
-    if output.exit_code != Some(0) {
-        anyhow::bail!("delete {rel} failed: {}", output.stderr.trim_end());
-    }
-    Ok(())
-}
-
-fn join_patch_lines(lines: &[String]) -> String {
-    if lines.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", lines.join("\n"))
-    }
-}
-
-async fn apply_unified_patch(workspace: &Workspace, patch: &str) -> anyhow::Result<String> {
-    validate_unified_patch_paths(workspace, patch)?;
-    if workspace.path_scope().allows_external_paths() && unified_patch_has_absolute_path(patch) {
-        return apply_unified_patch_with_system_patch(patch).await;
-    }
-    let mut child = tokio::process::Command::new("git")
-        .args(["apply", "--whitespace=nowarn", "-"])
-        .current_dir(workspace.root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("failed to open git apply stdin"))?;
-    stdin.write_all(patch.as_bytes()).await?;
-    drop(stdin);
-
-    let output = child.wait_with_output().await?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-    .trim()
-    .to_string();
-    if !output.status.success() {
-        anyhow::bail!(
-            "{}",
-            if text.is_empty() {
-                format!("git apply exited with {}", output.status)
-            } else {
-                text
-            }
-        );
-    }
-    Ok(if text.is_empty() {
-        "Success. Applied patch".to_string()
-    } else {
-        text
-    })
-}
-
-async fn apply_unified_patch_with_system_patch(patch: &str) -> anyhow::Result<String> {
-    let mut child = tokio::process::Command::new("patch")
-        .args(["-p0"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("failed to open patch stdin"))?;
-    stdin.write_all(patch.as_bytes()).await?;
-    drop(stdin);
-
-    let output = child.wait_with_output().await?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-    .trim()
-    .to_string();
-    if !output.status.success() {
-        anyhow::bail!(
-            "{}",
-            if text.is_empty() {
-                format!("patch exited with {}", output.status)
-            } else {
-                text
-            }
-        );
-    }
-    Ok(if text.is_empty() {
-        "Success. Applied patch".to_string()
-    } else {
-        text
-    })
-}
-
-fn unified_patch_has_absolute_path(patch: &str) -> bool {
-    patch.lines().any(|line| {
-        line.strip_prefix("--- ")
-            .or_else(|| line.strip_prefix("+++ "))
-            .map(|path| path.split('\t').next().unwrap_or(path).trim())
-            .filter(|path| *path != "/dev/null")
-            .is_some_and(|path| Path::new(strip_diff_prefix(path)).is_absolute())
-    })
-}
-
-fn validate_unified_patch_paths(workspace: &Workspace, patch: &str) -> anyhow::Result<()> {
-    for line in patch.lines() {
-        if let Some(rest) = line.strip_prefix("diff --git ") {
-            for path in rest.split_whitespace().take(2) {
-                validate_patch_path(workspace, strip_diff_prefix(path))?;
-            }
-        } else if let Some(path) = line.strip_prefix("--- ") {
-            validate_patch_header_path(workspace, path)?;
-        } else if let Some(path) = line.strip_prefix("+++ ") {
-            validate_patch_header_path(workspace, path)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_patch_header_path(workspace: &Workspace, path: &str) -> anyhow::Result<()> {
-    let path = path.split('\t').next().unwrap_or(path).trim();
-    if path == "/dev/null" {
-        return Ok(());
-    }
-    validate_patch_path(workspace, strip_diff_prefix(path))
-}
-
-fn validate_patch_path(workspace: &Workspace, path: &str) -> anyhow::Result<()> {
-    workspace.resolve_for_write(path).map(|_| ())
-}
-
-fn strip_diff_prefix(path: &str) -> &str {
-    path.strip_prefix("a/")
-        .or_else(|| path.strip_prefix("b/"))
-        .unwrap_or(path)
-}
-
-async fn apply_codex_patch(workspace: &Workspace, patch: &str) -> anyhow::Result<String> {
+) -> anyhow::Result<roder_edit_core::patch::PatchOutcome> {
     roder_edit_core::patch::apply_codex_patch_to_workspace_with_external_paths(
         workspace.root(),
         patch,
@@ -456,106 +135,17 @@ async fn apply_codex_patch(workspace: &Workspace, patch: &str) -> anyhow::Result
     )
 }
 
-#[cfg(test)]
-mod runner_tests {
-    use std::path::PathBuf;
-    use std::sync::Arc;
+#[path = "patch_runner.rs"]
+mod runner;
 
-    use super::*;
-    use crate::remote_test_support::{RecordingRunnerSession, RecordingRunnerState};
-    use crate::workspace::ToolPathScope;
-
-    #[tokio::test]
-    async fn unified_patch_pipes_through_the_runner_shell_without_temp_files() {
-        let state = Arc::new(RecordingRunnerState::default());
-        let session = RecordingRunnerSession {
-            state: state.clone(),
-        };
-        let workspace = Workspace::remote(
-            PathBuf::from("/sandbox/workspace"),
-            ToolPathScope::Workspace,
-        )
-        .unwrap();
-        let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n";
-
-        let summary = apply_patch_to_runner_workspace(&workspace, &session, patch)
-            .await
-            .unwrap();
-
-        assert_eq!(summary, "remote ok");
-        assert!(
-            state.files.lock().unwrap().is_empty(),
-            "no temp patch file may be written into the runner workspace"
-        );
-        let commands = state.commands.lock().unwrap();
-        assert_eq!(commands.len(), 1, "apply must be a single runner command");
-        assert_eq!(commands[0].program, "sh");
-        let script = commands[0].args.last().unwrap();
-        assert!(
-            script.contains("| git apply --whitespace=nowarn -"),
-            "{script}"
-        );
-        assert!(script.contains("-old"), "{script}");
-    }
+pub(crate) async fn apply_patch_to_runner_workspace(
+    workspace: &Workspace,
+    session: &dyn RemoteRunnerSession,
+    patch: &str,
+) -> anyhow::Result<roder_edit_core::patch::PatchOutcome> {
+    runner::apply(workspace, session, patch).await
 }
 
 #[cfg(test)]
-mod hunk_tests {
-    use super::*;
-    use roder_api::policy_mode::PolicyMode;
-    use serde_json::json;
-
-    #[test]
-    fn codex_patch_produces_hunk_records() {
-        let ctx = ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default);
-        let call = ToolCall {
-            id: "patch-1".to_string(),
-            name: "apply_patch".to_string(),
-            arguments: json!({}),
-            raw_arguments: "{}".to_string(),
-            thread_id: "thread-1".to_string(),
-            turn_id: "turn-1".to_string(),
-        };
-        let records = hunk_records_from_patch(
-            &ctx,
-            &call,
-            "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch\n",
-        )
-        .unwrap();
-
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].path, "src/lib.rs");
-        assert_eq!(records[0].tool_name, "apply_patch");
-        assert_eq!(records[0].diff.len(), 2);
-    }
-
-    fn call_with_arguments(arguments: Value) -> ToolCall {
-        ToolCall {
-            id: "patch-1".to_string(),
-            name: "apply_patch".to_string(),
-            arguments,
-            raw_arguments: "{}".to_string(),
-            thread_id: "thread-1".to_string(),
-            turn_id: "turn-1".to_string(),
-        }
-    }
-
-    #[test]
-    fn patch_text_accepts_json_function_arguments() {
-        let call = call_with_arguments(json!({ "patch": "PATCH" }));
-        assert_eq!(patch_text_from_call(&call).unwrap(), "PATCH");
-    }
-
-    #[test]
-    fn patch_text_accepts_freeform_input_wrapper() {
-        // The Responses provider wraps the raw custom-channel body as `input`.
-        let call = call_with_arguments(json!({ "input": "PATCH" }));
-        assert_eq!(patch_text_from_call(&call).unwrap(), "PATCH");
-    }
-
-    #[test]
-    fn patch_text_accepts_bare_string_body() {
-        let call = call_with_arguments(Value::String("PATCH".to_string()));
-        assert_eq!(patch_text_from_call(&call).unwrap(), "PATCH");
-    }
-}
+#[path = "patch_tests.rs"]
+mod tests;

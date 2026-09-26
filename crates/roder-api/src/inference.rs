@@ -678,6 +678,9 @@ pub enum InferenceEvent {
     ToolCallStarted(ToolCallStarted),
     ToolCallDelta(ToolCallDelta),
     ToolCallCompleted(ToolCallCompleted),
+    /// A complete provider output item. Persist immediately; unfinished deltas
+    /// are presentation only and must not enter replay history on interruption.
+    OutputItemCompleted(serde_json::Value),
     HostedToolCallStarted(HostedToolCallStarted),
     HostedToolCallCompleted(HostedToolCallCompleted),
     Compaction(CompactionProgress),
@@ -812,6 +815,16 @@ pub trait InferenceEngine: Send + Sync + 'static {
         &self,
         ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>>;
+
+    /// Native, opaque provider compaction. Unsupported engines return None.
+    /// The stream must publish a completed boundary and one terminal completion.
+    async fn compact_turn(
+        &self,
+        _ctx: InferenceTurnContext<'_>,
+        _request: AgentInferenceRequest,
+    ) -> anyhow::Result<Option<InferenceEventStream>> {
+        Ok(None)
+    }
 
     async fn stream_turn(
         &self,

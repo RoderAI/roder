@@ -56,7 +56,10 @@ pub(crate) trait WorkspaceBackend: Send + Sync + 'static {
 
     async fn glob(&self, pattern: &str) -> anyhow::Result<crate::search::GlobOutcome>;
 
-    async fn apply_patch(&self, patch: &str) -> anyhow::Result<String>;
+    async fn apply_patch(
+        &self,
+        patch: &str,
+    ) -> anyhow::Result<roder_edit_core::patch::PatchOutcome>;
 
     /// Called when something outside the file tools (a shell or exec command)
     /// may have changed the workspace, so cached search state is rebuilt.
@@ -298,10 +301,13 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         .map_err(|err| anyhow::anyhow!("glob task failed: {err}"))?
     }
 
-    async fn apply_patch(&self, patch: &str) -> anyhow::Result<String> {
-        let result = crate::patch::apply_patch_to_workspace(&self.workspace, patch).await?;
+    async fn apply_patch(
+        &self,
+        patch: &str,
+    ) -> anyhow::Result<roder_edit_core::patch::PatchOutcome> {
+        let result = crate::patch::apply_patch_to_workspace(&self.workspace, patch).await;
         self.invalidate_search_index()?;
-        Ok(result)
+        result
     }
 
     fn note_external_change(&self) {
@@ -541,7 +547,10 @@ impl WorkspaceBackend for RunnerWorkspaceBackend {
         })
     }
 
-    async fn apply_patch(&self, patch: &str) -> anyhow::Result<String> {
+    async fn apply_patch(
+        &self,
+        patch: &str,
+    ) -> anyhow::Result<roder_edit_core::patch::PatchOutcome> {
         crate::patch::apply_patch_to_runner_workspace(&self.guard, self.session.as_ref(), patch)
             .await
     }
@@ -749,7 +758,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(summary, "Success. Updated src/lib.rs");
+        assert_eq!(
+            summary.summary,
+            "Success. Updated the following files:\nM src/lib.rs\n"
+        );
         assert_eq!(
             state
                 .files

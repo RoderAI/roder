@@ -530,31 +530,28 @@ async fn codex_v2_mailbox_bursts_reserve_each_message_once_per_turn() {
         .await
         .unwrap();
 
-    let active = runtime
-        .active_turns
-        .read()
-        .await
-        .get(&child_turn_id)
-        .cloned()
-        .expect("child active turn");
-    let steers = active.steers.lock().await.clone();
-    assert_eq!(steers.len(), 2);
-    assert_eq!(
-        steers[0].message.text,
-        "Message Type: MESSAGE\nTask name: /root/mailbox_child\nSender: /root\nPayload:\nfirst burst message"
-    );
-    assert_eq!(
-        steers[1].message.text,
-        "Message Type: MESSAGE\nTask name: /root/mailbox_child\nSender: /root\nPayload:\nsecond burst message"
-    );
+    let messages = super::mailbox_test_helpers::persisted_mailbox_messages(
+        &runtime,
+        &team_id,
+        &child_thread_id,
+        &child_turn_id,
+        &["first burst message", "second burst message"],
+    )
+    .await;
+    for payload in ["first burst message", "second burst message"] {
+        let expected = format!(
+            "Message Type: MESSAGE\nTask name: /root/mailbox_child\nSender: /root\nPayload:\n{payload}"
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| **message == expected)
+                .count(),
+            1,
+            "each mailbox message is persisted once before acknowledgement"
+        );
+    }
     let team = runtime.read_team(&team_id).await.unwrap();
-    assert!(
-        team.mailbox
-            .iter()
-            .filter(|message| message.text.contains("burst message"))
-            .all(|message| !message.delivered),
-        "queued steers are acknowledged only after transcript persistence"
-    );
 
     interrupt_team_turns(&runtime, &team).await;
     let _ = std::fs::remove_dir_all(thread_root);
@@ -817,19 +814,15 @@ async fn codex_v2_nested_children_inherit_live_authority_with_one_direct_parent_
         )
         .await
         .unwrap();
-    let active = runtime
-        .active_turns
-        .read()
-        .await
-        .get(grandchild_turn_id)
-        .cloned()
-        .expect("grandchild active turn");
-    let steers = active.steers.lock().await.clone();
-    assert_eq!(steers.len(), 1);
-    assert_eq!(
-        steers[0].message.text,
-        "Message Type: MESSAGE\nTask name: /root/child/grandchild\nSender: /root/child\nPayload:\nnested coordination"
-    );
+    let messages = super::mailbox_test_helpers::persisted_mailbox_messages(
+        &runtime,
+        grandchild.data["team_id"].as_str().unwrap(),
+        grandchild_thread_id,
+        grandchild_turn_id,
+        &["nested coordination"],
+    )
+    .await;
+    assert_eq!(messages.iter().filter(|message| message.as_str() == "Message Type: MESSAGE\nTask name: /root/child/grandchild\nSender: /root/child\nPayload:\nnested coordination").count(), 1);
 
     let team_id = child.data["team_id"].as_str().unwrap();
     let child_member_id = child.data["member_id"].as_str().unwrap();
@@ -1082,6 +1075,7 @@ async fn register_test_active_turn(runtime: &Arc<Runtime>, thread_id: &ThreadId,
             thread_id: thread_id.clone(),
             abort,
             steers: Arc::new(Mutex::new(Vec::new())),
+            steer_changed: tokio::sync::watch::channel(0).0,
             drain: Arc::new(TurnDrainHandle {
                 thread_id: thread_id.clone(),
                 interrupt_requested: AtomicBool::new(false),

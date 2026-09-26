@@ -1,0 +1,149 @@
+{
+  "live": true,
+  "results": [
+    {
+      "fixture": "update-unicode",
+      "model": "gpt-6-luna",
+      "reasoning": "low",
+      "duration_ms": 8197.871917,
+      "first_event_ms": 1037.5627080000002,
+      "first_tool_start_ms": 2266.798875,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 5730,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 6161,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 6643,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 7073,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 3,
+      "transport_events": [],
+      "failure": null,
+      "checks": [
+        {
+          "path": "src/settings.txt",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": {
+        "prompt_tokens": 22702,
+        "completion_tokens": 127,
+        "total_tokens": 22829,
+        "cached_prompt_tokens": 21504,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate": 0.947229319002731
+      }
+    },
+    {
+      "fixture": "move-add-delete",
+      "model": "gpt-6-luna",
+      "reasoning": "low",
+      "duration_ms": 13543.995833,
+      "first_event_ms": 739.978416,
+      "first_tool_start_ms": 3860.425291,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 5834,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 7369,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 7953,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 9095,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 8,
+      "transport_events": [],
+      "failure": null,
+      "checks": [
+        {
+          "path": "source.txt",
+          "passed": true
+        },
+        {
+          "path": "destination.txt",
+          "passed": true
+        },
+        {
+          "path": "obsolete.txt",
+          "passed": true
+        },
+        {
+          "path": "nested/new.txt",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "final_answer": "**DONE**",
+      "usage": {
+        "prompt_tokens": 23298,
+        "completion_tokens": 315,
+        "total_tokens": 23613,
+        "cached_prompt_tokens": 15360,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate": 0.6592840587174865
+      }
+    }
+  ]
+}

@@ -1502,6 +1502,7 @@ pub enum RoderEvent {
     ProcessStopped(ProcessStopped),
     ProcessFailed(ProcessFailed),
     FileChangePreviewReady(FileChangePreviewReady),
+    PatchProgress(crate::patch_progress::PatchProgress),
     FileChanged(FileChanged),
     TranscriptItemAppended(TranscriptItemAppended),
     TurnCompleted(TurnCompleted),
@@ -1711,6 +1712,7 @@ impl RoderEvent {
             RoderEvent::ProcessStopped(_) => "process.stopped",
             RoderEvent::ProcessFailed(_) => "process.failed",
             RoderEvent::FileChangePreviewReady(_) => "file.change_preview_ready",
+            RoderEvent::PatchProgress(_) => "patch/progress",
             RoderEvent::FileChanged(_) => "file.changed",
             RoderEvent::TranscriptItemAppended(_) => "turn.transcript_item_appended",
             RoderEvent::TurnCompleted(_) => "turn.completed",
@@ -1846,7 +1848,9 @@ impl RoderEvent {
             | RoderEvent::SkillInvoked(_)
             | RoderEvent::SkillAutoActivated(_)
             | RoderEvent::SkillSkipped(_) => EventSource::Core,
-            RoderEvent::FileChangePreviewReady(_) => EventSource::Tool,
+            RoderEvent::FileChangePreviewReady(_) | RoderEvent::PatchProgress(_) => {
+                EventSource::Tool
+            }
             RoderEvent::UserInputRequested(_)
             | RoderEvent::UserInputResolved(_)
             | RoderEvent::TaskLedgerUpdated(_)
@@ -1980,6 +1984,7 @@ impl RoderEvent {
             RoderEvent::TaskFailed(e) => e.thread_id.as_ref(),
             RoderEvent::TaskCancelled(e) => e.thread_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.thread_id),
+            RoderEvent::PatchProgress(e) => Some(&e.thread_id),
             RoderEvent::FileChanged(e) => Some(&e.thread_id),
             RoderEvent::TranscriptItemAppended(e) => Some(&e.thread_id),
             RoderEvent::TurnCompleted(e) => Some(&e.thread_id),
@@ -2180,6 +2185,7 @@ impl RoderEvent {
             RoderEvent::TaskFailed(e) => e.turn_id.as_ref(),
             RoderEvent::TaskCancelled(e) => e.turn_id.as_ref(),
             RoderEvent::FileChangePreviewReady(e) => Some(&e.turn_id),
+            RoderEvent::PatchProgress(e) => Some(&e.turn_id),
             RoderEvent::FileChanged(e) => Some(&e.turn_id),
             RoderEvent::TranscriptItemAppended(e) => Some(&e.turn_id),
             RoderEvent::TurnCompleted(e) => Some(&e.turn_id),

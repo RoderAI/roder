@@ -2,7 +2,7 @@
   "id": "search-selection-unknown-tool",
   "title": "Provider-selected unknown tool id fails closed with an actionable diagnostic",
   "provider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-luna",
   "mode": "provider_native",
   "catalog": {
     "tools": [

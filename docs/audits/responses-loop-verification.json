@@ -1,0 +1,70 @@
+{
+  "baseline": "816974be81b5cb7a1d249c14bc5bd26d7afb14ff",
+  "codex_reference": "8b78f4796605bda8e31329537f5fef036e405e66",
+  "branch": "pz/responses-loop-parity",
+  "tested_changed_rust_source_sha256": "3c7f3a062619ea69a6d04cbc3fb3c31f0118b2836e8a3bb25a747dbdc93e2ad1",
+  "workspace": {
+    "passed": 3157,
+    "failed": 3,
+    "ignored": 55,
+    "test_targets": 364,
+    "unrelated_baseline_failure": "roder-commands::expand_blocks_shell_includes_by_default_and_in_plan_mode",
+    "baseline_failure_reproduced": true,
+    "isolation_failures": [
+      "default_roder_home_dir_uses_home_roder",
+      "tui_config_path_targets_home_roder_config"
+    ],
+    "isolation_failures_pass_without_data_dir_override": true
+  },
+  "critical_unit_tests": {
+    "roder-core": 232,
+    "roder-ext-openai-responses": 113,
+    "roder-tools": 126,
+    "roder-edit-core": 36
+  },
+  "audit_probes": {
+    "provider": 8,
+    "runtime": 3
+  },
+  "optional_wire_tests": {
+    "acp": 4,
+    "patch_contract": 2,
+    "turn_start_steering": 2,
+    "e2e_passed": 126,
+    "e2e_ignored": 1,
+    "e2e_filtered_baseline_failures": [
+      "providers_clear_removes_api_key",
+      "runners_methods_list_select_status_and_delete_destination",
+      "tools_list_discovers_configured_web_search_without_secret_material"
+    ]
+  },
+  "clippy": {
+    "passed": true,
+    "existing_warnings": true
+  },
+  "harbor_python_tests": 496,
+  "real_cli_acp": {
+    "protocol_version": 1,
+    "session_new": true,
+    "mock_prompt_stop_reason": "end_turn"
+  },
+  "live_evaluation": {
+    "model": "gpt-6-luna",
+    "reasoning": "low",
+    "current_http_passed": 2,
+    "baseline_http_passed": 2,
+    "current_websocket_passed": 2,
+    "native_compaction_continuity_passed": 1,
+    "patch_errors": 0,
+    "general_speed_or_quality_claim": false
+  },
+  "offline_terminal": {
+    "samples_per_build": 20,
+    "held_open_ms": 150,
+    "baseline_median_ms": 200.833,
+    "current_median_ms": 40.705
+  },
+  "release_config_generation_check": true,
+  "diff_whitespace_check": true,
+  "submission_or_deployment_performed": false
+}

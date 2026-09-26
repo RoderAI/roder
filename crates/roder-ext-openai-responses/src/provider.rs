@@ -1,7 +1,45 @@
+#[path = "native_compaction.rs"]
+mod native_compaction;
+use roder_api::provider_error::{ProviderFailure, ProviderFailureKind};
+#[path = "response_transport.rs"]
+mod response_transport;
+use response_transport::*;
+#[path = "request_budget.rs"]
+mod request_budget;
+use request_budget::*;
+#[path = "response_websocket.rs"]
+mod response_websocket;
+use response_websocket::*;
+#[path = "tool_definitions.rs"]
+mod tool_definitions;
+use tool_definitions::*;
+pub use tool_definitions::{
+    openai_model_supports_freeform_apply_patch, openai_model_supports_tool_search,
+};
+#[path = "response_stream.rs"]
+mod response_stream;
+use response_stream::*;
+#[path = "client_search.rs"]
+mod client_search;
+use client_search::*;
+#[path = "response_events.rs"]
+mod response_events;
+#[path = "response_replay.rs"]
+mod response_replay;
+use response_events::*;
+use response_replay::*;
+#[path = "response_instructions.rs"]
+mod response_instructions;
+use response_instructions::*;
+#[path = "response_tools.rs"]
+mod response_tools;
+use response_tools::*;
+
 use crate::stream_diagnostics::ResponseStreamDiagnostics;
 use roder_api::catalog::{
-    PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK, PROVIDER_XAI,
-    REASONING_MAX, REASONING_ULTRA, lookup_model, lookup_model_for_provider, models_for_provider,
+    PROVIDER_CODEX, PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK,
+    PROVIDER_XAI, REASONING_MAX, REASONING_ULTRA, lookup_model, lookup_model_for_provider,
+    models_for_provider,
 };
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
@@ -559,102 +597,6 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
-fn responses_tools(
-    request: &AgentInferenceRequest,
-    profile: ResponsesProviderProfile,
-) -> (Vec<Value>, ResponsesToolNameMap) {
-    let mut tools = Vec::new();
-    let mut used_tool_names = HashSet::new();
-    let mut tool_name_map = ResponsesToolNameMap::default();
-    match request.runtime.hosted_web_search.mode {
-        HostedWebSearchMode::Disabled => {}
-        HostedWebSearchMode::Cached => {
-            let mut tool = json!({ "type": "web_search" });
-            if profile != ResponsesProviderProfile::Xai {
-                tool["external_web_access"] = json!(false);
-            }
-            tools.push(tool);
-        }
-        HostedWebSearchMode::Live => {
-            let mut tool = json!({ "type": "web_search" });
-            if profile != ResponsesProviderProfile::Xai {
-                tool["external_web_access"] = json!(true);
-            }
-            tools.push(tool);
-        }
-    }
-    for tool in &request.tools {
-        let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
-        let api_name = responses_tool_name(&tool.name, &mut used_tool_names);
-        tool_name_map.register(&tool.name, &api_name);
-        let mut entry = if freeform_custom_tool(&tool, request) {
-            // Freeform/custom channel: the model emits the raw body (patch
-            // text) as a string `input`; no JSON parameters schema is sent.
-            json!({
-                "type": "custom",
-                "name": api_name,
-                "description": tool.description,
-            })
-        } else {
-            json!({
-                "type": "function",
-                "name": api_name,
-                "description": tool.description,
-                "parameters": tool.parameters,
-            })
-        };
-        if openai_provider_native_tool_search(request) {
-            entry["defer_loading"] = json!(true);
-        }
-        tools.push(entry);
-    }
-    if openai_provider_native_tool_search(request) && !request.tools.is_empty() {
-        tools.push(json!({ "type": "tool_search" }));
-    }
-    (tools, tool_name_map)
-}
-
-fn openai_provider_native_tool_search(request: &AgentInferenceRequest) -> bool {
-    request.runtime.tool_search.is_provider_native_requested()
-        && request.model.provider == PROVIDER_OPENAI
-        && openai_model_supports_tool_search(&request.model.model)
-}
-
-/**
- * Whether an OpenAI model id is known to support Responses `tool_search`.
- * Public so offline eval fixtures exercise the same support gating as the
- * live request mapping.
- */
-pub fn openai_model_supports_tool_search(model: &str) -> bool {
-    model.starts_with("gpt-5.4")
-        || model.starts_with("gpt-5.5")
-        || model.starts_with("gpt-5.6")
-        || model.starts_with("gpt-6-")
-}
-
-/**
- * Whether an OpenAI model reliably emits `apply_patch` on the Responses
- * freeform/custom tool channel. gpt-5.5 was RL-trained on it; other models
- * keep the JSON `type:"function"` shape.
- */
-pub fn openai_model_supports_freeform_apply_patch(model: &str) -> bool {
-    model.starts_with("gpt-5.5")
-}
-
-/**
- * Whether a tool should be advertised on the Responses custom-tool channel
- * (`type:"custom"`) for this request. Gated to the gpt-5.5 family via the
- * OpenAI provider; every other tool/model falls back to `type:"function"`.
- */
-fn freeform_custom_tool(
-    tool: &roder_api::tools::ToolSpec,
-    request: &AgentInferenceRequest,
-) -> bool {
-    tool.freeform_input_field().is_some()
-        && request.model.provider == PROVIDER_OPENAI
-        && openai_model_supports_freeform_apply_patch(&request.model.model)
-}
-
 fn responses_tool_name(tool_name: &str, used_tool_names: &mut HashSet<String>) -> String {
     let base_name = responses_api_tool_name(tool_name);
     if used_tool_names.insert(base_name.clone()) {
@@ -780,6 +722,14 @@ impl InferenceEngine for OpenAiResponsesEngine {
         Ok(models_for_provider(&self.provider_id, false))
     }
 
+    async fn compact_turn(
+        &self,
+        ctx: InferenceTurnContext<'_>,
+        request: AgentInferenceRequest,
+    ) -> anyhow::Result<Option<InferenceEventStream>> {
+        native_compaction::compact(self, ctx, request).await
+    }
+
     async fn stream_turn(
         &self,
         _ctx: InferenceTurnContext<'_>,
@@ -806,32 +756,16 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 ),
             }
         };
-        let (body, tool_name_map) = Self::map_request_with_options(
+        let (mut body, tool_name_map) = Self::map_request_with_options(
             &request,
             RequestMappingOptions {
                 profile: self.profile,
                 thread_id: Some(_ctx.thread_id),
             },
         );
-        let response = send_responses_request(
-            &self.base_url,
-            api_key,
-            &self.headers,
-            (self.profile == ResponsesProviderProfile::Xai).then_some(_ctx.thread_id),
-            &body,
-            request.runtime.reliability.as_ref(),
-        )
-        .await
-        .map_err(|err| match self.profile {
-            ResponsesProviderProfile::Xai => anyhow::anyhow!("xAI Responses error: {err}"),
-            ResponsesProviderProfile::OpenRouter => {
-                anyhow::anyhow!("{}", openrouter_error_message(&err.to_string()))
-            }
-            ResponsesProviderProfile::Fireworks => {
-                anyhow::anyhow!("{}", fireworks_error_message(&err.to_string()))
-            }
-            ResponsesProviderProfile::OpenAi => err,
-        })?;
+        if self.provider_id == PROVIDER_CODEX {
+            body.as_object_mut().unwrap().remove("context_management");
+        }
         // Provider-native tool search may require client-executed searches
         // against the runtime catalog within the same turn.
         let continuation =
@@ -843,11 +777,50 @@ impl InferenceEngine for OpenAiResponsesEngine {
                     .then(|| _ctx.thread_id.to_string()),
                 body: body.clone(),
                 policy: request.runtime.reliability.clone(),
+                definitions: client_search_definitions(&body, &tool_name_map),
                 catalog: roder_api::tool_search_catalog::ToolSearchCatalog::build(
                     &request.tools,
                     &request.runtime.tool_search,
                 ),
             });
+        // Auto-compaction uses the HTTP context_management contract as well.
+        if self.profile == ResponsesProviderProfile::OpenAi
+            && body.get("context_management").is_none()
+            && websocket_requested(&self.base_url)
+            && let Some(stream) = try_websocket_stream(
+                &self.base_url,
+                api_key,
+                &self.headers,
+                _ctx.thread_id,
+                &body,
+                tool_name_map.api_name_to_tool_name.clone(),
+                continuation.clone(),
+            )
+            .await?
+        {
+            return Ok(stream);
+        }
+        let response = send_responses_request(
+            &self.base_url,
+            api_key,
+            &self.headers,
+            (self.profile == ResponsesProviderProfile::Xai).then_some(_ctx.thread_id),
+            &body,
+            request.runtime.reliability.as_ref(),
+        )
+        .await
+        .map_err(|err| match self.profile {
+            ResponsesProviderProfile::Xai => err.context("xAI Responses error"),
+            ResponsesProviderProfile::OpenRouter => {
+                let message = openrouter_error_message(&err.to_string());
+                err.context(message)
+            }
+            ResponsesProviderProfile::Fireworks => {
+                let message = fireworks_error_message(&err.to_string());
+                err.context(message)
+            }
+            ResponsesProviderProfile::OpenAi => err,
+        })?;
         Ok(stream_responses_sse_with_client_tool_search(
             response.response,
             tool_name_map.api_name_to_tool_name,
@@ -856,190 +829,6 @@ impl InferenceEngine for OpenAiResponsesEngine {
             continuation,
         ))
     }
-}
-
-struct RetriedResponse {
-    response: reqwest::Response,
-    retry_events: Vec<Value>,
-    idle_timeout: Duration,
-}
-
-async fn send_responses_request(
-    base_url: &str,
-    api_key: &str,
-    headers: &[(String, String)],
-    grok_conversation_id: Option<&str>,
-    body: &Value,
-    policy: Option<&ReliabilityRequestPolicy>,
-) -> anyhow::Result<RetriedResponse> {
-    send_responses_request_with_idle_timeout(
-        base_url,
-        api_key,
-        headers,
-        grok_conversation_id,
-        body,
-        policy,
-        responses_stream_idle_timeout(),
-    )
-    .await
-}
-
-async fn send_responses_request_with_idle_timeout(
-    base_url: &str,
-    api_key: &str,
-    headers: &[(String, String)],
-    grok_conversation_id: Option<&str>,
-    body: &Value,
-    policy: Option<&ReliabilityRequestPolicy>,
-    idle_timeout: Duration,
-) -> anyhow::Result<RetriedResponse> {
-    let policy = policy.cloned().unwrap_or_default();
-    let attempts = policy.provider_retry_max_attempts.max(1);
-    let client = responses_stream_client(idle_timeout)?;
-    let mut last_error = None;
-    let mut retry_events = Vec::new();
-    let mut body = body.clone();
-    let mut recovered_missing_tool_output_call_ids = HashSet::new();
-    for attempt in 1..=attempts {
-        let mut request = client
-            .post(format!("{}/responses", base_url))
-            .bearer_auth(api_key);
-        for (key, value) in headers {
-            request = request.header(key, value);
-        }
-        if let Some(thread_id) = grok_conversation_id.filter(|id| !id.is_empty()) {
-            request = request.header("x-grok-conv-id", thread_id);
-        }
-        let response = tokio::time::timeout(idle_timeout, request.json(&body).send()).await;
-        match response {
-            Ok(Ok(response)) if response.status().is_success() => {
-                return Ok(RetriedResponse {
-                    response,
-                    retry_events,
-                    idle_timeout,
-                });
-            }
-            Ok(Ok(response)) => {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                let retryable = policy
-                    .provider_retry_status_codes
-                    .contains(&status.as_u16());
-                last_error = Some(format!("OpenAI Responses error {status}: {text}"));
-                if status == reqwest::StatusCode::BAD_REQUEST
-                    && attempt < attempts
-                    && let Some(call_id) = missing_function_call_output_call_id(&text)
-                    && recovered_missing_tool_output_call_ids.insert(call_id.clone())
-                    && remove_function_call_output(&mut body, &call_id)
-                {
-                    push_retry_event(
-                        &mut retry_events,
-                        attempt,
-                        "missing_function_call_output_call_id",
-                        &policy,
-                    );
-                    continue;
-                }
-                if retryable && attempt < attempts {
-                    push_retry_event(
-                        &mut retry_events,
-                        attempt,
-                        &provider_retry_status_cause(status.as_u16()),
-                        &policy,
-                    );
-                    retry_sleep(&policy, attempt).await;
-                    continue;
-                }
-            }
-            Ok(Err(err)) => {
-                let timed_out = err.is_timeout();
-                last_error = Some(if timed_out {
-                    format!(
-                        "OpenAI Responses request timed out after {}ms: {err}",
-                        idle_timeout.as_millis()
-                    )
-                } else {
-                    err.to_string()
-                });
-                if attempt < attempts {
-                    let cause = if timed_out {
-                        "transport_timeout"
-                    } else {
-                        "transport_error"
-                    };
-                    push_retry_event(&mut retry_events, attempt, cause, &policy);
-                    retry_sleep(&policy, attempt).await;
-                    continue;
-                }
-            }
-            Err(_) => {
-                last_error = Some(format!(
-                    "OpenAI Responses request timed out waiting for response headers after {}ms",
-                    idle_timeout.as_millis()
-                ));
-                if attempt < attempts {
-                    push_retry_event(
-                        &mut retry_events,
-                        attempt,
-                        "response_headers_timeout",
-                        &policy,
-                    );
-                    retry_sleep(&policy, attempt).await;
-                    continue;
-                }
-            }
-        }
-        break;
-    }
-    anyhow::bail!(last_error.unwrap_or_else(|| "OpenAI Responses request failed".to_string()))
-}
-
-fn missing_function_call_output_call_id(body: &str) -> Option<String> {
-    if !body.contains("No tool call found for function call output with call_id") {
-        return None;
-    }
-
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("error")
-                .and_then(|error| error.get("message"))
-                .and_then(Value::as_str)
-                .and_then(extract_missing_function_call_output_call_id)
-        })
-        .or_else(|| extract_missing_function_call_output_call_id(body))
-}
-
-fn extract_missing_function_call_output_call_id(message: &str) -> Option<String> {
-    const PREFIX: &str = "No tool call found for function call output with call_id ";
-    let tail = message.split_once(PREFIX)?.1;
-    let call_id = tail
-        .trim_start()
-        .trim_end_matches('.')
-        .split(|ch: char| ch.is_whitespace() || ch == '.' || ch == ',' || ch == '}' || ch == '"')
-        .next()
-        .unwrap_or_default()
-        .trim();
-    (!call_id.is_empty()).then(|| call_id.to_string())
-}
-
-fn remove_function_call_output(body: &mut Value, call_id: &str) -> bool {
-    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
-        return false;
-    };
-    let before = input.len();
-    input.retain(|item| {
-        !(item.get("type").and_then(Value::as_str) == Some("function_call_output")
-            && item.get("call_id").and_then(Value::as_str) == Some(call_id))
-    });
-    input.len() != before
-}
-
-fn responses_stream_client(idle_timeout: Duration) -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .read_timeout(idle_timeout)
-        .build()?)
 }
 
 fn responses_stream_idle_timeout() -> Duration {
@@ -1172,857 +961,6 @@ fn xai_error_message(status: reqwest::StatusCode, body: &str) -> String {
     format!("xAI Responses error {status}: {detail}")
 }
 
-/// Bounded number of in-turn client-executed tool-search continuations.
-const MAX_CLIENT_TOOL_SEARCH_ROUNDS: usize = 3;
-
-/**
- * Connection/request context for the client-executed `tool_search_call` →
- * `tool_search_output` flow (roadmap phase 79): when the model emits a
- * `tool_search_call` item without provider-side results, the client runs
- * the search against the runtime catalog adapter and continues the same
- * turn with a follow-up request carrying the `tool_search_output` item.
- */
-struct ClientToolSearchContext {
-    base_url: String,
-    api_key: String,
-    headers: Vec<(String, String)>,
-    grok_conversation_id: Option<String>,
-    body: Value,
-    policy: Option<ReliabilityRequestPolicy>,
-    catalog: roder_api::tool_search_catalog::ToolSearchCatalog,
-}
-
-fn stream_responses_sse_with_client_tool_search(
-    response: reqwest::Response,
-    tool_name_map: HashMap<String, String>,
-    retry_events: Vec<Value>,
-    mut idle_timeout: Duration,
-    mut continuation: Option<ClientToolSearchContext>,
-) -> InferenceEventStream {
-    Box::pin(async_stream::try_stream! {
-        use futures::StreamExt as _;
-
-        for retry_event in retry_events {
-            yield InferenceEvent::ProviderMetadata(retry_event);
-        }
-
-        let mut response = response;
-        for _round in 0..=MAX_CLIENT_TOOL_SEARCH_ROUNDS {
-            let diagnostics = ResponseStreamDiagnostics::from_response(&response, idle_timeout);
-            let mut chunks = response.bytes_stream();
-            let mut buffer = String::new();
-            let mut state = ResponsesStreamState {
-                tool_name_map: tool_name_map.clone(),
-                ..Default::default()
-            };
-
-            while let Some(chunk) = chunks.next().await {
-                let chunk = chunk.map_err(|error| diagnostics.read_error(error))?;
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-                while let Some((frame, consumed)) = take_sse_frame(&buffer) {
-                    buffer.drain(..consumed);
-                    let Some(event) = parse_sse_frame(&frame)? else {
-                        continue;
-                    };
-                    for inference_event in events_from_sse_event(&event, &mut state) {
-                        // A pending client search means this turn continues
-                        // with a follow-up request; the intermediate
-                        // completion must not terminate the canonical turn.
-                        if matches!(inference_event, InferenceEvent::Completed(_))
-                            && continuation.is_some()
-                            && !state.pending_client_tool_searches.is_empty()
-                        {
-                            continue;
-                        }
-                        yield inference_event;
-                    }
-                }
-            }
-
-            let trailing_event = if buffer.trim().is_empty() {
-                None
-            } else {
-                parse_sse_frame(&buffer)?
-            };
-            if let Some(event) = trailing_event {
-                for inference_event in events_from_sse_event(&event, &mut state) {
-                    if matches!(inference_event, InferenceEvent::Completed(_))
-                        && continuation.is_some()
-                        && !state.pending_client_tool_searches.is_empty()
-                    {
-                        continue;
-                    }
-                    yield inference_event;
-                }
-            }
-
-            if !state.terminal {
-                Err(anyhow::anyhow!("stream closed before response.completed"))?;
-            }
-
-            let pending = std::mem::take(&mut state.pending_client_tool_searches);
-            let Some(ctx) = continuation.as_mut() else {
-                break;
-            };
-            if pending.is_empty() {
-                break;
-            }
-
-            // Execute the searches locally against the runtime catalog and
-            // continue the turn with tool_search_output items. Execution of
-            // any selected tool still flows through TurnToolExecutor.
-            for item in pending {
-                let call_id = item
-                    .get("call_id")
-                    .or_else(|| item.get("id"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let query = item
-                    .get("query")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let hits = ctx.catalog.search(&query, 10);
-                let selected: Vec<Value> = hits
-                    .iter()
-                    .map(|hit| Value::String(hit.name.clone()))
-                    .collect();
-                let output_tools: Vec<Value> = hits
-                    .iter()
-                    .map(|hit| {
-                        json!({
-                            "id": hit.id,
-                            "name": hit.name,
-                            "description": hit.description,
-                        })
-                    })
-                    .collect();
-                for event in emit_hosted_tool_completed_events(
-                    HostedToolCallCompleted {
-                        id: item
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .unwrap_or(&call_id)
-                            .to_string(),
-                        name: "tool_search".to_string(),
-                        arguments: json!({
-                            "query": query,
-                            "selected_tools": selected,
-                            "executor": "client",
-                        })
-                        .to_string(),
-                    },
-                    &mut state,
-                ) {
-                    yield event;
-                }
-                if let Some(input) = ctx.body.get_mut("input").and_then(Value::as_array_mut) {
-                    input.push(item.clone());
-                    input.push(json!({
-                        "type": "tool_search_output",
-                        "call_id": call_id,
-                        "output": Value::Array(output_tools).to_string(),
-                    }));
-                }
-            }
-
-            let retried = send_responses_request(
-                &ctx.base_url,
-                &ctx.api_key,
-                &ctx.headers,
-                ctx.grok_conversation_id.as_deref(),
-                &ctx.body,
-                ctx.policy.as_ref(),
-            )
-            .await?;
-            for retry_event in retried.retry_events {
-                yield InferenceEvent::ProviderMetadata(retry_event);
-            }
-            idle_timeout = retried.idle_timeout;
-            response = retried.response;
-        }
-    })
-}
-
-#[derive(Default)]
-struct ResponsesStreamState {
-    terminal: bool,
-    streamed_final_text: bool,
-    current_message_phase: String,
-    message_phases: HashMap<String, String>,
-    streamed_message_ids: HashSet<String>,
-    tool_arguments: HashMap<String, String>,
-    tool_names: HashMap<String, String>,
-    tool_call_ids: HashMap<String, String>,
-    tool_name_map: HashMap<String, String>,
-    emitted_tool_call_ids: HashSet<String>,
-    emitted_hosted_tool_start_ids: HashSet<String>,
-    emitted_hosted_tool_complete_ids: HashSet<String>,
-    reasoning_delta_keys: HashSet<String>,
-    /// Completed `tool_search_call` items without provider-side results:
-    /// the client must execute the search and continue the turn.
-    pending_client_tool_searches: Vec<Value>,
-}
-
-/**
- * A `tool_search_call` the client must execute: it carries a query but no
- * provider-side results. Hosted (server-executed) searches always include
- * `results`; failed calls report a failed status instead.
- */
-fn is_client_executed_tool_search(item: &Value) -> bool {
-    item.get("type").and_then(Value::as_str) == Some("tool_search_call")
-        && item.get("results").is_none()
-        && item.get("query").or_else(|| item.get("queries")).is_some()
-        && item.get("status").and_then(Value::as_str) != Some("failed")
-}
-
-#[derive(Debug, PartialEq)]
-struct SseEvent {
-    event: Option<String>,
-    data: Value,
-}
-
-fn take_sse_frame(buffer: &str) -> Option<(String, usize)> {
-    let lf = buffer.find("\n\n").map(|idx| (idx, 2));
-    let crlf = buffer.find("\r\n\r\n").map(|idx| (idx, 4));
-    let (idx, delimiter_len) = match (lf, crlf) {
-        (Some(lf), Some(crlf)) => lf.min(crlf),
-        (Some(lf), None) => lf,
-        (None, Some(crlf)) => crlf,
-        (None, None) => return None,
-    };
-    Some((buffer[..idx].to_string(), idx + delimiter_len))
-}
-
-fn parse_sse_frame(frame: &str) -> anyhow::Result<Option<SseEvent>> {
-    let mut event = None;
-    let mut data = Vec::new();
-
-    for raw_line in frame.lines() {
-        let line = raw_line.trim_end_matches('\r');
-        if let Some(value) = line.strip_prefix("event:") {
-            event = Some(value.trim_start().to_string());
-        } else if let Some(value) = line.strip_prefix("data:") {
-            data.push(value.trim_start());
-        }
-    }
-
-    if data.is_empty() {
-        return Ok(None);
-    }
-
-    let data = data.join("\n");
-    if data.trim() == "[DONE]" {
-        return Ok(None);
-    }
-
-    Ok(Some(SseEvent {
-        event,
-        data: serde_json::from_str(&data).map_err(|err| {
-            anyhow::anyhow!(
-                "failed to parse Responses SSE data as JSON: {err}; data: {}",
-                error_body_excerpt(&data)
-            )
-        })?,
-    }))
-}
-
-fn events_from_sse_event(
-    event: &SseEvent,
-    state: &mut ResponsesStreamState,
-) -> Vec<InferenceEvent> {
-    let kind = event
-        .data
-        .get("type")
-        .and_then(|value| value.as_str())
-        .or(event.event.as_deref())
-        .unwrap_or_default();
-
-    match kind {
-        "response.output_text.delta" => {
-            let phase = output_text_phase(&event.data, state);
-            if let Some(item_id) = event.data.get("item_id").and_then(Value::as_str) {
-                state.streamed_message_ids.insert(item_id.to_string());
-            }
-            event
-                .data
-                .get("delta")
-                .and_then(|value| value.as_str())
-                .map(|text| {
-                    if is_final_answer_phase(&phase) {
-                        state.streamed_final_text = true;
-                    }
-                    InferenceEvent::MessageDelta(MessageDelta {
-                        text: text.to_string(),
-                        phase: (!phase.is_empty()).then_some(phase),
-                    })
-                })
-                .into_iter()
-                .collect()
-        }
-        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
-            if let Some(key) = reasoning_content_key(kind, &event.data) {
-                state.reasoning_delta_keys.insert(key);
-            }
-            event
-                .data
-                .get("delta")
-                .and_then(|value| value.as_str())
-                .map(|text| {
-                    InferenceEvent::ReasoningDelta(ReasoningDelta {
-                        text: text.to_string(),
-                    })
-                })
-                .into_iter()
-                .collect()
-        }
-        "response.reasoning_summary_text.done" | "response.reasoning_text.done" => {
-            let key = reasoning_content_key(kind, &event.data);
-            if key
-                .as_ref()
-                .is_some_and(|key| state.reasoning_delta_keys.contains(key))
-            {
-                return Vec::new();
-            }
-            event
-                .data
-                .get("text")
-                .and_then(|value| value.as_str())
-                .map(|text| {
-                    InferenceEvent::ReasoningDelta(ReasoningDelta {
-                        text: text.to_string(),
-                    })
-                })
-                .into_iter()
-                .collect()
-        }
-        "response.output_item.added" => {
-            if let Some(item) = event.data.get("item") {
-                record_output_item(item, state);
-                if is_compaction_item(item) {
-                    return vec![compaction_event(item, "started")];
-                }
-                if let Some(call) = hosted_tool_call_started_from_item(item) {
-                    return emit_hosted_tool_start_once(call, state)
-                        .into_iter()
-                        .collect();
-                }
-                if let Some(call) = started_function_call(item, state) {
-                    return vec![InferenceEvent::ToolCallStarted(call)];
-                }
-                if let Some(call) = started_custom_tool_call(item, state) {
-                    return vec![InferenceEvent::ToolCallStarted(call)];
-                }
-            }
-            Vec::new()
-        }
-        "response.web_search_call.searching" => event
-            .data
-            .get("item_id")
-            .and_then(Value::as_str)
-            .map(|id| HostedToolCallStarted {
-                id: id.to_string(),
-                name: "web_search".to_string(),
-            })
-            .and_then(|call| emit_hosted_tool_start_once(call, state))
-            .into_iter()
-            .collect(),
-        "response.function_call_arguments.delta" => {
-            if let Some(item_id) = event.data.get("item_id").and_then(Value::as_str)
-                && let Some(delta) = event.data.get("delta").and_then(Value::as_str)
-            {
-                state
-                    .tool_arguments
-                    .entry(item_id.to_string())
-                    .or_default()
-                    .push_str(delta);
-                let id = state
-                    .tool_call_ids
-                    .get(item_id)
-                    .cloned()
-                    .unwrap_or_else(|| item_id.to_string());
-                return vec![InferenceEvent::ToolCallDelta(ToolCallDelta {
-                    id,
-                    arguments_delta: delta.to_string(),
-                })];
-            }
-            Vec::new()
-        }
-        "response.function_call_arguments.done" => finalized_function_call(&event.data, state)
-            .and_then(|call| emit_tool_call_once(call, state))
-            .into_iter()
-            .collect(),
-        "response.output_item.done" => {
-            let mut events = Vec::new();
-            if let Some(item) = event.data.get("item") {
-                record_output_item(item, state);
-                if is_compaction_item(item) {
-                    events.push(compaction_event(item, "completed"));
-                }
-                if let Some(message) = message_delta_from_done_item(item, state) {
-                    events.push(message);
-                }
-                if is_client_executed_tool_search(item) {
-                    // Completion is emitted after the local search runs.
-                    state.pending_client_tool_searches.push(item.clone());
-                    if let Some(started) = hosted_tool_call_started_from_item(item)
-                        && let Some(event) = emit_hosted_tool_start_once(started, state)
-                    {
-                        events.push(event);
-                    }
-                } else if let Some(call) = hosted_tool_call_completed_from_item(item) {
-                    events.extend(emit_hosted_tool_completed_events(call, state));
-                }
-                events.extend(
-                    extract_tool_calls_from_item(item, &state.tool_name_map)
-                        .into_iter()
-                        .filter_map(|call| emit_tool_call_once(call, state)),
-                );
-            }
-            events
-        }
-        "response.completed" => {
-            state.terminal = true;
-            let response = event.data.get("response").unwrap_or(&event.data);
-            let mut events = Vec::new();
-            events.extend(message_deltas_from_response(response, state));
-            // Recover unstreamed client-executed searches before treating
-            // any tool_search_call as a hosted completion.
-            if let Some(output) = response.get("output").and_then(Value::as_array) {
-                for item in output {
-                    if is_client_executed_tool_search(item)
-                        && !state
-                            .pending_client_tool_searches
-                            .iter()
-                            .any(|pending| pending.get("id") == item.get("id"))
-                    {
-                        state.pending_client_tool_searches.push(item.clone());
-                        if let Some(started) = hosted_tool_call_started_from_item(item)
-                            && let Some(event) = emit_hosted_tool_start_once(started, state)
-                        {
-                            events.push(event);
-                        }
-                    }
-                }
-            }
-            for call in extract_hosted_tool_calls(response) {
-                events.extend(emit_hosted_tool_completed_events(call, state));
-            }
-            for call in extract_tool_calls(response, &state.tool_name_map) {
-                if let Some(call) = emit_tool_call_once(call, state) {
-                    events.push(call);
-                }
-            }
-            if let Some(usage) = extract_usage(response) {
-                events.push(InferenceEvent::Usage(usage));
-            }
-            events.push(InferenceEvent::ProviderMetadata(response.clone()));
-            events.push(InferenceEvent::Completed(CompletionMetadata {
-                stop_reason: response
-                    .get("status")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string),
-                provider_response_id: response
-                    .get("id")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string),
-            }));
-            events
-        }
-        "response.failed" | "response.incomplete" | "error" => {
-            state.terminal = true;
-            vec![InferenceEvent::Failed(InferenceFailure {
-                message: stream_error_message(&event.data, kind),
-            })]
-        }
-        _ => Vec::new(),
-    }
-}
-
-fn reasoning_content_key(kind: &str, data: &Value) -> Option<String> {
-    let item_id = data.get("item_id").and_then(Value::as_str)?;
-    let content_index = data
-        .get("content_index")
-        .and_then(Value::as_u64)
-        .unwrap_or_default();
-    let kind = kind
-        .strip_suffix(".delta")
-        .or_else(|| kind.strip_suffix(".done"))
-        .unwrap_or(kind);
-    Some(format!("{kind}:{item_id}:{content_index}"))
-}
-
-fn output_text_phase(data: &Value, state: &ResponsesStreamState) -> String {
-    data.get("item_id")
-        .and_then(Value::as_str)
-        .and_then(|item_id| state.message_phases.get(item_id))
-        .cloned()
-        .unwrap_or_else(|| state.current_message_phase.clone())
-}
-
-fn is_final_answer_phase(phase: &str) -> bool {
-    phase.is_empty() || phase == FINAL_ANSWER_PHASE
-}
-
-fn hosted_tool_call_started_from_item(item: &Value) -> Option<HostedToolCallStarted> {
-    let name = hosted_tool_name(item)?;
-    let id = item.get("id").and_then(Value::as_str)?;
-    Some(HostedToolCallStarted {
-        id: id.to_string(),
-        name: name.to_string(),
-    })
-}
-
-fn hosted_tool_call_completed_from_item(item: &Value) -> Option<HostedToolCallCompleted> {
-    let name = hosted_tool_name(item)?;
-    let id = item.get("id").and_then(Value::as_str)?;
-    Some(HostedToolCallCompleted {
-        id: id.to_string(),
-        name: name.to_string(),
-        arguments: hosted_tool_arguments(item),
-    })
-}
-
-fn hosted_tool_name(item: &Value) -> Option<&'static str> {
-    match item.get("type").and_then(Value::as_str) {
-        Some("web_search_call") => Some("web_search"),
-        Some("tool_search_call") => Some("tool_search"),
-        _ => None,
-    }
-}
-
-fn hosted_tool_arguments(item: &Value) -> String {
-    let mut arguments = serde_json::Map::new();
-    if let Some(action) = item.get("action").and_then(Value::as_object) {
-        if let Some(action_type) = action.get("type").and_then(Value::as_str) {
-            arguments.insert("action".to_string(), Value::String(action_type.to_string()));
-        }
-        if let Some(query) = action
-            .get("query")
-            .or_else(|| action.get("pattern"))
-            .and_then(Value::as_str)
-        {
-            arguments.insert("query".to_string(), Value::String(query.to_string()));
-        } else if let Some(queries) = action.get("queries").and_then(Value::as_array)
-            && let Some(query) = queries.first().and_then(Value::as_str)
-        {
-            arguments.insert("query".to_string(), Value::String(query.to_string()));
-        }
-        if let Some(url) = action.get("url").and_then(Value::as_str) {
-            arguments.insert("url".to_string(), Value::String(url.to_string()));
-        }
-    }
-    // tool_search_call items carry the search query and the searched tool
-    // selection at the item level; preserve them so the canonical hosted
-    // tool-call events never lose searched tool ids.
-    if !arguments.contains_key("query") {
-        if let Some(query) = item.get("query").and_then(Value::as_str) {
-            arguments.insert("query".to_string(), Value::String(query.to_string()));
-        } else if let Some(queries) = item.get("queries").and_then(Value::as_array)
-            && let Some(query) = queries.first().and_then(Value::as_str)
-        {
-            arguments.insert("query".to_string(), Value::String(query.to_string()));
-        }
-    }
-    if let Some(results) = item.get("results").and_then(Value::as_array) {
-        let selected: Vec<Value> = results
-            .iter()
-            .filter_map(|result| {
-                result
-                    .get("name")
-                    .or_else(|| result.get("tool_name"))
-                    .and_then(Value::as_str)
-                    .map(|name| Value::String(name.to_string()))
-            })
-            .collect();
-        if !selected.is_empty() {
-            arguments.insert("selected_tools".to_string(), Value::Array(selected));
-        }
-    }
-    Value::Object(arguments).to_string()
-}
-
-fn emit_hosted_tool_start_once(
-    call: HostedToolCallStarted,
-    state: &mut ResponsesStreamState,
-) -> Option<InferenceEvent> {
-    state
-        .emitted_hosted_tool_start_ids
-        .insert(call.id.clone())
-        .then_some(InferenceEvent::HostedToolCallStarted(call))
-}
-
-fn emit_hosted_tool_completed_events(
-    call: HostedToolCallCompleted,
-    state: &mut ResponsesStreamState,
-) -> Vec<InferenceEvent> {
-    let mut events = Vec::new();
-    if let Some(started) = emit_hosted_tool_start_once(
-        HostedToolCallStarted {
-            id: call.id.clone(),
-            name: call.name.clone(),
-        },
-        state,
-    ) {
-        events.push(started);
-    }
-    if state
-        .emitted_hosted_tool_complete_ids
-        .insert(call.id.clone())
-    {
-        events.push(InferenceEvent::HostedToolCallCompleted(call));
-    }
-    events
-}
-
-fn record_output_item(item: &Value, state: &mut ResponsesStreamState) {
-    match item.get("type").and_then(Value::as_str) {
-        Some("message") => {
-            let phase = item
-                .get("phase")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            state.current_message_phase = phase.clone();
-            if let Some(id) = item.get("id").and_then(Value::as_str) {
-                state.message_phases.insert(id.to_string(), phase);
-            }
-        }
-        Some("function_call") => {
-            let Some(id) = item.get("id").and_then(Value::as_str) else {
-                return;
-            };
-            if let Some(name) = item.get("name").and_then(Value::as_str) {
-                state.tool_names.insert(id.to_string(), name.to_string());
-            }
-            if let Some(call_id) = item
-                .get("call_id")
-                .or_else(|| item.get("id"))
-                .and_then(Value::as_str)
-            {
-                state
-                    .tool_call_ids
-                    .insert(id.to_string(), call_id.to_string());
-            }
-            if let Some(arguments) = item.get("arguments").and_then(Value::as_str) {
-                state
-                    .tool_arguments
-                    .insert(id.to_string(), arguments.to_string());
-            }
-        }
-        Some("custom_tool_call") => {
-            let Some(id) = item.get("id").and_then(Value::as_str) else {
-                return;
-            };
-            if let Some(name) = item.get("name").and_then(Value::as_str) {
-                state.tool_names.insert(id.to_string(), name.to_string());
-            }
-            if let Some(call_id) = item
-                .get("call_id")
-                .or_else(|| item.get("id"))
-                .and_then(Value::as_str)
-            {
-                state
-                    .tool_call_ids
-                    .insert(id.to_string(), call_id.to_string());
-            }
-        }
-        _ => {}
-    }
-}
-
-fn message_delta_from_done_item(
-    item: &Value,
-    state: &mut ResponsesStreamState,
-) -> Option<InferenceEvent> {
-    if item.get("type").and_then(Value::as_str) != Some("message") {
-        return None;
-    }
-    let id = item.get("id").and_then(Value::as_str);
-    if id.is_some_and(|id| state.streamed_message_ids.contains(id)) {
-        return None;
-    }
-    let text = output_text_from_message_item(item)?;
-    let phase = item
-        .get("phase")
-        .and_then(Value::as_str)
-        .unwrap_or(FINAL_ANSWER_PHASE)
-        .to_string();
-    if is_final_answer_phase(&phase) {
-        if state.streamed_final_text {
-            return None;
-        }
-        state.streamed_final_text = true;
-    }
-    if let Some(id) = id {
-        state.streamed_message_ids.insert(id.to_string());
-    }
-    Some(InferenceEvent::MessageDelta(MessageDelta {
-        text,
-        phase: Some(phase),
-    }))
-}
-
-fn started_function_call(item: &Value, state: &ResponsesStreamState) -> Option<ToolCallStarted> {
-    if item.get("type").and_then(Value::as_str) != Some("function_call") {
-        return None;
-    }
-    let item_id = item.get("id").and_then(Value::as_str)?;
-    let id = state
-        .tool_call_ids
-        .get(item_id)
-        .cloned()
-        .unwrap_or_else(|| item_id.to_string());
-    let name = item
-        .get("name")
-        .and_then(Value::as_str)
-        .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
-        .or_else(|| {
-            state
-                .tool_names
-                .get(item_id)
-                .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
-        })?;
-    Some(ToolCallStarted { id, name })
-}
-
-fn started_custom_tool_call(item: &Value, state: &ResponsesStreamState) -> Option<ToolCallStarted> {
-    if item.get("type").and_then(Value::as_str) != Some("custom_tool_call") {
-        return None;
-    }
-    let item_id = item.get("id").and_then(Value::as_str)?;
-    let id = state
-        .tool_call_ids
-        .get(item_id)
-        .cloned()
-        .unwrap_or_else(|| item_id.to_string());
-    let name = item
-        .get("name")
-        .and_then(Value::as_str)
-        .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
-        .or_else(|| {
-            state
-                .tool_names
-                .get(item_id)
-                .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
-        })?;
-    Some(ToolCallStarted { id, name })
-}
-
-fn finalized_function_call(
-    data: &Value,
-    state: &mut ResponsesStreamState,
-) -> Option<ToolCallCompleted> {
-    let item_id = data.get("item_id").and_then(Value::as_str)?;
-    let arguments = data
-        .get("arguments")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            state
-                .tool_arguments
-                .get(item_id)
-                .cloned()
-                .unwrap_or_else(|| "{}".to_string())
-        });
-    state
-        .tool_arguments
-        .insert(item_id.to_string(), arguments.clone());
-    let name = data
-        .get("name")
-        .and_then(Value::as_str)
-        .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
-        .or_else(|| {
-            state
-                .tool_names
-                .get(item_id)
-                .map(|name| map_tool_name(name, &state.tool_name_map).to_string())
-        })?;
-    let id = state
-        .tool_call_ids
-        .get(item_id)
-        .cloned()
-        .unwrap_or_else(|| item_id.to_string());
-
-    Some(ToolCallCompleted {
-        id,
-        name,
-        arguments,
-    })
-}
-
-fn emit_tool_call_once(
-    call: ToolCallCompleted,
-    state: &mut ResponsesStreamState,
-) -> Option<InferenceEvent> {
-    state
-        .emitted_tool_call_ids
-        .insert(call.id.clone())
-        .then_some(InferenceEvent::ToolCallCompleted(call))
-}
-
-/**
- * Parses a Responses `custom_tool_call` output item (the freeform/custom
- * channel). The call carries the raw body as a string `input`; it is wrapped as
- * `{ "input": <raw> }` so it routes through the same tool-dispatch path as JSON
- * function arguments. The `apply_patch` handler accepts both shapes.
- */
-fn custom_tool_call_completed(
-    item: &Value,
-    tool_name_map: &HashMap<String, String>,
-) -> Option<ToolCallCompleted> {
-    if item.get("type").and_then(Value::as_str) != Some("custom_tool_call") {
-        return None;
-    }
-    let id = item
-        .get("call_id")
-        .or_else(|| item.get("id"))
-        .and_then(Value::as_str)?;
-    let name = item.get("name").and_then(Value::as_str)?;
-    let input = item
-        .get("input")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    Some(ToolCallCompleted {
-        id: id.to_string(),
-        name: map_tool_name(name, tool_name_map).to_string(),
-        arguments: json!({ "input": input }).to_string(),
-    })
-}
-
-fn extract_tool_calls_from_item(
-    item: &Value,
-    tool_name_map: &HashMap<String, String>,
-) -> Vec<ToolCallCompleted> {
-    if let Some(call) = custom_tool_call_completed(item, tool_name_map) {
-        return vec![call];
-    }
-    if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
-        return Vec::new();
-    }
-
-    let Some(id) = item
-        .get("call_id")
-        .or_else(|| item.get("id"))
-        .and_then(|value| value.as_str())
-    else {
-        return Vec::new();
-    };
-    let Some(name) = item.get("name").and_then(|value| value.as_str()) else {
-        return Vec::new();
-    };
-    vec![ToolCallCompleted {
-        id: id.to_string(),
-        name: map_tool_name(name, tool_name_map).to_string(),
-        arguments: item
-            .get("arguments")
-            .and_then(|value| value.as_str())
-            .unwrap_or("{}")
-            .to_string(),
-    }]
-}
-
 fn stream_error_message(data: &Value, fallback: &str) -> String {
     data.get("response")
         .and_then(|response| response.get("error"))
@@ -2045,377 +983,6 @@ fn error_body_excerpt(body: &str) -> String {
         excerpt.push_str(" ...");
     }
     excerpt
-}
-
-fn response_input_items(
-    request: &AgentInferenceRequest,
-    tool_name_map: &ResponsesToolNameMap,
-    profile: ResponsesProviderProfile,
-    supports_images: bool,
-) -> Vec<Value> {
-    let mut items = Vec::new();
-    let mut provider_output_call_ids = HashSet::new();
-    let completed_tool_call_ids = completed_tool_call_ids(&request.transcript);
-    let known_tool_call_ids = known_tool_call_ids(&request.transcript);
-    let custom_tool_call_ids = custom_tool_call_ids(&request.transcript);
-
-    for conversation_item in &request.transcript {
-        let mapped = match conversation_item {
-            roder_api::transcript::TranscriptItem::UserMessage(message) => Some(json!({
-                "type": "message",
-                "role": "user",
-                "content": user_message_content(message, supports_images)
-            })),
-            roder_api::transcript::TranscriptItem::AssistantMessage(message) => Some(json!({
-                "type": "message",
-                "role": "assistant",
-                "phase": message.phase.as_deref().unwrap_or(FINAL_ANSWER_PHASE),
-                "content": [{ "type": "output_text", "text": message.text }]
-            })),
-            roder_api::transcript::TranscriptItem::ReasoningSummary(summary) => Some(json!({
-                "type": "reasoning",
-                "summary": [{ "type": "summary_text", "text": summary.text }]
-            })),
-            roder_api::transcript::TranscriptItem::ToolCall(call) => {
-                if provider_output_call_ids.contains(&call.id)
-                    || !completed_tool_call_ids.contains(&call.id)
-                {
-                    None
-                } else {
-                    let item_id = fallback_function_call_item_id(&call.id);
-                    let name = tool_name_map.replay_api_name(&call.name);
-                    Some(json!({
-                        "type": "function_call",
-                        "id": item_id,
-                        "call_id": call.id,
-                        "name": name,
-                        "arguments": call.arguments,
-                        "status": "completed"
-                    }))
-                }
-            }
-            roder_api::transcript::TranscriptItem::ToolResult(result) => {
-                if known_tool_call_ids.contains(&result.id) {
-                    // Results for freeform/custom calls must be replayed as
-                    // `custom_tool_call_output`, not `function_call_output`.
-                    let is_custom = custom_tool_call_ids.contains(&result.id);
-                    let output_type = if is_custom {
-                        "custom_tool_call_output"
-                    } else {
-                        "function_call_output"
-                    };
-                    // A `view_image` result carries an image content block:
-                    // forward it as an `input_image` so the model sees the
-                    // pixels. Custom-tool outputs stay plain strings.
-                    let output = tool_output_image_block(result)
-                        .filter(|_| supports_images && !is_custom)
-                        .map(|image| json!([{ "type": "input_image", "image_url": image }]))
-                        .unwrap_or_else(|| Value::String(result.result.clone()));
-                    Some(json!({
-                        "type": output_type,
-                        "call_id": result.id,
-                        "output": output
-                    }))
-                } else {
-                    None
-                }
-            }
-            roder_api::transcript::TranscriptItem::ContextCompaction(compaction) => Some(json!({
-                "type": "message",
-                "role": "user",
-                "content": [{ "type": "input_text", "text": format!("Context summary:\n{}", compaction.summary) }]
-            })),
-            roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
-                append_provider_output_items(
-                    metadata,
-                    &mut items,
-                    &mut provider_output_call_ids,
-                    &completed_tool_call_ids,
-                    tool_name_map,
-                    profile,
-                );
-                None
-            }
-            _ => None,
-        };
-        if let Some(item) = mapped {
-            items.push(item);
-        }
-    }
-
-    // OpenAI server-side compaction: after the latest compaction item, drop the
-    // pre-compact window so the next request does not re-send (and re-compact)
-    // the full history. The opaque compaction item carries prior state.
-    // https://developers.openai.com/api/docs/guides/compaction
-    if let Some(idx) = items.iter().rposition(is_compaction_item) {
-        items = items[idx..].to_vec();
-    }
-
-    items
-}
-
-/// Extract the image `data:` URL a `view_image` tool result stashed in its
-/// display payload, so it can be replayed to the model as `input_image`.
-fn tool_output_image_block(result: &roder_api::transcript::ToolResultRecord) -> Option<String> {
-    result
-        .display_payload
-        .as_ref()?
-        .get(roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY)?
-        .get("image_url")?
-        .as_str()
-        .map(str::to_string)
-}
-
-/**
- * Call ids that were emitted on the freeform/custom tool channel, recovered
- * from the raw provider output. Their results replay as `custom_tool_call_output`.
- */
-fn custom_tool_call_ids(transcript: &[roder_api::transcript::TranscriptItem]) -> HashSet<String> {
-    let mut ids = HashSet::new();
-    for item in transcript {
-        if let roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) = item
-            && let Some(output) = metadata.get("output").and_then(Value::as_array)
-        {
-            for out in output {
-                if out.get("type").and_then(Value::as_str) == Some("custom_tool_call")
-                    && let Some(call_id) = out.get("call_id").and_then(Value::as_str)
-                {
-                    ids.insert(call_id.to_string());
-                }
-            }
-        }
-    }
-    ids
-}
-
-fn known_tool_call_ids(transcript: &[roder_api::transcript::TranscriptItem]) -> HashSet<String> {
-    let mut ids = HashSet::new();
-    for item in transcript {
-        match item {
-            roder_api::transcript::TranscriptItem::ToolCall(call) => {
-                ids.insert(call.id.clone());
-            }
-            roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
-                if let Some(output) = metadata.get("output").and_then(Value::as_array) {
-                    ids.extend(output.iter().filter_map(|item| {
-                        (item.get("type").and_then(Value::as_str) == Some("function_call"))
-                            .then(|| {
-                                item.get("call_id")
-                                    .and_then(Value::as_str)
-                                    .map(str::to_string)
-                            })
-                            .flatten()
-                    }));
-                }
-            }
-            _ => {}
-        }
-    }
-    ids
-}
-
-fn completed_tool_call_ids(
-    transcript: &[roder_api::transcript::TranscriptItem],
-) -> HashSet<String> {
-    transcript
-        .iter()
-        .filter_map(|item| match item {
-            roder_api::transcript::TranscriptItem::ToolResult(result) => Some(result.id.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn response_input_items_with_options(
-    request: &AgentInferenceRequest,
-    tool_name_map: &ResponsesToolNameMap,
-    profile: ResponsesProviderProfile,
-    supports_images: bool,
-) -> Vec<Value> {
-    let mut items = response_input_items(request, tool_name_map, profile, supports_images);
-    if matches!(
-        profile,
-        ResponsesProviderProfile::OpenRouter | ResponsesProviderProfile::Fireworks
-    ) {
-        // These profiles do not use top-level `instructions`; fold the full
-        // InstructionBundle into leading system-role input messages.
-        let mut instruction_items = Vec::new();
-        if let Some(system) = request
-            .instructions
-            .system
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            instruction_items.push(system_input_message(system));
-        }
-        if let Some(developer) = request
-            .instructions
-            .developer
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            instruction_items.push(system_input_message(&format!(
-                "Developer instructions:\n{developer}"
-            )));
-        }
-        if let Some(context) = request
-            .instructions
-            .developer_context
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            instruction_items.push(developer_context_input_message(context));
-        }
-        if !instruction_items.is_empty() {
-            instruction_items.extend(items);
-            items = instruction_items;
-        }
-    } else if let Some(context) = request
-        .instructions
-        .developer_context
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        // Keep per-turn developer_context out of the stable top-level
-        // `instructions` prefix so prompt-cache breakpoints survive. Render it
-        // as a leading input message after instructions/system+developer.
-        let mut with_context = vec![developer_context_input_message(context)];
-        with_context.extend(items);
-        items = with_context;
-    }
-    items
-}
-
-/// Stable system + developer text for the Responses top-level `instructions`
-/// field (OpenAI, Codex, xAI, SuperGrok). Omits per-turn `developer_context`.
-fn stable_responses_instructions(request: &AgentInferenceRequest) -> Option<String> {
-    let mut parts = Vec::new();
-    if let Some(system) = request
-        .instructions
-        .system
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        parts.push(system.to_string());
-    }
-    if let Some(developer) = request
-        .instructions
-        .developer
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        parts.push(format!("Developer instructions:\n{developer}"));
-    }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("\n\n"))
-    }
-}
-
-fn system_input_message(text: &str) -> Value {
-    json!({
-        "type": "message",
-        "role": "system",
-        "content": [{ "type": "input_text", "text": text }]
-    })
-}
-
-fn developer_context_input_message(context: &str) -> Value {
-    system_input_message(&format!("Developer context (this turn):\n{context}"))
-}
-
-fn user_message_content(
-    message: &roder_api::transcript::UserMessage,
-    supports_images: bool,
-) -> Vec<Value> {
-    let mut content = Vec::new();
-    if !message.text.is_empty() {
-        content.push(json!({ "type": "input_text", "text": message.text }));
-    }
-    if supports_images {
-        content.extend(message.images.iter().map(|image| {
-            json!({
-                "type": "input_image",
-                "image_url": image.image_url,
-            })
-        }));
-    }
-    if content.is_empty() {
-        content.push(json!({ "type": "input_text", "text": "" }));
-    }
-    content
-}
-
-fn fallback_function_call_item_id(call_id: &str) -> String {
-    if call_id.starts_with("fc_") {
-        call_id.to_string()
-    } else if let Some(suffix) = call_id.strip_prefix("call_") {
-        format!("fc_{suffix}")
-    } else {
-        format!("fc_{call_id}")
-    }
-}
-
-fn append_provider_output_items(
-    metadata: &Value,
-    items: &mut Vec<Value>,
-    provider_output_call_ids: &mut HashSet<String>,
-    completed_tool_call_ids: &HashSet<String>,
-    tool_name_map: &ResponsesToolNameMap,
-    profile: ResponsesProviderProfile,
-) {
-    let Some(output) = metadata.get("output").and_then(Value::as_array) else {
-        return;
-    };
-    for item in output {
-        match item.get("type").and_then(Value::as_str) {
-            Some("function_call") => {
-                let call_id = item.get("call_id").and_then(Value::as_str);
-                let Some(call_id) = call_id else {
-                    continue;
-                };
-                if !completed_tool_call_ids.contains(call_id) {
-                    continue;
-                }
-                provider_output_call_ids.insert(call_id.to_string());
-                let mut item = item.clone();
-                if let Some(name) = item.get("name").and_then(Value::as_str) {
-                    item["name"] = json!(tool_name_map.replay_api_name(name));
-                }
-                items.push(item);
-            }
-            Some("custom_tool_call") => {
-                let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
-                    continue;
-                };
-                if !completed_tool_call_ids.contains(call_id) {
-                    continue;
-                }
-                provider_output_call_ids.insert(call_id.to_string());
-                let mut item = item.clone();
-                if let Some(name) = item.get("name").and_then(Value::as_str) {
-                    item["name"] = json!(tool_name_map.replay_api_name(name));
-                }
-                items.push(item);
-            }
-            Some("reasoning") => items.push(replay_provider_output_item(item, profile)),
-            Some(kind) if is_compaction_type(kind) => {
-                items.push(replay_provider_output_item(item, profile))
-            }
-            _ => {}
-        }
-    }
-}
-
-fn replay_provider_output_item(item: &Value, profile: ResponsesProviderProfile) -> Value {
-    let mut item = item.clone();
-    if profile == ResponsesProviderProfile::Fireworks
-        && let Some(object) = item.as_object_mut()
-    {
-        object.remove("encrypted_content");
-    }
-    item
 }
 
 fn is_compaction_item(item: &Value) -> bool {
@@ -2599,7 +1166,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    fn request() -> AgentInferenceRequest {
+    pub(super) fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
             model: ModelSelection {
                 provider: "openai".to_string(),
@@ -2666,7 +1233,9 @@ mod tests {
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["tools"][0]["name"], "echo");
         assert_eq!(body["tools"][0]["defer_loading"], true);
-        assert_eq!(body["tools"][1], json!({ "type": "tool_search" }));
+        assert_eq!(body["tools"][1]["type"], "tool_search");
+        assert_eq!(body["tools"][1]["execution"], "client");
+        assert_eq!(body["tools"][1]["parameters"]["required"], json!(["query"]));
         assert_eq!(body["tool_choice"], "auto");
     }
 
@@ -2854,7 +1423,7 @@ mod tests {
         use roder_api::inference::ToolSearchConfig;
         use roder_api::tool_search_catalog::ToolSearchCatalog;
 
-        const FIRST_SSE: &str = "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ts_9\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"query\":\"read files\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"ts_9\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"query\":\"read files\"}]}}\n\n";
+        const FIRST_SSE: &str = "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ts_9\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"call_id\":\"search_9\",\"execution\":\"client\",\"arguments\":{\"query\":\"read files\",\"limit\":1}}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"ts_9\",\"type\":\"tool_search_call\",\"status\":\"completed\",\"call_id\":\"search_9\",\"execution\":\"client\",\"arguments\":{\"query\":\"read files\",\"limit\":1}}]}}\n\n";
         const SECOND_SSE: &str = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n";
 
         let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2902,6 +1471,7 @@ mod tests {
                 grok_conversation_id: None,
                 body: body.clone(),
                 policy: None,
+                definitions: tools.iter().map(|tool| (tool.name.clone(), json!({ "type": "function", "name": tool.name, "description": tool.description, "parameters": tool.parameters }))).collect(),
                 catalog,
             }),
         );
@@ -2955,13 +1525,16 @@ mod tests {
             .iter()
             .find(|item| item["type"] == "tool_search_output")
             .expect("tool_search_output item");
-        assert_eq!(output["call_id"], "ts_9");
-        assert!(output["output"].as_str().unwrap().contains("read_file"));
-        assert!(!output["output"].as_str().unwrap().contains("deploy_app"));
+        assert_eq!(output["call_id"], "search_9");
+        assert_eq!(output["status"], "completed");
+        assert_eq!(output["execution"], "client");
+        assert_eq!(output["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(output["tools"][0]["name"], "read_file");
+        assert_eq!(output["tools"][0]["parameters"], json!({"type": "object"}));
     }
 
     #[tokio::test]
-    async fn retry_recovers_by_removing_missing_function_call_output() {
+    async fn invalid_history_fails_without_discarding_tool_results() {
         let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
         let base_url = spawn_recording_server(
             vec![
@@ -2985,7 +1558,7 @@ mod tests {
             ..ReliabilityRequestPolicy::default()
         };
 
-        let response = send_responses_request(
+        let error = send_responses_request(
             &base_url,
             "secret",
             &[],
@@ -3001,18 +1574,16 @@ mod tests {
             Some(&policy),
         )
         .await
-        .unwrap();
+        .err().unwrap();
 
-        assert!(response.response.status().is_success());
         assert_eq!(
-            response.retry_events[0]["cause"],
-            "missing_function_call_output_call_id"
+            error.downcast_ref::<ProviderFailure>().unwrap().kind,
+            ProviderFailureKind::InvalidRequest
         );
         let bodies = bodies.lock().unwrap();
-        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies.len(), 1);
         assert!(bodies[0].contains("call_missing"));
-        assert!(!bodies[1].contains("call_missing"));
-        assert!(bodies[1].contains("call_ok"));
+        assert!(bodies[0].contains("call_ok"));
     }
 
     #[tokio::test]
@@ -3563,9 +2134,9 @@ mod tests {
     }
 
     #[test]
-    fn keeps_apply_patch_as_function_for_non_gpt55_models() {
+    fn keeps_apply_patch_as_function_for_models_without_custom_tools() {
         let mut request = request();
-        request.model.model = "gpt-5.4".to_string();
+        request.model.model = "gpt-4.1".to_string();
         request.tools = vec![roder_api::tools::ToolSpec {
             name: "apply_patch".to_string(),
             description: "Apply a patch".to_string(),
@@ -3603,7 +2174,7 @@ mod tests {
         assert_eq!(calls[0].name, "apply_patch");
         assert_eq!(
             calls[0].arguments,
-            json!({ "input": "*** Begin Patch\n*** End Patch\n" }).to_string()
+            json!({ "patch": "*** Begin Patch\n*** End Patch\n" }).to_string()
         );
     }
 
@@ -3625,7 +2196,7 @@ mod tests {
             TranscriptItem::ToolCall(ToolCallRecord {
                 id: "call_patch".to_string(),
                 name: "apply_patch".to_string(),
-                arguments: json!({ "input": "*** Begin Patch\n*** End Patch\n" }).to_string(),
+                arguments: json!({ "patch": "*** Begin Patch\n*** End Patch\n" }).to_string(),
             }),
             TranscriptItem::ToolResult(ToolResultRecord {
                 id: "call_patch".to_string(),
@@ -4435,11 +3006,14 @@ mod tests {
         let events = events_from_sse_event(&added, &mut state);
         assert_eq!(
             events,
-            vec![InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                id: "call_1".to_string(),
-                name: "memory.save".to_string(),
-                arguments: "{\"entry\":\"x\"}".to_string(),
-            })]
+            vec![
+                InferenceEvent::ToolCallCompleted(ToolCallCompleted {
+                    id: "call_1".to_string(),
+                    name: "memory.save".to_string(),
+                    arguments: "{\"entry\":\"x\"}".to_string(),
+                }),
+                InferenceEvent::OutputItemCompleted(added.data["item"].clone())
+            ]
         );
     }
 
@@ -4617,10 +3191,13 @@ mod tests {
 
         assert_eq!(
             events_from_sse_event(&done, &mut state),
-            vec![InferenceEvent::MessageDelta(MessageDelta {
-                text: "I’ll inspect the logs first.".to_string(),
-                phase: Some("commentary".to_string()),
-            })]
+            vec![
+                InferenceEvent::MessageDelta(MessageDelta {
+                    text: "I’ll inspect the logs first.".to_string(),
+                    phase: Some("commentary".to_string()),
+                }),
+                InferenceEvent::OutputItemCompleted(done.data["item"].clone())
+            ]
         );
     }
 
@@ -4643,10 +3220,13 @@ mod tests {
 
         assert_eq!(
             events_from_sse_event(&done, &mut state),
-            vec![InferenceEvent::MessageDelta(MessageDelta {
-                text: "I’ll inspect the logs and then summarize root cause.".to_string(),
-                phase: Some("commentary".to_string()),
-            })]
+            vec![
+                InferenceEvent::MessageDelta(MessageDelta {
+                    text: "I’ll inspect the logs and then summarize root cause.".to_string(),
+                    phase: Some("commentary".to_string()),
+                }),
+                InferenceEvent::OutputItemCompleted(done.data["item"].clone())
+            ]
         );
     }
 
@@ -4684,7 +3264,12 @@ mod tests {
                 }
             }),
         };
-        assert!(events_from_sse_event(&done, &mut state).is_empty());
+        assert_eq!(
+            events_from_sse_event(&done, &mut state),
+            vec![InferenceEvent::OutputItemCompleted(
+                done.data["item"].clone()
+            )]
+        );
     }
 
     #[test]
@@ -4809,7 +3394,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_tool_call_from_function_arguments_done() {
+    fn function_arguments_done_waits_for_completed_output_item() {
         let mut state = ResponsesStreamState::default();
         let added = SseEvent {
             event: Some("response.output_item.added".to_string()),
@@ -4856,14 +3441,18 @@ mod tests {
                 "arguments": "{\"text\":\"hello\"}"
             }),
         };
-        assert_eq!(
-            events_from_sse_event(&done, &mut state),
-            vec![InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                id: "call_1".to_string(),
-                name: "echo".to_string(),
-                arguments: "{\"text\":\"hello\"}".to_string(),
-            })]
-        );
+        assert!(events_from_sse_event(&done, &mut state).is_empty());
+        let completed = SseEvent {
+            event: None,
+            data: json!({
+                "type": "response.output_item.done", "item": {
+                    "id":"fc_1", "type":"function_call", "call_id":"call_1", "name":"echo"
+                }
+            }),
+        };
+        let events = events_from_sse_event(&completed, &mut state);
+        assert!(matches!(&events[0], InferenceEvent::ToolCallCompleted(call)
+            if call.id == "call_1" && call.arguments == "{\"text\":\"hello\"}"));
     }
 
     #[test]
@@ -4907,13 +3496,14 @@ mod tests {
         };
         assert_eq!(
             events_from_sse_event(&done, &mut state),
-            vec![InferenceEvent::HostedToolCallCompleted(
-                HostedToolCallCompleted {
+            vec![
+                InferenceEvent::HostedToolCallCompleted(HostedToolCallCompleted {
                     id: "ws_1".to_string(),
                     name: "web_search".to_string(),
                     arguments: r#"{"action":"search","query":"pandelis zembashis"}"#.to_string(),
-                }
-            )]
+                }),
+                InferenceEvent::OutputItemCompleted(done.data["item"].clone())
+            ]
         );
     }
 
@@ -5043,3 +3633,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "audit_regressions.rs"]
+mod audit_regressions;
+
+#[cfg(test)]
+#[path = "patch_stream_tests.rs"]
+mod patch_stream_tests;

@@ -22,6 +22,14 @@ impl ResponseStreamDiagnostics {
         }
     }
 
+    pub(crate) fn attach(
+        &self,
+        mut failure: roder_api::provider_error::ProviderFailure,
+    ) -> roder_api::provider_error::ProviderFailure {
+        failure.request_id = self.provider_request_id.clone();
+        failure
+    }
+
     pub(crate) fn read_error(&self, error: reqwest::Error) -> anyhow::Error {
         let kind = if error.is_timeout() {
             "timeout"
@@ -46,7 +54,7 @@ impl ResponseStreamDiagnostics {
     }
 }
 
-fn provider_request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
+pub(crate) fn provider_request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
     PROVIDER_REQUEST_ID_HEADERS.iter().find_map(|name| {
         let value = headers.get(*name)?.to_str().ok()?;
         let valid = !value.is_empty()

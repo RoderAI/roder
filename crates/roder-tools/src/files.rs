@@ -34,6 +34,9 @@ struct ReadFileTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for ReadFileTool {
+    fn supports_eager_execution(&self) -> bool {
+        true
+    }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".to_string(),
@@ -121,6 +124,9 @@ struct ListFilesTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for ListFilesTool {
+    fn supports_eager_execution(&self) -> bool {
+        true
+    }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "list_files".to_string(),
