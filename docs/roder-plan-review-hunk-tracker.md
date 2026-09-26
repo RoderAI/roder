@@ -29,7 +29,7 @@ The app-server reconstructs review and hunk state from persisted thread events. 
 
 ## Tool Reporting
 
-`apply_patch`, `edit`, and `multi_edit` include `hunks` in their structured tool result data. The runtime converts those records into `hunk/recorded` events after the tool finishes. Apply-patch hunks use the Codex patch structure when available; edit tools report equivalent before/after line bodies from the exact replacement arguments.
+`apply_patch`, `edit`, and `multi_edit` include `hunks` in their structured tool result data. The runtime converts those records into `hunk/recorded` events after the tool finishes. Apply-patch hunks report the actual before/after text and matched line numbers, including fuzzy matches. Partial failures report known completed changes; `changesExact: false` indicates that the complete filesystem delta is uncertain. Exact rollback is available only when the original bytes can be restored by a reverse patch. Proposed changes during generation arrive separately through `item/applyPatch/progress`.
 
 ## TUI
 

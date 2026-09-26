@@ -397,7 +397,7 @@ fn text_input(text: String) -> TurnInputItem {
     }
 }
 
-fn acp_session_update(
+pub(super) fn acp_session_update(
     session_id: &str,
     notification: &JsonRpcNotification,
 ) -> Option<JsonRpcNotification> {
@@ -408,6 +408,11 @@ fn acp_session_update(
             let event: ThreadItemEvent =
                 serde_json::from_value(notification.params.clone()).ok()?;
             session_update_for_item_delta(&event)?
+        }
+        "item/applyPatch/progress" => {
+            let progress: roder_api::patch_progress::PatchProgress =
+                serde_json::from_value(notification.params.clone()).ok()?;
+            crate::patch_progress::acp_update(progress)
         }
         "item/started" | "item/completed" => {
             let event: ThreadItemEvent =

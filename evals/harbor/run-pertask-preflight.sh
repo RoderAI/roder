@@ -10,7 +10,7 @@ export RODER_HARBOR_AUTH_FILE="${RODER_HARBOR_AUTH_FILE:-$PWD/evals/harbor/artif
 harbor run \
   -d terminal-bench/terminal-bench-2-1 \
   -a roder_harbor_agent:RoderCli \
-  -m codex/gpt-5.5 \
+  -m codex/gpt-6-luna \
   --include-task-name terminal-bench/build-cython-ext \
   --include-task-name terminal-bench/chess-best-move \
   --include-task-name terminal-bench/path-tracing \

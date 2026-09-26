@@ -11,6 +11,7 @@ mod exec;
 mod exec_events;
 mod exec_output;
 mod forks;
+mod inference_provider_selection;
 mod knowledge;
 mod marketplace;
 mod media;
@@ -31,6 +32,7 @@ mod zerolang;
 
 use automations::run_automations_cli;
 use evals::run_eval_cli;
+use inference_provider_selection::stock_inference_providers;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
@@ -2584,36 +2586,6 @@ struct ProviderKeys {
  * The enum stays function-scoped because `lib.rs` re-exports it at the crate
  * root and `include!`s this file.
  */
-fn stock_inference_providers(
-    keys: &ProviderKeys,
-) -> Vec<roder_extension_host::InferenceProviderSelection> {
-    use roder_extension_host::InferenceProviderSelection;
-
-    let mut providers = Vec::new();
-    if keys.anthropic.is_some() {
-        providers.push(InferenceProviderSelection::Anthropic);
-    }
-    if keys.openai.is_some() {
-        providers.push(InferenceProviderSelection::OpenAi);
-    }
-    if keys.gemini.is_some() {
-        providers.push(InferenceProviderSelection::Gemini);
-    }
-    if keys.vertex_credentials_path.is_some() || keys.vertex_credentials_json.is_some() {
-        providers.push(InferenceProviderSelection::Vertex);
-    }
-    if keys.xai.is_some() {
-        providers.push(InferenceProviderSelection::Xai);
-    }
-    if keys.kimi_code.is_some()
-        || std::env::var("KIMI_CODE_API_KEY").is_ok()
-        || std::env::var("RODER_KIMI_CODE_API_KEY").is_ok()
-        || roder_ext_kimi_code::has_stored_tokens()
-    {
-        providers.push(InferenceProviderSelection::KimiCode);
-    }
-    providers
-}
 
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
     ProviderKeys {
@@ -3639,16 +3611,26 @@ mod tests {
     fn stock_inference_providers_derive_from_resolved_keys() {
         use roder_extension_host::InferenceProviderSelection;
 
-        assert!(stock_inference_providers(&provider_keys_for_test()).is_empty());
+        assert!(
+            inference_provider_selection::providers_from_keys(&provider_keys_for_test(), false)
+                .is_empty()
+        );
+        assert_eq!(
+            inference_provider_selection::providers_from_keys(&provider_keys_for_test(), true),
+            vec![InferenceProviderSelection::KimiCode]
+        );
 
-        let declared = stock_inference_providers(&ProviderKeys {
-            anthropic: Some("anthropic-key".to_string()),
-            openai: Some("openai-key".to_string()),
-            vertex_credentials_json: Some("{}".to_string()),
-            xai: Some("xai-key".to_string()),
-            kimi_code: Some("kimi-key".to_string()),
-            ..provider_keys_for_test()
-        });
+        let declared = inference_provider_selection::providers_from_keys(
+            &ProviderKeys {
+                anthropic: Some("anthropic-key".to_string()),
+                openai: Some("openai-key".to_string()),
+                vertex_credentials_json: Some("{}".to_string()),
+                xai: Some("xai-key".to_string()),
+                kimi_code: Some("kimi-key".to_string()),
+                ..provider_keys_for_test()
+            },
+            false,
+        );
         assert_eq!(
             declared,
             vec![

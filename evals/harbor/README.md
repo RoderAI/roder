@@ -10,6 +10,8 @@ bypass --skip-git-repo-check --task-ledger-required`. The prebuilt binary is
 the normal path. Source upload/build remains available as a slower fallback for
 debugging only.
 
+The default model for new test runs is `codex/gpt-6-luna`. Explicit model-specific experiment configs and recorded results retain their original model and reasoning settings. The Responses parity comparison uses Luna with `low` reasoning; Harbor configs retain their declared reasoning effort.
+
 ## Smoke Run
 
 ```sh
@@ -697,7 +699,7 @@ blocks harness/provider errors without requiring a full 89-task run.
 
 ## Auth
 
-For the default `codex/gpt-5.5` model, the adapter copies
+For the default `codex/gpt-6-luna` model, the adapter copies
 `~/.roder/auth/codex.json` into the container's isolated `RODER_CONFIG_DIR`.
 Override this with:
 

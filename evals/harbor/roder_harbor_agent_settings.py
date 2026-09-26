@@ -15,7 +15,7 @@ from roder_harbor_agent_config import (
     str_tuple,
 )
 
-DEFAULT_MODEL = "codex/gpt-5.5"
+DEFAULT_MODEL = "codex/gpt-6-luna"
 DEFAULT_SOURCE_ROOTS = ("Cargo.toml", "Cargo.lock", ".cargo", "crates")
 DEFAULT_PLAN_FIRST_SOFT_TIMEOUT_SEC = 360
 DEFAULT_POLICY_BLOCK_MAX_RETRIES = 2

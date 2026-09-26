@@ -2,7 +2,7 @@
   "id": "search-selection-subset-success",
   "title": "Provider search selects and executes a permitted subset of a larger catalog",
   "provider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-luna",
   "mode": "provider_native",
   "catalog": {
     "tools": [

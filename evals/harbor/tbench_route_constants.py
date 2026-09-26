@@ -137,7 +137,7 @@ TASK_TIMEOUTS: dict[str, int] = {
 # Harbor invocation defaults for a targeted rerun.
 HARBOR_DATASET = "terminal-bench/terminal-bench-2-1"
 HARBOR_AGENT = "roder_harbor_agent:RoderCli"
-HARBOR_MODEL = "codex/gpt-5.5"
+HARBOR_MODEL = "codex/gpt-6-luna"
 HARBOR_JOBS_DIR = "evals/harbor/jobs"
 
 # Default per-route ``--ak`` kwargs. reasoning=xhigh matches every mined trial.

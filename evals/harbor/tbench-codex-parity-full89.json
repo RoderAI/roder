@@ -32,7 +32,7 @@
   "agents": [
     {
       "import_path": "roder_harbor_agent:RoderCli",
-      "model_name": "codex/gpt-5.5",
+      "model_name": "codex/gpt-6-luna",
       "kwargs": {
         "reasoning": "xhigh",
         "benchmark_guidance_enabled": false,

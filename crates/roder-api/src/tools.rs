@@ -32,14 +32,18 @@ impl ToolSpec {
     /// are best emitted on a provider's freeform/custom tool channel instead of
     /// as a JSON-schema function.
     ///
-    /// `apply_patch` is the canonical case: gpt-5.5 was RL-trained to emit
-    /// patches on the OpenAI Responses custom-tool channel (`type:"custom"`),
+    /// `apply_patch` emits grammar-constrained patches on the supported
+    /// OpenAI Responses custom-tool channel (`type:"custom"`),
     /// where the call carries the raw patch text as a string `input` rather than
-    /// JSON arguments. Ordinary function tools return `None` (the default), so
-    /// this is backward-compatible. Providers without a freeform channel ignore
+    /// JSON arguments. Ordinary function tools return `None`.
+    /// Providers without a freeform channel ignore
     /// it and always serialize `type:"function"`.
     pub fn freeform_input_field(&self) -> Option<&'static str> {
-        match self.name.as_str() {
+        Self::freeform_field_for_name(&self.name)
+    }
+
+    pub fn freeform_field_for_name(name: &str) -> Option<&'static str> {
+        match name {
             "apply_patch" => Some("patch"),
             _ => None,
         }
@@ -315,6 +319,13 @@ impl ToolExecutionContext {
 #[async_trait::async_trait]
 pub trait ToolExecutor: Send + Sync + 'static {
     fn spec(&self) -> ToolSpec;
+
+    /// Whether this executor is safe to start while the model is still
+    /// sampling other output items. Only independent, read-only tools opt in.
+    /// Approval, validation and workspace authorization still run normally.
+    fn supports_eager_execution(&self) -> bool {
+        false
+    }
 
     async fn execute(
         &self,

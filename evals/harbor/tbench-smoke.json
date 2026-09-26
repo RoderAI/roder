@@ -32,7 +32,7 @@
   "agents": [
     {
       "import_path": "roder_harbor_agent:RoderCli",
-      "model_name": "codex/gpt-5.5",
+      "model_name": "codex/gpt-6-luna",
       "override_timeout_sec": 1800,
       "override_setup_timeout_sec": 2400,
       "kwargs": {

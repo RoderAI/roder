@@ -23,6 +23,7 @@ pub(crate) struct CompactionOptions {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompactionSkipReason {
+    NewInput,
     BelowThreshold,
     PruneSufficient,
     Hysteresis,
@@ -32,6 +33,7 @@ pub(crate) enum CompactionSkipReason {
 impl CompactionSkipReason {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            Self::NewInput => "new_input",
             Self::BelowThreshold => "below_threshold",
             Self::PruneSufficient => "prune_sufficient",
             Self::Hysteresis => "hysteresis",
@@ -59,7 +61,7 @@ pub(crate) fn estimate_prompt_tokens(items: &[TranscriptItem]) -> u32 {
         .filter(|item| !matches!(item, TranscriptItem::ProviderMetadata(_)))
         .map(item_text_len)
         .sum();
-    chars_to_tokens(chars)
+    chars_to_tokens(chars).saturating_add(crate::prompt_accounting::extra_prompt_tokens(items))
 }
 
 pub(crate) fn trim_to_last_compaction_boundary(items: Vec<TranscriptItem>) -> Vec<TranscriptItem> {
@@ -587,7 +589,7 @@ mod tests {
     }
 
     #[test]
-        fn provider_metadata_is_excluded_from_prompt_token_estimates() {
+    fn provider_metadata_is_excluded_from_prompt_token_estimates() {
         let items = vec![
             TranscriptItem::UserMessage(UserMessage::text("hello")),
             TranscriptItem::ProviderMetadata(serde_json::json!({

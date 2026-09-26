@@ -8,6 +8,7 @@
 versioned_files = [
     "crates/roder-api/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-api" },
 ]
 changelog = "crates/roder-api/CHANGELOG.md"
 
@@ -15,6 +16,7 @@ changelog = "crates/roder-api/CHANGELOG.md"
 versioned_files = [
     "crates/roder-api-transcript/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-api-transcript" },
 ]
 changelog = "crates/roder-api-transcript/CHANGELOG.md"
 
@@ -22,6 +24,7 @@ changelog = "crates/roder-api-transcript/CHANGELOG.md"
 versioned_files = [
     "crates/roder-app-server/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-app-server" },
 ]
 changelog = "crates/roder-app-server/CHANGELOG.md"
 
@@ -29,6 +32,7 @@ changelog = "crates/roder-app-server/CHANGELOG.md"
 versioned_files = [
     "crates/roder-automations/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-automations" },
 ]
 changelog = "crates/roder-automations/CHANGELOG.md"
 
@@ -43,6 +47,7 @@ changelog = "crates/roder-cli/CHANGELOG.md"
 versioned_files = [
     "crates/roder-code-index/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-code-index" },
 ]
 changelog = "crates/roder-code-index/CHANGELOG.md"
 
@@ -50,6 +55,7 @@ changelog = "crates/roder-code-index/CHANGELOG.md"
 versioned_files = [
     "crates/roder-codex-auth/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-codex-auth" },
 ]
 changelog = "crates/roder-codex-auth/CHANGELOG.md"
 
@@ -57,6 +63,7 @@ changelog = "crates/roder-codex-auth/CHANGELOG.md"
 versioned_files = [
     "crates/roder-commands/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-commands" },
 ]
 changelog = "crates/roder-commands/CHANGELOG.md"
 
@@ -64,6 +71,7 @@ changelog = "crates/roder-commands/CHANGELOG.md"
 versioned_files = [
     "crates/roder-config/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-config" },
 ]
 changelog = "crates/roder-config/CHANGELOG.md"
 
@@ -78,6 +86,7 @@ changelog = "crates/roder-configure/CHANGELOG.md"
 versioned_files = [
     "crates/roder-context/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-context" },
 ]
 changelog = "crates/roder-context/CHANGELOG.md"
 
@@ -85,6 +94,7 @@ changelog = "crates/roder-context/CHANGELOG.md"
 versioned_files = [
     "crates/roder-core/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-core" },
 ]
 changelog = "crates/roder-core/CHANGELOG.md"
 
@@ -92,6 +102,7 @@ changelog = "crates/roder-core/CHANGELOG.md"
 versioned_files = [
     "crates/roder-dist-hosted/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-dist-hosted" },
 ]
 changelog = "crates/roder-dist-hosted/CHANGELOG.md"
 
@@ -99,6 +110,7 @@ changelog = "crates/roder-dist-hosted/CHANGELOG.md"
 versioned_files = [
     "crates/roder-dynamic-workflows/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-dynamic-workflows" },
 ]
 changelog = "crates/roder-dynamic-workflows/CHANGELOG.md"
 
@@ -106,6 +118,7 @@ changelog = "crates/roder-dynamic-workflows/CHANGELOG.md"
 versioned_files = [
     "crates/roder-edit-core/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-edit-core" },
 ]
 changelog = "crates/roder-edit-core/CHANGELOG.md"
 
@@ -120,6 +133,7 @@ changelog = "crates/roder-edit-wasm/CHANGELOG.md"
 versioned_files = [
     "crates/roder-evals/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-evals" },
 ]
 changelog = "crates/roder-evals/CHANGELOG.md"
 
@@ -127,6 +141,7 @@ changelog = "crates/roder-evals/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-anthropic/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-anthropic" },
 ]
 changelog = "crates/roder-ext-anthropic/CHANGELOG.md"
 
@@ -134,6 +149,7 @@ changelog = "crates/roder-ext-anthropic/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-chrome/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-chrome" },
 ]
 changelog = "crates/roder-ext-chrome/CHANGELOG.md"
 
@@ -141,6 +157,7 @@ changelog = "crates/roder-ext-chrome/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-claude-code/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-claude-code" },
 ]
 changelog = "crates/roder-ext-claude-code/CHANGELOG.md"
 
@@ -148,6 +165,7 @@ changelog = "crates/roder-ext-claude-code/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-codex-backend/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-codex-backend" },
 ]
 changelog = "crates/roder-ext-codex-backend/CHANGELOG.md"
 
@@ -155,6 +173,7 @@ changelog = "crates/roder-ext-codex-backend/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-cursor/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-cursor" },
 ]
 changelog = "crates/roder-ext-cursor/CHANGELOG.md"
 
@@ -162,6 +181,7 @@ changelog = "crates/roder-ext-cursor/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-deepseek/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-deepseek" },
 ]
 changelog = "crates/roder-ext-deepseek/CHANGELOG.md"
 
@@ -169,6 +189,7 @@ changelog = "crates/roder-ext-deepseek/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-disk-context/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-disk-context" },
 ]
 changelog = "crates/roder-ext-disk-context/CHANGELOG.md"
 
@@ -176,6 +197,7 @@ changelog = "crates/roder-ext-disk-context/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-firecrawl-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-firecrawl-search" },
 ]
 changelog = "crates/roder-ext-firecrawl-search/CHANGELOG.md"
 
@@ -183,6 +205,7 @@ changelog = "crates/roder-ext-firecrawl-search/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-fireworks/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-fireworks" },
 ]
 changelog = "crates/roder-ext-fireworks/CHANGELOG.md"
 
@@ -190,6 +213,7 @@ changelog = "crates/roder-ext-fireworks/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-fork-rift/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-fork-rift" },
 ]
 changelog = "crates/roder-ext-fork-rift/CHANGELOG.md"
 
@@ -197,6 +221,7 @@ changelog = "crates/roder-ext-fork-rift/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-gemini/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-gemini" },
 ]
 changelog = "crates/roder-ext-gemini/CHANGELOG.md"
 
@@ -204,6 +229,7 @@ changelog = "crates/roder-ext-gemini/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-git/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-git" },
 ]
 changelog = "crates/roder-ext-git/CHANGELOG.md"
 
@@ -211,6 +237,7 @@ changelog = "crates/roder-ext-git/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-github-review/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-github-review" },
 ]
 changelog = "crates/roder-ext-github-review/CHANGELOG.md"
 
@@ -218,6 +245,7 @@ changelog = "crates/roder-ext-github-review/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-google-embeddings/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-google-embeddings" },
 ]
 changelog = "crates/roder-ext-google-embeddings/CHANGELOG.md"
 
@@ -225,6 +253,7 @@ changelog = "crates/roder-ext-google-embeddings/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-google-images/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-google-images" },
 ]
 changelog = "crates/roder-ext-google-images/CHANGELOG.md"
 
@@ -232,6 +261,7 @@ changelog = "crates/roder-ext-google-images/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-google-speech/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-google-speech" },
 ]
 changelog = "crates/roder-ext-google-speech/CHANGELOG.md"
 
@@ -239,6 +269,7 @@ changelog = "crates/roder-ext-google-speech/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-honcho/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-honcho" },
 ]
 changelog = "crates/roder-ext-honcho/CHANGELOG.md"
 
@@ -246,6 +277,7 @@ changelog = "crates/roder-ext-honcho/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-inference-router/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-inference-router" },
 ]
 changelog = "crates/roder-ext-inference-router/CHANGELOG.md"
 
@@ -253,6 +285,7 @@ changelog = "crates/roder-ext-inference-router/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-jev/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-jev" },
 ]
 changelog = "crates/roder-ext-jev/CHANGELOG.md"
 
@@ -260,6 +293,7 @@ changelog = "crates/roder-ext-jev/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-jsonl-thread-store/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-jsonl-thread-store" },
 ]
 changelog = "crates/roder-ext-jsonl-thread-store/CHANGELOG.md"
 
@@ -267,6 +301,7 @@ changelog = "crates/roder-ext-jsonl-thread-store/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-kimi-code/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-kimi-code" },
 ]
 changelog = "crates/roder-ext-kimi-code/CHANGELOG.md"
 
@@ -274,6 +309,7 @@ changelog = "crates/roder-ext-kimi-code/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-knowledge-md/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-knowledge-md" },
 ]
 changelog = "crates/roder-ext-knowledge-md/CHANGELOG.md"
 
@@ -281,6 +317,7 @@ changelog = "crates/roder-ext-knowledge-md/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-mcp/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-mcp" },
 ]
 changelog = "crates/roder-ext-mcp/CHANGELOG.md"
 
@@ -288,6 +325,7 @@ changelog = "crates/roder-ext-mcp/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-memory/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-memory" },
 ]
 changelog = "crates/roder-ext-memory/CHANGELOG.md"
 
@@ -295,6 +333,7 @@ changelog = "crates/roder-ext-memory/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-mysql-session/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-mysql-session" },
 ]
 changelog = "crates/roder-ext-mysql-session/CHANGELOG.md"
 
@@ -302,6 +341,7 @@ changelog = "crates/roder-ext-mysql-session/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-notify-desktop/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-notify-desktop" },
 ]
 changelog = "crates/roder-ext-notify-desktop/CHANGELOG.md"
 
@@ -309,6 +349,7 @@ changelog = "crates/roder-ext-notify-desktop/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-notify-terminal/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-notify-terminal" },
 ]
 changelog = "crates/roder-ext-notify-terminal/CHANGELOG.md"
 
@@ -316,6 +357,7 @@ changelog = "crates/roder-ext-notify-terminal/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-openai-chat-completions/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-openai-chat-completions" },
 ]
 changelog = "crates/roder-ext-openai-chat-completions/CHANGELOG.md"
 
@@ -323,6 +365,7 @@ changelog = "crates/roder-ext-openai-chat-completions/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-openai-embeddings/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-openai-embeddings" },
 ]
 changelog = "crates/roder-ext-openai-embeddings/CHANGELOG.md"
 
@@ -330,6 +373,7 @@ changelog = "crates/roder-ext-openai-embeddings/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-openai-images/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-openai-images" },
 ]
 changelog = "crates/roder-ext-openai-images/CHANGELOG.md"
 
@@ -337,6 +381,7 @@ changelog = "crates/roder-ext-openai-images/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-openai-responses/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-openai-responses" },
 ]
 changelog = "crates/roder-ext-openai-responses/CHANGELOG.md"
 
@@ -344,6 +389,7 @@ changelog = "crates/roder-ext-openai-responses/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-openai-speech/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-openai-speech" },
 ]
 changelog = "crates/roder-ext-openai-speech/CHANGELOG.md"
 
@@ -351,6 +397,7 @@ changelog = "crates/roder-ext-openai-speech/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-opencode/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-opencode" },
 ]
 changelog = "crates/roder-ext-opencode/CHANGELOG.md"
 
@@ -358,6 +405,7 @@ changelog = "crates/roder-ext-opencode/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-openrouter/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-openrouter" },
 ]
 changelog = "crates/roder-ext-openrouter/CHANGELOG.md"
 
@@ -365,6 +413,7 @@ changelog = "crates/roder-ext-openrouter/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-parallel-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-parallel-search" },
 ]
 changelog = "crates/roder-ext-parallel-search/CHANGELOG.md"
 
@@ -372,6 +421,7 @@ changelog = "crates/roder-ext-parallel-search/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-perplexity-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-perplexity-search" },
 ]
 changelog = "crates/roder-ext-perplexity-search/CHANGELOG.md"
 
@@ -379,6 +429,7 @@ changelog = "crates/roder-ext-perplexity-search/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-plan-mode/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-plan-mode" },
 ]
 changelog = "crates/roder-ext-plan-mode/CHANGELOG.md"
 
@@ -386,6 +437,7 @@ changelog = "crates/roder-ext-plan-mode/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-poolside/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-poolside" },
 ]
 changelog = "crates/roder-ext-poolside/CHANGELOG.md"
 
@@ -393,6 +445,7 @@ changelog = "crates/roder-ext-poolside/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-postgres-session/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-postgres-session" },
 ]
 changelog = "crates/roder-ext-postgres-session/CHANGELOG.md"
 
@@ -400,6 +453,7 @@ changelog = "crates/roder-ext-postgres-session/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-process-host/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-process-host" },
 ]
 changelog = "crates/roder-ext-process-host/CHANGELOG.md"
 
@@ -407,6 +461,7 @@ changelog = "crates/roder-ext-process-host/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-roder-cloud/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-roder-cloud" },
 ]
 changelog = "crates/roder-ext-roder-cloud/CHANGELOG.md"
 
@@ -414,6 +469,7 @@ changelog = "crates/roder-ext-roder-cloud/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-blaxel/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-blaxel" },
 ]
 changelog = "crates/roder-ext-runner-blaxel/CHANGELOG.md"
 
@@ -421,6 +477,7 @@ changelog = "crates/roder-ext-runner-blaxel/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-cloudflare/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-cloudflare" },
 ]
 changelog = "crates/roder-ext-runner-cloudflare/CHANGELOG.md"
 
@@ -428,6 +485,7 @@ changelog = "crates/roder-ext-runner-cloudflare/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-daytona/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-daytona" },
 ]
 changelog = "crates/roder-ext-runner-daytona/CHANGELOG.md"
 
@@ -435,6 +493,7 @@ changelog = "crates/roder-ext-runner-daytona/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-docker/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-docker" },
 ]
 changelog = "crates/roder-ext-runner-docker/CHANGELOG.md"
 
@@ -442,6 +501,7 @@ changelog = "crates/roder-ext-runner-docker/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-e2b/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-e2b" },
 ]
 changelog = "crates/roder-ext-runner-e2b/CHANGELOG.md"
 
@@ -449,6 +509,7 @@ changelog = "crates/roder-ext-runner-e2b/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-hosted-common/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-hosted-common" },
 ]
 changelog = "crates/roder-ext-runner-hosted-common/CHANGELOG.md"
 
@@ -456,6 +517,7 @@ changelog = "crates/roder-ext-runner-hosted-common/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-modal/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-modal" },
 ]
 changelog = "crates/roder-ext-runner-modal/CHANGELOG.md"
 
@@ -463,6 +525,7 @@ changelog = "crates/roder-ext-runner-modal/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-runloop/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-runloop" },
 ]
 changelog = "crates/roder-ext-runner-runloop/CHANGELOG.md"
 
@@ -470,6 +533,7 @@ changelog = "crates/roder-ext-runner-runloop/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-sprites/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-sprites" },
 ]
 changelog = "crates/roder-ext-runner-sprites/CHANGELOG.md"
 
@@ -477,6 +541,7 @@ changelog = "crates/roder-ext-runner-sprites/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-unix-local/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-unix-local" },
 ]
 changelog = "crates/roder-ext-runner-unix-local/CHANGELOG.md"
 
@@ -484,6 +549,7 @@ changelog = "crates/roder-ext-runner-unix-local/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-runner-vercel/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-runner-vercel" },
 ]
 changelog = "crates/roder-ext-runner-vercel/CHANGELOG.md"
 
@@ -491,6 +557,7 @@ changelog = "crates/roder-ext-runner-vercel/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-subagents/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-subagents" },
 ]
 changelog = "crates/roder-ext-subagents/CHANGELOG.md"
 
@@ -498,6 +565,7 @@ changelog = "crates/roder-ext-subagents/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-synthetic/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-synthetic" },
 ]
 changelog = "crates/roder-ext-synthetic/CHANGELOG.md"
 
@@ -505,6 +573,7 @@ changelog = "crates/roder-ext-synthetic/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-synthetic-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-synthetic-search" },
 ]
 changelog = "crates/roder-ext-synthetic-search/CHANGELOG.md"
 
@@ -512,6 +581,7 @@ changelog = "crates/roder-ext-synthetic-search/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-task-ledger/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-task-ledger" },
 ]
 changelog = "crates/roder-ext-task-ledger/CHANGELOG.md"
 
@@ -519,6 +589,7 @@ changelog = "crates/roder-ext-task-ledger/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-task-process/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-task-process" },
 ]
 changelog = "crates/roder-ext-task-process/CHANGELOG.md"
 
@@ -533,6 +604,7 @@ changelog = "crates/roder-ext-task-subagent/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-tavily-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-tavily-search" },
 ]
 changelog = "crates/roder-ext-tavily-search/CHANGELOG.md"
 
@@ -540,6 +612,7 @@ changelog = "crates/roder-ext-tavily-search/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-verification/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-verification" },
 ]
 changelog = "crates/roder-ext-verification/CHANGELOG.md"
 
@@ -547,6 +620,7 @@ changelog = "crates/roder-ext-verification/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-vertex/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-vertex" },
 ]
 changelog = "crates/roder-ext-vertex/CHANGELOG.md"
 
@@ -554,6 +628,7 @@ changelog = "crates/roder-ext-vertex/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-web-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-web-search" },
 ]
 changelog = "crates/roder-ext-web-search/CHANGELOG.md"
 
@@ -561,6 +636,7 @@ changelog = "crates/roder-ext-web-search/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-webwright/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-webwright" },
 ]
 changelog = "crates/roder-ext-webwright/CHANGELOG.md"
 
@@ -568,6 +644,7 @@ changelog = "crates/roder-ext-webwright/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-xai/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-xai" },
 ]
 changelog = "crates/roder-ext-xai/CHANGELOG.md"
 
@@ -575,6 +652,7 @@ changelog = "crates/roder-ext-xai/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-xiaomi-mimo/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-xiaomi-mimo" },
 ]
 changelog = "crates/roder-ext-xiaomi-mimo/CHANGELOG.md"
 
@@ -582,6 +660,7 @@ changelog = "crates/roder-ext-xiaomi-mimo/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-zeroentropy-embeddings/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-zeroentropy-embeddings" },
 ]
 changelog = "crates/roder-ext-zeroentropy-embeddings/CHANGELOG.md"
 
@@ -589,6 +668,7 @@ changelog = "crates/roder-ext-zeroentropy-embeddings/CHANGELOG.md"
 versioned_files = [
     "crates/roder-ext-zerolang/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-zerolang" },
 ]
 changelog = "crates/roder-ext-zerolang/CHANGELOG.md"
 
@@ -596,6 +676,7 @@ changelog = "crates/roder-ext-zerolang/CHANGELOG.md"
 versioned_files = [
     "crates/roder-extension-host/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-extension-host" },
 ]
 changelog = "crates/roder-extension-host/CHANGELOG.md"
 
@@ -617,6 +698,7 @@ changelog = "crates/roder-memory/CHANGELOG.md"
 versioned_files = [
     "crates/roder-protocol/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-protocol" },
 ]
 changelog = "crates/roder-protocol/CHANGELOG.md"
 
@@ -624,6 +706,7 @@ changelog = "crates/roder-protocol/CHANGELOG.md"
 versioned_files = [
     "crates/roder-roadmap/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-roadmap" },
 ]
 changelog = "crates/roder-roadmap/CHANGELOG.md"
 
@@ -631,6 +714,7 @@ changelog = "crates/roder-roadmap/CHANGELOG.md"
 versioned_files = [
     "crates/roder-sandbox/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-sandbox" },
 ]
 changelog = "crates/roder-sandbox/CHANGELOG.md"
 
@@ -638,6 +722,7 @@ changelog = "crates/roder-sandbox/CHANGELOG.md"
 versioned_files = [
     "crates/roder-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-search" },
 ]
 changelog = "crates/roder-search/CHANGELOG.md"
 
@@ -645,6 +730,7 @@ changelog = "crates/roder-search/CHANGELOG.md"
 versioned_files = [
     "crates/roder-skills/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-skills" },
 ]
 changelog = "crates/roder-skills/CHANGELOG.md"
 
@@ -652,6 +738,7 @@ changelog = "crates/roder-skills/CHANGELOG.md"
 versioned_files = [
     "crates/roder-supergrok-auth/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-supergrok-auth" },
 ]
 changelog = "crates/roder-supergrok-auth/CHANGELOG.md"
 
@@ -659,6 +746,7 @@ changelog = "crates/roder-supergrok-auth/CHANGELOG.md"
 versioned_files = [
     "crates/roder-tasks/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-tasks" },
 ]
 changelog = "crates/roder-tasks/CHANGELOG.md"
 
@@ -666,6 +754,7 @@ changelog = "crates/roder-tasks/CHANGELOG.md"
 versioned_files = [
     "crates/roder-theme/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-theme" },
 ]
 changelog = "crates/roder-theme/CHANGELOG.md"
 
@@ -680,6 +769,7 @@ changelog = "crates/roder-thread-store/CHANGELOG.md"
 versioned_files = [
     "crates/roder-tools/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-tools" },
 ]
 changelog = "crates/roder-tools/CHANGELOG.md"
 
@@ -687,6 +777,7 @@ changelog = "crates/roder-tools/CHANGELOG.md"
 versioned_files = [
     "crates/roder-tui/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-tui" },
 ]
 changelog = "crates/roder-tui/CHANGELOG.md"
 
@@ -694,6 +785,7 @@ changelog = "crates/roder-tui/CHANGELOG.md"
 versioned_files = [
     "crates/roder-usage-analytics/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-usage-analytics" },
 ]
 changelog = "crates/roder-usage-analytics/CHANGELOG.md"
 
@@ -701,6 +793,7 @@ changelog = "crates/roder-usage-analytics/CHANGELOG.md"
 versioned_files = [
     "crates/roder-web-search/Cargo.toml",
     "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-web-search" },
 ]
 changelog = "crates/roder-web-search/CHANGELOG.md"
 

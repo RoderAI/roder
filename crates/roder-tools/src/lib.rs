@@ -53,6 +53,9 @@ pub struct EchoTool;
 
 #[async_trait::async_trait]
 impl ToolExecutor for EchoTool {
+    fn supports_eager_execution(&self) -> bool {
+        true
+    }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "echo".to_string(),
@@ -350,7 +353,10 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(patch.text, "Success. Updated src/main.rs");
+        assert_eq!(
+            patch.text,
+            "Success. Updated the following files:\nM src/main.rs\n"
+        );
 
         let read = run_tool(
             &registry,
@@ -397,7 +403,11 @@ mod tests {
             json!({ "patch": patch }),
         )
         .await;
-        assert!(result.text.contains("Success. Added"));
+        assert!(
+            result
+                .text
+                .contains("Success. Updated the following files:")
+        );
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "yes\n");
 
         let mut workspace_registry = ToolRegistry::default();

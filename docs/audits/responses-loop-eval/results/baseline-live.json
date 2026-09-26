@@ -1,0 +1,83 @@
+{
+  "live": true,
+  "results": [
+    {
+      "fixture": "update-unicode",
+      "model": "gpt-6-luna",
+      "reasoning": "low",
+      "duration_ms": 12195.398209,
+      "first_event_ms": 1632.4593750000001,
+      "first_tool_start_ms": 2315.297667,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "request_budgets": [],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 3,
+      "transport_events": [],
+      "failure": null,
+      "checks": [
+        {
+          "path": "src/settings.txt",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": {
+        "prompt_tokens": 21740,
+        "completion_tokens": 128,
+        "total_tokens": 21868,
+        "cached_prompt_tokens": 13312,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate": 0.612327506899724
+      }
+    },
+    {
+      "fixture": "move-add-delete",
+      "model": "gpt-6-luna",
+      "reasoning": "low",
+      "duration_ms": 12849.738958,
+      "first_event_ms": 3424.5165,
+      "first_tool_start_ms": 3572.5031249999997,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "request_budgets": [],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 8,
+      "transport_events": [],
+      "failure": null,
+      "checks": [
+        {
+          "path": "source.txt",
+          "passed": true
+        },
+        {
+          "path": "destination.txt",
+          "passed": true
+        },
+        {
+          "path": "obsolete.txt",
+          "passed": true
+        },
+        {
+          "path": "nested/new.txt",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": {
+        "prompt_tokens": 22251,
+        "completion_tokens": 324,
+        "total_tokens": 22575,
+        "cached_prompt_tokens": 13312,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate": 0.5982652465057751
+      }
+    }
+  ]
+}

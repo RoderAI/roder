@@ -90,7 +90,7 @@ fn expand_truncates_oversize_file_include() {
 }
 
 #[test]
-fn expand_blocks_shell_includes_by_default_and_in_plan_mode() {
+fn expand_blocks_shell_includes_by_default_and_allows_enabled_plan_processes() {
     let dir = tempdir("expand_blocks_shell_includes_by_default_and_in_plan_mode");
     let mut spec = command("review", "{{include.shell.diff}}");
     spec.include.shell.push(ShellInclude {
@@ -109,7 +109,7 @@ fn expand_blocks_shell_includes_by_default_and_in_plan_mode() {
         policy_mode: PolicyMode::Plan,
         ..CommandExpansionOptions::default()
     };
-    let err = expand_command(CommandExpansionRequest {
+    let result = expand_command(CommandExpansionRequest {
         spec: &spec,
         arguments: "",
         workspace_root: &dir,
@@ -118,9 +118,8 @@ fn expand_blocks_shell_includes_by_default_and_in_plan_mode() {
         url_fetcher: None,
         skill_registry: None,
     })
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("blocked by active policy mode"), "{err}");
+    .unwrap();
+    assert_eq!(result.context_blocks[0].text, "shell:git diff:5");
 }
 
 #[test]

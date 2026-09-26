@@ -1,3 +1,20 @@
+#[path = "runtime/sampling.rs"]
+pub(crate) mod sampling;
+use sampling::{
+    SamplingPreempted, SamplingRetry, completed_call_replayed, preemptible, wait_for_steer,
+};
+#[path = "runtime/sampling_output.rs"]
+mod sampling_output;
+use sampling_output::{OutputContext, SamplingOutput};
+mod compaction_template;
+#[path = "runtime/eager_tools.rs"]
+mod eager_tools;
+mod thread_admission;
+use eager_tools::EagerTools;
+#[path = "runtime/patch_progress.rs"]
+mod patch_progress;
+use patch_progress::PatchProgressTracker;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -317,6 +334,7 @@ struct ActiveTurnHandle {
     thread_id: ThreadId,
     abort: AbortHandle,
     steers: Arc<Mutex<Vec<QueuedTurnSteer>>>,
+    steer_changed: tokio::sync::watch::Sender<u64>,
     drain: Arc<TurnDrainHandle>,
 }
 
@@ -536,6 +554,8 @@ pub struct Runtime {
     provider_cleanup_unknown: AtomicUsize,
     active_turns_changed: Notify,
     active_turn_selections: RwLock<HashMap<TurnId, ModelSelectionMode>>,
+    compaction_templates: RwLock<HashMap<ThreadId, AgentInferenceRequest>>,
+    thread_admission_gates: Mutex<HashMap<ThreadId, Arc<Mutex<()>>>>,
     /// Threads that have already dispatched a `SessionStart` local hook.
     ///
     /// `ThreadCreated` fires once, but `ThreadLoaded` fires on every read of the
@@ -568,7 +588,8 @@ pub struct Runtime {
     /// Lazily-started bounded dispatch of emitted events to registry
     /// `EventSink`s (process extensions etc.); see `event_sink_dispatch`.
     event_sink_dispatcher: tokio::sync::OnceCell<crate::event_sink_dispatch::EventSinkDispatcher>,
-    pub(crate) compaction_hysteresis: std::sync::Mutex<HashMap<ThreadId, u32>>,
+    pub(crate) compaction_hysteresis:
+        std::sync::Mutex<HashMap<ThreadId, crate::compaction_runtime::CompactionState>>,
     /// Per-thread agent-swarm mode overrides (roadmap 104). A thread present in
     /// this map uses its stored value; absent threads fall back to the
     /// runtime-global `RuntimeConfig.agent_swarm_mode` default. This mirrors the
@@ -720,6 +741,8 @@ impl Runtime {
             provider_cleanup_unknown: AtomicUsize::new(0),
             active_turns_changed: Notify::new(),
             active_turn_selections: RwLock::new(HashMap::new()),
+            compaction_templates: RwLock::new(HashMap::new()),
+            thread_admission_gates: Mutex::new(HashMap::new()),
             session_hook_started: RwLock::new(HashSet::new()),
             active_turn_contexts: RwLock::new(HashMap::new()),
             allow_local_workspaces: AtomicBool::new(true),
@@ -3178,7 +3201,7 @@ impl Runtime {
         Ok(session.state())
     }
 
-    async fn record_thread_usage_metadata(
+    pub(crate) async fn record_thread_usage_metadata(
         &self,
         thread_id: &ThreadId,
         usage: &TokenUsage,
@@ -3209,6 +3232,7 @@ impl Runtime {
         mut req: StartTurnRequest,
     ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
         Box::pin(async move {
+            let _thread_admission = self.thread_admission(&req.thread_id).await;
             let turn_admission = self.turn_admission.lock().await;
             anyhow::ensure!(
                 self.accepting_turns.load(Ordering::Acquire),
@@ -3252,10 +3276,12 @@ impl Runtime {
                 completed: AtomicBool::new(false),
                 completed_notify: Notify::new(),
             });
+            let (steer_changed, steering) = tokio::sync::watch::channel(0);
             let active = ActiveTurnHandle {
                 thread_id: req.thread_id.clone(),
                 abort: abort_handle,
                 steers: Arc::new(Mutex::new(Vec::new())),
+                steer_changed,
                 drain,
             };
             self.active_turns
@@ -3322,7 +3348,12 @@ impl Runtime {
             let turn_id_for_task = turn_id.clone();
             tokio::spawn(async move {
                 let result = Abortable::new(
-                    runtime.run_turn(turn_req, turn_id_for_task.clone(), initial_mailbox_ack),
+                    runtime.run_turn(
+                        turn_req,
+                        turn_id_for_task.clone(),
+                        initial_mailbox_ack,
+                        steering,
+                    ),
                     abort_registration,
                 )
                 .await;
@@ -3341,13 +3372,15 @@ impl Runtime {
                     Ok(Err(err)) => {
                         let (cleanup, ownership) =
                             runtime.await_provider_turn_cleanup(&turn_id_for_task).await;
-                        // run_turn emits failures after the stream starts; this covers setup/startup errors.
+                        // This wrapper owns terminal failure emission for returned errors.
                         runtime
                             .emit(RoderEvent::TurnFailed(TurnFailed {
                                 thread_id: thread_id_for_task.clone(),
                                 turn_id: turn_id_for_task.clone(),
                                 error: err.to_string(),
-                                error_kind: None,
+                                error_kind: err
+                                    .downcast_ref::<roder_api::provider_error::ProviderFailure>()
+                                    .map(|failure| failure.kind.retry_cause().to_string()),
                                 usage: None,
                                 timestamp: OffsetDateTime::now_utc(),
                             }))
@@ -3752,10 +3785,20 @@ impl Runtime {
         let Some(active) = self.active_turns.read().await.get(&turn_id).cloned() else {
             anyhow::bail!("no active turn to steer");
         };
-        active.steers.lock().await.push(QueuedTurnSteer {
-            message: UserMessage::with_images(message.clone(), images),
-            mailbox_ack,
-        });
+        anyhow::ensure!(
+            active.thread_id == thread_id,
+            "turn does not belong to thread"
+        );
+        {
+            let mut steers = active.steers.lock().await;
+            steers.push(QueuedTurnSteer {
+                message: UserMessage::with_images(message.clone(), images),
+                mailbox_ack,
+            });
+            active
+                .steer_changed
+                .send_modify(|generation| *generation = generation.wrapping_add(1));
+        }
         self.emit(RoderEvent::TurnSteered(TurnSteered {
             thread_id,
             turn_id,
@@ -3786,6 +3829,7 @@ impl Runtime {
         req: StartTurnRequest,
         turn_id: TurnId,
         initial_mailbox_ack: Option<MailboxDeliveryAck>,
+        mut steering: tokio::sync::watch::Receiver<u64>,
     ) -> anyhow::Result<TurnRunOutcome> {
         let turn_started_at = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TurnStarted(TurnStarted {
@@ -3873,10 +3917,10 @@ impl Runtime {
         let mut model = default_model.clone();
         let mut model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
         let workspace = req.workspace.clone();
+        let compaction_generation_at_start = self.compaction_generation(&req.thread_id);
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
-        let mut compacted_this_turn = transcript
-            .iter()
-            .any(crate::compaction::is_compaction_boundary);
+        let mut compacted_this_turn =
+            self.compaction_generation(&req.thread_id) != compaction_generation_at_start;
         let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
         let agent_swarm_mode_active = self
             .effective_agent_swarm_mode_for_thread(&req.thread_id)
@@ -3884,8 +3928,6 @@ impl Runtime {
         let ultra_mode_active = self.effective_ultra_mode_for_thread(&req.thread_id).await;
         let thread_overrides = self.thread_turn_overrides(&req.thread_id).await?;
         let mut final_assistant_text = String::new();
-        let mut final_phase_messages = Vec::<AssistantMessage>::new();
-        let mut final_reasoning_text = String::new();
         let mut final_provider_metadata = None;
         let mut exhausted_tool_rounds = true;
         let mut verification_gate =
@@ -3917,7 +3959,7 @@ impl Runtime {
                     .await?;
                 return Ok(TurnRunOutcome::Stopped);
             }
-            let steers = self.drain_turn_steers(&turn_id).await;
+            let steers = self.drain_turn_steers(&turn_id, &mut steering).await;
             self.append_steers(&req, &turn_id, &mut transcript, steers)
                 .await?;
             if runtime_profile == RuntimeProfile::Eval
@@ -4086,6 +4128,7 @@ impl Runtime {
                 .await?;
                 return Ok(TurnRunOutcome::Stopped);
             }
+            let compaction_generation_before = self.compaction_generation(&req.thread_id);
             transcript = self
                 .compact_transcript_if_needed(
                     &req.thread_id,
@@ -4096,10 +4139,8 @@ impl Runtime {
                     self.compaction_options_for_turn(&req.thread_id, !compacted_this_turn),
                 )
                 .await?;
-            compacted_this_turn = compacted_this_turn
-                || transcript
-                    .iter()
-                    .any(crate::compaction::is_compaction_boundary);
+            compacted_this_turn |=
+                self.compaction_generation(&req.thread_id) != compaction_generation_before;
 
             let speed_policy_decision =
                 speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);
@@ -4241,6 +4282,17 @@ impl Runtime {
                     "remainingSeconds": deadline_remaining_seconds(turn_deadline),
                 });
             }
+            let mut eager_tools = EagerTools::new(
+                self,
+                &request_tools,
+                &thread_overrides.external_tools,
+                parallel_tool_calls,
+            );
+            let mut request_reliability: ReliabilityRequestPolicy = cfg.reliability.clone().into();
+            request_reliability.provider_retry_max_attempts = request_reliability
+                .provider_retry_max_attempts
+                .saturating_sub(provider_stream_retry_attempts)
+                .max(1);
             let request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
@@ -4253,19 +4305,29 @@ impl Runtime {
                 reasoning: request_reasoning,
                 output: OutputConfig::default(),
                 runtime: RuntimeHints {
-                    auto_compact_token_limit: server_side_compaction_threshold(&cfg, &model),
+                    auto_compact_token_limit: (provider != roder_api::catalog::PROVIDER_CODEX)
+                        .then(|| server_side_compaction_threshold(&cfg, &model))
+                        .flatten(),
                     profile: runtime_profile,
                     parallel_tool_calls: Some(parallel_tool_calls),
+                    prompt_cache_key: Some(req.thread_id.clone()),
                     hosted_web_search: cfg.hosted_web_search.clone(),
                     tool_search: tool_search_for_provider_model(&cfg, &provider, &model),
                     speed_policy: speed_policy_decision,
-                    reliability: Some(cfg.reliability.clone().into()),
+                    reliability: Some(request_reliability),
                     deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
                     service_tier: req.service_tier_override.clone(),
                     ..RuntimeHints::default()
                 },
                 metadata: request_metadata,
             };
+
+            let mut compaction_template = request.clone();
+            compaction_template.transcript.clear();
+            self.compaction_templates
+                .write()
+                .await
+                .insert(req.thread_id.clone(), compaction_template);
 
             let ctx = InferenceTurnContext {
                 thread_id: &req.thread_id,
@@ -4280,7 +4342,7 @@ impl Runtime {
                     },
                 )),
             };
-            let stream_future = engine.stream_turn(ctx, request);
+            let stream_future = preemptible(engine.stream_turn(ctx, request), &mut steering);
             let mut stream = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
                 turn_deadline,
                 runtime_profile,
@@ -4294,6 +4356,30 @@ impl Runtime {
                     Ok(stream) => match stream {
                         Ok(stream) => stream,
                         Err(err) => {
+                            if err.is::<SamplingPreempted>() {
+                                self.finish_sampling_cleanup(&turn_id).await?;
+                                provider_stream_retry_attempts = 0;
+                                continue 'tool_rounds;
+                            }
+                            self.finish_sampling_cleanup(&turn_id).await?;
+                            if !deadline_finalization_requested
+                                && self
+                                    .retry_sampling_failure(
+                                        SamplingRetry {
+                                            thread_id: &req.thread_id,
+                                            turn_id: &turn_id,
+                                            provider: &provider,
+                                            model: &model,
+                                            config: &cfg.reliability,
+                                            error: &err,
+                                        },
+                                        &mut provider_stream_retry_attempts,
+                                        &mut steering,
+                                    )
+                                    .await
+                            {
+                                continue 'tool_rounds;
+                            }
                             let error = err.to_string();
                             if self
                                 .try_recover_from_context_limit(
@@ -4356,6 +4442,30 @@ impl Runtime {
                 match stream_future.await {
                     Ok(stream) => stream,
                     Err(err) => {
+                        if err.is::<SamplingPreempted>() {
+                            self.finish_sampling_cleanup(&turn_id).await?;
+                            provider_stream_retry_attempts = 0;
+                            continue 'tool_rounds;
+                        }
+                        self.finish_sampling_cleanup(&turn_id).await?;
+                        if !deadline_finalization_requested
+                            && self
+                                .retry_sampling_failure(
+                                    SamplingRetry {
+                                        thread_id: &req.thread_id,
+                                        turn_id: &turn_id,
+                                        provider: &provider,
+                                        model: &model,
+                                        config: &cfg.reliability,
+                                        error: &err,
+                                    },
+                                    &mut provider_stream_retry_attempts,
+                                    &mut steering,
+                                )
+                                .await
+                        {
+                            continue 'tool_rounds;
+                        }
                         let error = err.to_string();
                         if self
                             .try_recover_from_context_limit(
@@ -4376,11 +4486,22 @@ impl Runtime {
                     }
                 }
             };
+            let mut sampling_output = SamplingOutput::default();
+            let output_context = OutputContext {
+                thread_id: &req.thread_id,
+                turn_id: &turn_id,
+                profile: model_profile.as_ref(),
+                provider: &provider,
+                model: &model,
+            };
             let mut assistant_text = String::new();
             let mut phase_messages = Vec::<AssistantMessage>::new();
             let mut reasoning_text = String::new();
+            let mut replayed_tool_call = false;
             let mut tool_calls = Vec::new();
+            let mut patch_progress = PatchProgressTracker::default();
             let mut provider_metadata = None;
+            let mut provider_requests_continuation = false;
             // Captured from mid-stream Compaction(completed) events. Codex/OpenAI
             // sometimes abort the SSE stream after emitting the compaction item
             // ("error decoding response body") before response.completed, so we
@@ -4388,6 +4509,18 @@ impl Runtime {
             let mut stream_compaction_item: Option<serde_json::Value> = None;
 
             loop {
+                let next_future = async {
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = wait_for_steer(&mut steering) => break Some(Err(SamplingPreempted.into())),
+                            result = eager_tools.poll_result(), if eager_tools.pending() => {
+                                if let Err(error) = result { break Some(Err(error)); }
+                            }
+                            next = stream.next() => break next,
+                        }
+                    }
+                };
                 let next = if let Some((deadline, timeout_action)) = inference_timeout_deadline(
                     turn_deadline,
                     runtime_profile,
@@ -4397,7 +4530,7 @@ impl Runtime {
                     task_ledger_scoreable_checkpoints,
                     &transcript,
                 ) {
-                    match tokio::time::timeout_at(deadline_instant(deadline), stream.next()).await {
+                    match tokio::time::timeout_at(deadline_instant(deadline), next_future).await {
                         Ok(next) => next,
                         Err(_) => {
                             if runtime_profile == RuntimeProfile::Eval
@@ -4440,52 +4573,48 @@ impl Runtime {
                         }
                     }
                 } else {
-                    stream.next().await
+                    next_future.await
                 };
-                let Some(res) = next else {
-                    break;
-                };
+                let res = next.unwrap_or_else(|| {
+                    Err(roder_api::provider_error::ProviderFailure::new(
+                        roder_api::provider_error::ProviderFailureKind::StreamInterrupted,
+                        "provider stream ended before terminal completion",
+                    )
+                    .into())
+                });
                 let event = match res {
                     Ok(event) => event,
                     Err(err) => {
-                        let error = err.to_string();
-                        if runtime_profile == RuntimeProfile::Eval
-                            && !deadline_finalization_requested
-                            && let Some(cause) = provider_stream_retry_cause(&error)
-                        {
-                            let retry_attempt = provider_stream_retry_attempts.saturating_add(1);
-                            let policy: ReliabilityRequestPolicy = cfg.reliability.clone().into();
-                            if retry_attempt < policy.provider_retry_max_attempts {
-                                provider_stream_retry_attempts = retry_attempt;
-                                let delay_ms = provider_retry_delay_ms(&policy, retry_attempt);
-                                self.emit(RoderEvent::ReliabilityRetryRecorded(
-                                    ReliabilityRetryRecorded {
-                                        context: ReliabilityContext {
-                                            thread_id: req.thread_id.clone(),
-                                            turn_id: turn_id.clone(),
-                                            provider: Some(provider.clone()),
-                                            model: Some(model.clone()),
-                                            ..ReliabilityContext::default()
-                                        },
-                                        error_class: ReliabilityErrorClass::ProviderError,
-                                        decision: ReliabilityRetryDecision::Retry,
-                                        attempt: retry_attempt,
-                                        max_attempts: policy.provider_retry_max_attempts,
-                                        delay_ms: Some(delay_ms),
-                                        details: ReliabilityDetails::redacted(format!(
-                                            "{cause}: {error}"
-                                        )),
-                                        timestamp: OffsetDateTime::now_utc(),
-                                    },
-                                ))
-                                .await;
-                                if delay_ms > 0 {
-                                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms))
-                                        .await;
-                                }
-                                continue 'tool_rounds;
-                            }
+                        drop(stream);
+                        eager_tools.drain().await?;
+                        for result in eager_tools.take_results(&tool_calls) {
+                            verification_gate.record_tool_result(&result);
+                            transcript.push(TranscriptItem::ToolResult(result));
                         }
+                        self.finish_sampling_cleanup(&turn_id).await?;
+                        if err.is::<SamplingPreempted>() {
+                            provider_stream_retry_attempts = 0;
+                            continue 'tool_rounds;
+                        }
+                        if !deadline_finalization_requested
+                            && self
+                                .retry_sampling_failure(
+                                    SamplingRetry {
+                                        thread_id: &req.thread_id,
+                                        turn_id: &turn_id,
+                                        provider: &provider,
+                                        model: &model,
+                                        config: &cfg.reliability,
+                                        error: &err,
+                                    },
+                                    &mut provider_stream_retry_attempts,
+                                    &mut steering,
+                                )
+                                .await
+                        {
+                            continue 'tool_rounds;
+                        }
+                        let error = err.to_string();
                         if self
                             .try_recover_from_context_limit(
                                 &req.thread_id,
@@ -4501,23 +4630,6 @@ impl Runtime {
                         {
                             continue 'tool_rounds;
                         }
-                        self.emit(RoderEvent::TurnFailed(TurnFailed {
-                            thread_id: req.thread_id.clone(),
-                            turn_id: turn_id.clone(),
-                            error: error.clone(),
-                            error_kind: None,
-                            usage: None,
-                            timestamp: OffsetDateTime::now_utc(),
-                        }))
-                        .await;
-                        self.complete_team_member_turn_with_result(
-                            &req.thread_id,
-                            &turn_id,
-                            TeamMemberStatus::Failed,
-                            (!assistant_text.trim().is_empty()).then(|| assistant_text.clone()),
-                            Some(error),
-                        )
-                        .await?;
                         return Err(err);
                     }
                 };
@@ -4560,7 +4672,42 @@ impl Runtime {
                         }
                     }
                     InferenceEvent::ReasoningDelta(delta) => reasoning_text.push_str(&delta.text),
-                    InferenceEvent::ToolCallCompleted(call) => tool_calls.push(call),
+                    InferenceEvent::ToolCallCompleted(call) => {
+                        if completed_call_replayed(&transcript, &call)? {
+                            replayed_tool_call = true;
+                            continue;
+                        }
+                        if let Some(progress) = patch_progress.complete(
+                            &req.thread_id,
+                            &turn_id,
+                            &call.id,
+                            &call.name,
+                            &call.arguments,
+                        ) {
+                            self.emit(RoderEvent::PatchProgress(progress)).await;
+                        }
+                        if !tool_calls
+                            .iter()
+                            .any(|previous: &ToolCallCompleted| previous.id == call.id)
+                        {
+                            eager_tools
+                                .schedule(
+                                    self,
+                                    &output_context,
+                                    &call,
+                                    workspace.as_str(),
+                                    turn_deadline,
+                                    &mut transcript,
+                                )
+                                .await?;
+                            tool_calls.push(call);
+                        }
+                    }
+                    InferenceEvent::OutputItemCompleted(item) => {
+                        sampling_output
+                            .complete_item(self, &output_context, item, &mut transcript)
+                            .await?;
+                    }
                     InferenceEvent::Failed(failure) => {
                         speed_policy.record_failure();
                         let error = failure.message;
@@ -4610,10 +4757,22 @@ impl Runtime {
                         turn_usage.add_assign(&usage);
                     }
                     InferenceEvent::Completed(metadata) => {
+                        sampling_output
+                            .finish(
+                                self,
+                                &output_context,
+                                &assistant_text,
+                                &phase_messages,
+                                &reasoning_text,
+                                &mut transcript,
+                            )
+                            .await?;
+                        provider_stream_retry_attempts = 0;
                         turn_finish_reason = metadata
                             .stop_reason
                             .as_deref()
                             .map(finish_reason_from_stop_reason);
+                        break;
                     }
                     InferenceEvent::Compaction(progress) => {
                         // Persist the boundary as soon as the provider emits a
@@ -4646,17 +4805,45 @@ impl Runtime {
                         }
                     }
                     InferenceEvent::HostedToolCallStarted(_)
-                    | InferenceEvent::HostedToolCallCompleted(_)
-                    | InferenceEvent::ToolCallStarted(_)
-                    | InferenceEvent::ToolCallDelta(_) => {}
+                    | InferenceEvent::HostedToolCallCompleted(_) => {}
+                    InferenceEvent::ToolCallStarted(call) => {
+                        patch_progress.start(&call.id, &call.name)
+                    }
+                    InferenceEvent::ToolCallDelta(delta) => {
+                        if let Some(progress) = patch_progress.delta(
+                            &req.thread_id,
+                            &turn_id,
+                            &delta.id,
+                            &delta.arguments_delta,
+                        ) {
+                            self.emit(RoderEvent::PatchProgress(progress)).await;
+                        }
+                    }
                     InferenceEvent::ProviderMetadata(mut metadata) => {
+                        if metadata.get("kind").and_then(serde_json::Value::as_str)
+                            == Some("reliability_retry_attempt")
+                        {
+                            provider_stream_retry_attempts =
+                                provider_stream_retry_attempts.saturating_add(1);
+                        }
+                        provider_requests_continuation |= metadata
+                            .get("end_turn")
+                            .and_then(serde_json::Value::as_bool)
+                            == Some(false);
                         if let Some(compaction_item) = stream_compaction_item.as_ref() {
                             let _ = crate::compaction::ensure_provider_metadata_compaction(
                                 &mut metadata,
                                 compaction_item,
                             );
                         }
-                        provider_metadata = Some(metadata);
+                        if metadata.get("output").is_none() {
+                            let item = TranscriptItem::ProviderMetadata(metadata);
+                            self.persist_turn_item(&req.thread_id, &turn_id, &item)
+                                .await?;
+                            transcript.push(item);
+                        } else {
+                            provider_metadata = Some(metadata);
+                        }
                     }
                 }
             }
@@ -4666,41 +4853,17 @@ impl Runtime {
                 tool_calls.len(),
             );
             if tool_calls.is_empty() {
-                let steers = self.drain_turn_steers(&turn_id).await;
-                if !steers.is_empty() {
-                    for message in phase_messages {
-                        let item = TranscriptItem::AssistantMessage(message);
+                if provider_requests_continuation || replayed_tool_call {
+                    if let Some(metadata) = provider_metadata {
+                        let item = TranscriptItem::ProviderMetadata(metadata);
                         self.persist_turn_item(&req.thread_id, &turn_id, &item)
                             .await?;
                         transcript.push(item);
-                        self.persist_model_profile_segment(
-                            &req.thread_id,
-                            &turn_id,
-                            model_profile.as_ref(),
-                            &provider,
-                            &model,
-                            "assistant",
-                        )
-                        .await?;
                     }
-                    if !assistant_text.is_empty() {
-                        let assistant = TranscriptItem::AssistantMessage(AssistantMessage {
-                            text: assistant_text,
-                            phase: Some(FINAL_ANSWER_PHASE.to_string()),
-                        });
-                        self.persist_turn_item(&req.thread_id, &turn_id, &assistant)
-                            .await?;
-                        transcript.push(assistant);
-                        self.persist_model_profile_segment(
-                            &req.thread_id,
-                            &turn_id,
-                            model_profile.as_ref(),
-                            &provider,
-                            &model,
-                            "assistant",
-                        )
-                        .await?;
-                    }
+                    continue 'tool_rounds;
+                }
+                let steers = self.drain_turn_steers(&turn_id, &mut steering).await;
+                if !steers.is_empty() {
                     if let Some(metadata) = provider_metadata {
                         let had_provider_compaction =
                             crate::compaction::provider_metadata_has_compaction(&metadata);
@@ -4786,44 +4949,12 @@ impl Runtime {
                         turn_partial_result(&transcript)
                     );
                 }
-                final_phase_messages = phase_messages;
                 final_assistant_text = assistant_text;
-                final_reasoning_text = reasoning_text;
                 final_provider_metadata = provider_metadata;
                 exhausted_tool_rounds = false;
                 break;
             }
 
-            for message in phase_messages {
-                let item = TranscriptItem::AssistantMessage(message);
-                self.persist_turn_item(&req.thread_id, &turn_id, &item)
-                    .await?;
-                transcript.push(item);
-                self.persist_model_profile_segment(
-                    &req.thread_id,
-                    &turn_id,
-                    model_profile.as_ref(),
-                    &provider,
-                    &model,
-                    "assistant",
-                )
-                .await?;
-            }
-            if !assistant_text.is_empty() {
-                transcript.push(TranscriptItem::AssistantMessage(AssistantMessage {
-                    text: assistant_text,
-                    phase: Some(FINAL_ANSWER_PHASE.to_string()),
-                }));
-                self.persist_model_profile_segment(
-                    &req.thread_id,
-                    &turn_id,
-                    model_profile.as_ref(),
-                    &provider,
-                    &model,
-                    "assistant",
-                )
-                .await?;
-            }
             if let Some(metadata) = provider_metadata {
                 let had_provider_compaction =
                     crate::compaction::provider_metadata_has_compaction(&metadata);
@@ -4839,19 +4970,11 @@ impl Runtime {
                     compacted_this_turn = true;
                 }
             }
-            // Persist CoT before tool calls so providers that require
-            // `reasoning_content` on tool-call assistant turns (DeepSeek) can
-            // replay it on the next request. Without this, multi-step tool
-            // rollouts drop the thinking block and the API returns 400.
-            if !reasoning_text.is_empty() {
-                let item = TranscriptItem::ReasoningSummary(ReasoningSummary {
-                    text: std::mem::take(&mut reasoning_text),
-                });
-                self.persist_turn_item(&req.thread_id, &turn_id, &item)
-                    .await?;
-                transcript.push(item);
-            }
+            eager_tools.drain().await?;
             for call in &tool_calls {
+                if eager_tools.scheduled(&call.id) {
+                    continue;
+                }
                 let tool_item = TranscriptItem::ToolCall(ToolCallRecord {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -4877,16 +5000,22 @@ impl Runtime {
                     .await?;
                 return Ok(TurnRunOutcome::Stopped);
             }
-            let results = self
-                .route_tool_calls(
+            let mut results = eager_tools.take_results(&tool_calls);
+            let remaining_calls = tool_calls
+                .into_iter()
+                .filter(|call| !eager_tools.scheduled(&call.id))
+                .collect();
+            results.extend(
+                self.route_tool_calls(
                     &req.thread_id,
                     &turn_id,
-                    tool_calls,
+                    remaining_calls,
                     parallel_tool_calls,
                     Some(workspace.as_str()),
                     turn_deadline,
                 )
-                .await?;
+                .await?,
+            );
             let reliability_limit = reliability.record_tool_results(
                 &cfg.reliability,
                 &results,
@@ -4940,6 +5069,7 @@ impl Runtime {
                     return Ok(TurnRunOutcome::Stopped);
                 }
             }
+            let compaction_generation_before = self.compaction_generation(&req.thread_id);
             transcript = self
                 .compact_transcript_if_needed(
                     &req.thread_id,
@@ -4950,10 +5080,8 @@ impl Runtime {
                     self.compaction_options_for_turn(&req.thread_id, !compacted_this_turn),
                 )
                 .await?;
-            compacted_this_turn = compacted_this_turn
-                || transcript
-                    .iter()
-                    .any(crate::compaction::is_compaction_boundary);
+            compacted_this_turn |=
+                self.compaction_generation(&req.thread_id) != compaction_generation_before;
         }
 
         if exhausted_tool_rounds {
@@ -4987,53 +5115,6 @@ impl Runtime {
             return Ok(TurnRunOutcome::Stopped);
         }
 
-        if !final_reasoning_text.is_empty() {
-            self.persist_turn_item(
-                &req.thread_id,
-                &turn_id,
-                &TranscriptItem::ReasoningSummary(ReasoningSummary {
-                    text: final_reasoning_text,
-                }),
-            )
-            .await?;
-        }
-        for message in final_phase_messages {
-            self.persist_turn_item(
-                &req.thread_id,
-                &turn_id,
-                &TranscriptItem::AssistantMessage(message),
-            )
-            .await?;
-            self.persist_model_profile_segment(
-                &req.thread_id,
-                &turn_id,
-                model_profile.as_ref(),
-                &provider,
-                &model,
-                "assistant",
-            )
-            .await?;
-        }
-        if !final_assistant_text.is_empty() {
-            self.persist_turn_item(
-                &req.thread_id,
-                &turn_id,
-                &TranscriptItem::AssistantMessage(AssistantMessage {
-                    text: final_assistant_text.clone(),
-                    phase: Some(FINAL_ANSWER_PHASE.to_string()),
-                }),
-            )
-            .await?;
-            self.persist_model_profile_segment(
-                &req.thread_id,
-                &turn_id,
-                model_profile.as_ref(),
-                &provider,
-                &model,
-                "assistant",
-            )
-            .await?;
-        }
         if let Some(metadata) = final_provider_metadata {
             self.persist_turn_item(
                 &req.thread_id,
@@ -5081,14 +5162,6 @@ impl Runtime {
         )
         .await?;
         Ok(TurnRunOutcome::Completed)
-    }
-
-    async fn drain_turn_steers(&self, turn_id: &TurnId) -> Vec<QueuedTurnSteer> {
-        let Some(active) = self.active_turns.read().await.get(turn_id).cloned() else {
-            return Vec::new();
-        };
-        let mut steers = active.steers.lock().await;
-        std::mem::take(&mut *steers)
     }
 
     async fn route_tool_calls(
@@ -10228,3 +10301,7 @@ mod tests {
         assert!(saw, "expected an UltraModeChanged event for the thread");
     }
 }
+
+#[cfg(test)]
+#[path = "runtime/mailbox_test_helpers.rs"]
+mod mailbox_test_helpers;

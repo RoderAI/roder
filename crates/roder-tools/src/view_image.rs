@@ -46,6 +46,9 @@ struct ViewImageArgs {
 
 #[async_trait::async_trait]
 impl ToolExecutor for ViewImageTool {
+    fn supports_eager_execution(&self) -> bool {
+        true
+    }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "view_image".to_string(),

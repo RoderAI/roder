@@ -1,0 +1,115 @@
+{
+  "live": true,
+  "results": [
+    {
+      "fixture": "compaction-smoke",
+      "model": "gpt-6-luna",
+      "reasoning": "low",
+      "duration_ms": 6928.877625,
+      "first_event_ms": 488.832667,
+      "first_tool_start_ms": 2098.9628749999997,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 5753,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 5586,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 5637,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 5585,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        },
+        {
+          "type": "request_budget",
+          "request_bytes": 7223,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": {
+        "compacted": true,
+        "reason": null,
+        "estimated_before": 165,
+        "estimated_after": 491
+      },
+      "native_boundary": true,
+      "follow_up_answer": "BLUE",
+      "tool_count": 3,
+      "transport_events": [
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": false,
+          "incremental": false
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": true
+        },
+        {
+          "type": "responses_transport",
+          "transport": "websocket",
+          "connection_reused": true,
+          "incremental": false
+        }
+      ],
+      "failure": null,
+      "checks": [
+        {
+          "path": "src/settings.txt",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "final_answer": "src/settings.txt now contains `enabled=true`. I’ll remember the durable color constraint: BLUE.\n\nDONEBLUE",
+      "usage": {
+        "prompt_tokens": 34139,
+        "completion_tokens": 242,
+        "total_tokens": 34381,
+        "cached_prompt_tokens": 26112,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate": 0.7648730191276839
+      }
+    }
+  ]
+}

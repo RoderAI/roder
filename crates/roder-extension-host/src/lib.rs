@@ -1,3 +1,7 @@
+mod codex_oauth;
+#[cfg(test)]
+mod test_config;
+use codex_oauth::CodexOAuthInferenceEngine;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -1071,73 +1075,6 @@ impl RoderExtension for CodexOAuthProviderExtension {
     }
 }
 
-struct CodexOAuthInferenceEngine;
-
-#[async_trait::async_trait]
-impl InferenceEngine for CodexOAuthInferenceEngine {
-    fn id(&self) -> roder_api::extension::InferenceEngineId {
-        PROVIDER_CODEX.to_string()
-    }
-
-    fn capabilities(&self) -> InferenceCapabilities {
-        InferenceCapabilities {
-            streaming: true,
-            tool_calls: true,
-            parallel_tool_calls: true,
-            reasoning_summaries: true,
-            structured_output: true,
-            image_input: true,
-            prompt_cache: true,
-            provider_metadata: true,
-            tool_search: false,
-        }
-    }
-
-    fn metadata(&self) -> InferenceProviderMetadata {
-        InferenceProviderMetadata {
-            name: "Codex".to_string(),
-            description: Some("ChatGPT account provider for Codex models".to_string()),
-            auth_type: ProviderAuthType::OAuth,
-            auth_label: Some("ChatGPT Plus/Pro".to_string()),
-            auth_configured: None,
-            recommended: true,
-            sort_order: 10,
-        }
-    }
-
-    async fn list_models(
-        &self,
-        _ctx: InferenceProviderContext<'_>,
-    ) -> anyhow::Result<Vec<ModelDescriptor>> {
-        Ok(models_for_codex(false))
-    }
-
-    async fn stream_turn(
-        &self,
-        ctx: InferenceTurnContext<'_>,
-        request: AgentInferenceRequest,
-    ) -> anyhow::Result<InferenceEventStream> {
-        let Some((access_token, account_id)) = roder_codex_auth::access_token().await? else {
-            anyhow::bail!("codex auth is missing; run `roder auth login codex`")
-        };
-        let mut headers = vec![
-            ("originator".to_string(), "roder".to_string()),
-            ("User-Agent".to_string(), "roder/0.1.0".to_string()),
-        ];
-        if let Some(account_id) = account_id {
-            headers.push(("ChatGPT-Account-Id".to_string(), account_id));
-        }
-        OpenAiResponsesEngine::new_with_config(
-            Some(access_token),
-            PROVIDER_CODEX,
-            "https://chatgpt.com/backend-api/codex",
-            headers,
-        )
-        .stream_turn(ctx, request)
-        .await
-    }
-}
-
 struct FakeInferenceEngine;
 
 #[async_trait::async_trait]
@@ -1638,6 +1575,9 @@ mod tests {
 
     #[test]
     fn default_roder_home_dir_uses_home_roder() {
+        if test_config::run_in_child("tests::default_roder_home_dir_uses_home_roder", true) {
+            return;
+        }
         let rendered = roder_home_dir()
             .unwrap()
             .to_string_lossy()
@@ -1866,22 +1806,12 @@ mod tests {
     #[test]
     fn default_registry_installs_synthetic_provider_without_credentials() {
         use roder_api::catalog::PROVIDER_SYNTHETIC;
-        use std::sync::OnceLock;
-
-        static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
-        CONFIG_ISOLATION.get_or_init(|| {
-            let temp = std::env::temp_dir().join(format!(
-                "roder-extension-host-synthetic-tests-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&temp);
-            std::fs::create_dir_all(&temp).unwrap();
-            // SAFETY: set once before any test reads the config; all tests run
-            // in the same process and never restore a real config dir.
-            unsafe {
-                std::env::set_var("RODER_CONFIG_DIR", &temp);
-            }
-        });
+        if test_config::run_in_child(
+            "tests::default_registry_installs_synthetic_provider_without_credentials",
+            false,
+        ) {
+            return;
+        }
 
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
         let engine = registry
@@ -1909,22 +1839,12 @@ mod tests {
     #[test]
     fn default_registry_installs_deepseek_provider_without_credentials() {
         use roder_api::catalog::PROVIDER_DEEPSEEK;
-        use std::sync::OnceLock;
-
-        static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
-        CONFIG_ISOLATION.get_or_init(|| {
-            let temp = std::env::temp_dir().join(format!(
-                "roder-extension-host-deepseek-tests-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&temp);
-            std::fs::create_dir_all(&temp).unwrap();
-            // SAFETY: set once before any test reads the config; all tests run
-            // in the same process and never restore a real config dir.
-            unsafe {
-                std::env::set_var("RODER_CONFIG_DIR", &temp);
-            }
-        });
+        if test_config::run_in_child(
+            "tests::default_registry_installs_deepseek_provider_without_credentials",
+            false,
+        ) {
+            return;
+        }
 
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
         let engine = registry

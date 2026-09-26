@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 pub use hunks::{EditHunk, HunkDiffLine, HunkDiffLineKind};
 pub use patch::{
-    CodexPatchChange, CodexPatchOp, apply_codex_patch_to_workspace, parse_codex_patch,
+    Hunk, ParseError, ParsedPatch, StreamingPatchParser, UpdateFileChunk,
+    apply_codex_patch_to_workspace, parse_patch,
 };
 pub use post_edit::{
     PostEditDiagnostic, PostEditHooks, PostEditOutcome, PostEditValidator, ValidatorPolicy,

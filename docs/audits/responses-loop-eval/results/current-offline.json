@@ -1,0 +1,605 @@
+{
+  "live": false,
+  "results": [
+    {
+      "fixture": "held-open-0",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 91.04229099999999,
+      "first_event_ms": 75.163333,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-1",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 41.696749999999994,
+      "first_event_ms": 26.977292,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-2",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 42.487917,
+      "first_event_ms": 26.176292,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-3",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 42.890041,
+      "first_event_ms": 26.90225,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-4",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 40.27275,
+      "first_event_ms": 26.37575,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-5",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 39.603041999999995,
+      "first_event_ms": 25.617292,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-6",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 39.459416999999995,
+      "first_event_ms": 25.149874999999998,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-7",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 38.942167,
+      "first_event_ms": 25.030375,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-8",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 37.390541999999996,
+      "first_event_ms": 24.159542,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-9",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 39.714833,
+      "first_event_ms": 25.165958,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-10",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 38.964959,
+      "first_event_ms": 25.064292,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-11",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 37.754833000000005,
+      "first_event_ms": 23.659083000000003,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-12",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 40.928332999999995,
+      "first_event_ms": 25.394083000000002,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-13",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 40.700583,
+      "first_event_ms": 26.310333,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-14",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 39.7445,
+      "first_event_ms": 25.713625,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-15",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 40.708708,
+      "first_event_ms": 25.795624999999998,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-16",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 41.550999999999995,
+      "first_event_ms": 25.438583,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-17",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 43.645165999999996,
+      "first_event_ms": 26.775666,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-18",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 41.301207999999995,
+      "first_event_ms": 25.995041999999998,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    },
+    {
+      "fixture": "held-open-19",
+      "model": "mock",
+      "reasoning": "none",
+      "duration_ms": 41.90975,
+      "first_event_ms": 27.216541,
+      "first_tool_start_ms": null,
+      "patch_calls": 0,
+      "patch_errors": [],
+      "request_budgets": [
+        {
+          "type": "request_budget",
+          "request_bytes": 4842,
+          "image_count": 0,
+          "image_bytes": 0,
+          "shed_tool_images": 0,
+          "limit_bytes": 15728640
+        }
+      ],
+      "native_compaction": null,
+      "native_boundary": false,
+      "follow_up_answer": null,
+      "tool_count": 0,
+      "transport_events": [],
+      "failure": null,
+      "checks": [],
+      "passed": true,
+      "final_answer": "DONE",
+      "usage": null
+    }
+  ]
+}
