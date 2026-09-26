@@ -249,6 +249,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-inference-router/CHANGELOG.md"
 
+[packages."roder-ext-jev"]
+versioned_files = [
+    "crates/roder-ext-jev/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-jev/CHANGELOG.md"
+
 [packages."roder-ext-jsonl-thread-store"]
 versioned_files = [
     "crates/roder-ext-jsonl-thread-store/Cargo.toml",

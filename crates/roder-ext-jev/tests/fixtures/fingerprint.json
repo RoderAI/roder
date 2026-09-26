@@ -1,0 +1,162 @@
+{
+  "page": {
+    "url": "https://example.test/search?q=1",
+    "title": "Search — Example",
+    "text": "Search\nWhere to?\nCabin\nNonstop only\nCheapest\nPrices in £",
+    "w": 1120,
+    "h": 780,
+    "scroll": {
+      "y": 0,
+      "height": 2400
+    },
+    "actions": [
+      {
+        "id": "e1",
+        "node": 11,
+        "kind": "click",
+        "role": "button",
+        "label": "Search",
+        "value": "",
+        "rect": {
+          "x": 10.0,
+          "y": 20.5,
+          "w": 80.0,
+          "h": 24.0
+        }
+      },
+      {
+        "id": "e2",
+        "node": 12,
+        "kind": "fill",
+        "role": "searchbox",
+        "label": "Where to?",
+        "value": "Zur",
+        "rect": {
+          "x": 10.0,
+          "y": 60.0,
+          "w": 200.0,
+          "h": 32.0
+        }
+      },
+      {
+        "id": "e3",
+        "node": 12,
+        "kind": "click",
+        "role": "searchbox",
+        "label": "Open Where to?",
+        "value": "Zur",
+        "rect": {
+          "x": 10.0,
+          "y": 60.0,
+          "w": 200.0,
+          "h": 32.0
+        }
+      },
+      {
+        "id": "e4",
+        "node": 13,
+        "kind": "select",
+        "role": "combobox",
+        "label": "Cabin → Economy",
+        "value": "economy",
+        "current_value": "Any",
+        "rect": {
+          "x": 10.0,
+          "y": 100.0,
+          "w": 120.0,
+          "h": 28.0
+        }
+      },
+      {
+        "id": "e5",
+        "node": 13,
+        "kind": "select",
+        "role": "combobox",
+        "label": "Cabin → Business",
+        "value": "business",
+        "current_value": "Any",
+        "rect": {
+          "x": 10.0,
+          "y": 100.0,
+          "w": 120.0,
+          "h": 28.0
+        }
+      },
+      {
+        "id": "e6",
+        "node": 14,
+        "kind": "click",
+        "role": "checkbox",
+        "label": "Nonstop only",
+        "value": "on",
+        "checked": "false",
+        "rect": {
+          "x": 10.0,
+          "y": 140.0,
+          "w": 16.0,
+          "h": 16.0
+        }
+      },
+      {
+        "id": "e7",
+        "node": 15,
+        "kind": "click",
+        "role": "tab",
+        "label": "Cheapest",
+        "value": "",
+        "selected": "false",
+        "expanded": "true",
+        "rect": {
+          "x": 10.0,
+          "y": 180.0,
+          "w": 90.0,
+          "h": 30.0
+        }
+      },
+      {
+        "id": "scroll_down",
+        "kind": "scroll",
+        "label": "Scroll down",
+        "delta": 560
+      },
+      {
+        "id": "wait",
+        "kind": "wait",
+        "label": "Wait for the page to update"
+      }
+    ],
+    "guards": {
+      "11": [
+        11,
+        "button",
+        "Search"
+      ],
+      "12": [
+        12,
+        "searchbox",
+        "Where to?"
+      ]
+    },
+    "marker": [
+      12345.0,
+      "https://example.test/search?q=1",
+      0,
+      0,
+      1120,
+      780
+    ],
+    "page_key": [
+      12345.0,
+      "https://example.test/search?q=1",
+      0,
+      0,
+      1120,
+      780,
+      []
+    ],
+    "omitted_actions": 0
+  },
+  "canonical": "{\"actions\": [{\"id\": \"e1\", \"kind\": \"click\", \"label\": \"Search\", \"node\": 11, \"rect\": {\"h\": 24.0, \"w\": 80.0, \"x\": 10.0, \"y\": 20.5}, \"role\": \"button\", \"value\": \"\"}, {\"id\": \"e2\", \"kind\": \"fill\", \"label\": \"Where to?\", \"node\": 12, \"rect\": {\"h\": 32.0, \"w\": 200.0, \"x\": 10.0, \"y\": 60.0}, \"role\": \"searchbox\", \"value\": \"Zur\"}, {\"id\": \"e3\", \"kind\": \"click\", \"label\": \"Open Where to?\", \"node\": 12, \"rect\": {\"h\": 32.0, \"w\": 200.0, \"x\": 10.0, \"y\": 60.0}, \"role\": \"searchbox\", \"value\": \"Zur\"}, {\"current_value\": \"Any\", \"id\": \"e4\", \"kind\": \"select\", \"label\": \"Cabin \\u2192 Economy\", \"node\": 13, \"rect\": {\"h\": 28.0, \"w\": 120.0, \"x\": 10.0, \"y\": 100.0}, \"role\": \"combobox\", \"value\": \"economy\"}, {\"current_value\": \"Any\", \"id\": \"e5\", \"kind\": \"select\", \"label\": \"Cabin \\u2192 Business\", \"node\": 13, \"rect\": {\"h\": 28.0, \"w\": 120.0, \"x\": 10.0, \"y\": 100.0}, \"role\": \"combobox\", \"value\": \"business\"}, {\"checked\": \"false\", \"id\": \"e6\", \"kind\": \"click\", \"label\": \"Nonstop only\", \"node\": 14, \"rect\": {\"h\": 16.0, \"w\": 16.0, \"x\": 10.0, \"y\": 140.0}, \"role\": \"checkbox\", \"value\": \"on\"}, {\"expanded\": \"true\", \"id\": \"e7\", \"kind\": \"click\", \"label\": \"Cheapest\", \"node\": 15, \"rect\": {\"h\": 30.0, \"w\": 90.0, \"x\": 10.0, \"y\": 180.0}, \"role\": \"tab\", \"selected\": \"false\", \"value\": \"\"}, {\"delta\": 560, \"id\": \"scroll_down\", \"kind\": \"scroll\", \"label\": \"Scroll down\"}, {\"id\": \"wait\", \"kind\": \"wait\", \"label\": \"Wait for the page to update\"}], \"scroll\": {\"height\": 2400, \"y\": 0}, \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\", \"url\": \"https://example.test/search?q=1\"}",
+  "sha256": "5332de2a5361d2935889ae607d2d25c51735822e29e3718759896bc78448fafe",
+  "upstream": "5332de2a5361d2935889ae607d2d25c51735822e29e3718759896bc78448fafe"
+}

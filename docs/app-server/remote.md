@@ -34,6 +34,21 @@ Tokens are not accepted in WebSocket query parameters. The pairing payload inclu
 
 The Roder browser extension pairs over this same remote WebSocket listener and authenticates with the subprotocol bearer flow (`Sec-WebSocket-Protocol: roder.remote.v1, bearer.<token>`), since extensions cannot set custom WebSocket headers. Once connected, the extension sends a `hello` browser-bridge frame (a `{ "type": ... }` envelope, not JSON-RPC). The transport registers it with the process-global Chrome bridge (`roder_api::chrome`) and forwards its command stream. The `chrome/*` app-server methods (see `api.md`) then bridge JSON-RPC requests to the connected extension by pushing `{ type, id, ...params }` command frames and awaiting the matching `{ type: "command/result", id, ok, result, error }` reply. Browser page content, console output, and network metadata returned through the bridge are untrusted and are passed through verbatim; only the bearer-token preview (never the full token) and connection metadata are logged.
 
+## Persisted browser pairing
+
+The browser extension stores one endpoint and bearer token and reconnects to
+them by itself, so Roder keeps that pairing stable instead of minting a new
+token and taking a new OS-assigned port on every start. The token and the bound
+loopback port live in `<config-dir>/remote-pairing.json`, written owner-only
+(`0600`) and never logged — logs keep using the token preview. A Roder that
+finds the file brings the listener back up on the same endpoint at startup, so a
+user who paired once never walks the `/pair` flow again.
+
+`/remote regenerate` (alias `/remote unpair`) rotates the token and clears the
+remembered port, which revokes every paired browser. If the remembered port is
+already bound by another Roder, the listener falls back to an ephemeral port and
+remembers the new one.
+
 ## Security Model
 
 Remote mode is intended for a trusted LAN or Tailscale network. Raw `ws://` over a LAN IP is not TLS-protected; use Tailscale or another trusted private tunnel when possible. Do not expose the remote app-server directly to the public internet.

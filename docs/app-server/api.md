@@ -182,7 +182,7 @@ Core:
 | `initialize` | Startup handshake with active provider, model, and cwd. |
 | `extensions/list` | List extension manifests and capability status. |
 | `providers/list` | List providers, auth status, capabilities, and models. |
-| `providers/configure` | Persist an API key for an API-key provider. |
+| `providers/configure` | Persist an API key for an inference provider or Jev browser tool. |
 | `providers/select` | Select active default provider/model/reasoning; Manual-only legacy path. |
 | `model/list` | List protocol model descriptors. |
 | `model/select` | Select Manual provider/model or Auto routing mode. |
@@ -765,7 +765,8 @@ Behavior:
 
 ### `providers/configure`
 
-Purpose: Persist an API key for a registered API-key provider.
+Purpose: Persist an API key for a registered API-key inference provider or the
+Jev browser tool provider.
 
 Request:
 
@@ -787,7 +788,9 @@ Response:
 
 Behavior:
 
-- Requires the provider to be registered in the runtime inference registry.
+- Requires the provider to be registered in the runtime inference registry,
+  except `jev`, which configures the `jev_browse` tool provider. Jev is not
+  selectable as an inference model. Its key may also come from `JEV_API_KEY`.
 - OpenRouter API keys are configured with provider `openrouter`; optional
   attribution headers are read from config or environment, not from this method.
 - Fireworks API keys are configured with provider `fireworks`; environment and
@@ -5544,12 +5547,20 @@ and await its `command/result`.
 | `chrome/reconnect` | — | `ChromeStatus` |
 | `chrome/browsers/list` | — | `{ browsers: [] }` when disconnected, else bridge result |
 | `chrome/tabs/list` | — | bridge result (`tabs/list`) |
+| `chrome/tabs/open` | `{ url, active? }` | bridge result (`tab/open`) |
+| `chrome/tabs/close` | `{ tabId }` | bridge result (`tab/close`) |
+| `chrome/tabs/group` | `{ tabIds, title? }` | bridge result (`tabs/group`) |
 | `chrome/tabs/activate` | `{ tabId }` | bridge result (`tab/activate`) |
 | `chrome/tabs/navigate` | `{ tabId?, url }` | bridge result (`tab/navigate`) |
 | `chrome/page/snapshot` | `{ tabId?, include? }` | bridge result (`page/snapshot`) |
+| `chrome/page/getText` | `{ tabId? }` | bridge result (`page/getText`) |
 | `chrome/page/action` | `{ action, ... }` | bridge result (`page/<action>`) |
+| `chrome/debug/attach` | `{ tabId? }` | bridge result (`debug/attach`) |
+| `chrome/debug/detach` | `{ tabId? }` | bridge result (`debug/detach`) |
 | `chrome/debug/console` | `{ tabId?, limit? }` | bridge result (`debug/console/read`) |
 | `chrome/debug/network` | `{ tabId?, limit? }` | bridge result (`debug/network/read`) |
+| `chrome/recording/start` | `{ tabId? }` | bridge result (`recording/start`) |
+| `chrome/recording/stop` | `{ recordingId }` | bridge result (`recording/stop`) |
 | `chrome/permissions/list` | `{ origin? }` | bridge result (`permissions/get`) |
 | `chrome/permissions/update` | `{ origin, perms }` | bridge result (`permissions/set`) |
 
@@ -5557,6 +5568,20 @@ Behavior:
 
 - `chrome/enable` sets the session enabled flag and, when `mode` is supplied,
   the permission mode; an unknown mode returns `-32602`.
+- `chrome/enable` and `chrome/setMode` also push the mode to the extension as a
+  `session/mode` command, so the browser side gates on the same mode the host
+  does. The extension keeps its own user-set capability ceiling (the options
+  page) and its per-origin site permissions; the mode can only narrow what runs,
+  never widen it past what the user granted. The push is best-effort — no
+  extension may be connected — and is re-sent on the next mode call.
+- `chrome/debug/console` and `chrome/debug/network` read a buffer that only
+  fills while the debugger is attached: call `chrome/debug/attach` first.
+- `chrome/tabs/group` with no `title` (or `title: "Roder"`) reuses the single
+  `Roder` tab group rather than creating a new group per call. Every tab Roder
+  opens or is pointed at joins that group automatically.
+- `chrome/page/snapshot`'s `include` accepts `text`, `controls`, `forms`,
+  `iframes`, `boxes`; omitting it captures all of them, and listing a subset
+  drops the rest (so an empty `controls` array means it was not requested).
 - `chrome/page/action` maps `action` (`click`, `type`, `keypress`, `scroll`,
   `select`, `screenshot`, `highlight`, `eval`) to the wire kind `page/<action>`
   and forwards the remaining params; unknown actions return `-32602`.

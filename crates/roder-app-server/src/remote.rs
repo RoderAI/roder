@@ -26,6 +26,8 @@ use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
 use crate::AppServer;
 use network::connect_urls;
 
+pub mod pairing;
+
 pub const REMOTE_PROTOCOL: &str = "roder.remote.v1";
 const TOKEN_BYTES: usize = 32;
 
