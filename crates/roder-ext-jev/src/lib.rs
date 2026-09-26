@@ -6,10 +6,13 @@
 //! decision contract and text helper are ported, and parity with upstream is
 //! pinned by fixtures recorded from the Python implementation.
 
+#![doc = include_str!("../README.md")]
+
 mod agent;
 mod cdp;
 mod chrome;
 mod decide;
+mod engine;
 mod page;
 mod policy;
 mod prompts;
@@ -28,6 +31,12 @@ use roder_api::extension::{
 };
 use semver::Version;
 
+pub use decide::JevTypeSafeDecisionClient;
+pub use engine::{
+    JevActionRecord, JevBrowser, JevDecision, JevDecisionClient, JevDecisionRecord,
+    JevDecisionTransport, JevEngine, JevEngineConfig, JevRunResult, JevStatus, JevTextValue,
+    JevTextValueResolver, StaleObservation,
+};
 pub use tools::{JevToolContributor, jev_tool_spec};
 
 pub struct JevExtension;
