@@ -1,0 +1,39 @@
+{
+  "goal": "Find one-way flights from Zurich to London on 2026-09-28 in economy.",
+  "action": {
+    "id": "e2",
+    "node": 12,
+    "kind": "fill",
+    "role": "searchbox",
+    "label": "Where to?",
+    "value": "Zur",
+    "rect": {
+      "x": 10.0,
+      "y": 60.0,
+      "w": 200.0,
+      "h": 32.0
+    }
+  },
+  "context": {
+    "goal": "Find one-way flights from Zurich to London on 2026-09-28 in economy.",
+    "field": {
+      "label": "Where to?",
+      "role": "searchbox",
+      "value": "Zur"
+    },
+    "page": {
+      "title": "Search — Example",
+      "text": "Search\nWhere to?\nCabin\nNonstop only\nCheapest\nPrices in £"
+    },
+    "recent_actions": [
+      {
+        "action": "Accept cookies",
+        "text": null
+      },
+      {
+        "action": "Where to?",
+        "text": "Zurich"
+      }
+    ]
+  }
+}

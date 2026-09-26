@@ -23,6 +23,46 @@ pub fn label_result(kind: &str, value: Value) -> Value {
     }
 }
 
+/// Largest tool text we hand the model for one browser result. Snapshots of a
+/// real page run long; past this the text is truncated with an explicit marker
+/// so the model knows to narrow its request (a selector, a smaller `include`).
+const MAX_RESULT_TEXT: usize = 24_000;
+
+/// Render a bridge result as the tool text the model actually reads.
+///
+/// `ToolResult::data` never reaches the model — the runtime feeds `text` to it —
+/// so a result whose text is only "chrome page/getText ok" leaves the model
+/// blind and guessing. Page-derived content is prefixed with the untrusted note
+/// so the boundary survives into the prompt.
+pub fn result_text(kind: &str, value: &Value) -> String {
+    // A screenshot's data URL is megabytes of base64 and useless as text; the
+    // image itself travels to the UI through `data`.
+    if kind == "page/screenshot" {
+        let bytes = value
+            .get("content")
+            .and_then(|content| content.get("dataUrl"))
+            .or_else(|| value.get("dataUrl"))
+            .and_then(Value::as_str)
+            .map(str::len)
+            .unwrap_or(0);
+        return format!(
+            "Captured a PNG screenshot of the visible tab ({bytes} base64 chars).              The image is attached to this tool result, not inlined here."
+        );
+    }
+
+    let body = serde_json::to_string_pretty(value)
+        .unwrap_or_else(|_| "<result could not be serialized>".to_string());
+    if body.len() <= MAX_RESULT_TEXT {
+        return body;
+    }
+    let mut truncated: String = body.chars().take(MAX_RESULT_TEXT).collect();
+    truncated.push_str(
+        "\n… truncated. Narrow the request: pass a selector to read one element, \
+         or a smaller `include` list to the snapshot.",
+    );
+    truncated
+}
+
 /// Commands whose results contain page-derived content.
 pub fn is_untrusted_kind(kind: &str) -> bool {
     matches!(
@@ -45,6 +85,48 @@ mod tests {
         let labeled = label_result("page/snapshot", json!({ "title": "x" }));
         assert_eq!(labeled["untrusted"], json!(true));
         assert_eq!(labeled["content"]["title"], "x");
+    }
+
+    #[test]
+    fn result_text_carries_the_payload_to_the_model() {
+        // Regression: the tool text used to be a fixed "chrome <kind> ok", so
+        // the model never saw tab lists or page text and guessed instead.
+        let labeled = label_result("page/getText", json!({ "text": "clicked:agent-was-here" }));
+        let text = result_text("page/getText", &labeled);
+        assert!(text.contains("clicked:agent-was-here"), "{text}");
+        assert!(
+            text.contains("UNTRUSTED"),
+            "untrusted note must survive: {text}"
+        );
+
+        let tabs = label_result(
+            "tabs/list",
+            json!({ "tabs": [{ "id": 7, "title": "Fixture" }] }),
+        );
+        let text = result_text("tabs/list", &tabs);
+        assert!(text.contains("Fixture"), "{text}");
+    }
+
+    #[test]
+    fn screenshots_are_summarized_not_inlined() {
+        let labeled = label_result(
+            "page/screenshot",
+            json!({ "dataUrl": format!("data:image/png;base64,{}", "A".repeat(5000)) }),
+        );
+        let text = result_text("page/screenshot", &labeled);
+        assert!(
+            !text.contains("AAAA"),
+            "base64 must not reach the prompt: {text}"
+        );
+        assert!(text.contains("screenshot"), "{text}");
+    }
+
+    #[test]
+    fn oversized_results_are_truncated_with_guidance() {
+        let labeled = label_result("page/snapshot", json!({ "text": "x".repeat(60_000) }));
+        let text = result_text("page/snapshot", &labeled);
+        assert!(text.len() < 60_000);
+        assert!(text.contains("truncated"), "{text}");
     }
 
     #[test]

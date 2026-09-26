@@ -125,23 +125,25 @@ not-supported error; "Not yet" = no surface yet.
 | Capability                         | Prio | Roder tool / method                                   | Status        | Notes |
 |------------------------------------|------|--------------------------------------------------------|---------------|-------|
 | List tabs                          | P0   | `chrome_tabs_list` / `chrome/tabs/list`                | Implemented   | id, title, url, active |
-| Open tab                           | P0   | `chrome_tab_open`                                      | Implemented   | http(s) only |
+| Open tab                           | P0   | `chrome_tab_open` / `chrome/tabs/open`                 | Implemented   | http(s) only; joins the `Roder` tab group |
 | Activate tab                       | P0   | `chrome_tab_activate` / `chrome/tabs/activate`         | Implemented   | |
-| Close tab                          | P1   | `chrome_tab_close`                                     | Implemented   | |
+| Close tab                          | P1   | `chrome_tab_close` / `chrome/tabs/close`               | Implemented   | |
+| Tab group                          | P1   | `chrome_tabs_group` / `chrome/tabs/group`              | Implemented   | one reusable orange `Roder` group per window |
 | Navigate                           | P0   | `chrome_navigate` / `chrome/tabs/navigate`            | Implemented   | protected: control mode + approval |
 | DOM snapshot (aria/forms/boxes)    | P0   | `chrome_page_snapshot` / `chrome/page/snapshot`        | Implemented   | aria roles, form metadata, bounding boxes, iframes; `untrusted:true` |
-| Page text                          | P1   | (via snapshot `include:["text"]`)                      | Implemented   | |
+| Page text                          | P1   | `chrome_page_text` / `chrome/page/getText`             | Implemented   | optional `selector`/`ref`/`text` reads one element; also via snapshot `include:["text"]` |
 | Screenshot                         | P0   | `chrome_screenshot`                                    | Implemented   | full visible-tab PNG data URL; **region crop not supported in MV3 SW** |
 | Click                              | P0   | `chrome_click` / `chrome/page/action`                  | Implemented   | by selector, visible text, or snapshot ref |
 | Type                               | P0   | `chrome_type`                                          | Implemented   | optional submit |
 | Keypress                           | P1   | `chrome_keypress`                                      | Implemented   | |
 | Scroll                             | P1   | `chrome_scroll`                                        | Implemented   | |
-| Select option                      | P2   | `chrome/page/action` (`page/select`)                   | Implemented   | no dedicated model tool yet |
-| Highlight element                  | P2   | `chrome/page/action` (`page/highlight`)                | Implemented   | inspection aid |
-| Console read                       | P0   | `chrome_console_read` / `chrome/debug/console`         | Implemented   | CDP, redacted, bounded; needs debugger site perm |
-| Network read                       | P0   | `chrome_network_read` / `chrome/debug/network`         | Implemented   | metadata only, no bodies/headers; redacted URLs |
+| Select option                      | P2   | `chrome_select` / `chrome/page/action` (`page/select`) | Implemented   | |
+| Highlight element                  | P2   | `chrome_highlight` / `chrome/page/action`              | Implemented   | inspection aid |
+| Debugger attach/detach             | P0   | `chrome_debug_attach` / `chrome/debug/attach`          | Implemented   | required before console/network reads return anything |
+| Console read                       | P0   | `chrome_console_read` / `chrome/debug/console`         | Implemented   | CDP, redacted, bounded; needs debugger site perm + attach |
+| Network read                       | P0   | `chrome_network_read` / `chrome/debug/network`         | Implemented   | metadata only, no bodies/headers; redacted URLs; needs attach |
 | Evaluate JS                        | P1   | `chrome_eval`                                          | Implemented   | protected: control mode + eval site perm |
-| Recording (action trace)           | P1   | `chrome_recording_start` / `chrome_recording_stop`     | Implemented   | JSON action trace |
+| Recording (action trace)           | P1   | `chrome_recording_start` / `chrome/recording/start`    | Implemented   | JSON action trace |
 | Per-origin permissions             | P0   | `chrome/permissions/list` / `chrome/permissions/update`| Implemented   | inspect/interact/eval/debugger/download/upload/recording/schedule/alwaysAllow |
 | File upload                        | P2   | `page/upload`                                          | **Stub**      | MV3 cannot synthesize a file chooser; asks user to attach via page UI |
 | GIF / video capture                | P2   | —                                                      | **Not yet**   | only single-frame screenshots today |
@@ -153,6 +155,32 @@ not-supported error; "Not yet" = no surface yet.
 Two independent gates must both pass for a privileged action: the **session
 mode** and the **per-origin site permission**.
 
+### Pairing persists
+
+Pair once and every later Roder run reconnects on its own. The bearer token and
+the loopback port the listener bound are stored in
+`<config-dir>/remote-pairing.json` (owner-only, never logged), and a Roder that
+finds that file brings the listener back up on the same endpoint at startup —
+no `/remote start`, no second trip through `/pair`. The extension keeps its own
+copy of the endpoint and token and reconnects through its keepalive, so a
+browser restart, an extension reload, or an MV3 service-worker shutdown all heal
+themselves.
+
+`/remote regenerate` (alias `/remote unpair`) mints a new token, which
+invalidates every paired browser and is the way to revoke access. If the
+remembered port is already taken — a second Roder is running — the listener
+falls back to an ephemeral port, remembers that one, and the browser needs one
+more trip through `/pair`.
+
+### Tab group
+
+Every tab Roder opens or is pointed at is collected into a single Chrome tab
+group named **Roder** (orange, one per window), so the user can see at a glance
+which tabs the agent is driving and collapse or close all of them at once.
+`chrome/tabs/group` with no title reuses that group; pass an explicit title to
+make a separate, named group. Tabs the user has already grouped themselves are
+left where they are.
+
 ### Session modes
 
 `chrome/setMode` selects one of:
@@ -162,6 +190,14 @@ mode** and the **per-origin site permission**.
   actions queue for user approval.
 - **control** — enabled actions execute within the approved plan and site
   scope; protected actions still require explicit approval.
+
+The mode is pushed to the extension as a `session/mode` command whenever it
+changes, so both sides gate on the same value. It can only narrow what runs: the
+extension's own capability toggles (options page) and its per-origin site
+permissions remain the user's ceiling and are never raised from the wire.
+Pairing grants a usable default — inspection, navigation and input, in `assist`
+mode so each privileged action waits for approval — while eval, debugger,
+downloads, uploads and recording stay off until the user turns them on.
 
 ### Action classes
 

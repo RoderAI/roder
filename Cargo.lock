@@ -3445,6 +3445,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "time",
  "tokio",
  "tokio-rustls",
@@ -3942,6 +3943,23 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "roder-ext-jev"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-config",
+ "semver",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -4695,6 +4713,7 @@ dependencies = [
  "roder-ext-google-speech",
  "roder-ext-honcho",
  "roder-ext-inference-router",
+ "roder-ext-jev",
  "roder-ext-jsonl-thread-store",
  "roder-ext-kimi-code",
  "roder-ext-knowledge-md",

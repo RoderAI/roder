@@ -46,6 +46,8 @@ use crate::protocol_contract::{
     protocol_turns_from_snapshot, thread_status_for_activity,
 };
 
+mod provider_credentials;
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RoadmapPathParams {
@@ -1694,6 +1696,54 @@ impl AppServer {
                 })
                 .await
             }
+            "chrome/tabs/open" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_tabs_open(p).await
+                })
+                .await
+            }
+            "chrome/tabs/close" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_tabs_close(p).await
+                })
+                .await
+            }
+            "chrome/tabs/group" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_tabs_group(p).await
+                })
+                .await
+            }
+            "chrome/page/getText" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_page_get_text(p).await
+                })
+                .await
+            }
+            "chrome/debug/attach" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_debug_attach(p).await
+                })
+                .await
+            }
+            "chrome/debug/detach" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_debug_detach(p).await
+                })
+                .await
+            }
+            "chrome/recording/start" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_recording_start(p).await
+                })
+                .await
+            }
+            "chrome/recording/stop" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_chrome_recording_stop(p).await
+                })
+                .await
+            }
             "chrome/page/snapshot" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_chrome_page_snapshot(p).await
@@ -2352,63 +2402,6 @@ impl AppServer {
             model_switch_summary,
         })
         .unwrap())
-    }
-
-    async fn handle_provider_configure(
-        &self,
-        params: ProviderConfigureParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        let provider = roder_api::catalog::normalize_provider_id(params.provider.trim());
-        let api_key = params.api_key.trim();
-        if provider.is_empty() {
-            return Err(invalid_params("provider is required"));
-        }
-        if api_key.is_empty() {
-            return Err(invalid_params("api_key is required"));
-        }
-        if !self
-            .runtime
-            .registry()
-            .inference_engines
-            .iter()
-            .any(|engine| engine.id() == provider)
-        {
-            return Err(invalid_params(format!("unknown provider {provider:?}")));
-        }
-        if !self.persist_user_config {
-            return Err(internal_error(
-                "provider API key persistence is disabled for this app-server",
-            ));
-        }
-        roder_config::save_provider_api_key(&provider, api_key).map_err(internal_error)?;
-        // Synthetic web search shares SYNTHETIC_API_KEY with the synthetic
-        // inference provider, so configuring the provider key auto-enables the
-        // synthetic web-search sub-section (without switching the active router).
-        if provider == "synthetic" {
-            let _ = roder_config::save_web_search_provider_enabled("synthetic", true);
-        }
-        Ok(serde_json::to_value(ProviderConfigureResult {
-            provider,
-            authenticated: true,
-        })
-        .unwrap())
-    }
-
-    async fn handle_provider_clear(
-        &self,
-        params: ProviderClearParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        let provider = roder_api::catalog::normalize_provider_id(params.provider.trim());
-        if provider.is_empty() {
-            return Err(invalid_params("provider is required"));
-        }
-        if !self.persist_user_config {
-            return Err(internal_error(
-                "provider API key persistence is disabled for this app-server",
-            ));
-        }
-        roder_config::delete_provider_api_key(&provider).map_err(internal_error)?;
-        Ok(serde_json::to_value(ProviderClearResult { provider }).unwrap())
     }
 
     async fn handle_settings_get(&self) -> Result<serde_json::Value, JsonRpcError> {

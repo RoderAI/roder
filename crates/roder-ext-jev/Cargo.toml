@@ -1,0 +1,34 @@
+[package]
+name = "roder-ext-jev"
+version = "0.1.0"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[package.metadata.roder.distribution]
+id = "jev"
+category = "tool-provider"
+display_name = "Jev Ultrafast Browser"
+description = "Run a goal-directed browser task through Jev and Chrome CDP."
+default_in_profiles = ["full"]
+required_env = []
+optional_env = ["JEV_API_KEY", "JEV_MODEL", "JEV_TEXT_MODEL_API_KEY", "JEV_TEXT_MODEL", "JEV_TEXT_MODEL_BASE_URL", "JEV_TEXT_MODEL_REASONING", "JEV_CDP_PORT", "JEV_CHROME_BINARY", "JEV_CHROME_AUTOSTART", "JEV_WAIT_MS"]
+conflicts_with = []
+required_capabilities = ["network.web", "secret.read.JEV_API_KEY"]
+extension_path = "::JevExtension"
+docs_url = "https://github.com/browser-use/jev-ultrafast"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+roder-api.workspace = true
+roder-config.workspace = true
+semver.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true

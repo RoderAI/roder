@@ -1,0 +1,215 @@
+{
+  "input_actions": [
+    {
+      "id": "e1",
+      "node": 11,
+      "kind": "click",
+      "role": "button",
+      "label": "Search",
+      "value": "",
+      "rect": {
+        "x": 10.0,
+        "y": 20.5,
+        "w": 80.0,
+        "h": 24.0
+      }
+    },
+    {
+      "id": "e2",
+      "node": 12,
+      "kind": "fill",
+      "role": "searchbox",
+      "label": "Where to?",
+      "value": "Zur",
+      "rect": {
+        "x": 10.0,
+        "y": 60.0,
+        "w": 200.0,
+        "h": 32.0
+      }
+    },
+    {
+      "id": "e3",
+      "node": 12,
+      "kind": "click",
+      "role": "searchbox",
+      "label": "Open Where to?",
+      "value": "Zur",
+      "rect": {
+        "x": 10.0,
+        "y": 60.0,
+        "w": 200.0,
+        "h": 32.0
+      }
+    },
+    {
+      "id": "e4",
+      "node": 13,
+      "kind": "select",
+      "role": "combobox",
+      "label": "Cabin → Economy",
+      "value": "economy",
+      "current_value": "Any",
+      "rect": {
+        "x": 10.0,
+        "y": 100.0,
+        "w": 120.0,
+        "h": 28.0
+      }
+    },
+    {
+      "id": "e5",
+      "node": 13,
+      "kind": "select",
+      "role": "combobox",
+      "label": "Cabin → Business",
+      "value": "business",
+      "current_value": "Any",
+      "rect": {
+        "x": 10.0,
+        "y": 100.0,
+        "w": 120.0,
+        "h": 28.0
+      }
+    },
+    {
+      "id": "e6",
+      "node": 14,
+      "kind": "click",
+      "role": "checkbox",
+      "label": "Nonstop only",
+      "value": "on",
+      "checked": "false",
+      "rect": {
+        "x": 10.0,
+        "y": 140.0,
+        "w": 16.0,
+        "h": 16.0
+      }
+    },
+    {
+      "id": "e7",
+      "node": 15,
+      "kind": "click",
+      "role": "tab",
+      "label": "Cheapest",
+      "value": "",
+      "selected": "false",
+      "expanded": "true",
+      "rect": {
+        "x": 10.0,
+        "y": 180.0,
+        "w": 90.0,
+        "h": 30.0
+      }
+    },
+    {
+      "id": "scroll_down",
+      "kind": "scroll",
+      "label": "Scroll down",
+      "delta": 560
+    },
+    {
+      "id": "wait",
+      "kind": "wait",
+      "label": "Wait for the page to update"
+    }
+  ],
+  "elements": [
+    {
+      "role": "button",
+      "value": "",
+      "index": "1",
+      "label": "Search",
+      "operations": [
+        "CLICK"
+      ]
+    },
+    {
+      "role": "searchbox",
+      "value": "Zur",
+      "index": "2",
+      "label": "Where to?",
+      "operations": [
+        "TYPE_TEXT",
+        "CLICK"
+      ]
+    },
+    {
+      "role": "combobox",
+      "value": "Any",
+      "index": "3",
+      "label": "Cabin",
+      "operations": [
+        "SELECT"
+      ],
+      "options": [
+        {
+          "index": "3:1",
+          "label": "Cabin → Economy",
+          "value": "economy"
+        },
+        {
+          "index": "3:2",
+          "label": "Cabin → Business",
+          "value": "business"
+        }
+      ]
+    },
+    {
+      "role": "checkbox",
+      "value": "on",
+      "checked": "false",
+      "index": "4",
+      "label": "Nonstop only",
+      "operations": [
+        "CLICK"
+      ]
+    },
+    {
+      "role": "tab",
+      "value": "",
+      "selected": "false",
+      "expanded": "true",
+      "index": "5",
+      "label": "Cheapest",
+      "operations": [
+        "CLICK"
+      ]
+    }
+  ],
+  "targets": {
+    "CLICK": {
+      "1": "e1",
+      "2": "e3",
+      "4": "e6",
+      "5": "e7"
+    },
+    "TYPE_TEXT": {
+      "2": "e2"
+    },
+    "SELECT": {
+      "3:1": "e4",
+      "3:2": "e5"
+    }
+  },
+  "target_order": {
+    "CLICK": [
+      "1",
+      "2",
+      "4",
+      "5"
+    ],
+    "TYPE_TEXT": [
+      "2"
+    ],
+    "SELECT": [
+      "3:1",
+      "3:2"
+    ]
+  },
+  "controls": {
+    "SCROLL_DOWN": "scroll_down",
+    "WAIT": "wait"
+  }
+}

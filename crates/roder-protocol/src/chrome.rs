@@ -55,7 +55,8 @@ pub struct ChromeNavigateParams {
 pub struct ChromePageSnapshotParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<i64>,
-    /// Optional list of snapshot sections to include (e.g. `["dom","text"]`).
+    /// Sections to capture: `text`, `controls`, `forms`, `iframes`, `boxes`.
+    /// Empty captures every section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
 }
@@ -99,4 +100,72 @@ pub struct ChromePermissionsUpdateParams {
     pub origin: String,
     /// The permission bits to apply for `origin`, forwarded verbatim.
     pub perms: serde_json::Value,
+}
+
+/// Params for `chrome/tabs/open`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromeTabOpenParams {
+    /// An `http:` or `https:` URL; the extension refuses any other scheme.
+    pub url: String,
+    /// Focus the new tab. Defaults to the extension's own default (`true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
+}
+
+/// Params for `chrome/tabs/close`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromeTabCloseParams {
+    pub tab_id: i64,
+}
+
+/// Params for `chrome/tabs/group`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromeTabsGroupParams {
+    /// Tabs to collect into one Chrome tab group; must be non-empty.
+    pub tab_ids: Vec<i64>,
+    /// Optional group title shown on the tab strip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// Params for `chrome/page/getText`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromePageGetTextParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<i64>,
+    /// Read just this element's text instead of the whole page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#ref: Option<String>,
+    /// Match an element by its visible text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// Params for `chrome/debug/attach` and `chrome/debug/detach`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromeDebugAttachParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<i64>,
+}
+
+/// Params for `chrome/recording/start`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromeRecordingStartParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<i64>,
+}
+
+/// Params for `chrome/recording/stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChromeRecordingStopParams {
+    pub recording_id: String,
 }

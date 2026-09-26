@@ -1974,7 +1974,34 @@ where
         self.run_with_options(TuiRunOptions::default()).await
     }
 
+    /// Bring the remote listener back up when a browser has been paired before.
+    ///
+    /// A paired extension stores the endpoint and token and reconnects on its
+    /// own, but only if something is listening — without this the user would
+    /// have to run `/remote start` by hand after every launch, which is the same
+    /// friction persisting the token was meant to remove. Nothing is started
+    /// until the user has paired at least once (no pairing file, no listener),
+    /// and the listener reuses the remembered loopback port and token.
+    async fn resume_browser_pairing(&mut self) {
+        if self.remote_panel.is_running() || !roder_app_server::remote::pairing::exists() {
+            return;
+        }
+        match self.remote_panel.start().await {
+            Ok(()) => {
+                let preview = self
+                    .remote_panel
+                    .snapshot()
+                    .token_preview
+                    .unwrap_or_default();
+                self.push_event(format!("resumed browser pairing (token {preview})"));
+            }
+            // A failure here is not fatal: the user can still run /chrome pair.
+            Err(err) => self.push_event(format!("could not resume browser pairing: {err}")),
+        }
+    }
+
     pub async fn run_with_options(&mut self, options: TuiRunOptions) -> anyhow::Result<()> {
+        self.resume_browser_pairing().await;
         let mut session = TerminalSession::enter()?;
         let mut input = RecordingInputSource::new(
             CrosstermInputSource,
@@ -3830,7 +3857,10 @@ where
         let result = match action {
             "start" => self.remote_panel.start().await,
             "stop" => self.remote_panel.stop().await,
-            "restart" | "regenerate" => self.remote_panel.start().await,
+            "restart" => self.remote_panel.start().await,
+            // Now that the pairing persists, "regenerate" has to actually mint a
+            // new token — a plain restart would hand back the same one.
+            "regenerate" | "unpair" => self.remote_panel.rotate_pairing().await,
             "status" | "" => {
                 if self.remote_panel.is_running() {
                     Ok(())
@@ -3840,7 +3870,7 @@ where
             }
             other => {
                 self.timeline.push_error(format!(
-                    "unknown /remote action: {other}. Use start, stop, restart, or status."
+                    "unknown /remote action: {other}. Use start, stop, restart, regenerate, unpair, or status."
                 ));
                 return;
             }

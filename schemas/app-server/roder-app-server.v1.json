@@ -219,6 +219,15 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "chrome/debug/attach",
+      "paramsType": "ChromeDebugAttachParams",
+      "resultType": "ChromeDebugAttachResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "chrome/debug/console",
       "paramsType": "ChromeDebugConsoleParams",
       "resultType": "ChromeDebugConsoleResult",
@@ -226,6 +235,15 @@
       "featureGroup": "chrome",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/debug/detach",
+      "paramsType": "ChromeDebugDetachParams",
+      "resultType": "ChromeDebugDetachResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "chrome/debug/network",
@@ -264,6 +282,15 @@
       "sideEffect": "externalProcess"
     },
     {
+      "method": "chrome/page/getText",
+      "paramsType": "ChromePageGetTextParams",
+      "resultType": "ChromePageGetTextResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "chrome/page/snapshot",
       "paramsType": "ChromePageSnapshotParams",
       "resultType": "ChromePageSnapshotResult",
@@ -300,6 +327,24 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "chrome/recording/start",
+      "paramsType": "ChromeRecordingStartParams",
+      "resultType": "ChromeRecordingStartResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/recording/stop",
+      "paramsType": "ChromeRecordingStopParams",
+      "resultType": "ChromeRecordingStopResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "chrome/setMode",
       "paramsType": "ChromeSetModeParams",
       "resultType": "ChromeSetModeResult",
@@ -327,6 +372,24 @@
       "sideEffect": "externalProcess"
     },
     {
+      "method": "chrome/tabs/close",
+      "paramsType": "ChromeTabsCloseParams",
+      "resultType": "ChromeTabsCloseResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/tabs/group",
+      "paramsType": "ChromeTabsGroupParams",
+      "resultType": "ChromeTabsGroupResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "chrome/tabs/list",
       "paramsType": "ChromeTabsListParams",
       "resultType": "ChromeTabsListResult",
@@ -339,6 +402,15 @@
       "method": "chrome/tabs/navigate",
       "paramsType": "ChromeTabsNavigateParams",
       "resultType": "ChromeTabsNavigateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/tabs/open",
+      "paramsType": "ChromeTabsOpenParams",
+      "resultType": "ChromeTabsOpenResult",
       "stability": "stable",
       "featureGroup": "chrome",
       "idempotency": "nonIdempotent",
@@ -2180,18 +2252,18 @@
       "sideEffect": "localState"
     },
     {
-      "method": "thread/set_ultra_mode",
-      "paramsType": "ThreadSetUltraModeParams",
-      "resultType": "ThreadSetUltraModeResult",
+      "method": "thread/set_mode",
+      "paramsType": "ThreadSetModeParams",
+      "resultType": "ThreadSetModeResult",
       "stability": "stable",
       "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
     {
-      "method": "thread/set_mode",
-      "paramsType": "ThreadSetModeParams",
-      "resultType": "ThreadSetModeResult",
+      "method": "thread/set_ultra_mode",
+      "paramsType": "ThreadSetUltraModeParams",
+      "resultType": "ThreadSetUltraModeResult",
       "stability": "stable",
       "featureGroup": "thread",
       "idempotency": "nonIdempotent",

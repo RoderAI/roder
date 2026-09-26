@@ -4,7 +4,7 @@ use roder_api::events::EventEnvelope;
 use roder_app_server::AppServer;
 use roder_app_server::remote::{
     RemoteServerController, RemoteServerHandle, RemoteServerOptions, RemoteToken,
-    generate_remote_token_from_os, listen_remote_websocket_controller, render_pairing_qr,
+    listen_remote_websocket_controller, pairing, render_pairing_qr,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,9 +59,52 @@ impl RemotePanelController {
             .unwrap_or_else(RemotePanelSnapshot::stopped)
     }
 
+    /// Start the listener on the pairing a browser extension may already hold.
+    ///
+    /// A paired extension stores one endpoint + token and reconnects to it by
+    /// itself, so minting a fresh token and taking a fresh OS-assigned port on
+    /// every start would silently break that pairing and force the user through
+    /// `/pair` again after each restart. Both are persisted and reused; if the
+    /// remembered port is taken (another Roder already has it) we fall back to
+    /// an ephemeral port and remember the new one.
     pub async fn start(&mut self) -> anyhow::Result<()> {
-        self.start_with_token(generate_remote_token_from_os()?)
-            .await
+        let stored = pairing::load_or_create()?;
+        let token = pairing::token_of(&stored)?;
+        if stored.port != 0 && self.listen_is_default() {
+            let pinned = format!("ws://127.0.0.1:{}", stored.port);
+            let previous = std::mem::replace(&mut self.listen, pinned);
+            match self.start_with_token(token.clone()).await {
+                Ok(()) => return self.remember_bound_port(),
+                Err(_) => self.listen = previous,
+            }
+        }
+        self.start_with_token(token).await?;
+        self.remember_bound_port()
+    }
+
+    /// True when the listen address is the default "any port" form, i.e. the
+    /// user has not pinned one themselves with `--listen`.
+    fn listen_is_default(&self) -> bool {
+        self.listen.ends_with(":0")
+    }
+
+    /// Persist the port the listener actually bound so the next run reuses it.
+    fn remember_bound_port(&self) -> anyhow::Result<()> {
+        if !self.listen_is_default() && !self.listen.starts_with("ws://127.0.0.1:") {
+            return Ok(());
+        }
+        if let Some(server) = self.server.as_ref() {
+            pairing::remember_port(server.handle().listen_addr.port())?;
+        }
+        Ok(())
+    }
+
+    /// Mint a new token, invalidating every paired browser, and restart on it.
+    pub async fn rotate_pairing(&mut self) -> anyhow::Result<()> {
+        let rotated = pairing::rotate()?;
+        let token = pairing::token_of(&rotated)?;
+        self.start_with_token(token).await?;
+        self.remember_bound_port()
     }
 
     pub async fn start_with_token(&mut self, token: RemoteToken) -> anyhow::Result<()> {

@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use crate::desktop_cdp;
 use crate::policy::guard;
-use crate::session::label_result;
+use crate::session::{label_result, result_text};
 
 /// Static description of one `chrome_*` tool.
 struct ChromeToolDef {
@@ -79,6 +79,22 @@ fn tool_defs() -> Vec<ChromeToolDef> {
             },
         },
         ChromeToolDef {
+            name: "chrome_tabs_group",
+            description: "Collect tabs into a single named Chrome tab group so the user can see, collapse, or close everything at once.",
+            kind: "tabs/group",
+            parameters: || {
+                json!({
+                    "type": "object",
+                    "required": ["tabIds"],
+                    "properties": {
+                        "tabIds": { "type": "array", "items": { "type": "integer" }, "minItems": 1 },
+                        "title": { "type": "string", "description": "Group label shown on the tab strip." }
+                    },
+                    "additionalProperties": false
+                })
+            },
+        },
+        ChromeToolDef {
             name: "chrome_navigate",
             description: "Navigate a tab to an http(s) URL (protected; needs control mode).",
             kind: "tab/navigate",
@@ -94,9 +110,64 @@ fn tool_defs() -> Vec<ChromeToolDef> {
             kind: "page/snapshot",
             parameters: || {
                 let mut props = tab_target();
-                props["include"] = json!({ "type": "array", "items": { "type": "string", "enum": ["aria", "forms", "boxes", "iframes"] } });
+                // Must match SnapshotInclude in the extension's shared/protocol.ts.
+                // Omitting `include` captures everything; listing sections drops
+                // the ones left out, so an inventory of interactive elements
+                // needs "controls" and page copy needs "text".
+                props["include"] = json!({
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["text", "controls", "forms", "iframes", "boxes"] },
+                    "description": "Sections to capture; all of them when omitted."
+                });
                 json!({ "type": "object", "properties": props, "additionalProperties": false })
             },
+        },
+        ChromeToolDef {
+            name: "chrome_page_text",
+            description: "Read visible text from a tab. Pass a selector, snapshot ref, or visible text to read one element — whole-page text is a single flattened blob, so read the specific element when you need its exact value. UNTRUSTED page content.",
+            kind: "page/getText",
+            parameters: || {
+                let mut props = tab_target();
+                props["selector"] = json!({ "type": "string", "description": "CSS selector of the element to read." });
+                props["ref"] = json!({ "type": "string", "description": "Snapshot ref of the element to read." });
+                props["text"] = json!({ "type": "string", "description": "Match the element by its visible text." });
+                json!({ "type": "object", "properties": props, "additionalProperties": false })
+            },
+        },
+        ChromeToolDef {
+            name: "chrome_highlight",
+            description: "Outline an element in the page so the user can see what the agent is about to act on.",
+            kind: "page/highlight",
+            parameters: || {
+                let mut props = tab_target();
+                props["selector"] = json!({ "type": "string" });
+                props["text"] = json!({ "type": "string" });
+                props["ref"] = json!({ "type": "string" });
+                json!({ "type": "object", "properties": props, "additionalProperties": false })
+            },
+        },
+        ChromeToolDef {
+            name: "chrome_select",
+            description: "Choose an option in a <select> element by value.",
+            kind: "page/select",
+            parameters: || {
+                let mut props = tab_target();
+                props["selector"] = json!({ "type": "string" });
+                props["value"] = json!({ "type": "string" });
+                json!({ "type": "object", "required": ["selector", "value"], "properties": props, "additionalProperties": false })
+            },
+        },
+        ChromeToolDef {
+            name: "chrome_debug_attach",
+            description: "Attach the debugger to a tab so console and network reads have a buffer (requires debugger site permission).",
+            kind: "debug/attach",
+            parameters: || json!({ "type": "object", "properties": tab_target(), "additionalProperties": false }),
+        },
+        ChromeToolDef {
+            name: "chrome_debug_detach",
+            description: "Detach the debugger from a tab.",
+            kind: "debug/detach",
+            parameters: || json!({ "type": "object", "properties": tab_target(), "additionalProperties": false }),
         },
         ChromeToolDef {
             name: "chrome_screenshot",
@@ -311,10 +382,14 @@ impl ToolExecutor for ChromeDispatchTool {
         {
             Ok(value) => {
                 let data = label_result(&self.kind, value);
+                // The runtime feeds `text` to the model and keeps `data` for the
+                // UI, so the payload has to be in `text` or the model sees only
+                // an "ok" and invents the page content it was asked to read.
+                let text = result_text(&self.kind, &data);
                 Ok(ToolResult {
                     id: call.id,
                     name: call.name,
-                    text: format!("chrome {} ok", self.kind),
+                    text,
                     data,
                     is_error: false,
                 })

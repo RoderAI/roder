@@ -91,19 +91,23 @@ use speech::run_speech_cli;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-#[cfg(not(windows))]
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    run_cli().await
-}
+/// Worker-thread stack for every Roder tokio runtime.
+///
+/// The agent-loop future is deep enough to blow the 2 MiB default a tokio
+/// worker gets — a debug-build TUI aborts with "tokio-rt-worker has overflowed
+/// its stack" on the first turn. The roadmap TUI and the app-server already
+/// spawn themselves on a big stack for this reason; `main` needs the same, and
+/// it must also apply to the runtime's *worker* threads, not just the thread
+/// that blocks on it, because the turn runs on a worker.
+const RODER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
-#[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("roder-main".to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(RODER_STACK_SIZE)
         .spawn(|| {
             tokio::runtime::Builder::new_multi_thread()
+                .thread_stack_size(RODER_STACK_SIZE)
                 .enable_all()
                 .build()
                 .expect("roder main tokio runtime")
@@ -542,7 +546,7 @@ fn roadmap_entrypoint_opens_tui(args: &[String]) -> bool {
 fn run_roadmap_tui_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("roder-roadmap-tui".to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(RODER_STACK_SIZE)
         .spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -557,7 +561,7 @@ fn run_roadmap_tui_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
 fn run_app_server_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("roder-app-server".to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(RODER_STACK_SIZE)
         .spawn(move || {
             // Multi-thread, not current-thread: providers that bridge a
             // synchronous callback back into async work call
@@ -567,6 +571,7 @@ fn run_app_server_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
             // entry point is already multi-thread; this keeps the app-server
             // able to host the same providers.
             tokio::runtime::Builder::new_multi_thread()
+                .thread_stack_size(RODER_STACK_SIZE)
                 .enable_all()
                 .build()
                 .expect("app-server tokio runtime")

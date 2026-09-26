@@ -202,7 +202,19 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         NonIdempotent
     ),
     method_spec!("chrome/browsers/list", "chrome", ReadOnly, Idempotent),
+    method_spec!(
+        "chrome/debug/attach",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("chrome/debug/console", "chrome", ReadOnly, Idempotent),
+    method_spec!(
+        "chrome/debug/detach",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("chrome/debug/network", "chrome", ReadOnly, Idempotent),
     method_spec!("chrome/disable", "chrome", LocalState, NonIdempotent),
     method_spec!("chrome/enable", "chrome", LocalState, NonIdempotent),
@@ -212,6 +224,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ExternalProcess,
         NonIdempotent
     ),
+    method_spec!("chrome/page/getText", "chrome", ReadOnly, Idempotent),
     method_spec!("chrome/page/snapshot", "chrome", ReadOnly, Idempotent),
     method_spec!("chrome/permissions/list", "chrome", ReadOnly, Idempotent),
     method_spec!(
@@ -221,10 +234,34 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         NonIdempotent
     ),
     method_spec!("chrome/reconnect", "chrome", ReadOnly, Idempotent),
+    method_spec!(
+        "chrome/recording/start",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!(
+        "chrome/recording/stop",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
     method_spec!("chrome/setMode", "chrome", LocalState, NonIdempotent),
     method_spec!("chrome/status", "chrome", ReadOnly, Idempotent),
     method_spec!(
         "chrome/tabs/activate",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!(
+        "chrome/tabs/close",
+        "chrome",
+        ExternalProcess,
+        NonIdempotent
+    ),
+    method_spec!(
+        "chrome/tabs/group",
         "chrome",
         ExternalProcess,
         NonIdempotent
@@ -236,6 +273,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ExternalProcess,
         NonIdempotent
     ),
+    method_spec!("chrome/tabs/open", "chrome", ExternalProcess, NonIdempotent),
     method_spec!("command/exec", "commands", ExternalProcess, NonIdempotent),
     method_spec!("commands/expand", "commands", ReadOnly, Idempotent),
     method_spec!("commands/list", "commands", ReadOnly, Idempotent),
@@ -708,8 +746,8 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
-    method_spec!("thread/set_ultra_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/set_mode", "thread", LocalState, NonIdempotent),
+    method_spec!("thread/set_ultra_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/start", "thread", LocalState, NonIdempotent),
     method_spec!("thread/state", "thread", ReadOnly, Idempotent),
     method_spec!("tools/call", "tools", LocalState, NonIdempotent),
