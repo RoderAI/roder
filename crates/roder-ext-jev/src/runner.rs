@@ -4,15 +4,17 @@
 //! decision key, the text model — then drives the ported agent loop and
 //! reports the observed trace.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use roder_api::inference::ModelSelection;
 use serde_json::{Map, Value, json};
 
-use crate::agent::{Agent, AgentConfig};
 use crate::cdp::Connection;
 use crate::chrome::{self, ChromeEndpoint};
+use crate::decide::JevTypeSafeDecisionClient;
+use crate::engine::{JevEngine, JevEngineConfig, JevTextValueResolver};
 use crate::page::Page;
 use crate::text_model::{self, RoderKeys, TextModel};
 
@@ -108,24 +110,24 @@ pub(crate) async fn run(
     .await?;
 
     let page = Page::open(connection, &request.url).await?;
-    let config = AgentConfig {
-        goal: request.goal.clone(),
-        typesafe_key: key,
-        typesafe_model: env_value("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
-        text: text.clone(),
-        wait: Duration::from_millis(request.wait_ms),
-    };
-    let mut agent = Agent::start(page, config).await?;
+    let decision = Arc::new(JevTypeSafeDecisionClient::new(
+        key,
+        env_value("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
+    ));
+    let mut config = JevEngineConfig::new(request.goal.clone(), decision)
+        .with_wait(Duration::from_millis(request.wait_ms));
+    if let Some(text) = text.clone() {
+        let resolver: Arc<dyn JevTextValueResolver> = Arc::new(text);
+        config = config.with_text_resolver(resolver);
+    }
+    let mut agent = JevEngine::start(Box::new(page), config).await?;
     if request.foreground {
         // Jev owns a background tab; show it so the work is watchable and the
         // final page stays on screen for verification.
         agent.activate().await?;
     }
-    let stopped_because = match tokio::time::timeout(request.timeout, agent.run()).await {
-        Ok(stopped) => stopped,
-        Err(_) => Some("Jev browser task timed out".into()),
-    };
-    let mut value = agent.result(stopped_because);
+    let result = agent.run(request.timeout).await;
+    let mut value = serde_json::to_value(result).context("serialize the JEV result")?;
     if !request.foreground {
         agent.close().await.ok();
     }

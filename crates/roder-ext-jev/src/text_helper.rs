@@ -8,23 +8,16 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
+use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
+use crate::engine::{JevTextValue, JevTextValueResolver};
 use crate::prompts::TEXT_VALUE;
 use crate::python_json;
 use crate::text_model::TextModel;
 
 const TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_VALUE_CHARS: usize = 2000;
-
-/// What the helper wrote, and what it cost.
-#[derive(Debug, Clone)]
-pub(crate) struct WrittenText {
-    pub(crate) value: String,
-    pub(crate) model: String,
-    pub(crate) latency_ms: u64,
-    pub(crate) usage: Value,
-}
 
 /// Everything the helper is told about the field it is filling.
 pub(crate) fn field_context(goal: &str, action: &Value, page: &Value, history: &[Value]) -> Value {
@@ -109,7 +102,7 @@ pub(crate) fn parse_value(content: &str) -> anyhow::Result<String> {
 }
 
 /// Ask Roder's configured text model for the value of one field.
-pub(crate) async fn field_text(context: &Value, text: &TextModel) -> anyhow::Result<WrittenText> {
+pub(crate) async fn field_text(context: &Value, text: &TextModel) -> anyhow::Result<JevTextValue> {
     let body = request_body(context, &text.model, &text.base_url, text.reasoning_none);
     let started = Instant::now();
     let client = reqwest::Client::builder()
@@ -134,12 +127,19 @@ pub(crate) async fn field_text(context: &Value, text: &TextModel) -> anyhow::Res
     let content = result["choices"][0]["message"]["content"]
         .as_str()
         .context("Text helper returned no valid field value; nothing typed.")?;
-    Ok(WrittenText {
+    Ok(JevTextValue {
         value: parse_value(content)?,
         model: text.model.clone(),
         latency_ms: started.elapsed().as_millis() as u64,
         usage: result.get("usage").cloned().unwrap_or_else(|| json!({})),
     })
+}
+
+#[async_trait]
+impl JevTextValueResolver for TextModel {
+    async fn resolve(&self, field_context: &Value) -> anyhow::Result<JevTextValue> {
+        field_text(field_context, self).await
+    }
 }
 
 #[cfg(test)]

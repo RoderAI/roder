@@ -4,11 +4,14 @@
 //! request body and the validation rules are the contract with the service, so
 //! both are reproduced exactly and pinned by fixtures recorded from upstream.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
+use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
+use crate::engine::{JevDecision, JevDecisionClient, JevDecisionTransport};
 use crate::prompts::{NEXT_ACTION, TARGET};
 use crate::space::{ActionSpace, action_space};
 
@@ -16,26 +19,59 @@ const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 const TIMEOUT: Duration = Duration::from_secs(25);
 const RETRY_STATUSES: [u16; 3] = [429, 529, 503];
 
-/// What the service chose, plus everything the trace records about it.
-#[derive(Debug, Clone)]
-pub(crate) struct Decision {
-    /// The observed action id to execute, or `DONE` / `BLOCKED`.
-    pub(crate) choice: String,
-    pub(crate) operation: String,
-    pub(crate) target: Option<String>,
-    pub(crate) confidence: f64,
-    /// Probability per executable choice, keyed by action id.
-    pub(crate) probabilities: Map<String, Value>,
-    pub(crate) latency_ms: u64,
-    pub(crate) usage: Value,
+/// The same TypeSafe decision service used by the built-in `jev_browse` tool.
+pub struct JevTypeSafeDecisionClient {
+    model: String,
+    transport: Arc<dyn JevDecisionTransport>,
 }
 
-impl Decision {
-    pub(crate) fn probability_of(&self, choice: &str) -> Value {
-        self.probabilities
-            .get(choice)
-            .cloned()
-            .unwrap_or(Value::Null)
+impl JevTypeSafeDecisionClient {
+    pub fn new(key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            transport: Arc::new(TypeSafeHttpTransport { key: key.into() }),
+        }
+    }
+
+    pub fn with_transport(
+        model: impl Into<String>,
+        transport: Arc<dyn JevDecisionTransport>,
+    ) -> Self {
+        Self {
+            model: model.into(),
+            transport,
+        }
+    }
+}
+
+#[async_trait]
+impl JevDecisionClient for JevTypeSafeDecisionClient {
+    async fn choose(
+        &self,
+        observation: &Value,
+        goal: &str,
+        history: &[Value],
+    ) -> anyhow::Result<JevDecision> {
+        choose(
+            observation,
+            goal,
+            history,
+            &self.model,
+            self.transport.as_ref(),
+        )
+        .await
+        .map(|(decision, _)| decision)
+    }
+}
+
+struct TypeSafeHttpTransport {
+    key: String,
+}
+
+#[async_trait]
+impl JevDecisionTransport for TypeSafeHttpTransport {
+    async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
+        post_json(ENDPOINT, &self.key, request).await
     }
 }
 
@@ -233,11 +269,11 @@ pub(crate) async fn choose(
     goal: &str,
     history: &[Value],
     model: &str,
-    key: &str,
-) -> anyhow::Result<(Decision, ActionSpace)> {
+    transport: &dyn JevDecisionTransport,
+) -> anyhow::Result<(JevDecision, ActionSpace)> {
     let (body, space, operation_ids) = request_body(page, goal, history, model);
     let started = Instant::now();
-    let result = post_json(ENDPOINT, key, &body).await?;
+    let result = transport.decide(&body).await?;
     let answers = &result["answers"];
     let operation_answer = &answers["operation"];
     validate_choice(operation_answer, &operation_ids)?;
@@ -281,7 +317,7 @@ pub(crate) async fn choose(
         );
     }
     Ok((
-        Decision {
+        JevDecision {
             choice,
             operation,
             target,
@@ -296,7 +332,22 @@ pub(crate) async fn choose(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    struct FixtureTransport {
+        request: Mutex<Option<Value>>,
+        response: Value,
+    }
+
+    #[async_trait]
+    impl JevDecisionTransport for FixtureTransport {
+        async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
+            *self.request.lock().unwrap() = Some(request.clone());
+            Ok(self.response.clone())
+        }
+    }
 
     fn fixture(name: &str) -> Value {
         let raw = match name {
@@ -347,5 +398,44 @@ mod tests {
                 case["name"]
             );
         }
+    }
+
+    #[tokio::test]
+    async fn injected_transport_keeps_request_and_response_parsing_upstream() {
+        let page: Value = serde_json::from_str(include_str!("../tests/fixtures/fingerprint.json"))
+            .map(|value: Value| value["page"].clone())
+            .unwrap();
+        let transport = Arc::new(FixtureTransport {
+            request: Mutex::new(None),
+            response: json!({
+                "answers": {
+                    "operation": {
+                        "choice": "WAIT",
+                        "confidence": 1.0,
+                        "probabilities": {
+                            "CLICK": 0.0,
+                            "TYPE_TEXT": 0.0,
+                            "SELECT": 0.0,
+                            "SCROLL_DOWN": 0.0,
+                            "WAIT": 1.0,
+                            "DONE": 0.0,
+                            "BLOCKED": 0.0
+                        }
+                    }
+                },
+                "usage": {"input_tokens": 10}
+            }),
+        });
+        let client = JevTypeSafeDecisionClient::with_transport("jev-hosted", transport.clone());
+
+        let decision = client.choose(&page, "Wait once", &[]).await.unwrap();
+
+        assert_eq!(decision.choice, "wait");
+        assert_eq!(decision.operation, "WAIT");
+        assert_eq!(decision.usage["input_tokens"], json!(10));
+        assert_eq!(
+            transport.request.lock().unwrap().as_ref().unwrap()["model"],
+            json!("jev-hosted")
+        );
     }
 }

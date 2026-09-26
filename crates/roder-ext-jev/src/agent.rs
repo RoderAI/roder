@@ -4,74 +4,49 @@
 //! it, observe again. The budgets, the statuses, and the rule that three
 //! consecutive actions changing nothing mean `blocked` are upstream's.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::bail;
 use serde_json::{Value, json};
 
-use crate::decide::{self, Decision};
-use crate::page::{Page, StalePage};
+use crate::engine::{
+    JevActionRecord, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevRunResult,
+    JevStatus, JevTextValue, StaleObservation,
+};
 use crate::prompts::MAX_STEPS;
 use crate::space::action_space;
-use crate::text_helper::{self, WrittenText};
-use crate::text_model::TextModel;
-
-pub(crate) struct AgentConfig {
-    pub(crate) goal: String,
-    pub(crate) typesafe_key: String,
-    pub(crate) typesafe_model: String,
-    pub(crate) text: Option<TextModel>,
-    /// How long a `wait` action holds the page.
-    pub(crate) wait: Duration,
-}
-
-/// Upstream's run statuses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Status {
-    Ready,
-    Done,
-    Blocked,
-}
-
-impl Status {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Done => "done",
-            Self::Blocked => "blocked",
-        }
-    }
-
-    fn stopped(self) -> bool {
-        matches!(self, Self::Done | Self::Blocked)
-    }
-}
+use crate::text_helper;
 
 pub(crate) struct Agent {
-    page: Page,
-    config: AgentConfig,
+    browser: Box<dyn JevBrowser>,
+    config: JevEngineConfig,
     observation: Value,
     history: Vec<Value>,
     text_calls: Vec<Value>,
     decisions: usize,
-    status: Status,
+    decision_calls: Vec<JevDecisionRecord>,
+    status: JevStatus,
     started_at: Instant,
     elapsed_ms: u64,
     /// A value already written for a field whose action had to be retried.
-    pending_text: Option<(Value, WrittenText)>,
+    pending_text: Option<(Value, JevTextValue)>,
 }
 
 impl Agent {
-    pub(crate) async fn start(mut page: Page, config: AgentConfig) -> anyhow::Result<Self> {
-        let observation = page.observe().await?;
+    pub(crate) async fn start(
+        mut browser: Box<dyn JevBrowser>,
+        config: JevEngineConfig,
+    ) -> anyhow::Result<Self> {
+        let observation = browser.observe().await?;
         Ok(Self {
-            page,
+            browser,
             config,
             observation,
             history: Vec::new(),
             text_calls: Vec::new(),
             decisions: 0,
-            status: Status::Ready,
+            decision_calls: Vec::new(),
+            status: JevStatus::Ready,
             started_at: Instant::now(),
             elapsed_ms: 0,
             pending_text: None,
@@ -90,10 +65,10 @@ impl Agent {
         while !self.status.stopped() {
             match self.tick().await {
                 Ok(()) => {}
-                Err(error) if error.is::<StalePage>() => {
+                Err(error) if error.is::<StaleObservation>() => {
                     // The page moved under the decision; observe and choose again.
-                    self.status = Status::Ready;
-                    match self.page.observe().await {
+                    self.status = JevStatus::Ready;
+                    match self.browser.observe().await {
                         Ok(observation) => self.observation = observation,
                         Err(error) => return Some(describe(&error)),
                     }
@@ -110,37 +85,44 @@ impl Agent {
         self.act(decision).await
     }
 
-    async fn predict(&mut self) -> anyhow::Result<Decision> {
-        if !self.page.fresh(&self.observation, None).await? {
-            self.observation = self.page.observe().await?;
+    async fn predict(&mut self) -> anyhow::Result<JevDecision> {
+        if !self.browser.fresh(&self.observation, None).await? {
+            self.observation = self.browser.observe().await?;
         }
         if self.decisions >= MAX_STEPS * 2 {
             bail!("Reached the demo's model-call budget");
         }
-        let (decision, _) = decide::choose(
-            &self.observation,
-            &self.config.goal,
-            &self.history,
-            &self.config.typesafe_model,
-            &self.config.typesafe_key,
-        )
-        .await?;
+        let decision = self
+            .config
+            .decision
+            .choose(&self.observation, &self.config.goal, &self.history)
+            .await?;
         self.decisions += 1;
+        self.decision_calls.push(JevDecisionRecord {
+            choice: decision.choice.clone(),
+            operation: decision.operation.clone(),
+            target: decision.target.clone(),
+            confidence: decision.confidence,
+            probabilities: decision.probabilities.clone(),
+            latency_ms: decision.latency_ms,
+            usage: decision.usage.clone(),
+        });
         Ok(decision)
     }
 
-    async fn act(&mut self, decision: Decision) -> anyhow::Result<()> {
+    async fn act(&mut self, decision: JevDecision) -> anyhow::Result<()> {
         let selected = decision.choice.clone();
         if selected == "DONE" || selected == "BLOCKED" {
-            if !self.page.fresh(&self.observation, None).await? {
-                return Err(
-                    StalePage("Page changed since the decision. Choose again.".into()).into(),
-                );
+            if !self.browser.fresh(&self.observation, None).await? {
+                return Err(StaleObservation::new(
+                    "Page changed since the decision. Choose again.",
+                )
+                .into());
             }
             self.status = if selected == "DONE" {
-                Status::Done
+                JevStatus::Done
             } else {
-                Status::Blocked
+                JevStatus::Blocked
             };
             self.elapsed();
             return Ok(());
@@ -156,16 +138,16 @@ impl Agent {
             })
             .cloned();
         let Some(action) = action else {
-            return Err(StalePage("Chosen action is no longer observed".into()).into());
+            return Err(StaleObservation::new("Chosen action is no longer observed").into());
         };
         if self.history.len() >= MAX_STEPS {
-            self.status = Status::Blocked;
+            self.status = JevStatus::Blocked;
             bail!("Stopped at the {MAX_STEPS}-action demo budget");
         }
 
         let written = self.write_text_if_needed(&action).await?;
         let text = written.as_ref().map(|written| written.value.clone());
-        self.page
+        self.browser
             .act(
                 &action,
                 &self.observation,
@@ -199,7 +181,7 @@ impl Agent {
             "elapsed_ms": self.elapsed_ms,
         }));
 
-        self.observation = self.page.observe().await?;
+        self.observation = self.browser.observe().await?;
         let elapsed = self.elapsed();
         if let Some(entry) = self.history.last_mut() {
             entry["page_changed"] = json!(self.observation["fingerprint"] != previous_fingerprint);
@@ -207,9 +189,9 @@ impl Agent {
             entry["elapsed_ms"] = json!(elapsed);
         }
         self.status = if stalled(&self.history) {
-            Status::Blocked
+            JevStatus::Blocked
         } else {
-            Status::Ready
+            JevStatus::Ready
         };
         Ok(())
     }
@@ -218,14 +200,15 @@ impl Agent {
     async fn write_text_if_needed(
         &mut self,
         action: &Value,
-    ) -> anyhow::Result<Option<WrittenText>> {
+    ) -> anyhow::Result<Option<JevTextValue>> {
         if action["kind"].as_str() != Some("fill") {
             return Ok(None);
         }
-        if !self.page.fresh(&self.observation, Some(action)).await? {
-            return Err(
-                StalePage("Page changed before text generation. Choose again.".into()).into(),
-            );
+        if !self.browser.fresh(&self.observation, Some(action)).await? {
+            return Err(StaleObservation::new(
+                "Page changed before text generation. Choose again.",
+            )
+            .into());
         }
         let context =
             text_helper::field_context(&self.config.goal, action, &self.observation, &self.history);
@@ -240,7 +223,7 @@ impl Agent {
                  set JEV_TEXT_MODEL_API_KEY. No text is guessed."
             );
         };
-        let written = text_helper::field_text(&context, text).await?;
+        let written = text.resolve(&context).await?;
         self.pending_text = Some((context, written.clone()));
         self.text_calls.push(json!({
             "model": written.model,
@@ -253,26 +236,30 @@ impl Agent {
     }
 
     /// The result payload, in the shape the tool reports.
-    pub(crate) fn result(&self, stopped_because: Option<String>) -> Value {
+    pub(crate) fn result(&self, stopped_because: Option<String>) -> JevRunResult {
         let text = self.observation["text"].as_str().unwrap_or_default();
         let visible_text = text.chars().take(6000).collect::<String>();
         let actions = self
             .history
             .iter()
-            .map(|entry| {
-                let mut recorded = serde_json::Map::new();
-                for key in [
-                    "step",
-                    "action",
-                    "kind",
-                    "text",
-                    "url",
-                    "page_changed",
-                    "elapsed_ms",
-                ] {
-                    recorded.insert(key.into(), entry.get(key).cloned().unwrap_or(Value::Null));
-                }
-                Value::Object(recorded)
+            .map(|entry| JevActionRecord {
+                step: entry["step"].as_u64().unwrap_or_default() as usize,
+                action: entry["action"].as_str().unwrap_or_default().to_string(),
+                kind: entry["kind"].as_str().unwrap_or_default().to_string(),
+                text: entry["text"].as_str().map(str::to_string),
+                url: entry["url"].as_str().unwrap_or_default().to_string(),
+                page_changed: entry["page_changed"].as_bool(),
+                elapsed_ms: entry["elapsed_ms"].as_u64().unwrap_or_default(),
+                choice: entry["choice"].as_str().unwrap_or_default().to_string(),
+                probability: entry["probability"].clone(),
+                confidence: entry["confidence"].as_f64().unwrap_or_default(),
+                decision_latency_ms: entry["latency_ms"].as_u64().unwrap_or_default(),
+                text_helper: entry["text_helper"].as_str().map(str::to_string),
+                text_latency_ms: entry["text_latency_ms"].as_u64().unwrap_or_default(),
+                operation: entry["operation"].as_str().unwrap_or_default().to_string(),
+                target: entry["target"].as_str().map(str::to_string),
+                usage: entry["usage"].clone(),
+                executed_ms: entry["executed_ms"].as_u64().unwrap_or_default(),
             })
             .collect::<Vec<_>>();
         let observed = action_space(
@@ -280,27 +267,34 @@ impl Agent {
                 .as_array()
                 .map_or(&[][..], Vec::as_slice),
         );
-        json!({
-            "status": self.status.as_str(),
-            "url": self.observation["url"],
-            "title": self.observation["title"],
-            "visible_text": visible_text,
-            "actions": actions,
-            "elapsed_ms": self.elapsed_ms,
-            "observed_elements": observed.elements.len(),
-            "model_calls": self.decisions,
-            "text_calls": self.text_calls.len(),
-            "stopped_because": stopped_because,
-            "untrusted": true,
-        })
+        JevRunResult {
+            status: self.status,
+            url: self.observation["url"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            title: self.observation["title"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            visible_text,
+            actions,
+            elapsed_ms: self.elapsed_ms,
+            observed_elements: observed.elements.len(),
+            model_calls: self.decisions,
+            text_calls: self.text_calls.len(),
+            decisions: self.decision_calls.clone(),
+            stopped_because,
+            untrusted: true,
+        }
     }
 
     pub(crate) async fn activate(&mut self) -> anyhow::Result<()> {
-        self.page.activate().await
+        self.browser.activate().await
     }
 
     pub(crate) async fn close(&mut self) -> anyhow::Result<()> {
-        self.page.close().await
+        self.browser.close().await
     }
 }
 
@@ -366,11 +360,8 @@ mod tests {
 
     #[test]
     fn statuses_use_upstream_names() {
-        assert_eq!(Status::Ready.as_str(), "ready");
-        assert_eq!(Status::Done.as_str(), "done");
-        assert_eq!(Status::Blocked.as_str(), "blocked");
-        assert!(Status::Done.stopped() && Status::Blocked.stopped());
-        assert!(!Status::Ready.stopped());
+        assert!(JevStatus::Done.stopped() && JevStatus::Blocked.stopped());
+        assert!(!JevStatus::Ready.stopped());
     }
 
     #[test]

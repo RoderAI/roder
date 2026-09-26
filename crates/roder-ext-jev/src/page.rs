@@ -8,10 +8,12 @@
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::cdp::Connection;
+use crate::engine::{JevBrowser, StaleObservation};
 use crate::python_json;
 
 const SNAPSHOT_JS: &str = include_str!("assets/snapshot.js");
@@ -22,18 +24,6 @@ const VIEWPORT_WIDTH: u32 = 1120;
 const VIEWPORT_HEIGHT: u32 = 780;
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 const OBSERVE_ATTEMPTS: usize = 10;
-
-/// Upstream's `StalePage`: the page moved under a decision, so observe again.
-#[derive(Debug)]
-pub(crate) struct StalePage(pub(crate) String);
-
-impl std::fmt::Display for StalePage {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.0)
-    }
-}
-
-impl std::error::Error for StalePage {}
 
 pub(crate) struct Page {
     connection: Connection,
@@ -144,7 +134,7 @@ impl Page {
             )
             .await?;
         if result.get("exceptionDetails").is_some() {
-            return Err(StalePage("Document changed during evaluation".into()).into());
+            return Err(StaleObservation::new("Document changed during evaluation").into());
         }
         Ok(result["result"]["value"].clone())
     }
@@ -161,7 +151,7 @@ impl Page {
             )
             .await?;
         if result.get("exceptionDetails").is_some() {
-            return Err(StalePage("Document changed during evaluation".into()).into());
+            return Err(StaleObservation::new("Document changed during evaluation").into());
         }
         Ok(result["result"]["value"].clone())
     }
@@ -176,20 +166,20 @@ impl Page {
         for attempt in 0..OBSERVE_ATTEMPTS {
             match self.evaluate(SNAPSHOT_JS).await {
                 Ok(Value::Null) => {
-                    return Err(StalePage("Document is navigating".into()).into());
+                    return Err(StaleObservation::new("Document is navigating").into());
                 }
                 Ok(mut observation) => {
                     let fingerprint = fingerprint(&observation);
                     observation["fingerprint"] = json!(fingerprint);
                     return Ok(observation);
                 }
-                Err(error) if error.is::<StalePage>() && attempt + 1 < OBSERVE_ATTEMPTS => {
+                Err(error) if error.is::<StaleObservation>() && attempt + 1 < OBSERVE_ATTEMPTS => {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 Err(error) => return Err(error),
             }
         }
-        Err(StalePage("Page did not settle".into()).into())
+        Err(StaleObservation::new("Page did not settle").into())
     }
 
     /// Has the page kept the meaning the decision was made against?
@@ -237,7 +227,7 @@ impl Page {
     ) -> anyhow::Result<()> {
         if !self.fresh(observation, Some(action)).await? {
             return Err(
-                StalePage("Page changed since this decision. Observe again.".into()).into(),
+                StaleObservation::new("Page changed since this decision. Observe again.").into(),
             );
         }
         let kind = action["kind"].as_str().unwrap_or_default();
@@ -271,7 +261,9 @@ impl Page {
             if kind == "select" {
                 bail!("Dropdown execution was not confirmed; inspect before retrying.");
             }
-            return Err(StalePage("Target changed or is covered. Observe again.".into()).into());
+            return Err(
+                StaleObservation::new("Target changed or is covered. Observe again.").into(),
+            );
         }
         if kind == "select" {
             // The script already set the value and fired input/change.
@@ -308,6 +300,35 @@ impl Page {
             .await?;
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl JevBrowser for Page {
+    async fn observe(&mut self) -> anyhow::Result<Value> {
+        Page::observe(self).await
+    }
+
+    async fn fresh(&mut self, observation: &Value, action: Option<&Value>) -> anyhow::Result<bool> {
+        Page::fresh(self, observation, action).await
+    }
+
+    async fn act(
+        &mut self,
+        action: &Value,
+        observation: &Value,
+        text: Option<&str>,
+        wait: Duration,
+    ) -> anyhow::Result<()> {
+        Page::act(self, action, observation, text, wait).await
+    }
+
+    async fn activate(&mut self) -> anyhow::Result<()> {
+        Page::activate(self).await
+    }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        Page::close(self).await
     }
 }
 
