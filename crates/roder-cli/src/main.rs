@@ -40,6 +40,10 @@ use roder_api::catalog::{
     PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
     normalize_provider_id,
 };
+use roder_api::backend::AgentBackend;
+use roder_api::capabilities::CapabilityGrant;
+use roder_api::extension::ExtensionRegistryBuilder;
+use roder_ext_codex_backend::CodexBackendExtension;
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
@@ -87,19 +91,23 @@ use speech::run_speech_cli;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-#[cfg(not(windows))]
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    run_cli().await
-}
+/// Worker-thread stack for every Roder tokio runtime.
+///
+/// The agent-loop future is deep enough to blow the 2 MiB default a tokio
+/// worker gets — a debug-build TUI aborts with "tokio-rt-worker has overflowed
+/// its stack" on the first turn. The roadmap TUI and the app-server already
+/// spawn themselves on a big stack for this reason; `main` needs the same, and
+/// it must also apply to the runtime's *worker* threads, not just the thread
+/// that blocks on it, because the turn runs on a worker.
+const RODER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
-#[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("roder-main".to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(RODER_STACK_SIZE)
         .spawn(|| {
             tokio::runtime::Builder::new_multi_thread()
+                .thread_stack_size(RODER_STACK_SIZE)
                 .enable_all()
                 .build()
                 .expect("roder main tokio runtime")
@@ -235,15 +243,23 @@ async fn run_cli() -> anyhow::Result<()> {
     // registry/config below is built.
     let args = packages::apply_ephemeral_package_args(&args)?;
     let cli_options = parse_cli_options(&args)?;
+    let cli_backend = cli_options.backend;
+    let selected_backend = selected_agent_backend(cli_options.backend)?;
+    let codex_model = cli_options.codex_model.clone();
     let mut startup = cli_options.startup.clone();
     let record_api_transcript = cli_options.record_api_transcript.clone();
     let record_ui_frames = cli_options.record_ui_frames;
     let enable_chrome = args.iter().any(|arg| arg == "--chrome");
     let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
-    let app_server = Arc::new(
-        AppServer::with_feature_config(runtime, resolve_local_app_server_feature_config()?)
-            .with_user_config_persistence(),
-    );
+    let mut server = AppServer::with_feature_config(runtime, resolve_local_app_server_feature_config()?)
+        .with_user_config_persistence();
+    if let Some(backend) = selected_backend { server = server.with_agent_backend(backend); }
+    let app_server = Arc::new(server);
+    let default_model = if cli_backend == Backend::Codex {
+        codex_model.unwrap_or_default()
+    } else {
+        default_model
+    };
     let client = LocalAppClient::new(app_server.clone());
 
     if enable_chrome {
@@ -530,7 +546,7 @@ fn roadmap_entrypoint_opens_tui(args: &[String]) -> bool {
 fn run_roadmap_tui_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("roder-roadmap-tui".to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(RODER_STACK_SIZE)
         .spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -545,7 +561,7 @@ fn run_roadmap_tui_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
 fn run_app_server_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("roder-app-server".to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(RODER_STACK_SIZE)
         .spawn(move || {
             // Multi-thread, not current-thread: providers that bridge a
             // synchronous callback back into async work call
@@ -555,6 +571,7 @@ fn run_app_server_on_large_stack(args: Vec<String>) -> anyhow::Result<()> {
             // entry point is already multi-thread; this keeps the app-server
             // able to host the same providers.
             tokio::runtime::Builder::new_multi_thread()
+                .thread_stack_size(RODER_STACK_SIZE)
                 .enable_all()
                 .build()
                 .expect("app-server tokio runtime")
@@ -1063,12 +1080,29 @@ pub(crate) fn decode_response<T: serde::de::DeserializeOwned>(
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CliOptions {
+    backend: Backend,
+    codex_model: Option<String>,
     policy_mode: Option<PolicyMode>,
     runtime_profile: Option<RuntimeProfile>,
     team_display: Option<roder_api::teams::AgentTeamDisplayMode>,
     startup: TuiStartup,
     record_api_transcript: Option<PathBuf>,
     record_ui_frames: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Backend {
+    #[default]
+    Roder,
+    Codex,
+}
+
+fn selected_agent_backend(backend: Backend) -> anyhow::Result<Option<Arc<dyn AgentBackend>>> {
+    if backend == Backend::Roder { return Ok(None); }
+    let mut registry = ExtensionRegistryBuilder::new();
+    registry.install(CodexBackendExtension)?;
+    registry.grant_capability("roder-ext-codex-backend", CapabilityGrant::new("process.codex"));
+    Ok(registry.build()?.agent_backend("codex"))
 }
 
 fn extract_global_config_dir(args: &[String]) -> anyhow::Result<(Vec<String>, Option<PathBuf>)> {
@@ -1092,6 +1126,14 @@ fn extract_global_config_dir(args: &[String]) -> anyhow::Result<(Vec<String>, Op
         i += 1;
     }
     Ok((stripped, config_dir))
+}
+
+fn parse_backend(value: &str) -> anyhow::Result<Backend> {
+    match value {
+        "roder" => Ok(Backend::Roder),
+        "codex" => Ok(Backend::Codex),
+        _ => anyhow::bail!("unknown backend {value:?}; expected roder or codex"),
+    }
 }
 
 fn apply_config_dir_override(path: &Path) -> anyhow::Result<PathBuf> {
@@ -1753,6 +1795,27 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--backend" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--backend requires roder or codex"))?;
+                options.backend = parse_backend(value)?;
+                i += 1;
+            }
+            arg if arg.starts_with("--backend=") => {
+                options.backend = parse_backend(&arg["--backend=".len()..])?
+            }
+            "--model" => {
+                options.codex_model = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| anyhow::anyhow!("--model requires a value"))?
+                        .clone(),
+                );
+                i += 1;
+            }
+            arg if arg.starts_with("--model=") => {
+                options.codex_model = Some(arg["--model=".len()..].to_string())
+            }
             "resume" => {
                 let thread_id = args.get(i + 1).filter(|value| !value.starts_with("--"));
                 options.startup = match thread_id {
@@ -2002,11 +2065,12 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
         );
     }
 
+    let backend = selected_agent_backend(options.cli_options.backend)?;
     let (runtime, _) = build_runtime_from_config(options.cli_options.clone()).await?;
     let feature_config = resolve_app_server_feature_config(&options)?;
-    let app_server = Arc::new(
-        AppServer::with_feature_config(runtime, feature_config).with_user_config_persistence(),
-    );
+    let mut server = AppServer::with_feature_config(runtime, feature_config).with_user_config_persistence();
+    if let Some(backend) = backend { server = server.with_agent_backend(backend); }
+    let app_server = Arc::new(server);
     if options.remote {
         let token = match options.auth_token {
             Some(token) => roder_app_server::remote::RemoteToken::new(token)?,
@@ -3502,6 +3566,21 @@ fn provider_can_be_registered(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_backend_selection_is_explicit() {
+        let options = parse_cli_options(&[
+            "--backend=codex".into(),
+            "--model".into(),
+            "gpt-6-sol".into(),
+            "resume".into(),
+            "thread-123".into(),
+        ]).unwrap();
+        assert_eq!(options.backend, Backend::Codex);
+        assert_eq!(options.codex_model.as_deref(), Some("gpt-6-sol"));
+        assert_eq!(options.startup, TuiStartup::ResumeThread("thread-123".into()));
+        assert!(parse_cli_options(&["--backend=unknown".into()]).is_err());
+    }
 
     fn provider_keys_for_test() -> ProviderKeys {
         ProviderKeys {

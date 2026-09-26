@@ -3341,6 +3341,7 @@ dependencies = [
  "roder-core",
  "roder-evals",
  "roder-ext-anthropic",
+ "roder-ext-codex-backend",
  "roder-ext-disk-context",
  "roder-ext-gemini",
  "roder-ext-jsonl-thread-store",
@@ -3444,6 +3445,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "time",
  "tokio",
  "tokio-rustls",
@@ -3719,6 +3721,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-codex-backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-cursor"
 version = "0.1.5"
 dependencies = [
@@ -3929,6 +3943,23 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "roder-ext-jev"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "reqwest",
+ "roder-api",
+ "roder-config",
+ "semver",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -4682,6 +4713,7 @@ dependencies = [
  "roder-ext-google-speech",
  "roder-ext-honcho",
  "roder-ext-inference-router",
+ "roder-ext-jev",
  "roder-ext-jsonl-thread-store",
  "roder-ext-kimi-code",
  "roder-ext-knowledge-md",

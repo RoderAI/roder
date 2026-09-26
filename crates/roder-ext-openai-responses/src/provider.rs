@@ -255,6 +255,17 @@ impl OpenAiResponsesEngine {
                 ResponsesProviderProfile::Xai | ResponsesProviderProfile::Fireworks => {}
             }
         }
+        // Only OpenAI's own Responses API takes `service_tier` (Fast mode is
+        // `"priority"`); OpenRouter, xAI, and Fireworks never receive it.
+        if options.profile == ResponsesProviderProfile::OpenAi
+            && let Some(service_tier) = request
+                .runtime
+                .service_tier
+                .as_deref()
+                .filter(|tier| !tier.is_empty())
+        {
+            body["service_tier"] = json!(service_tier);
+        }
         if !tools.is_empty() {
             body["tools"] = json!(tools);
             body["tool_choice"] = match &request.tool_choice {
@@ -615,7 +626,10 @@ fn openai_provider_native_tool_search(request: &AgentInferenceRequest) -> bool {
  * live request mapping.
  */
 pub fn openai_model_supports_tool_search(model: &str) -> bool {
-    model.starts_with("gpt-5.4") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.6")
+    model.starts_with("gpt-5.4")
+        || model.starts_with("gpt-5.5")
+        || model.starts_with("gpt-5.6")
+        || model.starts_with("gpt-6-")
 }
 
 /**
@@ -2553,7 +2567,13 @@ fn extract_usage(value: &Value) -> Option<TokenUsage> {
             completion_tokens.unwrap_or_default(),
             total_tokens.unwrap_or_default(),
         )
-        .with_cached_prompt_tokens(cached_prompt_tokens),
+        .with_cached_prompt_tokens(cached_prompt_tokens)
+        .with_service_tier(
+            value
+                .get("service_tier")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        ),
     )
 }
 
@@ -2648,6 +2668,13 @@ mod tests {
         assert_eq!(body["tools"][0]["defer_loading"], true);
         assert_eq!(body["tools"][1], json!({ "type": "tool_search" }));
         assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn gpt_6_supports_provider_native_tool_search() {
+        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+            assert!(openai_model_supports_tool_search(model));
+        }
     }
 
     #[test]
@@ -4299,6 +4326,56 @@ mod tests {
             extract_usage(&value),
             Some(TokenUsage::new(10, 4, 14).with_cached_prompt_tokens(9))
         );
+    }
+
+    #[test]
+    fn extracts_the_service_tier_openai_served() {
+        let value = json!({
+            "service_tier": "default",
+            "usage": { "input_tokens": 10, "output_tokens": 4 }
+        });
+        assert_eq!(
+            extract_usage(&value).and_then(|usage| usage.service_tier),
+            Some("default".to_string())
+        );
+    }
+
+    #[test]
+    fn sends_service_tier_only_to_openai_when_requested() {
+        let mut request = request();
+        let body = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions::default(),
+        )
+        .0;
+        assert!(body.get("service_tier").is_none());
+
+        request.runtime.service_tier = Some("priority".to_string());
+        let body = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions::default(),
+        )
+        .0;
+        assert_eq!(body["service_tier"], json!("priority"));
+
+        for profile in [
+            ResponsesProviderProfile::OpenRouter,
+            ResponsesProviderProfile::Xai,
+            ResponsesProviderProfile::Fireworks,
+        ] {
+            let body = OpenAiResponsesEngine::map_request_with_options(
+                &request,
+                RequestMappingOptions {
+                    profile,
+                    thread_id: None,
+                },
+            )
+            .0;
+            assert!(
+                body.get("service_tier").is_none(),
+                "{profile:?} must not receive service_tier"
+            );
+        }
     }
 
     #[test]

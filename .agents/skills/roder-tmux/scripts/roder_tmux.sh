@@ -75,6 +75,11 @@ cmd_start() {
   need_tmux
   local session="$DEFAULT_SESSION"
   local workdir="$PWD"
+  # A detached tmux session defaults to 80x24, which truncates roder's panels —
+  # the /remote pairing URL and /chrome status both run off the edge. Start wide
+  # enough to read them; override with --width/--height.
+  local width="${RODER_TMUX_WIDTH:-200}"
+  local height="${RODER_TMUX_HEIGHT:-50}"
   local -a command=()
 
   while [[ $# -gt 0 ]]; do
@@ -87,6 +92,16 @@ cmd_start() {
       -d|--dir|--workdir)
         [[ $# -ge 2 ]] || die "missing value for $1"
         workdir="$2"
+        shift 2
+        ;;
+      -x|--width)
+        [[ $# -ge 2 ]] || die "missing value for $1"
+        width="$2"
+        shift 2
+        ;;
+      -y|--height)
+        [[ $# -ge 2 ]] || die "missing value for $1"
+        height="$2"
         shift 2
         ;;
       --)
@@ -114,8 +129,8 @@ cmd_start() {
     shell_command="$(shell_join "${command[@]}")"
   fi
 
-  tmux new-session -d -s "$session" -c "$workdir" "$shell_command"
-  printf 'started %s with command: %s\n' "$session" "$shell_command"
+  tmux new-session -d -s "$session" -c "$workdir" -x "$width" -y "$height" "$shell_command"
+  printf 'started %s (%sx%s) with command: %s\n' "$session" "$width" "$height" "$shell_command"
 }
 
 cmd_send() {

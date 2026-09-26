@@ -123,6 +123,7 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 async-trait.workspace = true
+tempfile = "3"
 rustls.workspace = true
 tokio-rustls.workspace = true
 futures.workspace = true

@@ -1,0 +1,129 @@
+{
+  "ids": [
+    "e1",
+    "e2",
+    "DONE"
+  ],
+  "cases": [
+    {
+      "name": "valid",
+      "answer": {
+        "choice": "e1",
+        "confidence": 0.9,
+        "probabilities": {
+          "e1": 0.8,
+          "e2": 0.15,
+          "DONE": 0.05
+        }
+      },
+      "accepted": true
+    },
+    {
+      "name": "unknown_choice",
+      "answer": {
+        "choice": "e9",
+        "confidence": 0.9,
+        "probabilities": {
+          "e1": 0.8,
+          "e2": 0.15,
+          "DONE": 0.05
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "missing_probability",
+      "answer": {
+        "choice": "e1",
+        "confidence": 0.9,
+        "probabilities": {
+          "e1": 0.9,
+          "e2": 0.1
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "sum_out_of_tolerance",
+      "answer": {
+        "choice": "e1",
+        "confidence": 0.5,
+        "probabilities": {
+          "e1": 0.5,
+          "e2": 0.2,
+          "DONE": 0.2
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "sum_within_tolerance",
+      "answer": {
+        "choice": "e1",
+        "confidence": 0.5,
+        "probabilities": {
+          "e1": 0.5,
+          "e2": 0.3,
+          "DONE": 0.19
+        }
+      },
+      "accepted": true
+    },
+    {
+      "name": "choice_not_argmax",
+      "answer": {
+        "choice": "e2",
+        "confidence": 0.9,
+        "probabilities": {
+          "e1": 0.8,
+          "e2": 0.15,
+          "DONE": 0.05
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "confidence_out_of_range",
+      "answer": {
+        "choice": "e1",
+        "confidence": 1.4,
+        "probabilities": {
+          "e1": 0.8,
+          "e2": 0.15,
+          "DONE": 0.05
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "probability_not_a_number",
+      "answer": {
+        "choice": "e1",
+        "confidence": 0.9,
+        "probabilities": {
+          "e1": "high",
+          "e2": 0.05,
+          "DONE": 0.05
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "missing_confidence",
+      "answer": {
+        "choice": "e1",
+        "probabilities": {
+          "e1": 0.8,
+          "e2": 0.15,
+          "DONE": 0.05
+        }
+      },
+      "accepted": false
+    },
+    {
+      "name": "empty",
+      "answer": {},
+      "accepted": false
+    }
+  ]
+}

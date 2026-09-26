@@ -12,9 +12,11 @@ use roder_api::chrome::{
     ChromeCommand, ChromeController, ChromeError, ChromePermissionMode, bridge,
 };
 use roder_protocol::{
-    ChromeDebugReadParams, ChromeEnableParams, ChromeNavigateParams, ChromePageActionParams,
-    ChromePageSnapshotParams, ChromePermissionsListParams, ChromePermissionsUpdateParams,
-    ChromeSetModeParams, ChromeTabActivateParams, JsonRpcError,
+    ChromeDebugAttachParams, ChromeDebugReadParams, ChromeEnableParams, ChromeNavigateParams,
+    ChromePageActionParams, ChromePageGetTextParams, ChromePageSnapshotParams,
+    ChromePermissionsListParams, ChromePermissionsUpdateParams, ChromeRecordingStartParams,
+    ChromeRecordingStopParams, ChromeSetModeParams, ChromeTabActivateParams, ChromeTabCloseParams,
+    ChromeTabOpenParams, ChromeTabsGroupParams, JsonRpcError,
 };
 
 use crate::server::AppServer;
@@ -46,6 +48,8 @@ impl AppServer {
         if let Some(mode) = params.mode.as_deref() {
             let mode = parse_mode(mode)?;
             bridge.set_mode(mode);
+            bridge.set_enabled(true);
+            push_mode(mode).await;
         }
         bridge.set_enabled(true);
         Ok(status_value())
@@ -64,6 +68,7 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let mode = parse_mode(&params.mode)?;
         bridge().set_mode(mode);
+        push_mode(mode).await;
         Ok(status_value())
     }
 
@@ -104,6 +109,82 @@ impl AppServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         let body = serde_json::to_value(&params).map_err(invalid_params)?;
         dispatch(ChromeCommand::with_params("tab/navigate", body)).await
+    }
+
+    /// `chrome/tabs/open` — open a new tab at an http(s) URL.
+    pub(crate) async fn handle_chrome_tabs_open(
+        &self,
+        params: ChromeTabOpenParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("tab/open", body)).await
+    }
+
+    /// `chrome/tabs/close` — close a tab by id.
+    pub(crate) async fn handle_chrome_tabs_close(
+        &self,
+        params: ChromeTabCloseParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("tab/close", body)).await
+    }
+
+    /// `chrome/tabs/group` — collect tabs into one named Chrome tab group.
+    pub(crate) async fn handle_chrome_tabs_group(
+        &self,
+        params: ChromeTabsGroupParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        if params.tab_ids.is_empty() {
+            return Err(invalid_params("tabIds must contain at least one tab id"));
+        }
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("tabs/group", body)).await
+    }
+
+    /// `chrome/page/getText` — read a tab's visible text. UNTRUSTED content.
+    pub(crate) async fn handle_chrome_page_get_text(
+        &self,
+        params: ChromePageGetTextParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("page/getText", body)).await
+    }
+
+    /// `chrome/debug/attach` — attach the debugger to a tab so console and
+    /// network reads have a buffer to draw from.
+    pub(crate) async fn handle_chrome_debug_attach(
+        &self,
+        params: ChromeDebugAttachParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("debug/attach", body)).await
+    }
+
+    /// `chrome/debug/detach` — detach the debugger from a tab.
+    pub(crate) async fn handle_chrome_debug_detach(
+        &self,
+        params: ChromeDebugAttachParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("debug/detach", body)).await
+    }
+
+    /// `chrome/recording/start` — begin an action-trace recording for a tab.
+    pub(crate) async fn handle_chrome_recording_start(
+        &self,
+        params: ChromeRecordingStartParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("recording/start", body)).await
+    }
+
+    /// `chrome/recording/stop` — stop a recording and return its action trace.
+    pub(crate) async fn handle_chrome_recording_stop(
+        &self,
+        params: ChromeRecordingStopParams,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let body = serde_json::to_value(&params).map_err(invalid_params)?;
+        dispatch(ChromeCommand::with_params("recording/stop", body)).await
     }
 
     /// `chrome/page/snapshot` — capture a page snapshot.
@@ -172,6 +253,19 @@ impl AppServer {
 /// Serialize the current bridge status as a JSON-RPC result value.
 fn status_value() -> serde_json::Value {
     serde_json::to_value(bridge().status()).expect("chrome status serializes")
+}
+
+/// Mirror the session's permission mode into the connected extension.
+///
+/// The host-side mode is only half the gate: the extension keeps its own mode
+/// and its own user-set capability ceiling, and without this the two drift —
+/// `chrome/setMode { control }` would leave the extension in `assist` and every
+/// interaction would be refused. Failures are deliberately ignored: no
+/// extension may be connected yet, and the mode is re-sent on the next call.
+async fn push_mode(mode: ChromePermissionMode) {
+    let command =
+        ChromeCommand::with_params("session/mode", serde_json::json!({ "mode": mode.as_str() }));
+    let _ = bridge().dispatch(command).await;
 }
 
 /// Forward a command to the connected extension and surface failures as JSON-RPC errors.

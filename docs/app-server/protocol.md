@@ -4,6 +4,12 @@ Roder's app-server contract uses protocol thread, turn, item, model,
 filesystem, and command method names. This is the canonical app-server surface
 for app, TUI, CLI, SDK, and sibling clients.
 
+With `roder app-server --backend codex`, the same methods and notifications
+drive Codex's app-server agent runtime. Roder translates thread and turn
+operations, streamed messages and tool output, file edits, token usage, and
+approval requests at this boundary. See [Agent backends](../agent-backends.md)
+for backend selection and policy mapping.
+
 ## Required Client Methods
 
 | Method | Client caller | Roder backing behavior | Notes |

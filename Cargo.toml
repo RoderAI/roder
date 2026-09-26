@@ -13,6 +13,7 @@ repository = "https://github.com/RoderAI/roder"
 readme = "README.md"
 
 [workspace.dependencies]
+roder-ext-codex-backend = { path = "crates/roder-ext-codex-backend", version = "0.1.0" }
 anyhow = "1.0.102"
 agent-client-protocol-schema = "0.13.8"
 async-trait = "0.1.89"
@@ -91,6 +92,7 @@ roder-roadmap = { path = "crates/roder-roadmap", version = "0.1.0" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth", version = "0.1.0" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic", version = "0.1.0" }
 roder-ext-chrome = { path = "crates/roder-ext-chrome", version = "0.1.0" }
+roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.1.0" }
 roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.1.0" }
 roder-ext-cursor = { path = "crates/roder-ext-cursor", version = "0.1.0" }
 roder-ext-deepseek = { path = "crates/roder-ext-deepseek", version = "0.1.0" }

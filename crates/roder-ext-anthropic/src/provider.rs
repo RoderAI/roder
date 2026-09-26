@@ -360,7 +360,7 @@ fn anthropic_tool_choice(choice: &roder_api::tools::ToolChoice, model: &str) -> 
  * every earlier Claude model in the catalog still accepts them.
  */
 fn anthropic_model_supports_forced_tool_choice(model: &str) -> bool {
-    !model.starts_with("claude-fable-5-1")
+    !model.starts_with("claude-fable-5-1") && !model.starts_with("claude-opus-5-5")
 }
 
 /// Anthropic rejects tool names outside ^[a-zA-Z0-9_-]{1,128}$, but roder tool
@@ -416,7 +416,9 @@ fn anthropic_provider_native_tool_search(request: &AgentInferenceRequest) -> boo
  * same support gating as the live request mapping.
  */
 pub fn anthropic_model_supports_tool_search(model: &str) -> bool {
-    model.starts_with("claude-sonnet-4-6")
+    model.starts_with("claude-sonnet-5")
+        || model.starts_with("claude-opus-5-5")
+        || model.starts_with("claude-sonnet-4-6")
         || model.starts_with("claude-opus-4-8")
         || model.starts_with("claude-fable")
         || model.starts_with("claude-4")
@@ -427,6 +429,8 @@ pub fn anthropic_model_supports_tool_search(model: &str) -> bool {
 // `top_p`, `top_k`) with a 400 — they must be omitted from the request body.
 fn anthropic_model_accepts_sampling_params(model: &str) -> bool {
     !(model.starts_with("claude-fable")
+        || model.starts_with("claude-opus-5-5")
+        || model.starts_with("claude-sonnet-5")
         || model.starts_with("claude-opus-4-7")
         || model.starts_with("claude-opus-4-8"))
 }
@@ -758,6 +762,23 @@ mod tests {
     #[test]
     fn fable_5_supports_provider_native_tool_search() {
         assert!(anthropic_model_supports_tool_search("claude-fable-5"));
+    }
+
+    #[test]
+    fn opus_55_and_sonnet_5_use_supported_request_modes() {
+        assert!(!anthropic_model_supports_forced_tool_choice(
+            "claude-opus-5-5"
+        ));
+        assert!(!anthropic_model_accepts_sampling_params("claude-opus-5-5"));
+        assert!(!anthropic_model_accepts_sampling_params("claude-sonnet-5"));
+        assert!(anthropic_model_supports_tool_search("claude-opus-5-5"));
+        assert!(anthropic_model_supports_tool_search("claude-sonnet-5"));
+        let mut request = request();
+        request.model.model = "claude-opus-5-5".into();
+        request.tool_choice = ToolChoice::Specific("shell".into());
+        let body = AnthropicEngine::map_request(&request);
+        assert_eq!(body["tool_choice"]["type"], "auto");
+        assert!(body.get("temperature").is_none());
     }
 
     #[test]

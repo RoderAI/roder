@@ -178,6 +178,7 @@ async fn turns_complete_while_a_sink_hangs() {
             instructions: roder_core::default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

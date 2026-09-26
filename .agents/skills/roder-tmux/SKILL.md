@@ -25,6 +25,13 @@ The default session is `roder`, the default command is `cargo run -p roder-cli -
   ```sh
   .agents/skills/roder-tmux/scripts/roder_tmux.sh start -s roder -- cargo run -p roder-cli --bin roder
   ```
+- Start with an explicit window size (default 200x50 — an 80x24 tmux default
+  truncates roder's `/remote` pairing URL and `/chrome` status panels):
+  ```sh
+  .agents/skills/roder-tmux/scripts/roder_tmux.sh start -s roder -x 220 -y 60
+  ```
+  `RODER_TMUX_WIDTH` / `RODER_TMUX_HEIGHT` set the same defaults. Size the window
+  at start rather than calling `tmux resize-window` on a detached session later.
 - Start with an alternate command:
   ```sh
   .agents/skills/roder-tmux/scripts/roder_tmux.sh start -s roder-dev -- make run

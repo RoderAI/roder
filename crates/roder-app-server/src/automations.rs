@@ -141,6 +141,7 @@ impl AppServer {
             crate::workspace_files::WorkspaceFileService::new(protocol_notifications.clone());
         Self {
             runtime,
+            agent_backend: None,
             workflows,
             tasks,
             persist_user_config: false,

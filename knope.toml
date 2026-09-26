@@ -144,6 +144,13 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-claude-code/CHANGELOG.md"
 
+[packages."roder-ext-codex-backend"]
+versioned_files = [
+    "crates/roder-ext-codex-backend/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-codex-backend/CHANGELOG.md"
+
 [packages."roder-ext-cursor"]
 versioned_files = [
     "crates/roder-ext-cursor/Cargo.toml",
@@ -241,6 +248,13 @@ versioned_files = [
     "Cargo.lock",
 ]
 changelog = "crates/roder-ext-inference-router/CHANGELOG.md"
+
+[packages."roder-ext-jev"]
+versioned_files = [
+    "crates/roder-ext-jev/Cargo.toml",
+    "Cargo.lock",
+]
+changelog = "crates/roder-ext-jev/CHANGELOG.md"
 
 [packages."roder-ext-jsonl-thread-store"]
 versioned_files = [

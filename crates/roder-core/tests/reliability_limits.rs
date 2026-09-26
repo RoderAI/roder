@@ -79,6 +79,7 @@ async fn reliability_limits_model_call_emits_interactive_continuation_decision()
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();
@@ -239,6 +240,7 @@ fn turn(thread_id: &str) -> StartTurnRequest {
         instructions: default_instructions(),
         developer_context: None,
         task_ledger_required: false,
+        service_tier_override: None,
     }
 }
 

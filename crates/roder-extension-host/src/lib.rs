@@ -38,6 +38,7 @@ use roder_ext_honcho::{HonchoMemoryConfig, HonchoMemoryExtension};
 use roder_ext_inference_router::{
     LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
 };
+use roder_ext_jev::JevExtension;
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
 use roder_ext_kimi_code::{KimiCodeConfig, KimiCodeExtension};
 use roder_ext_knowledge_md::KnowledgeMdExtension;
@@ -514,6 +515,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
     builder.install(WebwrightExtension)?;
     builder.install(ChromeExtension::new())?;
+    builder.install(JevExtension)?;
     builder.install(ZerolangExtension::new(config.zerolang.unwrap_or_default()))?;
     if config.notifications.enabled && config.notifications.terminal {
         builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
@@ -1876,7 +1878,9 @@ mod tests {
             std::fs::create_dir_all(&temp).unwrap();
             // SAFETY: set once before any test reads the config; all tests run
             // in the same process and never restore a real config dir.
-            unsafe { std::env::set_var("RODER_CONFIG_DIR", &temp); }
+            unsafe {
+                std::env::set_var("RODER_CONFIG_DIR", &temp);
+            }
         });
 
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();

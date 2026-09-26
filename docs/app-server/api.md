@@ -182,7 +182,7 @@ Core:
 | `initialize` | Startup handshake with active provider, model, and cwd. |
 | `extensions/list` | List extension manifests and capability status. |
 | `providers/list` | List providers, auth status, capabilities, and models. |
-| `providers/configure` | Persist an API key for an API-key provider. |
+| `providers/configure` | Persist an API key for an inference provider or Jev browser tool. |
 | `providers/select` | Select active default provider/model/reasoning; Manual-only legacy path. |
 | `model/list` | List protocol model descriptors. |
 | `model/select` | Select Manual provider/model or Auto routing mode. |
@@ -765,7 +765,8 @@ Behavior:
 
 ### `providers/configure`
 
-Purpose: Persist an API key for a registered API-key provider.
+Purpose: Persist an API key for a registered API-key inference provider or the
+Jev browser tool provider.
 
 Request:
 
@@ -787,7 +788,9 @@ Response:
 
 Behavior:
 
-- Requires the provider to be registered in the runtime inference registry.
+- Requires the provider to be registered in the runtime inference registry,
+  except `jev`, which configures the `jev_browse` tool provider. Jev is not
+  selectable as an inference model. Its key may also come from `JEV_API_KEY`.
 - OpenRouter API keys are configured with provider `openrouter`; optional
   attribution headers are read from config or environment, not from this method.
 - Fireworks API keys are configured with provider `fireworks`; environment and
@@ -1360,6 +1363,11 @@ Behavior:
 ### `thread/list`
 
 Purpose: Bootstrap or refresh a thread list.
+
+When started with `roder app-server --backend codex`, Roder serves this method
+from Codex's stored thread list for the current directory and merges sessions
+opened in this app-server process. `thread/read` resumes a Codex thread id and
+maps its saved turns into Roder items.
 
 Request:
 
@@ -5539,12 +5547,20 @@ and await its `command/result`.
 | `chrome/reconnect` | — | `ChromeStatus` |
 | `chrome/browsers/list` | — | `{ browsers: [] }` when disconnected, else bridge result |
 | `chrome/tabs/list` | — | bridge result (`tabs/list`) |
+| `chrome/tabs/open` | `{ url, active? }` | bridge result (`tab/open`) |
+| `chrome/tabs/close` | `{ tabId }` | bridge result (`tab/close`) |
+| `chrome/tabs/group` | `{ tabIds, title? }` | bridge result (`tabs/group`) |
 | `chrome/tabs/activate` | `{ tabId }` | bridge result (`tab/activate`) |
 | `chrome/tabs/navigate` | `{ tabId?, url }` | bridge result (`tab/navigate`) |
 | `chrome/page/snapshot` | `{ tabId?, include? }` | bridge result (`page/snapshot`) |
+| `chrome/page/getText` | `{ tabId? }` | bridge result (`page/getText`) |
 | `chrome/page/action` | `{ action, ... }` | bridge result (`page/<action>`) |
+| `chrome/debug/attach` | `{ tabId? }` | bridge result (`debug/attach`) |
+| `chrome/debug/detach` | `{ tabId? }` | bridge result (`debug/detach`) |
 | `chrome/debug/console` | `{ tabId?, limit? }` | bridge result (`debug/console/read`) |
 | `chrome/debug/network` | `{ tabId?, limit? }` | bridge result (`debug/network/read`) |
+| `chrome/recording/start` | `{ tabId? }` | bridge result (`recording/start`) |
+| `chrome/recording/stop` | `{ recordingId }` | bridge result (`recording/stop`) |
 | `chrome/permissions/list` | `{ origin? }` | bridge result (`permissions/get`) |
 | `chrome/permissions/update` | `{ origin, perms }` | bridge result (`permissions/set`) |
 
@@ -5552,6 +5568,20 @@ Behavior:
 
 - `chrome/enable` sets the session enabled flag and, when `mode` is supplied,
   the permission mode; an unknown mode returns `-32602`.
+- `chrome/enable` and `chrome/setMode` also push the mode to the extension as a
+  `session/mode` command, so the browser side gates on the same mode the host
+  does. The extension keeps its own user-set capability ceiling (the options
+  page) and its per-origin site permissions; the mode can only narrow what runs,
+  never widen it past what the user granted. The push is best-effort — no
+  extension may be connected — and is re-sent on the next mode call.
+- `chrome/debug/console` and `chrome/debug/network` read a buffer that only
+  fills while the debugger is attached: call `chrome/debug/attach` first.
+- `chrome/tabs/group` with no `title` (or `title: "Roder"`) reuses the single
+  `Roder` tab group rather than creating a new group per call. Every tab Roder
+  opens or is pointed at joins that group automatically.
+- `chrome/page/snapshot`'s `include` accepts `text`, `controls`, `forms`,
+  `iframes`, `boxes`; omitting it captures all of them, and listing a subset
+  drops the rest (so an empty `controls` array means it was not requested).
 - `chrome/page/action` maps `action` (`click`, `type`, `keypress`, `scroll`,
   `select`, `screenshot`, `highlight`, `eval`) to the wire kind `page/<action>`
   and forwards the remaining params; unknown actions return `-32602`.
@@ -6036,6 +6066,28 @@ Cancellation and interruption:
 - `tasks/cancel` cancels a background task and returns `{ "cancelled": bool }`.
 
 ## Persistence and Contract Notes
+
+### Agent backend selection
+
+`roder app-server --backend codex` keeps the Roder JSON-RPC surface while
+Codex owns inference and tool execution. `thread/start`, `thread/read`,
+`thread/list`, `thread/archive`, `turn/start`, `turn/steer`, `turn/interrupt`,
+`thread/resolve_approval`, and `thread/resolve_user_input` are routed through
+the backend adapter. Clients receive the usual Roder turn, item, and approval
+notifications. Codex command output additionally streams as
+`thread/toolOutputDelta` with `threadId`, `turnId`, `toolId`, and `delta`;
+completed file edits emit `thread/fileChanged` with `threadId`, `turnId`,
+`path`, and `changeType`. A permission request from Codex uses the existing
+Roder approval method and dialog. Codex `thread/tokenUsage/updated` is mapped
+to Roder usage events and the completed turn's `usage`; the TUI token counters
+update from those events. `initialize`, `model/list`, `providers/list`,
+`providers/select`, and `model/select` are backed by Codex's model catalog.
+Other Roder app-server methods continue to
+be served by Roder.
+
+The selected Roder policy mode is sent to Codex as approval and sandbox
+settings when starting a thread or turn. Codex threads remain stored by Codex;
+Roder's native thread persistence is not used for their conversation history.
 
 - `thread/list` and `thread/read` use persisted threads first and in-memory
   protocol threads as a fallback.

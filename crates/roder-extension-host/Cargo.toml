@@ -20,6 +20,7 @@ roder-config.workspace = true
 roder-context.workspace = true
 roder-ext-anthropic.workspace = true
 roder-ext-chrome.workspace = true
+roder-ext-jev.workspace = true
 roder-ext-claude-code.workspace = true
 roder-ext-cursor.workspace = true
 roder-ext-deepseek.workspace = true

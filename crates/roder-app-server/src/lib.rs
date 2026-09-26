@@ -1,6 +1,7 @@
 pub mod acp;
 pub mod agent_node;
 mod artifact;
+mod backend;
 mod automation_worker;
 mod automations;
 mod chrome;

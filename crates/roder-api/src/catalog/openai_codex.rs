@@ -1,7 +1,7 @@
 use super::{
     EDIT_TOOL_PATCH, ModelCatalogEntry, PROVIDER_OPENAI, REASONING_HIGH, REASONING_LOW,
-    REASONING_MAX, REASONING_MEDIUM, REASONING_ULTRA, REASONING_XHIGH, ReasoningOption,
-    STANDARD_REASONING,
+    REASONING_MAX, REASONING_MEDIUM, REASONING_NONE, REASONING_ULTRA, REASONING_XHIGH,
+    ReasoningOption, STANDARD_REASONING,
 };
 
 const GPT_56_REASONING: &[ReasoningOption] = &[
@@ -77,12 +77,59 @@ const GPT_6_REASONING: &[ReasoningOption] = &[
     },
 ];
 
+const GPT_6_SOL_LUNA_REASONING: &[ReasoningOption] = &[
+    ReasoningOption {
+        effort: REASONING_NONE,
+        description: "No reasoning for fastest responses",
+    },
+    ReasoningOption {
+        effort: REASONING_LOW,
+        description: "Fast responses with lighter reasoning",
+    },
+    ReasoningOption {
+        effort: REASONING_MEDIUM,
+        description: "Balanced reasoning",
+    },
+    ReasoningOption {
+        effort: REASONING_HIGH,
+        description: "Deeper reasoning",
+    },
+    ReasoningOption {
+        effort: REASONING_XHIGH,
+        description: "Extra high reasoning",
+    },
+    ReasoningOption {
+        effort: REASONING_MAX,
+        description: "Maximum reasoning",
+    },
+];
+
 pub(super) const GPT_6_ASTRA: ModelCatalogEntry = openai_codex_model(
     "gpt-6-astra",
     "GPT-6-Astra",
     "OpenAI's most capable model, built for the hardest end-to-end work.",
     REASONING_HIGH,
     GPT_6_REASONING,
+    1_050_000,
+    1_050_000,
+);
+
+pub(super) const GPT_6_SOL: ModelCatalogEntry = openai_codex_model(
+    "gpt-6-sol",
+    "GPT-6 Sol",
+    "Agentic coding model balancing intelligence and cost.",
+    REASONING_MEDIUM,
+    GPT_6_SOL_LUNA_REASONING,
+    1_050_000,
+    1_050_000,
+);
+
+pub(super) const GPT_6_LUNA: ModelCatalogEntry = openai_codex_model(
+    "gpt-6-luna",
+    "GPT-6 Luna",
+    "Efficient model for focused, high-volume tasks.",
+    REASONING_MEDIUM,
+    GPT_6_SOL_LUNA_REASONING,
     1_050_000,
     1_050_000,
 );

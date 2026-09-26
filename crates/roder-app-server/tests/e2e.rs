@@ -4035,6 +4035,8 @@ async fn providers_list_exposes_current_codex_subscription_roster_and_ultra_sele
             .collect::<Vec<_>>(),
         vec![
             "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
             "gpt-5.6-sol",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
@@ -6641,6 +6643,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             instructions: default_instructions(),
             developer_context: None,
             task_ledger_required: false,
+            service_tier_override: None,
         })
         .await
         .unwrap();

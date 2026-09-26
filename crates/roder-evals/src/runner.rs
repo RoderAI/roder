@@ -315,6 +315,7 @@ async fn run_offline_fixture(
                 instructions: InstructionBundle::default(),
                 developer_context: None,
                 task_ledger_required: fixture.expected.task_ledger_required,
+                service_tier_override: None,
             })
             .await?;
         let timeout_ms = fixture.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
