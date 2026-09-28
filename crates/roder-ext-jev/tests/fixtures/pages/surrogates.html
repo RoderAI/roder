@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Emoji</title></head>
+<body>
+  <!-- The page text is cut at 6000 UTF-16 units, straddling an emoji; a
+       generic clickable's name is cut at 100 straddling another; and the
+       page itself writes half an emoji into a button and a field. -->
+  <p id="long"></p>
+  <div id="card" onclick="window.opened = true" style="width: 300px"></div>
+  <button id="half" type="button"></button>
+  <input id="field" aria-label="Note">
+  <script>
+    document.getElementById('long').textContent = 'a'.repeat(5999) + '\u{1F600}' + ' tail';
+    document.getElementById('card').textContent = 'b'.repeat(98) + '\u{1F600}' + ' more card text';
+    document.getElementById('half').textContent = 'Save \uD83D';
+    document.getElementById('field').value = 'Draft \uD83D';
+  </script>
+</body>
+</html>

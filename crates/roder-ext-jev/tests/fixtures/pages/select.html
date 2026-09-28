@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Pick a colour</title></head>
+<body>
+  <h1>Pick a colour</h1>
+  <label>Colour
+    <select name="colour" id="colour">
+      <option value="red">Red</option>
+      <option value="green">Green</option>
+      <option value="blue">Blue</option>
+      <option value="grey" disabled>Grey</option>
+    </select>
+  </label>
+  <p id="status">No change yet</p>
+  <script>
+    window.changes = [];
+    document.getElementById('colour').addEventListener('change', event => {
+      window.changes.push(event.target.value);
+      document.getElementById('status').textContent = 'Changed to ' + event.target.value;
+    });
+  </script>
+</body>
+</html>

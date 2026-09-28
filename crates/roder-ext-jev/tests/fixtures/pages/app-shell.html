@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Inbox app</title>
+<style>
+  html, body { margin: 0; height: 100vh; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  header { height: 48px; flex: none; }
+  main { flex: 1; overflow: auto; }
+  main p { height: 40px; margin: 0; }
+</style>
+</head>
+<body>
+  <!-- An app shell: the document never scrolls; the main pane does. Its
+       controls below the fold, and its pager, are reached by scrolling the
+       pane. -->
+  <header><h1>Inbox</h1></header>
+  <main id="main"></main>
+  <script>
+    const main = document.getElementById('main');
+    let html = '';
+    for (let i = 1; i <= 60; i++) html += `<p><button type="button" onclick="window.opened = ${i}">Open mail ${i}</button></p>`;
+    html += '<p><a href="app-shell.html?page=2" rel="next">Next page</a></p>';
+    main.innerHTML = html;
+  </script>
+</body>
+</html>

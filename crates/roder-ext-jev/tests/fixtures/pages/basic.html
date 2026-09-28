@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Basic controls</title></head>
+<body>
+  <h1>Basic controls</h1>
+  <p>Every kind of control snapshot.js reports, and a few it must skip.</p>
+  <a href="/pages/landing.html">Read the docs</a>
+  <button type="button">Save draft</button>
+  <label>Full name <input type="text" name="name"></label>
+  <label>Newsletter <input type="checkbox" name="news"></label>
+  <!-- A password field is offered (its value never read); disabled,
+       hidden or zero-size controls are never observed. -->
+  <input type="password" name="secret" aria-label="Secret">
+  <button type="button" disabled>Disabled action</button>
+  <button type="button" style="display:none">Hidden action</button>
+  <button type="button" style="opacity:0">Transparent action</button>
+  <div aria-hidden="true"><button type="button">Aria hidden action</button></div>
+</body>
+</html>

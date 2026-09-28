@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Big store</title>
+  <style>
+    body { font: 13px sans-serif; margin: 0; }
+    header nav a { margin: 0 4px; }
+    #layout { display: flex; }
+    aside { width: 180px; flex: none; }
+    aside li { cursor: pointer; }
+    main { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .card { border: 1px solid #ccc; padding: 4px; cursor: pointer; }
+    .card .meta span { margin-right: 2px; }
+    .card .icons span { display: inline-block; width: 12px; height: 12px; background: #ddd; }
+    footer div { display: inline-block; margin: 2px; }
+  </style>
+</head>
+<body>
+  <!-- ?n=N product cards (default 400): about 40 elements each, for the
+       snapshot's cost on a large page. Cards are clickable only through a
+       delegated handler (as React attaches them) and their cursor; each has
+       an icon row whose icons carry their own click listeners, a button and
+       a link. The navigation, sidebar and footer add plain links, lists and
+       paragraphs. -->
+  <header><nav id="nav"></nav><input type="search" placeholder="Search the store"></header>
+  <div id="layout">
+    <aside><ul id="side"></ul></aside>
+    <main id="grid"></main>
+  </div>
+  <footer id="foot"></footer>
+  <script>
+    const n = Number(new URLSearchParams(location.search).get('n') || 400);
+    const nav = document.getElementById('nav');
+    for (let i = 0; i < 60; i++) nav.insertAdjacentHTML('beforeend', `<a href="/c/${i}">Category ${i}</a>`);
+    const side = document.getElementById('side');
+    for (let i = 0; i < 80; i++) side.insertAdjacentHTML('beforeend', `<li>Filter ${i} <small>(${i * 3})</small></li>`);
+    const grid = document.getElementById('grid');
+    let html = '';
+    for (let i = 0; i < n; i++) {
+      html += `<div class="card" data-id="${i}">
+        <div class="media"><img alt="" width="40" height="30"><div class="badge"><span>New</span></div></div>
+        <div class="title"><span>Product</span> <span>${i}</span></div>
+        <div class="meta"><span>★</span><span>★</span><span>★</span><span>★</span><span>☆</span> <em>${i % 97} reviews</em></div>
+        <div class="price"><span>$</span><span>${(i * 7) % 300}</span><span>.99</span></div>
+        <p>Ships in <b>${i % 5 + 1}</b> days from <i>Warehouse ${i % 13}</i>. <small>Terms apply.</small></p>
+        <div class="icons"><span class="fav" title="Favourite"></span><span class="share" title="Share"></span></div>
+        <button type="button">Add to cart</button> <a href="/p/${i}">Details</a>
+      </div>`;
+    }
+    grid.innerHTML = html;
+    for (const icon of grid.querySelectorAll('.icons span')) icon.addEventListener('click', () => {});
+    grid.addEventListener('click', event => { window.opened = event.target.closest('.card')?.dataset.id; });
+    const foot = document.getElementById('foot');
+    for (let i = 0; i < 200; i++) foot.insertAdjacentHTML('beforeend', `<div><p>Footer note ${i}</p></div>`);
+  </script>
+</body>
+</html>

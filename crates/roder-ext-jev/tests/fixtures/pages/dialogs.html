@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Drafts</title></head>
+<body>
+  <h1>Drafts</h1>
+  <!-- Every kind of JavaScript dialog. Each blocks the renderer until it is
+       answered, so an unanswered one would stall the next DevTools call. -->
+  <p>Q3 notes, edited yesterday</p>
+  <p id="status">Nothing done yet</p>
+  <button type="button" id="save">Save</button>
+  <button type="button" id="delete">Delete draft</button>
+  <button type="button" id="rename">Rename</button>
+  <button type="button" id="later">Save later</button>
+  <a href="/pages/landing.html" id="leave">Leave drafts</a>
+  <script>
+    const status = text => { document.getElementById('status').textContent = text; };
+    document.getElementById('save').addEventListener('click', () => {
+      alert('Saved.');
+      status('Saved');
+    });
+    document.getElementById('delete').addEventListener('click', () => {
+      if (confirm('Delete the draft "Q3 notes"? This cannot be undone.')) {
+        window.deleted = true;
+        status('Deleted');
+      } else {
+        window.kept = (window.kept || 0) + 1;
+      }
+    });
+    document.getElementById('rename').addEventListener('click', () => {
+      window.renamed = prompt('New name for the draft?', 'Q3 notes');
+    });
+    document.getElementById('later').addEventListener('click', () => {
+      setTimeout(() => { alert('Saved later.'); status('Saved later'); }, 300);
+    });
+    // Leaving asks first, as an editor with unsaved changes does.
+    window.addEventListener('beforeunload', event => {
+      event.preventDefault();
+      event.returnValue = '';
+    });
+  </script>
+</body>
+</html>

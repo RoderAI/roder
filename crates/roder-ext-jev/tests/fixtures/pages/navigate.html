@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Leaving soon</title></head>
+<body>
+  <h1>Leaving soon</h1>
+  <button type="button" onclick="window.clicks = (window.clicks || 0) + 1">Stay here</button>
+  <script>
+    // Navigates away on its own `?observed_after=<ms>`, so the page moves
+    // between a decision and the act that follows it. The clock starts at
+    // Jev's first snapshot (which sets `__jevFast.pageKey`), not at load, so
+    // a slow start cannot move the page before it is read.
+    const leave = () => { location.href = '/pages/landing.html'; };
+    const observedAfter = Number(new URLSearchParams(location.search).get('observed_after'));
+    if (observedAfter > 0) {
+      const watch = setInterval(() => {
+        if (!window.__jevFast?.pageKey) return;
+        clearInterval(watch);
+        setTimeout(leave, observedAfter);
+      }, 10);
+    }
+  </script>
+</body>
+</html>

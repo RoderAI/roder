@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Find flights</title></head>
+<body>
+  <h1>Find flights</h1>
+  <!-- Typing alone is not enough: only choosing a suggestion sets the
+       hidden place code the search posts. -->
+  <form method="post" action="/submit/search">
+    <label for="destination">Destination</label>
+    <input id="destination" name="destination" role="combobox" aria-controls="places"
+           aria-expanded="false" autocomplete="off">
+    <input type="hidden" name="place" id="place">
+    <ul id="places" role="listbox"></ul>
+    <button type="submit">Search flights</button>
+  </form>
+  <script>
+    const places = [['Lisbon, Portugal', 'LIS'], ['Lisbon, Ohio', 'LBN'], ['Lima, Peru', 'LIM']];
+    const input = document.getElementById('destination');
+    const list = document.getElementById('places');
+    const place = document.getElementById('place');
+    input.addEventListener('input', () => {
+      place.value = '';
+      list.innerHTML = '';
+      const typed = input.value.trim().toLowerCase();
+      for (const [name, code] of places) {
+        if (!typed || !name.toLowerCase().startsWith(typed)) continue;
+        const option = document.createElement('li');
+        option.setAttribute('role', 'option');
+        option.textContent = name;
+        option.addEventListener('click', () => {
+          input.value = name;
+          place.value = code;
+          list.innerHTML = '';
+          input.setAttribute('aria-expanded', 'false');
+        });
+        list.append(option);
+      }
+      input.setAttribute('aria-expanded', String(list.children.length > 0));
+    });
+  </script>
+</body>
+</html>

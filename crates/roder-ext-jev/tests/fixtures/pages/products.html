@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Shop</title>
+  <style>
+    body { font: 14px sans-serif; margin: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(4, 240px); gap: 12px; }
+    .card { border: 1px solid #ccc; padding: 8px; }
+    .card h3, .card h4, .card p { margin: 4px 0; }
+    .share button { width: 28px; height: 28px; }
+  </style>
+</head>
+<body>
+  <h1>Shop</h1>
+  <!-- A real shop confirms an add; without it nothing visible changes. -->
+  <p id="cart-status" role="status">Cart is empty</p>
+  <!-- Eight cards with the same button. Every card ends in a "Details"
+       heading, so the nearest title is shared and the card's first title
+       must name it; card three opens with a hidden heading that must not. -->
+  <section class="grid">
+    <article class="card">
+      <h3>Trail Runner</h3>
+      <p class="price">$89</p>
+      <h4>Details</h4>
+      <p>Lightweight shoe for rough paths.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Trail Runner')">Add to cart</button>
+    </article>
+    <article class="card">
+      <h3>Canvas Tote</h3>
+      <p class="price">$24</p>
+      <h4>Details</h4>
+      <p>Holds a laptop and lunch.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Canvas Tote')">Add to cart</button>
+    </article>
+    <article class="card">
+      <h4 hidden>Clearance</h4>
+      <h3>Wool Beanie</h3>
+      <p class="price">$18</p>
+      <h4>Details</h4>
+      <p>Warm, soft and machine washable.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Wool Beanie')">Add to cart</button>
+    </article>
+    <article class="card">
+      <h3>Steel Bottle</h3>
+      <p class="price">$29</p>
+      <h4>Details</h4>
+      <p>Keeps drinks cold for a day.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Steel Bottle')">Add to cart</button>
+    </article>
+    <article class="card">
+      <h3>Rain Shell</h3>
+      <p class="price">$120</p>
+      <h4>Details</h4>
+      <p>Packs into its own pocket.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Rain Shell')">Add to cart</button>
+    </article>
+    <article class="card">
+      <h3>Desk Lamp</h3>
+      <p class="price">$45</p>
+      <h4>Details</h4>
+      <p>Warm light with three levels.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Desk Lamp')">Add to cart</button>
+    </article>
+    <article class="card">
+      <h3>Yoga Mat</h3>
+      <p class="price">$38</p>
+      <h4>Details</h4>
+      <p>Grippy on both sides.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Yoga Mat')">Add to cart</button>
+    </article>
+    <article class="card">
+      <h3>Travel Mug</h3>
+      <p class="price">$22</p>
+      <h4>Details</h4>
+      <p>Fits under most coffee machines.</p>
+      <button type="button" onclick="(window.cart ||= []).push('Travel Mug')">Add to cart</button>
+    </article>
+  </section>
+  <!-- Identical icon buttons with nothing around them differ only by position. -->
+  <div class="share">
+    <span><button type="button" aria-label="Share"></button></span>
+    <span><button type="button" aria-label="Share"></button></span>
+    <span><button type="button" aria-label="Share"></button></span>
+  </div>
+  <script>
+    document.addEventListener('click', () => {
+      const cart = window.cart || [];
+      if (cart.length) document.getElementById('cart-status').textContent = 'Cart (' + cart.length + '): ' + cart.join(', ');
+    });
+  </script>
+</body>
+</html>

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use roder_ext_jev::{
-    JevBrowser, JevDecision, JevDecisionClient, JevEngine, JevEngineConfig, JevStatus,
-    JevTextValue, JevTextValueResolver,
+    JevActOutcome, JevBrowser, JevDecision, JevDecisionClient, JevEngine, JevEngineConfig,
+    JevStatus, JevTextValue, JevTextValueResolver,
 };
 use serde_json::{Map, Value, json};
 
@@ -66,9 +66,9 @@ impl JevBrowser for HostedBrowser {
         _observation: &Value,
         text: Option<&str>,
         _wait: Duration,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<JevActOutcome> {
         self.state.lock().unwrap().executed_text = text.map(str::to_string);
-        Ok(())
+        Ok(JevActOutcome::done())
     }
 }
 
@@ -94,9 +94,12 @@ impl JevDecisionClient for HostedDecisionClient {
             operation: operation.into(),
             target: None,
             confidence: 1.0,
+            target_confidence: None,
             probabilities,
             latency_ms: 1,
             usage: json!({}),
+            model: None,
+            irreversible: None,
         })
     }
 }

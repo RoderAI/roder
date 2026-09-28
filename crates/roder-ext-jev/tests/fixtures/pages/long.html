@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Long page</title></head>
+<body>
+  <h1>Long page</h1>
+  <button type="button" onclick="window.top_clicks = (window.top_clicks || 0) + 1">Top action</button>
+  <!-- Pushes the target well below the 780 px viewport. -->
+  <div style="height: 2400px"></div>
+  <button type="button" id="subscribe"
+          onclick="window.clicks = (window.clicks || 0) + 1;
+                   document.getElementById('status').textContent = 'Subscribed'">Subscribe</button>
+  <p id="status"></p>
+</body>
+</html>

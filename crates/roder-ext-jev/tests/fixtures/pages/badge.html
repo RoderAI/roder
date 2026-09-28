@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Badge over a button</title>
+  <style>
+    #wrap { position: relative; display: inline-block; margin: 40px; }
+    #cart { width: 200px; height: 60px; }
+    /* Sits over the button's centre and nothing else. */
+    #badge { position: absolute; left: 80px; top: 10px; width: 40px; height: 40px;
+             border-radius: 50%; background: crimson; color: white; text-align: center;
+             line-height: 40px; }
+  </style>
+</head>
+<body>
+  <h1>Badge over a button</h1>
+  <div id="wrap">
+    <button type="button" id="cart"
+            onclick="window.clicks = (window.clicks || 0) + 1; window.at = [event.clientX, event.clientY]">Open cart</button>
+    <span id="badge" onclick="window.badge_clicks = (window.badge_clicks || 0) + 1">3</span>
+  </div>
+</body>
+</html>

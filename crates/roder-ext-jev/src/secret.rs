@@ -1,0 +1,133 @@
+//! Secret fields: passwords and one-time codes.
+//!
+//! `snapshot.js` offers a password field, a field masked like one, and one
+//! marked for a password or a one-time code as a fill action whose
+//! `input_type` is `password` or `one-time-code`, with `filled` saying
+//! whether it holds anything and `value` always empty: what such a field
+//! holds is never read. The value Jev types into one is recorded as
+//! [`SECRET`] on the step, and the loop scrubs it from everything it later
+//! reads off the page, in case the page shows it back (a "show password"
+//! toggle, an echo in an error message, a GET form's address).
+
+use serde_json::Value;
+
+/// What a step, a text-helper record or a scrubbed page shows instead of a
+/// typed secret. Its length is not given.
+pub(crate) const SECRET: &str = "[secret]";
+
+/// A typed secret shorter than this is not scrubbed from the page: taking
+/// every "12" out of the page text would garble it for a code nobody could
+/// recognise there anyway.
+const SCRUB_MIN_CHARS: usize = 4;
+
+/// Whether an observed action targets a secret field.
+pub(crate) fn is_secret(action: &Value) -> bool {
+    matches!(
+        action["input_type"].as_str(),
+        Some("password" | "one-time-code")
+    )
+}
+
+/// The secrets typed in one run, kept only in memory to scrub them from
+/// what the page shows.
+#[derive(Debug, Default)]
+pub(crate) struct Secrets(Vec<String>);
+
+impl Secrets {
+    pub(crate) fn remember(&mut self, value: &str) {
+        let value = value.trim();
+        if value.chars().count() >= SCRUB_MIN_CHARS && !self.0.iter().any(|known| known == value) {
+            self.0.push(value.to_string());
+        }
+    }
+
+    /// `text` with every remembered secret replaced by [`SECRET`].
+    pub(crate) fn scrub(&self, text: &str) -> String {
+        self.0.iter().fold(text.to_string(), |text, secret| {
+            text.replace(secret.as_str(), SECRET)
+        })
+    }
+
+    fn scrub_in_place(&self, value: &mut Value) {
+        if let Value::String(text) = value
+            && self.0.iter().any(|secret| text.contains(secret.as_str()))
+        {
+            *text = self.scrub(text);
+        }
+    }
+
+    /// Scrub the parts of an observation that leave the loop: its address,
+    /// title and text, each action's label, value, current value and
+    /// context, and the dialogs' messages. The freshness marker, page key
+    /// and guards are compared with the live page and never leave it, so
+    /// they are kept; so is a select option's value, which choosing it needs.
+    pub(crate) fn scrub_observation(&self, observation: &mut Value) {
+        if self.0.is_empty() {
+            return;
+        }
+        for key in ["url", "title", "text"] {
+            if let Some(value) = observation.get_mut(key) {
+                self.scrub_in_place(value);
+            }
+        }
+        for action in observation["actions"].as_array_mut().into_iter().flatten() {
+            let select = action["kind"] == "select";
+            for key in ["label", "value", "current_value", "context"] {
+                if key == "value" && select {
+                    continue;
+                }
+                if let Some(value) = action.get_mut(key) {
+                    self.scrub_in_place(value);
+                }
+            }
+        }
+        for dialog in observation["dialogs"].as_array_mut().into_iter().flatten() {
+            if let Some(message) = dialog.get_mut("message") {
+                self.scrub_in_place(message);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn only_passwords_and_one_time_codes_are_secret() {
+        assert!(is_secret(&json!({"input_type": "password"})));
+        assert!(is_secret(&json!({"input_type": "one-time-code"})));
+        assert!(!is_secret(&json!({"input_type": "text"})));
+        assert!(!is_secret(&json!({"kind": "fill"})));
+    }
+
+    #[test]
+    fn a_typed_secret_is_scrubbed_from_what_leaves_the_loop() {
+        let mut secrets = Secrets::default();
+        secrets.remember("hunter2-7431");
+        secrets.remember("12");
+        let mut page = json!({
+            "url": "https://x.test/login?password=hunter2-7431",
+            "title": "Hi",
+            "text": "Wrong password hunter2-7431 for 12 users",
+            "marker": ["hunter2-7431"],
+            "actions": [
+                {"kind": "fill", "label": "Shown hunter2-7431", "value": "hunter2-7431"},
+                {"kind": "select", "label": "x → hunter2-7431", "value": "hunter2-7431"},
+            ],
+            "dialogs": [{"type": "alert", "message": "hunter2-7431?", "accepted": true}],
+        });
+        secrets.scrub_observation(&mut page);
+        assert_eq!(page["url"], "https://x.test/login?password=[secret]");
+        // A two-character secret is not scrubbed.
+        assert_eq!(page["text"], "Wrong password [secret] for 12 users");
+        assert_eq!(page["actions"][0]["value"], "[secret]");
+        assert_eq!(page["actions"][1]["label"], "x → [secret]");
+        assert_eq!(page["actions"][1]["value"], "hunter2-7431");
+        assert_eq!(page["dialogs"][0]["message"], "[secret]?");
+        // Compared with the live page, never reported.
+        assert_eq!(page["marker"][0], "hunter2-7431");
+    }
+}

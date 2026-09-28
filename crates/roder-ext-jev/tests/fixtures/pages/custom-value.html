@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Knob</title></head>
+<body>
+  <h1>Knob</h1>
+  <!-- A custom element whose `value` is an object pointing at itself, and
+       whose `checked` getter throws. -->
+  <x-knob role="button" tabindex="0" aria-label="Turn up">Turn up</x-knob>
+  <script>
+    customElements.define('x-knob', class extends HTMLElement {
+      get value() { const state = {}; state.self = state; return state; }
+      get checked() { return {toString() { throw new Error('no'); }}; }
+    });
+  </script>
+</body>
+</html>

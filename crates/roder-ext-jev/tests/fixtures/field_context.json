@@ -16,11 +16,18 @@
   },
   "context": {
     "goal": "Find one-way flights from Zurich to London on 2026-09-28 in economy.",
+    "date": "2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026",
     "field": {
       "label": "Where to?",
       "role": "searchbox",
       "value": "Zur"
     },
+    "other_fields": [
+      {
+        "label": "Cabin",
+        "value": "Any"
+      }
+    ],
     "page": {
       "title": "Search — Example",
       "text": "Search\nWhere to?\nCabin\nNonstop only\nCheapest\nPrices in £"

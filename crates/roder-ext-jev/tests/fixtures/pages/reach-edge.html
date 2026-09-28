@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Edge reach</title>
+  <style>
+    /* A standard skip link, parked above the document until focused. */
+    #skip { position: absolute; top: -40px; left: 0; height: 20px; }
+    /* A cookie bar slid off the top of a fixed layer. */
+    #cookies { position: fixed; top: 0; left: 0; right: 0; height: 50px;
+               transform: translateY(-100%); background: #eee; }
+    #list { height: 200px; overflow: auto; width: 300px; border: 1px solid #999; }
+    #list button { display: block; height: 40px; width: 100%; }
+    /* A closed accordion panel and a strip cut with overflow:clip. */
+    #panel { height: 0; overflow: hidden; }
+    #strip { height: 30px; width: 300px; overflow: clip; }
+    #strip button { display: block; height: 30px; }
+    /* A carousel: hidden overflow with room, which scrollIntoView can move. */
+    #slides { height: 40px; width: 300px; overflow: hidden; white-space: nowrap; }
+    #slides button { display: block; height: 40px; width: 300px; }
+    /* A menu that escapes a collapsed static ancestor. */
+    #anchor { position: relative; }
+    #shell { height: 0; overflow: hidden; }
+    #menu { position: absolute; top: 0; left: 320px; }
+    #city { display: inline-block; width: 240px; padding: 2px; border: 1px solid #999; }
+    #city input { width: 100%; box-sizing: border-box; height: 30px; border: 0; }
+  </style>
+</head>
+<body>
+  <a id="skip" href="#main">Skip to main content</a>
+  <div id="cookies"><button type="button">Accept cookies</button></div>
+  <h1 id="main">Edge reach</h1>
+  <div id="list">
+    <button type="button">Item 1</button>
+    <button type="button">Item 2</button>
+    <button type="button">Item 3</button>
+    <button type="button">Item 4</button>
+    <button type="button">Item 5</button>
+    <button type="button">Item 6</button>
+    <button type="button" id="inner"
+            onclick="window.inner_clicks = (window.inner_clicks || 0) + 1">Inner item</button>
+  </div>
+  <div id="panel"><button type="button">Collapsed action</button></div>
+  <div id="strip"><button type="button">Strip first</button><button type="button">Strip second</button></div>
+  <div id="slides"><button type="button">Slide one</button><button type="button"
+       onclick="window.slide_clicks = (window.slide_clicks || 0) + 1">Slide two</button></div>
+  <div id="anchor"><div id="shell"><button type="button" id="menu">Floating menu</button></div></div>
+  <div id="city" role="combobox" aria-expanded="false">
+    <input aria-label="City" onfocus="window.city_focus = (window.city_focus || 0) + 1">
+  </div>
+</body>
+</html>

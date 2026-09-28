@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Many twins</title>
+  <style>
+    #grid { display: grid; grid-template-columns: repeat(10, 100px); gap: 2px; }
+    article { font-size: 9px; } article h3 { font-size: 9px; margin: 0; }
+    article button { font-size: 9px; }
+  </style>
+</head>
+<body>
+  <h1>Many twins</h1>
+  <!-- ?n=N cards, each with the same "Add to cart" button: the worst case
+       for the context pass, which only walks the nearest 50. -->
+  <section id="grid"></section>
+  <script>
+    const n = Number(new URLSearchParams(location.search).get('n') || 8);
+    for (let i = 1; i <= n; i++) {
+      const card = document.createElement('article');
+      card.innerHTML = '<h3>Product ' + i + '</h3><button type="button">Add to cart</button>';
+      document.getElementById('grid').append(card);
+    }
+  </script>
+</body>
+</html>

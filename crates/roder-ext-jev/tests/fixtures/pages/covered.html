@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Covered button</title>
+  <style>
+    #overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); }
+  </style>
+</head>
+<body>
+  <h1>Covered button</h1>
+  <!-- The button is visible to snapshot.js but a modal backdrop sits on top,
+       so act.js's hit test must refuse it. -->
+  <button type="button" id="buy" onclick="window.clicks = (window.clicks || 0) + 1">Buy now</button>
+  <div id="overlay"></div>
+</body>
+</html>

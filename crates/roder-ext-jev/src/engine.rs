@@ -9,10 +9,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::agent::Agent;
+use crate::prompts::MAX_STEPS;
+use crate::scope::JevOriginScope;
+pub use records::{JevActionRecord, JevDecisionRecord, JevRunResult};
 
 /// A stale observation means the browser changed after JEV made its decision.
 #[derive(Debug)]
@@ -32,7 +35,70 @@ impl std::fmt::Display for StaleObservation {
 
 impl std::error::Error for StaleObservation {}
 
+/// The target is still observed as it was, but another element would take
+/// the click at every point tried, so no input was dispatched. Unlike a stale
+/// observation this is recorded as an executed step that changed nothing, so
+/// a target that stays covered ends the run through the stall rule.
+#[derive(Debug)]
+pub struct Covered(String);
+
+impl Covered {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl std::fmt::Display for Covered {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+impl std::error::Error for Covered {}
+
+/// What an executed action came to. An action that ran but that the page
+/// did not keep is still a step: the loop records why on it and goes on, so
+/// the stall rule, not an error, ends a run the page keeps refusing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JevActOutcome {
+    /// Why the page did not keep what the action asked for: a select it put
+    /// back, or a fill whose text did not stay in the field.
+    pub refused: Option<String>,
+}
+
+impl JevActOutcome {
+    /// The action ran as asked.
+    pub fn done() -> Self {
+        Self::default()
+    }
+
+    /// The action ran, but the page did not keep its effect.
+    pub fn refused(reason: impl Into<String>) -> Self {
+        Self {
+            refused: Some(reason.into()),
+        }
+    }
+}
+
+/// A JavaScript dialog the page opened and Jev answered: an `alert` or
+/// `beforeunload` is accepted, a `confirm` or `prompt` dismissed. Its message
+/// is page text, and as untrusted as the rest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JevDialog {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub message: String,
+    pub accepted: bool,
+}
+
 /// Browser operations needed by the JEV loop.
+///
+/// An observation may carry `dialogs`, the [`JevDialog`]s answered since the
+/// last one, and `opened_tab: true` when the last action opened a tab the
+/// browser now reads; the loop records both on the step that preceded them.
+/// A fill action whose `input_type` is `password` or `one-time-code` is a
+/// secret field: its `value` should be empty and `filled` say whether it
+/// holds anything, and the loop records what it types there as `[secret]`.
 #[async_trait]
 pub trait JevBrowser: Send {
     async fn observe(&mut self) -> anyhow::Result<Value>;
@@ -45,14 +111,22 @@ pub trait JevBrowser: Send {
         observation: &Value,
         text: Option<&str>,
         wait: Duration,
-    ) -> anyhow::Result<()>;
-
-    async fn activate(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
+    ) -> anyhow::Result<JevActOutcome>;
 
     async fn close(&mut self) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    /// With cookie-banner refusal on (the default; see
+    /// [`JevEngineConfig::with_cookie_banner_refusal`]), the loop calls this
+    /// before every observation. Once per document, after the page settles,
+    /// a browser that supports it refuses a cookie or consent banner (never
+    /// accepting or opening settings) and returns what it clicked, as page
+    /// text: the button's label, or the consent platform it refused on.
+    /// `None` when it did nothing new, and always for a browser that does
+    /// not support it, which is the default.
+    async fn refuse_cookie_banner(&mut self) -> anyhow::Result<Option<String>> {
+        Ok(None)
     }
 }
 
@@ -62,13 +136,32 @@ pub struct JevDecision {
     pub choice: String,
     pub operation: String,
     pub target: Option<String>,
+    /// The operation head's confidence.
     pub confidence: f64,
+    /// The target head's confidence, for an operation that has targets.
+    pub target_confidence: Option<f64>,
+    /// The deciding head's distribution, keyed by observed action id: the
+    /// target head's for a targeted operation, else the operation head's.
     pub probabilities: Map<String, Value>,
     pub latency_ms: u64,
     pub usage: Value,
+    /// The model version that answered, as the service reports it.
+    pub model: Option<String>,
+    /// With the irreversible-action gate on, P(the chosen action cannot be
+    /// undone) from the question asked about it in the same request. `None`
+    /// when it was not asked, or its answer was missing or invalid; the gate
+    /// treats an action it applies to with no answer as irreversible.
+    pub irreversible: Option<f64>,
 }
 
 impl JevDecision {
+    /// The least certain judgement behind the call: an action is only as
+    /// sure as the operation and the target that chose it.
+    pub fn call_confidence(&self) -> f64 {
+        self.target_confidence
+            .map_or(self.confidence, |target| target.min(self.confidence))
+    }
+
     pub fn probability_of(&self, choice: &str) -> Value {
         self.probabilities
             .get(choice)
@@ -86,6 +179,23 @@ pub trait JevDecisionClient: Send + Sync {
         goal: &str,
         history: &[Value],
     ) -> anyhow::Result<JevDecision>;
+
+    /// [`choose`](Self::choose) with the irreversible-action gate on: the
+    /// same request also asks, for each offered action that may commit
+    /// something, whether it would do what cannot be undone, and the decision
+    /// carries the chosen action's answer in [`JevDecision::irreversible`].
+    /// The loop calls this instead of `choose` when
+    /// [`JevEngineConfig::with_irreversible_gate`] is set. The default asks
+    /// nothing, so the gate treats every such action a client without it
+    /// chooses as irreversible; a wrapping client should forward it.
+    async fn choose_gated(
+        &self,
+        observation: &Value,
+        goal: &str,
+        history: &[Value],
+    ) -> anyhow::Result<JevDecision> {
+        self.choose(observation, goal, history).await
+    }
 }
 
 /// Sends a fully-formed TypeSafe request and returns its JSON response.
@@ -108,94 +218,117 @@ pub struct JevTextValue {
 
 /// Resolves a fill value from JEV's field context.
 ///
-/// Supervisors may return an opaque value reference and resolve it only while
-/// executing the browser action, so secret values never enter the JEV trace.
+/// The preferred source for a password or one-time code (the field
+/// context's `field.input_type` is `password` or `one-time-code`):
+/// supervisors may return an opaque value reference and resolve it only
+/// while executing the browser action, so the secret never enters the goal,
+/// the decision request, the text model or the JEV trace. Whatever is
+/// returned for a secret field is recorded as `[secret]`. A resolver with
+/// no value should fail with [`JevStop`] and [`JevStatus::NeedsInput`],
+/// naming the field; Roder's own text helper does, and never types a
+/// password or code that is not written in the goal.
 #[async_trait]
 pub trait JevTextValueResolver: Send + Sync {
     async fn resolve(&self, field_context: &Value) -> anyhow::Result<JevTextValue>;
 }
 
+/// Where a run stands. Every status but `Ready` ends it; `Ready` is only seen
+/// mid-run. New statuses may be added as something comes to produce them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JevStatus {
     Ready,
+    /// The model answered DONE.
     Done,
+    /// No supported operation could progress: the model answered BLOCKED,
+    /// three steps changed nothing, DONE followed a covered attempt, the
+    /// start page did not load, or a page was outside the allowed origins.
     Blocked,
+    /// The action budget (60 by default, or `JEV_MAX_ACTIONS` and
+    /// [`JevEngineConfig::with_max_actions`]) or the model-call budget of
+    /// twice that ran out.
+    BudgetExceeded,
+    /// The run's timeout elapsed, during setup or the loop.
+    TimedOut,
+    /// A field needs a value nothing can supply: no text model, or the text
+    /// model found none in the goal.
+    NeedsInput,
+    /// A model provider stayed unreachable or overloaded through its retries.
+    Unavailable,
+    /// Anything else that ended the run early.
+    Error,
+    /// The irreversible-action gate stopped the run before an action that
+    /// may not be undone (see [`JevEngineConfig::with_irreversible_gate`]);
+    /// `stopped_because` names the control. Nothing was dispatched.
+    NeedsConfirmation,
 }
 
 impl JevStatus {
     pub(crate) fn stopped(self) -> bool {
-        matches!(self, Self::Done | Self::Blocked)
+        !matches!(self, Self::Ready)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct JevActionRecord {
-    pub step: usize,
-    pub action: String,
-    pub kind: String,
-    pub text: Option<String>,
-    pub url: String,
-    pub page_changed: Option<bool>,
-    pub elapsed_ms: u64,
-    /// Detailed planner telemetry is available to embedded hosts without
-    /// expanding the compact `jev_browse` tool result.
-    #[serde(skip)]
-    pub choice: String,
-    #[serde(skip)]
-    pub probability: Value,
-    #[serde(skip)]
-    pub confidence: f64,
-    #[serde(skip)]
-    pub decision_latency_ms: u64,
-    #[serde(skip)]
-    pub text_helper: Option<String>,
-    #[serde(skip)]
-    pub text_latency_ms: u64,
-    #[serde(skip)]
-    pub operation: String,
-    #[serde(skip)]
-    pub target: Option<String>,
-    #[serde(skip)]
-    pub usage: Value,
-    #[serde(skip)]
-    pub executed_ms: u64,
+/// Ends a run with a typed status. The loop maps any other error to
+/// [`JevStatus::Error`]; hosted decision clients, transports and text
+/// resolvers can return this to say why they gave up.
+#[derive(Debug)]
+pub struct JevStop {
+    status: JevStatus,
+    reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct JevDecisionRecord {
-    pub choice: String,
-    pub operation: String,
-    pub target: Option<String>,
-    pub confidence: f64,
-    pub probabilities: Map<String, Value>,
-    pub latency_ms: u64,
-    pub usage: Value,
+impl JevStop {
+    pub fn new(status: JevStatus, reason: impl Into<String>) -> Self {
+        Self {
+            status,
+            reason: reason.into(),
+        }
+    }
+
+    pub fn status(&self) -> JevStatus {
+        self.status
+    }
+
+    /// The status a failed run ends with: this stop's, or `Error` for any
+    /// other failure. A stop cannot claim the run is done or still going.
+    pub(crate) fn status_of(error: &anyhow::Error) -> JevStatus {
+        // Through any wrapper, such as a billed call's.
+        let stop = error.chain().find_map(|cause| cause.downcast_ref::<Self>());
+        match stop.map(Self::status) {
+            Some(JevStatus::Ready | JevStatus::Done) | None => JevStatus::Error,
+            Some(status) => status,
+        }
+    }
 }
 
-/// Typed outcome from one bounded JEV run.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct JevRunResult {
-    pub status: JevStatus,
-    pub url: String,
-    pub title: String,
-    pub visible_text: String,
-    pub actions: Vec<JevActionRecord>,
-    pub elapsed_ms: u64,
-    pub observed_elements: usize,
-    pub model_calls: usize,
-    pub text_calls: usize,
-    #[serde(skip)]
-    pub decisions: Vec<JevDecisionRecord>,
-    pub stopped_because: Option<String>,
-    pub untrusted: bool,
+impl std::fmt::Display for JevStop {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.reason)
+    }
 }
+
+impl std::error::Error for JevStop {}
 
 pub struct JevEngineConfig {
     pub(crate) goal: String,
     pub(crate) decision: Arc<dyn JevDecisionClient>,
     pub(crate) text: Option<Arc<dyn JevTextValueResolver>>,
     pub(crate) wait: Duration,
+    /// Executed actions a run may take; twice this many model calls.
+    pub(crate) max_actions: usize,
+    /// The longest a run may take, whatever `JevEngine::run` is given.
+    pub(crate) max_duration: Option<Duration>,
+    /// The origins the run may visit, checked after every observation.
+    pub(crate) scope: JevOriginScope,
+    /// Ask about, and stop before, actions that cannot be undone.
+    pub(crate) irreversible_gate: bool,
+    /// The gate lets a confident irreversible action through.
+    pub(crate) irreversible_authorized: bool,
+    /// Refuse a cookie banner once per document before reading it; on by
+    /// default.
+    pub(crate) refuse_cookie_banners: bool,
 }
 
 impl JevEngineConfig {
@@ -205,7 +338,67 @@ impl JevEngineConfig {
             decision,
             text: None,
             wait: Duration::from_millis(800),
+            max_actions: MAX_STEPS,
+            max_duration: None,
+            scope: JevOriginScope::any(),
+            irreversible_gate: false,
+            irreversible_authorized: false,
+            refuse_cookie_banners: true,
         }
+    }
+
+    /// Cap the run at `actions` executed actions (at least one) and twice as
+    /// many model calls; upstream's 60 by default.
+    pub fn with_max_actions(mut self, actions: usize) -> Self {
+        self.max_actions = actions.max(1);
+        self
+    }
+
+    /// Cap the run's time, below any timeout `JevEngine::run` is given.
+    pub fn with_max_duration(mut self, duration: Duration) -> Self {
+        self.max_duration = Some(duration);
+        self
+    }
+
+    /// Stop the run, `blocked`, once it observes a page outside `scope`.
+    pub fn with_scope(mut self, scope: JevOriginScope) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    /// Turn on the irreversible-action gate; off by default. Each decision
+    /// request then also asks, in the same request, whether the offered
+    /// clicks that may commit something, and any Enter, would make a
+    /// purchase, payment, send, publish, delete or other change that cannot
+    /// be undone. When the chosen action is one of those and the answer is
+    /// above 0.5, or missing, the run ends [`JevStatus::NeedsConfirmation`]
+    /// without dispatching it, unless it is authorized
+    /// ([`with_irreversible_authorized`](Self::with_irreversible_authorized)).
+    /// The decision client must implement
+    /// [`JevDecisionClient::choose_gated`]. The thresholds are fastbrowse's
+    /// and have not been validated against the hosted model.
+    pub fn with_irreversible_gate(mut self) -> Self {
+        self.irreversible_gate = true;
+        self
+    }
+
+    /// Let the gate dispatch an irreversible action when the decision's
+    /// call confidence is at least 0.90; below that the run still ends
+    /// [`JevStatus::NeedsConfirmation`]. Only meaningful with the gate on.
+    pub fn with_irreversible_authorized(mut self) -> Self {
+        self.irreversible_authorized = true;
+        self
+    }
+
+    /// Refuse cookie and consent banners, `on` by default. Before every
+    /// observation the browser's [`JevBrowser::refuse_cookie_banner`] gets
+    /// its chance, and the loop records a refusal as a step ("refused
+    /// cookie banner: <label>") that costs no model call. Jev's own Chrome
+    /// runner also injects DuckDuckGo's autoconsent into every document
+    /// when this is on.
+    pub fn with_cookie_banner_refusal(mut self, on: bool) -> Self {
+        self.refuse_cookie_banners = on;
+        self
     }
 
     pub fn with_text_resolver(mut self, text: Arc<dyn JevTextValueResolver>) -> Self {
@@ -218,6 +411,9 @@ impl JevEngineConfig {
         self
     }
 }
+
+/// Why a run whose timeout elapsed in the loop stopped.
+pub(crate) const TIMED_OUT: &str = "Jev browser task timed out";
 
 /// The reusable, bounded JEV agent loop.
 pub struct JevEngine {
@@ -235,18 +431,26 @@ impl JevEngine {
     }
 
     pub async fn run(&mut self, timeout: Duration) -> JevRunResult {
-        let stopped_because = match tokio::time::timeout(timeout, self.agent.run()).await {
+        let timeout = self
+            .agent
+            .max_duration()
+            .map_or(timeout, |max| timeout.min(max));
+        // Model calls read the deadline, so a retry never outlasts the run.
+        let deadline = tokio::time::Instant::now() + timeout;
+        let run = tokio::time::timeout_at(deadline, self.agent.run());
+        let stopped_because = match crate::http::RUN_DEADLINE.scope(deadline, run).await {
             Ok(stopped) => stopped,
-            Err(_) => Some("Jev browser task timed out".into()),
+            Err(_) => {
+                self.agent.stop(JevStatus::TimedOut);
+                Some(TIMED_OUT.into())
+            }
         };
         self.agent.result(stopped_because)
-    }
-
-    pub async fn activate(&mut self) -> anyhow::Result<()> {
-        self.agent.activate().await
     }
 
     pub async fn close(&mut self) -> anyhow::Result<()> {
         self.agent.close().await
     }
 }
+
+mod records;

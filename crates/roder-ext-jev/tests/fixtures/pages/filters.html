@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Garden tools</title>
+  <style>
+    /* Styled filters: the native input is invisible and its label is drawn
+       as the checkbox, so only the label can be offered and clicked. */
+    .filter { position: relative; display: inline-block; padding: 4px 8px 4px 28px; cursor: pointer; }
+    .filter input { position: absolute; opacity: 0; width: 1px; height: 1px; left: 6px; top: 8px; }
+    .filter .box { position: absolute; left: 6px; top: 6px; width: 14px; height: 14px; border: 1px solid #333; }
+    .filter input:checked + .box { background: #333; }
+    .sort { color: #06c; cursor: pointer; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Garden tools</h1>
+  <fieldset>
+    <legend>Filters</legend>
+    <label class="filter"><input type="checkbox" id="stock"><span class="box"></span>In stock only</label>
+    <label class="filter"><input type="checkbox" id="free"><span class="box"></span>Free shipping</label>
+  </fieldset>
+  <!-- An anchor with no href that acts through its click handler alone. -->
+  <a class="sort" onclick="window.sorted = true; render()">Sort by price</a>
+  <p id="count"></p>
+  <ul id="products"></ul>
+  <script>
+    const products = [
+      {name: 'Spade', price: 30, stock: true, free: false},
+      {name: 'Rake', price: 18, stock: true, free: true},
+      {name: 'Hose', price: 45, stock: false, free: true},
+      {name: 'Shears', price: 25, stock: true, free: false},
+    ];
+    function render() {
+      const stock = document.getElementById('stock').checked;
+      const free = document.getElementById('free').checked;
+      let shown = products.filter(p => (!stock || p.stock) && (!free || p.free));
+      if (window.sorted) shown = [...shown].sort((a, b) => a.price - b.price);
+      document.getElementById('count').textContent = `${shown.length} products`;
+      document.getElementById('products').innerHTML =
+        shown.map(p => `<li>${p.name}, $${p.price}${p.free ? ', free shipping' : ''}</li>`).join('');
+    }
+    document.getElementById('stock').addEventListener('change', render);
+    document.getElementById('free').addEventListener('change', render);
+    render();
+  </script>
+</body>
+</html>

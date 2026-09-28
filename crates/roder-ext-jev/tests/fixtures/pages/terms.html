@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create your account</title>
+<style>
+  body { font: 14px sans-serif; }
+  #terms { height: 120px; width: 360px; overflow-y: auto; border: 1px solid #999; padding: 6px; }
+  #terms p { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<h1>Create your account</h1>
+<h2>Terms of service</h2>
+<!-- As sign-up pages do, Agree stays disabled until the terms box has been
+     scrolled to its end. -->
+<div id="terms" aria-label="Terms of service"></div>
+<p>Read the terms to the end to continue.</p>
+<button type="button" id="agree" disabled>I agree</button>
+<button type="button" id="cancel">Cancel</button>
+<p id="status"></p>
+<script>
+  const terms = document.getElementById('terms');
+  terms.innerHTML = Array.from({length: 24}, (_, i) =>
+    `<p>${i + 1}. The service is provided as is, and these terms may change with notice.</p>`).join('') +
+    '<p>End of the terms of service.</p>';
+  terms.addEventListener('scroll', () => {
+    if (terms.scrollTop + terms.clientHeight >= terms.scrollHeight - 4)
+      document.getElementById('agree').disabled = false;
+  });
+  document.getElementById('agree').addEventListener('click', () => {
+    document.getElementById('status').textContent = 'Account created.';
+  });
+  document.getElementById('cancel').addEventListener('click', () => {
+    document.getElementById('status').textContent = 'Sign-up cancelled.';
+  });
+</script>
+</body>
+</html>

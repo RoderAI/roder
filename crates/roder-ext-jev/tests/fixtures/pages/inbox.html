@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Mail</title></head>
+<body>
+  <h1>Mail</h1>
+  <!-- A single-page app: each click routes with pushState and renders late,
+       behind a spinner, so a read taken too early misses the next control. -->
+  <button type="button" id="open-inbox">Inbox</button>
+  <div id="view"><p>Choose a folder.</p></div>
+  <script>
+    const view = document.getElementById('view');
+    const spinner = text => `<div class="spinner" aria-busy="true">${text}</div>`;
+    const openMessage = button => {
+      history.pushState({}, '', '#/message/' + button.dataset.id);
+      view.innerHTML = spinner('Loading message');
+      setTimeout(() => {
+        view.innerHTML = `<h2>${button.textContent}</h2><p>Amount due: $120 by 1 November.</p>`;
+      }, 600);
+    };
+    document.getElementById('open-inbox').addEventListener('click', () => {
+      history.pushState({}, '', '#/inbox');
+      view.innerHTML = spinner('Loading messages');
+      const request = new XMLHttpRequest();
+      request.open('GET', '/pages/inbox-data.html?delay=900');
+      request.onload = () => {
+        view.innerHTML = request.responseText;
+        for (const button of view.querySelectorAll('button[data-id]')) {
+          button.addEventListener('click', () => openMessage(button));
+        }
+      };
+      request.send();
+    });
+  </script>
+</body>
+</html>

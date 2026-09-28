@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Consent cases</title>
+  <style>
+    .bar { position: fixed; left: 0; right: 0; background: #eee; padding: 8px; }
+    .bottom { bottom: 0; } .top { top: 0; }
+  </style>
+</head>
+<body>
+  <h1>Consent cases</h1>
+  <!-- ?case=<name> draws one banner shape. Every button records its label in
+       window.clicked, so a test can tell what, if anything, was pressed. -->
+  <div id="root"></div>
+  <script>
+    const cases = {
+      // Two separate banners, each with a refusal: ambiguous, so neither.
+      two: `<div class="bar bottom" role="dialog">We use cookies. <button>Reject all</button></div>
+            <div class="bar top" role="dialog">Consent to cookies? <button>Reject all</button></div>`,
+      // The refusal sits outside the banner, which offers only acceptance.
+      outside: `<button>Reject all</button>
+                <div class="bar bottom">We use cookies. <button>Accept all</button></div>`,
+      // A dialog with a Decline button that is not about cookies.
+      invite: `<div class="bar bottom" role="dialog">Join the team meeting at 3 pm?
+               <button>Decline</button><button>Accept</button></div>`,
+      // Settings and acceptance only: no refusal, so nothing.
+      settings: `<div class="bar bottom" role="dialog">We use cookies.
+                 <button>Manage options</button><button>Accept</button></div>`,
+      // German.
+      german: `<div class="bar bottom" id="cookie-hinweis">Wir verwenden Cookies.
+               <button>Alle akzeptieren</button><button>Einstellungen</button><button>Alle ablehnen</button></div>`,
+      // A refusal that is a link to another page is not a button.
+      link: `<div class="bar bottom" role="dialog">We use cookies.
+             <a href="/pages/landing.html">Reject all</a><button>Accept all</button></div>`,
+      // The same refusal twice in one banner: which one is ambiguous.
+      twice: `<div class="bar bottom" role="dialog">We use cookies.
+              <button>Reject all</button><button>Reject all</button></div>`,
+      // Two refusals: the stronger one wins.
+      ranked: `<div class="bar bottom" role="dialog">We use cookies.
+               <button>Only necessary</button><button>Reject all</button><button>Accept all</button></div>`,
+      // Drawn in an open shadow root, as some consent platforms do.
+      shadow: `<div id="host"></div>`,
+      // A fixed backdrop holding the banner: the inner dialog is the banner.
+      backdrop: `<div class="bar top" style="bottom:0;background:rgba(0,0,0,.3)">
+                 <div role="dialog" style="background:#fff;margin:40px;padding:8px">
+                 Cookie consent. <button>Decline</button><button>Allow all</button></div></div>`,
+    };
+    const name = new URLSearchParams(location.search).get('case');
+    document.getElementById('root').innerHTML = cases[name] || '';
+    if (name === 'shadow') {
+      const root = document.getElementById('host').attachShadow({mode: 'open'});
+      root.innerHTML = `<style>div{position:fixed;bottom:0;left:0;right:0;background:#eee}</style>
+        <div role="dialog">We value your privacy and use cookies. <button>Accept all</button>
+        <button>Reject all</button></div>`;
+    }
+    window.clicked = [];
+    addEventListener('click', event => {
+      const target = event.composedPath()[0];
+      if (target.closest?.('button,a')) {
+        window.clicked.push(target.textContent.trim());
+        event.preventDefault();
+      }
+    }, true);
+  </script>
+</body>
+</html>

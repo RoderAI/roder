@@ -1,10 +1,13 @@
 //! Goal-directed Chrome CDP browser automation.
 //!
-//! A Rust port of Jev Ultrafast (MIT, browser-use/jev-ultrafast), pinned to
-//! revision 1231850a. The two scripts that must run inside the page are
-//! vendored verbatim under `src/assets/`; the agent loop, action space,
-//! decision contract and text helper are ported, and parity with upstream is
-//! pinned by fixtures recorded from the Python implementation.
+//! Started as a Rust port of Jev Ultrafast (MIT, browser-use/jev-ultrafast)
+//! at revision 1231850a. Jev owns its in-page scripts (`src/assets/`), prompts
+//! and fixtures, and diverges from upstream on purpose where it settles,
+//! reaches and names controls, hit-tests, fingerprints and retries; the README
+//! lists every divergence. The agent loop, action space, decision contract
+//! and text helper keep upstream's shape, pinned by fixtures first recorded
+//! from the Python implementation and re-recorded deliberately where Jev
+//! diverges.
 
 #![doc = include_str!("../README.md")]
 
@@ -12,16 +15,24 @@ mod agent;
 mod cdp;
 mod chrome;
 mod decide;
+mod effects;
 mod engine;
+#[cfg(test)]
+mod fixture_harness;
+mod http;
+mod irreversible;
 mod page;
 mod policy;
 mod prompts;
 mod python_json;
 mod runner;
+mod scope;
+mod secret;
 mod space;
 mod text_helper;
 mod text_model;
 mod tools;
+mod usage;
 
 use std::sync::Arc;
 
@@ -33,11 +44,13 @@ use semver::Version;
 
 pub use decide::JevTypeSafeDecisionClient;
 pub use engine::{
-    JevActionRecord, JevBrowser, JevDecision, JevDecisionClient, JevDecisionRecord,
-    JevDecisionTransport, JevEngine, JevEngineConfig, JevRunResult, JevStatus, JevTextValue,
-    JevTextValueResolver, StaleObservation,
+    Covered, JevActOutcome, JevActionRecord, JevBrowser, JevDecision, JevDecisionClient,
+    JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine, JevEngineConfig, JevRunResult,
+    JevStatus, JevStop, JevTextValue, JevTextValueResolver, StaleObservation,
 };
+pub use scope::JevOriginScope;
 pub use tools::{JevToolContributor, jev_tool_spec};
+pub use usage::{JevBilled, JevCallUsage, JevTokenCount, JevUsage};
 
 pub struct JevExtension;
 

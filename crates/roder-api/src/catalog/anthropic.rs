@@ -1,6 +1,6 @@
 use super::{
-    ModelCatalogEntry, OPUS_REASONING, REASONING_HIGH, REASONING_MEDIUM,
-    anthropic_model, claude_code_model,
+    ModelCatalogEntry, OPUS_REASONING, REASONING_HIGH, REASONING_MEDIUM, anthropic_model,
+    claude_code_model,
 };
 
 pub(super) const OPUS_55: ModelCatalogEntry = anthropic_model(

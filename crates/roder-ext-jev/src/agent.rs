@@ -1,21 +1,32 @@
 //! The bounded agent loop.
 //!
 //! A port of upstream Jev's `agent.py`: observe, ask for one operation, execute
-//! it, observe again. The budgets, the statuses, and the rule that three
-//! consecutive actions changing nothing mean `blocked` are upstream's.
+//! it, observe again. The budgets and the rule that three consecutive actions
+//! changing nothing mean `blocked` are upstream's. The statuses past `done` and
+//! `blocked` are Jev's: upstream raises on a budget, a missing value or a
+//! provider failure, and a run stopped that way ends with a [`JevStop`]
+//! status (any other error is `error`) instead of reporting `ready`. An
+//! action the page refused and the dialogs it opened are recorded on the step;
+//! a blocked run whose page asked for a confirmation Jev declined says so.
+//! Two more behaviours are Jev's: the opt-in irreversible-action gate stops
+//! the run `needs_confirmation` before an action that may not be undone
+//! (see [`crate::irreversible`]), and a cookie banner refused (on by
+//! default) is recorded as a step of its own that costs no model call and
+//! counts toward no budget. A value typed into a password or one-time-code
+//! field is recorded as `[secret]` and scrubbed from every later page read
+//! (see [`crate::secret`]).
 
 use std::time::Instant;
 
-use anyhow::bail;
 use serde_json::{Value, json};
 
+use crate::effects;
 use crate::engine::{
-    JevActionRecord, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevRunResult,
-    JevStatus, JevTextValue, StaleObservation,
+    Covered, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevStatus, JevStop,
+    JevTextValue, StaleObservation,
 };
-use crate::prompts::MAX_STEPS;
-use crate::space::action_space;
-use crate::text_helper;
+use crate::secret::{self, SECRET, Secrets};
+use crate::usage::JevBilled;
 
 pub(crate) struct Agent {
     browser: Box<dyn JevBrowser>,
@@ -25,32 +36,71 @@ pub(crate) struct Agent {
     text_calls: Vec<Value>,
     decisions: usize,
     decision_calls: Vec<JevDecisionRecord>,
+    /// The usage of decisions that were billed but could not be used.
+    unusable_decisions: Vec<Value>,
     status: JevStatus,
     started_at: Instant,
     elapsed_ms: u64,
     /// A value already written for a field whose action had to be retried.
     pending_text: Option<(Value, JevTextValue)>,
+    /// Why the run ended before its loop started (a start page outside the
+    /// allowed origins).
+    stopped_before: Option<String>,
+    /// The secrets typed so far, scrubbed from every later observation.
+    secrets: Secrets,
+}
+
+/// Below this, a repeat of the last effective click is read as DONE.
+const REPEAT_CONFIDENCE: f64 = 0.7;
+
+/// The kind of a history entry recording a refused cookie banner: not a
+/// model step, so no budget, stall or repeat rule counts it.
+pub(crate) const COOKIE_BANNER: &str = "cookie_banner";
+
+/// Whether a history entry is an action the model chose.
+fn chosen(entry: &&Value) -> bool {
+    entry["kind"].as_str() != Some(COOKIE_BANNER)
 }
 
 impl Agent {
     pub(crate) async fn start(
-        mut browser: Box<dyn JevBrowser>,
+        browser: Box<dyn JevBrowser>,
         config: JevEngineConfig,
     ) -> anyhow::Result<Self> {
-        let observation = browser.observe().await?;
-        Ok(Self {
+        let mut agent = Self {
             browser,
             config,
-            observation,
+            observation: Value::Null,
             history: Vec::new(),
             text_calls: Vec::new(),
             decisions: 0,
             decision_calls: Vec::new(),
+            unusable_decisions: Vec::new(),
             status: JevStatus::Ready,
             started_at: Instant::now(),
             elapsed_ms: 0,
             pending_text: None,
-        })
+            stopped_before: None,
+            secrets: Secrets::default(),
+        };
+        agent.observe().await?;
+        if let Err(error) = agent.check_scope() {
+            agent.stopped_before = Some(agent.fail(&error));
+        }
+        Ok(agent)
+    }
+
+    pub(crate) fn max_duration(&self) -> Option<std::time::Duration> {
+        self.config.max_duration
+    }
+
+    /// End the run, `blocked`, on a page outside the allowed origins.
+    fn check_scope(&self) -> anyhow::Result<()> {
+        let url = self.observation["url"].as_str().unwrap_or_default();
+        if self.config.scope.allows(url) {
+            return Ok(());
+        }
+        Err(JevStop::new(JevStatus::Blocked, self.config.scope.outside(url)).into())
     }
 
     fn elapsed(&mut self) -> u64 {
@@ -60,24 +110,103 @@ impl Agent {
 
     /// Run until the goal is met, nothing can progress, or a budget is reached.
     /// A budget or helper failure ends the run but keeps the trace, which is
-    /// what upstream raises and callers want reported.
+    /// what upstream raises and callers want reported; the error's
+    /// [`JevStop`] status, else `error`, says which.
     pub(crate) async fn run(&mut self) -> Option<String> {
+        if self.stopped_before.is_some() {
+            return self.stopped_before.clone();
+        }
         while !self.status.stopped() {
             match self.tick().await {
                 Ok(()) => {}
                 Err(error) if error.is::<StaleObservation>() => {
                     // The page moved under the decision; observe and choose again.
                     self.status = JevStatus::Ready;
-                    match self.browser.observe().await {
-                        Ok(observation) => self.observation = observation,
-                        Err(error) => return Some(describe(&error)),
+                    if let Err(error) = self.observe().await {
+                        return Some(self.fail(&error));
+                    }
+                    if let Err(error) = self.check_scope() {
+                        return Some(self.fail(&error));
                     }
                     self.elapsed();
                 }
-                Err(error) => return Some(describe(&error)),
+                Err(error) => return Some(self.fail(&error)),
             }
         }
-        None
+        self.dismissed_dialog()
+    }
+
+    /// Read the page, recording any dialog it opened since the last read on
+    /// the step that preceded it. With cookie-banner refusal on, the browser
+    /// first gets its chance to refuse one, which is recorded after that.
+    async fn observe(&mut self) -> anyhow::Result<()> {
+        let refused = if self.config.refuse_cookie_banners {
+            // Best effort: a check that fails never ends the run, and the
+            // observation that follows reports the page as it is.
+            self.browser.refuse_cookie_banner().await.ok().flatten()
+        } else {
+            None
+        };
+        self.observation = self.browser.observe().await?;
+        // A page that shows a typed secret back does not pass it on.
+        self.secrets.scrub_observation(&mut self.observation);
+        let dialogs = self.observation["dialogs"]
+            .as_array()
+            .filter(|dialogs| !dialogs.is_empty())
+            .cloned();
+        if let (Some(dialogs), Some(entry)) = (dialogs, self.history.last_mut()) {
+            match entry["dialogs"].as_array_mut() {
+                Some(recorded) => recorded.extend(dialogs),
+                None => entry["dialogs"] = Value::Array(dialogs),
+            }
+        }
+        if self.observation["opened_tab"] == json!(true)
+            && let Some(entry) = self.history.last_mut()
+        {
+            entry["opened_tab"] = json!(true);
+        }
+        if let Some(label) = refused {
+            self.record_cookie_banner(&self.secrets.scrub(&label));
+        }
+        Ok(())
+    }
+
+    /// The last action the model chose.
+    fn last_step(&self) -> Option<&Value> {
+        self.history.iter().rev().find(chosen)
+    }
+
+    /// Why a blocked run stopped, when the page asked for consent or input
+    /// Jev declined: a confirm the task may have needed accepted is for the
+    /// caller to decide, and the only thing to do about it.
+    fn dismissed_dialog(&self) -> Option<String> {
+        if self.status != JevStatus::Blocked {
+            return None;
+        }
+        let dialog = self
+            .history
+            .iter()
+            .rev()
+            .filter_map(|entry| entry["dialogs"].as_array())
+            .flat_map(|dialogs| dialogs.iter().rev())
+            .find(|dialog| dialog["accepted"] == json!(false))?;
+        Some(format!(
+            "The page asked {:?} in a {} dialog and Jev dismissed it: Jev never accepts a \
+             confirm or answers a prompt. If the task needs it accepted, do that step yourself.",
+            dialog["message"].as_str().unwrap_or_default(),
+            dialog["type"].as_str().unwrap_or("confirm"),
+        ))
+    }
+
+    fn fail(&mut self, error: &anyhow::Error) -> String {
+        self.stop(JevStop::status_of(error));
+        error.to_string()
+    }
+
+    /// End the run with `status`, as of now.
+    pub(crate) fn stop(&mut self, status: JevStatus) {
+        self.status = status;
+        self.elapsed();
     }
 
     async fn tick(&mut self) -> anyhow::Result<()> {
@@ -87,27 +216,65 @@ impl Agent {
 
     async fn predict(&mut self) -> anyhow::Result<JevDecision> {
         if !self.browser.fresh(&self.observation, None).await? {
-            self.observation = self.browser.observe().await?;
+            self.observe().await?;
+            self.check_scope()?;
         }
-        if self.decisions >= MAX_STEPS * 2 {
-            bail!("Reached the demo's model-call budget");
+        if self.decisions >= self.config.max_actions.saturating_mul(2) {
+            return Err(JevStop::new(
+                JevStatus::BudgetExceeded,
+                "Reached the demo's model-call budget",
+            )
+            .into());
         }
-        let decision = self
-            .config
-            .decision
-            .choose(&self.observation, &self.config.goal, &self.history)
-            .await?;
+        let decision = self.config.decision.as_ref();
+        let (observation, goal, history) = (&self.observation, &self.config.goal, &self.history);
+        let chosen = if self.config.irreversible_gate {
+            decision.choose_gated(observation, goal, history).await
+        } else {
+            decision.choose(observation, goal, history).await
+        };
+        let decision = match chosen {
+            Ok(decision) => decision,
+            Err(error) => {
+                // An answer that failed validation was still billed.
+                if let Some(usage) = JevBilled::usage_of(&error) {
+                    self.decisions += 1;
+                    self.unusable_decisions.push(usage.clone());
+                }
+                return Err(error);
+            }
+        };
         self.decisions += 1;
         self.decision_calls.push(JevDecisionRecord {
             choice: decision.choice.clone(),
             operation: decision.operation.clone(),
             target: decision.target.clone(),
             confidence: decision.confidence,
+            target_confidence: decision.target_confidence,
             probabilities: decision.probabilities.clone(),
             latency_ms: decision.latency_ms,
             usage: decision.usage.clone(),
+            model: decision.model.clone(),
+            irreversible: decision.irreversible,
         });
         Ok(decision)
+    }
+
+    /// An unsure repeat of the click that just took effect. Live runs show
+    /// the model split between that click and DONE once the page confirms
+    /// the first one (confidence 0.43 to 0.66), while a click that is meant
+    /// to repeat stays above 0.75. Clicking again is the costly mistake: a
+    /// second item in the cart.
+    fn repeats_a_finished_click(&self, action: &Value, decision: &JevDecision) -> bool {
+        let Some(last) = self.last_step() else {
+            return false;
+        };
+        action["kind"] == json!("click")
+            && decision.confidence < REPEAT_CONFIDENCE
+            && last["kind"] == action["kind"]
+            && last["choice"] == json!(decision.choice)
+            && last["action"] == action["label"]
+            && last["page_changed"] == json!(true)
     }
 
     async fn act(&mut self, decision: JevDecision) -> anyhow::Result<()> {
@@ -119,7 +286,12 @@ impl Agent {
                 )
                 .into());
             }
-            self.status = if selected == "DONE" {
+            // DONE straight after a covered attempt claims an effect that
+            // never happened: nothing was dispatched.
+            let covered = self
+                .last_step()
+                .is_some_and(|entry| entry["covered"] == json!(true));
+            self.status = if selected == "DONE" && !covered {
                 JevStatus::Done
             } else {
                 JevStatus::Blocked
@@ -140,27 +312,54 @@ impl Agent {
         let Some(action) = action else {
             return Err(StaleObservation::new("Chosen action is no longer observed").into());
         };
-        if self.history.len() >= MAX_STEPS {
-            self.status = JevStatus::Blocked;
-            bail!("Stopped at the {MAX_STEPS}-action demo budget");
+        if self.repeats_a_finished_click(&action, &decision) {
+            self.status = JevStatus::Done;
+            self.elapsed();
+            return Ok(());
         }
+        if self.history.iter().filter(chosen).count() >= self.config.max_actions {
+            return Err(JevStop::new(
+                JevStatus::BudgetExceeded,
+                format!(
+                    "Stopped at the {}-action demo budget",
+                    self.config.max_actions
+                ),
+            )
+            .into());
+        }
+        self.gate(&action, &decision).await?;
 
         let written = self.write_text_if_needed(&action).await?;
         let text = written.as_ref().map(|written| written.value.clone());
-        self.browser
+        let secret = secret::is_secret(&action);
+        if secret && let Some(text) = &text {
+            self.secrets.remember(text);
+        }
+        let (covered, refused) = match self
+            .browser
             .act(
                 &action,
                 &self.observation,
                 text.as_deref(),
                 self.config.wait,
             )
-            .await?;
+            .await
+        {
+            // A refusal is recorded and the run goes on: the next decision
+            // sees the page as it stands.
+            Ok(outcome) => (false, outcome.refused),
+            // Nothing was dispatched, but the attempt is a step that changed
+            // nothing: a target that stays covered stalls the run instead of
+            // paying for a decision per retry until the model-call budget.
+            Err(error) if error.is::<Covered>() => (true, None),
+            Err(error) => return Err(error),
+        };
         self.pending_text = None;
         self.elapsed();
 
         // Record execution before observing: a stale observation afterwards
         // must not erase the fact that the action ran.
-        let previous_fingerprint = self.observation["fingerprint"].clone();
+        let previous = self.observation.clone();
         self.history.push(json!({
             "step": self.history.len() + 1,
             "action": action["label"],
@@ -168,129 +367,48 @@ impl Agent {
             "choice": selected,
             "probability": decision.probability_of(&selected),
             "confidence": decision.confidence,
+            "target_confidence": decision.target_confidence,
             "latency_ms": decision.latency_ms,
-            "text": text,
+            // A covered fill typed nothing, and a secret is never recorded.
+            "text": match (covered, secret) {
+                (true, _) => None,
+                (false, true) => text.map(|_| SECRET.to_string()),
+                (false, false) => text,
+            },
+            "covered": covered,
+            "refused": refused.map(|reason| self.secrets.scrub(&reason)),
             "text_helper": written.as_ref().map(|written| written.model.clone()),
             "text_latency_ms": written.as_ref().map_or(0, |written| written.latency_ms),
             "operation": decision.operation,
             "target": decision.target,
             "page_changed": Value::Null,
+            "effect": Value::Null,
             "url": self.observation["url"],
             "usage": decision.usage,
             "executed_ms": self.elapsed_ms,
             "elapsed_ms": self.elapsed_ms,
         }));
 
-        self.observation = self.browser.observe().await?;
+        // A refused cookie banner may be recorded after this step.
+        let step = self.history.len() - 1;
+        self.observe().await?;
         let elapsed = self.elapsed();
-        if let Some(entry) = self.history.last_mut() {
-            entry["page_changed"] = json!(self.observation["fingerprint"] != previous_fingerprint);
+        if let Some(entry) = self.history.get_mut(step) {
+            // A covered target may have been scrolled into view first; that
+            // is not the action taking effect.
+            entry["page_changed"] =
+                json!(!covered && self.observation["fingerprint"] != previous["fingerprint"]);
+            entry["effect"] = json!(effects::effect(&previous, &self.observation));
             entry["url"] = self.observation["url"].clone();
             entry["elapsed_ms"] = json!(elapsed);
         }
+        self.check_scope()?;
         self.status = if stalled(&self.history) {
             JevStatus::Blocked
         } else {
             JevStatus::Ready
         };
         Ok(())
-    }
-
-    /// Typing needs a value, and only the text helper may supply one.
-    async fn write_text_if_needed(
-        &mut self,
-        action: &Value,
-    ) -> anyhow::Result<Option<JevTextValue>> {
-        if action["kind"].as_str() != Some("fill") {
-            return Ok(None);
-        }
-        if !self.browser.fresh(&self.observation, Some(action)).await? {
-            return Err(StaleObservation::new(
-                "Page changed before text generation. Choose again.",
-            )
-            .into());
-        }
-        let context =
-            text_helper::field_context(&self.config.goal, action, &self.observation, &self.history);
-        if let Some((pending, written)) = &self.pending_text
-            && pending == &context
-        {
-            return Ok(Some(written.clone()));
-        }
-        let Some(text) = self.config.text.as_ref() else {
-            bail!(
-                "TYPE_TEXT needs a text model; configure a Roder chat-completions provider or \
-                 set JEV_TEXT_MODEL_API_KEY. No text is guessed."
-            );
-        };
-        let written = text.resolve(&context).await?;
-        self.pending_text = Some((context, written.clone()));
-        self.text_calls.push(json!({
-            "model": written.model,
-            "latency_ms": written.latency_ms,
-            "usage": written.usage,
-            "field": action["label"],
-            "value": written.value,
-        }));
-        Ok(Some(written))
-    }
-
-    /// The result payload, in the shape the tool reports.
-    pub(crate) fn result(&self, stopped_because: Option<String>) -> JevRunResult {
-        let text = self.observation["text"].as_str().unwrap_or_default();
-        let visible_text = text.chars().take(6000).collect::<String>();
-        let actions = self
-            .history
-            .iter()
-            .map(|entry| JevActionRecord {
-                step: entry["step"].as_u64().unwrap_or_default() as usize,
-                action: entry["action"].as_str().unwrap_or_default().to_string(),
-                kind: entry["kind"].as_str().unwrap_or_default().to_string(),
-                text: entry["text"].as_str().map(str::to_string),
-                url: entry["url"].as_str().unwrap_or_default().to_string(),
-                page_changed: entry["page_changed"].as_bool(),
-                elapsed_ms: entry["elapsed_ms"].as_u64().unwrap_or_default(),
-                choice: entry["choice"].as_str().unwrap_or_default().to_string(),
-                probability: entry["probability"].clone(),
-                confidence: entry["confidence"].as_f64().unwrap_or_default(),
-                decision_latency_ms: entry["latency_ms"].as_u64().unwrap_or_default(),
-                text_helper: entry["text_helper"].as_str().map(str::to_string),
-                text_latency_ms: entry["text_latency_ms"].as_u64().unwrap_or_default(),
-                operation: entry["operation"].as_str().unwrap_or_default().to_string(),
-                target: entry["target"].as_str().map(str::to_string),
-                usage: entry["usage"].clone(),
-                executed_ms: entry["executed_ms"].as_u64().unwrap_or_default(),
-            })
-            .collect::<Vec<_>>();
-        let observed = action_space(
-            self.observation["actions"]
-                .as_array()
-                .map_or(&[][..], Vec::as_slice),
-        );
-        JevRunResult {
-            status: self.status,
-            url: self.observation["url"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-            title: self.observation["title"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-            visible_text,
-            actions,
-            elapsed_ms: self.elapsed_ms,
-            observed_elements: observed.elements.len(),
-            model_calls: self.decisions,
-            text_calls: self.text_calls.len(),
-            decisions: self.decision_calls.clone(),
-            stopped_because,
-            untrusted: true,
-        }
-    }
-
-    pub(crate) async fn activate(&mut self) -> anyhow::Result<()> {
-        self.browser.activate().await
     }
 
     pub(crate) async fn close(&mut self) -> anyhow::Result<()> {
@@ -300,73 +418,23 @@ impl Agent {
 
 /// Upstream's stall rule: three consecutive executed actions, none of them a
 /// wait, none of which changed the page.
+/// A refused cookie banner is not an action the model chose, so it neither
+/// counts nor breaks the run of three.
 fn stalled(history: &[Value]) -> bool {
-    let recent = &history[history.len().saturating_sub(3)..];
+    let recent = history
+        .iter()
+        .rev()
+        .filter(chosen)
+        .take(3)
+        .collect::<Vec<_>>();
     recent.len() == 3
         && recent.iter().all(|entry| {
             entry["page_changed"] == json!(false) && entry["kind"].as_str() != Some("wait")
         })
 }
 
-fn describe(error: &anyhow::Error) -> String {
-    error.to_string()
-}
-
+mod opt_in;
+mod result;
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entry(kind: &str, changed: Option<bool>) -> Value {
-        json!({"kind": kind, "page_changed": changed})
-    }
-
-    #[test]
-    fn three_unchanged_actions_block_the_run() {
-        let history = vec![
-            entry("click", Some(false)),
-            entry("click", Some(false)),
-            entry("click", Some(false)),
-        ];
-        assert!(stalled(&history));
-    }
-
-    #[test]
-    fn a_wait_or_a_change_keeps_the_run_going() {
-        assert!(!stalled(&[
-            entry("click", Some(false)),
-            entry("wait", Some(false)),
-            entry("click", Some(false)),
-        ]));
-        assert!(!stalled(&[
-            entry("click", Some(false)),
-            entry("click", Some(true)),
-            entry("click", Some(false)),
-        ]));
-        // A run that has not executed three actions yet cannot stall.
-        assert!(!stalled(&[entry("click", Some(false))]));
-        assert!(!stalled(&[]));
-    }
-
-    #[test]
-    fn only_the_last_three_actions_matter() {
-        let history = vec![
-            entry("click", Some(true)),
-            entry("click", Some(false)),
-            entry("click", Some(false)),
-            entry("click", Some(false)),
-        ];
-        assert!(stalled(&history));
-    }
-
-    #[test]
-    fn statuses_use_upstream_names() {
-        assert!(JevStatus::Done.stopped() && JevStatus::Blocked.stopped());
-        assert!(!JevStatus::Ready.stopped());
-    }
-
-    #[test]
-    fn budgets_match_upstream() {
-        assert_eq!(MAX_STEPS, 60);
-        assert_eq!(MAX_STEPS * 2, 120);
-    }
-}
+mod tests;
+mod typing;

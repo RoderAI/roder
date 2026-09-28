@@ -1,0 +1,28 @@
+DuckDuckGo Autoconsent, standalone build, vendored unmodified.
+
+- Project: https://github.com/duckduckgo/autoconsent
+- Package: @duckduckgo/autoconsent 16.40.0 (npm), file dist/autoconsent.standalone.js
+- Tarball: https://registry.npmjs.org/@duckduckgo/autoconsent/-/autoconsent-16.40.0.tgz
+  (npm integrity sha512-1HU7CQZs8v1jnzHhNbFRN8RYJUrhptYL671AiPPKDYJu70fuvqGy1rGhwEqEub4XmpDlvwN6xsebh+fr/OCD0w==)
+- License: MPL-2.0, in LICENSE beside this file (the package's own LICENSE, unmodified)
+- Status: unmodified. Jev's own code that injects it and reads its result lives
+  outside this directory (src/page/consent.rs, src/assets/refuse.js,
+  src/assets/autoconsent_setup.js).
+
+Integrity
+
+autoconsent.standalone.js must match this SHA-256 exactly (440,566 bytes):
+
+  cc50f2114cce0bdaf4f7da703cae4467a84d609d234f3ccb69c5ec0f071aca97
+
+`page::consent::tests::the_vendored_autoconsent_is_the_pinned_file` checks it.
+The file was taken from the npm tarball above, whose sha512 matched the
+registry's integrity value, and is byte-identical to the copy fastbrowse
+vendors. Treat any change to it as a supply-chain change: re-download from
+the registry, check the tarball's integrity, then update this checksum, the
+test and the version together.
+
+The bundle initialises itself when it runs (autoAction "optOut", heuristic
+detection "tier2", prehide on). Jev's own src/assets/autoconsent_setup.js
+runs right after it and sets heuristicMode to "reject", because "tier2"
+heuristics also press a lone "Accept" or "OK"; nothing else is changed.

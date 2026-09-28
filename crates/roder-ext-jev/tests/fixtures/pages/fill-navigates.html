@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Search launcher</title></head>
+<body>
+  <h1>Search launcher</h1>
+  <!-- Pressing the search field opens the search page instead of taking
+       text, as some sites' header search boxes do: the press that starts a
+       fill navigates, so nothing can be typed. The navigation starts 30 ms
+       after the press, so the new document arrives while the fill is still
+       waiting for focus to settle. -->
+  <input id="q" aria-label="Search" autocomplete="off"
+    onmousedown="setTimeout(() => { location.href = 'basic.html'; }, 30)">
+</body>
+</html>

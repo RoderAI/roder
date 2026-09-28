@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mailbox</title>
+<style>
+  body { font: 14px sans-serif; }
+  .row { display: flex; gap: 10px; align-items: center; padding: 6px; width: 460px;
+    border-bottom: 1px solid #ddd; cursor: pointer; }
+  .row .subject { flex: 1; }
+  .icon { width: 16px; height: 16px; display: inline-block; background-size: cover; cursor: pointer; }
+  .star { background-image: url(/icons/star.png); }
+  .trash { background-image: url(/icons/delete.png); }
+  .starred .star { background-color: gold; }
+</style>
+</head>
+<body>
+<h1>Inbox</h1>
+<!-- A mail app built from divs and spans: rows open through a handler on
+     the list and show a pointer; the star and trash icons have their own
+     click listeners and no names but their pictures. -->
+<div id="list"></div>
+<p id="status"></p>
+<script>
+  const mails = [['Ada', 'Minutes'], ['Bob', 'Budget'], ['Cleo', 'Offsite'], ['Bob', 'Lunch']];
+  const list = document.getElementById('list');
+  mails.forEach(([from, subject], i) => {
+    list.insertAdjacentHTML('beforeend', `<div class="row" id="mail${i}"><span class="from">${from}</span>` +
+      `<span class="subject">${subject}</span><span class="icon star"></span><span class="icon trash"></span></div>`);
+  });
+  for (const row of list.querySelectorAll('.row')) {
+    row.querySelector('.star').addEventListener('click', event => {
+      event.stopPropagation();
+      row.classList.toggle('starred');
+      document.getElementById('status').textContent = 'Starred mail updated.';
+    });
+    row.querySelector('.trash').addEventListener('click', event => {
+      event.stopPropagation();
+      row.remove();
+      document.getElementById('status').textContent = 'Moved to trash.';
+    });
+  }
+  list.addEventListener('click', event => {
+    const row = event.target.closest('.row');
+    if (row) document.getElementById('status').textContent =
+      'Opened: ' + row.querySelector('.subject').textContent;
+  });
+</script>
+</body>
+</html>

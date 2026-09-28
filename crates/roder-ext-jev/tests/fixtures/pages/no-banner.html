@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Library hours</title></head>
+<body>
+  <h1>Library hours</h1>
+  <!-- No consent banner; the text mentions cookies only as food, outside any
+       dialog or fixed region, next to a "Decline" button that is not a
+       banner's. Refusal must do nothing. -->
+  <p>The café sells cookies until 4 pm.</p>
+  <button type="button" onclick="window.declined = true">Decline invitation</button>
+  <button type="button" onclick="window.hours = true; document.getElementById('hours-text').hidden = false">Show opening hours</button>
+  <p id="hours-text" hidden>Open 9 to 5, Monday to Saturday.</p>
+</body>
+</html>

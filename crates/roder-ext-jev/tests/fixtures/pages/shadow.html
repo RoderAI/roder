@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Shadow store</title></head>
+<body>
+  <h1>Shadow store</h1>
+  <p>Everything below is drawn by web components.</p>
+  <product-card name="Desk Lamp" price="$25"></product-card>
+  <product-card name="Trail Runner" price="$90"></product-card>
+  <star-button role="button" aria-label="Favourite" tabindex="0"></star-button>
+  <signup-form></signup-form>
+  <closed-widget></closed-widget>
+  <p id="status">Cart is empty.</p>
+  <script>
+    window.cart = [];
+    const status = text => { document.getElementById('status').textContent = text; };
+    customElements.define('product-card', class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({mode: 'open'});
+        const name = this.getAttribute('name');
+        root.innerHTML = `<div class="card"><h2>${name}</h2><p>${this.getAttribute('price')}</p>` +
+          `<button type="button">Add to cart</button></div>`;
+        root.querySelector('button').addEventListener('click', () => {
+          window.cart.push(name);
+          status('Cart: ' + window.cart.join(', '));
+        });
+      }
+    });
+    // A control whose inside is a <button> in its own shadow root.
+    customElements.define('star-button', class extends HTMLElement {
+      connectedCallback() {
+        this.attachShadow({mode: 'open'}).innerHTML =
+          '<style>button{font-size:24px;padding:4px 16px}</style><button type="button">★</button>';
+        this.addEventListener('click', () => { window.favourited = true; status('Favourited.'); });
+      }
+    });
+    // A field and a nested component's button, two shadow roots deep.
+    customElements.define('submit-button', class extends HTMLElement {
+      connectedCallback() {
+        this.attachShadow({mode: 'open'}).innerHTML = '<button type="button">Sign up</button>';
+      }
+    });
+    customElements.define('signup-form', class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({mode: 'open'});
+        root.innerHTML = '<h2>Newsletter</h2><label>Email <input type="email" name="email"></label>' +
+          '<submit-button></submit-button>';
+        root.querySelector('submit-button').addEventListener('click', () => {
+          window.signedUp = root.querySelector('input').value;
+          status('Signed up: ' + window.signedUp);
+        });
+      }
+    });
+    // A closed shadow root is out of reach, as for any script.
+    customElements.define('closed-widget', class extends HTMLElement {
+      connectedCallback() {
+        this.attachShadow({mode: 'closed'}).innerHTML = '<button type="button">Closed action</button>';
+      }
+    });
+  </script>
+</body>
+</html>

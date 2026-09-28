@@ -1,0 +1,659 @@
+{
+  "source": "Farama-Foundation/miniwob-plusplus",
+  "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "license": "MIT",
+  "note": "Labels say whether Jev can express the task at all (supported) and why; derived from a researcher mapping and checked against the task pages and snapshot.js.",
+  "excluded": [
+    {
+      "id": "text-transform",
+      "why": "distorted-text CAPTCHA toy; excluded by policy"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "ascending-numbers",
+      "supported": true,
+      "why": "numbered SVG shapes with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "bisect-angle",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "book-flight",
+      "supported": true,
+      "why": "long form: autocomplete cities + datepicker whose month links (anchors with listeners, no href) are now offered (relabelled after the coverage work)"
+    },
+    {
+      "id": "book-flight-nodelay",
+      "supported": true,
+      "why": "long form: autocomplete cities + datepicker + result compare"
+    },
+    {
+      "id": "button-delay",
+      "supported": true,
+      "why": "click, wait N seconds, click; reward depends on timing"
+    },
+    {
+      "id": "buy-ticket",
+      "supported": true,
+      "why": "compare cards, click Book button"
+    },
+    {
+      "id": "chase-circle",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "choose-date",
+      "supported": true,
+      "why": "datepicker month links (anchors with listeners, no href) are now offered (relabelled after the coverage work)"
+    },
+    {
+      "id": "choose-date-easy",
+      "supported": true,
+      "why": "datepicker, target month already shown"
+    },
+    {
+      "id": "choose-date-medium",
+      "supported": true,
+      "why": "half the seeds need the month Prev link, which has no href"
+    },
+    {
+      "id": "choose-date-nodelay",
+      "supported": true,
+      "why": "datepicker month links (anchors with listeners, no href) are now offered (relabelled after the coverage work)"
+    },
+    {
+      "id": "choose-list",
+      "supported": true,
+      "why": "native select"
+    },
+    {
+      "id": "circle-center",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "click-button",
+      "supported": true,
+      "why": "button among text/inputs"
+    },
+    {
+      "id": "click-button-sequence",
+      "supported": true,
+      "why": "two ordered clicks"
+    },
+    {
+      "id": "click-checkboxes",
+      "supported": true,
+      "why": "checkbox set + submit"
+    },
+    {
+      "id": "click-checkboxes-large",
+      "supported": true,
+      "why": "5-12 checkboxes"
+    },
+    {
+      "id": "click-checkboxes-soft",
+      "supported": true,
+      "why": "synonym matching"
+    },
+    {
+      "id": "click-checkboxes-transfer",
+      "supported": true,
+      "why": "variable target count (near-duplicate; run after the first 40)"
+    },
+    {
+      "id": "click-collapsible",
+      "supported": true,
+      "why": "accordion header (role=tab) then submit"
+    },
+    {
+      "id": "click-collapsible-2",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-collapsible-2-nodelay",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-collapsible-nodelay",
+      "supported": true,
+      "why": "same, no animation (near-duplicate; run after the first 40)"
+    },
+    {
+      "id": "click-color",
+      "supported": false,
+      "why": "colour swatches with no text: the colour is only visual (targets are offered since the coverage work)"
+    },
+    {
+      "id": "click-dialog",
+      "supported": true,
+      "why": "jQuery UI dialog close button"
+    },
+    {
+      "id": "click-dialog-2",
+      "supported": true,
+      "why": "dialog button by label"
+    },
+    {
+      "id": "click-link",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-menu",
+      "supported": false,
+      "why": "submenus open on hover; clicking a parent item ends the episode with -1 (relabelled after the baseline)"
+    },
+    {
+      "id": "click-menu-2",
+      "supported": true,
+      "why": "jQuery UI menu (role=menuitem)"
+    },
+    {
+      "id": "click-option",
+      "supported": true,
+      "why": "radio + submit"
+    },
+    {
+      "id": "click-pie",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "click-pie-nodelay",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "click-scroll-list",
+      "supported": false,
+      "why": "multi-select list needs modifier-click"
+    },
+    {
+      "id": "click-shades",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "click-shape",
+      "supported": true,
+      "why": "SVG shapes with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-tab",
+      "supported": true,
+      "why": "jQuery UI tabs (a[href])"
+    },
+    {
+      "id": "click-tab-2",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-tab-2-easy",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-tab-2-hard",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-tab-2-medium",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "click-test",
+      "supported": true,
+      "why": "single button"
+    },
+    {
+      "id": "click-test-2",
+      "supported": true,
+      "why": "one of two buttons (near-duplicate; run after the first 40)"
+    },
+    {
+      "id": "click-test-transfer",
+      "supported": true,
+      "why": "button label shift (near-duplicate; run after the first 40)"
+    },
+    {
+      "id": "click-widget",
+      "supported": true,
+      "why": "widget type by role"
+    },
+    {
+      "id": "copy-paste",
+      "supported": true,
+      "why": "textarea value may not reach page text; clipboard not modelled"
+    },
+    {
+      "id": "copy-paste-2",
+      "supported": true,
+      "why": "as copy-paste, nth textarea"
+    },
+    {
+      "id": "count-shape",
+      "supported": false,
+      "why": "needs vision (answer only in drawn shapes)"
+    },
+    {
+      "id": "count-sides",
+      "supported": false,
+      "why": "needs vision (answer only in drawn shapes)"
+    },
+    {
+      "id": "daily-calendar",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-box",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-circle",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-cube",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-items",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-items-grid",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-shapes",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-shapes-2",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-single-shape",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "drag-sort-numbers",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "draw-circle",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "draw-line",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "email-inbox",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-delete",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-forward",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-forward-nl",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-forward-nl-turk",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-important",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-nl-turk",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-noscroll",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-reply",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "email-inbox-star-reply",
+      "supported": true,
+      "why": "rows, icons and buttons are divs and spans with listeners or pointer cursors; icons are named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "enter-date",
+      "supported": true,
+      "why": "native date input: the snapshot offers it as a textbox and fill.js sets its ISO value (relabelled from the researcher's 'insertText does not fill segmented inputs')"
+    },
+    {
+      "id": "enter-password",
+      "supported": true,
+      "why": "two password inputs, now offered as input_type password fills (never read), typed from the goal; relabelled when password fields became fillable, not yet run"
+    },
+    {
+      "id": "enter-text",
+      "supported": true,
+      "why": "fill + submit"
+    },
+    {
+      "id": "enter-text-2",
+      "supported": true,
+      "why": "case transform fill"
+    },
+    {
+      "id": "enter-text-dynamic",
+      "supported": true,
+      "why": "random string fill (near-duplicate; run after the first 40)"
+    },
+    {
+      "id": "enter-time",
+      "supported": true,
+      "why": "native time input: the snapshot offers it as a textbox and fill.js sets its ISO value (relabelled from the researcher's 'insertText does not fill segmented inputs')"
+    },
+    {
+      "id": "find-greatest",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "find-midpoint",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "find-word",
+      "supported": true,
+      "why": "read paragraph, type nth word"
+    },
+    {
+      "id": "focus-text",
+      "supported": true,
+      "why": "click into textbox (near-duplicate; run after the first 40)"
+    },
+    {
+      "id": "focus-text-2",
+      "supported": true,
+      "why": "nth textbox"
+    },
+    {
+      "id": "form-sequence",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "form-sequence-2",
+      "supported": true,
+      "why": "radio + nth textbox"
+    },
+    {
+      "id": "form-sequence-3",
+      "supported": true,
+      "why": "Selectric's option items have click listeners and are offered (relabelled after the coverage work)"
+    },
+    {
+      "id": "generate-number",
+      "supported": true,
+      "why": "click Generate until criterion met, then submit"
+    },
+    {
+      "id": "grid-coordinate",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "guess-number",
+      "supported": true,
+      "why": "feedback loop over several submits"
+    },
+    {
+      "id": "highlight-text",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "highlight-text-2",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "hot-cold",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "hover-shape",
+      "supported": false,
+      "why": "hover only"
+    },
+    {
+      "id": "identify-shape",
+      "supported": false,
+      "why": "needs vision (answer only in drawn shapes)"
+    },
+    {
+      "id": "login-user",
+      "supported": true,
+      "why": "username and password fills, then the login button; relabelled when password fields became fillable, not yet run"
+    },
+    {
+      "id": "login-user-popup",
+      "supported": true,
+      "why": "login-user plus the popup the page may show over the form; relabelled when password fields became fillable, not yet run"
+    },
+    {
+      "id": "moving-items",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "multi-layouts",
+      "supported": true,
+      "why": "form with varied layouts"
+    },
+    {
+      "id": "multi-orderings",
+      "supported": true,
+      "why": "the Submit div has a click listener and the fields are named by the text beside them (relabelled after the coverage work)"
+    },
+    {
+      "id": "navigate-tree",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "number-checkboxes",
+      "supported": true,
+      "why": "pattern copy onto checkbox grid (visual layout)"
+    },
+    {
+      "id": "odd-or-even",
+      "supported": true,
+      "why": "twin Odd/Even buttons per number (context)"
+    },
+    {
+      "id": "order-food",
+      "supported": true,
+      "why": "span, div, li or td targets with click listeners, offered as generic clickables (relabelled after the coverage work)"
+    },
+    {
+      "id": "phone-book",
+      "supported": true,
+      "why": "the contact links are anchors with click listeners, now offered (relabelled after the coverage work)"
+    },
+    {
+      "id": "read-table",
+      "supported": true,
+      "why": "read table value, type it"
+    },
+    {
+      "id": "read-table-2",
+      "supported": true,
+      "why": "two table lookups"
+    },
+    {
+      "id": "resize-textarea",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "right-angle",
+      "supported": false,
+      "why": "SVG/canvas target or coordinate click"
+    },
+    {
+      "id": "scroll-text",
+      "supported": true,
+      "why": "the text helper now reads the textarea's value among the other fields (relabelled after the coverage work)"
+    },
+    {
+      "id": "scroll-text-2",
+      "supported": true,
+      "why": "the textarea is offered as a scroll region (relabelled after the coverage work)"
+    },
+    {
+      "id": "search-engine",
+      "supported": true,
+      "why": "search, paginate, open nth result"
+    },
+    {
+      "id": "sign-agreement",
+      "supported": true,
+      "why": "the disabled textarea is offered as a scroll region (relabelled after the coverage work)"
+    },
+    {
+      "id": "simon-says",
+      "supported": false,
+      "why": "visual timing sequence (flashing buttons)"
+    },
+    {
+      "id": "simple-algebra",
+      "supported": true,
+      "why": "solve for x and type"
+    },
+    {
+      "id": "simple-arithmetic",
+      "supported": true,
+      "why": "compute and type"
+    },
+    {
+      "id": "social-media",
+      "supported": true,
+      "why": "icon spans with click listeners, named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "social-media-all",
+      "supported": true,
+      "why": "icon spans with click listeners, named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "social-media-some",
+      "supported": true,
+      "why": "icon spans with click listeners, named by their picture files (relabelled after the coverage work)"
+    },
+    {
+      "id": "stock-market",
+      "supported": true,
+      "why": "WAIT until price below threshold, then buy"
+    },
+    {
+      "id": "terminal",
+      "supported": false,
+      "why": "the terminal reads keydown events on a hidden input; typing inserts text without them"
+    },
+    {
+      "id": "text-editor",
+      "supported": false,
+      "why": "rich-text selection + formatting"
+    },
+    {
+      "id": "tic-tac-toe",
+      "supported": true,
+      "why": "board cells are divs with click listeners, offered with their row and column (relabelled after the coverage work); winning still needs play"
+    },
+    {
+      "id": "unicode-test",
+      "supported": true,
+      "why": "unicode button labels"
+    },
+    {
+      "id": "use-autocomplete",
+      "supported": true,
+      "why": "fill full value (suggestion list items have no role)"
+    },
+    {
+      "id": "use-autocomplete-nodelay",
+      "supported": true,
+      "why": "as use-autocomplete"
+    },
+    {
+      "id": "use-colorwheel",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "use-colorwheel-2",
+      "supported": true,
+      "why": "the colour can be typed into the Color text field; mislabelled as a drag at the baseline, where it already passed 5/5 (relabelled after the coverage work)"
+    },
+    {
+      "id": "use-slider",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "use-slider-2",
+      "supported": false,
+      "why": "drag / mouse-move gesture"
+    },
+    {
+      "id": "use-spinner",
+      "supported": true,
+      "why": "spinbutton fill"
+    },
+    {
+      "id": "visual-addition",
+      "supported": false,
+      "why": "needs vision (answer only in drawn shapes)"
+    }
+  ]
+}

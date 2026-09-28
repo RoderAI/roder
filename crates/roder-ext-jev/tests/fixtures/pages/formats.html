@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Callback</title></head>
+<body>
+  <h1>Callback</h1>
+  <!-- A phone field that formats what is typed, and a native datetime
+       field, which drops zero seconds. -->
+  <label>Phone <input id="phone" autocomplete="off"></label>
+  <label>When <input id="when" type="datetime-local"></label>
+  <script>
+    document.getElementById('phone').addEventListener('input', event => {
+      const digits = event.target.value.replace(/\D/g, '').slice(0, 10);
+      const parts = [digits.slice(0, 3), digits.slice(3, 6), digits.slice(6)];
+      event.target.value = digits.length > 6 ? `(${parts[0]}) ${parts[1]}-${parts[2]}` : digits;
+    });
+  </script>
+</body>
+</html>

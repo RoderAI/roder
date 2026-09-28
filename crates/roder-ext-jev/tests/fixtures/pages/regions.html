@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agreement</title>
+<style>
+  body { font: 14px sans-serif; }
+  #terms { height: 90px; width: 320px; overflow-y: auto; border: 1px solid #999; padding: 4px; }
+  #terms p { margin: 0; height: 30px; }
+  #notes { height: 60px; width: 320px; }
+  #plain { height: 40px; width: 320px; overflow: hidden; }
+</style>
+</head>
+<body>
+<h1>User agreement</h1>
+<!-- Agree unlocks only once the terms were scrolled to their end, as sign-up
+     pages do: two scrolls of 320 px (the least a box scrolls). The terms box, and the
+     textarea, scroll inside themselves. -->
+<div id="terms" aria-label="Terms of service"></div>
+<button type="button" id="agree" disabled>Agree</button>
+<p id="status">Not agreed</p>
+<label for="notes">Notes</label><br>
+<textarea id="notes"></textarea>
+<!-- A box that hides its overflow is not a scroll region. -->
+<div id="plain">Hidden overflow line 1<br>line 2<br>line 3<br>line 4<br>line 5</div>
+<script>
+  const terms = document.getElementById('terms');
+  terms.innerHTML = Array.from({length: 20}, (_, i) => `<p>Clause ${i + 1}.</p>`).join('') +
+    '<p>End of terms.</p>';
+  terms.addEventListener('scroll', () => {
+    if (terms.scrollTop + terms.clientHeight >= terms.scrollHeight - 4)
+      document.getElementById('agree').disabled = false;
+  });
+  document.getElementById('agree').addEventListener('click', () => {
+    document.getElementById('status').textContent = 'Agreed';
+  });
+  document.getElementById('notes').value =
+    Array.from({length: 20}, (_, i) => `Note line ${i + 1}`).join('\n');
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fruit search</title>
+<style>#list { position: absolute; top: 80px; left: 8px; margin: 0; background: white; }</style>
+</head>
+<body>
+  <h1>Fruit search</h1>
+  <!-- The suggestion list still shows the last query's options when a new
+       query is typed; it updates 500 ms after typing stops. A listbox
+       elsewhere in the page is hidden and never counts. -->
+  <input id="q" role="combobox" aria-label="Fruit" aria-controls="list" aria-expanded="true" value="Ap">
+  <ul id="list" role="listbox"><li role="option">Apple</li><li role="option">Apricot</li></ul>
+  <ul role="listbox" hidden><li role="option">Ghost</li></ul>
+  <script>
+    const fruits = ['Apple', 'Apricot', 'Banana', 'Blueberry', 'Cherry'];
+    let timer;
+    document.getElementById('q').addEventListener('input', event => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const query = event.target.value.toLowerCase();
+        document.getElementById('list').innerHTML = fruits
+          .filter(fruit => fruit.toLowerCase().startsWith(query))
+          .map(fruit => `<li role="option">${fruit}</li>`).join('');
+      }, 500);
+    });
+  </script>
+</body>
+</html>

@@ -8,6 +8,15 @@ Run against the pinned upstream revision:
 
 Every file it writes is upstream output, not hand-written expectation: the Rust
 implementation is correct when it reproduces these byte for byte.
+
+Jev now owns the fixtures and diverges in places this script cannot record, so
+reapply them after regenerating: TARGET's closing sentences about offscreen
+elements and `context` (prompts.json, and the rules in choose_request.json's body and
+serialized form), the offscreen "Next page" link in action_space.json, and the
+`date` key after `goal` in field_context.json's context (recorded as of
+2026-09-27), the `other_fields` key after `field` there (the fixture page's
+"Cabin" select), and both in the user message of every
+field_text_requests.json body.
 """
 
 import hashlib

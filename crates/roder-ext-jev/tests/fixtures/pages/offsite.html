@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Partners</title></head>
+<body>
+  <h1>Partners</h1>
+  <p>Our partner's catalogue lives on another site.</p>
+  <a id="partner" href="#">Visit the partner catalogue</a>
+  <a href="landing.html">Our own landing page</a>
+  <script>
+    // The same server under another host name is another origin.
+    document.getElementById('partner').href =
+      'http://localhost:' + location.port + '/pages/landing.html?from=partner';
+  </script>
+</body>
+</html>

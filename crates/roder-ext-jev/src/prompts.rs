@@ -1,9 +1,11 @@
 //! Instruction text sent to the decision service and the text helper.
 //!
-//! Vendored verbatim from upstream Jev's `questions.py` (MIT, browser-use/
-//! jev-ultrafast). These strings are part of the model contract: changing a
-//! word changes behaviour, so they are copied rather than paraphrased and are
-//! checked against a recorded fixture.
+//! Vendored from upstream Jev's `questions.py` (MIT, browser-use/
+//! jev-ultrafast) and now Jev-owned. These strings are part of the model
+//! contract: changing a word changes behaviour, so they are checked against a
+//! recorded fixture. The divergences are TARGET's last two sentences, which
+//! tell the target heads that offscreen elements need no scroll first and
+//! that `context` separates elements with the same label.
 
 /// Rules for choosing the next operation.
 pub(crate) const NEXT_ACTION: &str = "Advance the user's entire goal from the CURRENT page using one operation.\n\
@@ -23,7 +25,9 @@ a matching link is not enough. BLOCKED means no supported operation can make pro
 pub(crate) const TARGET: &str = "Choose the best observed target if the next operation is the one specified in this question.\n\
 Use the user's entire goal, field values, nearby text, and recent actions. This question chooses only\n\
 a target for that operation; another question decides which operation to execute. Do not choose\n\
-a field that already contains the requested value. Choose only an offered element index.";
+a field that already contains the requested value. Choose only an offered element index.\n\
+An element marked offscreen can be targeted directly; do not scroll just to reach it.\n\
+Use an element's context, the card, row, section or table column it belongs to, to tell apart elements with the same label.";
 
 /// Rules for the text helper that fills one field.
 pub(crate) const TEXT_VALUE: &str = "Return a JSON object with exactly one key, text: the exact string to enter in the selected field.\n\
@@ -40,9 +44,9 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    /// The prompts must stay identical to the upstream revision we pin.
+    /// The prompts must stay identical to the recorded, Jev-owned text.
     #[test]
-    fn prompts_match_the_recorded_upstream_text() {
+    fn prompts_match_the_recorded_text() {
         let fixture: Value =
             serde_json::from_str(include_str!("../tests/fixtures/prompts.json")).unwrap();
         assert_eq!(NEXT_ACTION, fixture["NEXT_ACTION"].as_str().unwrap());

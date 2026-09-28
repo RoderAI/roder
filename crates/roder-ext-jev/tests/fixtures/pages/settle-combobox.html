@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Pick a city</title></head>
+<body>
+  <h1>Pick a city</h1>
+  <label for="city">City</label>
+  <input id="city" role="combobox" aria-controls="cities" aria-expanded="false">
+  <ul id="cities" role="listbox"></ul>
+  <p>Ticks: <span id="ticks">0</span></p>
+  <script>
+    // Suggestions appear on the first keystroke, while a ticker keeps the
+    // page from ever going quiet.
+    document.getElementById('city').addEventListener('input', event => {
+      document.getElementById('cities').innerHTML = ['Paris', 'Parma']
+        .filter(city => city.toLowerCase().startsWith(event.target.value.toLowerCase()))
+        .map(city => `<li role="option">${city}</li>`).join('');
+    });
+    let ticks = 0;
+    setInterval(() => { document.getElementById('ticks').textContent = ++ticks; }, 50);
+  </script>
+</body>
+</html>

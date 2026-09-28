@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Shipping</title></head>
+<body>
+  <h1>Shipping</h1>
+  <!-- A country select with 300 options above the form's Submit button. -->
+  <form method="post" action="/submit/shipping">
+    <label>Country <select id="country" name="country"></select></label>
+    <label>City <input name="city"></label>
+    <button type="submit">Submit</button>
+  </form>
+  <script>
+    const select = document.getElementById('country');
+    for (let i = 1; i <= 300; i++) select.add(new Option('Country ' + i, 'c' + i));
+  </script>
+</body>
+</html>

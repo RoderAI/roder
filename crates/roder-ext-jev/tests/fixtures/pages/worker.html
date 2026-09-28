@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Worker host</title></head>
+<body>
+  <h1>Worker host</h1>
+  <!-- Starts a shared worker: a DevTools target that is not a page, so it
+       can be attached to but not set up as a tab (it has no viewport). -->
+  <button type="button">Refresh</button>
+  <script>
+    const source = 'onconnect = event => event.ports[0].postMessage("ready");';
+    window.worker = new SharedWorker(URL.createObjectURL(new Blob([source], {type: 'text/javascript'})));
+    window.worker.port.start();
+  </script>
+</body>
+</html>
