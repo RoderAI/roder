@@ -45,6 +45,9 @@ impl Connection {
             true => endpoint.to_string(),
             false => advertised_websocket(endpoint).await?,
         };
+        // A host that compiles in both rustls backends must name one, or a
+        // wss endpoint panics; an error only means one is already set.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let (socket, _) = tokio_tungstenite::connect_async(url.as_str())
             .await
             .context("open the Chrome DevTools websocket")?;

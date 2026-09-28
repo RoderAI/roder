@@ -234,3 +234,6 @@ Still one decision round trip per step.
   `refuse_cookie_banner`; `JevEngineConfig` gains `with_irreversible_gate`,
   `with_irreversible_authorized` and `with_cookie_banner_refusal(bool)`, and
   banner refusal is on unless that is given `false`.
+- The `roder` binary names its TLS crypto backend at start. Both rustls
+  backends are compiled in, so a TLS websocket (the Codex provider's, or a
+  `wss` `JEV_CDP_URL`) panicked.

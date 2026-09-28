@@ -104,6 +104,10 @@ use tokio::sync::mpsc;
 const RODER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
+    // Both rustls crypto backends are compiled in (reqwest brings aws-lc-rs,
+    // sqlx and the app server bring ring), so rustls cannot pick one and any
+    // TLS websocket would panic. An error only means one is already set.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     std::thread::Builder::new()
         .name("roder-main".to_string())
         .stack_size(RODER_STACK_SIZE)
