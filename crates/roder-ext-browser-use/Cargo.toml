@@ -1,0 +1,39 @@
+[package]
+name = "roder-ext-browser-use"
+version = "0.1.0"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[package.metadata.roder.distribution]
+id = "browser-use"
+category = "tool-provider"
+display_name = "browser-use Browser (MCP)"
+description = "Drive a separate browser through the open-source browser-use local MCP server, launched with uvx."
+default_in_profiles = []
+required_env = []
+optional_env = [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "RODER_BROWSER_USE_HEADLESS",
+]
+conflicts_with = []
+required_capabilities = ["network.web", "process.uvx"]
+extension_path = "::BrowserUseExtension::from_env"
+docs_url = "https://docs.browser-use.com/open-source/customize/integrations/mcp-server"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+roder-api.workspace = true
+roder-ext-mcp.workspace = true
+semver.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

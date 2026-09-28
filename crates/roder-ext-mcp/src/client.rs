@@ -265,7 +265,7 @@ fn parse_sse_message(body: &str) -> anyhow::Result<serde_json::Value> {
     last_response.ok_or_else(|| anyhow::anyhow!("no JSON-RPC response found in SSE stream"))
 }
 
-fn rpc_result(message: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+pub(crate) fn rpc_result(message: serde_json::Value) -> anyhow::Result<serde_json::Value> {
     if let Some(error) = message.get("error") {
         let code = error
             .get("code")
@@ -284,7 +284,7 @@ fn rpc_result(message: serde_json::Value) -> anyhow::Result<serde_json::Value> {
 }
 
 /// Joins the `content` text parts of a tool result for the model transcript.
-fn render_content_text(result: &serde_json::Value) -> String {
+pub(crate) fn render_content_text(result: &serde_json::Value) -> String {
     let Some(content) = result.get("content").and_then(|content| content.as_array()) else {
         return String::new();
     };
@@ -302,7 +302,7 @@ fn render_content_text(result: &serde_json::Value) -> String {
         .join("\n")
 }
 
-fn truncate(text: &str, max: usize) -> String {
+pub(crate) fn truncate(text: &str, max: usize) -> String {
     if text.len() <= max {
         text.to_string()
     } else {
