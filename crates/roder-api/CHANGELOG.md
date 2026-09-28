@@ -1,3 +1,11 @@
+## 0.2.1 (2026-09-28)
+
+### Fixes
+
+#### Format catalog imports
+
+Formatting only; no behaviour change.
+
 ## 0.2.0 (2026-09-26)
 
 ### Breaking Changes
