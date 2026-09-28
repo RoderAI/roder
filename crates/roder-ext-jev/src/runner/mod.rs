@@ -24,7 +24,7 @@ use crate::decide::JevTypeSafeDecisionClient;
 use crate::engine::{JevEngineConfig, JevRunResult, JevStatus, JevTextValueResolver};
 use crate::scope::JevOriginScope;
 use crate::text_helper::TextHelper;
-use crate::text_model::{self, RoderKeys, TextModel};
+use crate::text_model::{self, Effort, Explicit, RoderCodexSignIn, RoderKeys, TextModel};
 pub(crate) use ceilings::Ceilings;
 #[cfg(test)]
 pub(crate) use ceilings::switch;
@@ -149,14 +149,21 @@ fn env_value(key: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-pub(crate) fn resolve_text_model(turn_model: Option<&ModelSelection>) -> Option<TextModel> {
-    text_model::resolve(
-        env_value("JEV_TEXT_MODEL_API_KEY").or_else(|| env_value("OPENROUTER_API_KEY")),
-        env_value("JEV_TEXT_MODEL_BASE_URL"),
-        env_value("JEV_TEXT_MODEL"),
-        turn_model,
-        &RoderKeys,
-    )
+/// The text helper from the environment and Roder's providers (see
+/// [`text_model::resolve`]). A malformed `JEV_TEXT_MODEL_REASONING`, or an
+/// explicit model Roder cannot serve, fails the call.
+pub(crate) async fn resolve_text_model(
+    turn_model: Option<&ModelSelection>,
+) -> anyhow::Result<Option<TextModel>> {
+    let explicit = Explicit {
+        key: env_value("JEV_TEXT_MODEL_API_KEY").or_else(|| env_value("OPENROUTER_API_KEY")),
+        base_url: env_value("JEV_TEXT_MODEL_BASE_URL"),
+        model: env_value("JEV_TEXT_MODEL"),
+        reasoning: env_value("JEV_TEXT_MODEL_REASONING")
+            .map(|raw| Effort::parse(&raw))
+            .transpose()?,
+    };
+    text_model::resolve(explicit, turn_model, &RoderKeys, &RoderCodexSignIn).await
 }
 
 /// How long a `wait` action holds the page. Upstream sleeps 100ms, which is
@@ -176,7 +183,7 @@ pub(crate) async fn run(
     let started = Instant::now();
     let deadline = started + request.timeout;
     let key = key_from_env_or_config().context("JEV_API_KEY is required for jev_browse")?;
-    let text = resolve_text_model(turn_model);
+    let text = resolve_text_model(turn_model).await?;
     let decision = Arc::new(JevTypeSafeDecisionClient::new(
         key,
         env_value("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
@@ -194,8 +201,9 @@ pub(crate) async fn run(
         config = config.with_irreversible_authorized();
     }
     config = config.with_cookie_banner_refusal(request.refuse_cookie_banners);
-    if let Some(text) = text.clone() {
-        let resolver: Arc<dyn JevTextValueResolver> = Arc::new(TextHelper::new(text));
+    let helper = text.map(|text| Arc::new(TextHelper::new(text)));
+    if let Some(helper) = &helper {
+        let resolver: Arc<dyn JevTextValueResolver> = helper.clone();
         config = config.with_text_resolver(resolver);
     }
 
@@ -226,7 +234,9 @@ pub(crate) async fn run(
     annotate(
         &mut value,
         endpoint.as_ref(),
-        text.as_ref(),
+        // The model that wrote values, which is not the one resolved when
+        // an unusable Codex sign-in fell back.
+        helper.map(|helper| helper.current()).as_ref(),
         request.foreground,
     );
     Ok(value)
@@ -258,7 +268,17 @@ fn annotate(
     object.insert(
         "text_model".into(),
         match text {
-            Some(text) => json!({"model": text.model, "source": text.source}),
+            Some(text) => {
+                let mut provenance = json!({
+                    "model": text.model,
+                    "effort": text.effort(),
+                    "source": text.source,
+                });
+                if let Some(note) = text.note {
+                    provenance["note"] = json!(note);
+                }
+                provenance
+            }
             None => json!(null),
         },
     );
@@ -421,11 +441,15 @@ mod tests {
         let mut value = json!({"status":"done"});
         let endpoint = ChromeEndpoint::new("http://127.0.0.1:9222", true);
         let text = TextModel {
-            base_url: "https://api.deepseek.com/v1".into(),
             model: "deepseek-chat".into(),
-            api_key: "sk-deepseek".into(),
             source: "turn-model",
-            reasoning_none: false,
+            note: None,
+            fallback: None,
+            transport: crate::text_model::Transport::Chat {
+                base_url: "https://api.deepseek.com/v1".into(),
+                api_key: "sk-deepseek".into(),
+                reasoning: None,
+            },
         };
         annotate(&mut value, Some(&endpoint), Some(&text), true);
         assert_eq!(value["browser"]["launched_by_roder"], json!(true));
@@ -433,6 +457,29 @@ mod tests {
         assert_eq!(value["browser"]["foreground"], json!(true));
         assert_eq!(value["text_model"]["model"], json!("deepseek-chat"));
         assert_eq!(value["text_model"]["source"], json!("turn-model"));
+        assert_eq!(value["text_model"]["effort"], json!("none"));
+        let codex = TextModel {
+            model: "gpt-6-sol".into(),
+            source: "codex",
+            note: None,
+            fallback: None,
+            transport: crate::text_model::Transport::Codex {
+                effort: Effort::Low,
+            },
+        };
+        annotate(&mut value, Some(&endpoint), Some(&codex), true);
+        assert_eq!(
+            value["text_model"],
+            json!({"model": "gpt-6-sol", "effort": "low", "source": "codex"})
+        );
+        // A stand-in for an unusable sign-in names itself and says why.
+        let stand_in = text.clone().standing_in();
+        annotate(&mut value, Some(&endpoint), Some(&stand_in), true);
+        assert_eq!(value["text_model"]["model"], json!("deepseek-chat"));
+        assert_eq!(
+            value["text_model"]["note"],
+            json!(crate::text_model::CODEX_UNUSABLE)
+        );
         assert!(!value.to_string().contains("sk-deepseek"));
     }
 

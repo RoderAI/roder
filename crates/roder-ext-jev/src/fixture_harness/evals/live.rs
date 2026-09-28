@@ -10,8 +10,11 @@
 //!   pins a model, else `jev-latest`.
 //! - `JEV_EVAL_VARIANTS=a,b` turns on request variants (see [`super::variants`]).
 //! - `JEV_EVAL_TEXT=model` types values from the configured text helper
-//!   instead of each task's `values`, which otherwise isolate the decision
-//!   model.
+//!   (`JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` pick it, as for
+//!   `jev_browse`) instead of each task's `values`, which otherwise isolate
+//!   the decision model. A password or one-time code the task holds still
+//!   comes from its values, as a supervisor's resolver would supply it; see
+//!   [`super::text_sources::Supervised`].
 //! - `JEV_EVAL_CONFIRM_IRREVERSIBLE=1` runs every task with the
 //!   irreversible-action gate on, to measure what turning it on by default
 //!   would cost, and `JEV_EVAL_REFUSE_COOKIE_BANNERS=0` every task that does
@@ -31,6 +34,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use futures::StreamExt;
 use serde_json::{Value, json};
 
+use super::text_sources::{Recorded, Supervised};
 use super::variants::{StepTelemetry, VariantTransport, Variants};
 use super::{Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_rows};
 use crate::decide::{ENDPOINT, JevTypeSafeDecisionClient, TypeSafeHttpTransport};
@@ -38,6 +42,7 @@ use crate::engine::{JevDecisionTransport, JevTextValueResolver};
 use crate::fixture_harness::Harness;
 use crate::http::RetryPolicy;
 use crate::text_helper::TextHelper;
+use crate::text_model::TextModel;
 
 pub(super) fn env(key: &str) -> Option<String> {
     std::env::var(key)
@@ -53,7 +58,8 @@ struct LiveSetup {
     key: String,
     model: String,
     variants: Variants,
-    text_model: bool,
+    /// `JEV_EVAL_TEXT=model`: the text helper that types ordinary fields.
+    text_model: Option<TextModel>,
     /// Every task with the irreversible-action gate on.
     confirm_irreversible: bool,
     /// Every task that does not set it with cookie-banner refusal off.
@@ -97,24 +103,33 @@ async fn run_one(setup: &LiveSetup, task: &Task) -> Option<Row> {
                 transport.clone(),
             ))
         };
-    let text: Arc<dyn JevTextValueResolver> = if setup.text_model {
-        match crate::runner::resolve_text_model(None) {
-            Some(model) => Arc::new(TextHelper::new(model)),
-            None => {
-                let error = anyhow::anyhow!("JEV_EVAL_TEXT=model but no text model is configured");
-                return Some(Row::errored(task, "live", &error));
-            }
-        }
-    } else {
-        Arc::new(TaskValues::new(&task.values))
+    let helper = setup
+        .text_model
+        .as_ref()
+        .map(|model| Arc::new(TextHelper::new(model.clone())));
+    let text = match &helper {
+        Some(helper) => Recorded::new(
+            Arc::new(Supervised::new(&task.values, helper.clone())),
+            "text-model",
+        ),
+        None => Recorded::new(Arc::new(TaskValues::new(&task.values)), "task-values"),
     };
+    let resolver: Arc<dyn JevTextValueResolver> = text.clone();
     let probes = task.expect.probes().cloned().collect();
     Some(
-        match run_task(&harness, task, decision, text, probes).await {
+        match run_task(&harness, task, decision, resolver, probes).await {
             Ok(outcome) => {
                 let failures = task.expect.grade(&outcome);
                 let mut row = Row::new(task, "live", names, &outcome, failures);
                 row.telemetry = telemetry(&outcome, &transport.steps());
+                // The model that wrote values, which is not the one
+                // resolved when an unusable Codex sign-in fell back.
+                row.telemetry["text_model"] = json!(
+                    helper
+                        .as_ref()
+                        .map_or("task-values".to_string(), |helper| helper.current().label())
+                );
+                row.telemetry["text"] = text.report();
                 row
             }
             Err(error) => Row::errored(task, "live", &error),
@@ -180,7 +195,15 @@ async fn live_corpus() {
         key,
         model: env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
         variants: Variants::parse(&env("JEV_EVAL_VARIANTS").unwrap_or_default()).unwrap(),
-        text_model: env("JEV_EVAL_TEXT").as_deref() == Some("model"),
+        text_model: match env("JEV_EVAL_TEXT").as_deref() == Some("model") {
+            true => Some(
+                crate::runner::resolve_text_model(None)
+                    .await
+                    .unwrap()
+                    .expect("JEV_EVAL_TEXT=model but no text model is configured"),
+            ),
+            false => None,
+        },
         confirm_irreversible: crate::runner::switch(
             "JEV_EVAL_CONFIRM_IRREVERSIBLE",
             env("JEV_EVAL_CONFIRM_IRREVERSIBLE").as_deref(),
@@ -214,8 +237,12 @@ async fn live_corpus() {
         .map_or(0, |elapsed| elapsed.as_secs());
     let path = write_rows(&format!("live-{stamp}"), &rows).unwrap();
     eprintln!(
-        "model {}, variants {:?}, gate {}, cookie refusal {}\n{}rows: {}",
+        "model {}, text {}, variants {:?}, gate {}, cookie refusal {}\n{}rows: {}",
         setup.model,
+        setup
+            .text_model
+            .as_ref()
+            .map_or("task values".to_string(), TextModel::label),
         setup.variants.names(),
         setup.confirm_irreversible,
         !setup.no_cookie_banner_refusal,

@@ -15,7 +15,7 @@ use crate::engine::{
     JevActOutcome, JevBrowser, JevDecision, JevDecisionClient, JevEngine, JevEngineConfig,
     JevTextValue, JevTextValueResolver,
 };
-use crate::text_model::TextModel;
+use crate::text_model::{TextModel, Transport};
 
 const PASSWORD: &str = "hunter2-correct-horse";
 const CODE: &str = "482913";
@@ -141,11 +141,15 @@ async fn secrets_never_reach_the_reported_result() {
     // annotated result; it carries the model name, never the key.
     let mut value = json!({"status":"done"});
     let text = TextModel {
-        base_url: "https://api.deepseek.com/v1".into(),
         model: "deepseek-chat".into(),
-        api_key: "sk-secret-value".into(),
         source: "roder-provider",
-        reasoning_none: false,
+        note: None,
+        fallback: None,
+        transport: Transport::Chat {
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: "sk-secret-value".into(),
+            reasoning: None,
+        },
     };
     let endpoint = ChromeEndpoint::new("http://127.0.0.1:9222", false);
     annotate(&mut value, Some(&endpoint), Some(&text), true);

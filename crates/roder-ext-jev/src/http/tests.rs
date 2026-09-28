@@ -27,6 +27,11 @@ impl Reply {
     pub(crate) fn status(code: u16) -> Self {
         Self::Status(code, Vec::new(), r#"{"error":"scripted"}"#)
     }
+
+    /// A 200 sent as server-sent events.
+    pub(crate) fn sse(body: &'static str) -> Self {
+        Self::Status(200, vec![("content-type", "text/event-stream")], body)
+    }
 }
 
 /// A local HTTP/1.1 server that answers each connection with the next
@@ -34,6 +39,7 @@ impl Reply {
 pub(crate) struct MockServer {
     pub(crate) url: String,
     requests: Arc<Mutex<Vec<(String, Value)>>>,
+    heads: Arc<Mutex<Vec<String>>>,
 }
 
 impl MockServer {
@@ -41,8 +47,9 @@ impl MockServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let heads = Arc::new(Mutex::new(Vec::new()));
         let queue = Arc::new(Mutex::new(VecDeque::from(replies)));
-        let recorded = requests.clone();
+        let recorded = (requests.clone(), heads.clone());
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let queue = queue.clone();
@@ -50,7 +57,16 @@ impl MockServer {
                 tokio::spawn(async move { serve(stream, queue, recorded).await });
             }
         });
-        Self { url, requests }
+        Self {
+            url,
+            requests,
+            heads,
+        }
+    }
+
+    /// Each request's line and headers, as sent.
+    pub(crate) fn heads(&self) -> Vec<String> {
+        self.heads.lock().unwrap().clone()
     }
 
     pub(crate) fn hits(&self) -> usize {
@@ -62,14 +78,18 @@ impl MockServer {
     }
 }
 
+/// Each request's `authorization` and body, and each request's head.
+type Recorded = (Arc<Mutex<Vec<(String, Value)>>>, Arc<Mutex<Vec<String>>>);
+
 async fn serve(
     mut stream: TcpStream,
     queue: Arc<Mutex<VecDeque<Reply>>>,
-    recorded: Arc<Mutex<Vec<(String, Value)>>>,
+    (recorded, heads): Recorded,
 ) {
-    let Some((authorization, body)) = read_request(&mut stream).await else {
+    let Some((head, authorization, body)) = read_request(&mut stream).await else {
         return;
     };
+    heads.lock().unwrap().push(head);
     let reply = {
         let mut queue = queue.lock().unwrap();
         if queue.len() > 1 {
@@ -82,9 +102,15 @@ async fn serve(
     match reply {
         Reply::Status(code, headers, body) => {
             let mut head = format!(
-                "HTTP/1.1 {code} Scripted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n",
+                "HTTP/1.1 {code} Scripted\r\ncontent-length: {}\r\nconnection: close\r\n",
                 body.len()
             );
+            if !headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+            {
+                head.push_str("content-type: application/json\r\n");
+            }
             for (name, value) in headers {
                 head.push_str(&format!("{name}: {value}\r\n"));
             }
@@ -98,8 +124,8 @@ async fn serve(
     }
 }
 
-/// The request's `authorization` header and JSON body.
-async fn read_request(stream: &mut TcpStream) -> Option<(String, Value)> {
+/// The request's head, its `authorization` header and its JSON body.
+async fn read_request(stream: &mut TcpStream) -> Option<(String, String, Value)> {
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 4096];
     let header_end = loop {
@@ -129,7 +155,11 @@ async fn read_request(stream: &mut TcpStream) -> Option<(String, Value)> {
         buffer.extend_from_slice(&chunk[..read]);
     }
     let body = serde_json::from_slice(&buffer[header_end..header_end + length]).ok()?;
-    Some((header("authorization").unwrap_or_default(), body))
+    Some((
+        head.clone(),
+        header("authorization").unwrap_or_default(),
+        body,
+    ))
 }
 
 /// The production schedule's shape with millisecond waits.
@@ -310,7 +340,7 @@ async fn a_non_retryable_status_fails_at_once() {
 
         let failure = poster.post(&server.url, "k", &json!({})).await.unwrap_err();
 
-        let detail = (status == 422).then(|| r#"{"error":"scripted"}"#.to_string());
+        let detail = (status < 500 && status != 401).then(|| r#"{"error":"scripted"}"#.to_string());
         assert_eq!(failure, PostFailure::Status(status, detail));
         assert_eq!(server.hits(), 1, "status {status} was retried");
     }

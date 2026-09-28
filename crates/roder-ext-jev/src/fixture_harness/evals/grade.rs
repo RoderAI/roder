@@ -15,8 +15,9 @@ use super::Outcome;
 pub(crate) struct Expect {
     /// The final status as the result serialises it: `done`, `blocked`,
     /// `budget_exceeded`, `timed_out`, `needs_input`, `unavailable`, `error`
-    /// or `needs_confirmation`.
-    pub(crate) status: Option<String>,
+    /// or `needs_confirmation`; or a list of statuses any of which passes,
+    /// where the task's intent allows more than one honest ending.
+    pub(crate) status: Option<Statuses>,
     /// Whether the run ended with a `stopped_because` reason.
     pub(crate) stopped: Option<bool>,
     pub(crate) stopped_because_contains: Option<String>,
@@ -45,6 +46,23 @@ pub(crate) struct Expect {
     pub(crate) page_changed: Option<Vec<bool>>,
 }
 
+/// One status, or several any of which passes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Statuses {
+    One(String),
+    Any(Vec<String>),
+}
+
+impl Statuses {
+    fn all(&self) -> &[String] {
+        match self {
+            Self::One(status) => std::slice::from_ref(status),
+            Self::Any(statuses) => statuses,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExpectedPost {
@@ -60,7 +78,7 @@ pub(crate) struct ExpectedPost {
 
 impl Expect {
     pub(crate) fn check(&self) -> anyhow::Result<()> {
-        if let Some(status) = &self.status {
+        for status in self.status.iter().flat_map(Statuses::all) {
             ensure!(
                 [
                     "done",
@@ -76,6 +94,12 @@ impl Expect {
                 "unknown status {status:?}"
             );
         }
+        ensure!(
+            self.status
+                .as_ref()
+                .is_none_or(|statuses| !statuses.all().is_empty()),
+            "an empty status list passes nothing"
+        );
         ensure!(
             !(self.stopped == Some(false) && self.stopped_because_contains.is_some()),
             "stopped: false contradicts stopped_because_contains"
@@ -97,11 +121,15 @@ impl Expect {
                 failures.push(failure);
             }
         };
-        if let Some(status) = &self.status {
+        if let Some(statuses) = &self.status {
             let actual = serde_json::to_value(result.status).unwrap_or(Value::Null);
+            let failure = match statuses {
+                Statuses::One(status) => format!("status {actual} != {status:?}"),
+                Statuses::Any(statuses) => format!("status {actual} not in {statuses:?}"),
+            };
             check(
-                actual == json!(status),
-                format!("status {actual} != {status:?}"),
+                statuses.all().iter().any(|status| actual == json!(status)),
+                failure,
             );
         }
         if let Some(stopped) = self.stopped {

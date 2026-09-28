@@ -155,8 +155,9 @@ fn summarize(data: &serde_json::Value) -> String {
         );
     } else if data["text_calls"].as_u64() == Some(0) && data["text_model"].is_null() {
         text.push_str(
-            " No text model is configured, so Jev cannot type: configure a Roder \
-             chat-completions provider or set JEV_TEXT_MODEL_API_KEY.",
+            " No text model is configured, so Jev cannot type: sign in with `roder auth \
+             login codex`, configure a Roder chat-completions provider or set \
+             JEV_TEXT_MODEL_API_KEY.",
         );
     }
     text

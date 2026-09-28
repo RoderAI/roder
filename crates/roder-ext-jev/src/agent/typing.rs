@@ -41,8 +41,9 @@ impl Agent {
             return Err(JevStop::new(
                 JevStatus::NeedsInput,
                 format!(
-                    "TYPE_TEXT into {:?} needs a text model; configure a Roder chat-completions \
-                     provider or set JEV_TEXT_MODEL_API_KEY. No text is guessed.",
+                    "TYPE_TEXT into {:?} needs a text model; sign in with `roder auth login \
+                     codex`, configure a Roder chat-completions provider or set \
+                     JEV_TEXT_MODEL_API_KEY. No text is guessed.",
                     action["label"].as_str().unwrap_or_default()
                 ),
             )

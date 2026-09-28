@@ -131,16 +131,19 @@ fn request_bodies_match_upstream_for_every_provider_shape() {
     let (context_fixture, requests, _) = fixtures();
     let context = &context_fixture["context"];
     for (name, expected) in requests.as_object().unwrap() {
-        let (base, none) = match name.as_str() {
-            "deepseek_default" => ("https://api.deepseek.com/v1", false),
-            "deepseek_none" => ("https://api.deepseek.com/v1", true),
-            "openrouter_default" => ("https://openrouter.ai/api/v1", false),
-            "openrouter_none" => ("https://openrouter.ai/api/v1", true),
-            "other_default" => ("https://api.example.test/v1", false),
-            "other_none" => ("https://api.example.test/v1", true),
+        // Upstream's default is no level; its `TEXT_MODEL_REASONING=none`
+        // is `JEV_TEXT_MODEL_REASONING=none`.
+        let none = Some(Effort::None);
+        let (base, effort) = match name.as_str() {
+            "deepseek_default" => ("https://api.deepseek.com/v1", None),
+            "deepseek_none" => ("https://api.deepseek.com/v1", none),
+            "openrouter_default" => ("https://openrouter.ai/api/v1", None),
+            "openrouter_none" => ("https://openrouter.ai/api/v1", none),
+            "other_default" => ("https://api.example.test/v1", None),
+            "other_none" => ("https://api.example.test/v1", none),
             other => panic!("unexpected fixture {other}"),
         };
-        let ours = request_body(context, "fixture-writer", base, none);
+        let ours = request_body(context, "fixture-writer", base, effort);
         assert_eq!(
             serde_json::to_string(&ours).unwrap(),
             serde_json::to_string(&expected["body"]).unwrap(),
@@ -148,6 +151,19 @@ fn request_bodies_match_upstream_for_every_provider_shape() {
         );
         assert_eq!(endpoint(base), expected["url"].as_str().unwrap());
     }
+}
+
+/// Levels upstream never sends: named by `JEV_TEXT_MODEL_REASONING`.
+#[test]
+fn a_named_level_is_sent_as_the_endpoint_takes_it() {
+    let context = json!({"goal": "g"});
+    let body = |base: &str, effort| request_body(&context, "m", base, Some(effort));
+    let other = body("https://api.example.test/v1", Effort::Medium);
+    assert_eq!(other["reasoning"], json!({"effort": "medium"}));
+    // DeepSeek has no levels: any but none turns its thinking on.
+    let deepseek = body("https://api.deepseek.com/v1", Effort::High);
+    assert_eq!(deepseek["thinking"], json!({"type": "enabled"}));
+    assert!(deepseek.get("reasoning").is_none());
 }
 
 #[test]
@@ -195,11 +211,15 @@ fn endpoint_trims_a_trailing_slash() {
 fn helper(base_url: &str) -> TextHelper {
     TextHelper::with_policy(
         TextModel {
-            base_url: base_url.into(),
             model: "fixture-writer".into(),
-            api_key: "sk-writer".into(),
             source: "explicit",
-            reasoning_none: false,
+            note: None,
+            fallback: None,
+            transport: Transport::Chat {
+                base_url: base_url.into(),
+                api_key: "sk-writer".into(),
+                reasoning: None,
+            },
         },
         fast_policy(),
     )

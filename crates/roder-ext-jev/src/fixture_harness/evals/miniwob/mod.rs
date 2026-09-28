@@ -42,6 +42,7 @@ use anyhow::{Context, bail, ensure};
 use serde::Deserialize;
 
 use super::live::{env, live_key};
+use super::text_sources::Recorded;
 use crate::decide::JevTypeSafeDecisionClient;
 use crate::engine::{JevDecisionClient, JevTextValueResolver};
 use crate::fixture_harness::{Harness, target_dir};
@@ -152,8 +153,7 @@ fn env_number<T: std::str::FromStr>(key: &str, default: T) -> T {
 struct Setup {
     site: StaticSite,
     decision: Arc<dyn JevDecisionClient>,
-    text: Arc<dyn JevTextValueResolver>,
-    text_model: String,
+    text: Arc<TextHelper>,
     max_steps: usize,
     timeout: Duration,
     attempt_unsupported: bool,
@@ -180,21 +180,27 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
             return rows;
         };
         if !task.supported && !setup.attempt_unsupported {
-            let row = Row::not_attempted(&task, seed, &setup.text_model);
+            let row = Row::not_attempted(&task, seed, &setup.text.current().label());
             setup.write(&row);
             rows.push(row);
             continue;
         }
+        // This episode's text calls, for its row.
+        let recorded = Recorded::new(setup.text.clone(), "text-model");
+        // The model that wrote this episode's values, read once it ends: an
+        // unusable Codex sign-in may have fallen back meanwhile.
+        let label = || setup.text.current().label();
+        let text: Arc<dyn JevTextValueResolver> = recorded.clone();
         let spec = EpisodeSpec {
             url: setup.site.task_url(&task.id),
             seed,
             max_steps: setup.max_steps,
             timeout: setup.timeout,
             decision: &setup.decision,
-            text: &setup.text,
+            text: &text,
         };
         let mut attempt = 0;
-        let row = loop {
+        let mut row = loop {
             attempt += 1;
             if harness.is_none() {
                 harness = Harness::start().await;
@@ -203,12 +209,12 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
                 break Row::errored(
                     &task,
                     seed,
-                    &setup.text_model,
+                    &label(),
                     &anyhow::anyhow!("Chrome did not start"),
                 );
             };
             match episode::run(chrome, &spec).await {
-                Ok(episode) => break Row::ran(&task, seed, &setup.text_model, episode),
+                Ok(episode) => break Row::ran(&task, seed, &label(), episode),
                 Err(error) if attempt < 2 => {
                     eprintln!(
                         "{} seed {seed}: {error:#}; retrying on a new Chrome",
@@ -216,9 +222,10 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
                     );
                     harness = None;
                 }
-                Err(error) => break Row::errored(&task, seed, &setup.text_model, &error),
+                Err(error) => break Row::errored(&task, seed, &label(), &error),
             }
         };
+        row.text = recorded.report();
         eprintln!(
             "{:<30} seed {seed} {:<7} {:<14} steps {:>2} {:>6} ms  {}",
             task.id,
@@ -269,11 +276,10 @@ async fn miniwob_corpus() {
         return;
     };
     let text_model = crate::runner::resolve_text_model(None)
+        .await
+        .unwrap()
         .expect("MiniWoB values change with the seed: configure Jev's text model");
-    let text_label = format!(
-        "{} ({}, {})",
-        text_model.model, text_model.source, text_model.base_url
-    );
+    let text_label = text_model.label();
     let seeds = parse_seeds(&env("JEV_MINIWOB_SEEDS").unwrap_or_else(|| "0-4".into())).unwrap();
     let model = env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into());
     let stamp = SystemTime::now()
@@ -286,7 +292,6 @@ async fn miniwob_corpus() {
         site: StaticSite::start(root).await.unwrap(),
         decision: decision_client(key, model.clone()),
         text: Arc::new(TextHelper::new(text_model)),
-        text_model: text_label,
         max_steps: env_number("JEV_MINIWOB_MAX_STEPS", 25usize).max(1),
         timeout: Duration::from_secs(env_number("JEV_MINIWOB_TIMEOUT_S", 90u64).max(1)),
         attempt_unsupported: env("JEV_MINIWOB_ATTEMPT_UNSUPPORTED").as_deref() == Some("1"),
@@ -296,7 +301,7 @@ async fn miniwob_corpus() {
     eprintln!(
         "decision model {model}, text model {}, seeds {seeds:?}, {} decisions and {:?} per \
          episode, {concurrency} workers, unsupported attempted: {}\nrows: {}",
-        setup.text_model,
+        text_label,
         setup.max_steps,
         setup.timeout,
         setup.attempt_unsupported,

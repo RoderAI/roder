@@ -17,6 +17,12 @@
 //! repeated at most once.
 //! No retry starts that would outlast the run (see [`RUN_DEADLINE`]), so the
 //! run reports the provider's failure rather than its own timeout.
+//!
+//! A reply sent as server-sent events (the Codex backend's Responses API
+//! only streams) is read to its end and reduced to its final `response`
+//! object (see [`sse`]), so callers see one JSON value either way.
+
+mod sse;
 
 use std::time::Duration;
 
@@ -94,11 +100,15 @@ impl RetryPolicy {
 pub(crate) enum PostFailure {
     /// The request never completed: connect, timeout or a dropped body.
     Connection,
-    /// The provider answered with an error status. A 422 carries its body,
-    /// trimmed, since it names the field the provider rejected.
+    /// The provider answered with an error status. A rejection (any 4xx
+    /// but 401) carries its body, trimmed, since it says what the provider
+    /// refused: the field, the model or the limit.
     Status(u16, Option<String>),
     /// The provider answered, but not with JSON.
     InvalidBody,
+    /// The provider accepted the request, then reported inside its event
+    /// stream that it failed, with its code and message.
+    Failed(String),
 }
 
 impl PostFailure {
@@ -111,7 +121,7 @@ impl PostFailure {
             Self::Status(status, _) => {
                 SAFE_STATUSES.contains(status) || RESEND_STATUSES.contains(status)
             }
-            Self::InvalidBody => false,
+            Self::InvalidBody | Self::Failed(_) => false,
         }
     }
 
@@ -167,6 +177,17 @@ impl JsonPoster {
         key: &str,
         body: &Value,
     ) -> Result<Value, PostFailure> {
+        self.post_with(url, key, &[], body).await
+    }
+
+    /// [`Self::post`] with extra request headers.
+    pub(crate) async fn post_with(
+        &self,
+        url: &str,
+        key: &str,
+        headers: &[(&str, String)],
+        body: &Value,
+    ) -> Result<Value, PostFailure> {
         let deadline = RUN_DEADLINE
             .try_with(|deadline| deadline.checked_sub(DEADLINE_RESERVE).unwrap_or(*deadline))
             .ok();
@@ -181,7 +202,7 @@ impl JsonPoster {
                     .min(deadline.saturating_duration_since(Instant::now()))
                     .max(Duration::from_millis(1))
             });
-            let attempt = match self.attempt(url, key, body, timeout).await {
+            let attempt = match self.attempt(url, key, headers, body, timeout).await {
                 Ok(value) => return Ok(value),
                 Err(attempt) => attempt,
             };
@@ -209,13 +230,15 @@ impl JsonPoster {
         &self,
         url: &str,
         key: &str,
+        headers: &[(&str, String)],
         body: &Value,
         timeout: Duration,
     ) -> Result<Value, Attempt> {
-        let response = self
-            .client
-            .post(url)
-            .bearer_auth(key)
+        let mut request = self.client.post(url).bearer_auth(key);
+        for (name, value) in headers {
+            request = request.header(*name, value);
+        }
+        let response = request
             .json(body)
             .timeout(timeout)
             .send()
@@ -228,8 +251,9 @@ impl JsonPoster {
         let status = response.status().as_u16();
         if status >= 400 {
             let retry_after = retry_after(response.headers(), self.policy.max_retry_after);
+            // A 401's body says nothing the status does not.
             let detail = match status {
-                422 => response.text().await.ok().map(|body| trimmed(&body)),
+                400..=499 if status != 401 => response.text().await.ok().map(|body| trimmed(&body)),
                 _ => None,
             };
             return Err(Attempt {
@@ -244,6 +268,11 @@ impl JsonPoster {
                 retry_after,
             });
         }
+        let streamed = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream"));
         // The provider has answered by now, so every failure from here on
         // may have been billed.
         let bytes = response.bytes().await.map_err(|error| Attempt {
@@ -254,6 +283,24 @@ impl JsonPoster {
             },
             retry_after: None,
         })?;
+        // The Codex backend streams without naming the content type, so
+        // an event stream is also known by its first field.
+        if streamed || sse::looks_like(&bytes) {
+            return match sse::finish(&bytes) {
+                sse::StreamEnd::Response(response) => Ok(response),
+                sse::StreamEnd::Failed(message) => Err(Attempt {
+                    failure: PostFailure::Failed(message),
+                    retry: Retry::Never,
+                    retry_after: None,
+                }),
+                // Cut off in transit, like a dropped body: one more try.
+                sse::StreamEnd::Truncated => Err(Attempt {
+                    failure: PostFailure::InvalidBody,
+                    retry: Retry::Resend,
+                    retry_after: None,
+                }),
+            };
+        }
         // A body garbled in transit can clear, but a proxy's HTML page will
         // not, so it gets one more try.
         serde_json::from_slice(&bytes).map_err(|_| Attempt {

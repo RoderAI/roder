@@ -1359,13 +1359,11 @@
   },
   {
     "id": "one_time_code_missing",
-    "covers": "with no code from the resolver or the goal, the run ends needs_input naming the field, nothing typed or posted",
+    "covers": "with no code from the resolver or the goal, no code is guessed: the run stops with nothing typed or posted, either asking for the code (needs_input, naming the field, which the scripted plan pins) or with the model declining to go on (blocked)",
     "page": "one-time-code.html",
     "goal": "Verify the sign-in.",
     "expect": {
-      "status": "needs_input",
-      "stopped": true,
-      "stopped_because_contains": "\"Code\"",
+      "status": ["needs_input", "blocked"],
       "posts": [],
       "dom": {
         "document.querySelector('[name=code]').value": ""
@@ -1381,6 +1379,9 @@
         }
       ],
       "expect": {
+        "status": "needs_input",
+        "stopped": true,
+        "stopped_because_contains": "\"Code\"",
         "acts": 0,
         "model_calls": 1
       }

@@ -405,6 +405,21 @@ copied from a textarea and a field placed in its form. `field_context.json` and
 `field_text_requests.json` were re-recorded for the date and again for
 `other_fields`.
 
+**Text helper transport.** Upstream only speaks chat-completions. With a
+ChatGPT/Codex sign-in, Roder's default writer is GPT-6 Sol at low reasoning
+effort over the Responses API: `roder-ext-openai-responses` maps the same
+system prompt and field context into the request, `text.format` holds the
+reply to a strict JSON schema for `{"text": string | null}`, the token comes
+from `roder-codex-auth`, and a 401 is sent again once only if the stored
+token changed meanwhile. A default choice whose sign-in cannot produce a
+usable token falls back, for the rest of the run, to the turn's model or the
+provider list, and the result's `text_model` names that model with a
+`note`; an explicit choice fails instead. The reply then passes the same checks as upstream's.
+`JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` (`none`, `low`, `medium`,
+`high`) pick the model and effort on either path; upstream's
+`TEXT_MODEL_REASONING=none` shape is the `none` of the chat path, which the
+recorded `field_text_requests.json` still pins.
+
 **Tab.** A foreground task's tab is shown when it is created, before the page
 loads; upstream's port showed it only after the first observation. A
 background task's tab is never brought forward. Measured on a windowed
@@ -422,7 +437,8 @@ provider's failure is reported rather than the run's timeout. The text helper
 uses the same rules with three attempts. Upstream made three attempts on 429,
 503 and 529 with a 25 s timeout, and one text-helper attempt. An undecodable
 reply now fails as "Invalid TypeSafe response; no action executed.", and a
-422 carries its trimmed body.
+rejection (any 4xx but 401) carries its trimmed body. A reply sent as
+server-sent events is read to its end and reduced to its final `response`.
 
 **Secret fields (`secret.rs`, `agent/typing.rs`).** A value typed into a
 password or one-time-code field is recorded as `[secret]` (no length) on the
@@ -603,7 +619,12 @@ TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
 - `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key; `JEV_MODEL` pins
   a model version, else `jev-latest`.
 - Field values come from each task's `values`, so a run measures the decision
-  model alone; `JEV_EVAL_TEXT=model` uses the configured text helper instead.
+  model alone; `JEV_EVAL_TEXT=model` uses the configured text helper instead
+  (`JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` pick it), except for a
+  password or one-time code the task holds, which still comes from its values
+  as a supervisor's resolver would supply it. Each row's telemetry records the
+  text model and each text call's latency, usage and outcome (never the
+  value); MiniWoB++ rows carry the same under `text`.
 - `JEV_EVAL_VARIANTS` turns on request variants from the design audit, for A/B
   runs: `no_context` (strip `context` and `offscreen`, the baseline for twin
   disambiguation), `structured_criteria` (`{what, not_for}` operation

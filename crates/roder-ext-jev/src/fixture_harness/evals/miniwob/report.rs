@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde::Serialize;
+use serde_json::Value;
 
 use super::episode::{EPISODE_ENDED, Episode, STEP_CAP};
 use super::{Manifest, TaskEntry};
@@ -35,6 +36,10 @@ pub(super) struct Row {
     pub(super) goal: String,
     pub(super) decision_model: Option<String>,
     pub(super) text_model: String,
+    /// Each text-helper call's latency, the summed usage, and each call's
+    /// outcome; never the values.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub(super) text: Value,
     /// Executed actions, then the final DONE or BLOCKED if Jev gave one.
     pub(super) trace: Vec<String>,
     pub(super) start_actions: Vec<String>,
@@ -64,6 +69,7 @@ impl Row {
             goal: String::new(),
             decision_model: None,
             text_model: text_model.into(),
+            text: Value::Null,
             trace: Vec::new(),
             start_actions: Vec::new(),
             error: None,

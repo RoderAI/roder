@@ -22,6 +22,7 @@ mod probe;
 mod scripted;
 #[cfg(test)]
 mod secret_tests;
+mod text_sources;
 mod variants;
 
 mod keyless;
@@ -366,6 +367,27 @@ mod tests {
         let tasks = load_all().unwrap();
         validate(&tasks).unwrap();
         assert!(tasks.len() >= 10, "{} tasks", tasks.len());
+    }
+
+    #[test]
+    fn a_status_is_one_name_or_a_list_of_known_names() {
+        let expect = |raw: serde_json::Value| serde_json::from_value::<Expect>(raw).unwrap();
+        assert!(
+            expect(serde_json::json!({"status": "done"}))
+                .check()
+                .is_ok()
+        );
+        assert!(
+            expect(serde_json::json!({"status": ["needs_input", "blocked"]}))
+                .check()
+                .is_ok()
+        );
+        assert!(
+            expect(serde_json::json!({"status": ["blocked", "stuck"]}))
+                .check()
+                .is_err()
+        );
+        assert!(expect(serde_json::json!({"status": []})).check().is_err());
     }
 
     #[test]

@@ -996,6 +996,29 @@ values read from the final document just before the engine closes the tab.
   searches the result (serialized and in full), every history sent to the
   decision client, every field context sent to the resolver and the eval row
   for the password and the code.
+  With `JEV_EVAL_TEXT=model`, a password or one-time code the task holds in
+  its `values` still comes from those values, as a supervisor's resolver
+  would supply it, and every other field (and a secret the task does not
+  hold) from the text model; before, `login_form` and
+  `one_time_code_resolved` got no resolver in that mode and ended
+  `needs_input`, since the text model rightly refuses a password the goal
+  does not give. `one_time_code_missing` passes live on `needs_input` or
+  `blocked`, provided nothing is typed or posted: its point is that no code
+  is guessed, and a model that declines to go on without the code meets it
+  as surely as the text helper's refusal. The scripted plan still pins the
+  `needs_input` path and its stop reason naming the field. Live rows record
+  the text model (`telemetry.text_model`) and each text call's latency,
+  usage and outcome (`telemetry.text`), never the value.
+  With those fixes the live corpus passed 35 of 40 in both runs with
+  GPT-6 Sol at low effort (the default through the Codex sign-in) and 35,
+  36, 36 and 36 of 40 with `JEV_TEXT_MODEL=deepseek-chat`, against 33
+  before them. `icon_by_picture`, `scroll_region`, `escape_popup` and
+  `enter_to_search` failed in every run, and `delayed_spa` or
+  `below_the_fold` (an invalid decision reply) in some, all on decisions;
+  no run failed on a typed value. The 17 text calls a run makes took a
+  median of 2.0 to 2.1 s (p95 3.1 to 5.9 s) with GPT-6 Sol and 0.8 to 1.0 s
+  (p95 1.0 to 2.3 s) with DeepSeek, at about 4,740 input tokens either way
+  and 257 against 141 output tokens.
   `JEV_EVAL_VARIANTS` rewrites the request for the design
   audit's candidates (`no_context`, `structured_criteria`, `goal_in_state`,
   and the shadow-only `handoff_nouls`, `none_target`, `irreversible_nouls`) so
@@ -1108,31 +1131,89 @@ password from MiniWoB's goal is unmeasured. Every episode also now runs with
 banner refusal on (autoconsent injected), as `jev_browse` does by default;
 that is unmeasured on MiniWoB too.
 
+Every task attempted, same code, one run each:
+
+| Text model | Seeds 0-4 (tuned) | Seeds 5-9 (held out) | Text call median / p95 | Output tokens per 645 episodes |
+|---|---|---|---|---|
+| GPT-6 Sol, effort low | 367/645 (56.9%; 83.4% supported) | 351/645 (54.4%; 79.8%) | 2.09 to 2.11 s / 4.2 to 17.3 s | 4,800 to 5,000 |
+| DeepSeek Chat, thinking off | 358/645 (55.5%; 81.4%) | 344/645 (53.3%; 78.2%) | 0.72 to 0.93 s / 1.0 to 1.4 s | about 2,100 |
+
+Input tokens were about 80,000 to 83,000 for both. On the episodes that
+typed (165 to 172 per seed set), GPT-6 Sol alone succeeded on 14 and 12,
+DeepSeek alone on 3 and 4, mostly `copy-paste`, `copy-paste-2`,
+`find-word`, `guess-number` and the `email-inbox-forward` family; two
+DeepSeek runs of the same seeds differ by 1 to 2 such episodes net. So GPT-6
+Sol writes better values, worth about 1 to 1.4 points overall, at 2 to 3
+times the latency: 20 of its 520 calls took over 15 s, an attempt that timed
+out and was sent again, which puts its p95 on seeds 0 to 4 at 17 s and made
+each run 50 to 135 s longer.
+
 ## Typing: the text model comes from Roder
 
-Jev asks a small OpenAI-compatible chat-completions model for the value of any
-field it types into. Roder serves that from its own harness and resolves it in
-this order:
+Jev asks a small model for the value of any field it types into. Roder serves
+that from its own harness and resolves it in this order:
 
 1. `JEV_TEXT_MODEL_API_KEY` (or `OPENROUTER_API_KEY`), with
    `JEV_TEXT_MODEL_BASE_URL` (default OpenRouter) and `JEV_TEXT_MODEL`
-   (default `inception/mercury-2.5`), when set explicitly.
-2. The model of the turn that called the tool, when its provider speaks
-   chat-completions and Roder holds its key — so a typing task uses the model
-   you are already running.
-3. The first configured chat-completions provider Roder has a key for:
+   (default `inception/mercury-2.5`), when set explicitly: an
+   OpenAI-compatible chat-completions endpoint.
+2. `JEV_TEXT_MODEL` alone: the model from Roder's catalog, through the
+   provider that serves it. An OpenAI model (such as `gpt-6-sol`) goes
+   through the ChatGPT/Codex sign-in when Roder holds one, else through an
+   OpenAI API key; any other through its chat-completions provider's key
+   (`JEV_TEXT_MODEL=deepseek-chat` forces DeepSeek). A model Roder cannot
+   serve fails the call rather than being swapped for another.
+3. GPT-6 Sol (`gpt-6-sol`) at low reasoning effort, whenever Roder holds a
+   Codex sign-in (`roder auth login codex`) that can produce a token. A
+   stored sign-in that cannot (its refresh refused, or expired with no
+   refresh token) falls through to 4 and 5, and so does one whose token the
+   backend refuses mid-run (the same token refused with 401 after being
+   fetched again), for the rest of that run.
+4. The model of the turn that called the tool, when its provider speaks
+   chat-completions and Roder holds its key.
+5. The first configured chat-completions provider Roder has a key for:
    `deepseek`, `openrouter`, `synthetic`, `xai`, `fireworks`, `openai`.
 
-The reasoning field follows the endpoint: DeepSeek gets `thinking: disabled`,
-OpenRouter `reasoning.enabled: false`, and any other `reasoning.effort: low`;
-no variable overrides it. The tool result reports the choice under
-`text_model` as `{model, source}`, where source is `explicit`, `turn-model` or
-`roder-provider`.
+`JEV_TEXT_MODEL_REASONING` (`none`, `low`, `medium` or `high`; anything else
+fails the call) sets the effort for any of these, and makes step 3 an
+explicit choice. Through the Codex sign-in
+it is the Responses API's `reasoning.effort`, default `low`, and must be one
+the model's catalog entry lists. On a chat-completions endpoint `none` sends
+upstream's `reasoning.enabled: false`; a level sends `reasoning.effort`,
+except to DeepSeek, which has no levels and gets `thinking: enabled`. Unset,
+the endpoint's default applies: DeepSeek `thinking: disabled`, OpenRouter
+`reasoning.enabled: false`, any other `reasoning.effort: low`.
+
+The Codex path posts to the ChatGPT backend's `/responses` with the request
+`roder-ext-openai-responses` builds from the same system prompt and field
+context (`store: false`, `stream: true`, `reasoning.effort`, and a strict
+JSON schema for `{"text": string | null}` as `text.format`; the replay-only
+`include` and the reasoning summary are dropped), the headers Roder's Codex
+provider sends, and a token from `roder-codex-auth`, which refreshes it when
+it is about to expire. The streamed reply is read to its end; its text then
+passes exactly the checks a chat-completions reply does, and its
+`input_tokens` and `output_tokens` are summed into `usage`. A 401 fetches the
+token again and, if another process refreshed it meanwhile, sends once more;
+the same token refused, a sign-in that cannot be refreshed, or no sign-in at
+all ends the run `error` asking you to sign in again, without quoting the
+token or the token endpoint's reply; that ending applies to an explicit
+choice (`JEV_TEXT_MODEL=gpt-6-sol`, or any `JEV_TEXT_MODEL` or
+`JEV_TEXT_MODEL_REASONING`) and to a default choice with nothing behind it.
+A rejection (any 4xx but 401) or a failure the backend reports inside its
+stream is quoted in the stop reason and never falls back.
+
+The tool result reports the model that actually wrote values under
+`text_model` as `{model, effort, source}`, where source is `explicit`,
+`codex`, `turn-model` or `roder-provider`. A model standing in for an
+unusable Codex sign-in adds `note`: "Codex sign-in unusable; sign in again
+with `roder auth login codex` to use gpt-6-sol" (never the token or the
+auth error). Eval rows record the same, so a stand-in is never reported as
+GPT-6 Sol.
 
 Providers on native non-OpenAI transports cannot serve this helper: OAuth
-harnesses (`claude-code`, `supergrok`, `codex`), Anthropic and Gemini's own
-APIs, and Cursor, whose provider path is a protobuf AgentService rather than
-chat completions. With none available, `text_model` is `null` and a task that
+harnesses other than Codex (`claude-code`, `supergrok`), Anthropic and
+Gemini's own APIs, and Cursor, whose provider path is a protobuf
+AgentService. With none available, `text_model` is `null` and a task that
 needs to type ends `needs_input` rather than guessing a value; goals that only
 click and read are unaffected.
 

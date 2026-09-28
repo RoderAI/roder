@@ -132,6 +132,9 @@ impl JevDecisionTransport for TypeSafeHttpTransport {
                     PostFailure::InvalidBody => {
                         "Invalid TypeSafe response; no action executed.".to_string()
                     }
+                    PostFailure::Failed(detail) => {
+                        format!("Model provider failed ({detail}); no action executed.")
+                    }
                 };
                 failure.stop(message)
             })

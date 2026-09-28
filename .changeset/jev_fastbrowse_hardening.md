@@ -205,6 +205,29 @@ Still one decision round trip per step.
   text model and the transcript, and that a `JevTextValueResolver` avoids
   that. MiniWoB++'s `enter-password`, `login-user` and `login-user-popup`
   are labelled supported (not yet run).
+- The text helper writes with GPT-6 Sol (`gpt-6-sol`) at low reasoning
+  effort whenever Roder holds a ChatGPT/Codex sign-in, ahead of the calling
+  turn's model and the fallback providers, over the Responses API: the
+  request is built by `roder-ext-openai-responses`, the reply held to a
+  strict JSON schema for `{"text": string | null}` and then to the same
+  checks as before, the token taken (and refreshed) from `roder-codex-auth`,
+  and a 401 sent once more only when the stored token changed meanwhile.
+  `JEV_TEXT_MODEL` alone now picks a catalog model through the provider that
+  serves it (`deepseek-chat` forces DeepSeek), and the new
+  `JEV_TEXT_MODEL_REASONING` (`none`, `low`, `medium`, `high`) sets the
+  effort on either path; an explicit model or effort Roder cannot serve
+  fails the call instead of being substituted. A default GPT-6 Sol choice
+  whose stored sign-in cannot produce a usable token (refresh refused,
+  expired, or its token refused with 401) falls back for the rest of the run
+  to the turn's model or the provider list, and says so. The tool result's
+  `text_model` names the model that actually wrote values, gains `effort`
+  and, for such a stand-in, a `note`; its source may be `codex`. Provider
+  rejections (any 4xx but 401) now carry their trimmed body.
+- The live eval tier with `JEV_EVAL_TEXT=model` gives secret fields the
+  task's own values, as a supervisor's resolver would, and records each text
+  call's latency, usage and outcome in the row; `one_time_code_missing`
+  accepts `blocked` as well as `needs_input` live (nothing typed or posted
+  either way), and task `status` may list several statuses.
 - Breaking: `JevStatus` gains `NeedsConfirmation`; `JevDecision` and
   `JevDecisionRecord` gain `irreversible`; `JevDecisionClient` gains the
   provided method `choose_gated` and `JevBrowser` the provided method
