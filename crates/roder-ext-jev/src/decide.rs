@@ -3,21 +3,25 @@
 //! A port of upstream Jev's `model.choose` and `model.validate_choice`. The
 //! request body and the validation rules are the contract with the service, so
 //! both are reproduced exactly and pinned by fixtures recorded from upstream.
+//! Jev's state also carries today's date (see [`crate::text_helper::today`]):
+//! "next month" and "the next Monday" mean nothing without it.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Context, bail};
 use async_trait::async_trait;
+use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
 
 use crate::engine::{JevDecision, JevDecisionClient, JevDecisionTransport};
+use crate::http::{JsonPoster, PostFailure, RetryPolicy};
+use crate::irreversible;
 use crate::prompts::{NEXT_ACTION, TARGET};
 use crate::space::{ActionSpace, action_space};
+use crate::usage::JevBilled;
 
-const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
-const TIMEOUT: Duration = Duration::from_secs(25);
-const RETRY_STATUSES: [u16; 3] = [429, 529, 503];
+pub(crate) const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 
 /// The same TypeSafe decision service used by the built-in `jev_browse` tool.
 pub struct JevTypeSafeDecisionClient {
@@ -29,7 +33,11 @@ impl JevTypeSafeDecisionClient {
     pub fn new(key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
-            transport: Arc::new(TypeSafeHttpTransport { key: key.into() }),
+            transport: Arc::new(TypeSafeHttpTransport::new(
+                ENDPOINT,
+                key,
+                RetryPolicy::default(),
+            )),
         }
     }
 
@@ -58,20 +66,75 @@ impl JevDecisionClient for JevTypeSafeDecisionClient {
             history,
             &self.model,
             self.transport.as_ref(),
+            chrono::Local::now().date_naive(),
+            false,
+        )
+        .await
+        .map(|(decision, _)| decision)
+    }
+
+    /// The same request with the irreversible-action gate's questions added
+    /// (see [`crate::irreversible`]), and the chosen action's answer read.
+    async fn choose_gated(
+        &self,
+        observation: &Value,
+        goal: &str,
+        history: &[Value],
+    ) -> anyhow::Result<JevDecision> {
+        choose(
+            observation,
+            goal,
+            history,
+            &self.model,
+            self.transport.as_ref(),
+            chrono::Local::now().date_naive(),
+            true,
         )
         .await
         .map(|(decision, _)| decision)
     }
 }
 
-struct TypeSafeHttpTransport {
+/// The hosted decision service, over one pooled client for the whole run.
+pub(crate) struct TypeSafeHttpTransport {
+    url: String,
     key: String,
+    http: JsonPoster,
+}
+
+impl TypeSafeHttpTransport {
+    pub(crate) fn new(url: impl Into<String>, key: impl Into<String>, policy: RetryPolicy) -> Self {
+        Self {
+            url: url.into(),
+            key: key.into(),
+            http: JsonPoster::new(policy),
+        }
+    }
 }
 
 #[async_trait]
 impl JevDecisionTransport for TypeSafeHttpTransport {
     async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
-        post_json(ENDPOINT, &self.key, request).await
+        self.http
+            .post(&self.url, &self.key, request)
+            .await
+            .map_err(|failure| {
+                let message = match &failure {
+                    PostFailure::Connection => {
+                        "Model connection failed; no action executed.".to_string()
+                    }
+                    PostFailure::Status(status, None) => {
+                        format!("Model provider returned HTTP {status}; no action executed.")
+                    }
+                    PostFailure::Status(status, Some(detail)) => format!(
+                        "Model provider returned HTTP {status} ({detail}); no action executed."
+                    ),
+                    PostFailure::InvalidBody => {
+                        "Invalid TypeSafe response; no action executed.".to_string()
+                    }
+                };
+                failure.stop(message)
+            })
     }
 }
 
@@ -88,6 +151,13 @@ fn questions(space: &ActionSpace, goal: &str) -> (Value, Vec<String>) {
                 "Enter or replace text in an editable field. A small LLM will supply the value from the goal."
             }
             "SELECT" => "Select an observed dropdown value.",
+            "SCROLL_REGION_DOWN" => {
+                "Scroll down inside a box that scrolls on its own (a text area, list or panel) to reveal more of it."
+            }
+            "SCROLL_REGION_UP" => "Scroll up inside a box that scrolls on its own.",
+            "PRESS_ENTER" => {
+                "Press Enter in the focused text field to submit or search for what it already holds."
+            }
             _ => continue,
         };
         operations.insert(operation.clone(), json!(description));
@@ -125,6 +195,11 @@ fn questions(space: &ActionSpace, goal: &str) -> (Value, Vec<String>) {
                     action["label"].as_str().unwrap_or_default()
                 )),
             );
+            // Right after the label it qualifies, so the option itself tells
+            // twins apart.
+            if let Some(context) = action.get("context") {
+                entry.insert("context".into(), context.clone());
+            }
             entry.insert(
                 "current_value".into(),
                 action
@@ -133,8 +208,16 @@ fn questions(space: &ActionSpace, goal: &str) -> (Value, Vec<String>) {
                     .cloned()
                     .unwrap_or_else(|| json!("")),
             );
-            for key in ["role", "checked", "selected", "expanded"] {
-                if let Some(value) = action.get(key) {
+            for key in [
+                "role",
+                "input_type",
+                "checked",
+                "selected",
+                "expanded",
+                "scrolled",
+                "offscreen",
+            ] {
+                if let Some(value) = crate::space::shown(action, key) {
                     entry.insert(key.into(), value.clone());
                 }
             }
@@ -152,12 +235,15 @@ fn questions(space: &ActionSpace, goal: &str) -> (Value, Vec<String>) {
     (Value::Object(questions), operation_ids)
 }
 
-/// The exact body upstream posts to the decision service.
+/// The exact body upstream posts to the decision service, with Jev's `date`
+/// first in the state. `today` is passed in so the body is deterministic
+/// under test.
 pub(crate) fn request_body(
     page: &Value,
     goal: &str,
     history: &[Value],
     model: &str,
+    today: NaiveDate,
 ) -> (Value, ActionSpace, Vec<String>) {
     let space = action_space(page["actions"].as_array().map_or(&[][..], Vec::as_slice));
     let (questions, operation_ids) = questions(&space, goal);
@@ -179,6 +265,7 @@ pub(crate) fn request_body(
     let body = json!({
         "model": model,
         "state": {
+            "date": crate::text_helper::today(today),
             "page": Value::Object(page_view),
             "elements": space.elements.clone(),
             "recent_actions": recent,
@@ -233,50 +320,75 @@ pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<
     Ok(())
 }
 
-/// POST with upstream's retry policy: back off on 429/529/503, fail otherwise.
-async fn post_json(url: &str, key: &str, body: &Value) -> anyhow::Result<Value> {
-    let client = reqwest::Client::builder()
-        .timeout(TIMEOUT)
-        .build()
-        .context("build the decision client")?;
-    for attempt in 0..3u32 {
-        let response = client
-            .post(url)
-            .bearer_auth(key)
-            .json(body)
-            .send()
-            .await
-            .map_err(|_| anyhow::anyhow!("Model connection failed; no action executed."))?;
-        let status = response.status().as_u16();
-        if RETRY_STATUSES.contains(&status) && attempt < 2 {
-            tokio::time::sleep(Duration::from_millis(500 * 2u64.pow(attempt))).await;
-            continue;
-        }
-        if status >= 400 {
-            bail!("Model provider returned HTTP {status}; no action executed.");
-        }
-        return response
-            .json::<Value>()
-            .await
-            .context("decode the decision response");
-    }
-    bail!("Model unavailable")
-}
-
-/// Ask for the next operation and resolve it to an executable choice.
+/// Ask for the next operation and resolve it to an executable choice. With
+/// `gate`, the request also carries the irreversible-action gate's questions
+/// and the decision the chosen action's answer; without it the request is
+/// exactly as before.
 pub(crate) async fn choose(
     page: &Value,
     goal: &str,
     history: &[Value],
     model: &str,
     transport: &dyn JevDecisionTransport,
+    today: NaiveDate,
+    gate: bool,
 ) -> anyhow::Result<(JevDecision, ActionSpace)> {
-    let (body, space, operation_ids) = request_body(page, goal, history, model);
+    let (mut body, space, operation_ids) = request_body(page, goal, history, model, today);
+    let asked = if gate {
+        irreversible::add_questions(&mut body)
+    } else {
+        Vec::new()
+    };
     let started = Instant::now();
     let result = transport.decide(&body).await?;
+    let usage = result.get("usage").cloned().unwrap_or_else(|| json!({}));
+    // The service has answered, so the call is billed even when its answer
+    // cannot be used: that usage is kept.
+    let answer = read_answer(&result, &space, &operation_ids)
+        .map_err(|error| anyhow::Error::from(JevBilled::new(usage.clone(), error)))?;
+    // A missing or invalid answer is `None`, which the loop treats as
+    // irreversible: the gate fails closed without failing the decision.
+    let irreversible = irreversible::chosen_probability(
+        &result["answers"],
+        &asked,
+        &answer.operation,
+        answer.target.as_deref(),
+    );
+    Ok((
+        JevDecision {
+            choice: answer.choice,
+            operation: answer.operation,
+            target: answer.target,
+            confidence: answer.confidence,
+            target_confidence: answer.target_confidence,
+            probabilities: answer.probabilities,
+            latency_ms: started.elapsed().as_millis() as u64,
+            usage,
+            model: result["model"].as_str().map(str::to_string),
+            irreversible,
+        },
+        space,
+    ))
+}
+
+/// A validated answer, resolved to an observed action.
+struct Answer {
+    choice: String,
+    operation: String,
+    target: Option<String>,
+    confidence: f64,
+    target_confidence: Option<f64>,
+    probabilities: Map<String, Value>,
+}
+
+fn read_answer(
+    result: &Value,
+    space: &ActionSpace,
+    operation_ids: &[String],
+) -> anyhow::Result<Answer> {
     let answers = &result["answers"];
     let operation_answer = &answers["operation"];
-    validate_choice(operation_answer, &operation_ids)?;
+    validate_choice(operation_answer, operation_ids)?;
     let operation = operation_answer["choice"]
         .as_str()
         .unwrap_or_default()
@@ -284,6 +396,7 @@ pub(crate) async fn choose(
 
     let mut probabilities = Map::new();
     let mut target = None;
+    let mut target_confidence = None;
     let choice;
     if let Some(candidates) = space.targets_for(&operation) {
         let target_ids = candidates
@@ -306,6 +419,7 @@ pub(crate) async fn choose(
             probabilities.insert(id, target_answer["probabilities"][index].clone());
         }
         target = Some(selected);
+        target_confidence = target_answer["confidence"].as_f64();
     } else {
         choice = match space.control(&operation) {
             Some(action) => action["id"].as_str().unwrap_or_default().to_string(),
@@ -316,126 +430,17 @@ pub(crate) async fn choose(
             operation_answer["probabilities"][&operation].clone(),
         );
     }
-    Ok((
-        JevDecision {
-            choice,
-            operation,
-            target,
-            confidence: operation_answer["confidence"].as_f64().unwrap_or_default(),
-            probabilities,
-            latency_ms: started.elapsed().as_millis() as u64,
-            usage: result.get("usage").cloned().unwrap_or_else(|| json!({})),
-        },
-        space,
-    ))
+    Ok(Answer {
+        choice,
+        operation,
+        target,
+        confidence: operation_answer["confidence"].as_f64().unwrap_or_default(),
+        target_confidence,
+        probabilities,
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use super::*;
-
-    struct FixtureTransport {
-        request: Mutex<Option<Value>>,
-        response: Value,
-    }
-
-    #[async_trait]
-    impl JevDecisionTransport for FixtureTransport {
-        async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
-            *self.request.lock().unwrap() = Some(request.clone());
-            Ok(self.response.clone())
-        }
-    }
-
-    fn fixture(name: &str) -> Value {
-        let raw = match name {
-            "choose" => include_str!("../tests/fixtures/choose_request.json"),
-            "validate" => include_str!("../tests/fixtures/validate_choice.json"),
-            _ => unreachable!(),
-        };
-        serde_json::from_str(raw).unwrap()
-    }
-
-    #[test]
-    fn request_body_matches_upstream_byte_for_byte() {
-        let fixture = fixture("choose");
-        let page: Value = serde_json::from_str(include_str!("../tests/fixtures/fingerprint.json"))
-            .map(|value: Value| value["page"].clone())
-            .unwrap();
-        let history = fixture["history"].as_array().unwrap().clone();
-        let (body, _, _) = request_body(
-            &page,
-            fixture["goal"].as_str().unwrap(),
-            &history,
-            "jev-latest",
-        );
-        // Compact serialization, which is what httpx sends: this pins content
-        // and key order together.
-        assert_eq!(
-            serde_json::to_string(&body).unwrap(),
-            fixture["serialized"].as_str().unwrap()
-        );
-        assert_eq!(body, fixture["body"]);
-    }
-
-    #[test]
-    fn validation_verdicts_match_upstream() {
-        let fixture = fixture("validate");
-        let ids = fixture["ids"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|id| id.as_str().unwrap().to_string())
-            .collect::<Vec<_>>();
-        for case in fixture["cases"].as_array().unwrap() {
-            let accepted = validate_choice(&case["answer"], &ids).is_ok();
-            assert_eq!(
-                accepted,
-                case["accepted"].as_bool().unwrap(),
-                "case {} disagreed with upstream",
-                case["name"]
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn injected_transport_keeps_request_and_response_parsing_upstream() {
-        let page: Value = serde_json::from_str(include_str!("../tests/fixtures/fingerprint.json"))
-            .map(|value: Value| value["page"].clone())
-            .unwrap();
-        let transport = Arc::new(FixtureTransport {
-            request: Mutex::new(None),
-            response: json!({
-                "answers": {
-                    "operation": {
-                        "choice": "WAIT",
-                        "confidence": 1.0,
-                        "probabilities": {
-                            "CLICK": 0.0,
-                            "TYPE_TEXT": 0.0,
-                            "SELECT": 0.0,
-                            "SCROLL_DOWN": 0.0,
-                            "WAIT": 1.0,
-                            "DONE": 0.0,
-                            "BLOCKED": 0.0
-                        }
-                    }
-                },
-                "usage": {"input_tokens": 10}
-            }),
-        });
-        let client = JevTypeSafeDecisionClient::with_transport("jev-hosted", transport.clone());
-
-        let decision = client.choose(&page, "Wait once", &[]).await.unwrap();
-
-        assert_eq!(decision.choice, "wait");
-        assert_eq!(decision.operation, "WAIT");
-        assert_eq!(decision.usage["input_tokens"], json!(10));
-        assert_eq!(
-            transport.request.lock().unwrap().as_ref().unwrap()["model"],
-            json!("jev-hosted")
-        );
-    }
-}
+mod gate_tests;
+#[cfg(test)]
+mod tests;

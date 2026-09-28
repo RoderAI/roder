@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Verify it's you</title></head>
+<body>
+  <h1>Verify it's you</h1>
+  <p>Enter the six-digit code we sent to your phone.</p>
+  <!-- A one-time code: a text input marked autocomplete=one-time-code, so
+       Jev offers it as input_type one-time-code and never reads it. -->
+  <form method="post" action="/submit/verify">
+    <label>Code <input type="text" inputmode="numeric" name="code" autocomplete="one-time-code"></label>
+    <button type="submit">Verify</button>
+  </form>
+</body>
+</html>

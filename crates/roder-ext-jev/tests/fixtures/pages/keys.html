@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Keys</title>
+<style>
+  body { font: 14px sans-serif; }
+  #suggestions { position: absolute; width: 260px; background: white;
+    border: 1px solid #999; margin: 0; padding: 0; list-style: none; }
+  #suggestions li { padding: 6px; }
+</style>
+</head>
+<body>
+<!-- A search form with no button: Enter in its field submits it. -->
+<form id="search" action="/submit/search" method="post">
+  <input type="search" name="q" aria-label="Search">
+</form>
+<!-- A chat box that sends on Enter through its own script, with no form. -->
+<div><input type="text" id="chat" aria-label="Message"></div>
+<!-- A field whose suggestion list covers the button below it until Escape
+     closes it or a suggestion is chosen. -->
+<div style="position: relative">
+  <input type="text" id="city" aria-label="City" role="combobox" aria-expanded="false"
+    aria-controls="suggestions">
+  <ul id="suggestions" role="listbox" hidden><li role="option">Paris</li><li role="option">Parma</li>
+    <li role="option">Parla</li></ul>
+  <div><button type="button" id="go">Go</button></div>
+</div>
+<!-- An open accordion section is not something Escape closes. -->
+<button type="button" aria-expanded="true" aria-controls="details">Details</button>
+<div id="details">Ships in two days.</div>
+<ul id="log"></ul>
+<script>
+  const log = text => document.getElementById('log').insertAdjacentHTML('beforeend', `<li>${text}</li>`);
+  document.getElementById('chat').addEventListener('keydown', event => {
+    if (event.key === 'Enter') { log('Sent: ' + event.target.value); event.target.value = ''; }
+  });
+  const city = document.getElementById('city'), list = document.getElementById('suggestions');
+  city.addEventListener('input', () => { list.hidden = !city.value; city.setAttribute('aria-expanded', String(!list.hidden)); });
+  city.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { list.hidden = true; city.setAttribute('aria-expanded', 'false'); }
+  });
+  for (const option of list.querySelectorAll('[role="option"]'))
+    option.addEventListener('click', () => {
+      city.value = option.textContent; list.hidden = true; city.setAttribute('aria-expanded', 'false');
+    });
+  document.getElementById('go').addEventListener('click', () => log('Go clicked for ' + city.value));
+</script>
+</body>
+</html>

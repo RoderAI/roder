@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Names</title>
+</head>
+<body>
+<!-- A result card that nests style, script, noscript and template in its link. -->
+<a href="#trail" id="card"><style>.price { color: red; }</style><script>window.cardScript = 1;</script><noscript>Enable JavaScript</noscript><template>Template text</template>Trail Runner</a>
+
+<!-- Hydration later sets aria-disabled="false" on this button. -->
+<button id="hydrate" onclick="window.clicks = (window.clicks || 0) + 1">Buy now</button>
+
+<span id="shared">Document label</span>
+<span id="outside">Outside label</span>
+<div id="host"></div>
+<script>
+  // Labels referenced from inside a shadow root resolve there first, then in
+  // the document.
+  const root = document.getElementById('host').attachShadow({mode: 'open'});
+  root.innerHTML =
+    '<span id="shared">Shadow label</span>' +
+    '<button id="inner" aria-labelledby="shared">x</button>' +
+    '<button id="fallback" aria-labelledby="outside">y</button>';
+</script>
+</body>
+</html>

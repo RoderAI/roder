@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Board</title>
+<style>
+  td { width: 40px; height: 40px; border: 1px solid #333; text-align: center; }
+  .icons span { display: inline-block; width: 20px; height: 20px; background: #ccc; margin: 2px; }
+</style>
+</head>
+<body>
+<!-- A board of nine cells with nothing to tell them apart but where they
+     are, and a row of three unnamed icons. -->
+<table id="board"><tbody></tbody></table>
+<div class="icons"><span></span><span></span><span></span></div>
+<p id="status"></p>
+<script>
+  const body = document.querySelector('#board tbody');
+  for (let r = 1; r <= 3; r++) {
+    const row = body.insertRow();
+    for (let c = 1; c <= 3; c++) {
+      const cell = row.insertCell();
+      cell.addEventListener('click', () => {
+        cell.textContent = 'X';
+        document.getElementById('status').textContent = `Marked row ${r}, column ${c}`;
+      });
+    }
+  }
+  for (const icon of document.querySelectorAll('.icons span')) icon.addEventListener('click', () => {});
+</script>
+</body>
+</html>

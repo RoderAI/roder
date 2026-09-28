@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Paginated list</title>
+  <style>
+    #grid button { width: 48px; height: 22px; margin: 1px; font-size: 9px; }
+    li { height: 24px; }
+  </style>
+</head>
+<body>
+  <h1>Paginated list</h1>
+  <!-- ?grid=N puts N small buttons on screen first, to fill the overall cap. -->
+  <div id="grid"></div>
+  <ul id="items"></ul>
+  <!-- Kept past every cap: a rel=next link, a link labelled like a pager,
+       and a load-more button. -->
+  <a href="/pages/landing.html?page=2" rel="next">2</a>
+  <a href="/pages/landing.html?page=3">Next page ›</a>
+  <button type="button" onclick="window.more = (window.more || 0) + 1">Show 20 more</button>
+  <!-- Look like pagers but are not: a carousel button and a content link. -->
+  <button type="button">Next</button>
+  <a href="/pages/landing.html?about=1">Learn more</a>
+  <script>
+    const grid = Number(new URLSearchParams(location.search).get('grid') || 0);
+    for (let i = 1; i <= grid; i++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = 'Cell ' + i;
+      document.getElementById('grid').append(b);
+    }
+    for (let i = 1; i <= 300; i++) {
+      const li = document.createElement('li'), a = document.createElement('a');
+      a.href = '/pages/landing.html?item=' + i;
+      a.textContent = 'Item ' + i;
+      li.append(a);
+      document.getElementById('items').append(li);
+    }
+  </script>
+</body>
+</html>

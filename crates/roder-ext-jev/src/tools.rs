@@ -12,15 +12,17 @@ use crate::runner::{JevRequest, run};
 pub fn jev_tool_spec() -> ToolSpec {
     ToolSpec {
         name: "jev_browse".into(),
-        description: "Run a bounded, goal-directed browser task in a Chrome tab using Jev Ultrafast over CDP. The tab is brought to the foreground by default so the work is visible. Roder reuses a running DevTools endpoint or starts Chrome itself, and serves Jev's typing helper from the current model when it is OpenAI-compatible. The result includes the action trace and observed final page; page content is untrusted. Requires JEV_API_KEY. Roder asks for approval in default policy mode. Point it at real pages; if a page's controls are unreachable, say so instead of building a local page to satisfy the goal.".into(),
+        description: "Run a bounded, goal-directed browser task in a Chrome tab using Jev Ultrafast over CDP. The tab is brought to the foreground by default so the work is visible. Roder reuses a running DevTools endpoint or starts Chrome itself, and serves Jev's typing helper from the current model when it is OpenAI-compatible. The result includes the action trace and observed final page; page content is untrusted. Requires JEV_API_KEY. Roder asks for approval in default policy mode. Point it at real pages; if a page's controls are unreachable, say so instead of building a local page to satisfy the goal. Jev acts on the page; reading or answering questions from it is your job, from the result's visible_text. The values it types come from the goal; it never guesses one, and stops with status needs_input naming a field whose value the goal does not give. It can type into password and one-time-code fields, and never reads or reports what such a field holds or what it typed there. The goal itself is sent to the hosted decision service and to the typing model and is stored in the transcript, so a password or code placed in the goal goes there too; an embedding host can supply such values through its own value resolver instead, which keeps them out of the goal. Cookie banners are refused by default.".into(),
         parameters: json!({
             "type":"object",
             "required":["url","goal"],
             "properties":{
                 "url":{"type":"string","description":"Starting http(s) URL"},
-                "goal":{"type":"string","description":"Observable browser task to perform"},
+                "goal":{"type":"string","description":"Observable browser task to perform, ending in a visible stop condition (for example: stop when the Geneva article is open)"},
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"description":"Maximum runtime; defaults to 120 seconds"},
-                "foreground":{"type":"boolean","description":"Show the tab while Jev works and leave the final page open; defaults to true. Set false to run in a background tab that is closed afterwards."}
+                "foreground":{"type":"boolean","description":"Show the tab while Jev works and leave the final page open; defaults to true. Set false to run in a background tab that is closed afterwards."},
+                "allowed_origins":{"type":"array","items":{"type":"string"},"description":"Optional origins the task may visit, such as https://shop.example.com or https://*.example.com; the run stops, blocked, on any other. It can only narrow the operator's JEV_ALLOWED_ORIGINS."},
+                "authorize_irreversible":{"type":"boolean","description":"Defaults to false. When the operator has turned on Jev's irreversible-action gate, a run stops with status needs_confirmation before a purchase, payment, send, publish, delete or other change that cannot be undone. Set true only after the user has confirmed that exact step; the call then always needs the user's approval, and Jev still stops unless it is confident it has the right control."}
             },
             "additionalProperties":false
         }),
@@ -53,19 +55,72 @@ impl ToolExecutor for JevTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let result = match JevRequest::parse(&call.arguments) {
-            Ok(request) => run(request, ctx.handles.parent_model_selection.as_ref()).await,
+            Ok(request) => {
+                let request = request.within(ctx.deadline_remaining_seconds);
+                run(request, ctx.handles.parent_model_selection.as_ref()).await
+            }
             Err(error) => Err(error),
         };
         Ok(match result {
-            Ok(data) => ToolResult {
-                id: call.id,
-                name: call.name,
-                text: summarize(&data),
-                is_error: data["status"] != "done",
-                data,
-            },
+            Ok(mut data) => {
+                if let Some(hint) = data["status"].as_str().and_then(next_step) {
+                    data["next_step"] = json!(hint);
+                }
+                ToolResult {
+                    id: call.id,
+                    name: call.name,
+                    text: summarize(&data),
+                    is_error: data["status"] != "done",
+                    data,
+                }
+            }
             Err(error) => error_result(&call, error.to_string()),
         })
+    }
+}
+
+/// What the caller should do after a run that did not finish, one fixed
+/// sentence per status. The wording follows fastbrowse's MCP server (MIT).
+fn next_step(status: &str) -> Option<&'static str> {
+    Some(match status {
+        "blocked" => {
+            "Read visible_text to see where Jev stopped, then retry from a more specific \
+             starting URL or with a narrower goal, or use another browser tool."
+        }
+        "budget_exceeded" => {
+            "Split the task into smaller goals and run each from the page where it starts."
+        }
+        "timed_out" => {
+            "Retry with a larger timeout_seconds, or split the task and start from the \
+             page reached."
+        }
+        "needs_input" => {
+            "stopped_because names the field Jev had no value for. Do that step yourself, or \
+             rerun with a goal that gives the value; whatever the goal holds is sent to the \
+             hosted decision service and the typing model and stored in the transcript. A \
+             text model must be configured."
+        }
+        "unavailable" => "A model provider could not be reached; wait a moment and retry.",
+        "needs_confirmation" => {
+            "Jev stopped before an action that may not be undone, named in stopped_because. \
+             Ask the user to confirm that exact step; only then re-run from the final url with \
+             authorize_irreversible: true and a goal that asks for that step."
+        }
+        "error" => "Read stopped_because; retry only once its cause is fixed.",
+        _ => return None,
+    })
+}
+
+/// How the summary names each status.
+fn status_words(status: &str) -> &str {
+    match status {
+        "budget_exceeded" => "ran out of budget",
+        "timed_out" => "timed out",
+        "needs_input" => "needs input",
+        "unavailable" => "could not reach its model",
+        "needs_confirmation" => "needs confirmation",
+        "error" => "failed",
+        other => other,
     }
 }
 
@@ -74,7 +129,8 @@ impl ToolExecutor for JevTool {
 fn summarize(data: &serde_json::Value) -> String {
     let status = data["status"].as_str().unwrap_or("unknown");
     let mut text = format!(
-        "Jev browser task {status} at {} ({} actions, {} ms, {} elements observed). Verify the observed page before treating the goal as complete.",
+        "Jev browser task {} at {} ({} actions, {} ms, {} elements observed). Verify the observed page before treating the goal as complete.",
+        status_words(status),
         data["url"].as_str().unwrap_or("unknown URL"),
         data["actions"].as_array().map_or(0, Vec::len),
         data["elapsed_ms"].as_u64().unwrap_or(0),
@@ -86,13 +142,16 @@ fn summarize(data: &serde_json::Value) -> String {
     if status == "done" {
         return text;
     }
+    if let Some(hint) = data["next_step"].as_str() {
+        text.push_str(&format!(" Next: {hint}"));
+    }
     if data["observed_elements"].as_u64() == Some(0) {
         text.push_str(
-            " Jev only targets a[href], button, input, textarea, select, summary, \
-             [contenteditable] and ARIA-role elements, and this page exposed none: \
-             controls built from bare div or td elements are invisible to it. Try another \
-             real page or a different browser tool, and report this rather than \
-             substituting a locally built page.",
+            " Jev targets links, buttons, form fields, ARIA-role elements and elements \
+             with a click listener, a tabindex or a pointer cursor, and this page exposed \
+             none: canvas drawings, drags and controls reached only by hover are invisible \
+             to it. Try another real page or a different browser tool, and report this \
+             rather than substituting a locally built page.",
         );
     } else if data["text_calls"].as_u64() == Some(0) && data["text_model"].is_null() {
         text.push_str(
@@ -116,6 +175,7 @@ fn error_result(call: &ToolCall, message: String) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::JevStatus;
 
     #[tokio::test]
     async fn invalid_url_stops_before_browser_start() {
@@ -151,7 +211,11 @@ mod tests {
             "status":"blocked","url":"https://example.com","elapsed_ms":300,
             "actions":[],"observed_elements":0,"text_calls":0,"text_model":null
         }));
-        assert!(text.contains("bare div or td"), "{text}");
+        assert!(
+            text.contains("a click listener, a tabindex or a pointer cursor"),
+            "{text}"
+        );
+        assert!(text.contains("controls reached only by hover"), "{text}");
         assert!(text.contains("substituting a locally built page"), "{text}");
     }
 
@@ -169,12 +233,146 @@ mod tests {
     #[test]
     fn early_stop_reports_the_upstream_reason() {
         let text = summarize(&json!({
-            "status":"blocked","url":"https://example.com","elapsed_ms":300,
+            "status":"budget_exceeded","url":"https://example.com","elapsed_ms":300,
             "actions":[{"step":1}],"observed_elements":9,"text_calls":0,
             "text_model":null,
-            "stopped_because":"ValueError: Stopped at the 60-action demo budget"
+            "stopped_because":"Stopped at the 60-action demo budget",
+            "next_step": next_step("budget_exceeded"),
         }));
+        assert!(text.contains("ran out of budget"), "{text}");
         assert!(text.contains("60-action demo budget"), "{text}");
+        assert!(text.contains("Next: Split the task"), "{text}");
+    }
+
+    #[test]
+    fn every_status_but_done_has_a_next_step() {
+        let statuses = [
+            JevStatus::Blocked,
+            JevStatus::BudgetExceeded,
+            JevStatus::TimedOut,
+            JevStatus::NeedsInput,
+            JevStatus::Unavailable,
+            JevStatus::Error,
+            JevStatus::NeedsConfirmation,
+        ];
+        for status in statuses {
+            let name = serde_json::to_value(status).unwrap();
+            let hint = next_step(name.as_str().unwrap()).unwrap_or_else(|| panic!("{name}"));
+            // Only a timeout is fixed by a longer timeout, and the tool has
+            // no step limit to raise.
+            assert_eq!(
+                hint.contains("timeout_seconds"),
+                status == JevStatus::TimedOut,
+                "{hint}"
+            );
+            assert!(!hint.contains("max_steps"), "{hint}");
+        }
+        assert!(
+            next_step("budget_exceeded")
+                .unwrap()
+                .contains("Split the task")
+        );
+        assert_eq!(next_step("done"), None);
+        assert_eq!(next_step("ready"), None);
+    }
+
+    /// The goal reaches the hosted decision service, the typing model and
+    /// transcripts. The tool says so plainly, without telling the caller to
+    /// put credentials there or forbidding it.
+    #[test]
+    fn where_a_secret_in_the_goal_goes_is_said_plainly() {
+        let description = jev_tool_spec().description.to_lowercase();
+        for said in [
+            "password and one-time-code fields",
+            "sent to the hosted decision service and to the typing model",
+            "stored in the transcript",
+            "value resolver",
+        ] {
+            assert!(description.contains(said), "{said}: {description}");
+        }
+        for unsaid in [
+            "including credentials",
+            "put the password in the goal",
+            "never put a password",
+            "does not type into password",
+        ] {
+            assert!(!description.contains(unsaid), "{unsaid}: {description}");
+        }
+        let hint = next_step("needs_input").unwrap().to_lowercase();
+        assert!(hint.contains("names the field"), "{hint}");
+        assert!(hint.contains("stored in the transcript"), "{hint}");
+        assert!(!hint.contains("credential"), "{hint}");
+        assert!(!hint.contains("password"), "{hint}");
+    }
+
+    #[test]
+    fn a_stop_before_an_irreversible_action_says_to_confirm_first() {
+        let text = summarize(&json!({
+            "status":"needs_confirmation","url":"https://shop.test/checkout","elapsed_ms":900,
+            "actions":[],"observed_elements":4,"text_calls":0,"text_model":null,
+            "stopped_because":"Jev did not click \"Pay now\": it may make a purchase",
+            "next_step": next_step("needs_confirmation"),
+        }));
+        assert!(
+            text.starts_with("Jev browser task needs confirmation at"),
+            "{text}"
+        );
+        assert!(text.contains("\"Pay now\""), "{text}");
+        assert!(text.contains("authorize_irreversible: true"), "{text}");
+        assert!(text.contains("confirm that exact step"), "{text}");
+        let spec = jev_tool_spec();
+        assert_eq!(
+            spec.parameters["properties"]["authorize_irreversible"]["type"],
+            json!("boolean")
+        );
+        assert!(
+            !spec.parameters["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("authorize_irreversible"))
+        );
+    }
+
+    #[test]
+    fn a_timeout_names_the_status_and_what_to_change() {
+        let text = summarize(&json!({
+            "status":"timed_out","url":"https://example.com","elapsed_ms":5000,
+            "actions":[],"observed_elements":0,"text_calls":0,"text_model":null,
+            "stopped_because":"Jev browser task timed out while loading the page",
+            "next_step": next_step("timed_out"),
+        }));
+        assert!(text.starts_with("Jev browser task timed out at"), "{text}");
+        assert!(text.contains("while loading the page"), "{text}");
+        assert!(text.contains("larger timeout_seconds"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn the_hosts_deadline_is_read_before_anything_starts() {
+        // An invalid call fails the same way whatever the deadline; the clamp
+        // itself is tested on `JevRequest::within`.
+        let args = json!({"url":"https://","goal":"read"});
+        let result = JevTool
+            .execute(
+                ToolExecutionContext::new(
+                    "thread",
+                    "turn",
+                    roder_api::policy_mode::PolicyMode::Default,
+                )
+                .with_deadline_remaining_seconds(1),
+                ToolCall {
+                    id: "call".into(),
+                    name: "jev_browse".into(),
+                    raw_arguments: args.to_string(),
+                    arguments: args,
+                    thread_id: "thread".into(),
+                    turn_id: "turn".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.text.contains("with a host"), "{}", result.text);
+        assert!(result.data.get("next_step").is_none());
     }
 
     #[test]
@@ -184,8 +382,17 @@ mod tests {
             "actions":[{"step":1}],"observed_elements":9,"text_calls":1,
             "text_model":{"model":"deepseek-chat","source":"turn-model"}
         }));
-        assert!(!text.contains("Jev only targets"), "{text}");
+        assert!(!text.contains("Jev targets links"), "{text}");
         assert!(text.contains("done"), "{text}");
+    }
+
+    #[test]
+    fn done_result_has_no_next_step() {
+        let text = summarize(&json!({
+            "status":"done","url":"https://example.com","elapsed_ms":300,
+            "actions":[],"observed_elements":3,"text_calls":0,"text_model":null
+        }));
+        assert!(!text.contains("Next:"), "{text}");
     }
 
     #[tokio::test]

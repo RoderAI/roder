@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Editor</title></head>
+<body>
+  <h1>Editor</h1>
+  <!-- Both fields swallow the select-all accelerator, as rich editors and
+       grids do, so replacing their content must select it by script. -->
+  <label>Title <input id="title" value="Old title"></label>
+  <div id="notes" role="textbox" aria-label="Notes" contenteditable="true">Old notes</div>
+  <script>
+    window.blocked = 0;
+    for (const field of [document.getElementById('title'), document.getElementById('notes')]) {
+      field.addEventListener('keydown', event => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'a') {
+          event.preventDefault();
+          window.blocked += 1;
+        }
+      });
+    }
+  </script>
+</body>
+</html>

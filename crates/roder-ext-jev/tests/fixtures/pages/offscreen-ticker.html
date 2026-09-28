@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Ticker below the fold</title>
+  <style>#spacer { height: 2400px; }</style>
+</head>
+<body>
+  <h1>Quarterly report</h1>
+  <!-- The form bounds the click guard's scope to the button itself. -->
+  <form><button type="button" onclick="window.retries = (window.retries || 0) + 1">Retry</button></form>
+  <div id="spacer"></div>
+  <!-- Only below the fold changes: its label and position tick three times a
+       second, and the document height stays put. -->
+  <button type="button" id="sale">Sale ends in 60s</button>
+  <script>
+    let left = 60;
+    setInterval(() => {
+      left -= 1;
+      const sale = document.getElementById('sale');
+      sale.textContent = `Sale ends in ${left}s`;
+      sale.style.marginLeft = `${left % 2 * 6}px`;
+    }, 300);
+  </script>
+</body>
+</html>

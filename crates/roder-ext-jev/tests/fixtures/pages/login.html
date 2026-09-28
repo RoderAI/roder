@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign in</title></head>
+<body>
+  <h1>Sign in</h1>
+  <!-- A plain login form: the password field is offered to type into, but
+       what it holds is never read. Submitting posts both fields. -->
+  <form method="post" action="/submit/login">
+    <label>Username <input type="text" name="username" autocomplete="username"></label>
+    <label>Password <input type="password" name="password" autocomplete="current-password"></label>
+    <button type="submit">Sign in</button>
+  </form>
+</body>
+</html>

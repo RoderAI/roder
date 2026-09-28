@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Cart</title>
+<style>
+  button { cursor: pointer; width: 32px; height: 32px; padding: 0; border: 0;
+    display: inline-flex; align-items: center; justify-content: center; }
+  x-icon { display: block; width: 24px; height: 24px; }
+</style>
+</head>
+<body>
+  <h1>Cart</h1>
+  <!-- A button whose icon is a custom element drawing its picture in an open
+       shadow root, with a pointer cursor and a click listener there: all of
+       it is the button's inside, not another control. The icon covers
+       every point a click is tried at, but not three quarters of the
+       button. -->
+  <p>Blue lamp <button aria-label="Delete item" onclick="window.deleted = (window.deleted || 0) + 1"><x-icon></x-icon></button></p>
+  <script>
+    customElements.define('x-icon', class extends HTMLElement {
+      constructor() {
+        super();
+        const root = this.attachShadow({mode: 'open'});
+        root.innerHTML = '<span style="cursor:pointer;display:inline-block;width:24px;height:24px;background:#c00"></span>';
+        root.firstChild.addEventListener('click', () => {});
+      }
+    });
+  </script>
+</body>
+</html>

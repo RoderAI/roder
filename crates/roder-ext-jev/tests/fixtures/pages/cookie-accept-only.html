@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Recipes</title>
+  <style>
+    #notice { position: fixed; left: 0; right: 0; bottom: 0; background: #eee; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Recipes</h1>
+  <!-- A banner that offers only acceptance: refusal must leave it alone. The
+       target is not under it. -->
+  <button type="button" onclick="window.opened = true; document.getElementById('soup').hidden = false">Open soup recipe</button>
+  <p id="soup" hidden>Leek and potato soup.</p>
+  <div id="notice" class="cookie-notice">
+    This site uses cookies. By continuing you agree to our cookie policy.
+    <button type="button" onclick="window.consent = 'accepted'; this.parentElement.remove()">Accept</button>
+    <button type="button" onclick="window.consent = 'accepted'; this.parentElement.remove()">OK</button>
+  </div>
+</body>
+</html>

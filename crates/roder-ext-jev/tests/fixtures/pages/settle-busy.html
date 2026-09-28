@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Ticking clock</title></head>
+<body>
+  <h1>Ticking clock</h1>
+  <!-- The button's guard hashes its parent's text, so the ticker lives
+       outside that parent or every click would read as stale. -->
+  <div><button type="button" onclick="document.getElementById('note').textContent = 'Refreshed'">Refresh</button></div>
+  <p id="note">Not refreshed</p>
+  <p>Ticks: <span id="ticks">0</span></p>
+  <script>
+    // Mutates every 50 ms forever, so the DOM is never quiet.
+    let ticks = 0;
+    setInterval(() => { document.getElementById('ticks').textContent = ++ticks; }, 50);
+  </script>
+</body>
+</html>

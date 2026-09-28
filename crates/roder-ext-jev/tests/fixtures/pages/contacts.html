@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Contacts</title>
+  <style> body { font: 14px sans-serif; margin: 12px; } td, th { padding: 4px 10px; } </style>
+</head>
+<body>
+  <h1>Contacts</h1>
+  <section id="editing" role="status"><p>No contact is being edited</p></section>
+  <!-- Every row ends in the same Edit link. The header spans two rows and
+       two columns, so a cell's column comes from rowspan and colspan. -->
+  <table>
+    <thead>
+      <tr><th rowspan="2">Name</th><th colspan="2">Contact</th><th rowspan="2">Actions</th></tr>
+      <tr><th>Email</th><th>Phone</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>Ada Lovelace</td><td>ada@example.test</td><td><a href="#call-0">Call</a></td><td><a href="#edit-0" onclick="window.edited='Ada Lovelace'">Edit</a></td></tr>
+        <tr><td>Alan Turing</td><td>alan@example.test</td><td><a href="#call-1">Call</a></td><td><a href="#edit-1" onclick="window.edited='Alan Turing'">Edit</a></td></tr>
+        <tr><td>Grace Hopper</td><td>grace@example.test</td><td><a href="#call-2">Call</a></td><td><a href="#edit-2" onclick="window.edited='Grace Hopper'">Edit</a></td></tr>
+        <tr><td>Edsger Dijkstra</td><td>edsger@example.test</td><td><a href="#call-3">Call</a></td><td><a href="#edit-3" onclick="window.edited='Edsger Dijkstra'">Edit</a></td></tr>
+    </tbody>
+  </table>
+  <script>
+    document.addEventListener('click', () => {
+      if (window.edited) document.getElementById('editing').innerHTML = '<h2>Edit contact: ' + window.edited + '</h2><p>The edit form for ' + window.edited + ' is open.</p>';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Catalog</title></head>
+<body>
+  <h1>Catalog</h1>
+  <!-- ?page=N (1-4) lists five widgets per page; each page links the next
+       with rel=next, so a later item takes several pager clicks. -->
+  <p id="where"></p>
+  <ul id="items"></ul>
+  <nav id="pager"></nav>
+  <script>
+    const page = Math.min(4, Math.max(1, Number(new URLSearchParams(location.search).get('page') || 1)));
+    document.title = 'Catalog, page ' + page;
+    document.getElementById('where').textContent = 'Page ' + page + ' of 4';
+    for (let i = (page - 1) * 5 + 1; i <= page * 5; i++) {
+      const item = document.createElement('li'), link = document.createElement('a');
+      link.href = '/pages/landing.html?item=' + i;
+      link.textContent = 'Widget ' + i;
+      item.append(link);
+      document.getElementById('items').append(item);
+    }
+    const pager = document.getElementById('pager');
+    if (page > 1) pager.insertAdjacentHTML('beforeend',
+      `<a rel="prev" href="/pages/catalog.html?page=${page - 1}">Previous page</a> `);
+    if (page < 4) pager.insertAdjacentHTML('beforeend',
+      `<a rel="next" href="/pages/catalog.html?page=${page + 1}">Next page ›</a>`);
+  </script>
+</body>
+</html>

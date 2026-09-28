@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Account settings</title></head>
+<body>
+  <h1>Account settings</h1>
+  <!-- Deleting the account cannot be undone; the gate must stop before it
+       unless the run is authorized. -->
+  <p>Signed in as ada@example.com.</p>
+  <button type="button" onclick="window.theme = 'dark'; document.getElementById('theme-status').textContent = 'Theme: dark'">Use dark theme</button>
+  <p id="theme-status">Theme: light</p>
+  <form method="post" action="/submit/delete-account">
+    <button type="submit">Delete account</button>
+  </form>
+</body>
+</html>

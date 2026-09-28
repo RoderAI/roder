@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Garden news</title>
+  <style>
+    body { font: 15px sans-serif; margin: 0; padding: 16px; min-height: 700px; }
+    #show-more { position: absolute; top: 690px; left: 24px; }
+    #consent-banner { position: fixed; left: 0; right: 0; bottom: 0; height: 180px;
+      background: #fff; border-top: 2px solid #333; padding: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Garden news</h1>
+  <!-- A consent banner over the target: "Show more" sits under it, so a
+       click is covered until the banner is refused. Refusing records
+       window.consent = 'rejected'; accepting would record 'accepted', and
+       "Manage preferences" opens a second panel. -->
+  <p>Spring planting starts in March.</p>
+  <button type="button" id="show-more" onclick="document.getElementById('extra').hidden = false; window.more = true">Show more</button>
+  <p id="extra" hidden>Tomatoes go out after the last frost.</p>
+  <div id="consent-banner" role="dialog" aria-label="Cookie consent">
+    <p>We use cookies to measure traffic and personalise ads. Choose which cookies we may use.</p>
+    <button type="button" onclick="decide('accepted')">Accept all</button>
+    <button type="button" onclick="document.getElementById('prefs-panel').hidden = false; window.prefs = true">Manage preferences</button>
+    <button type="button" onclick="decide('rejected')">Reject all</button>
+    <div id="prefs-panel" hidden><label><input type="checkbox"> Analytics</label></div>
+  </div>
+  <script>
+    function decide(choice) {
+      window.consent = choice;
+      document.getElementById('consent-banner').remove();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Report</title></head>
+<body>
+  <h1 id="heading">Report</h1>
+  <p id="total"></p>
+  <button type="button" onclick="document.getElementById('status').textContent='Report approved.'">Approve report</button>
+  <button type="button" onclick="window.close()">Close this tab</button>
+  <p id="status"></p>
+  <script>
+    const name = new URLSearchParams(location.search).get('name') || 'unknown';
+    document.getElementById('heading').textContent = 'Report ' + name.toUpperCase();
+    document.getElementById('total').textContent = 'Total for ' + name.toUpperCase() + ': 42 units';
+    document.title = 'Report ' + name.toUpperCase();
+  </script>
+</body>
+</html>

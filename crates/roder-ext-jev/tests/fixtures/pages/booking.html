@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Book a train</title></head>
+<body>
+  <h1>Book a train</h1>
+  <!-- A native date input: typed keys land in whichever locale-formatted
+       segment has focus, so only its ISO value set through the value setter
+       commits a date. -->
+  <form method="post" action="/submit/booking">
+    <label>Departure date <input type="date" name="depart" id="depart" required></label>
+    <button type="submit">Search trains</button>
+  </form>
+  <p id="status">No date yet</p>
+  <script>
+    window.events = [];
+    const depart = document.getElementById('depart');
+    for (const type of ['input', 'change']) {
+      depart.addEventListener(type, () => {
+        window.events.push(type);
+        document.getElementById('status').textContent = 'Departing ' + depart.value;
+      });
+    }
+  </script>
+</body>
+</html>

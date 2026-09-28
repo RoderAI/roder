@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Verify</title>
+<style>#pin { -webkit-text-security: disc; }</style>
+</head>
+<body>
+  <h1>Verify</h1>
+  <!-- Secrets that are not type=password: a PIN masked by CSS, a password
+       field typed as text, and a one-time code. Only the name is public. -->
+  <label>Name <input id="name" value="Ada Lovelace"></label>
+  <label>PIN <input id="pin" value="SECRET-PIN-4821"></label>
+  <label>Password <input id="pass" autocomplete="current-password" value="SECRET-PASS-hunter2"></label>
+  <label>Code <input id="code" autocomplete="one-time-code" value="SECRET-CODE-913377"></label>
+</body>
+</html>

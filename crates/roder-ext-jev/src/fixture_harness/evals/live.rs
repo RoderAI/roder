@@ -1,0 +1,228 @@
+//! The live tier: the hosted decision model on the same pages and graders.
+//!
+//! Opt-in and `#[ignore]`d; it needs a key and spends model calls:
+//!
+//! ```text
+//! TYPESAFE_API_KEY=… cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
+//! ```
+//!
+//! - `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key; `JEV_MODEL`
+//!   pins a model, else `jev-latest`.
+//! - `JEV_EVAL_VARIANTS=a,b` turns on request variants (see [`super::variants`]).
+//! - `JEV_EVAL_TEXT=model` types values from the configured text helper
+//!   instead of each task's `values`, which otherwise isolate the decision
+//!   model.
+//! - `JEV_EVAL_CONFIRM_IRREVERSIBLE=1` runs every task with the
+//!   irreversible-action gate on, to measure what turning it on by default
+//!   would cost, and `JEV_EVAL_REFUSE_COOKIE_BANNERS=0` every task that does
+//!   not set it with cookie-banner refusal off, to measure what the default
+//!   costs; tasks that set either in `tasks.json` always run as they say.
+//! - `JEV_EVAL_TASKS=id,id` narrows the run; `JEV_EVAL_CONCURRENCY` (default
+//!   2) sets how many tasks run at once; `JEV_EVAL_STRICT=1` fails the test
+//!   on any failed task instead of only reporting it.
+//!
+//! Each run writes `target/jev-evals/live-<unix seconds>.jsonl`, one line per
+//! task, graded on outcomes only (the plan-specific `script` checks do not
+//! apply to a model), plus per-step telemetry.
+
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use futures::StreamExt;
+use serde_json::{Value, json};
+
+use super::variants::{StepTelemetry, VariantTransport, Variants};
+use super::{Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_rows};
+use crate::decide::{ENDPOINT, JevTypeSafeDecisionClient, TypeSafeHttpTransport};
+use crate::engine::{JevDecisionTransport, JevTextValueResolver};
+use crate::fixture_harness::Harness;
+use crate::http::RetryPolicy;
+use crate::text_helper::TextHelper;
+
+pub(super) fn env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+pub(super) fn live_key() -> Option<String> {
+    env("TYPESAFE_API_KEY").or_else(|| env("JEV_API_KEY"))
+}
+
+struct LiveSetup {
+    key: String,
+    model: String,
+    variants: Variants,
+    text_model: bool,
+    /// Every task with the irreversible-action gate on.
+    confirm_irreversible: bool,
+    /// Every task that does not set it with cookie-banner refusal off.
+    no_cookie_banner_refusal: bool,
+}
+
+impl LiveSetup {
+    /// The task as this run plays it, and the names of the switches it
+    /// forced on, for the row.
+    fn task(&self, task: &Task) -> (Task, Vec<String>) {
+        let mut task = task.clone();
+        let mut names = self.variants.names();
+        if self.confirm_irreversible {
+            task.confirm_irreversible = true;
+            names.push("confirm_irreversible".into());
+        }
+        if self.no_cookie_banner_refusal && task.refuse_cookie_banners.is_none() {
+            task.refuse_cookie_banners = Some(false);
+            names.push("no_cookie_banner_refusal".into());
+        }
+        (task, names)
+    }
+}
+
+async fn run_one(setup: &LiveSetup, task: &Task) -> Option<Row> {
+    let harness = Harness::start().await?;
+    let (task, names) = setup.task(task);
+    let task = &task;
+    let http: Arc<dyn JevDecisionTransport> = Arc::new(TypeSafeHttpTransport::new(
+        ENDPOINT,
+        setup.key.clone(),
+        RetryPolicy::default(),
+    ));
+    let transport = Arc::new(VariantTransport::new(http, setup.variants.clone()));
+    let decision: Arc<dyn crate::engine::JevDecisionClient> =
+        if setup.variants.has(super::variants::Variant::Effect) {
+            super::effect_variant::client(setup.model.clone(), transport.clone())
+        } else {
+            Arc::new(JevTypeSafeDecisionClient::with_transport(
+                setup.model.clone(),
+                transport.clone(),
+            ))
+        };
+    let text: Arc<dyn JevTextValueResolver> = if setup.text_model {
+        match crate::runner::resolve_text_model(None) {
+            Some(model) => Arc::new(TextHelper::new(model)),
+            None => {
+                let error = anyhow::anyhow!("JEV_EVAL_TEXT=model but no text model is configured");
+                return Some(Row::errored(task, "live", &error));
+            }
+        }
+    } else {
+        Arc::new(TaskValues::new(&task.values))
+    };
+    let probes = task.expect.probes().cloned().collect();
+    Some(
+        match run_task(&harness, task, decision, text, probes).await {
+            Ok(outcome) => {
+                let failures = task.expect.grade(&outcome);
+                let mut row = Row::new(task, "live", names, &outcome, failures);
+                row.telemetry = telemetry(&outcome, &transport.steps());
+                row
+            }
+            Err(error) => Row::errored(task, "live", &error),
+        },
+    )
+}
+
+/// Per-head confidence and the call confidence (the least certain head),
+/// the answering model, request size, and shadow answers, per decision.
+fn telemetry(outcome: &Outcome, steps: &[StepTelemetry]) -> Value {
+    let decisions = &outcome.result.decisions;
+    let call =
+        |confidence: f64, target: Option<f64>| target.map_or(confidence, |t| t.min(confidence));
+    let calls = decisions
+        .iter()
+        .map(|decision| call(decision.confidence, decision.target_confidence))
+        .collect::<Vec<_>>();
+    let input_tokens = decisions
+        .iter()
+        .filter_map(|decision| decision.usage["input_tokens"].as_u64())
+        .sum::<u64>();
+    let per_step = decisions
+        .iter()
+        .enumerate()
+        .map(|(index, decision)| {
+            let mut step = json!({
+                "operation": decision.operation,
+                "choice": decision.choice,
+                "confidence": decision.confidence,
+                "target_confidence": decision.target_confidence,
+                "latency_ms": decision.latency_ms,
+                "irreversible": decision.irreversible,
+            });
+            if let Some(sent) = steps.get(index) {
+                step["request"] = serde_json::to_value(sent).unwrap_or(Value::Null);
+            }
+            step
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "model": decisions.iter().rev().find_map(|decision| decision.model.clone()),
+        "min_call_confidence": calls.iter().copied().reduce(f64::min),
+        "mean_call_confidence": (!calls.is_empty())
+            .then(|| calls.iter().sum::<f64>() / calls.len() as f64),
+        "input_tokens": input_tokens,
+        "max_request_bytes": steps.iter().map(|step| step.request_bytes).max(),
+        "none_wins": steps.iter().filter(|step| step.none_won).count(),
+        "decisions": per_step,
+        "effects": outcome.result.actions.iter().map(|action| action.effect.clone()).collect::<Vec<_>>(),
+    })
+}
+
+#[tokio::test]
+#[ignore = "live: needs TYPESAFE_API_KEY (or JEV_API_KEY), Chrome, and spends model calls"]
+async fn live_corpus() {
+    let tasks = load_tasks().unwrap();
+    validate(&tasks).unwrap();
+    let Some(key) = live_key() else {
+        eprintln!("skipping: set TYPESAFE_API_KEY (or JEV_API_KEY) to run the live tier");
+        return;
+    };
+    let setup = LiveSetup {
+        key,
+        model: env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
+        variants: Variants::parse(&env("JEV_EVAL_VARIANTS").unwrap_or_default()).unwrap(),
+        text_model: env("JEV_EVAL_TEXT").as_deref() == Some("model"),
+        confirm_irreversible: crate::runner::switch(
+            "JEV_EVAL_CONFIRM_IRREVERSIBLE",
+            env("JEV_EVAL_CONFIRM_IRREVERSIBLE").as_deref(),
+            false,
+        )
+        .unwrap(),
+        no_cookie_banner_refusal: !crate::runner::switch(
+            "JEV_EVAL_REFUSE_COOKIE_BANNERS",
+            env("JEV_EVAL_REFUSE_COOKIE_BANNERS").as_deref(),
+            true,
+        )
+        .unwrap(),
+    };
+    if Harness::start().await.is_none() {
+        eprintln!("skipping: no Chrome binary found (set JEV_CHROME_BINARY)");
+        return;
+    }
+    let concurrency = env("JEV_EVAL_CONCURRENCY")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2)
+        .max(1);
+    let setup = &setup;
+    let rows = futures::stream::iter(&tasks)
+        .map(|task| run_one(setup, task))
+        .buffer_unordered(concurrency)
+        .filter_map(|row| async move { row })
+        .collect::<Vec<_>>()
+        .await;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let path = write_rows(&format!("live-{stamp}"), &rows).unwrap();
+    eprintln!(
+        "model {}, variants {:?}, gate {}, cookie refusal {}\n{}rows: {}",
+        setup.model,
+        setup.variants.names(),
+        setup.confirm_irreversible,
+        !setup.no_cookie_banner_refusal,
+        table(&tasks, &rows),
+        path.display()
+    );
+    if env("JEV_EVAL_STRICT").as_deref() == Some("1") {
+        assert!(rows.iter().all(|row| row.pass), "some live tasks failed");
+    }
+}

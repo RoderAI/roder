@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Account</title>
+  <style>
+    #account-menu, #help-menu { border: 1px solid #ccc; padding: 4px; }
+    [hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Account</h1>
+  <!-- A menu button whose menu arrives from the network 500 ms after the
+       click: the click itself redraws nothing, so a settle that trusts 200 ms
+       of quiet reads the page before the menu exists. -->
+  <button type="button" id="account" aria-haspopup="menu" aria-expanded="false"
+          aria-controls="account-menu">Account</button>
+  <ul id="account-menu" role="menu" hidden></ul>
+  <!-- Announces a popup that never opens. -->
+  <button type="button" id="help" aria-haspopup="menu" aria-expanded="false">Help</button>
+  <!-- A search field whose suggestions arrive 600 ms after typing, with no
+       combobox role to announce them. -->
+  <label>Search the site <input type="search" id="search"></label>
+  <ul id="suggestions" role="listbox"></ul>
+  <script>
+    const latency = Number(new URLSearchParams(location.search).get('latency') || 500);
+    const account = document.getElementById('account');
+    const menu = document.getElementById('account-menu');
+    account.addEventListener('click', () => {
+      setTimeout(() => {
+        menu.innerHTML =
+          '<li><a role="menuitem" href="/pages/landing.html?page=profile">Profile</a></li>' +
+          '<li><a role="menuitem" href="/pages/landing.html?page=billing">Billing</a></li>';
+        menu.hidden = false;
+        account.setAttribute('aria-expanded', 'true');
+      }, latency);
+    });
+    document.getElementById('help').addEventListener('click', () => { window.help_clicked = true; });
+    const search = document.getElementById('search');
+    search.addEventListener('input', () => {
+      const typed = search.value.toLowerCase();
+      setTimeout(() => {
+        document.getElementById('suggestions').innerHTML = ['Pricing', 'Privacy policy']
+          .filter(item => item.toLowerCase().startsWith(typed))
+          .map(item => `<li role="option">${item}</li>`).join('');
+      }, 600);
+    });
+  </script>
+</body>
+</html>

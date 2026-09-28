@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sort</title>
+<style>
+  .box { position: relative; width: 200px; height: 32px; border: 1px solid #888; }
+  .box span { position: absolute; left: 8px; top: 6px; }
+  .box select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+</style>
+</head>
+<body>
+  <h1>Sort</h1>
+  <!-- A native select made transparent over a styled box, as many sites
+       style their dropdowns: the select is what takes the click. -->
+  <div class="box"><span id="shown">Newest</span>
+    <select aria-label="Sort by" onchange="document.getElementById('shown').textContent = this.selectedOptions[0].label">
+      <option value="new">Newest</option><option value="cheap">Cheapest</option>
+    </select>
+  </div>
+</body>
+</html>

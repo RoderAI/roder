@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Allotment diary</title>
+  <style>
+    body { font: 15px sans-serif; margin: 0; padding: 16px; min-height: 700px; }
+    #show-more { position: absolute; top: 690px; left: 24px; }
+    #gdpr-cookie-consent-bar { position: fixed; left: 0; right: 0; bottom: 0; height: 180px;
+      background: #fff; border-top: 2px solid #333; padding: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Allotment diary</h1>
+  <!-- The markup of a known consent platform, the WordPress plugin "WP
+       Cookie Notice for GDPR", whose autoconsent rule looks for
+       #gdpr-cookie-consent-bar and refuses with #cookie_action_reject. The
+       refusal's label comes from ?reject= ("No thanks" by default, which
+       consent.js does not read as a refusal; "Reject all", which it does).
+       Every choice is recorded in window.clicks. -->
+  <p>Beans go in after the frost.</p>
+  <button type="button" id="show-more" onclick="document.getElementById('extra').hidden = false; window.more = true">Show more</button>
+  <p id="extra" hidden>Water them twice a week.</p>
+  <div id="gdpr-cookie-consent-bar">
+    <p>This website uses cookies to improve your experience and for ads.</p>
+    <button type="button" id="cookie_action_accept" onclick="decide('accepted')">Accept</button>
+    <button type="button" id="cookie_action_reject" onclick="decide('rejected')"></button>
+  </div>
+  <script>
+    window.clicks = [];
+    document.getElementById('cookie_action_reject').textContent =
+      new URLSearchParams(location.search).get('reject') || 'No thanks';
+    function decide(choice) {
+      window.clicks.push(choice);
+      window.consent = choice;
+      document.getElementById('gdpr-cookie-consent-bar').remove();
+    }
+  </script>
+</body>
+</html>

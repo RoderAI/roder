@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Search results</title></head>
+<body>
+  <h1>Search results</h1>
+  <button type="button" id="load">Load results</button>
+  <div id="status"></div>
+  <ul id="results"></ul>
+  <script>
+    // `?latency=<ms>` is the server's reply latency; `?indicator=0` renders
+    // nothing while the request is in flight, like a page with no spinner;
+    // `?autoload=1` also loads once on its own at start, like an SPA.
+    const query = new URLSearchParams(location.search);
+    const latency = Number(query.get('latency') || 600);
+    const indicator = query.get('indicator') !== '0';
+    const load = () => {
+      const status = document.getElementById('status');
+      if (indicator) status.innerHTML = '<div class="loading">Loading results</div>';
+      const request = new XMLHttpRequest();
+      request.open('GET', '/pages/settle-data.html?delay=' + latency);
+      request.onload = () => {
+        document.getElementById('results').innerHTML = request.responseText;
+        status.textContent = '3 results loaded';
+      };
+      request.send();
+    };
+    document.getElementById('load').addEventListener('click', load);
+    if (query.get('autoload') === '1') load();
+  </script>
+</body>
+</html>

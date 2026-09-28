@@ -1,0 +1,12 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Desk Lamp</title></head>
+<body>
+  <h1>Desk Lamp</h1>
+  <!-- A harmless click: adding to a cart commits nothing, and the gate does
+       not ask about it. -->
+  <p>$45. In stock.</p>
+  <button type="button" onclick="window.cart = (window.cart || 0) + 1; document.getElementById('cart-status').textContent = 'Cart: ' + window.cart + ' item'">Add to cart</button>
+  <p id="cart-status">Cart: empty</p>
+</body>
+</html>

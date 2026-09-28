@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Signup form</title></head>
+<body>
+  <h2>Join our newsletter</h2>
+  <form id="signup">
+    <p><label for="name">Name</label> <input id="name" name="name"></p>
+    <p><label for="email">Email</label> <input id="email" name="email" type="email"></p>
+    <p><label for="when">Start date</label> <input id="when" name="when" type="date"></p>
+    <button type="submit">Subscribe</button>
+  </form>
+  <script>
+    document.getElementById('signup').addEventListener('submit', event => {
+      event.preventDefault();
+      const value = id => document.getElementById(id).value;
+      window.top.subscribed = {name: value('name'), email: value('email'), when: value('when')};
+      window.top.document.getElementById('status').textContent =
+        'Subscribed: ' + value('name') + ' <' + value('email') + '>';
+    });
+  </script>
+</body>
+</html>

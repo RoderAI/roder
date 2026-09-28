@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Payment</title></head>
+<body>
+  <h1>Payment</h1>
+  <!-- The last step of a checkout: paying commits the purchase. With the
+       irreversible-action gate on, an unauthorized run must stop before it. -->
+  <p>1 × Desk Lamp, $45. Card ending 4242.</p>
+  <form method="post" action="/submit/pay">
+    <input type="hidden" name="order" value="lamp-45">
+    <button type="submit">Pay now</button>
+  </form>
+</body>
+</html>

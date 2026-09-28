@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Pick a size</title></head>
+<body>
+  <h1>Pick a size</h1>
+  <!-- Large is out of stock: the page puts the previous size back. -->
+  <label>Size
+    <select id="size">
+      <option value="s">Small</option>
+      <option value="m" selected>Medium</option>
+      <option value="l">Large</option>
+    </select>
+  </label>
+  <p id="status">Medium selected</p>
+  <script>
+    const size = document.getElementById('size');
+    let last = size.value;
+    size.addEventListener('change', () => {
+      if (size.value === 'l') {
+        size.value = last;
+        document.getElementById('status').textContent = 'Large is out of stock';
+        return;
+      }
+      last = size.value;
+      document.getElementById('status').textContent = size.selectedOptions[0].label + ' selected';
+    });
+  </script>
+</body>
+</html>

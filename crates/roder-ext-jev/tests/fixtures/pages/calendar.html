@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Pick a date</title>
+  <style>
+    body { font: 13px sans-serif; margin: 12px; }
+    .months { display: flex; gap: 24px; }
+    td button { width: 30px; height: 24px; }
+  </style>
+</head>
+<body>
+  <h1>Pick a date</h1>
+  <p id="picked">No date selected</p>
+  <script>
+    function pick(day) {
+      window.picked = day;
+      document.getElementById('picked').textContent = 'Selected: ' + day;
+    }
+  </script>
+  <!-- Two months show the same day numbers. October names itself with a
+       caption, which must not name the nav buttons outside its table;
+       November with a plain line, from which the day "2" must be cut as a
+       whole word only. Empty leading cells shift the weekdays, so a day's
+       column must come from the table's structure, not the flattened text. -->
+  <div class="months">
+    <div class="month">
+      <div class="nav"><button type="button">‹</button></div>
+      <div class="nav"><button type="button">›</button></div>
+      <table>
+        <caption>October 2026</caption>
+        <thead><tr><th scope="col" abbr="Monday">Mo</th><th scope="col" abbr="Tuesday">Tu</th><th scope="col" abbr="Wednesday">We</th><th scope="col" abbr="Thursday">Th</th><th scope="col" abbr="Friday">Fr</th><th scope="col" abbr="Saturday">Sa</th><th scope="col" abbr="Sunday">Su</th></tr></thead>
+        <tbody>
+          <tr><td></td><td></td><td></td><td><button type="button" onclick="pick('October 1')">1</button></td><td><button type="button" onclick="pick('October 2')">2</button></td><td><button type="button" onclick="pick('October 3')">3</button></td><td><button type="button" onclick="pick('October 4')">4</button></td></tr>
+          <tr><td><button type="button" onclick="pick('October 5')">5</button></td><td><button type="button" onclick="pick('October 6')">6</button></td><td><button type="button" onclick="pick('October 7')">7</button></td><td><button type="button" onclick="pick('October 8')">8</button></td><td><button type="button" onclick="pick('October 9')">9</button></td><td><button type="button" onclick="pick('October 10')">10</button></td><td><button type="button" onclick="pick('October 11')">11</button></td></tr>
+          <tr><td><button type="button" onclick="pick('October 12')">12</button></td><td><button type="button" onclick="pick('October 13')">13</button></td><td><button type="button" onclick="pick('October 14')">14</button></td><td><button type="button" onclick="pick('October 15')">15</button></td><td><button type="button" onclick="pick('October 16')">16</button></td><td><button type="button" onclick="pick('October 17')">17</button></td><td><button type="button" onclick="pick('October 18')">18</button></td></tr>
+          <tr><td><button type="button" onclick="pick('October 19')">19</button></td><td><button type="button" onclick="pick('October 20')">20</button></td><td><button type="button" onclick="pick('October 21')">21</button></td><td><button type="button" onclick="pick('October 22')">22</button></td><td><button type="button" onclick="pick('October 23')">23</button></td><td><button type="button" onclick="pick('October 24')">24</button></td><td><button type="button" onclick="pick('October 25')">25</button></td></tr>
+          <tr><td><button type="button" onclick="pick('October 26')">26</button></td><td><button type="button" onclick="pick('October 27')">27</button></td><td><button type="button" onclick="pick('October 28')">28</button></td><td><button type="button" onclick="pick('October 29')">29</button></td><td><button type="button" onclick="pick('October 30')">30</button></td><td><button type="button" onclick="pick('October 31')">31</button></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="month">
+      <div class="nav"><button type="button">‹</button></div>
+      <div class="nav"><button type="button">›</button></div>
+      <div class="title">November 2026</div>
+      <table>
+        <thead><tr><th scope="col" abbr="Monday">Mo</th><th scope="col" abbr="Tuesday">Tu</th><th scope="col" abbr="Wednesday">We</th><th scope="col" abbr="Thursday">Th</th><th scope="col" abbr="Friday">Fr</th><th scope="col" abbr="Saturday">Sa</th><th scope="col" abbr="Sunday">Su</th></tr></thead>
+        <tbody>
+          <tr><td></td><td></td><td></td><td></td><td></td><td></td><td><button type="button" onclick="pick('November 1')">1</button></td></tr>
+          <tr><td><button type="button" onclick="pick('November 2')">2</button></td><td><button type="button" onclick="pick('November 3')">3</button></td><td><button type="button" onclick="pick('November 4')">4</button></td><td><button type="button" onclick="pick('November 5')">5</button></td><td><button type="button" onclick="pick('November 6')">6</button></td><td><button type="button" onclick="pick('November 7')">7</button></td><td><button type="button" onclick="pick('November 8')">8</button></td></tr>
+          <tr><td><button type="button" onclick="pick('November 9')">9</button></td><td><button type="button" onclick="pick('November 10')">10</button></td><td><button type="button" onclick="pick('November 11')">11</button></td><td><button type="button" onclick="pick('November 12')">12</button></td><td><button type="button" onclick="pick('November 13')">13</button></td><td><button type="button" onclick="pick('November 14')">14</button></td><td><button type="button" onclick="pick('November 15')">15</button></td></tr>
+          <tr><td><button type="button" onclick="pick('November 16')">16</button></td><td><button type="button" onclick="pick('November 17')">17</button></td><td><button type="button" onclick="pick('November 18')">18</button></td><td><button type="button" onclick="pick('November 19')">19</button></td><td><button type="button" onclick="pick('November 20')">20</button></td><td><button type="button" onclick="pick('November 21')">21</button></td><td><button type="button" onclick="pick('November 22')">22</button></td></tr>
+          <tr><td><button type="button" onclick="pick('November 23')">23</button></td><td><button type="button" onclick="pick('November 24')">24</button></td><td><button type="button" onclick="pick('November 25')">25</button></td><td><button type="button" onclick="pick('November 26')">26</button></td><td><button type="button" onclick="pick('November 27')">27</button></td><td><button type="button" onclick="pick('November 28')">28</button></td><td><button type="button" onclick="pick('November 29')">29</button></td></tr>
+          <tr><td><button type="button" onclick="pick('November 30')">30</button></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

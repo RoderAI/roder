@@ -17,7 +17,7 @@
         },
         {
           "role": "user",
-          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
+          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"date\": \"2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"other_fields\": [{\"label\": \"Cabin\", \"value\": \"Any\"}], \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
         }
       ]
     }
@@ -40,7 +40,7 @@
         },
         {
           "role": "user",
-          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
+          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"date\": \"2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"other_fields\": [{\"label\": \"Cabin\", \"value\": \"Any\"}], \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
         }
       ]
     }
@@ -63,7 +63,7 @@
         },
         {
           "role": "user",
-          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
+          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"date\": \"2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"other_fields\": [{\"label\": \"Cabin\", \"value\": \"Any\"}], \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
         }
       ]
     }
@@ -86,7 +86,7 @@
         },
         {
           "role": "user",
-          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
+          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"date\": \"2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"other_fields\": [{\"label\": \"Cabin\", \"value\": \"Any\"}], \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
         }
       ]
     }
@@ -109,7 +109,7 @@
         },
         {
           "role": "user",
-          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
+          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"date\": \"2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"other_fields\": [{\"label\": \"Cabin\", \"value\": \"Any\"}], \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
         }
       ]
     }
@@ -132,7 +132,7 @@
         },
         {
           "role": "user",
-          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
+          "content": "{\"goal\": \"Find one-way flights from Zurich to London on 2026-09-28 in economy.\", \"date\": \"2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026\", \"field\": {\"label\": \"Where to?\", \"role\": \"searchbox\", \"value\": \"Zur\"}, \"other_fields\": [{\"label\": \"Cabin\", \"value\": \"Any\"}], \"page\": {\"title\": \"Search \\u2014 Example\", \"text\": \"Search\\nWhere to?\\nCabin\\nNonstop only\\nCheapest\\nPrices in \\u00a3\"}, \"recent_actions\": [{\"action\": \"Accept cookies\", \"text\": null}, {\"action\": \"Where to?\", \"text\": \"Zurich\"}]}"
         }
       ]
     }

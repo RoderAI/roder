@@ -104,6 +104,21 @@
       }
     },
     {
+      "id": "e8",
+      "node": 16,
+      "kind": "click",
+      "role": "link",
+      "label": "Next page",
+      "value": "",
+      "offscreen": true,
+      "rect": {
+        "x": 10.0,
+        "y": 1500.0,
+        "w": 70.0,
+        "h": 20.0
+      }
+    },
+    {
       "id": "scroll_down",
       "kind": "scroll",
       "label": "Scroll down",
@@ -176,6 +191,16 @@
       "operations": [
         "CLICK"
       ]
+    },
+    {
+      "role": "link",
+      "value": "",
+      "offscreen": true,
+      "index": "6",
+      "label": "Next page",
+      "operations": [
+        "CLICK"
+      ]
     }
   ],
   "targets": {
@@ -183,7 +208,8 @@
       "1": "e1",
       "2": "e3",
       "4": "e6",
-      "5": "e7"
+      "5": "e7",
+      "6": "e8"
     },
     "TYPE_TEXT": {
       "2": "e2"
@@ -198,7 +224,8 @@
       "1",
       "2",
       "4",
-      "5"
+      "5",
+      "6"
     ],
     "TYPE_TEXT": [
       "2"

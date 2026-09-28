@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Price</title></head>
+<body>
+  <!-- A custom element whose shadow root holds text directly and a slot
+       between two runs of text; its light child is slotted. -->
+  <x-price>42</x-price>
+  <script>
+    customElements.define('x-price', class extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({mode: 'open'}).innerHTML = 'Total: <slot></slot> EUR <b>today</b>';
+      }
+    });
+  </script>
+</body>
+</html>

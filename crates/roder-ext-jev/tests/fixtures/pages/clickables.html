@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Clickables</title>
+<style>
+  body { font: 14px sans-serif; }
+  .link { color: blue; text-decoration: underline; }
+  .row { display: flex; gap: 8px; padding: 6px; border-bottom: 1px solid #ccc; cursor: pointer; width: 420px; }
+  .row .star { display: inline-block; width: 16px; height: 16px; background: gold; cursor: pointer; }
+  .nav li { cursor: pointer; }
+  #toolbar { padding: 4px; background: #eee; }
+</style>
+</head>
+<body>
+<!-- Each control records its clicks in window.clicked. -->
+<p id="para">Read the <span class="link" id="in">In</span> section or the
+  <span class="link" id="out">Out</span> one.</p>
+
+<div id="inline" onclick="clicked.push('inline')">Inline handler</div>
+<div id="focusable" tabindex="0">Focusable tile</div>
+<a id="prev" data-handler="prev">Prev</a>
+<a id="named" name="top">Named anchor, not a control</a>
+<ul role="tree"><li role="treeitem" id="tree">Documents</li></ul>
+
+<!-- Mail rows: the row opens by a delegated handler and shows a pointer;
+     the star inside it has its own listener. -->
+<div id="inbox">
+  <div class="row" data-id="1"><span class="from">Ada</span><span>Minutes</span><span class="star" title="Star"></span></div>
+  <div class="row" data-id="2"><span class="from">Bob</span><span>Budget</span><span class="star" title="Star"></span></div>
+</div>
+
+<!-- A pointer list item that only wraps its link is offered once, as the link. -->
+<ul class="nav"><li><a href="#home">Home</a></li></ul>
+
+<!-- A toolbar listening for its buttons' clicks is not a control itself. -->
+<div id="toolbar">Tools:
+  <button type="button">Bold</button><button type="button">Italic</button><button type="button">Code</button>
+  <button type="button">Quote</button><button type="button">List</button>
+</div>
+
+<!-- Icons with no name are named by their picture's file, unless the file
+     name is not words. -->
+<div id="icons">
+  <span id="trash" style="display:inline-block;width:16px;height:16px;background:url(/icons/delete.png)"></span>
+  <button type="button" id="starred"><svg width="16" height="16"><use href="#icon-star"></use></svg></button>
+  <button type="button" id="hashed"><img src="/static/a8f3e9c1.png" width="16" height="16"></button>
+</div>
+<!-- A floating suggestion list: each item (a pointer li whose wrapper
+     listens) is offered once, as an option. -->
+<div style="position: relative; height: 30px">
+  <ul id="suggest" style="position: absolute; top: 0; left: 0; margin: 0; padding: 0; list-style: none">
+    <li style="cursor: pointer"><div class="wrap">Paris (CDG)</div></li>
+  </ul>
+</div>
+<!-- A listener on a button's icon is the button's. -->
+<button type="button" id="save"><span id="save-icon">Save</span></button>
+
+<script>
+  window.clicked = [];
+  const record = name => () => clicked.push(name);
+  for (const id of ['in', 'out', 'focusable', 'prev', 'tree', 'save-icon', 'trash'])
+    document.getElementById(id).addEventListener('click', record(id));
+  document.getElementById('toolbar').addEventListener('click', record('toolbar'));
+  document.querySelector('#suggest .wrap').addEventListener('click', record('suggestion'));
+  for (const star of document.querySelectorAll('.star'))
+    star.addEventListener('click', event => {
+      event.stopPropagation();
+      clicked.push('star ' + star.parentElement.dataset.id);
+    });
+  document.getElementById('inbox').addEventListener('click', event => {
+    const row = event.target.closest('.row');
+    if (row) clicked.push('row ' + row.dataset.id);
+  });
+</script>
+</body>
+</html>

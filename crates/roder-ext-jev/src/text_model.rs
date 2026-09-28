@@ -63,7 +63,8 @@ impl KeySource for RoderKeys {
 
 /// Resolve the text helper: explicit override, then the calling turn's model,
 /// then whatever Roder is configured for. `None` means Jev runs without a text
-/// helper and typing actions fail upstream instead of guessing a value.
+/// helper, and a run that must type ends `needs_input` instead of guessing a
+/// value.
 pub(crate) fn resolve(
     explicit_key: Option<String>,
     explicit_base_url: Option<String>,

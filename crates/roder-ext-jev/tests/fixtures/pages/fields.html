@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fields</title>
+<style>
+  body { font: 14px sans-serif; }
+  .entry { margin: 4px 0; }
+  .note { width: 220px; height: 60px; }
+</style>
+</head>
+<body>
+<h1>Movie search</h1>
+<!-- Fields named only by the text around them: a label with no "for", a
+     header cell in the field's row, text before and text after the field. -->
+<div class="entry"><label>Genre</label><input type="text" id="genre"></div>
+<table><tr><th>Director</th><td><input type="text" id="director"></td></tr></table>
+<p><span>Year:</span> <input type="text" id="year"></p>
+<div class="entry"><input type="email" id="email"><div>Contact email</div></div>
+<!-- A placeholder names a field before the text around it. -->
+<div class="entry">Search the catalogue <input type="search" id="query" placeholder="Title or actor"></div>
+<!-- Two fields in one box name neither. -->
+<div class="entry">Range <input type="text" id="low"> to <input type="text" id="high"></div>
+<!-- A textarea is named by its label, never by its text; a select by its
+     label, never by its options. -->
+<label for="note">Note</label><br>
+<textarea id="note" class="note">Meet at the north gate at nine.</textarea>
+<div class="entry"><select id="rating"><option>Any</option><option>PG</option><option>R</option></select></div>
+<!-- A form's header is not a label: several runs of text two boxes up. -->
+<div class="reply">
+  <div class="head"><label>to: </label><span>Ada</span><div><label>subject: </label>Re: Minutes</div></div>
+  <div class="body"><textarea id="reply"></textarea></div>
+</div>
+<!-- A status line above a field grouped with its button is not its label. -->
+<div><div>Waiting for your guess...</div><div><input type="number" id="guess"><button type="button">Guess</button></div></div>
+<!-- A password's value is never read. -->
+<div class="entry"><label>Password <input type="password" id="secret" value="hunter2"></label></div>
+<button type="button" id="submit">Search</button>
+</body>
+</html>
