@@ -1,6 +1,6 @@
 use super::{
-    ModelCatalogEntry, PROVIDER_DEEPSEEK, PROVIDER_KIND_DEEPSEEK, ProviderCatalogEntry, REASONING_HIGH,
-    REASONING_LOW, REASONING_MAX, REASONING_NONE, REASONING_XHIGH, ReasoningOption,
+    ModelCatalogEntry, PROVIDER_DEEPSEEK, PROVIDER_KIND_DEEPSEEK, ProviderCatalogEntry,
+    REASONING_HIGH, REASONING_LOW, REASONING_MAX, REASONING_NONE, REASONING_XHIGH, ReasoningOption,
 };
 
 /// Default OpenAI-compatible Chat Completions base URL for DeepSeek Platform.

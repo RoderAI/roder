@@ -1,0 +1,76 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter codex --event post-tool-use || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": null
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter codex --event pre-tool-use || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": null
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter codex --event session-end || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'",
+            "timeout": 3,
+            "type": "command"
+          }
+        ],
+        "matcher": null
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter codex --event session-start || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": null
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter codex --event stop || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": null
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter codex --event user-prompt-submit || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "hooks": {
+    "afterShellExecution": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event post-tool-use || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event pre-tool-use || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event user-prompt-submit || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event pre-compact || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event session-end || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event session-start || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "stop": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event stop || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event subagent-start || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "sh -c 'if command -v vex >/dev/null 2>&1; then vex --ignore-working-copy transcripts hook --adapter cursor --event subagent-stop || true; else printf \"%s\\n\" \"vex CLI not found; Vex checkpoint skipped (https://vex.sc/docs/agents/setup)\" >&2; fi; exit 0'"
+      }
+    ]
+  },
+  "version": 1
+}
