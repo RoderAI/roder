@@ -1,8 +1,9 @@
 //! The origins a run may visit, set by the operator.
 //!
-//! `JEV_ALLOWED_ORIGINS` is the real control: a per-call list can only narrow
-//! it, since a prompt-injected caller could otherwise widen its own scope. An
-//! origin is allowed when every scope in force allows it. The check runs
+//! `JEV_ALLOWED_ORIGINS` is the only control, off (any origin) when unset;
+//! a `jev_browse` call names no origins of its own. An embedder can narrow a
+//! scope further ([`JevOriginScope::narrow`]), and an origin is allowed when
+//! every scope in force allows it. The check runs
 //! after each observation, so one page outside the scope has already loaded
 //! when a run stops on it. Matching follows fastbrowse's safety.py (MIT): a
 //! pattern is an exact origin, or one whose host starts with `*.` to cover
@@ -102,7 +103,7 @@ impl Origin {
     }
 }
 
-/// Every scope in force: the operator's, then a call's.
+/// Every scope in force: the operator's, then any narrowing of it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct JevOriginScope {
     scopes: Vec<Vec<Pattern>>,
@@ -229,14 +230,14 @@ mod tests {
     }
 
     #[test]
-    fn a_call_can_only_narrow_the_operators_scope() {
+    fn a_narrowed_scope_stays_within_the_one_it_narrows() {
         let operator = scope(&["https://*.example.com"]);
         let narrowed = operator
             .clone()
             .narrow(&["https://docs.example.com", "https://evil.test"])
             .unwrap();
         assert!(narrowed.allows("https://docs.example.com/a"));
-        // Named by the call, but outside the operator's scope.
+        // Named by the narrowing, but outside the scope it narrows.
         assert!(!narrowed.allows("https://evil.test/"));
         assert!(!narrowed.allows("https://shop.example.com/"));
         assert_eq!(

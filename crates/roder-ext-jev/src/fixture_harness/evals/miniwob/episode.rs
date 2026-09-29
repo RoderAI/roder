@@ -139,6 +139,10 @@ impl JevBrowser for MiniwobPage {
         self.page.fresh(observation, action).await
     }
 
+    async fn describe(&mut self) -> anyhow::Result<Option<crate::engine::JevPageFacts>> {
+        self.page.describe().await
+    }
+
     async fn act(
         &mut self,
         action: &Value,

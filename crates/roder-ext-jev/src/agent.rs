@@ -22,8 +22,8 @@ use serde_json::{Value, json};
 
 use crate::effects;
 use crate::engine::{
-    Covered, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevStatus, JevStop,
-    JevTextValue, StaleObservation,
+    Covered, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevPageFacts, JevStatus,
+    JevStop, JevTextValue, StaleObservation,
 };
 use crate::secret::{self, SECRET, Secrets};
 use crate::usage::JevBilled;
@@ -48,6 +48,10 @@ pub(crate) struct Agent {
     stopped_before: Option<String>,
     /// The secrets typed so far, scrubbed from every later observation.
     secrets: Secrets,
+    /// What the browser said of the page besides the observation.
+    facts: Option<JevPageFacts>,
+    /// A BLOCKED on an empty page has already been looked at again.
+    looked_again: bool,
 }
 
 /// Below this, a repeat of the last effective click is read as DONE.
@@ -65,8 +69,9 @@ fn chosen(entry: &&Value) -> bool {
 impl Agent {
     pub(crate) async fn start(
         browser: Box<dyn JevBrowser>,
-        config: JevEngineConfig,
+        mut config: JevEngineConfig,
     ) -> anyhow::Result<Self> {
+        let secrets = std::mem::take(&mut config.secrets);
         let mut agent = Self {
             browser,
             config,
@@ -81,11 +86,17 @@ impl Agent {
             elapsed_ms: 0,
             pending_text: None,
             stopped_before: None,
-            secrets: Secrets::default(),
+            secrets,
+            facts: None,
+            looked_again: false,
         };
         agent.observe().await?;
+        agent.look_again_while_empty().await?;
         if let Err(error) = agent.check_scope() {
             agent.stopped_before = Some(agent.fail(&error));
+        } else if let Some(reason) = agent.refused_access().await {
+            agent.stop(JevStatus::AccessDenied);
+            agent.stopped_before = Some(reason);
         }
         Ok(agent)
     }
@@ -279,6 +290,13 @@ impl Agent {
 
     async fn act(&mut self, decision: JevDecision) -> anyhow::Result<()> {
         let selected = decision.choice.clone();
+        // A page that showed nothing yet is read again once before a
+        // BLOCKED about it is believed; the next decision sees what came.
+        if selected == "BLOCKED" && !self.looked_again && self.shows_nothing() {
+            self.looked_again = true;
+            self.look_again_while_empty().await?;
+            return Ok(());
+        }
         if selected == "DONE" || selected == "BLOCKED" {
             if !self.browser.fresh(&self.observation, None).await? {
                 return Err(StaleObservation::new(
@@ -364,6 +382,8 @@ impl Agent {
             "step": self.history.len() + 1,
             "action": action["label"],
             "kind": action["kind"],
+            // Where it sat, for the caller's trace; not sent to the model.
+            "context": action.get("context").or_else(|| action.get("section")),
             "choice": selected,
             "probability": decision.probability_of(&selected),
             "confidence": decision.confidence,
@@ -433,6 +453,7 @@ fn stalled(history: &[Value]) -> bool {
         })
 }
 
+mod look;
 mod opt_in;
 mod result;
 #[cfg(test)]

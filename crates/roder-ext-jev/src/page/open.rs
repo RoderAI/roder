@@ -22,15 +22,18 @@ use std::time::Duration;
 use anyhow::Context;
 use serde_json::{Value, json};
 
-use super::Page;
-use super::tabs::{Tab, is_gone};
+use super::tabs::{Tab, attach_session, is_gone};
+use super::{LOAD_TIMEOUT, Page};
 use crate::cdp::Connection;
+use crate::engine::StaleObservation;
 
 const VIEWPORT_WIDTH: u32 = 1120;
 const VIEWPORT_HEIGHT: u32 = 780;
 /// How long closing a tab keeps checking that it went.
 const CLOSE_WAIT: Duration = Duration::from_secs(1);
 const CLOSE_POLL: Duration = Duration::from_millis(50);
+/// How often the commit wait checks for the new document.
+const COMMIT_POLL: Duration = Duration::from_millis(50);
 /// The waits before each retry of a transient network failure.
 const NAVIGATION_RETRIES: [Duration; 2] = [Duration::from_millis(500), Duration::from_secs(1)];
 
@@ -123,38 +126,31 @@ impl Page {
         target_id: String,
         foreground: bool,
     ) -> anyhow::Result<Self> {
-        let attached = connection
-            .call(
-                "Target.attachToTarget",
-                json!({"targetId": target_id, "flatten": true}),
-                None,
-            )
-            .await
-            .and_then(|attached| {
-                attached["sessionId"]
-                    .as_str()
-                    .map(str::to_string)
-                    .context("Chrome did not return a session")
-            });
-        let session = match attached {
+        let session = match attach_session(&mut connection, &target_id).await {
             Ok(session) => session,
             Err(error) => {
                 close_target(&mut connection, &target_id).await.ok();
                 return Err(error);
             }
         };
-        let mut page = Self {
+        let page = Self {
             connection,
             tabs: vec![Tab {
                 target: target_id,
                 session,
+                opener: None,
             }],
             stray: Vec::new(),
+            seen: Vec::new(),
             foreground,
             after_input: None,
             opened_tab: false,
             autoconsent: false,
+            ledger: Default::default(),
+            frame_text: super::frames::frame_text_on(),
         };
+        page.record_tabs();
+        let mut page = page;
         if foreground && let Err(error) = page.activate().await {
             page.close().await.ok();
             return Err(error);
@@ -168,10 +164,57 @@ impl Page {
         self.prepare().await?;
         self.install_tracker().await?;
         self.install_autoconsent(false).await?;
-        self.navigate(url).await?;
+        self.load_in(url, false).await
+    }
+
+    /// Load `url` in the tab, which is already set up and showing a page,
+    /// and wait for the new document to commit, be ready and settle. Without
+    /// the commit wait, a tab that already showed a page read the old
+    /// document as ready and settled while the new one was still on its way.
+    pub(crate) async fn goto(&mut self, url: &str) -> anyhow::Result<()> {
+        self.load_in(url, true).await
+    }
+
+    /// [`Self::goto`]; `shown` when the tab shows a page already, whose own
+    /// activity can abandon the load once (see [`Self::navigate`]).
+    async fn load_in(&mut self, url: &str, shown: bool) -> anyhow::Result<()> {
+        let stamp = self.stamp_document().await;
+        let navigated = self.navigate(url, shown).await?;
+        // A `loaderId` means a new document; a same-document navigation
+        // (a fragment, a history push) has none and keeps the stamp.
+        if let Some(stamp) = stamp
+            && navigated.get("loaderId").is_some_and(|id| !id.is_null())
+        {
+            self.await_commit(&stamp).await;
+        }
         self.await_ready().await;
         self.settle_page(None).await;
         Ok(())
+    }
+
+    /// Mark the document the tab shows now, so the next one can be told
+    /// apart from it. `None` when the page could not be marked.
+    async fn stamp_document(&mut self) -> Option<String> {
+        let stamp = format!("{:x}", rand_stamp());
+        let script = format!("window.__jevDoc = {:?}", stamp);
+        self.evaluate(&script).await.ok().map(|_| stamp)
+    }
+
+    /// Wait, for at most the load timeout, until the tab no longer shows
+    /// the document marked with `stamp`.
+    async fn await_commit(&mut self, stamp: &str) {
+        let deadline = tokio::time::Instant::now() + LOAD_TIMEOUT;
+        let check = format!("window.__jevDoc === {stamp:?}");
+        while tokio::time::Instant::now() < deadline {
+            match self.evaluate(&check).await {
+                Ok(Value::Bool(true)) => {}
+                // A new document, or none reachable yet between the two.
+                Ok(_) => return,
+                Err(error) if error.is::<StaleObservation>() => {}
+                Err(_) => return,
+            }
+            tokio::time::sleep(COMMIT_POLL).await;
+        }
     }
 
     /// What every Jev tab needs before it is read: the viewport, focus
@@ -209,14 +252,30 @@ impl Page {
     }
 
     /// `Page.navigate`, retrying a transient network failure; any other
-    /// `errorText` is a [`LoadFailed`].
-    async fn navigate(&mut self, url: &str) -> anyhow::Result<()> {
+    /// `errorText` is a [`LoadFailed`]. Returns Chrome's reply.
+    ///
+    /// In a tab that `shown` a page already, an abandoned load
+    /// (`net::ERR_ABORTED`, not a download) is tried once more: the live
+    /// booking benchmark had a reused tab abandon a plain redirect to the
+    /// next site that loaded at once in a fresh tab. A fresh tab's abandoned
+    /// load (a 204 reply) fails the same way again, so it is not retried.
+    async fn navigate(&mut self, url: &str, shown: bool) -> anyhow::Result<Value> {
         let mut retries = NAVIGATION_RETRIES.iter();
+        let mut abandoned_once = false;
         loop {
             let result = self.call("Page.navigate", json!({"url": url})).await?;
             let Some(error) = error_text(&result) else {
-                return Ok(());
+                return Ok(result);
             };
+            let abandoned = shown
+                && !abandoned_once
+                && net_error(error) == Some("ERR_ABORTED")
+                && result["isDownload"] != Value::Bool(true);
+            if abandoned {
+                abandoned_once = true;
+                tokio::time::sleep(NAVIGATION_RETRIES[0]).await;
+                continue;
+            }
             match retries.next() {
                 Some(delay) if transient(error) => tokio::time::sleep(*delay).await,
                 _ => return Err(LoadFailed(error.to_string()).into()),
@@ -276,6 +335,18 @@ pub(crate) async fn close_target(
             "Chrome did not close the tab"
         );
     }
+}
+
+/// A value unlikely to repeat between two navigations of one tab.
+fn rand_stamp() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos()),
+    );
+    hasher.finish()
 }
 
 fn error_text(result: &Value) -> Option<&str> {

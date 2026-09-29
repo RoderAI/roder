@@ -105,8 +105,10 @@ fn pages_dir() -> PathBuf {
 }
 
 /// Failure routes for loads that go wrong: `/fail/drop` closes the
-/// connection with no reply (`net::ERR_EMPTY_RESPONSE`), and
-/// `/fail/no-content` answers 204, which Chrome abandons (`net::ERR_ABORTED`).
+/// connection with no reply (`net::ERR_EMPTY_RESPONSE`),
+/// `/fail/no-content` answers 204, which Chrome abandons (`net::ERR_ABORTED`),
+/// and `/fail/abort-once/<page>.html` answers 204 the first time and serves
+/// the page after that.
 async fn serve(
     mut stream: TcpStream,
     posts: Arc<Mutex<Vec<Post>>>,
@@ -115,6 +117,28 @@ async fn serve(
     let Some((method, path, body)) = read_request(&mut stream).await else {
         return;
     };
+    if let Some(page_path) = path.strip_prefix("/fail/abort-once") {
+        let seen = {
+            let mut failures = failures.lock().unwrap();
+            let seen = failures.contains(&path);
+            failures.push(path.clone());
+            seen
+        };
+        if seen && let Some(content) = page(&format!("/pages{page_path}")).await {
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\n\
+                 content-length: {}\r\nconnection: close\r\n\r\n",
+                content.len()
+            );
+            let _ = stream.write_all(head.as_bytes()).await;
+            let _ = stream.write_all(&content).await;
+        } else {
+            let head = "HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+            let _ = stream.write_all(head.as_bytes()).await;
+        }
+        let _ = stream.shutdown().await;
+        return;
+    }
     if path.starts_with("/fail/") {
         failures.lock().unwrap().push(path.clone());
         if path.starts_with("/fail/no-content") {
@@ -126,7 +150,7 @@ async fn serve(
     }
     let (status, content) = match method.as_str() {
         "GET" => match delayed_page(&path).await {
-            Some(content) => ("200 OK", content),
+            Some(content) => (served_status(&path), content),
             None => ("404 Not Found", b"not found".to_vec()),
         },
         "POST" => {
@@ -145,15 +169,29 @@ async fn serve(
     let _ = stream.shutdown().await;
 }
 
+/// A `status=<code>` query serves the page with that refusal status
+/// instead of 200, as a bot-protection edge serves an automated browser.
+fn served_status(path: &str) -> &'static str {
+    let status = query_value(path, "status");
+    match status {
+        Some("401") => "401 Unauthorized",
+        Some("403") => "403 Forbidden",
+        Some("429") => "429 Too Many Requests",
+        _ => "200 OK",
+    }
+}
+
+fn query_value<'a>(path: &'a str, key: &str) -> Option<&'a str> {
+    path.split_once('?')?.1.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == key).then_some(value)
+    })
+}
+
 /// A `delay=<ms>` query (capped at 10 s) holds the reply back, so a fixture
 /// can fetch from this server with real network latency.
 async fn delayed_page(path: &str) -> Option<Vec<u8>> {
-    let delay = path
-        .split_once('?')
-        .map(|(_, query)| query)
-        .unwrap_or_default()
-        .split('&')
-        .find_map(|pair| pair.strip_prefix("delay="))
+    let delay = query_value(path, "delay")
         .and_then(|ms| ms.parse::<u64>().ok())
         .unwrap_or(0)
         .min(10_000);
@@ -275,6 +313,13 @@ mod tests {
                 "{path}"
             );
         }
+        let refused = client
+            .get(site.url("access-denied.html?status=403"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), 403);
+        assert!(refused.text().await.unwrap().contains("Access Denied"));
         let posted = client
             .post(format!("{}/submit/x", site.origin))
             .body("a=1&b=two+words")

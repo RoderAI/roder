@@ -15,7 +15,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use roder_ext_jev::{
-    Covered, JevActOutcome, JevBrowser, JevDecision, JevDecisionClient, JevStatus, JevStop,
+    Covered, JevActOutcome, JevBrowser, JevDecision, JevDecisionClient, JevPageFacts, JevStatus,
+    JevStop,
 };
 use serde_json::{Map, Value, json};
 
@@ -97,6 +98,8 @@ pub struct BrowserLog {
     pub acts: Vec<ActCall>,
     /// How many times the loop asked the browser to refuse a cookie banner.
     pub banner_checks: usize,
+    /// How many times the loop asked the browser to describe the page.
+    pub describes: usize,
 }
 
 pub struct ScriptedBrowser {
@@ -107,6 +110,8 @@ pub struct ScriptedBrowser {
     refusals: VecDeque<Option<String>>,
     banners: VecDeque<Option<String>>,
     act_delay: Option<Duration>,
+    /// What `describe` answers, in order; the last repeats.
+    facts: VecDeque<JevPageFacts>,
     log: Arc<Mutex<BrowserLog>>,
 }
 
@@ -123,6 +128,7 @@ impl ScriptedBrowser {
             refusals: VecDeque::new(),
             banners: VecDeque::new(),
             act_delay: None,
+            facts: VecDeque::new(),
             log: Arc::default(),
         }
     }
@@ -163,6 +169,13 @@ impl ScriptedBrowser {
     /// Make every act sleep before returning.
     pub fn with_act_delay(mut self, delay: Duration) -> Self {
         self.act_delay = Some(delay);
+        self
+    }
+
+    /// What successive `describe` calls answer, the last repeating;
+    /// nothing when none are given.
+    pub fn with_facts(mut self, facts: &[JevPageFacts]) -> Self {
+        self.facts = facts.iter().cloned().collect();
         self
     }
 
@@ -217,6 +230,15 @@ impl JevBrowser for ScriptedBrowser {
     async fn refuse_cookie_banner(&mut self) -> anyhow::Result<Option<String>> {
         self.log.lock().unwrap().banner_checks += 1;
         Ok(self.banners.pop_front().flatten())
+    }
+
+    async fn describe(&mut self) -> anyhow::Result<Option<JevPageFacts>> {
+        self.log.lock().unwrap().describes += 1;
+        Ok(match self.facts.len() {
+            0 => None,
+            1 => self.facts.front().cloned(),
+            _ => self.facts.pop_front(),
+        })
     }
 }
 

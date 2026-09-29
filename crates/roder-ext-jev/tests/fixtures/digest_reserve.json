@@ -1,0 +1,194 @@
+{
+  "status": "done",
+  "url": "http://127.0.0.1:8000/pages/reserve-search.html?seats=3&q=Mission%20District",
+  "title": "Tables · Search results",
+  "visible_text": "3 Guests\nToday\nMission District\n6 restaurants\nMarina Grill\nAmerican · Marina · $$\n7:00 PM Dining Room\n8:15 PM Dining Room\nAngie's Pizza\nPizza · Mission District · $$\n5:00 PM Dining Room\n5:15 PM Dining Room\n8:15 PM Dining Room\nKuma on Valencia\nJapanese · Mission District · $$\n8:15 PM Dining Room\n9:00 PM Bar\nChestnut Bistro\nFrench · Marina · $$\n6:30 PM Bar\n8:15 PM Dining Room\nThe Morris\nCalifornian · Mission District · $$\n5:00 PM Dining Room\n7:30 PM Patio\nTartine Supper\nBakery · Mission District · $$\n7:45 PM Dining Room\n9:30 PM Bar\nLoad more\nClose\n[frame http://localhost:8000] Complete Your Reservation · Angie's Pizza · Mission District · Mon, Sep 28, 2026 · 8:15 PM · Dining Room · 3 Guests · Log in Reserve Now",
+  "actions": [
+    {
+      "step": 1,
+      "action": "8:15 PM Dining Room",
+      "kind": "click",
+      "context": "Angie's Pizza",
+      "text": null,
+      "url": "http://127.0.0.1:8000/pages/reserve-search.html?seats=3&q=Mission%20District",
+      "page_changed": true,
+      "effect": "showed 1 control: Close",
+      "elapsed_ms": 3100
+    }
+  ],
+  "elapsed_ms": 3200,
+  "observed_elements": 16,
+  "model_calls": 2,
+  "text_calls": 0,
+  "usage": {
+    "decision": {
+      "calls": 2,
+      "input_tokens": "unknown",
+      "output_tokens": "unknown"
+    },
+    "text": {
+      "calls": 0,
+      "input_tokens": 0,
+      "output_tokens": 0
+    }
+  },
+  "stopped_because": null,
+  "untrusted": true,
+  "controls": [
+    {
+      "label": "3 Guests",
+      "kind": "click",
+      "role": "button"
+    },
+    {
+      "label": "7:00 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "section": "Marina Grill"
+    },
+    {
+      "label": "8:15 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "context": "Marina Grill",
+      "section": "Marina Grill"
+    },
+    {
+      "label": "5:00 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "context": "Angie's Pizza",
+      "section": "Angie's Pizza"
+    },
+    {
+      "label": "5:15 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "section": "Angie's Pizza"
+    },
+    {
+      "label": "8:15 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "context": "Angie's Pizza",
+      "section": "Angie's Pizza"
+    },
+    {
+      "label": "8:15 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "context": "Kuma on Valencia",
+      "section": "Kuma on Valencia"
+    },
+    {
+      "label": "9:00 PM Bar",
+      "kind": "click",
+      "role": "button",
+      "section": "Kuma on Valencia"
+    },
+    {
+      "label": "6:30 PM Bar",
+      "kind": "click",
+      "role": "button",
+      "section": "Chestnut Bistro"
+    },
+    {
+      "label": "8:15 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "context": "Chestnut Bistro",
+      "section": "Chestnut Bistro"
+    },
+    {
+      "label": "5:00 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "context": "The Morris",
+      "section": "The Morris"
+    },
+    {
+      "label": "7:30 PM Patio",
+      "kind": "click",
+      "role": "button",
+      "section": "The Morris"
+    },
+    {
+      "label": "7:45 PM Dining Room",
+      "kind": "click",
+      "role": "button",
+      "section": "Tartine Supper"
+    },
+    {
+      "label": "9:30 PM Bar",
+      "kind": "click",
+      "role": "button",
+      "section": "Tartine Supper"
+    },
+    {
+      "label": "Close",
+      "kind": "click",
+      "role": "button",
+      "section": "Tartine Supper"
+    },
+    {
+      "label": "Load more",
+      "kind": "click",
+      "role": "button",
+      "context": "Tartine Supper",
+      "section": "Tartine Supper",
+      "offscreen": true
+    }
+  ],
+  "page": {
+    "http_status": 200,
+    "headings": [
+      "Marina Grill",
+      "Angie's Pizza",
+      "Kuma on Valencia",
+      "Chestnut Bistro",
+      "The Morris",
+      "Tartine Supper"
+    ],
+    "frames": [
+      {
+        "origin": "http://localhost:8000",
+        "text": "Complete Your Reservation · Angie's Pizza · Mission District · Mon, Sep 28, 2026 · 8:15 PM · Dining Room · 3 Guests · Log in Reserve Now"
+      }
+    ]
+  },
+  "browser": {
+    "foreground": true,
+    "launched_by_roder": false
+  },
+  "text_model": null,
+  "session": {
+    "call": 2,
+    "tab": "t1",
+    "tab_note": "continued",
+    "tabs": [
+      {
+        "id": "t1"
+      }
+    ],
+    "tabs_open": 1,
+    "max_tabs": 3,
+    "earlier_calls": [
+      {
+        "n": 1,
+        "goal": "Show the results.",
+        "start": "http://127.0.0.1:8000/pages/reserve-search.html?seats=3&q=Mission%20District",
+        "end_url": "http://127.0.0.1:8000/pages/reserve-search.html?seats=3&q=Mission%20District",
+        "title": "Tables · Search results",
+        "status": "done",
+        "actions": 0
+      }
+    ],
+    "totals": {
+      "calls": 2,
+      "actions": 1,
+      "decisions": 3,
+      "text_calls": 0
+    },
+    "secrets_typed": 0
+  }
+}

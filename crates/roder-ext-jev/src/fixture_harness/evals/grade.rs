@@ -14,9 +14,10 @@ use super::Outcome;
 #[serde(deny_unknown_fields)]
 pub(crate) struct Expect {
     /// The final status as the result serialises it: `done`, `blocked`,
-    /// `budget_exceeded`, `timed_out`, `needs_input`, `unavailable`, `error`
-    /// or `needs_confirmation`; or a list of statuses any of which passes,
-    /// where the task's intent allows more than one honest ending.
+    /// `budget_exceeded`, `timed_out`, `needs_input`, `unavailable`,
+    /// `error`, `needs_confirmation` or `access_denied`; or a list of
+    /// statuses any of which passes, where the task's intent allows more
+    /// than one honest ending.
     pub(crate) status: Option<Statuses>,
     /// Whether the run ended with a `stopped_because` reason.
     pub(crate) stopped: Option<bool>,
@@ -89,6 +90,7 @@ impl Expect {
                     "unavailable",
                     "error",
                     "needs_confirmation",
+                    "access_denied",
                 ]
                 .contains(&status.as_str()),
                 "unknown status {status:?}"
@@ -162,7 +164,11 @@ impl Expect {
                 format!("title {:?} != {title:?}", result.title),
             );
         }
-        for needle in &self.text_contains {
+        for needle in self
+            .text_contains
+            .iter()
+            .map(|needle| super::sessions::expand(needle))
+        {
             check(
                 result.visible_text.contains(needle.as_str()),
                 format!("visible text lacks {needle:?}"),

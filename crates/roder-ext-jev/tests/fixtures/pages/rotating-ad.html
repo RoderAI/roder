@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Checkout</title></head>
+<body>
+  <h1>Checkout</h1>
+  <!-- A large frame of another site whose text rotates on its own, as an
+       ad does, beside a button that does nothing: the rotation must not
+       count as the button's progress. -->
+  <p>Order total: $48.00</p>
+  <label>Coupon <input type="text" value="SPRING" readonly></label>
+  <button type="button">Apply coupon</button>
+  <iframe id="ad" style="width: 320px; height: 250px"></iframe>
+  <script>
+    const url = new URL('rotating-frame.html', location.href);
+    url.hostname = url.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    document.getElementById('ad').src = url.href;
+  </script>
+</body>
+</html>

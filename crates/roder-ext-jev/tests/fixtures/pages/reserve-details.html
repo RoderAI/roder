@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Complete your reservation</title></head>
+<body>
+  <!-- The same-origin variant of the booking step: the slot's details over
+       a sign-in wall. Continue posts the sign-in, a commitment a run must
+       stop before. -->
+  <h1>Complete your reservation</h1>
+  <p id="summary"></p>
+  <form method="post" action="/submit/signin">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password">
+    <button type="submit">Continue</button>
+  </form>
+  <script>
+    const query = new URLSearchParams(location.search);
+    const [y, m, d] = (query.get('date') || '').split('-').map(Number);
+    const day = new Date(y, m - 1, d).toLocaleDateString('en-US',
+      {weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'});
+    const seats = Number(query.get('seats') || 2);
+    document.getElementById('summary').textContent = query.get('name') + ' · ' + day + ' · ' +
+      query.get('time') + ' · ' + seats + (seats === 1 ? ' Guest' : ' Guests') +
+      '. Sign in to reserve.';
+  </script>
+</body>
+</html>

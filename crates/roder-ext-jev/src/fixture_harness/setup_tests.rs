@@ -10,17 +10,28 @@ use serde_json::Value;
 use super::scripted::PlanDecider;
 use crate::engine::{JevEngineConfig, JevRunResult, JevStatus};
 use crate::page::LoadFailed;
-use crate::runner::{Task, drive};
+use crate::runner::{TabChoice, Task, drive};
+use crate::session::SessionTabs;
 
 fn task(url: String, decider: Arc<PlanDecider>, timeout: Duration) -> Task {
     let started = tokio::time::Instant::now();
     Task {
-        url,
+        url: Some(url),
+        tab: TabChoice::Current,
+        refused_tab: None,
         foreground: false,
         started,
         deadline: started + timeout,
         config: JevEngineConfig::new("setup goal", decider).with_wait(Duration::from_millis(100)),
     }
+}
+
+/// Drive `task` as a session's first call, returning its result and the
+/// tabs it left for the session.
+async fn drive_fresh(endpoint: &str, task: Task) -> (JevRunResult, SessionTabs) {
+    let mut tabs = SessionTabs::new(3);
+    let driven = drive(endpoint, &mut tabs, task).await.unwrap();
+    (driven.result, tabs)
 }
 
 /// A loopback URL nothing listens on.
@@ -40,9 +51,8 @@ async fn stopped_before_the_loop(
 ) -> JevRunResult {
     let tabs = harness.page_targets().await;
     let decider = Arc::new(PlanDecider::new(Vec::new()));
-    let result = drive(harness.endpoint(), task(url, decider.clone(), timeout))
-        .await
-        .unwrap();
+    let (result, left) = drive_fresh(harness.endpoint(), task(url, decider.clone(), timeout)).await;
+    assert!(left.is_empty(), "{left:?}");
     assert!(decider.chosen.lock().unwrap().is_empty(), "{result:#?}");
     assert_eq!(result.model_calls, 0);
     assert_eq!(result.observed_elements, 0);
@@ -70,14 +80,15 @@ async fn a_websocket_endpoint_skips_the_version_lookup() {
 
     let decider = Arc::new(PlanDecider::new(Vec::new()));
     let url = harness.site.url("basic.html");
-    let result = drive(websocket, task(url, decider, Duration::from_secs(20)))
-        .await
-        .unwrap();
+    let (result, left) = drive_fresh(websocket, task(url, decider, Duration::from_secs(20))).await;
 
     assert_eq!(result.status, JevStatus::Done, "{result:#?}");
     assert_eq!(result.title, "Basic controls");
     assert_eq!(result.model_calls, 1);
-    // A background task closes its tab when it ends.
+    // The tab stays open for the session's next call, background or not.
+    assert_eq!(left.targets().len(), 1);
+    assert_eq!(harness.settled_page_targets(tabs + 1).await, tabs + 1);
+    harness.close_target(&left.targets()[0]).await.unwrap();
     assert_eq!(harness.settled_page_targets(tabs).await, tabs);
 }
 
@@ -213,9 +224,7 @@ async fn a_deadline_during_the_attach_closes_the_created_tab() {
     let tabs = harness.page_targets().await;
     let decider = Arc::new(PlanDecider::new(Vec::new()));
     let url = harness.site.url("basic.html");
-    let result = drive(&proxy.url, task(url, decider, Duration::from_secs(1)))
-        .await
-        .unwrap();
+    let (result, _) = drive_fresh(&proxy.url, task(url, decider, Duration::from_secs(1))).await;
     assert_eq!(result.status, JevStatus::TimedOut, "{result:#?}");
     assert_eq!(
         result.stopped_because.as_deref(),

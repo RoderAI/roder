@@ -1,0 +1,31 @@
+{
+  "resy": {
+    "entry": "https://resy.com/cities/san-francisco-ca",
+    "panel": [
+      "Complete Your Reservation"
+    ],
+    "panel_any": [
+      "Reserve Now",
+      "Log in"
+    ],
+    "commit_labels": [
+      "reserve now",
+      "complete reservation"
+    ]
+  },
+  "tock": {
+    "entry": "https://www.exploretock.com/city/san-francisco",
+    "panel": [
+      "Complete your reservation"
+    ],
+    "panel_any": [
+      "Sign in",
+      "Log in",
+      "Continue"
+    ],
+    "commit_labels": [
+      "book now",
+      "complete purchase"
+    ]
+  }
+}

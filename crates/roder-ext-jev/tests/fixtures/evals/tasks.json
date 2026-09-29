@@ -1386,5 +1386,103 @@
         "model_calls": 1
       }
     }
+  },
+  {
+    "id": "reserve_wrong_neighbourhood",
+    "covers": "results mix neighbourhoods and every card offers the same slot label: the slot must be taken in a Mission card, not the Marina card listed first; the booking widget opens in a frame of another site and nothing is reserved",
+    "page": "reserve-search.html?seats=3&q=Mission%20District",
+    "goal": "Choose the 8:15 PM Dining Room slot at a restaurant in the Mission District (not the Marina) and stop when the reservation details show. Do not log in or reserve.",
+    "expect": {
+      "status": "done",
+      "posts": [],
+      "dom": {
+        "new URL(document.getElementById('widget').src).searchParams.get('area')": "Mission District",
+        "new URL(document.getElementById('widget').src).searchParams.get('time')": "8:15 PM"
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "8:15 PM Dining Room",
+          "context": "Angie's Pizza"
+        }
+      ],
+      "expect": {
+        "acts": 1
+      }
+    }
+  },
+  {
+    "id": "access_denied_page",
+    "covers": "a page served 403 \"Access Denied\" ends the run as access_denied before any decision, with the evidence",
+    "page": "access-denied.html?status=403",
+    "goal": "Find a table for 3 people tonight.",
+    "expect": {
+      "status": "access_denied",
+      "stopped_because_contains": "HTTP 403",
+      "model_calls": 0,
+      "acts": 0
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Search"
+        }
+      ]
+    }
+  },
+  {
+    "id": "empty_first_look",
+    "covers": "a page that commits blank and renders 700 ms later is read again before any decision, instead of being judged blocked",
+    "page": "empty-then-render.html",
+    "goal": "Show tonight's specials.",
+    "expect": {
+      "status": "done",
+      "text_contains": [
+        "Mole negro"
+      ]
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Show specials"
+        }
+      ],
+      "expect": {
+        "acts": 1,
+        "model_calls": 2
+      }
+    }
+  },
+  {
+    "id": "rotating_frame_no_progress",
+    "covers": "a large frame of another site rotates its text on its own while the button Jev presses does nothing: the frame's text is read but does not count as progress, so the stall rule still ends the run",
+    "page": "rotating-ad.html",
+    "goal": "Apply the coupon and stop when the order total shows a discount.",
+    "expect": {
+      "status": "blocked",
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Apply coupon",
+          "repeat": 5
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click Apply coupon",
+          "click Apply coupon",
+          "click Apply coupon"
+        ],
+        "page_changed": [
+          false,
+          false,
+          false
+        ],
+        "model_calls": 3
+      }
+    }
   }
 ]

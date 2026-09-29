@@ -3,7 +3,10 @@
 // role and label) each get a `context`: the card, row or section they sit in.
 // Offscreen controls get their section too, since page text is viewport-only,
 // and controls in a table get their column. The rules and their guards follow
-// fastbrowse's snapshot.js (MIT), reimplemented here.
+// fastbrowse's snapshot.js (MIT), reimplemented here. Every control of the
+// top document also gets a `section` (Jev's own): the nearest visible heading
+// before it, for the result the caller reads. Neither the decision model nor
+// the step fingerprint sees it.
 (state => {
   if (!state) return state;
   const cache=window.__jevFast, visible=cache.visible, labelOf=cache.name;
@@ -205,5 +208,43 @@
     context.set(n,clip([context.get(n),'column: '+column].filter(Boolean).join('; ')));
 
   for (const a of state.actions) if (context.has(a.node)) a.context=context.get(a.node);
+
+  // Sections: the headings of the top document in document order, and for
+  // each control the last one before it (by binary search) that does not
+  // hold it and does not read as its label.
+  const heads=[...document.querySelectorAll('h1,h2,h3,h4,[role="heading"],legend')]
+    .filter(h=>visible(h)).map(h=>[h,clip(firstLine(h.innerText))]).filter(([,t])=>t);
+  const before=(h,e)=>!!(h.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING);
+  // A heading names what follows it in its own branch: the largest ancestor
+  // of the heading that does not hold the control. When that branch holds a
+  // neighbouring heading too, the heading titles one of several items (the
+  // last card of a list) and the control sits after the list, not in it.
+  const branchOf=(h,e)=>{
+    let b=h;
+    while (b.parentElement && !b.parentElement.contains(e)) b=b.parentElement;
+    return b;
+  };
+  const titlesItem=(i,e)=>{
+    const b=branchOf(heads[i][0],e);
+    return [heads[i-1],heads[i+1]].some(n=>n && b!==heads[i][0] && b.contains(n[0]) &&
+      !heads[i][0].contains(n[0]));
+  };
+  const sectionFor=e=>{
+    let low=0, high=heads.length;
+    while (low<high) { const mid=(low+high)>>1; if (before(heads[mid][0],e)) low=mid+1; else high=mid; }
+    for (let i=low-1; i>=0 && i>=low-3; i--) {
+      const [h,text]=heads[i];
+      if (!h.contains(e) && !titlesItem(i,e)) return text;
+    }
+    return '';
+  };
+  const sections=new Map();
+  if (heads.length) for (const a of state.actions) {
+    const e=elements.get(a.node);
+    if (!e || e.getRootNode()!==document) continue;
+    if (!sections.has(a.node)) sections.set(a.node,sectionFor(e));
+    const section=sections.get(a.node);
+    if (section && section!==baseLabel(a)) a.section=section;
+  }
   return state;
 })
