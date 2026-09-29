@@ -1,12 +1,8 @@
----
-roder-ext-browser-use: minor
-roder-ext-mcp: minor
-roder-extension-host: minor
-roder-config: minor
-roder: minor
----
+## 0.1.1 (2026-09-29)
 
-# Add browser-use as an opt-in browser provider over stdio MCP
+### Features
+
+#### Add browser-use as an opt-in browser provider over stdio MCP
 
 `roder --browser-use` or `[browser_use] enabled = true` exposes the open-source
 browser-use local MCP server as `browser_use_*` tools. Roder launches it with
