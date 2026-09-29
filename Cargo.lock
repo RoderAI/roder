@@ -634,9 +634,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -3330,7 +3330,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3378,7 +3378,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3403,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3600,7 +3600,7 @@ dependencies = [
 
 [[package]]
 name = "roder-dist-hosted"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "futures",
@@ -3956,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-jev"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4703,7 +4703,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4941,7 +4941,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
