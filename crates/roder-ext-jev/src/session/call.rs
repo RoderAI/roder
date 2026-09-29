@@ -7,8 +7,15 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 
 use super::{JevSessions, SessionDeps, SessionState, TabNote};
+use crate::chrome::ChromeEndpoint;
 use crate::engine::{JevEngineConfig, JevRunResult, JevStatus};
-use crate::runner::{Driven, JevRequest, NO_TAB_YET, TabChoice, Task, annotate, drive, timed_out};
+use crate::fallback::run::Limits;
+use crate::fallback::trigger::trigger;
+use crate::fallback::{Brief, FallbackMode, FinalPage, Report, Rules, fall_back as run_fallback};
+use crate::runner::{
+    Driven, JevRequest, NO_TAB_YET, TabChoice, Task, annotate, close_all, close_quietly, drive,
+    look_again, timed_out,
+};
 
 /// Why a call that could not get its session in time did nothing.
 pub(crate) const BUSY: &str = "Another jev_browse call is still using this thread's Jev tab. \
@@ -48,7 +55,7 @@ impl JevSessions {
             anyhow::bail!(NO_TAB_YET);
         }
         let outcome = self
-            .run_locked(&mut state, &request, deps, started, deadline)
+            .run_locked(thread, &mut state, &request, deps, started, deadline)
             .await;
         state.last_used = std::time::Instant::now();
         session.publish(&state);
@@ -63,6 +70,7 @@ impl JevSessions {
 
     async fn run_locked(
         &self,
+        thread: &str,
         state: &mut SessionState,
         request: &JevRequest,
         deps: &dyn SessionDeps,
@@ -151,8 +159,41 @@ impl JevSessions {
                 moved_to: None,
             },
         };
-        state.record(&request.goal, request.url.as_deref(), &driven.result);
+        let fallback = match &endpoint {
+            Some(endpoint) => {
+                fall_back(
+                    thread,
+                    state,
+                    request,
+                    deps,
+                    &driven.result,
+                    endpoint,
+                    started,
+                )
+                .await
+            }
+            None => Fallback::none(),
+        };
+        let mut recorded = driven.result.clone();
+        if let Report::Ran { outcome, .. } = &fallback.report {
+            recorded.status = outcome.status;
+            recorded.stopped_because = outcome.stopped_because.clone();
+            if let Some(page) = &fallback.page {
+                recorded.url = page.url.clone();
+                recorded.title = page.title.clone();
+            }
+            state.totals.fallback_actions += outcome.actions.len();
+        }
+        state.record(&request.goal, request.url.as_deref(), &recorded);
         let mut value = serde_json::to_value(&driven.result).context("serialize the JEV result")?;
+        crate::fallback::report(
+            &mut value,
+            &driven.result,
+            &fallback.report,
+            request.fallback.mode,
+            state.tabs.current().map(|tab| tab.id.as_str()),
+            fallback.page,
+        );
         // The model that wrote values, which is not the one resolved when an
         // unusable Codex sign-in fell back.
         let text = helper.map(|helper| helper.current());
@@ -198,4 +239,132 @@ fn view(state: &SessionState, driven: &Driven) -> Value {
         view["moved_to"] = json!(moved_to);
     }
     view
+}
+
+/// What the fallback came to for one call.
+struct Fallback {
+    report: Report,
+    /// The page the call ended on, read again after the fallback moved it.
+    page: Option<FinalPage>,
+}
+
+impl Fallback {
+    fn none() -> Self {
+        Self {
+            report: Report::None,
+            page: None,
+        }
+    }
+}
+
+/// Fall back after a Jev run that could not progress, as the operator's
+/// `JEV_FALLBACK` says: hand over, or run the model-driven loop in the same
+/// tab and record on the session what it did (tabs it opened, secrets it
+/// typed, where it left the tab).
+async fn fall_back(
+    thread: &str,
+    state: &mut SessionState,
+    request: &JevRequest,
+    deps: &dyn SessionDeps,
+    result: &JevRunResult,
+    endpoint: &ChromeEndpoint,
+    started: Instant,
+) -> Fallback {
+    let Some(why) = trigger(result) else {
+        return Fallback::none();
+    };
+    let settings = &request.fallback;
+    let handover = |reason: Option<String>| Fallback {
+        report: Report::Handover {
+            trigger: why,
+            why: reason,
+        },
+        page: None,
+    };
+    match settings.mode {
+        FallbackMode::Off => return Fallback::none(),
+        FallbackMode::Handover => return handover(None),
+        FallbackMode::Auto => {}
+    }
+    let Some(tab) = state.tabs.current().cloned() else {
+        return handover(Some("the session has no tab to go on in".into()));
+    };
+    let model = match deps.fallback_model(settings, thread).await {
+        Ok(model) => model,
+        Err(reason) => return handover(Some(reason)),
+    };
+    let now = Instant::now();
+    let mut deadline = now + settings.max_duration;
+    if let Some(seconds) = request.host_seconds {
+        deadline = deadline.min(started + Duration::from_secs(seconds));
+    }
+    if deadline <= now {
+        return handover(Some("no time is left in this call".into()));
+    }
+    let mut secrets = state.secrets.clone();
+    secrets.extend(&result.typed_secrets);
+    let rules = Rules {
+        scope: request.scope.clone(),
+        gate: request.confirm_irreversible,
+        authorized: request.authorize_irreversible,
+        banners: request.refuse_cookie_banners,
+        secrets,
+    };
+    let limits = Limits {
+        max_steps: settings.max_steps,
+        max_tokens: settings.max_tokens,
+        deadline,
+    };
+    let direct = roder_ext_chrome::direct::DirectTab::Target {
+        endpoint: endpoint.url().to_string(),
+        target_id: tab.target.clone(),
+    };
+    let brief = Brief {
+        goal: &request.goal,
+        trigger: why,
+        jev: result,
+    };
+    let (outcome, secrets) =
+        run_fallback(&direct, model.as_ref(), brief, rules, limits, None).await;
+    state.secrets.extend(&secrets);
+    for opened in &outcome.opened_tabs {
+        state.tabs.adopt(&opened.target_id, &opened.opener);
+    }
+    let closing = state.tabs.cap();
+    if !closing.is_empty() {
+        close_quietly(async {
+            let mut connection = crate::cdp::Connection::connect(endpoint.url()).await?;
+            close_all(&mut connection, &closing).await;
+            Ok(())
+        })
+        .await;
+    }
+    let page = match outcome.actions.is_empty() {
+        true => None,
+        false => {
+            look_again(
+                endpoint.url(),
+                &state.tabs,
+                &state.secrets,
+                request.refuse_cookie_banners,
+            )
+            .await
+        }
+    };
+    let url = page.as_ref().map(|page| page.url.clone()).or_else(|| {
+        outcome
+            .last_page
+            .as_ref()
+            .and_then(|page| page["url"].as_str().map(str::to_string))
+    });
+    if let Some(url) = url.filter(|url| !url.is_empty()) {
+        state.tabs.last_url = Some(url);
+    }
+    Fallback {
+        report: Report::Ran {
+            trigger: why,
+            outcome: Box::new(outcome),
+        },
+        page,
+    }
 }

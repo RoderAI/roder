@@ -77,6 +77,36 @@ class GradeTests(unittest.TestCase):
         self.assertEqual(result["reached"]["level"], "stop_point")
         self.assertEqual(result["reached"]["names"], ["Angie's Pizza"])
 
+    def test_a_fallback_that_reaches_the_panel_counts_and_its_steps_are_checked(self) -> None:
+        after = call_line(1, "new", frames=[PANEL], url="https://r.test/s?date=2026-09-28&seats=3",
+                          text="Mission District")
+        after["result"]["jev_status"] = "blocked"
+        after["result"]["drivers"] = [
+            {"driver": "jev", "elapsed_ms": 9000},
+            {"driver": "fallback", "actions": 2, "model_calls": 3, "elapsed_ms": 20000,
+             "status": "done", "usage": {"input_tokens": 9000, "output_tokens": 300}},
+        ]
+        after["result"]["fallback"] = {"ran": True, "actions": [
+            {"tool": "key", "target": None, "args": {"key": "Escape"}},
+            {"tool": "click", "target": "button \"8:15 PM\"", "args": {"ref": "e4"}},
+        ]}
+        result = self.run_one([after], [{"goal": "a"}],
+                              "Angie’s Pizza, tonight (Sep 28) at 8:15 PM for 3.")
+        self.assertTrue(result["pass"], result)
+        self.assertEqual(result["selected_slot"], "8:15 PM")
+        self.assertEqual(result["totals"]["elapsed_ms"], 9000)
+        self.assertEqual(result["fallback"]["ran"], 1)
+        self.assertEqual(result["fallback"]["input_tokens"], 9000)
+        # A commit the fallback pressed, or a tool call's, breaks P4.
+        after["result"]["fallback"]["actions"].append(
+            {"tool": "click", "target": "button \"Reserve Now\"", "args": {}})
+        tab = {"tool": "jev_tab_type", "result": {"target": {"label": "Email"}, "page": {}}}
+        result = self.run_one([after, tab], [{"goal": "a"}], "Angie’s Pizza, 8:15 PM for 3 tonight.")
+        self.assertFalse(result["checks"]["P4_no_commitment"])
+        self.assertEqual(len(result["commitments"]), 2, result["commitments"])
+        # A hand-over tool line has no tab of its own: continuity is Jev's calls'.
+        self.assertTrue(result["checks"]["P5_continuity"], result["continuity"])
+
     def test_listed_slots_are_partial_and_do_not_pass(self) -> None:
         controls = [{"label": "8:00 PM Dining Room", "kind": "click", "context": "The Hall"}]
         lines = [call_line(1, "new", controls=controls,

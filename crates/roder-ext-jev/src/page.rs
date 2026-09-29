@@ -17,6 +17,7 @@ mod open;
 mod resume;
 mod settle;
 mod tabs;
+mod uncover;
 
 use std::time::Duration;
 

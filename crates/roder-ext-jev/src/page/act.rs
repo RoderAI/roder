@@ -140,13 +140,18 @@ impl Page {
     }
 
     /// A key press and release to whatever has focus, as a keyboard sends it.
-    async fn press_key(&mut self, key: &str) -> anyhow::Result<()> {
-        let (text, code) = match key {
-            "Enter" => ("\r", 13),
-            _ => ("", 27),
+    ///
+    /// No native key code is sent: native codes are the platform's, and
+    /// Escape's Windows code 27 sent as macOS's native code opened Chrome's
+    /// "About Chrome" page from a shown tab. Escape, which types nothing,
+    /// goes as a `rawKeyDown`.
+    pub(super) async fn press_key(&mut self, key: &str) -> anyhow::Result<()> {
+        let (kind, text, code) = match key {
+            "Enter" => ("keyDown", "\r", 13),
+            _ => ("rawKeyDown", "", 27),
         };
-        let mut down = json!({"type": "keyDown", "key": key, "code": key,
-            "windowsVirtualKeyCode": code, "nativeVirtualKeyCode": code});
+        let mut down = json!({"type": kind, "key": key, "code": key,
+            "windowsVirtualKeyCode": code});
         if !text.is_empty() {
             down["text"] = json!(text);
             down["unmodifiedText"] = json!(text);
@@ -154,8 +159,7 @@ impl Page {
         self.call("Input.dispatchKeyEvent", down).await?;
         self.call(
             "Input.dispatchKeyEvent",
-            json!({"type": "keyUp", "key": key, "code": key,
-                "windowsVirtualKeyCode": code, "nativeVirtualKeyCode": code}),
+            json!({"type": "keyUp", "key": key, "code": key, "windowsVirtualKeyCode": code}),
         )
         .await
         .map(|_| ())
@@ -175,17 +179,29 @@ impl Page {
             bail!("Invalid observed node");
         }
         let kind = action["kind"].as_str().unwrap_or_default();
-        let hit = self
-            .evaluate_async(&format!(
-                "(async a => {{ const p=({ACT_JS})(a); if (p && !p.covered) {{ \
-                 p.hidden=document.hidden; \
-                 if (a.kind==='select') p.chosen=({SELECT_JS})(a); \
-                 else if (p.scrolled) await ({FRAME_JS})(); }} return p; }})({action})"
-            ))
-            .await?;
+        let hit_test = format!(
+            "(async a => {{ const p=({ACT_JS})(a); if (p && !p.covered) {{ \
+             p.hidden=document.hidden; \
+             if (a.kind==='select') p.chosen=({SELECT_JS})(a); \
+             else if (p.scrolled) await ({FRAME_JS})(); }} return p; }})({action})"
+        );
+        let mut hit = self.evaluate_async(&hit_test).await?;
+        // A target under a popover, menu or dialog: dismiss that first, and
+        // go ahead in the same step when the target is free (see `uncover`).
+        let mut uncovered = None;
+        if hit["covered"] == json!(true)
+            && let Some(how) = self.uncover(action).await?
+        {
+            uncovered = Some(how);
+            hit = self.evaluate_async(&hit_test).await?;
+        }
         let point = target_point(&hit)?;
+        let outcome = |mut outcome: JevActOutcome| {
+            outcome.uncovered = uncovered.clone();
+            outcome
+        };
         if kind == "select" {
-            return select_outcome(action, &hit["chosen"]);
+            return select_outcome(action, &hit["chosen"]).map(outcome);
         }
         if hit["announced"] == json!(true) {
             settle["announced"] = json!(true);
@@ -199,7 +215,7 @@ impl Page {
             false => self.press(action, &guard, point).await?,
         };
         if kind != "fill" {
-            return Ok(JevActOutcome::done());
+            return Ok(outcome(JevActOutcome::done()));
         }
         // The press has been sent, so from here the action ran: a page that
         // changed under it (the click navigated) is a step that typed
@@ -209,10 +225,10 @@ impl Page {
             .fill(action, text.unwrap_or_default(), point, settle)
             .await
         {
-            Err(error) if error.is::<StaleObservation>() => Ok(JevActOutcome::refused(format!(
-                "The page changed after the click ({error}); nothing was typed."
+            Err(error) if error.is::<StaleObservation>() => Ok(outcome(JevActOutcome::refused(
+                format!("The page changed after the click ({error}); nothing was typed."),
             ))),
-            outcome => outcome,
+            result => result.map(outcome),
         }
     }
 
@@ -258,7 +274,7 @@ impl Page {
     /// gets only this: it draws no frames, so nothing on it moves under the
     /// pointer, and Chrome holds a pointer move's reply for 5 s waiting for
     /// one (`fixture_harness::hidden_tab_tests`).
-    async fn press_at(&mut self, point: Point) -> anyhow::Result<Point> {
+    pub(super) async fn press_at(&mut self, point: Point) -> anyhow::Result<Point> {
         for event in ["mousePressed", "mouseReleased"] {
             self.mouse(event, point).await?;
         }

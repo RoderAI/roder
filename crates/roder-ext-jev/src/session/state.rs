@@ -41,6 +41,10 @@ pub(crate) struct Totals {
     pub(crate) actions: usize,
     pub(crate) decisions: usize,
     pub(crate) text_calls: usize,
+    /// Tool calls the automatic fallback made in this session's calls.
+    pub(crate) fallback_actions: usize,
+    /// Calls to the `jev_tab_*` tools on this session's tab.
+    pub(crate) tab_tool_calls: usize,
 }
 
 /// The models a session's calls use, resolved once and kept until the

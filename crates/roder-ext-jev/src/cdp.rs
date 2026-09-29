@@ -12,7 +12,9 @@
 //! `beforeunload` are accepted, `confirm` and `prompt` dismissed, and each
 //! is kept for [`Connection::take_dialogs`]. The rule follows fastbrowse's
 //! browser/session.py (MIT); jev never has two calls in flight, so no reader
-//! task is needed.
+//! task is needed. Finding the browser websocket, decoding a message and the
+//! dialog rule are shared with Roder's direct CDP tools
+//! (`roder_ext_chrome::direct::devtools`), which Jev's fallback drives.
 
 use std::time::Duration;
 
@@ -20,6 +22,8 @@ use anyhow::{Context, bail};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
+
+use roder_ext_chrome::direct::devtools::{accepts_dialog, browser_websocket, decode_message};
 
 use crate::engine::JevDialog;
 
@@ -41,10 +45,7 @@ impl Connection {
     /// websocket already, and an http(s) address advertises it at
     /// `/json/version`. Errors never repeat the URL, which may carry a token.
     pub(crate) async fn connect(endpoint: &str) -> anyhow::Result<Self> {
-        let url = match is_websocket(endpoint) {
-            true => endpoint.to_string(),
-            false => advertised_websocket(endpoint).await?,
-        };
+        let url = browser_websocket(endpoint).await?;
         // A host that compiles in both rustls backends must name one, or a
         // wss endpoint panics; an error only means one is already set.
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -91,7 +92,7 @@ impl Connection {
     async fn answer_dialog(&mut self, event: &Value) -> anyhow::Result<()> {
         let params = &event["params"];
         let kind = params["type"].as_str().unwrap_or("alert").to_string();
-        let accept = accepts(&kind);
+        let accept = accepts_dialog(&kind);
         let id = self.send_id();
         let session = event["sessionId"].as_str().map(str::to_string);
         self.send(
@@ -130,7 +131,7 @@ impl Connection {
             let Message::Text(text) = message else {
                 continue;
             };
-            let value = decode(&text)?;
+            let value = decode_message(&text)?;
             if value["method"] == "Page.javascriptDialogOpening" {
                 self.answer_dialog(&value).await?;
                 continue;
@@ -145,111 +146,6 @@ impl Connection {
             return Ok(value.get("result").cloned().unwrap_or(Value::Null));
         }
     }
-}
-
-/// Parse one DevTools message. A string holding a lone UTF-16 surrogate
-/// (half of an emoji a page script cut, or a page's own text) arrives as an
-/// unpaired `\uD83D` escape, which serde_json rejects, and with it the whole
-/// reply; such an escape is read as U+FFFD instead.
-fn decode(text: &str) -> anyhow::Result<Value> {
-    match serde_json::from_str(text) {
-        Ok(value) => Ok(value),
-        Err(error) => match repair_surrogates(text) {
-            Some(repaired) => serde_json::from_str(&repaired),
-            None => Err(error),
-        }
-        .context("decode a DevTools message"),
-    }
-}
-
-/// `text` with every unpaired surrogate escape replaced by `\uFFFD`, or
-/// `None` when it has none.
-fn repair_surrogates(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let unit = |at: usize| -> Option<u16> {
-        let digits = bytes.get(at..at + 6)?;
-        (digits[0] == b'\\' && digits[1] == b'u')
-            .then(|| std::str::from_utf8(&digits[2..]).ok())
-            .flatten()
-            .and_then(|hex| u16::from_str_radix(hex, 16).ok())
-    };
-    let mut out = String::with_capacity(text.len());
-    let mut changed = false;
-    let (mut copied, mut at) = (0, 0);
-    while at < bytes.len() {
-        if bytes[at] != b'\\' {
-            at += 1;
-            continue;
-        }
-        let Some(code) = unit(at) else {
-            // Any other escape is two bytes; skip both so `\\u` is not read
-            // as the start of a `\u` escape.
-            at += 2;
-            continue;
-        };
-        let paired = (0xD800..0xDC00).contains(&code)
-            && unit(at + 6).is_some_and(|low| (0xDC00..0xE000).contains(&low));
-        if paired {
-            at += 12;
-        } else if (0xD800..0xE000).contains(&code) {
-            out.push_str(&text[copied..at]);
-            out.push_str("\\uFFFD");
-            changed = true;
-            at += 6;
-            copied = at;
-        } else {
-            at += 6;
-        }
-    }
-    changed.then(|| {
-        out.push_str(&text[copied..]);
-        out
-    })
-}
-
-/// An `alert` only informs and a `beforeunload` guards a navigation the
-/// task asked for, so both go ahead. A `confirm` or `prompt` asks for
-/// consent or input that the goal never gave, so both are declined.
-fn accepts(kind: &str) -> bool {
-    matches!(kind, "alert" | "beforeunload")
-}
-
-fn is_websocket(endpoint: &str) -> bool {
-    let scheme = endpoint.split_once("://").map(|(scheme, _)| scheme);
-    scheme.is_some_and(|scheme| {
-        scheme.eq_ignore_ascii_case("ws") || scheme.eq_ignore_ascii_case("wss")
-    })
-}
-
-/// `/json/version` under a DevTools HTTP address: appended to its path, as
-/// segments, with its query (often a token) kept.
-fn version_url(http_endpoint: &str) -> anyhow::Result<reqwest::Url> {
-    let mut url = reqwest::Url::parse(http_endpoint.trim())
-        .ok()
-        .filter(|url| !url.cannot_be_a_base())
-        .context("the Chrome DevTools endpoint is not a valid URL")?;
-    url.path_segments_mut()
-        .map_err(|()| anyhow::anyhow!("the Chrome DevTools endpoint is not a valid URL"))?
-        .pop_if_empty()
-        .extend(["json", "version"]);
-    Ok(url)
-}
-
-/// The browser websocket a DevTools HTTP address advertises.
-async fn advertised_websocket(http_endpoint: &str) -> anyhow::Result<String> {
-    let version: Value = reqwest::Client::new()
-        .get(version_url(http_endpoint)?)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-        .context("reach the Chrome DevTools endpoint")?
-        .json()
-        .await
-        .context("decode the Chrome DevTools version")?;
-    version["webSocketDebuggerUrl"]
-        .as_str()
-        .map(str::to_string)
-        .context("Chrome did not advertise a browser websocket")
 }
 
 #[cfg(test)]
@@ -267,55 +163,6 @@ mod tests {
             error.to_string().contains("Chrome DevTools endpoint"),
             "{error}"
         );
-    }
-
-    #[test]
-    fn a_lone_surrogate_escape_does_not_lose_the_message() {
-        let message = r#"{"id":3,"result":{"result":{"value":"ab\ud83d","pair":"\ud83d\ude00","low":"\udc00x","slash":"\\ud83d"}}}"#;
-        assert!(serde_json::from_str::<Value>(message).is_err());
-        let value = decode(message).unwrap();
-        let result = &value["result"]["result"];
-        assert_eq!(result["value"], "ab\u{fffd}");
-        assert_eq!(result["pair"], "\u{1f600}");
-        assert_eq!(result["low"], "\u{fffd}x");
-        // An escaped backslash before "u" is text, not an escape.
-        assert_eq!(result["slash"], "\\ud83d");
-        assert_eq!(repair_surrogates(r#"{"a":"\ud83d\ude00 fine"}"#), None);
-        assert!(decode("not json").is_err());
-    }
-
-    #[test]
-    fn only_alerts_and_beforeunload_are_accepted() {
-        assert!(accepts("alert"));
-        assert!(accepts("beforeunload"));
-        assert!(!accepts("confirm"));
-        assert!(!accepts("prompt"));
-        assert!(!accepts("anything else"));
-    }
-
-    #[test]
-    fn the_version_lookup_keeps_the_endpoints_path_and_query() {
-        let url = |endpoint: &str| version_url(endpoint).unwrap().to_string();
-        assert_eq!(
-            url("http://127.0.0.1:9222"),
-            "http://127.0.0.1:9222/json/version"
-        );
-        assert_eq!(
-            url("http://127.0.0.1:9222/"),
-            "http://127.0.0.1:9222/json/version"
-        );
-        assert_eq!(
-            url("https://chrome.example.com/devtools/?token=secret"),
-            "https://chrome.example.com/devtools/json/version?token=secret"
-        );
-        assert_eq!(
-            url("https://chrome.example.com/t/abc?token=s&x=1"),
-            "https://chrome.example.com/t/abc/json/version?token=s&x=1"
-        );
-        let error = version_url("not a url ?token=secret")
-            .unwrap_err()
-            .to_string();
-        assert!(!error.contains("secret"), "{error}");
     }
 
     /// A DevTools address with a path and a token is asked for its
@@ -362,14 +209,6 @@ mod tests {
             error.contains("open the Chrome DevTools websocket"),
             "{error}"
         );
-    }
-
-    #[test]
-    fn websocket_endpoints_skip_the_version_lookup() {
-        assert!(is_websocket("ws://127.0.0.1:9222/devtools/browser/abc"));
-        assert!(is_websocket("WSS://browser.example.com/?token=t"));
-        assert!(!is_websocket("http://127.0.0.1:9222"));
-        assert!(!is_websocket("https://ws.example.com"));
     }
 
     #[tokio::test]

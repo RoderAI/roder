@@ -60,7 +60,9 @@ pub(crate) fn install_web_search(
     if let (WebSearchRouterProvider::Parallel(provider_config), false) =
         (&selected, config.namespaced_tools)
     {
-        builder.install(ParallelSearchExtension::with_config(provider_config.clone()))?;
+        builder.install(ParallelSearchExtension::with_config(
+            provider_config.clone(),
+        ))?;
     }
 
     if config.namespaced_tools {

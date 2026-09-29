@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Vault</title>
+  <style> body { font: 15px sans-serif; margin: 8px; } </style>
+</head>
+<body>
+  <h1>Vault</h1>
+  <!-- Nothing to click, fill or choose: the page is driven by the keyboard
+       alone, so Jev is offered nothing to act on. -->
+  <p>Press the K key to reveal the code.</p>
+  <p id="code"></p>
+  <script>
+    document.addEventListener('keydown', e => {
+      if (e.key === 'k' || e.key === 'K') {
+        document.getElementById('code').textContent = 'Code: 4417';
+        window.revealed = true;
+      }
+    });
+  </script>
+</body>
+</html>

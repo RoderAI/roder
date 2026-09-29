@@ -30,7 +30,6 @@ use async_trait::async_trait;
 use crate::cdp::Connection;
 use crate::chrome::ChromeEndpoint;
 use crate::runner::{close_all, close_quietly};
-#[cfg(test)]
 pub(crate) use call::BUSY;
 pub(crate) use state::{SessionModels, SessionState, cut};
 use sweep::{DiskLedger, recordable};
@@ -113,7 +112,7 @@ impl JevSession {
     }
 
     /// Publish what `state` now holds for readers that must not wait.
-    fn publish(&self, state: &SessionState) {
+    pub(crate) fn publish(&self, state: &SessionState) {
         let summary = SessionSummary {
             current_url: state.tabs.last_url.clone(),
             targets: state.tabs.targets(),
@@ -135,6 +134,14 @@ pub(crate) trait SessionDeps: Send + Sync {
     fn model_key(&self) -> String;
     async fn models(&self) -> anyhow::Result<SessionModels>;
     async fn endpoint(&self) -> anyhow::Result<ChromeEndpoint>;
+    /// The model that drives the automatic fallback, or why there is none.
+    async fn fallback_model(
+        &self,
+        _settings: &crate::fallback::FallbackSettings,
+        _thread: &str,
+    ) -> Result<std::sync::Arc<dyn crate::fallback::model::FallbackModel>, String> {
+        Err("no model can drive the fallback here".into())
+    }
 }
 
 pub(crate) struct JevSessions {
@@ -318,7 +325,7 @@ impl JevSessions {
     }
 
     /// Record every session's tabs in this process's ledger.
-    fn write_ledger(&self) {
+    pub(crate) fn write_ledger(&self) {
         let Some(ledger) = &self.ledger else {
             return;
         };

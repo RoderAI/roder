@@ -13,6 +13,7 @@ use reqwest::Url;
 use serde_json::Value;
 
 use super::{Ceilings, env_value};
+use crate::fallback::FallbackSettings;
 use crate::scope::JevOriginScope;
 
 /// Which of the thread's tabs a call acts in.
@@ -68,6 +69,11 @@ pub(crate) struct JevRequest {
     pub(crate) authorize_irreversible: bool,
     /// `JEV_REFUSE_COOKIE_BANNERS`, on unless set to 0.
     pub(crate) refuse_cookie_banners: bool,
+    /// `JEV_FALLBACK` and its model and ceilings.
+    pub(crate) fallback: FallbackSettings,
+    /// What was left of the host's deadline when the call began, which the
+    /// fallback runs within too.
+    pub(crate) host_seconds: Option<u64>,
 }
 
 /// An argument, unless it is absent or empty: `null`, a blank string, an
@@ -151,6 +157,8 @@ impl JevRequest {
             confirm_irreversible: ceilings.confirm_irreversible,
             authorize_irreversible,
             refuse_cookie_banners: ceilings.refuse_cookie_banners,
+            fallback: ceilings.fallback.clone(),
+            host_seconds: None,
         })
     }
 
@@ -160,6 +168,7 @@ impl JevRequest {
         if let Some(seconds) = deadline_remaining_seconds {
             self.timeout = self.timeout.min(Duration::from_secs(seconds));
         }
+        self.host_seconds = deadline_remaining_seconds;
         self
     }
 }

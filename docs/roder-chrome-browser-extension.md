@@ -58,6 +58,51 @@ All browser-origin payloads (DOM text, controls, console lines, network
 metadata) carry `untrusted: true`. The model layer treats them as **data, never
 instructions**.
 
+## Direct CDP tools (no extension)
+
+`roder_ext_chrome::direct` is Roder's own CDP toolset for one tab, used where
+no extension is involved:
+
+- **Roder Desktop's integrated browser.** When no extension is connected, the
+  `chrome_*` tools fall back to the integrated browser's DevTools port
+  (`RODER_DESKTOP_CDP_PORT`, default 9334) through the same client; the
+  screenshot tool goes through the toolset's `screenshot`.
+- **Jev's tab.** `roder-ext-jev` binds the whole set to its session's tab as
+  the `jev_tab_*` tools, and runs its automatic fallback on it (see
+  [`docs/jev-browser.md`](jev-browser.md), "When Jev cannot progress").
+
+A `DirectSession` attaches to a `DirectTab`: a target of a browser's DevTools
+endpoint (an http(s) address whose `/json/version` names the browser
+websocket, or that websocket), attached as a flat session, or a page
+websocket opened directly. It enables the Page domain and answers
+JavaScript dialogs as Jev does (alerts and `beforeunload` accepted, confirms
+and prompts dismissed, each reported), and turns on focus emulation so a
+background tab keeps rendering. Its tools:
+
+| Tool | What it does |
+| --- | --- |
+| `look` | address, title, HTTP status, the elements to act on (refs `e1`, `e2`, … with boxes in viewport px; a ref names the same element for as long as it is in the document), the page text; untrusted |
+| `screenshot` | a JPEG of the viewport, one image pixel per CSS px; filled secret fields blacked out, withheld while a typed secret shows |
+| `click` | real mouse events at a ref (hit-tested: a covered ref is not pressed, and the result names what covers it) or at x/y; right, middle, double |
+| `hover` | the pointer moved onto a ref or x/y |
+| `drag` | press, move in steps, release, between refs or points |
+| `type` | text inserted into a ref (clicked first, content replaced) or the focused field; `submit` presses Enter; a secret field's text is reported as `[secret]` |
+| `key` | any key or chord (`Escape`, `Shift+Tab`, `Control+a`, a character), repeatable |
+| `scroll` | the mouse wheel at a ref, x/y or the middle of the page |
+| `select` | a native select's option by text or value |
+| `navigate` | an http(s) URL in the same tab, or back, forward, reload |
+| `wait` | up to 10 s |
+
+After every action it waits for the page (a load it started, then 250 ms
+without a DOM change, at most 2 s), follows a tab the action opened, and reads
+the page again briefly, so the result shows what changed. The owner's
+`DirectGuard` is asked before a click on a control or an Enter (a reason stops
+it undispatched), and after every action about the page's origin and whether
+it refused automated access (either stops the run). There is no script
+evaluation tool in the set. `devtools` holds what every DevTools client in
+Roder shares: the browser websocket lookup, message decoding (lone surrogates
+read as U+FFFD) and the dialog rule; Jev's own connection uses it.
+
 ## Install the unpacked extension
 
 ```bash

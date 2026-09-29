@@ -20,6 +20,7 @@
 //! then text), each cut marked with how much was left out. Page text that
 //! imitates a marker line is defused.
 
+mod fallback;
 mod header;
 mod options;
 mod page;
@@ -90,6 +91,11 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
         STEP_LINES * (STEP_CHARS + 1) + 20,
         STEP_LINES + 1,
     );
+    let fallback_steps = budget.take(
+        fallback::steps(data),
+        STEP_LINES * (STEP_CHARS + 1) + 340,
+        STEP_LINES + 2,
+    );
     let session = budget.take(session(data), SESSION_CHARS, 10);
     let headings = budget.take(headings(data), HEADING_CHARS + 12, 1);
     // The page text keeps at least this much of what is left.
@@ -111,10 +117,18 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
         out.push(String::new());
         out.extend(session);
     }
-    let page = [reason, steps, frames, headings, page_text, options]
-        .into_iter()
-        .filter(|section| !section.is_empty())
-        .collect::<Vec<_>>();
+    let page = [
+        reason,
+        steps,
+        fallback_steps,
+        frames,
+        headings,
+        page_text,
+        options,
+    ]
+    .into_iter()
+    .filter(|section| !section.is_empty())
+    .collect::<Vec<_>>();
     if !page.is_empty() {
         out.push(String::new());
         out.push(BEGIN_PAGE.into());

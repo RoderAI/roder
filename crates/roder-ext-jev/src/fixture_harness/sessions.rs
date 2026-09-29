@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 use super::Harness;
 use crate::chrome::ChromeEndpoint;
 use crate::engine::{JevDecisionClient, JevTextValueResolver};
+use crate::fallback::FallbackSettings;
+use crate::fallback::model::FallbackModel;
 use crate::runner::{Ceilings, JevRequest};
 use crate::session::{JevSessions, SessionDeps, SessionLimits, SessionModels};
 
@@ -22,6 +24,8 @@ pub(crate) struct TestDeps {
     decision: Arc<dyn JevDecisionClient>,
     text: Option<Arc<dyn JevTextValueResolver>>,
     key: String,
+    /// What drives the automatic fallback; none hands it over.
+    fallback: Option<Arc<dyn FallbackModel>>,
 }
 
 impl TestDeps {
@@ -36,7 +40,13 @@ impl TestDeps {
             decision,
             text,
             key: format!("test-{}", CALLS.fetch_add(1, Ordering::Relaxed)),
+            fallback: None,
         }
+    }
+
+    pub(crate) fn with_fallback(mut self, model: Arc<dyn FallbackModel>) -> Self {
+        self.fallback = Some(model);
+        self
     }
 }
 
@@ -57,6 +67,16 @@ impl SessionDeps for TestDeps {
 
     async fn endpoint(&self) -> anyhow::Result<ChromeEndpoint> {
         Ok(ChromeEndpoint::new(self.endpoint.clone(), false))
+    }
+
+    async fn fallback_model(
+        &self,
+        _settings: &FallbackSettings,
+        _thread: &str,
+    ) -> Result<Arc<dyn FallbackModel>, String> {
+        self.fallback
+            .clone()
+            .ok_or_else(|| "no fallback model in this test".to_string())
     }
 }
 
@@ -111,6 +131,24 @@ pub(crate) async fn call_under(
     }
     let request = JevRequest::parse_with(&args, ceilings)?;
     let deps = TestDeps::new(harness.endpoint(), decision, text);
+    sessions.call(thread, request, &deps).await
+}
+
+/// One call whose automatic fallback, if it runs, is driven by `fallback`.
+pub(crate) async fn call_falling_back(
+    harness: &Harness,
+    sessions: &JevSessions,
+    thread: &str,
+    mut args: Value,
+    decision: Arc<dyn JevDecisionClient>,
+    fallback: Arc<dyn FallbackModel>,
+    ceilings: &Ceilings,
+) -> anyhow::Result<Value> {
+    if args.get("timeout_seconds").is_none() {
+        args["timeout_seconds"] = json!(30);
+    }
+    let request = JevRequest::parse_with(&args, ceilings)?;
+    let deps = TestDeps::new(harness.endpoint(), decision, None).with_fallback(fallback);
     sessions.call(thread, request, &deps).await
 }
 

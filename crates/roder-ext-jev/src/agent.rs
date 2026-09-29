@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use crate::effects;
 use crate::engine::{
     Covered, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevPageFacts, JevStatus,
-    JevStop, JevTextValue, StaleObservation,
+    JevStop, JevStopCause, JevTextValue, StaleObservation,
 };
 use crate::secret::{self, SECRET, Secrets};
 use crate::usage::JevBilled;
@@ -52,6 +52,8 @@ pub(crate) struct Agent {
     facts: Option<JevPageFacts>,
     /// A BLOCKED on an empty page has already been looked at again.
     looked_again: bool,
+    /// What ended the run, once it stopped short of its goal.
+    cause: Option<JevStopCause>,
 }
 
 /// Below this, a repeat of the last effective click is read as DONE.
@@ -89,6 +91,7 @@ impl Agent {
             secrets,
             facts: None,
             looked_again: false,
+            cause: None,
         };
         agent.observe().await?;
         agent.look_again_while_empty().await?;
@@ -106,11 +109,12 @@ impl Agent {
     }
 
     /// End the run, `blocked`, on a page outside the allowed origins.
-    fn check_scope(&self) -> anyhow::Result<()> {
+    fn check_scope(&mut self) -> anyhow::Result<()> {
         let url = self.observation["url"].as_str().unwrap_or_default();
         if self.config.scope.allows(url) {
             return Ok(());
         }
+        self.cause = Some(JevStopCause::OutsideScope);
         Err(JevStop::new(JevStatus::Blocked, self.config.scope.outside(url)).into())
     }
 
@@ -210,8 +214,20 @@ impl Agent {
     }
 
     fn fail(&mut self, error: &anyhow::Error) -> String {
-        self.stop(JevStop::status_of(error));
+        let status = JevStop::status_of(error);
+        self.stop(status);
+        self.cause.get_or_insert(match status {
+            JevStatus::BudgetExceeded if self.budget_spent() => JevStopCause::Budget,
+            _ => JevStopCause::Stopped,
+        });
         error.to_string()
+    }
+
+    /// Whether the run has spent its own action or model-call budget, as
+    /// opposed to an embedder ending it with that status.
+    fn budget_spent(&self) -> bool {
+        self.decisions >= self.config.max_actions.saturating_mul(2)
+            || self.history.iter().filter(chosen).count() >= self.config.max_actions
     }
 
     /// End the run with `status`, as of now.
@@ -309,10 +325,10 @@ impl Agent {
             let covered = self
                 .last_step()
                 .is_some_and(|entry| entry["covered"] == json!(true));
-            self.status = if selected == "DONE" && !covered {
-                JevStatus::Done
-            } else {
-                JevStatus::Blocked
+            (self.status, self.cause) = match (selected.as_str(), covered) {
+                ("DONE", false) => (JevStatus::Done, None),
+                ("DONE", true) => (JevStatus::Blocked, Some(JevStopCause::DoneAfterCovered)),
+                _ => (JevStatus::Blocked, Some(JevStopCause::ModelBlocked)),
             };
             self.elapsed();
             return Ok(());
@@ -353,7 +369,7 @@ impl Agent {
         if secret && let Some(text) = &text {
             self.secrets.remember(text);
         }
-        let (covered, refused) = match self
+        let (covered, refused, uncovered) = match self
             .browser
             .act(
                 &action,
@@ -365,11 +381,11 @@ impl Agent {
         {
             // A refusal is recorded and the run goes on: the next decision
             // sees the page as it stands.
-            Ok(outcome) => (false, outcome.refused),
+            Ok(outcome) => (false, outcome.refused, outcome.uncovered),
             // Nothing was dispatched, but the attempt is a step that changed
             // nothing: a target that stays covered stalls the run instead of
             // paying for a decision per retry until the model-call budget.
-            Err(error) if error.is::<Covered>() => (true, None),
+            Err(error) if error.is::<Covered>() => (true, None, None),
             Err(error) => return Err(error),
         };
         self.pending_text = None;
@@ -397,6 +413,7 @@ impl Agent {
             },
             "covered": covered,
             "refused": refused.map(|reason| self.secrets.scrub(&reason)),
+            "uncovered": uncovered.map(|how| self.secrets.scrub(&how)),
             "text_helper": written.as_ref().map(|written| written.model.clone()),
             "text_latency_ms": written.as_ref().map_or(0, |written| written.latency_ms),
             "operation": decision.operation,
@@ -423,10 +440,12 @@ impl Agent {
             entry["elapsed_ms"] = json!(elapsed);
         }
         self.check_scope()?;
-        self.status = if stalled(&self.history) {
-            JevStatus::Blocked
-        } else {
-            JevStatus::Ready
+        self.status = match stalled(&self.history) {
+            Some(cause) => {
+                self.cause = Some(cause);
+                JevStatus::Blocked
+            }
+            None => JevStatus::Ready,
         };
         Ok(())
     }
@@ -440,22 +459,31 @@ impl Agent {
 /// wait, none of which changed the page.
 /// A refused cookie banner is not an action the model chose, so it neither
 /// counts nor breaks the run of three.
-fn stalled(history: &[Value]) -> bool {
+/// Which rule stalled the run: three covered attempts in a row, or any
+/// three that changed nothing.
+fn stalled(history: &[Value]) -> Option<JevStopCause> {
     let recent = history
         .iter()
         .rev()
         .filter(chosen)
         .take(3)
         .collect::<Vec<_>>();
-    recent.len() == 3
+    let stalled = recent.len() == 3
         && recent.iter().all(|entry| {
             entry["page_changed"] == json!(false) && entry["kind"].as_str() != Some("wait")
-        })
+        });
+    let covered = recent.iter().all(|entry| entry["covered"] == json!(true));
+    match (stalled, covered) {
+        (false, _) => None,
+        (true, true) => Some(JevStopCause::Covered),
+        (true, false) => Some(JevStopCause::Stalled),
+    }
 }
 
 mod look;
 mod opt_in;
 mod result;
+pub(crate) use result::controls;
 #[cfg(test)]
 mod tests;
 mod typing;

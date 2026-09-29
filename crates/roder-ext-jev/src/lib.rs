@@ -18,6 +18,7 @@ mod chrome;
 mod decide;
 mod effects;
 mod engine;
+mod fallback;
 #[cfg(test)]
 mod fixture_harness;
 mod http;
@@ -49,14 +50,37 @@ pub use decide::JevTypeSafeDecisionClient;
 pub use engine::{
     Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
     JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
-    JevEngineConfig, JevFrameText, JevPageFacts, JevRunResult, JevStatus, JevStop, JevTextValue,
-    JevTextValueResolver, StaleObservation,
+    JevEngineConfig, JevFrameText, JevPageFacts, JevRunResult, JevStatus, JevStop, JevStopCause,
+    JevTextValue, JevTextValueResolver, StaleObservation,
 };
 pub use scope::JevOriginScope;
 pub use tools::{JevToolContributor, jev_tool_spec};
 pub use usage::{JevBilled, JevCallUsage, JevTokenCount, JevUsage};
 
-pub struct JevExtension;
+/// The Jev extension: `jev_browse`, the hand-over tools on its tab
+/// (`jev_tab_*`) and its policy. Give it Roder's inference engines
+/// ([`JevExtension::with_inference_engines`]) so the automatic fallback can
+/// run on the session's model; without them it hands over instead.
+#[derive(Default)]
+pub struct JevExtension {
+    engines: Vec<Arc<dyn roder_api::inference::InferenceEngine>>,
+}
+
+impl JevExtension {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The engines the automatic fallback may drive, looked up by the
+    /// calling turn's provider (or `JEV_FALLBACK_MODEL`'s).
+    pub fn with_inference_engines(
+        mut self,
+        engines: Vec<Arc<dyn roder_api::inference::InferenceEngine>>,
+    ) -> Self {
+        self.engines = engines;
+        self
+    }
+}
 
 impl RoderExtension for JevExtension {
     fn manifest(&self) -> ExtensionManifest {
@@ -78,7 +102,7 @@ impl RoderExtension for JevExtension {
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
-        registry.tool_contributor(Arc::new(JevToolContributor));
+        registry.tool_contributor(Arc::new(JevToolContributor::new(self.engines.clone())));
         registry.policy_contributor(Arc::new(policy::JevPolicy));
         Ok(())
     }
@@ -91,7 +115,7 @@ mod tests {
     #[test]
     fn installs_tool_and_policy_services() {
         let mut builder = ExtensionRegistryBuilder::new();
-        builder.install(JevExtension).unwrap();
+        builder.install(JevExtension::new()).unwrap();
         let registry = builder.build().unwrap();
         assert!(
             registry

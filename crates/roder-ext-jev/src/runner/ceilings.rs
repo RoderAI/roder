@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::Context;
 
 use super::env_value;
+use crate::fallback::FallbackSettings;
 use crate::scope::JevOriginScope;
 
 /// What the operator set in the environment, which no call can widen.
@@ -26,6 +27,8 @@ pub(crate) struct Ceilings {
     pub(crate) confirm_irreversible: bool,
     /// `JEV_REFUSE_COOKIE_BANNERS`: refuse cookie banners; on by default.
     pub(crate) refuse_cookie_banners: bool,
+    /// `JEV_FALLBACK` and its model and ceilings.
+    pub(crate) fallback: FallbackSettings,
 }
 
 impl Default for Ceilings {
@@ -37,6 +40,7 @@ impl Default for Ceilings {
             max_seconds: None,
             confirm_irreversible: false,
             refuse_cookie_banners: true,
+            fallback: FallbackSettings::default(),
         }
     }
 }
@@ -56,6 +60,7 @@ impl Ceilings {
                 env_value("JEV_REFUSE_COOKIE_BANNERS").as_deref(),
                 true,
             )?,
+            fallback: FallbackSettings::from_env()?,
             ..Self::parse(
                 env_value("JEV_ALLOWED_ORIGINS").as_deref(),
                 env_value("JEV_MAX_ACTIONS").as_deref(),

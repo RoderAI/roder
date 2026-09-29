@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::{JevDialog, JevStatus};
+use super::{JevDialog, JevStatus, JevStopCause};
 use crate::secret::Secrets;
 use crate::usage::JevUsage;
 
@@ -27,6 +27,10 @@ pub struct JevActionRecord {
     /// Why the page did not keep what the action asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    /// The target was covered and Jev dismissed what covered it first:
+    /// how (Escape, the layer's close control, a press outside it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uncovered: Option<String>,
     /// Dialogs the page opened after this action, and how Jev answered.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dialogs: Vec<JevDialog>,
@@ -67,6 +71,40 @@ pub struct JevActionRecord {
     pub executed_ms: u64,
 }
 
+#[cfg(test)]
+impl JevActionRecord {
+    /// A step that clicked or typed into `label`, for tests.
+    pub(crate) fn for_tests(kind: &str, label: &str) -> Self {
+        Self {
+            step: 1,
+            action: label.into(),
+            kind: kind.into(),
+            context: None,
+            text: None,
+            url: String::new(),
+            page_changed: Some(false),
+            covered: false,
+            refused: None,
+            uncovered: None,
+            dialogs: Vec::new(),
+            opened_tab: false,
+            effect: None,
+            elapsed_ms: 0,
+            choice: "e1".into(),
+            probability: Value::Null,
+            confidence: 1.0,
+            target_confidence: None,
+            decision_latency_ms: 0,
+            text_helper: None,
+            text_latency_ms: 0,
+            operation: "CLICK".into(),
+            target: None,
+            usage: Value::Null,
+            executed_ms: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct JevDecisionRecord {
     pub choice: String,
@@ -100,6 +138,9 @@ pub struct JevRunResult {
     #[serde(skip)]
     pub decisions: Vec<JevDecisionRecord>,
     pub stopped_because: Option<String>,
+    /// What ended a run that stopped short of its goal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_cause: Option<JevStopCause>,
     pub untrusted: bool,
     /// The controls the final page offered Jev, in the order it observed
     /// them (on screen first). Page text, as untrusted as the rest.
@@ -137,6 +178,7 @@ impl JevRunResult {
             usage: JevUsage::none(),
             decisions: Vec::new(),
             stopped_because: Some(reason.into()),
+            stop_cause: (status == JevStatus::Blocked).then_some(JevStopCause::NotLoaded),
             untrusted: true,
             controls: Vec::new(),
             page: None,

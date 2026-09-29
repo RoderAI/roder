@@ -153,6 +153,8 @@ fn env_number<T: std::str::FromStr>(key: &str, default: T) -> T {
 struct Setup {
     site: StaticSite,
     decision: Arc<dyn JevDecisionClient>,
+    /// `JEV_EVAL_FALLBACK=model`: the fallback after an unfinished episode.
+    fallback: Option<Arc<dyn crate::fallback::model::FallbackModel>>,
     text: Arc<TextHelper>,
     max_steps: usize,
     timeout: Duration,
@@ -198,6 +200,7 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
             timeout: setup.timeout,
             decision: &setup.decision,
             text: &text,
+            fallback: setup.fallback.as_ref(),
         };
         let mut attempt = 0;
         let mut row = loop {
@@ -229,7 +232,11 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
         eprintln!(
             "{:<30} seed {seed} {:<7} {:<14} steps {:>2} {:>6} ms  {}",
             task.id,
-            if row.success { "ok" } else { "FAIL" },
+            match (row.jev_success, row.success) {
+                (true, _) => "ok",
+                (false, true) => "ok (fb)",
+                (false, false) => "FAIL",
+            },
             row.jev_status,
             row.steps,
             row.wall_ms,
@@ -291,6 +298,7 @@ async fn miniwob_corpus() {
     let setup = Setup {
         site: StaticSite::start(root).await.unwrap(),
         decision: decision_client(key, model.clone()),
+        fallback: super::fallback_live::live_fallback().await,
         text: Arc::new(TextHelper::new(text_model)),
         max_steps: env_number("JEV_MINIWOB_MAX_STEPS", 25usize).max(1),
         timeout: Duration::from_secs(env_number("JEV_MINIWOB_TIMEOUT_S", 90u64).max(1)),
@@ -299,9 +307,13 @@ async fn miniwob_corpus() {
     };
     let concurrency = env_number("JEV_MINIWOB_CONCURRENCY", 4usize).max(1);
     eprintln!(
-        "decision model {model}, text model {}, seeds {seeds:?}, {} decisions and {:?} per \
-         episode, {concurrency} workers, unsupported attempted: {}\nrows: {}",
+        "decision model {model}, text model {}, fallback {}, seeds {seeds:?}, {} decisions and \
+         {:?} per episode, {concurrency} workers, unsupported attempted: {}\nrows: {}",
         text_label,
+        setup
+            .fallback
+            .as_ref()
+            .map_or("off".to_string(), |model| model.label()),
         setup.max_steps,
         setup.timeout,
         setup.attempt_unsupported,

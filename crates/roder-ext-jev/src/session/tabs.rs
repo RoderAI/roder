@@ -174,6 +174,22 @@ impl SessionTabs {
             .collect()
     }
 
+    /// Adopt a tab one of the session's tabs opened, outside a Jev call (the
+    /// full browser tools followed it); it becomes current.
+    pub(crate) fn adopt(&mut self, target: &str, opener: &str) {
+        if self.id_of(target).is_some() {
+            return;
+        }
+        let opened_by = self.id_of(opener).map(str::to_string);
+        let id = format!("t{}", self.next);
+        self.next += 1;
+        self.records.push(TabRecord {
+            id,
+            target: target.to_string(),
+            opened_by,
+        });
+    }
+
     /// Drop the oldest tabs past the cap, never the current one or the tab
     /// that opened it, and return their targets to close.
     pub(crate) fn cap(&mut self) -> Vec<String> {

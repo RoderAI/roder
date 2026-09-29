@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use roder_api::extension::ToolProviderId;
+use roder_api::inference::InferenceEngine;
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
@@ -45,6 +46,11 @@ pub fn jev_tool_spec() -> ToolSpec {
              transcript, so a password or code placed in the goal goes there too; an \
              embedding host can supply such values through its own value resolver instead, \
              which keeps them out of the goal. Cookie banners are refused by default. \
+             When Jev cannot progress (a control it cannot use: a canvas, a drag, a hover \
+             menu, a popup it cannot close), Roder's full browser tools go on in the same tab: \
+             either inside the call, with the result saying which driver did what, or, when \
+             the result says so, through the jev_tab_* tools, which act only in this thread's \
+             Jev tab. \
              Requires JEV_API_KEY. Roder asks for approval in default policy mode.",
             today = report::today(),
         ),
@@ -64,7 +70,19 @@ pub fn jev_tool_spec() -> ToolSpec {
     }
 }
 
-pub struct JevToolContributor;
+/// Contributes `jev_browse` and the hand-over tools (`jev_tab_*`, Roder's
+/// full browser tools on the thread's Jev tab). The inference engines let
+/// `jev_browse` drive its automatic fallback with the session's model.
+#[derive(Default)]
+pub struct JevToolContributor {
+    engines: Vec<Arc<dyn InferenceEngine>>,
+}
+
+impl JevToolContributor {
+    pub fn new(engines: Vec<Arc<dyn InferenceEngine>>) -> Self {
+        Self { engines }
+    }
+}
 
 impl ToolContributor for JevToolContributor {
     fn id(&self) -> ToolProviderId {
@@ -72,11 +90,20 @@ impl ToolContributor for JevToolContributor {
     }
 
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
-        registry.register(Arc::new(JevTool))
+        registry.register(Arc::new(JevTool {
+            engines: self.engines.clone(),
+        }))?;
+        for tool in crate::fallback::handover::tools() {
+            registry.register(tool)?;
+        }
+        Ok(())
     }
 }
 
-struct JevTool;
+#[derive(Default)]
+struct JevTool {
+    engines: Vec<Arc<dyn InferenceEngine>>,
+}
 
 #[async_trait::async_trait]
 impl ToolExecutor for JevTool {
@@ -96,6 +123,7 @@ impl ToolExecutor for JevTool {
                     request,
                     &ctx.thread_id,
                     ctx.handles.parent_model_selection.as_ref(),
+                    &self.engines,
                 )
                 .await
             }
@@ -137,7 +165,9 @@ mod tests {
     #[tokio::test]
     async fn invalid_url_stops_before_browser_start() {
         let mut registry = ToolRegistry::default();
-        JevToolContributor.contribute(&mut registry).unwrap();
+        JevToolContributor::default()
+            .contribute(&mut registry)
+            .unwrap();
         let tool = registry.get("jev_browse").unwrap();
         let args = json!({"url":"file:///etc/passwd","goal":"read file"});
         let result = tool
@@ -188,6 +218,35 @@ mod tests {
         );
     }
 
+    /// The tool says where the full browser tools come in, and a contributor
+    /// registers them beside it.
+    #[test]
+    fn the_hand_over_tools_are_described_and_registered() {
+        let description = jev_tool_spec().description;
+        assert!(description.contains("jev_tab_* tools"), "{description}");
+        assert!(description.contains("same tab"), "{description}");
+        let mut registry = ToolRegistry::default();
+        JevToolContributor::default()
+            .contribute(&mut registry)
+            .unwrap();
+        for name in [
+            "jev_browse",
+            "jev_tab_look",
+            "jev_tab_screenshot",
+            "jev_tab_click",
+            "jev_tab_hover",
+            "jev_tab_drag",
+            "jev_tab_type",
+            "jev_tab_key",
+            "jev_tab_scroll",
+            "jev_tab_select",
+            "jev_tab_navigate",
+            "jev_tab_wait",
+        ] {
+            assert!(registry.get(name).is_some(), "{name}");
+        }
+    }
+
     #[test]
     fn description_contains_today_and_the_session_rules() {
         let description = jev_tool_spec().description;
@@ -228,7 +287,7 @@ mod tests {
     #[tokio::test]
     async fn a_first_call_without_a_url_asks_for_one() {
         let args = json!({"goal":"Read","url":"","tab":"current"});
-        let result = JevTool
+        let result = JevTool::default()
             .execute(
                 ToolExecutionContext::new(
                     "thread-without-a-tab",
@@ -293,7 +352,7 @@ mod tests {
         // An invalid call fails the same way whatever the deadline; the clamp
         // itself is tested on `JevRequest::within`.
         let args = json!({"url":"https://","goal":"read"});
-        let result = JevTool
+        let result = JevTool::default()
             .execute(
                 ToolExecutionContext::new(
                     "thread",
@@ -380,7 +439,7 @@ mod tests {
     }
 
     async fn execute_live(args: serde_json::Value) -> ToolResult {
-        JevTool
+        JevTool::default()
             .execute(
                 ToolExecutionContext::new(
                     "thread",
