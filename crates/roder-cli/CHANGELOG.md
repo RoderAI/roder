@@ -1,3 +1,140 @@
+## 0.2.2 (2026-09-29)
+
+### Features
+
+#### Add browser-use as an opt-in browser provider over stdio MCP
+
+`roder --browser-use` or `[browser_use] enabled = true` exposes the open-source
+browser-use local MCP server as `browser_use_*` tools. Roder launches it with
+`uvx --from 'browser-use[cli]==0.13.10' browser-use --mcp` on the first call,
+with a visible browser by default (`headless = true` to hide it), an
+allowlisted environment, and only the OpenAI/Anthropic keys Roder already
+holds, which are scrubbed from every result and error. Clicks and typing ask
+for approval in default mode, the autonomous agent tool asks in default and
+accept-all mode, and plan mode denies both. Page content is labeled untrusted.
+
+`roder-ext-mcp` gains `McpStdioClient`, a stdio transport that runs the
+server in its own process group, answers server pings, keeps a redacted
+stderr tail for errors, and stops the whole group (including a browser the
+server started) on shutdown, on drop, and, through a pid guard, when Roder
+dies.
+
+### Fixes
+
+#### When Jev cannot progress, Roder's full browser tools go on in the same tab
+
+Jev acts only on the controls its snapshot offers, with a small action
+vocabulary. When a run ends because of that (the model answered BLOCKED,
+three steps changed nothing, its targets stayed covered, the page offered
+nothing Jev can act on, or its budget ran out), Roder now falls back to its
+own direct CDP tools on the same tab, with its cookies and page state, as
+`JEV_FALLBACK` says:
+
+- `auto` (default): `jev_browse` runs a bounded loop driven by the session's
+  model (or `JEV_FALLBACK_MODEL`, at `JEV_FALLBACK_REASONING`, default low)
+  with look, screenshot, click at a ref or x/y, hover, drag, type, any key,
+  scroll, select, navigate and wait, and returns one result: the call's end
+  state, Jev's own status as `jev_status`, and `drivers` with each driver's
+  steps, model calls, time and tokens. `JEV_FALLBACK_MAX_STEPS`,
+  `JEV_FALLBACK_MAX_SECONDS` and `JEV_FALLBACK_MAX_TOKENS` bound it.
+- `handover`: the result tells the caller the full tools work on this same
+  tab, names them (`jev_tab_*`) and the tab, and says where Jev stopped.
+  `auto` hands over too when no model can drive it or it also fails.
+- `off`: Jev's result as before.
+
+It never runs after `needs_input`, `needs_confirmation`, `access_denied` or a
+page that did not load, and it inherits Jev's rules: the allowed origins, the
+irreversible-action gate (stricter, with no model to clear a shortlisted
+control, and stopping any press into another site's frame), approvals and
+policy modes, cookie banners refused but never accepted (untouched with
+refusal off), a covered control never pressed (by a click or by Enter or
+Space while it has focus), secrets never read and reported as `[secret]`,
+screenshots with filled secret fields blacked out and withheld while a typed
+secret shows, and page content marked untrusted.
+
+The `jev_tab_*` tools are registered with `jev_browse` and drive only the
+thread's Jev tab, under the session's lock. `roder-ext-chrome` makes its
+direct CDP toolset public as `roder_ext_chrome::direct` (a `DirectSession` on
+a tab by endpoint and target id, a `DirectGuard` for the owner's rules,
+`direct_tools` to bind it as model-facing tools, and the shared `devtools`
+helpers Jev's own connection now uses); Roder Desktop's integrated browser
+fallback goes through the same client and gains a screenshot.
+
+Jev also uncovers a covered target before giving up: Escape, the covering
+layer's own close control, or a press outside it, then the action goes ahead
+in the same step. Escape and Enter are sent without a native key code, which
+on macOS made Escape open Chrome's "About Chrome" page from a shown tab.
+
+Breaking: `JevExtension` is a struct (`JevExtension::new()`,
+`with_inference_engines`); `JevToolContributor::new(engines)`;
+`JevActOutcome` and `JevActionRecord` gain `uncovered`; `JevRunResult` gains
+`stop_cause` (the new `JevStopCause`).
+
+#### Jev results show the page, and Jev reports access blocks and reads widget frames
+
+The model only ever reads a tool result's text, and `jev_browse` used to give
+it one line ("done at <url> (3 actions)"). The text is now a bounded digest
+of the call, at most 8,000 characters and 120 lines:
+
+- A header with the status, the session call and tab, today's date, time and
+  time zone, the page's address, title and HTTP status (marked
+  page-supplied), the outcome and what to do next. After `done` the caller is
+  told to check the page against the goal, how to continue with `url ""`, and
+  not to sign in, reserve, pay or send personal details unless the user asked.
+- The session's tabs, totals and earlier calls.
+- Between marker lines that say it is untrusted: why Jev stopped, each step
+  with the section its control sat in and its effect, the text of frames Jev
+  read, the headings, the page text, and the options Jev can act on, grouped
+  by the card or section they sit in.
+
+The result's data gains `controls`, `page` (`http_status`, `headings`,
+`frames`) and each step's `effect` and `context`. `JevActionRecord` gains a
+`context` field; `JevControl`, `JevPageFacts` and `JevFrameText` are new
+public types, and `JevBrowser` gains a default `describe` method.
+`JEV_SESSION_LOG=<dir>` appends one JSON line per call for grading.
+
+Jev also looks before it decides:
+
+- A site that refuses automated access (HTTP 401, 403 or 429 with a refusal
+  page, a challenge address, or an "Access Denied" page with nothing to act
+  on) ends the call with the new status `access_denied` before any decision,
+  with the evidence. Jev only reports it and never tries to get around it.
+- A first observation that shows nothing yet is read again for up to about
+  2.6 s, and a BLOCKED about a blank page is checked once, at no decision's
+  cost.
+- The text of up to two large, visible frames of another origin (a booking
+  widget) is read into the page text and the result; their controls are not
+  offered. `JEV_FRAME_TEXT=0` turns this off.
+
+#### Jev keeps one browser session per thread
+
+`jev_browse` calls on one Roder thread now share a session: the first call
+opens a tab, and later calls go on in that tab from where the last one
+stopped instead of opening a new tab each time.
+
+- `url` is optional: `""` continues on the tab's page without reloading; a url
+  loads in the same tab (after its new document commits) and is not reloaded
+  when the tab is already there. A new `tab` argument takes `current`
+  (default), `new`, `reset` or `close`. At most three tabs stay open; tabs an
+  action opens are kept; tabs are no longer closed at the end of a call,
+  background ones included.
+- The per-call `allowed_origins` argument is removed. A call may go to any
+  origin unless the operator sets `JEV_ALLOWED_ORIGINS`. `null`, `""` and `[]`
+  mean "not given" for every optional argument.
+- A session keeps its last eight calls, running totals, typed secrets (still
+  scrubbed from later page reads) and resolved models; each result's text
+  names the tab and how the call came to be on it, the tabs open, the totals,
+  earlier calls and how to continue, and `data.session` holds the same. The
+  tool description states today's date and time zone.
+- A closed or moved tab is reported and recovered; overlapping calls on one
+  thread wait for each other (or return `busy`); idle sessions close after
+  `JEV_SESSION_IDLE_SECS` (default 1200), and a per-process ledger lets a
+  later process close the tabs of one that died.
+- The approval names the thread's tab and where Jev works in it; `tab:
+  "close"` is allowed in every policy mode.
+- `JevRunResult` gains a crate-private field, so it can no longer be built
+  outside the crate.
+
 ## 0.2.1 (2026-09-28)
 
 ### Fixes
