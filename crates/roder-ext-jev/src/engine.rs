@@ -15,7 +15,10 @@ use serde_json::{Map, Value};
 use crate::agent::Agent;
 use crate::prompts::MAX_STEPS;
 use crate::scope::JevOriginScope;
-pub use records::{JevActionRecord, JevDecisionRecord, JevRunResult};
+use crate::secret::Secrets;
+pub use records::{
+    JevActionRecord, JevControl, JevDecisionRecord, JevFrameText, JevPageFacts, JevRunResult,
+};
 
 /// A stale observation means the browser changed after JEV made its decision.
 #[derive(Debug)]
@@ -126,6 +129,16 @@ pub trait JevBrowser: Send {
     /// `None` when it did nothing new, and always for a browser that does
     /// not support it, which is the default.
     async fn refuse_cookie_banner(&mut self) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// What the page shows besides its observation: the main document's
+    /// HTTP status and visible headings. The loop asks once after the first
+    /// observation, to stop on a page that refused automated access before
+    /// any decision, and once after the run, for the result; each ask is
+    /// bounded to a second and may fail without harm. `None`, the default,
+    /// for a browser that cannot tell.
+    async fn describe(&mut self) -> anyhow::Result<Option<JevPageFacts>> {
         Ok(None)
     }
 }
@@ -262,6 +275,12 @@ pub enum JevStatus {
     /// may not be undone (see [`JevEngineConfig::with_irreversible_gate`]);
     /// `stopped_because` names the control. Nothing was dispatched.
     NeedsConfirmation,
+    /// The site refused automated access: an HTTP 401, 403 or 429 page, a
+    /// challenge or "unusual traffic" wall, or an "Access Denied" page with
+    /// nothing to act on. Found on the first observation, it ends the run
+    /// before any decision; `stopped_because` gives the evidence. Jev only
+    /// reports it and never tries to get around it.
+    AccessDenied,
 }
 
 impl JevStatus {
@@ -329,6 +348,9 @@ pub struct JevEngineConfig {
     /// Refuse a cookie banner once per document before reading it; on by
     /// default.
     pub(crate) refuse_cookie_banners: bool,
+    /// Secrets typed by earlier runs on the same tab, scrubbed from this
+    /// run's page reads too.
+    pub(crate) secrets: Secrets,
 }
 
 impl JevEngineConfig {
@@ -344,7 +366,15 @@ impl JevEngineConfig {
             irreversible_gate: false,
             irreversible_authorized: false,
             refuse_cookie_banners: true,
+            secrets: Secrets::default(),
         }
+    }
+
+    /// Start with the secrets an earlier run on this tab typed, so they stay
+    /// scrubbed; the result's `typed_secrets` hands on the grown list.
+    pub(crate) fn with_secrets(mut self, secrets: Secrets) -> Self {
+        self.secrets = secrets;
+        self
     }
 
     /// Cap the run at `actions` executed actions (at least one) and twice as
@@ -445,6 +475,8 @@ impl JevEngine {
                 Some(TIMED_OUT.into())
             }
         };
+        // A timed-out run has spent its time; the result goes without facts.
+        let stopped_because = self.agent.finish(stopped_because).await;
         self.agent.result(stopped_because)
     }
 

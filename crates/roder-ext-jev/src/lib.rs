@@ -12,6 +12,7 @@
 #![doc = include_str!("../README.md")]
 
 mod agent;
+mod block;
 mod cdp;
 mod chrome;
 mod decide;
@@ -25,9 +26,11 @@ mod page;
 mod policy;
 mod prompts;
 mod python_json;
+mod report;
 mod runner;
 mod scope;
 mod secret;
+mod session;
 mod space;
 mod text_helper;
 mod text_model;
@@ -44,9 +47,10 @@ use semver::Version;
 
 pub use decide::JevTypeSafeDecisionClient;
 pub use engine::{
-    Covered, JevActOutcome, JevActionRecord, JevBrowser, JevDecision, JevDecisionClient,
-    JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine, JevEngineConfig, JevRunResult,
-    JevStatus, JevStop, JevTextValue, JevTextValueResolver, StaleObservation,
+    Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
+    JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
+    JevEngineConfig, JevFrameText, JevPageFacts, JevRunResult, JevStatus, JevStop, JevTextValue,
+    JevTextValueResolver, StaleObservation,
 };
 pub use scope::JevOriginScope;
 pub use tools::{JevToolContributor, jev_tool_spec};

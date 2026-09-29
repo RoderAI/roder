@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Booking widget</title>
+  <style>body { font: 14px sans-serif; margin: 8px; } dl { margin: 8px 0; }</style>
+</head>
+<body>
+  <!-- The booking widget a slot opens, served from the other loopback host
+       so it is another site than the results page. Reserve Now posts the
+       booking: the commitment a benchmark run must stop before. -->
+  <h2>Complete Your Reservation</h2>
+  <p id="name"></p>
+  <p id="when"></p>
+  <p id="party"></p>
+  <form method="post" action="/submit/reserve">
+    <input type="hidden" name="booking" id="booking">
+    <button type="button" id="login">Log in</button>
+    <button type="submit">Reserve Now</button>
+  </form>
+  <script>
+    const query = new URLSearchParams(location.search);
+    const [y, m, d] = (query.get('date') || '').split('-').map(Number);
+    const day = new Date(y, m - 1, d).toLocaleDateString('en-US',
+      {weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'});
+    const seats = Number(query.get('seats') || 2);
+    document.getElementById('name').textContent = query.get('name') + ' · ' + query.get('area');
+    document.getElementById('when').textContent = day + ' · ' + query.get('time') + ' · ' +
+      query.get('room');
+    document.getElementById('party').textContent = seats + (seats === 1 ? ' Guest' : ' Guests');
+    document.getElementById('booking').value = location.search;
+  </script>
+</body>
+</html>

@@ -5,9 +5,11 @@
 ## What It Does
 
 Exposes a `jev_browse` tool that runs a bounded browser task against Chrome over
-the DevTools Protocol: given a starting URL and an observable goal, it observes
-the page, chooses one operation at a time, executes it, and returns the action
-trace with the observed final page.
+the DevTools Protocol: given an observable goal (and, on a thread's first call,
+a starting URL), it observes the page, chooses one operation at a time,
+executes it, and returns the action trace with the observed final page. Each
+Roder thread keeps one Jev browser session: later calls go on in the same tab
+from where the last one stopped.
 
 The implementation started as a Rust port of
 [Jev Ultrafast](https://github.com/browser-use/jev-ultrafast) (MIT) at
@@ -34,12 +36,22 @@ notice is `third-party/duckduckgo-autoconsent/`.
   an action opens is followed.
 - The operator can limit the origins a task visits (`JEV_ALLOWED_ORIGINS`),
   its actions (`JEV_MAX_ACTIONS`) and its time (`JEV_MAX_SECONDS`).
-- Tasks run in a foreground tab by default, leaving the final page on screen.
+- A thread's calls share one session and tab (see
+  [Sessions](#sessions)); the tab is in the foreground by default and stays
+  open between calls.
 - Typing is served by Roder's own configured chat-completions provider.
 - JavaScript dialogs are answered: alerts accepted, confirms and prompts
   dismissed, and each is reported.
 - Page content is untrusted: a `done` result is an agent claim to be checked
-  against the observed page.
+  against the observed page, which the result text shows (see
+  [The result](#the-result)).
+- A site that refuses automated access (HTTP 401, 403 or 429, a challenge
+  or "unusual traffic" page) ends the call `access_denied` before any
+  decision, with the evidence. Jev only reports it; it never tries to get
+  around a block.
+- Frames of another origin (a booking or payment widget) are read, never
+  acted in: their text reaches the model and the result, their buttons are
+  not offered (`JEV_FRAME_TEXT=0` turns the read off).
 - Cookie banners are refused by default (`JEV_REFUSE_COOKIE_BANNERS=0`
   turns it off): DuckDuckGo's autoconsent, injected into every document,
   refuses the consent platforms it knows, and Jev's own `consent.js` a clear
@@ -66,6 +78,174 @@ naming the field.
 
 See [`docs/jev-browser.md`](https://github.com/RoderAI/roder/blob/master/docs/jev-browser.md)
 for configuration and known limitations.
+
+
+## Sessions
+
+Each Roder thread has one Jev browser session (`src/session/`), kept in a
+process-wide registry keyed by thread id; a subagent's thread has its own.
+
+- **One tab, reused.** The first call opens a tab and loads its `url`. Later
+  calls with `url: ""` go on from the page the tab shows, without reloading;
+  a `url` loads in the same tab, and is not reloaded when the tab is already
+  there. `tab: "new"` opens a second tab beside the first, `tab: "reset"`
+  closes the session's tabs and starts over, and `tab: "close"` closes them
+  and browses nothing. A tab an action opens is adopted and stays in the
+  session. At most three tabs stay open; the oldest beyond that is closed,
+  never the current tab or the one that opened it. Tabs have short ids
+  (`t1`, `t2`, …) in results. A call with no url on a thread without a tab
+  fails without browsing, and its text tells the caller to call again with
+  the page to start on. `tab: "new"` right after a call whose page refused
+  access loads the url in that tab instead, since a refused page holds
+  nothing worth keeping; if the user has closed that tab, the call opens the
+  new tab it asked for rather than loading over the tab before it.
+- **Target ids, not sockets.** The session keeps its tabs' target ids.
+  `cdp.rs` has no reader task, so an idle socket would queue events unread
+  and leave dialogs unanswered; each call opens a new connection,
+  re-attaches (`Page::resume`) and sets each tab up again (viewport, focus
+  emulation, the Page domain, the quiet clock, autoconsent for later
+  documents), since those end with the DevTools session. Measured under
+  300 ms on the fixture page (the suite's test asserts only a 2 s ceiling,
+  since it runs many Chromes in parallel). Every page already open at that
+  point is recorded as seen: a tab the user opened from Jev's tab between
+  calls (a `target="_blank"` click, a page's timer) is theirs, never adopted
+  as the run's tab or closed as a stray; only tabs this call's own inputs
+  open are followed.
+- **The user moved or closed the tab.** A tab found somewhere else than the
+  last call left it is reported ("changed since the last call") and Jev goes
+  on from there; that address is compared, and reported, with the
+  session's typed secrets scrubbed from it (a GET form's address), so a
+  password never comes back through it. A closed popup hands the call back
+  to the tab that opened it. When every recorded tab is gone (closed, or
+  Chrome restarted) the call opens a new tab at its url or the last one and
+  says so (`reopened`, with the reason); with `JEV_ALLOWED_ORIGINS` set, a
+  last page outside those origins is not reopened (the call ends
+  `blocked`).
+- **Carried between calls:** the last eight calls (goal, start and end url,
+  title, status, actions, reason), running totals, the typed secrets (still
+  scrubbed from later page reads) and the resolved models. Nothing new goes
+  to the decision model or the text helper: a continued call's first
+  decision request is the same as a fresh call's, and the page itself
+  carries the context.
+- **One call at a time per session.** A call waits for the one before it,
+  within its own deadline, and says how long it waited; one whose deadline
+  passes first returns `status: "busy"` and does nothing. Threads run side by
+  side.
+- **Cleanup.** A session idle for `JEV_SESSION_IDLE_SECS` (default 1200) is
+  closed by a sweeper that runs every minute; a ninth session in the process
+  pushes out the least recently used idle one. Each process writes its
+  sessions' tabs to a ledger in `jev-sessions/` under Roder's config
+  directory (loopback endpoints only); a ledger nobody has refreshed for
+  twice the idle limit belongs to a dead process, and its tabs are closed.
+  Only tabs Jev created or adopted are ever closed. A session leaves the
+  registry only under its own lock and marked closed, so a call that was
+  waiting for it moves to the thread's new session instead of running on
+  one whose tabs nothing would close.
+- **Result.** Every result's text names the tab and how the call came to be
+  on it, the tabs open, the session's totals, up to four earlier calls, and
+  how to go on; `data.session` holds the same. The tool description states
+  today's date and the local time zone.
+
+## The result
+
+Roder hands the model a tool result's text, never its data, and the text used
+to be one line ("done at <url> (3 actions)") that told the caller to read a
+`visible_text` it never received. It is now a digest of the call
+(`src/report/digest.rs`), at most 8,000 characters and 120 lines (Roder moves
+an output above 20,000 characters or 200 lines into a file):
+
+- **Header:** the status; the session call and tab; today's date, time and
+  time zone ("Tonight" means this date, or, when a flow ran past midnight,
+  the date the session began on); the address and title, marked
+  page-supplied, and the HTTP status; what came of the call (actions,
+  decisions, seconds); what to do next. After `done` that is to check the page
+  against the goal, to go on with `url ""`, and not to sign in, reserve, pay
+  or send personal details unless the user asked for that step.
+- **Session:** tabs open, totals, up to four earlier calls.
+- **Page content**, between fixed marker lines that say it is untrusted
+  (any run of three or more dashes in page text, ASCII or look-alike,
+  becomes "- -", so no page line can draw a marker): why Jev stopped, the steps with
+  their effect and the section each control sat in, the text of frames Jev
+  read, the visible headings, the page text (blank and repeated lines
+  dropped, short ones joined), and the options Jev can act on, on screen
+  first, grouped by the card or section they sit in (a twin's `context`,
+  else the nearest heading before it, which `context.js` now records for
+  every control as `section`, outside the fingerprint and the requests; a
+  heading that titles one card of a list does not name a control after the
+  list); links repeated more than three times are left out as navigation.
+
+Each section has a budget, and what is left of the whole goes to them in
+priority order (frames, steps, session, headings, options, text, with at least
+900 characters kept for the text); every cut says how much it left out.
+Measured on the fixture pages through the session layer: 1,211 characters on
+`basic.html`, 4,973 (48 lines) on `big.html` with 249 controls, 2,472 on the
+reservation results after a slot opened its booking widget; a synthetic page
+with 221 controls, 6,000 characters of text, two frames and 30 steps stays at
+7,930. `data` keeps everything: every step's `effect` and `context`, the
+final page's `controls` (label, kind, role, context, section, value cut to 60
+characters, a select's options; never a secret's value) and `page`
+(`http_status`, `headings`, `frames`).
+
+`JEV_SESSION_LOG=<dir>` appends one JSON line per call to
+`<dir>/<thread>.jsonl` (the request, the tab, the full data and the text), for
+grading a run afterwards: `roder exec --json` carries only the text.
+
+After `access_denied` the hint says: if the user asked for that particular
+site, tell them and ask how to go on; otherwise the task is not finished: go
+on at another site that offers the same thing, with its url and tab
+`current` (it loads in the same tab), without asking the user first; tell
+the user only when no other site will do. The tool description and schema
+carry no benchmark wording: the goal's example is a catalogue task, and a
+unit test keeps the booking task's words out of them.
+
+### Live booking benchmark
+
+`scripts/jev-booking-bench.sh [--site resy|tock] [--runs N] [--model M]
+[--prompt TEXT] [--earliest HH:MM]` runs a restaurant-booking request
+through the installed `roder` binary (`roder exec --json`, Jev's own
+profile, the irreversible gate on, `JEV_SESSION_LOG` in the output
+directory) and `scripts/jev_booking_grade.py` grades each run: reached the
+reservation panel (a listing of slots is reported as `listed_only`, a
+partial result that does not pass); the panel's own date, party size and
+time (or the address's `date=` and `seats=`) are today, 3 and in the window,
+and the run's pages named the area (`--area`); the answer names the panel's
+restaurant and a time the panel showed; no commit, sign-in or
+personal-data step; one tab across the calls. See "Live booking benchmark" in
+[docs/jev-browser.md](../../docs/jev-browser.md) for the criteria and the
+eight runs that shaped the fixes above (`fixture_harness/booking_tests.rs`).
+
+## Looking before deciding
+
+- **Access blocks (`block.rs`).** After the first observation the browser
+  describes the page (`JevBrowser::describe`, a default method: Jev's `Page`
+  reads the navigation's `responseStatus` and the visible headings with
+  `describe.js`). A 401, 403 or 429 with a refusal phrase ("Access Denied",
+  "unusual traffic", "verify you are human", "captcha", …) or nothing to act
+  on, a `cdn-cgi/challenge` address, a `/sorry/` address with a refusal
+  status, a marker or nothing to act on (an ordinary `/sorry/out-of-stock`
+  page is not one), or a page with
+  nothing to act on whose title carries such a phrase ends the call
+  `access_denied` before any decision. A page that loaded and merely mentions
+  a captcha is not one. A `blocked` run whose final page is one is renamed
+  too. Detection and honest reporting only.
+- **An empty first look is read again.** A page with nothing to act on and
+  under 20 characters of text (a document that committed before it rendered)
+  is read up to three more times over about 2.6 s before any decision, and a
+  BLOCKED about a page that shows nothing is checked once the same way.
+  Neither costs a decision.
+- **Frames Jev cannot reach (`page/frames.rs`).** Up to two frames of
+  another origin, at least 200 by 100 pixels, shown and on screen, are read
+  on every observation: one in the page's process through an isolated
+  world, one in another process (another site, or a sandboxed frame) by
+  attaching to its target for one evaluate. Their text, 700 characters each,
+  is added to the page text as `[frame <origin>] …` lines within its 6,000
+  characters (the page's own text is cut first), so the decision model can
+  see a booking panel, and to the result. Their controls are not offered,
+  so a widget's Reserve button stays out of reach. The step fingerprint
+  counts frames by origin, never by text (`page/fingerprint.rs`): a rotating
+  ad cannot make a no-op step look like progress, while a widget that opens
+  still does. Frame text, frame origins and every control's `section` are
+  scrubbed of typed secrets like the page text.
 
 ## Divergences from upstream
 
@@ -192,19 +372,21 @@ browser's targets once and adopts the newest page one of its tabs opened
 (`target="_blank"`, `window.open`). It repeats the tab setup and reads that
 tab from then on, recording `opened_tab` on the step; the run moves to it only
 once that setup succeeds. A tab that closes itself returns the run to its
-opener. Every tab Jev owns is closed with the
-page. Upstream read such a click as a no-op and left the tab open.
+opener. The page records its tabs in a ledger its owner reads after the
+run, so the session keeps them for the next call; closing the page closes
+every tab it owns. Upstream read such a click as a no-op and left the tab
+open.
 
 **Effects (`effects.rs`).** Each step records `effect`, what it visibly did
 ("went to …", "Size value: Small -> Large", "showed 2 controls: …",
 "nothing visible changed"), next to `page_changed`; controls are paired by
-node only within one document. It is on
-`JevActionRecord` for embedders and not sent to the decision model yet (see
-the docs).
+node only within one document. It is on `JevActionRecord` and in the result
+text, and not sent to the decision model yet (see the docs).
 
 **Operator limits (`scope.rs`, `runner/ceilings.rs`, `usage.rs`).**
-`JEV_ALLOWED_ORIGINS`, narrowed by a call's `allowed_origins`, ends a run
-`blocked` on any page outside it and is named in the approval request.
+`JEV_ALLOWED_ORIGINS` ends a run `blocked` on any page outside it and is
+named in the approval request; unset, any origin goes. A call names no
+origins of its own (the per-call `allowed_origins` argument is gone).
 `JEV_MAX_ACTIONS` replaces the 60-action budget (model calls stay twice
 that), and `JEV_MAX_SECONDS` caps `timeout_seconds`. The result carries
 summed decision and text-helper `usage`, `"unknown"` where a provider did not
@@ -225,7 +407,8 @@ or 120 model calls), `timed_out`, `needs_input` (no text model, the text
 helper's `{"text": null}`, or a password or code the goal does not hold;
 the reason names the field), `unavailable` (a provider still failing after its
 retries) or `error`, where upstream raises and Jev used to report `ready`;
-with the gate on, `needs_confirmation`.
+with the gate on, `needs_confirmation`; `access_denied` for a site that
+refused automated access.
 `blocked` also covers a start page that did not load. The tool result adds a
 fixed `next_step` sentence for every status but `done`. Statuses serialize in
 snake case.
@@ -234,11 +417,16 @@ snake case.
 connecting, loading, the first observation), cut to the host's remaining
 deadline, and a phase that runs out ends `timed_out` naming it; upstream timed
 only the loop. `Page.navigate`'s `errorText` is read: transient `net::ERR_…`
-errors are retried twice (not `ERR_NAME_NOT_RESOLVED` or `ERR_ABORTED`), then
-the task ends `blocked` with "could not load (…)" before any decision. The tab
-is closed on every failure after it was created, including a deadline during
-the attach, and a close is repeated until Chrome drops the tab; a close of a
-tab Chrome already dropped succeeds. The start URL must parse as `http(s)` with a host.
+errors are retried twice (not `ERR_NAME_NOT_RESOLVED` or `ERR_ABORTED`; in a
+session tab that already shows a page an `ERR_ABORTED` that is not a download
+is tried once more), then the task ends `blocked` with "could not load (…)" before any decision. A tab
+the call opened is closed on every failure before the loop, including a
+deadline during the attach, and a close is repeated until Chrome drops the
+tab; a close of a tab Chrome already dropped succeeds. A session tab that
+fails to load a new url stays the session's. A url must parse as `http(s)`
+with a host. Loading a url waits for the new document to commit (a stamp on
+the old one must be gone) before the ready check and the settle, so a tab
+that already showed a page is not read as ready on the old document.
 
 **Endpoint.** `JEV_CDP_URL` (http(s) or a ws(s) browser websocket, opened
 directly) replaces upstream's `BU_CDP_URL` and `BU_CDP_WS`, which the port
@@ -421,8 +609,9 @@ provider list, and the result's `text_model` names that model with a
 recorded `field_text_requests.json` still pins.
 
 **Tab.** A foreground task's tab is shown when it is created, before the page
-loads; upstream's port showed it only after the first observation. A
-background task's tab is never brought forward. Measured on a windowed
+loads, and again whenever a later call goes back to it; upstream's port showed
+it only after the first observation. A background task's tab is never brought
+forward, and is no longer closed when the call ends. Measured on a windowed
 Chrome, a background tab with focus emulation (which Jev sets) reports
 `visible`, runs frames and 50 ms timers on time; without it, it is hidden,
 runs no frames, and a 50 ms timer takes 1 s.
@@ -533,6 +722,26 @@ POST; Chrome is a throwaway headless instance on a temporary profile. The
 keyless tier runs tasks one at a time in one Chrome, while the live tier gives
 each task its own Chrome.
 
+`tests/fixtures/evals/sessions.json` holds session tasks: several calls on one
+thread through the same `JevSessions::call` the tool makes, each graded on its
+page and on its tab (`tab_note`, `same_tab`, `tabs_open`), plus the form posts
+over all of them. `keyless_session_corpus_passes` plays each call's plan;
+`live_session_corpus` (ignored) asks the hosted model.
+
+| Session task | Covers |
+|---|---|
+| `catalog_session` | page through a catalog, then go on from that page in the next call |
+| `report_session` | a link opens a tab; the next call goes on in that tab |
+| `search_then_submit_session` | pick a suggestion in one call, submit the search in the next |
+| `navigate_in_session_tab` | a new url loads in the session's tab instead of a new one |
+| `reserve_search_session` | search tables on a city page, then pick a slot in the next call; the booking widget opens in a frame of another site, read but not acted in |
+| `reserve_signin_wall` | a slot leads to a same-origin sign-in wall; the call stops without filling or submitting it |
+| `reserve_change_party` | go on from a results page and change the party size through its summary chip |
+
+Session calls may also expect `frame_text_contains`, `digest_contains` (the
+text the caller reads) and `forbid_actions`; `{today}` in an expected text is
+today's date as a booking page shows it ("Mon, Sep 28, 2026").
+
 | Task | Covers |
 |---|---|
 | `contact_form` | three fills and a submit; the values reach the POST |
@@ -575,6 +784,9 @@ each task its own Chrome.
 | `login_form` | a username and a password from the resolver, submitted by Enter; graded on the POST |
 | `one_time_code_resolved` | a one-time code from the resolver, typed and posted |
 | `one_time_code_missing` | no code anywhere: `needs_input` naming the field, nothing typed |
+| `reserve_wrong_neighbourhood` | results mixing neighbourhoods, one slot label on every card: the slot is taken in a Mission card, and nothing is reserved |
+| `access_denied_page` | a page served 403 "Access Denied" ends `access_denied` with no decision |
+| `empty_first_look` | a page that commits blank and renders 700 ms later is read again, not judged blocked |
 
 `icon_by_picture` to `escape_popup` cover generic clickables, field naming,
 scroll boxes and keys. With `jev-1.13.0` only `unlabelled_fields` of them

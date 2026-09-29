@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sandboxed widget</title></head>
+<body>
+  <!-- A sandboxed srcdoc frame: an opaque origin in the page's own process,
+       out of the snapshot's reach, read through an isolated world. Its
+       button must not be offered. A second frame is too small to read. -->
+  <h1>Order summary</h1>
+  <iframe id="widget" sandbox style="width: 420px; height: 200px"
+    srcdoc="<p>Sandboxed widget: table for 2 at 7:30 PM</p><button>Widget action</button>"></iframe>
+  <iframe id="tiny" sandbox style="width: 120px; height: 60px"
+    srcdoc="<p>Tiny frame text</p>"></iframe>
+  <iframe id="hidden" sandbox style="width: 420px; height: 200px; visibility: hidden"
+    srcdoc="<p>Hidden frame text</p>"></iframe>
+  <button type="button">Page action</button>
+</body>
+</html>

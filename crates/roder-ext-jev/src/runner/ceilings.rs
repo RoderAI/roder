@@ -1,7 +1,7 @@
 //! What the operator sets in the environment: the allowed origins
 //! (`JEV_ALLOWED_ORIGINS`), the action budget (`JEV_MAX_ACTIONS`) and the
-//! longest task (`JEV_MAX_SECONDS`). A call can narrow the origins and ask
-//! for less time, never more. Two switches sit beside them: the
+//! longest task (`JEV_MAX_SECONDS`). A call can ask for less time, never
+//! more, and names no origins of its own. Two switches sit beside them: the
 //! irreversible-action gate (`JEV_CONFIRM_IRREVERSIBLE`, off by default),
 //! which a call cannot turn off, only authorize past, and cookie-banner
 //! refusal (`JEV_REFUSE_COOKIE_BANNERS`, on unless set to 0).

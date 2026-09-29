@@ -13,6 +13,9 @@
 //! - [`miniwob`]: the hosted model on the public MiniWoB++ benchmark, from a
 //!   checkout named by `JEV_MINIWOB_DIR`; opt-in and `#[ignore]`d.
 //!
+//! - [`sessions`]: several calls on one thread's session, from
+//!   `tests/fixtures/evals/sessions.json`, keyless and live.
+//!
 //! To add a task, add a page under `tests/fixtures/pages/` if none fits and
 //! an entry to `tasks.json`; both tiers pick it up.
 
@@ -22,6 +25,7 @@ mod probe;
 mod scripted;
 #[cfg(test)]
 mod secret_tests;
+mod sessions;
 mod text_sources;
 mod variants;
 

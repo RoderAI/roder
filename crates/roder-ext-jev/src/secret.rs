@@ -29,11 +29,31 @@ pub(crate) fn is_secret(action: &Value) -> bool {
 }
 
 /// The secrets typed in one run, kept only in memory to scrub them from
-/// what the page shows.
-#[derive(Debug, Default)]
+/// what the page shows. A session hands them to its next call, so a value
+/// typed in one call is still scrubbed from the pages later calls read.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Secrets(Vec<String>);
 
+/// Never the values: a result is debug-printed in logs and test failures.
+impl std::fmt::Debug for Secrets {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Secrets({} kept)", self.0.len())
+    }
+}
+
 impl Secrets {
+    /// How many are remembered.
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Remember every secret `other` holds too.
+    pub(crate) fn extend(&mut self, other: &Secrets) {
+        for secret in &other.0 {
+            self.remember(secret);
+        }
+    }
+
     pub(crate) fn remember(&mut self, value: &str) {
         let value = value.trim();
         if value.chars().count() >= SCRUB_MIN_CHARS && !self.0.iter().any(|known| known == value) {
@@ -57,8 +77,9 @@ impl Secrets {
     }
 
     /// Scrub the parts of an observation that leave the loop: its address,
-    /// title and text, each action's label, value, current value and
-    /// context, and the dialogs' messages. The freshness marker, page key
+    /// title and text, each action's label, value, current value, context
+    /// and section, the dialogs' messages, and the frames' origins and
+    /// text. The freshness marker, page key
     /// and guards are compared with the live page and never leave it, so
     /// they are kept; so is a select option's value, which choosing it needs.
     pub(crate) fn scrub_observation(&self, observation: &mut Value) {
@@ -72,7 +93,7 @@ impl Secrets {
         }
         for action in observation["actions"].as_array_mut().into_iter().flatten() {
             let select = action["kind"] == "select";
-            for key in ["label", "value", "current_value", "context"] {
+            for key in ["label", "value", "current_value", "context", "section"] {
                 if key == "value" && select {
                     continue;
                 }
@@ -84,6 +105,13 @@ impl Secrets {
         for dialog in observation["dialogs"].as_array_mut().into_iter().flatten() {
             if let Some(message) = dialog.get_mut("message") {
                 self.scrub_in_place(message);
+            }
+        }
+        for frame in observation["frames"].as_array_mut().into_iter().flatten() {
+            for key in ["origin", "text"] {
+                if let Some(value) = frame.get_mut(key) {
+                    self.scrub_in_place(value);
+                }
             }
         }
     }
@@ -116,8 +144,10 @@ mod tests {
             "actions": [
                 {"kind": "fill", "label": "Shown hunter2-7431", "value": "hunter2-7431"},
                 {"kind": "select", "label": "x → hunter2-7431", "value": "hunter2-7431"},
+                {"kind": "click", "label": "Continue", "section": "Code hunter2-7431 sent"},
             ],
             "dialogs": [{"type": "alert", "message": "hunter2-7431?", "accepted": true}],
+            "frames": [{"origin": "https://accounts.test", "text": "Code hunter2-7431 confirmed"}],
         });
         secrets.scrub_observation(&mut page);
         assert_eq!(page["url"], "https://x.test/login?password=[secret]");
@@ -127,6 +157,9 @@ mod tests {
         assert_eq!(page["actions"][1]["label"], "x → [secret]");
         assert_eq!(page["actions"][1]["value"], "hunter2-7431");
         assert_eq!(page["dialogs"][0]["message"], "[secret]?");
+        // The heading a control sits under, and a frame showing it back.
+        assert_eq!(page["actions"][2]["section"], "Code [secret] sent");
+        assert_eq!(page["frames"][0]["text"], "Code [secret] confirmed");
         // Compared with the live page, never reported.
         assert_eq!(page["marker"][0], "hunter2-7431");
     }

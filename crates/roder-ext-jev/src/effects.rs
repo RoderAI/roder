@@ -8,8 +8,9 @@
 //! a field) is matched by its role and label when exactly one earlier control
 //! had them. The rules follow fastbrowse's effects.py (MIT), reimplemented.
 //!
-//! The effect is recorded on the step and on [`crate::JevActionRecord`]. It
-//! is not sent to the decision model: that would change the request, and it
+//! The effect is recorded on the step and on [`crate::JevActionRecord`], and
+//! the tool result shows it to the caller. It is not sent to the decision
+//! model: that would change the request, and it
 //! has not yet been measured against the hosted model (the eval variant
 //! `effect` adds it for an A/B run).
 
