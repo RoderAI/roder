@@ -3347,6 +3347,7 @@ dependencies = [
  "roder-core",
  "roder-evals",
  "roder-ext-anthropic",
+ "roder-ext-browser-use",
  "roder-ext-codex-backend",
  "roder-ext-disk-context",
  "roder-ext-gemini",
@@ -3695,6 +3696,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-browser-use"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "roder-api",
+ "roder-ext-mcp",
+ "semver",
+ "serde_json",
+ "tokio",
+ "which 8.0.4",
+]
+
+[[package]]
 name = "roder-ext-chrome"
 version = "0.2.0"
 dependencies = [
@@ -4034,6 +4049,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "libc",
  "reqwest",
  "roder-api",
  "semver",
@@ -4718,6 +4734,7 @@ dependencies = [
  "roder-config",
  "roder-context",
  "roder-ext-anthropic",
+ "roder-ext-browser-use",
  "roder-ext-chrome",
  "roder-ext-claude-code",
  "roder-ext-cursor",

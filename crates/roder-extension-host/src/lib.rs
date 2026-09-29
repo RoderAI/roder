@@ -24,6 +24,7 @@ use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
 use roder_ext_anthropic::AnthropicExtension;
+use roder_ext_browser_use::BrowserUseExtension;
 use roder_ext_chrome::ChromeExtension;
 use roder_ext_claude_code::{ClaudeCodeConfig, ClaudeCodeExtension};
 use roder_ext_cursor::{CursorConfig, CursorExtension};
@@ -173,6 +174,9 @@ pub struct DefaultRegistryConfig {
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
     pub zerolang: Option<ZerolangConfig>,
+    /// `[browser_use]` settings; the provider is installed only when enabled.
+    /// Its LLM keys come from `openai_api_key` / `anthropic_api_key`.
+    pub browser_use: Option<roder_config::BrowserUseConfig>,
     pub policy_mode: PolicyMode,
     pub notifications: DefaultNotificationsConfig,
     pub remote_runner_destination: Option<RunnerDestination>,
@@ -299,6 +303,7 @@ impl Default for DefaultRegistryConfig {
             web_search: None,
             subagents: None,
             zerolang: None,
+            browser_use: None,
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
@@ -307,6 +312,27 @@ impl Default for DefaultRegistryConfig {
             process_extensions: Vec::new(),
             github_review: GithubReviewConfig::default(),
         }
+    }
+}
+
+/// The browser-use provider's settings: `[browser_use]` plus the OpenAI and
+/// Anthropic keys Roder already resolved, which only the browser-use server
+/// process receives.
+pub fn browser_use_config(
+    settings: &roder_config::BrowserUseConfig,
+    openai_api_key: Option<String>,
+    anthropic_api_key: Option<String>,
+) -> roder_ext_browser_use::BrowserUseConfig {
+    roder_ext_browser_use::BrowserUseConfig {
+        headless: settings.headless,
+        package: settings
+            .package
+            .clone()
+            .filter(|package| !package.trim().is_empty())
+            .unwrap_or_else(|| roder_ext_browser_use::DEFAULT_PACKAGE.to_string()),
+        uvx: settings.uvx.clone(),
+        openai_api_key,
+        anthropic_api_key,
     }
 }
 
@@ -523,6 +549,13 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     // session's model through them.
     let engines = builder.inference_engines.clone();
     builder.install(JevExtension::new().with_inference_engines(engines))?;
+    if let Some(browser_use) = config.browser_use.as_ref().filter(|b| b.enabled) {
+        builder.install(BrowserUseExtension::new(browser_use_config(
+            browser_use,
+            config.openai_api_key.clone(),
+            config.anthropic_api_key.clone(),
+        )))?;
+    }
     builder.install(ZerolangExtension::new(config.zerolang.unwrap_or_default()))?;
     if config.notifications.enabled && config.notifications.terminal {
         builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
@@ -1451,6 +1484,53 @@ mod tests {
     }
 
     #[test]
+    fn browser_use_provider_is_opt_in() {
+        let has_browser_use = |registry: &roder_api::extension::ExtensionRegistry| {
+            registry
+                .manifests
+                .iter()
+                .any(|manifest| manifest.id == "roder-ext-browser-use")
+        };
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        assert!(!has_browser_use(&registry));
+
+        let registry = build_default_registry(DefaultRegistryConfig {
+            browser_use: Some(roder_config::BrowserUseConfig::default()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!has_browser_use(&registry), "present but not enabled");
+
+        let registry = build_default_registry(DefaultRegistryConfig {
+            browser_use: Some(roder_config::BrowserUseConfig {
+                enabled: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(has_browser_use(&registry));
+    }
+
+    #[test]
+    fn browser_use_config_takes_resolved_keys_and_defaults_the_package() {
+        let config = browser_use_config(
+            &roder_config::BrowserUseConfig {
+                enabled: true,
+                headless: true,
+                package: Some("  ".into()),
+                uvx: None,
+            },
+            Some("sk-openai".into()),
+            None,
+        );
+        assert!(config.headless);
+        assert_eq!(config.package, roder_ext_browser_use::DEFAULT_PACKAGE);
+        assert_eq!(config.openai_api_key.as_deref(), Some("sk-openai"));
+        assert!(config.anthropic_api_key.is_none());
+    }
+
+    #[test]
     fn default_registry_installs_enabled_process_extensions() {
         let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../roder-ext-process-host/tests/fixtures");
@@ -1700,6 +1780,7 @@ mod tests {
             web_search: None,
             subagents: None,
             zerolang: None,
+            browser_use: None,
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,

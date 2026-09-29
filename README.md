@@ -547,6 +547,22 @@ Roder does not advertise an ACP lifecycle or recovery capability.
 
 ---
 
+## Browser tools in Roder
+
+Roder offers four browser providers; tool names say which one a tool belongs to.
+
+| Provider | Tools | Browser | Enable |
+| --- | --- | --- | --- |
+| Chrome extension | `chrome_*` | The user's own signed-in Chrome, through the paired MV3 extension | On by default; pair the extension ([docs](docs/roder-chrome-browser-extension.md)) |
+| Direct CDP | `chrome_*` | Roder Desktop's integrated browser over CDP when no extension is paired | Automatic fallback |
+| Jev | `jev_browse` | Chrome over CDP, one bounded goal per call | Set `JEV_API_KEY` ([docs](docs/jev-browser.md)) |
+| browser-use | `browser_use_*` | A separate browser launched by the browser-use local MCP server | `roder --browser-use` or `[browser_use] enabled = true`; needs `uv` ([docs](docs/roder-browser-use-provider.md)) |
+
+Use `chrome_*` when the task needs the user's session, `jev_browse` for one
+bounded goal, and `browser_use_*` for step-by-step control of a fresh,
+isolated browser. See the comparison in
+[`docs/roder-browser-use-provider.md`](docs/roder-browser-use-provider.md#browser-tools-in-roder).
+
 ## Chrome browser integration
 
 Roder can drive a user's real, logged-in Chrome session through a Manifest V3

@@ -145,6 +145,14 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-anthropic/CHANGELOG.md"
 
+[packages."roder-ext-browser-use"]
+versioned_files = [
+    "crates/roder-ext-browser-use/Cargo.toml",
+    "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-browser-use" },
+]
+changelog = "crates/roder-ext-browser-use/CHANGELOG.md"
+
 [packages."roder-ext-chrome"]
 versioned_files = [
     "crates/roder-ext-chrome/Cargo.toml",

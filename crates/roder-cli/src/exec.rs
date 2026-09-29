@@ -283,6 +283,7 @@ pub(crate) fn parse_exec_cli(args: &[String]) -> anyhow::Result<ExecCli> {
                 cli_options.record_api_transcript =
                     Some(PathBuf::from(&arg["--record-api-transcript=".len()..]));
             }
+            "--browser-use" => cli_options.browser_use = true,
             "-" => prompt_parts.push("-".to_string()),
             arg => prompt_parts.push(arg.to_string()),
         }

@@ -49,6 +49,8 @@ pub struct Config {
     pub app_server: Option<AppServerConfig>,
     pub remote_runners: Option<RemoteRunnersConfig>,
     pub zerolang: Option<ZerolangConfig>,
+    /// browser-use browser provider (`[browser_use]`), off unless enabled.
+    pub browser_use: Option<BrowserUseConfig>,
     pub media: Option<MediaConfig>,
     pub memories: Option<MemoriesConfig>,
     /// Project knowledge base (`[knowledge]`); markdown engine by default.
@@ -1102,6 +1104,24 @@ pub struct RemoteRunnersConfig {
     pub default_destination: Option<String>,
     #[serde(default)]
     pub destinations: HashMap<String, RemoteRunnerDestinationConfig>,
+}
+
+/// `[browser_use]`: the browser-use local MCP server as a browser provider.
+/// `roder --browser-use` enables it for one session without this block.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserUseConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Run the browser without a window (a visible window is the default).
+    #[serde(default)]
+    pub headless: bool,
+    /// `uvx --from` requirement; defaults to the release Roder's tool table
+    /// was built against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Full path to `uvx` when it is not on `PATH`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uvx: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2198,6 +2218,7 @@ mod tests {
             app_server: None,
             remote_runners: None,
             zerolang: None,
+            browser_use: None,
             media: None,
             memories: None,
             knowledge: None,
@@ -3500,6 +3521,29 @@ mod tests {
                 .and_then(|model| model.parallel_tool_calls),
             Some(true)
         );
+    }
+
+    #[test]
+    fn deserializes_browser_use_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [browser_use]
+            enabled = true
+            headless = true
+            uvx = "/opt/homebrew/bin/uvx"
+            "#,
+        )
+        .unwrap();
+        let browser_use = config.browser_use.unwrap();
+        assert!(browser_use.enabled);
+        assert!(browser_use.headless);
+        assert_eq!(browser_use.package, None);
+        assert_eq!(
+            browser_use.uvx.as_deref(),
+            Some(std::path::Path::new("/opt/homebrew/bin/uvx"))
+        );
+        let minimal: Config = toml::from_str("[browser_use]\nenabled = true\n").unwrap();
+        assert!(!minimal.browser_use.unwrap().headless);
     }
 
     #[test]

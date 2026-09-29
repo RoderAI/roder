@@ -24,6 +24,7 @@ docs_url = "https://modelcontextprotocol.io"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+libc.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 roder-api.workspace = true
 semver.workspace = true

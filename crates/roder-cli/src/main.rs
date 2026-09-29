@@ -34,6 +34,8 @@ use automations::run_automations_cli;
 use evals::run_eval_cli;
 use inference_provider_selection::stock_inference_providers;
 use marketplace::{run_marketplace_cli, run_plugin_cli, run_setup_cli};
+use roder_api::backend::AgentBackend;
+use roder_api::capabilities::CapabilityGrant;
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
     PROVIDER_DEEPSEEK, PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK,
@@ -42,11 +44,8 @@ use roder_api::catalog::{
     PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
     normalize_provider_id,
 };
-use roder_api::backend::AgentBackend;
-use roder_api::capabilities::CapabilityGrant;
-use roder_api::extension::ExtensionRegistryBuilder;
-use roder_ext_codex_backend::CodexBackendExtension;
 use roder_api::command_shell::{default_command_shell, normalize_command_shell};
+use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::inference::{HostedWebSearchConfig, RuntimeProfile};
 use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
@@ -67,6 +66,7 @@ use roder_core::{
     Runtime, RuntimeConfig, RuntimeDynamicWorkflowConfig, RuntimeReliabilityConfig,
     RuntimeSpeedPolicyConfig, validate_edit_tool,
 };
+use roder_ext_codex_backend::CodexBackendExtension;
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
     CustomInferenceProviderConfig, DefaultNotificationsConfig, DefaultRegistryConfig,
@@ -257,9 +257,12 @@ async fn run_cli() -> anyhow::Result<()> {
     let record_ui_frames = cli_options.record_ui_frames;
     let enable_chrome = args.iter().any(|arg| arg == "--chrome");
     let (runtime, default_model) = build_runtime_from_config(cli_options).await?;
-    let mut server = AppServer::with_feature_config(runtime, resolve_local_app_server_feature_config()?)
-        .with_user_config_persistence();
-    if let Some(backend) = selected_backend { server = server.with_agent_backend(backend); }
+    let mut server =
+        AppServer::with_feature_config(runtime, resolve_local_app_server_feature_config()?)
+            .with_user_config_persistence();
+    if let Some(backend) = selected_backend {
+        server = server.with_agent_backend(backend);
+    }
     let app_server = Arc::new(server);
     let default_model = if cli_backend == Backend::Codex {
         codex_model.unwrap_or_default()
@@ -1094,6 +1097,8 @@ pub(crate) struct CliOptions {
     startup: TuiStartup,
     record_api_transcript: Option<PathBuf>,
     record_ui_frames: bool,
+    /// `--browser-use`: enable the browser-use provider for this session.
+    browser_use: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1104,10 +1109,15 @@ enum Backend {
 }
 
 fn selected_agent_backend(backend: Backend) -> anyhow::Result<Option<Arc<dyn AgentBackend>>> {
-    if backend == Backend::Roder { return Ok(None); }
+    if backend == Backend::Roder {
+        return Ok(None);
+    }
     let mut registry = ExtensionRegistryBuilder::new();
     registry.install(CodexBackendExtension)?;
-    registry.grant_capability("roder-ext-codex-backend", CapabilityGrant::new("process.codex"));
+    registry.grant_capability(
+        "roder-ext-codex-backend",
+        CapabilityGrant::new("process.codex"),
+    );
     Ok(registry.build()?.agent_backend("codex"))
 }
 
@@ -1257,6 +1267,7 @@ pub(crate) async fn build_runtime_from_config(
     let tool_path_scope = resolve_tool_path_scope(cfg.tools.as_ref())?;
     let command_shell = resolve_command_shell(cfg.tools.as_ref());
     let tool_allowlist = resolve_tool_allowlist(cfg.tools.as_ref());
+    let browser_use = resolve_browser_use_config(cfg.browser_use.as_ref(), options.browser_use);
     let search_index_enabled = cfg
         .search_index
         .as_ref()
@@ -1340,6 +1351,7 @@ pub(crate) async fn build_runtime_from_config(
         web_search: web_search.external,
         subagents,
         zerolang,
+        browser_use,
         policy_mode,
         notifications,
         remote_runner_destination: remote_runner_destination.clone(),
@@ -1401,6 +1413,30 @@ pub(crate) async fn build_runtime_from_config(
     runtime.set_skills(skills_registry).await;
 
     Ok((runtime, default_model))
+}
+
+/// `[browser_use]` from config, turned on for this session by
+/// `--browser-use`. When the flag asked for it, a missing `uvx` is reported
+/// now rather than on the first browser call.
+fn resolve_browser_use_config(
+    cfg: Option<&roder_config::BrowserUseConfig>,
+    flag: bool,
+) -> Option<roder_config::BrowserUseConfig> {
+    let mut browser_use = cfg.cloned().unwrap_or_default();
+    browser_use.enabled |= flag;
+    if !browser_use.enabled {
+        return None;
+    }
+    if flag {
+        let probe = roder_ext_browser_use::BrowserUseConfig {
+            uvx: browser_use.uvx.clone(),
+            ..Default::default()
+        };
+        if let Err(error) = roder_ext_browser_use::resolve_uvx(&probe) {
+            eprintln!("warning: {error}");
+        }
+    }
+    Some(browser_use)
 }
 
 fn resolve_review_config(
@@ -1876,6 +1912,7 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
                     Some(PathBuf::from(&arg["--record-api-transcript=".len()..]));
             }
             "--record-ui-frames" => options.record_ui_frames = true,
+            "--browser-use" => options.browser_use = true,
             _ => {}
         }
         i += 1;
@@ -2074,8 +2111,11 @@ async fn run_app_server(args: &[String]) -> anyhow::Result<()> {
     let backend = selected_agent_backend(options.cli_options.backend)?;
     let (runtime, _) = build_runtime_from_config(options.cli_options.clone()).await?;
     let feature_config = resolve_app_server_feature_config(&options)?;
-    let mut server = AppServer::with_feature_config(runtime, feature_config).with_user_config_persistence();
-    if let Some(backend) = backend { server = server.with_agent_backend(backend); }
+    let mut server =
+        AppServer::with_feature_config(runtime, feature_config).with_user_config_persistence();
+    if let Some(backend) = backend {
+        server = server.with_agent_backend(backend);
+    }
     let app_server = Arc::new(server);
     if options.remote {
         let token = match options.auth_token {
@@ -3551,10 +3591,14 @@ mod tests {
             "gpt-6-sol".into(),
             "resume".into(),
             "thread-123".into(),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(options.backend, Backend::Codex);
         assert_eq!(options.codex_model.as_deref(), Some("gpt-6-sol"));
-        assert_eq!(options.startup, TuiStartup::ResumeThread("thread-123".into()));
+        assert_eq!(
+            options.startup,
+            TuiStartup::ResumeThread("thread-123".into())
+        );
         assert!(parse_cli_options(&["--backend=unknown".into()]).is_err());
     }
 
@@ -3922,6 +3966,32 @@ mod tests {
         assert_eq!(providers[0].id, "local-openai");
         assert_eq!(providers[0].api_key.as_deref(), Some("secret"));
         assert_eq!(providers[0].base_url, "http://127.0.0.1:11434/v1");
+    }
+
+    #[test]
+    fn browser_use_flag_enables_the_provider_over_config() {
+        let options = parse_cli_options(&["--browser-use".to_string()]).unwrap();
+        assert!(options.browser_use);
+        assert!(!parse_cli_options(&[]).unwrap().browser_use);
+
+        assert_eq!(resolve_browser_use_config(None, false), None);
+        let configured = roder_config::BrowserUseConfig {
+            headless: true,
+            ..Default::default()
+        };
+        assert_eq!(resolve_browser_use_config(Some(&configured), false), None);
+        let enabled = resolve_browser_use_config(Some(&configured), true).unwrap();
+        assert!(enabled.enabled);
+        assert!(enabled.headless, "config settings survive the flag");
+        let from_config = roder_config::BrowserUseConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(
+            resolve_browser_use_config(Some(&from_config), false)
+                .unwrap()
+                .enabled
+        );
     }
 
     #[test]
