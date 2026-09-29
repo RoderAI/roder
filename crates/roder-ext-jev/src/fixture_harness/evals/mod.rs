@@ -20,8 +20,10 @@
 //! an entry to `tasks.json`; both tiers pick it up.
 
 mod effect_variant;
+pub(crate) mod fallback_live;
 mod grade;
 mod probe;
+mod rows;
 mod scripted;
 #[cfg(test)]
 mod secret_tests;
@@ -39,13 +41,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Deserialize;
 
 use super::Harness;
+use super::fallback_script::FallbackStep;
 use crate::engine::{JevDecisionClient, JevEngine, JevEngineConfig, JevRunResult};
+use crate::fallback::model::FallbackModel;
+use crate::fallback::{FallbackOutcome, Limits, Rules};
 pub(crate) use grade::Expect;
 use probe::{Probed, ProbedPage};
+pub(crate) use rows::{FallbackRow, Row, table, write_rows};
 pub(crate) use scripted::{FirstDecisionDelay, Step, StepDecider, TaskValues};
 
 /// One eval task, as written in `tasks.json`.
@@ -83,6 +88,20 @@ pub(crate) struct Task {
     /// Outcome graders both tiers apply.
     pub(crate) expect: Expect,
     pub(crate) script: Script,
+    /// A task Jev alone cannot finish: what the fallback must reach.
+    #[serde(default)]
+    pub(crate) fallback: Option<FallbackTask>,
+}
+
+/// What a fallback task expects of the fallback that follows Jev.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FallbackTask {
+    /// The keyless tier's scripted fallback plan.
+    #[serde(default)]
+    pub(crate) plan: Vec<FallbackStep>,
+    /// The call's end state after the fallback, graded in both tiers.
+    pub(crate) expect: Expect,
 }
 
 /// The keyless tier's plan and the trace only that plan pins.
@@ -138,12 +157,39 @@ fn select(tasks: Vec<Task>, wanted: Option<&str>) -> anyhow::Result<Vec<Task>> {
         .collect())
 }
 
-/// Everything a run produced that a grader may look at.
+/// Everything a run produced that a grader may look at: Jev's own end
+/// state, and after a fallback the call's.
 pub(crate) struct Outcome {
     pub(crate) result: JevRunResult,
     pub(crate) probed: Probed,
     pub(crate) posts: Vec<super::site::Post>,
     pub(crate) wall_ms: u64,
+    /// The end state after a fallback ran, and how it went.
+    pub(crate) after: Option<Box<(Outcome, FallbackOutcome)>>,
+}
+
+/// The fallback's step ceiling in eval runs (`JEV_EVAL_FALLBACK_STEPS`).
+pub(crate) fn fallback_steps() -> usize {
+    std::env::var("JEV_EVAL_FALLBACK_STEPS")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(crate::fallback::settings::DEFAULT_STEPS)
+}
+
+/// Jev's result as the call ends after a fallback: the fallback's status
+/// and the page it left, with Jev's trace.
+pub(crate) fn after_fallback(jev: &JevRunResult, fallback: &FallbackOutcome) -> JevRunResult {
+    let mut result = jev.clone();
+    result.status = fallback.status;
+    result.stopped_because = fallback.stopped_because.clone();
+    result.elapsed_ms += fallback.elapsed_ms;
+    if let Some(page) = &fallback.last_page {
+        let text = |key: &str| page[key].as_str().unwrap_or_default().to_string();
+        result.url = text("url");
+        result.title = text("title");
+        result.visible_text = text("text");
+    }
+    result
 }
 
 /// Drive the real engine on one task's page and collect its outcome.
@@ -156,6 +202,7 @@ pub(crate) async fn run_task(
     decision: Arc<dyn JevDecisionClient>,
     text: Arc<dyn crate::engine::JevTextValueResolver>,
     probes: Vec<String>,
+    fallback: Option<Arc<dyn FallbackModel>>,
 ) -> anyhow::Result<Outcome> {
     let started = Instant::now();
     let refuse = task.refuse_cookie_banners.unwrap_or(true);
@@ -201,129 +248,107 @@ pub(crate) async fn run_task(
         }
     };
     let result = engine.run(Duration::from_secs(task.timeout_s)).await;
-    engine.close().await.ok();
-    let wall_ms = started.elapsed().as_millis() as u64;
-    // A submit navigates, so its POST can land after the run has returned.
-    let expected_posts = task.expect.posts.as_ref().map_or(0, Vec::len);
+    let why = fallback
+        .as_ref()
+        .and_then(|_| crate::fallback::trigger::trigger(&result));
+    let (Some(model), Some(why)) = (fallback, why) else {
+        engine.close().await.ok();
+        let wall_ms = started.elapsed().as_millis() as u64;
+        // A submit navigates, so its POST can land after the run has returned.
+        let expected_posts = task.expect.posts.as_ref().map_or(0, Vec::len);
+        let posts = harness
+            .site
+            .wait_for_posts(expected_posts, Duration::from_secs(2))
+            .await;
+        return Ok(Outcome {
+            result,
+            probed: probed.take(),
+            posts,
+            wall_ms,
+            after: None,
+        });
+    };
+    // Jev's own end state first, then the fallback in the same tab.
+    let expressions = task
+        .expect
+        .probes()
+        .chain(
+            task.fallback
+                .iter()
+                .flat_map(|fallback| fallback.expect.probes()),
+        )
+        .cloned()
+        .collect::<Vec<_>>();
+    let before = probe::read(harness.endpoint(), &target_id, &expressions).await;
     let posts = harness
         .site
-        .wait_for_posts(expected_posts, Duration::from_secs(2))
+        .wait_for_posts(
+            task.expect.posts.as_ref().map_or(0, Vec::len),
+            Duration::from_secs(1),
+        )
         .await;
+    let wall_ms = started.elapsed().as_millis() as u64;
+    let tab = roder_ext_chrome::direct::DirectTab::Target {
+        endpoint: harness.endpoint().to_string(),
+        target_id: target_id.clone(),
+    };
+    let rules = Rules {
+        scope: config_scope(harness, task)?,
+        gate: task.confirm_irreversible,
+        authorized: task.authorize_irreversible,
+        banners: task.refuse_cookie_banners.unwrap_or(true),
+        secrets: result.typed_secrets.clone(),
+    };
+    let limits = Limits {
+        max_steps: fallback_steps(),
+        max_tokens: crate::fallback::settings::DEFAULT_TOKENS,
+        deadline: tokio::time::Instant::now() + Duration::from_secs(task.timeout_s),
+    };
+    let brief = crate::fallback::Brief {
+        goal: &task.goal,
+        trigger: why,
+        jev: &result,
+    };
+    let (outcome, _) =
+        crate::fallback::fall_back(&tab, model.as_ref(), brief, rules, limits, None).await;
+    engine.close().await.ok();
+    let expected = task
+        .fallback
+        .as_ref()
+        .and_then(|fallback| fallback.expect.posts.as_ref())
+        .or(task.expect.posts.as_ref())
+        .map_or(0, Vec::len);
+    let all_posts = harness
+        .site
+        .wait_for_posts(expected, Duration::from_secs(2))
+        .await;
+    let combined = Outcome {
+        result: after_fallback(&result, &outcome),
+        probed: probed.take(),
+        posts: all_posts,
+        wall_ms: started.elapsed().as_millis() as u64,
+        after: None,
+    };
     Ok(Outcome {
         result,
-        probed: probed.take(),
+        probed: before,
         posts,
         wall_ms,
+        after: Some(Box::new((combined, outcome))),
     })
 }
 
-/// One JSONL line per task.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Row {
-    pub(crate) task: String,
-    pub(crate) covers: String,
-    pub(crate) tier: &'static str,
-    pub(crate) variants: Vec<String>,
-    pub(crate) pass: bool,
-    pub(crate) failures: Vec<String>,
-    pub(crate) status: Value,
-    pub(crate) stopped_because: Option<String>,
-    pub(crate) steps: usize,
-    pub(crate) model_calls: usize,
-    pub(crate) text_calls: usize,
-    pub(crate) wall_ms: u64,
-    pub(crate) url: String,
-    /// Tier-specific telemetry, such as per-head confidence on live runs.
-    #[serde(skip_serializing_if = "Value::is_null")]
-    pub(crate) telemetry: Value,
-}
-
-impl Row {
-    pub(crate) fn new(
-        task: &Task,
-        tier: &'static str,
-        variants: Vec<String>,
-        outcome: &Outcome,
-        failures: Vec<String>,
-    ) -> Self {
-        let result = &outcome.result;
-        Self {
-            task: task.id.clone(),
-            covers: task.covers.clone(),
-            tier,
-            variants,
-            pass: failures.is_empty(),
-            failures,
-            status: serde_json::to_value(result.status).unwrap_or(Value::Null),
-            stopped_because: result.stopped_because.clone(),
-            steps: result.actions.len(),
-            model_calls: result.model_calls,
-            text_calls: result.text_calls,
-            wall_ms: outcome.wall_ms,
-            url: result.url.clone(),
-            telemetry: Value::Null,
-        }
+/// The operator's allowed origins as the task sets them.
+fn config_scope(harness: &Harness, task: &Task) -> anyhow::Result<crate::scope::JevOriginScope> {
+    if task.allowed_origins.is_empty() {
+        return Ok(crate::scope::JevOriginScope::any());
     }
-
-    /// A row for a task that could not run at all.
-    pub(crate) fn errored(task: &Task, tier: &'static str, error: &anyhow::Error) -> Self {
-        Self {
-            task: task.id.clone(),
-            covers: task.covers.clone(),
-            tier,
-            variants: Vec::new(),
-            pass: false,
-            failures: vec![format!("run failed: {error:#}")],
-            status: Value::Null,
-            stopped_because: None,
-            steps: 0,
-            model_calls: 0,
-            text_calls: 0,
-            wall_ms: 0,
-            url: String::new(),
-            telemetry: Value::Null,
-        }
-    }
-}
-
-/// Write rows to `target/jev-evals/<name>.jsonl` and return the path.
-pub(crate) fn write_rows(name: &str, rows: &[Row]) -> anyhow::Result<PathBuf> {
-    let dir = super::target_dir().join("jev-evals");
-    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let path = dir.join(format!("{name}.jsonl"));
-    let mut out = String::new();
-    for row in rows {
-        out.push_str(&serde_json::to_string(row)?);
-        out.push('\n');
-    }
-    std::fs::write(&path, out).with_context(|| format!("write {}", path.display()))?;
-    Ok(path)
-}
-
-/// The pass/fail table, in corpus order, for the test's stderr.
-pub(crate) fn table(tasks: &[Task], rows: &[Row]) -> String {
-    let mut out = format!(
-        "{:<26} {:<5} {:<18} {:>5} {:>6} {:>8}  {}\n",
-        "task", "pass", "status", "steps", "calls", "wall_ms", "failures"
-    );
-    for task in tasks {
-        let Some(row) = rows.iter().find(|row| row.task == task.id) else {
-            continue;
-        };
-        out.push_str(&format!(
-            "{:<26} {:<5} {:<18} {:>5} {:>6} {:>8}  {}\n",
-            row.task,
-            if row.pass { "pass" } else { "FAIL" },
-            row.status.as_str().unwrap_or("-"),
-            row.steps,
-            row.model_calls,
-            row.wall_ms,
-            row.failures.join("; ")
-        ));
-    }
-    let passed = rows.iter().filter(|row| row.pass).count();
-    out.push_str(&format!("{passed}/{} passed\n", rows.len()));
-    out
+    let origins = task
+        .allowed_origins
+        .iter()
+        .map(|origin| origin.replace("{site}", harness.site.origin()))
+        .collect::<Vec<_>>();
+    crate::scope::JevOriginScope::any().narrow(&origins)
 }
 
 /// Checks that need no browser: every task parses, names a page that
@@ -358,6 +383,21 @@ pub(crate) fn validate(tasks: &[Task]) -> anyhow::Result<()> {
             .expect
             .check()
             .with_context(|| format!("{}: bad script.expect", task.id))?;
+        if let Some(fallback) = &task.fallback {
+            ensure!(
+                !fallback.plan.is_empty(),
+                "{}: empty fallback plan",
+                task.id
+            );
+            for step in &fallback.plan {
+                step.check()
+                    .with_context(|| format!("{}: bad fallback step", task.id))?;
+            }
+            fallback
+                .expect
+                .check()
+                .with_context(|| format!("{}: bad fallback.expect", task.id))?;
+        }
     }
     Ok(())
 }

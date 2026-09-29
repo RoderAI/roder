@@ -15,6 +15,7 @@
 //! add it to the eval corpus instead (see [`evals`]).
 
 mod browser;
+pub(crate) mod fallback_script;
 mod proxy;
 mod scripted;
 mod sessions;
@@ -296,9 +297,12 @@ mod consent_tests;
 mod dialog_tests;
 mod digest_tests;
 mod evals;
+mod fallback_rule_tests;
+mod fallback_tests;
 mod field_tests;
 mod fill_tests;
 mod frame_text_tests;
+mod handover_tests;
 mod hidden_tab_tests;
 mod input_cost_tests;
 mod key_tests;
@@ -318,3 +322,4 @@ mod snapshot_tests;
 mod tab_tests;
 mod tests;
 mod twin_tests;
+mod uncover_tests;

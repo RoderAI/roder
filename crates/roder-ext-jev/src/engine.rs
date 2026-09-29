@@ -67,6 +67,10 @@ pub struct JevActOutcome {
     /// Why the page did not keep what the action asked for: a select it put
     /// back, or a fill whose text did not stay in the field.
     pub refused: Option<String>,
+    /// The target was covered by a popover, menu or dialog, and the browser
+    /// dismissed it first (how: Escape, its close control, or a press
+    /// outside it) before acting.
+    pub uncovered: Option<String>,
 }
 
 impl JevActOutcome {
@@ -79,6 +83,7 @@ impl JevActOutcome {
     pub fn refused(reason: impl Into<String>) -> Self {
         Self {
             refused: Some(reason.into()),
+            ..Self::default()
         }
     }
 }
@@ -287,6 +292,34 @@ impl JevStatus {
     pub(crate) fn stopped(self) -> bool {
         !matches!(self, Self::Ready)
     }
+}
+
+/// What ended a run that stopped short of its goal, beyond its status: a
+/// `blocked` run may have stalled, found its target covered, been told
+/// BLOCKED, or left the allowed origins, and a caller treats those
+/// differently (Roder falls back to a model with full browser tools only
+/// for some of them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum JevStopCause {
+    /// The model answered BLOCKED.
+    ModelBlocked,
+    /// Three actions in a row changed nothing.
+    Stalled,
+    /// Three actions in a row found their target covered.
+    Covered,
+    /// The model answered DONE straight after a covered attempt.
+    DoneAfterCovered,
+    /// A page was outside the allowed origins.
+    OutsideScope,
+    /// The start page did not load.
+    NotLoaded,
+    /// The action or model-call budget ran out.
+    Budget,
+    /// A provider, resolver or embedder ended the run with its own
+    /// [`JevStop`], or an error did.
+    Stopped,
 }
 
 /// Ends a run with a typed status. The loop maps any other error to

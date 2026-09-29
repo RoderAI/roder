@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Board</title>
+  <style>
+    body { font: 15px sans-serif; margin: 8px; }
+    .column { display: inline-block; vertical-align: top; width: 220px; min-height: 180px;
+      border: 1px solid #333; margin-right: 24px; padding: 6px; }
+    .card { border: 1px solid #999; background: #ffd; padding: 10px; margin: 6px 0; cursor: pointer; user-select: none; }
+  </style>
+</head>
+<body>
+  <h1>Board</h1>
+  <!-- Cards move only by dragging them with the pointer (press, move,
+       release over a column); a click does nothing. -->
+  <div class="column" id="todo" tabindex="0" aria-label="To do column">
+    <div class="card" id="a">Card A</div><div class="card" id="b">Card B</div></div>
+  <div class="column" id="done" tabindex="0" aria-label="Done column"></div>
+  <p id="log"></p>
+  <script>
+    let dragging = null;
+    for (const card of document.querySelectorAll('.card')) {
+      card.addEventListener('mousedown', e => { dragging = card; e.preventDefault(); });
+      card.addEventListener('click', () => {});
+    }
+    document.addEventListener('mousemove', e => {
+      if (dragging) dragging.style.outline = '2px solid #06c';
+    });
+    document.addEventListener('mouseup', e => {
+      if (!dragging) return;
+      const card = dragging; dragging = null; card.style.outline = '';
+      const column = document.elementFromPoint(e.clientX, e.clientY)?.closest('.column');
+      if (column && column !== card.parentElement) {
+        column.appendChild(card);
+        document.getElementById('log').textContent = 'Moved ' + card.textContent + ' to ' +
+          column.getAttribute('aria-label').replace(' column', '');
+        window.moved = card.textContent + ' -> ' + column.id;
+      }
+    });
+  </script>
+</body>
+</html>

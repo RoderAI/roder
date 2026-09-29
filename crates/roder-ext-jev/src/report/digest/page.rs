@@ -9,10 +9,14 @@ use super::{
 };
 
 pub(super) fn reason(data: &Value) -> Vec<String> {
+    let who = match data["fallback"]["ran"] == Value::Bool(true) {
+        true => "the fallback",
+        false => "Jev",
+    };
     match data["stopped_because"].as_str() {
         Some(reason) if !reason.trim().is_empty() => {
             vec![format!(
-                "Why Jev stopped: {}",
+                "Why {who} stopped: {}",
                 cut(&one_line(reason), REASON_CHARS)
             )]
         }
@@ -52,6 +56,9 @@ fn step(action: &Value) -> String {
         line.push_str(&format!(" with \"{}\"", cut(&one_line(typed), 40)));
     }
     let mut outcome = Vec::new();
+    if let Some(how) = action["uncovered"].as_str() {
+        outcome.push(format!("it was covered; Jev {}", one_line(how)));
+    }
     if action["covered"] == Value::Bool(true) {
         outcome.push("covered by another element; nothing was done".to_string());
     }

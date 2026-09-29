@@ -21,6 +21,9 @@ impl PolicyContributor for JevPolicy {
     }
 
     async fn review_tool(&self, review: PolicyReview) -> anyhow::Result<PolicyContribution> {
+        if let Some(short) = review.call.name.strip_prefix("jev_tab_") {
+            return Ok(review_tab_tool(short, &review));
+        }
         if review.call.name != "jev_browse" {
             return Ok(PolicyContribution::Abstain);
         }
@@ -45,6 +48,64 @@ impl PolicyContributor for JevPolicy {
             PolicyMode::Bypass => PolicyContribution::Allow { reason: None },
         })
     }
+}
+
+/// The hand-over tools on the thread's Jev tab. Reading it (look,
+/// screenshot, wait) is allowed in every mode. Acting on it follows
+/// `jev_browse`: plan mode denies it, default mode asks for each action,
+/// accept-all lets it run unless the call sets `authorize_irreversible`,
+/// and bypass allows it.
+fn review_tab_tool(short: &str, review: &PolicyReview) -> PolicyContribution {
+    if roder_ext_chrome::direct::reads_only(short) {
+        return PolicyContribution::Allow { reason: None };
+    }
+    let args = &review.call.arguments;
+    match review.mode {
+        PolicyMode::Plan => PolicyContribution::Deny {
+            reason: "the jev_tab_* tools act on a page and cannot run in plan mode".into(),
+        },
+        PolicyMode::AcceptAll if !authorizes_irreversible(args) => {
+            PolicyContribution::Allow { reason: None }
+        }
+        PolicyMode::Default | PolicyMode::AcceptAll => PolicyContribution::RequireApproval {
+            reason: Some(tab_tool_reason(
+                short,
+                args,
+                JevSessions::global().peek(&review.context.thread_id),
+            )),
+        },
+        PolicyMode::Bypass => PolicyContribution::Allow { reason: None },
+    }
+}
+
+/// What the person approving a hand-over tool call is asked about.
+fn tab_tool_reason(short: &str, args: &Value, session: Option<SessionSummary>) -> String {
+    let place = session
+        .and_then(|session| session.current_url)
+        .and_then(|url| host(&url))
+        .map_or("this thread's Jev browser tab".to_string(), |host| {
+            format!("this thread's Jev browser tab, on {host}")
+        });
+    let what = match short {
+        "navigate" => format!(
+            "load {} in",
+            args["url"]
+                .as_str()
+                .map(|url| host(url).unwrap_or_else(|| url.to_string()))
+                .unwrap_or_else(|| "a page".into())
+        ),
+        "type" => "type into".into(),
+        "key" => format!("press {} in", args["key"].as_str().unwrap_or("a key")),
+        other => format!("{other} in"),
+    };
+    let mut reason = format!("Roder may {what} {place}");
+    if authorizes_irreversible(args) {
+        reason.push_str(
+            "; it is AUTHORIZED to press a control that may make a purchase, payment, send, \
+             deletion or other change that cannot be undone (authorize_irreversible)",
+        );
+    }
+    reason
 }
 
 /// Whether the call authorizes actions that cannot be undone.
@@ -98,6 +159,9 @@ fn approval_reason(
     let gate = operator
         .as_ref()
         .is_ok_and(|ceilings| ceilings.confirm_irreversible);
+    let operator_fallback = operator
+        .as_ref()
+        .is_ok_and(|ceilings| ceilings.fallback.mode == crate::fallback::FallbackMode::Auto);
     let scope = match operator {
         Ok(ceilings) if ceilings.scope.is_restricted() => {
             format!("; it may only visit {}", ceilings.scope)
@@ -115,7 +179,14 @@ fn approval_reason(
         (false, true) => "; it stops before anything that cannot be undone",
         (false, false) => "",
     };
-    format!("Jev may navigate, click and type {place}{scope}{commits}")
+    let fallback = match operator_fallback {
+        true => {
+            "; if Jev cannot progress, the session's model may go on in the same tab with \
+             Roder's full browser tools"
+        }
+        false => "",
+    };
+    format!("Jev may navigate, click and type {place}{scope}{commits}{fallback}")
 }
 
 #[cfg(test)]
@@ -125,11 +196,20 @@ mod tests {
     use roder_api::tools::ToolCall;
     use serde_json::json;
 
-    fn scoped(scope: JevOriginScope) -> anyhow::Result<Ceilings> {
-        Ok(Ceilings {
-            scope,
+    /// The operator's settings with the fallback off, which the approval
+    /// then does not mention.
+    fn quiet() -> Ceilings {
+        Ceilings {
+            fallback: crate::fallback::FallbackSettings {
+                mode: crate::fallback::FallbackMode::Off,
+                ..Default::default()
+            },
             ..Ceilings::default()
-        })
+        }
+    }
+
+    fn scoped(scope: JevOriginScope) -> anyhow::Result<Ceilings> {
+        Ok(Ceilings { scope, ..quiet() })
     }
 
     fn summary(url: &str) -> SessionSummary {
@@ -223,13 +303,112 @@ mod tests {
         );
         let gated = Ceilings {
             confirm_irreversible: true,
-            ..Ceilings::default()
+            ..quiet()
         };
         let reason = approval_reason(&json!({"url": "https://shop.example.com"}), Ok(gated), None);
         assert!(
             reason.ends_with("it stops before anything that cannot be undone"),
             "{reason}"
         );
+    }
+
+    #[test]
+    fn the_approval_says_when_the_sessions_model_may_go_on() {
+        let reason = approval_reason(
+            &json!({"url": "https://shop.example.com"}),
+            Ok(Ceilings::default()),
+            None,
+        );
+        assert!(
+            reason.ends_with(
+                "; if Jev cannot progress, the session's model may go on in the same tab with \
+                 Roder's full browser tools"
+            ),
+            "{reason}"
+        );
+    }
+
+    async fn review_tool(mode: PolicyMode, name: &str, args: Value) -> PolicyContribution {
+        let call = ToolCall {
+            id: "call".into(),
+            name: name.into(),
+            raw_arguments: args.to_string(),
+            arguments: args,
+            thread_id: "thread".into(),
+            turn_id: "turn".into(),
+        };
+        let context = roder_api::tools::ToolExecutionContext::new("thread", "turn", mode);
+        JevPolicy
+            .review_tool(PolicyReview {
+                call,
+                mode,
+                context,
+            })
+            .await
+            .unwrap()
+    }
+
+    /// Reading Jev's tab is allowed in every mode; acting on it follows
+    /// jev_browse, and an authorized press is always asked about.
+    #[tokio::test]
+    async fn the_hand_over_tools_follow_jevs_policy() {
+        for mode in [
+            PolicyMode::Plan,
+            PolicyMode::Default,
+            PolicyMode::AcceptAll,
+            PolicyMode::Bypass,
+        ] {
+            for read in ["jev_tab_look", "jev_tab_screenshot", "jev_tab_wait"] {
+                assert!(
+                    matches!(
+                        review_tool(mode, read, json!({})).await,
+                        PolicyContribution::Allow { .. }
+                    ),
+                    "{read} in {mode:?}"
+                );
+            }
+        }
+        let click = json!({"ref": "e3"});
+        assert!(matches!(
+            review_tool(PolicyMode::Plan, "jev_tab_click", click.clone()).await,
+            PolicyContribution::Deny { .. }
+        ));
+        match review_tool(PolicyMode::Default, "jev_tab_click", click.clone()).await {
+            PolicyContribution::RequireApproval {
+                reason: Some(reason),
+            } => assert!(
+                reason.starts_with("Roder may click in this thread's Jev"),
+                "{reason}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            review_tool(PolicyMode::AcceptAll, "jev_tab_click", click.clone()).await,
+            PolicyContribution::Allow { .. }
+        ));
+        let authorized = json!({"ref": "e3", "authorize_irreversible": true});
+        match review_tool(PolicyMode::AcceptAll, "jev_tab_click", authorized.clone()).await {
+            PolicyContribution::RequireApproval {
+                reason: Some(reason),
+            } => assert!(reason.contains("AUTHORIZED"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            review_tool(PolicyMode::Bypass, "jev_tab_drag", authorized).await,
+            PolicyContribution::Allow { .. }
+        ));
+        match review_tool(
+            PolicyMode::Default,
+            "jev_tab_navigate",
+            json!({"url": "https://tock.com/x"}),
+        )
+        .await
+        {
+            PolicyContribution::RequireApproval {
+                reason: Some(reason),
+            } => assert!(reason.starts_with("Roder may load tock.com in"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     async fn review(mode: PolicyMode, args: Value) -> PolicyContribution {

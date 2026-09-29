@@ -36,9 +36,12 @@ use serde_json::{Value, json};
 
 use super::text_sources::{Recorded, Supervised};
 use super::variants::{StepTelemetry, VariantTransport, Variants};
-use super::{Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_rows};
+use super::{
+    FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_rows,
+};
 use crate::decide::{ENDPOINT, JevTypeSafeDecisionClient, TypeSafeHttpTransport};
 use crate::engine::{JevDecisionTransport, JevTextValueResolver};
+use crate::fallback::model::FallbackModel;
 use crate::fixture_harness::Harness;
 use crate::http::RetryPolicy;
 use crate::text_helper::TextHelper;
@@ -64,6 +67,9 @@ struct LiveSetup {
     confirm_irreversible: bool,
     /// Every task that does not set it with cookie-banner refusal off.
     no_cookie_banner_refusal: bool,
+    /// `JEV_EVAL_FALLBACK=model`: the fallback after every task Jev could
+    /// not finish, each row graded on Jev alone and on Jev with it.
+    fallback: Option<Arc<dyn FallbackModel>>,
 }
 
 impl LiveSetup {
@@ -117,10 +123,22 @@ async fn run_one(setup: &LiveSetup, task: &Task) -> Option<Row> {
     let resolver: Arc<dyn JevTextValueResolver> = text.clone();
     let probes = task.expect.probes().cloned().collect();
     Some(
-        match run_task(&harness, task, decision, resolver, probes).await {
+        match run_task(
+            &harness,
+            task,
+            decision,
+            resolver,
+            probes,
+            setup.fallback.clone(),
+        )
+        .await
+        {
             Ok(outcome) => {
                 let failures = task.expect.grade(&outcome);
                 let mut row = Row::new(task, "live", names, &outcome, failures);
+                if setup.fallback.is_some() {
+                    row.fallback = Some(FallbackRow::grade(task, &outcome, row.pass));
+                }
                 row.telemetry = telemetry(&outcome, &transport.steps());
                 // The model that wrote values, which is not the one
                 // resolved when an unusable Codex sign-in fell back.
@@ -216,6 +234,7 @@ async fn live_corpus() {
             true,
         )
         .unwrap(),
+        fallback: super::fallback_live::live_fallback().await,
     };
     if Harness::start().await.is_none() {
         eprintln!("skipping: no Chrome binary found (set JEV_CHROME_BINARY)");
@@ -237,12 +256,16 @@ async fn live_corpus() {
         .map_or(0, |elapsed| elapsed.as_secs());
     let path = write_rows(&format!("live-{stamp}"), &rows).unwrap();
     eprintln!(
-        "model {}, text {}, variants {:?}, gate {}, cookie refusal {}\n{}rows: {}",
+        "model {}, text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}\n{}rows: {}",
         setup.model,
         setup
             .text_model
             .as_ref()
             .map_or("task values".to_string(), TextModel::label),
+        setup
+            .fallback
+            .as_ref()
+            .map_or("off".to_string(), |model| model.label()),
         setup.variants.names(),
         setup.confirm_irreversible,
         !setup.no_cookie_banner_refusal,

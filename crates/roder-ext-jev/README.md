@@ -64,6 +64,14 @@ notice is `third-party/duckduckgo-autoconsent/`.
   holds is never read (the observation says only whether it is filled), and
   what Jev types there is recorded as `[secret]` and scrubbed from what the
   page shows afterwards.
+- A target covered by a popover, menu, picker or dialog (one Jev opened
+  itself, or any laid over the page) is uncovered first: Escape, the layer's
+  own close control, or a press outside it, then the action goes ahead in
+  the same step (see [Uncovering a target](#uncovering-a-target)).
+- When Jev cannot progress, Roder's full browser tools go on in the same tab
+  (see [Fallback](#fallback)): inside the call, driven by the session's
+  model (`JEV_FALLBACK=auto`, the default), or handed to the caller as the
+  `jev_tab_*` tools.
 
 Requires `JEV_API_KEY`. In Roder's default policy mode each goal needs approval
 before the browser starts; plan mode denies it. The goal is sent to the hosted
@@ -213,6 +221,109 @@ restaurant and a time the panel showed; no commit, sign-in or
 personal-data step; one tab across the calls. See "Live booking benchmark" in
 [docs/jev-browser.md](../../docs/jev-browser.md) for the criteria and the
 eight runs that shaped the fixes above (`fixture_harness/booking_tests.rs`).
+
+## Fallback
+
+Jev acts only on the controls its snapshot offers, with a small action
+vocabulary: no screenshots, coordinates, hover, drag or arbitrary keys. The
+last live booking run showed where that ends: Jev opened a date picker, the
+picker stayed open over the results, every slot click was covered, and the
+run stopped `blocked`. When a run ends like that, Roder's own direct CDP
+tools (`roder_ext_chrome::direct`) go on **in the same tab**, with its
+cookies and page state, as `JEV_FALLBACK` says (`src/fallback/`):
+
+- **When** (`trigger.rs`): the run ended `blocked` because the model answered
+  BLOCKED, three steps changed nothing, its targets stayed covered, or it
+  answered DONE after a covered attempt; the page offered nothing Jev can act
+  on; or its own action budget ran out. Never after `needs_input`,
+  `needs_confirmation`, `access_denied`, a page that did not load, a page
+  outside the allowed origins, a confirm or prompt Jev declined, a provider
+  failure, an error or a timeout: a different driver does not fix those, and
+  the fallback must never be a way around a block or a confirmation.
+  `JevRunResult.stop_cause` (new) says which rule ended a run.
+- **`auto` (default).** `jev_browse` itself runs a bounded loop (`run.rs`):
+  the model reads the tab and calls the full tools (look, screenshot, click at
+  a ref or x/y, hover, drag, type, key, scroll, select, navigate, wait) until
+  it answers DONE, BLOCKED, NEEDS_INPUT or NEEDS_CONFIRMATION, a rule stops
+  it, or a ceiling is reached. It is driven by the model the session is on:
+  the Jev extension is given Roder's inference engines when installed (as
+  the subagent dispatcher is) and finds the engine by the turn's provider.
+  `JEV_FALLBACK_MODEL` (`provider/model`, or a catalog model id; an OpenAI
+  model goes through the ChatGPT/Codex sign-in when Roder holds one) pins
+  another. The turn's reasoning effort is not handed to tools, so the effort
+  is `JEV_FALLBACK_REASONING` (default `low`). A model whose engine runs its
+  own agent (Claude Code, Cursor) or takes no tool calls cannot drive it; the
+  call then hands over, saying why. The result is one: its `status`, page
+  and time are the call's end state, `jev_status` is Jev's own, and
+  `drivers` gives each driver's steps, model calls, time and tokens, so the
+  fallback's cost is never read as Jev's speed. The text says the same
+  ("Drivers: Jev 5 actions, 5 decisions, 3.1 s; fallback (codex/gpt-6-sol
+  (low)) 2 tool calls, 3 model calls, 11.0 s, …") and lists the fallback's
+  steps among the page content. After it, the tab is read again as Jev reads
+  it, so the page, frames and options in the result are Jev's own reading.
+- **`handover`.** The result tells the caller that the full tools work on
+  this same tab, names them and the tab (`jev_tab_look`, …, `jev_tab_wait`;
+  `t1`), says what Jev did and why it stopped, and tells it to go on with
+  them instead of retrying `jev_browse` with the same goal or giving up.
+  `auto` hands over the same way when no model can drive it or the fallback
+  also fails.
+- **`off`.** Jev's result as before.
+
+The `jev_tab_*` tools are always registered with `jev_browse` (no `--chrome`
+needed) and drive only the tab this thread's Jev session is on, under the
+session's lock: they take no tab argument, cannot open or list tabs, and a
+thread with no Jev tab gets an error telling it to start with `jev_browse`.
+A tab one of them opens is adopted by the session, a secret typed through
+them is scrubbed from later reads, and Jev's next call goes on where they
+left the tab. `JEV_SESSION_LOG` logs each call.
+
+**Rules inherited (`guard.rs`).** The operator's `JEV_ALLOWED_ORIGINS`
+(a navigation outside is refused before it loads; a click that lands outside
+ends the fallback `blocked`); the irreversible-action gate, which with no
+model question stops at every control its shortlist names (a click whose
+label holds a commitment word, a form's submit once a password is filled in
+it, Enter in a form that pays or signs in), stricter than Jev; the call's
+`authorize_irreversible` counts only when the fallback also marks that press
+(and the fallback model is offered that switch only on an authorized call);
+Jev's reading of an access block (the fallback stops `access_denied`, never
+works around it); a covered control is never pressed, by a click or by
+Enter or Space while it has focus; with banner refusal on a cookie banner
+may only be refused, and with it off nothing in one is pressed. Secrets: what a password or one-time-code field holds is
+never read; what is typed there is reported as `[secret]` and scrubbed from
+every later read; a screenshot blacks out every filled secret field on
+screen, and none is taken while the page shows a typed secret anywhere.
+There is no script evaluation. Page content is marked untrusted, and the
+fallback model is told never to follow it, never to sign in, reserve, pay or
+send personal details unless the goal asks for that exact step, and never to
+solve a CAPTCHA. Policy: `jev_browse`'s approval says the session's model may
+go on (auto); the `jev_tab_*` tools that only read (look, screenshot, wait)
+run in every mode, and those that act follow `jev_browse` (plan mode denies,
+default mode asks for each, accept-all runs unless `authorize_irreversible`).
+
+**Ceilings.** `JEV_FALLBACK_MAX_STEPS` (tool calls, default 20),
+`JEV_FALLBACK_MAX_SECONDS` (default 120, within what is left of the host's
+deadline) and `JEV_FALLBACK_MAX_TOKENS` (input and output, default
+400,000). One that is reached ends the fallback `budget_exceeded` or
+`timed_out`, naming it. Older page reads are cut to one line before each
+model call and only the newest screenshot is still shown.
+
+## Uncovering a target
+
+A covered target used to be a step that changed nothing. Now, when act.js
+finds it covered by a layer laid over the page (positioned fixed, absolute or
+sticky, a top-layer dialog or popover, or a dialog, menu, listbox or tooltip
+role), `page/uncover.rs` tries, checking the target after each: Escape; the
+layer's own close control (a button whose whole name is a close word, or
+whose label says close or dismiss; never accept, cancel or done); a press
+outside it on nothing that acts, or on a full-page backdrop. The first that
+frees the target is recorded on the step (`uncovered`, "pressed Escape to
+close …") and the action goes ahead in the same step, with no model call. A
+cookie or consent banner is left to banner refusal, and a layer that stayed
+is not tried again in the run.
+
+Escape (and Enter) are now sent without a native key code: Escape's Windows
+code 27 sent as macOS's native code opened Chrome's "About Chrome" page from
+a shown tab, which the fallback fixtures found by counting Chrome's tabs.
 
 ## Looking before deciding
 
@@ -535,8 +646,9 @@ fully visible is scrolled into view first. Up to five points on up to four viewp
 tested, and a point counts only when no other control sits between the hit
 and the target. When none does, the target is scrolled into view inside its
 own scroll containers and tried again, and a nested control that fills the target (a
-combobox's own input) is accepted. A covered target returns the public
-`Covered` error; the loop records it as a step with `page_changed: false`,
+combobox's own input) is accepted. A target still covered after Jev tried
+to uncover it (see [Uncovering a target](#uncovering-a-target)) returns the
+public `Covered` error; the loop records it as a step with `page_changed: false`,
 `text: null` and `covered: true` (serialized only when true), so three in a
 row end the run `blocked`. Upstream checks only the centre, and treats a
 covered target as a stale page. A scroll box is scrolled by script, by four
@@ -664,8 +776,13 @@ and `with_cookie_banner_refusal(bool)` (on unless given `false`); `JevDecisionCl
 keeps the default asks nothing, so the gate stops at every shortlisted
 action it chooses; a browser that keeps it refuses nothing);
 `JevDecision.irreversible` and `JevDecisionRecord.irreversible`; and the
-tool's `authorize_irreversible` argument. These are breaking changes, with
-no compatibility shims.
+tool's `authorize_irreversible` argument. For the fallback:
+`JevRunResult.stop_cause` and the `JevStopCause` enum,
+`JevActOutcome.uncovered` and `JevActionRecord.uncovered`, and
+`JevExtension` is a struct (`JevExtension::new()`,
+`with_inference_engines`) and `JevToolContributor::new(engines)`, which also
+registers the `jev_tab_*` tools. These are breaking changes, with no
+compatibility shims.
 
 **Tests.** The scripted agent-loop fakes live in `tests/support/`, and the
 real-DOM harness and eval corpus in `src/fixture_harness/`, rather than in
@@ -787,6 +904,12 @@ today's date as a booking page shows it ("Mon, Sep 28, 2026").
 | `reserve_wrong_neighbourhood` | results mixing neighbourhoods, one slot label on every card: the slot is taken in a Mission card, and nothing is reserved |
 | `access_denied_page` | a page served 403 "Access Denied" ends `access_denied` with no decision |
 | `empty_first_look` | a page that commits blank and renders 700 ms later is read again, not judged blocked |
+| `popover_escape`, `popover_button`, `popover_outside` | a date picker Jev opened stays open over the results; Jev closes it (Escape, its Close button, a press outside) and takes the slot in the same step |
+| `popover_icon_fallback` | a picker only an unlabelled icon closes: Jev stops blocked; the fallback closes it and takes the slot |
+| `canvas_fallback` | a button drawn on a canvas, pressed by the fallback at its coordinates |
+| `drag_fallback` | a card that moves only by dragging |
+| `hover_menu_fallback` | a menu that opens only while the pointer rests on it |
+| `keyboard_only_fallback` | a page with nothing to act on, driven by a key |
 
 `icon_by_picture` to `escape_popup` cover generic clickables, field naming,
 scroll boxes and keys. With `jev-1.13.0` only `unlabelled_fields` of them
@@ -795,7 +918,10 @@ does not pick the suggestion, stops two scrolls short of the end of the
 terms, and deletes Bob's second mail after the first. They stay in the
 corpus as the record of those gaps. The last seventeen have not run live
 yet: the decision service returned HTTP 402 to every request while they
-were added. The `gate_` tasks turn the gate on themselves
+were added. A task with a `fallback` block is one Jev alone cannot finish: its
+`expect` is Jev's own end (blocked), and `fallback.expect` the call's after
+the fallback; the keyless tier plays `fallback.plan` with a scripted model
+that names its targets by label (`ref_of`, `at`). The `gate_` tasks turn the gate on themselves
 (`confirm_irreversible`, `authorize_irreversible` in `tasks.json`), the
 `_off` cookie tasks turn refusal off (`refuse_cookie_banners: false`; every
 other task runs with it on, autoconsent injected), and a plan step may give
@@ -854,6 +980,15 @@ TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
   answer.
 - `JEV_EVAL_DUMP=1` prints every observation's actions and text, to see
   what the model was offered.
+- `JEV_EVAL_FALLBACK=model` runs the automatic fallback after every task
+  Jev could not finish, on `JEV_FALLBACK_MODEL` (default `gpt-6-sol`) at
+  `JEV_FALLBACK_REASONING` (default low) through the Codex sign-in (or
+  `OPENAI_API_KEY`), with `JEV_EVAL_FALLBACK_STEPS` tool calls (default
+  20). Each row is graded twice, Jev alone (`pass`) and the call after the
+  fallback (`fallback.pass`, with its steps, model calls, tokens and time),
+  and the table prints both totals. MiniWoB++ honours it too: `success` is
+  the episode's reward at its end, `jev_success` when Jev stopped, and the
+  summary gives both scores and what the fallback cost.
 - `JEV_EVAL_TASKS` narrows the run, `JEV_EVAL_CONCURRENCY` (default 2) sets
   how many tasks run at once, and `JEV_EVAL_STRICT=1` fails the test when a
   task fails instead of only reporting it.

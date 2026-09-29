@@ -9,6 +9,7 @@
 
 mod ceilings;
 mod drive;
+mod look;
 mod request;
 #[cfg(test)]
 mod secret_tests;
@@ -17,12 +18,14 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use async_trait::async_trait;
-use roder_api::inference::ModelSelection;
+use roder_api::inference::{InferenceEngine, ModelSelection};
 use serde_json::{Map, Value, json};
 
 use crate::chrome::{self, ChromeEndpoint};
 use crate::decide::JevTypeSafeDecisionClient;
 use crate::engine::JevTextValueResolver;
+use crate::fallback::FallbackSettings;
+use crate::fallback::model::{self as fallback_model, FallbackModel};
 use crate::session::{JevSessions, SessionDeps, SessionModels};
 use crate::text_helper::TextHelper;
 use crate::text_model::{self, Effort, Explicit, RoderCodexSignIn, RoderKeys, TextModel};
@@ -30,6 +33,7 @@ pub(crate) use ceilings::Ceilings;
 #[cfg(test)]
 pub(crate) use ceilings::switch;
 pub(crate) use drive::{Driven, Task, close_all, close_quietly, drive, timed_out};
+pub(crate) use look::look_again;
 pub(crate) use request::{JevRequest, TabChoice};
 
 /// Why a call with no url on a thread without a tab did nothing.
@@ -69,9 +73,11 @@ pub(crate) async fn resolve_text_model(
 }
 
 /// Roder's own models and browser: `JEV_API_KEY`, the text helper resolved
-/// from the turn's model, and the Chrome [`chrome::ensure`] finds or starts.
+/// from the turn's model, the Chrome [`chrome::ensure`] finds or starts, and
+/// Roder's inference engines for the fallback.
 struct RoderDeps<'a> {
     turn_model: Option<&'a ModelSelection>,
+    engines: &'a [Arc<dyn InferenceEngine>],
 }
 
 #[async_trait]
@@ -103,6 +109,15 @@ impl SessionDeps for RoderDeps<'_> {
     async fn endpoint(&self) -> anyhow::Result<ChromeEndpoint> {
         chrome::ensure().await
     }
+
+    async fn fallback_model(
+        &self,
+        settings: &FallbackSettings,
+        thread: &str,
+    ) -> Result<Arc<dyn FallbackModel>, String> {
+        let codex = crate::text_model::CodexSignIn::signed_in(&RoderCodexSignIn).await;
+        fallback_model::resolve(settings, self.turn_model, self.engines, thread, codex)
+    }
 }
 
 /// Run one call on `thread`'s Jev session.
@@ -110,11 +125,19 @@ pub(crate) async fn run(
     request: JevRequest,
     thread: &str,
     turn_model: Option<&ModelSelection>,
+    engines: &[Arc<dyn InferenceEngine>],
 ) -> anyhow::Result<Value> {
     let sessions = JevSessions::global();
     sessions.start_sweeper();
     sessions
-        .call(thread, request, &RoderDeps { turn_model })
+        .call(
+            thread,
+            request,
+            &RoderDeps {
+                turn_model,
+                engines,
+            },
+        )
         .await
 }
 

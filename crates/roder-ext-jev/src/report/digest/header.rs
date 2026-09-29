@@ -5,11 +5,12 @@
 use serde_json::Value;
 
 use super::super::status_words;
-use super::{EARLIER_CALLS, cut, one_line, plural, seconds, text};
+use super::{EARLIER_CALLS, cut, fallback, one_line, plural, seconds, text};
 
 pub(super) fn header(data: &Value, status: &str, now: &str) -> Vec<String> {
     let session = &data["session"];
-    let mut first = format!("Jev: {}.", status_words(status));
+    let mut first = fallback::first_line(data, status_words(status))
+        .unwrap_or_else(|| format!("Jev: {}.", status_words(status)));
     if let Some(call) = session["call"].as_u64() {
         first.push_str(&format!(
             " Call {call} in this thread's Jev browser session; {}.",
@@ -38,7 +39,10 @@ pub(super) fn header(data: &Value, status: &str, now: &str) -> Vec<String> {
         (true, None) => {}
     }
     lines.push(outcome(data, status));
-    if let Some(next) = next(data, status) {
+    if let Some(drivers) = fallback::drivers(data) {
+        lines.push(drivers);
+    }
+    if let Some(next) = fallback::handover(data).or_else(|| next(data, status)) {
         lines.push(next);
     }
     lines
@@ -90,6 +94,15 @@ fn outcome(data: &Value, status: &str) -> String {
         plural(decisions, "decision", "decisions"),
         seconds(data["elapsed_ms"].as_u64().unwrap_or(0))
     );
+    if data["fallback"]["ran"] == Value::Bool(true) {
+        return match status {
+            "done" => "Result: the fallback judged the goal met.".to_string(),
+            _ => format!(
+                "Result: the fallback stopped too: {}.",
+                status_words(status)
+            ),
+        };
+    }
     match status {
         "done" => format!("Result: Jev judged the goal met ({spent})."),
         "blocked" => format!("Result: Jev could not make progress ({spent})."),

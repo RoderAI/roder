@@ -3,7 +3,7 @@
 #
 #   scripts/jev-booking-bench.sh [--site resy|tock] [--runs N] [--model M]
 #       [--reasoning R] [--prompt TEXT] [--out DIR] [--pause SECONDS]
-#       [--earliest HH:MM]
+#       [--earliest HH:MM] [--fallback auto|handover|off]
 #
 # Each run asks Roder to find a table for 3 tonight in San Francisco's Mission
 # District and to stop before signing in or confirming. Jev's session log
@@ -13,7 +13,9 @@
 # Keys live in the interactive shell, so each run goes through `zsh -ic`.
 # Runs are sequential with a pause between them, to keep the request rate
 # human. Jev uses its own Chrome profile (JEV_CDP_URL is unset) and the
-# irreversible-action gate is on as defence in depth.
+# irreversible-action gate is on as defence in depth. JEV_FALLBACK is
+# --fallback (auto by default: the session's model goes on with the full
+# browser tools in Jev's tab when Jev cannot progress).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +27,7 @@ prompt=""
 out=""
 pause=120
 earliest=19:00
+fallback=auto
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,7 +39,8 @@ while [ $# -gt 0 ]; do
     --out) out="$2"; shift 2 ;;
     --pause) pause="$2"; shift 2 ;;
     --earliest) earliest="$2"; shift 2 ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    --fallback) fallback="$2"; shift 2 ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -63,8 +67,9 @@ for i in $(seq 1 "$runs"); do
   (
     cd "$out/work"
     BENCH_PROMPT="$prompt" BENCH_MODEL="$model" BENCH_REASONING="$reasoning" \
-    BENCH_SESSIONS="$out/sessions" \
+    BENCH_SESSIONS="$out/sessions" BENCH_FALLBACK="$fallback" \
       zsh -ic 'unset JEV_CDP_URL; JEV_SESSION_LOG="$BENCH_SESSIONS" JEV_CONFIRM_IRREVERSIBLE=1 \
+        JEV_FALLBACK="$BENCH_FALLBACK" \
         RODER_PROVIDER=codex RODER_MODEL="$BENCH_MODEL" RODER_REASONING="$BENCH_REASONING" \
         roder exec --skip-git-repo-check --ephemeral --mode accept-all --json "$BENCH_PROMPT"'
   ) > "$out/run$i.jsonl" 2> "$out/run$i.stderr" || echo "run $i exited $?" >&2

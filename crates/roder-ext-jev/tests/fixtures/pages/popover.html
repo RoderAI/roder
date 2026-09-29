@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Tables tonight</title>
+  <style>
+    body { font: 15px sans-serif; margin: 8px; }
+    #results { margin-top: 12px; }
+    .card { border: 1px solid #ccc; padding: 8px; margin: 6px 0; width: 480px; }
+    .card h3 { margin: 0 0 6px; font-size: 16px; }
+    #picker { position: absolute; top: 44px; left: 8px; width: 520px; height: 300px;
+      background: #fff; border: 1px solid #333; box-shadow: 0 4px 12px #0004; padding: 8px; }
+    #picker button.day { width: 40px; height: 32px; margin: 2px; }
+    #picker .x { position: absolute; top: 6px; right: 8px; width: 18px; height: 18px; cursor: pointer; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <!-- A date picker the date button opens, drawn over the results. Picking a
+       day keeps it open, as the live benchmark's picker did, so it covers
+       the slots below. How it closes is the `close` parameter: `escape`
+       (the Escape key only), `button` (a "Close" button only), `outside` (a
+       press anywhere outside it only), or `icon` (only an unlabelled icon in
+       its corner, which Jev cannot tell is a close control). -->
+  <button type="button" id="date" aria-haspopup="dialog" aria-expanded="false">Date: Today</button>
+  <div id="results">
+    <div class="card"><h3>Luna Cafe</h3>
+      <button type="button" class="slot">6:30 PM</button> <button type="button" class="slot">7:00 PM</button></div>
+    <div class="card"><h3>Mission Grill</h3>
+      <button type="button" class="slot">6:45 PM</button> <button type="button" class="slot">7:15 PM</button></div>
+    <div class="card"><h3>Valencia Noodles</h3>
+      <button type="button" class="slot">7:30 PM</button></div>
+  </div>
+  <p id="picked"></p>
+  <div id="picker" role="dialog" aria-label="Choose a date" hidden>
+    <p>September 2026</p>
+    <div id="days"></div>
+    <button type="button" id="close" hidden>Close</button>
+    <span class="x" id="icon" hidden><svg viewBox="0 0 10 10" width="18" height="18"><path d="M1 1L9 9M9 1L1 9" stroke="#333" stroke-width="2"/></svg></span>
+  </div>
+  <script>
+    const mode = new URLSearchParams(location.search).get('close') || 'escape';
+    const picker = document.getElementById('picker'), date = document.getElementById('date');
+    const open = shown => { picker.hidden = !shown; date.setAttribute('aria-expanded', String(shown)); };
+    date.addEventListener('click', () => open(picker.hidden));
+    const days = document.getElementById('days');
+    for (const day of [26, 27, 28, 29, 30]) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'day'; b.textContent = String(day);
+      // Picking a day keeps the picker open over the results.
+      b.addEventListener('click', () => { date.textContent = 'Date: Sep ' + day; window.day = day; });
+      days.appendChild(b);
+    }
+    if (mode === 'escape') document.addEventListener('keydown', e => { if (e.key === 'Escape') open(false); });
+    if (mode === 'button') {
+      const close = document.getElementById('close');
+      close.hidden = false;
+      close.addEventListener('click', () => open(false));
+    }
+    if (mode === 'outside') document.addEventListener('mousedown', e => {
+      if (!picker.hidden && !picker.contains(e.target) && e.target !== date) open(false);
+    });
+    if (mode === 'icon') {
+      const icon = document.getElementById('icon');
+      icon.hidden = false;
+      icon.addEventListener('click', () => open(false));
+    }
+    for (const slot of document.querySelectorAll('.slot')) slot.addEventListener('click', () => {
+      const place = slot.closest('.card').querySelector('h3').textContent;
+      document.getElementById('picked').textContent = 'Selected ' + slot.textContent + ' at ' + place;
+      window.slot = slot.textContent + ' at ' + place;
+    });
+  </script>
+</body>
+</html>

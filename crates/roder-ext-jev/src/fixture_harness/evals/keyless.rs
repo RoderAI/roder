@@ -10,9 +10,12 @@
 use std::sync::Arc;
 
 use super::{
-    Row, StepDecider, Task, TaskValues, load_tasks, run_task, table, validate, write_rows,
+    FallbackRow, Row, StepDecider, Task, TaskValues, load_tasks, run_task, table, validate,
+    write_rows,
 };
+use crate::fallback::model::FallbackModel;
 use crate::fixture_harness::Harness;
+use crate::fixture_harness::fallback_script::ScriptedFallback;
 
 async fn run_one(base: &Harness, task: &Task) -> Row {
     let harness = base.with_new_site().await;
@@ -24,11 +27,33 @@ async fn run_one(base: &Harness, task: &Task) -> Row {
         .chain(task.script.expect.probes())
         .cloned()
         .collect::<Vec<_>>();
-    match run_task(&harness, task, decision, text, probes).await {
+    // A fallback task's scripted fallback; every other task runs Jev alone.
+    let fallback = task.fallback.as_ref().map(|fallback| {
+        Arc::new(ScriptedFallback::new(fallback.plan.clone())) as Arc<dyn FallbackModel>
+    });
+    match run_task(&harness, task, decision, text, probes, fallback).await {
         Ok(outcome) => {
             let mut failures = task.expect.grade(&outcome);
             failures.extend(task.script.expect.grade(&outcome));
-            Row::new(task, "keyless", Vec::new(), &outcome, failures)
+            let jev_pass = failures.is_empty();
+            let after = task
+                .fallback
+                .as_ref()
+                .map(|_| FallbackRow::grade(task, &outcome, jev_pass));
+            if let Some(after) = &after {
+                if !after.ran {
+                    failures.push("the fallback did not run".into());
+                }
+                failures.extend(
+                    after
+                        .failures
+                        .iter()
+                        .map(|f| format!("after fallback: {f}")),
+                );
+            }
+            let mut row = Row::new(task, "keyless", Vec::new(), &outcome, failures);
+            row.fallback = after;
+            row
         }
         Err(error) => Row::errored(task, "keyless", &error),
     }

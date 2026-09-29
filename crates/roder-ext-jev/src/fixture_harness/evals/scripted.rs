@@ -33,6 +33,10 @@ pub(crate) struct Step {
     enter: Option<String>,
     /// A key control such as Escape, by its label.
     key: Option<String>,
+    /// Answer BLOCKED, as the model does when nothing on the page serves
+    /// the goal.
+    #[serde(default)]
+    blocked: bool,
     /// The start of the target's observed context.
     context: Option<String>,
     /// Alternatives, in preference order, instead of one target.
@@ -80,6 +84,12 @@ impl Step {
     pub(crate) fn check(&self) -> anyhow::Result<()> {
         if self.repeat == 0 {
             bail!("repeat must be at least 1");
+        }
+        if self.blocked {
+            if !self.named().is_empty() || !self.any.is_empty() {
+                bail!("a blocked step names no target");
+            }
+            return Ok(());
         }
         if self
             .irreversible
@@ -157,6 +167,7 @@ impl JevDecisionClient for StepDecider {
     ) -> anyhow::Result<JevDecision> {
         let played = chosen(history);
         let (choice, operation) = match self.plan.get(played) {
+            Some(step) if step.blocked => ("BLOCKED".to_string(), "BLOCKED".to_string()),
             Some(step) => {
                 let (kind, action) = step.resolve(observation).with_context(|| {
                     format!(

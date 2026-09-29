@@ -50,6 +50,26 @@ pub(crate) fn append(dir: &Path, thread: &str, arguments: &Value, data: &Value, 
     });
 }
 
+/// Append one call of a `jev_tab_*` tool to `dir`'s log for `thread`: the
+/// tool, its result data (what it pressed or typed, `[secret]` for a secret,
+/// the page after it; never a screenshot) and its text.
+pub(crate) fn append_tab_tool(dir: &Path, thread: &str, tool: &str, data: &Value, text: &str) {
+    let line = json!({
+        "at": chrono::Local::now().to_rfc3339(),
+        "thread": thread,
+        "tool": tool,
+        "result": data,
+        "digest": text,
+    });
+    let _ = std::fs::create_dir_all(dir).and_then(|()| {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(format!("{}.jsonl", file_name(thread))))?;
+        writeln!(file, "{line}")
+    });
+}
+
 /// A thread id as a file name: anything but letters, digits, `-` and `_`
 /// becomes `_`.
 fn file_name(thread: &str) -> String {

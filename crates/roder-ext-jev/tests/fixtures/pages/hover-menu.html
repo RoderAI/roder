@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Shop</title>
+  <style>
+    body { font: 15px sans-serif; margin: 8px; }
+    .nav { display: inline-block; position: relative; padding: 4px; }
+    .sub { position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #333;
+      list-style: none; margin: 0; padding: 4px; width: 160px; }
+    .sub li { padding: 4px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>Shop</h1>
+  <!-- A menu that opens only when the pointer rests on it for a moment:
+       pressing "Products" closes it again, as many hover menus do. -->
+  <div class="nav" id="nav">
+    <button type="button" id="products">Products</button>
+    <ul class="sub" id="sub" hidden>
+      <li><a href="/pages/landing.html?page=laptops">Laptops</a></li>
+      <li><a href="/pages/landing.html?page=phones">Phones</a></li>
+    </ul>
+  </div>
+  <p>Browse our range.</p>
+  <script>
+    const nav = document.getElementById('nav'), sub = document.getElementById('sub');
+    let timer = null;
+    nav.addEventListener('mouseenter', () => { timer = setTimeout(() => { sub.hidden = false; }, 150); });
+    nav.addEventListener('mouseleave', () => { clearTimeout(timer); sub.hidden = true; });
+    document.getElementById('products').addEventListener('click', () => { clearTimeout(timer); sub.hidden = true; });
+  </script>
+</body>
+</html>

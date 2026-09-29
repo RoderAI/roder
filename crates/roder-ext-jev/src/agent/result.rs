@@ -3,7 +3,9 @@
 use serde_json::{Value, json};
 
 use super::Agent;
-use crate::engine::{JevActionRecord, JevControl, JevFrameText, JevPageFacts, JevRunResult};
+use crate::engine::{
+    JevActionRecord, JevControl, JevFrameText, JevPageFacts, JevRunResult, JevStatus,
+};
 use crate::space::action_space;
 use crate::usage::{JevCallUsage, JevUsage};
 
@@ -25,6 +27,7 @@ impl Agent {
                 page_changed: entry["page_changed"].as_bool(),
                 covered: entry["covered"].as_bool().unwrap_or_default(),
                 refused: entry["refused"].as_str().map(str::to_string),
+                uncovered: entry["uncovered"].as_str().map(str::to_string),
                 dialogs: serde_json::from_value(entry["dialogs"].clone()).unwrap_or_default(),
                 opened_tab: entry["opened_tab"] == json!(true),
                 effect: entry["effect"].as_str().map(str::to_string),
@@ -75,6 +78,9 @@ impl Agent {
             decisions: self.decision_calls.clone(),
             // A reason can quote the page, which may show a typed secret.
             stopped_because: stopped_because.map(|reason| self.secrets.scrub(&reason)),
+            stop_cause: (self.status != JevStatus::Done)
+                .then_some(self.cause)
+                .flatten(),
             untrusted: true,
             controls: controls(&self.observation),
             page: self.page_facts(),

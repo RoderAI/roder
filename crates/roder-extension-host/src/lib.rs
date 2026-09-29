@@ -519,7 +519,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
     builder.install(WebwrightExtension)?;
     builder.install(ChromeExtension::new())?;
-    builder.install(JevExtension)?;
+    // After every inference engine: Jev's automatic fallback drives the
+    // session's model through them.
+    let engines = builder.inference_engines.clone();
+    builder.install(JevExtension::new().with_inference_engines(engines))?;
     builder.install(ZerolangExtension::new(config.zerolang.unwrap_or_default()))?;
     if config.notifications.enabled && config.notifications.terminal {
         builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
