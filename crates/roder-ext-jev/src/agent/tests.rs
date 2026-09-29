@@ -13,40 +13,65 @@ fn three_unchanged_actions_block_the_run() {
         entry("click", Some(false)),
         entry("click", Some(false)),
     ];
-    assert!(stalled(&history));
+    assert_eq!(stalled(&history), Some(JevStopCause::Stalled));
 }
 
 #[test]
 fn a_wait_or_a_change_keeps_the_run_going() {
-    assert!(!stalled(&[
-        entry("click", Some(false)),
-        entry("wait", Some(false)),
-        entry("click", Some(false)),
-    ]));
-    assert!(!stalled(&[
-        entry("click", Some(false)),
-        entry("click", Some(true)),
-        entry("click", Some(false)),
-    ]));
+    assert!(
+        stalled(&[
+            entry("click", Some(false)),
+            entry("wait", Some(false)),
+            entry("click", Some(false)),
+        ])
+        .is_none()
+    );
+    assert!(
+        stalled(&[
+            entry("click", Some(false)),
+            entry("click", Some(true)),
+            entry("click", Some(false)),
+        ])
+        .is_none()
+    );
     // A run that has not executed three actions yet cannot stall.
-    assert!(!stalled(&[entry("click", Some(false))]));
-    assert!(!stalled(&[]));
+    assert!(stalled(&[entry("click", Some(false))]).is_none());
+    assert!(stalled(&[]).is_none());
+}
+
+#[test]
+fn three_covered_attempts_are_told_apart_from_a_stall() {
+    let covered = || json!({"kind": "click", "page_changed": false, "covered": true});
+    assert_eq!(
+        stalled(&[covered(), covered(), covered()]),
+        Some(JevStopCause::Covered)
+    );
+    assert_eq!(
+        stalled(&[covered(), entry("click", Some(false)), covered()]),
+        Some(JevStopCause::Stalled)
+    );
 }
 
 #[test]
 fn a_refused_cookie_banner_neither_counts_nor_breaks_a_stall() {
     let banner = || json!({"kind": COOKIE_BANNER, "page_changed": null});
-    assert!(stalled(&[
-        entry("click", Some(false)),
-        banner(),
-        entry("click", Some(false)),
-        entry("click", Some(false)),
-    ]));
-    assert!(!stalled(&[
-        banner(),
-        entry("click", Some(false)),
-        entry("click", Some(false)),
-    ]));
+    assert!(
+        Some(JevStopCause::Stalled)
+            == stalled(&[
+                entry("click", Some(false)),
+                banner(),
+                entry("click", Some(false)),
+                entry("click", Some(false)),
+            ])
+    );
+    assert!(
+        stalled(&[
+            banner(),
+            entry("click", Some(false)),
+            entry("click", Some(false)),
+        ])
+        .is_none()
+    );
 }
 
 #[test]
@@ -57,7 +82,7 @@ fn only_the_last_three_actions_matter() {
         entry("click", Some(false)),
         entry("click", Some(false)),
     ];
-    assert!(stalled(&history));
+    assert_eq!(stalled(&history), Some(JevStopCause::Stalled));
 }
 
 #[test]

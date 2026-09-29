@@ -23,6 +23,8 @@ use crate::engine::{
     JevActOutcome, JevBrowser, JevDecision, JevDecisionClient, JevEngine, JevEngineConfig,
     JevRunResult, JevStatus, JevStop, JevTextValueResolver,
 };
+use crate::fallback::model::FallbackModel;
+use crate::fallback::{EndCheck, FallbackOutcome, Limits, Rules};
 use crate::fixture_harness::Harness;
 use crate::page::Page;
 
@@ -139,6 +141,10 @@ impl JevBrowser for MiniwobPage {
         self.page.fresh(observation, action).await
     }
 
+    async fn describe(&mut self) -> anyhow::Result<Option<crate::engine::JevPageFacts>> {
+        self.page.describe().await
+    }
+
     async fn act(
         &mut self,
         action: &Value,
@@ -200,6 +206,9 @@ pub(super) struct EpisodeSpec<'a> {
     pub(super) timeout: Duration,
     pub(super) decision: &'a Arc<dyn JevDecisionClient>,
     pub(super) text: &'a Arc<dyn JevTextValueResolver>,
+    /// With `JEV_EVAL_FALLBACK=model`: the fallback after an episode Jev
+    /// could not finish, on the same tab, until the task ends the episode.
+    pub(super) fallback: Option<&'a Arc<dyn FallbackModel>>,
 }
 
 pub(super) struct Episode {
@@ -208,7 +217,25 @@ pub(super) struct Episode {
     pub(super) start_actions: Vec<String>,
     pub(super) result: JevRunResult,
     pub(super) grade: Result<Grade, String>,
+    /// The grade when Jev stopped, before a fallback went on.
+    pub(super) jev_grade: Option<Grade>,
+    pub(super) fallback: Option<FallbackOutcome>,
     pub(super) wall_ms: u64,
+}
+
+/// Stops the fallback once the task has ended the episode, as BrowserGym
+/// ends it: nothing can change the reward after that.
+struct EpisodeEnd {
+    endpoint: String,
+    target: String,
+}
+
+#[async_trait]
+impl EndCheck for EpisodeEnd {
+    async fn ended(&self) -> bool {
+        let read = super::super::probe::read(&self.endpoint, &self.target, &[DONE_JS.into()]).await;
+        matches!(read.dom.get(DONE_JS), Some(Ok(value)) if *value == json!(true))
+    }
 }
 
 /// Open and set up the task, then run the engine on it.
@@ -249,6 +276,49 @@ pub(super) async fn run(harness: &Harness, spec: &EpisodeSpec<'_>) -> anyhow::Re
         }
     };
     let result = engine.run(spec.timeout).await;
+    let mut jev_grade = None;
+    let mut fallback = None;
+    if let (Some(model), Some(why)) = (spec.fallback, crate::fallback::trigger::trigger(&result)) {
+        let read =
+            super::super::probe::read(harness.endpoint(), &target_id, &[GRADE_JS.into()]).await;
+        let grade = match read.dom.get(GRADE_JS) {
+            Some(Ok(value)) => Grade::read(value),
+            _ => Grade::default(),
+        };
+        let ended = grade.done;
+        jev_grade = Some(grade);
+        if !ended {
+            let tab = roder_ext_chrome::direct::DirectTab::Target {
+                endpoint: harness.endpoint().to_string(),
+                target_id: target_id.clone(),
+            };
+            let end = EpisodeEnd {
+                endpoint: harness.endpoint().to_string(),
+                target: target_id.clone(),
+            };
+            let rules = Rules {
+                scope: crate::scope::JevOriginScope::any(),
+                gate: false,
+                authorized: false,
+                banners: true,
+                secrets: result.typed_secrets.clone(),
+            };
+            let limits = Limits {
+                max_steps: super::super::fallback_steps(),
+                max_tokens: crate::fallback::settings::DEFAULT_TOKENS,
+                deadline: tokio::time::Instant::now() + spec.timeout,
+            };
+            let brief = crate::fallback::Brief {
+                goal: &goal,
+                trigger: why,
+                jev: &result,
+            };
+            let (outcome, _) =
+                crate::fallback::fall_back(&tab, model.as_ref(), brief, rules, limits, Some(&end))
+                    .await;
+            fallback = Some(outcome);
+        }
+    }
     engine.close().await.ok();
     let wall_ms = started.elapsed().as_millis() as u64;
     let mut state = state.lock().unwrap();
@@ -261,6 +331,8 @@ pub(super) async fn run(harness: &Harness, spec: &EpisodeSpec<'_>) -> anyhow::Re
         start_actions: state.start_actions.take().unwrap_or_default(),
         result,
         grade,
+        jev_grade,
+        fallback,
         wall_ms,
     })
 }

@@ -1,12 +1,10 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use futures::{SinkExt, StreamExt};
 use roder_api::tools::{ToolCall, ToolResult};
 use serde_json::{Value, json};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+use crate::direct::{DirectSession, DirectTab, OpenGuard, TabClient, tool_result};
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +28,7 @@ pub async fn execute(kind: &str, call: &ToolCall) -> Option<ToolResult> {
         "tab/open" | "tab/navigate" => Some(navigate(call).await),
         "tabs/list" => Some(tabs_list(call).await),
         "page/snapshot" => Some(page_snapshot(call).await),
+        "page/screenshot" => Some(screenshot(call).await),
         "page/eval" => Some(eval(call).await),
         "page/click" => Some(page_action(call, click_script(call)).await),
         "page/type" => Some(page_action(call, type_script(call)).await),
@@ -181,34 +180,40 @@ async fn runtime_eval(expression: &str) -> Result<Value, String> {
 }
 
 async fn cdp_call(method: &str, params: Value) -> Result<Value, String> {
+    let mut client = TabClient::attach(&desktop_tab().await?)
+        .await
+        .map_err(|error| format!("connect to Desktop integrated browser failed: {error:#}"))?;
+    tokio::time::timeout(Duration::from_secs(10), client.call(method, params))
+        .await
+        .map_err(|_| "Desktop integrated browser did not respond in time".to_string())?
+        .map_err(|error| format!("browser command failed: {error:#}"))
+}
+
+/// The integrated browser's active page, as the direct tools attach to it.
+async fn desktop_tab() -> Result<DirectTab, String> {
     let target = active_target().await?;
-    let request_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let (mut ws, _) = connect_async(&target.web_socket_debugger_url)
-        .await
-        .map_err(|error| format!("connect to Desktop integrated browser failed: {error}"))?;
-    let request = json!({ "id": request_id, "method": method, "params": params });
-    ws.send(Message::Text(request.to_string().into()))
-        .await
-        .map_err(|error| format!("send browser command failed: {error}"))?;
-    let timeout = tokio::time::sleep(Duration::from_secs(10));
-    tokio::pin!(timeout);
-    loop {
-        tokio::select! {
-            _ = &mut timeout => return Err("Desktop integrated browser did not respond in time".to_string()),
-            message = ws.next() => {
-                let Some(message) = message else { return Err("Desktop integrated browser connection closed".to_string()); };
-                let message = message.map_err(|error| format!("read browser response failed: {error}"))?;
-                let Message::Text(text) = message else { continue; };
-                let value: Value = serde_json::from_str(&text).map_err(|error| format!("invalid browser response: {error}"))?;
-                if value.get("id").and_then(Value::as_u64) != Some(request_id) {
-                    continue;
-                }
-                if let Some(error) = value.get("error") {
-                    return Err(format!("browser command failed: {error}"));
-                }
-                return Ok(value.get("result").cloned().unwrap_or(Value::Null));
-            }
+    Ok(DirectTab::Page {
+        websocket: target.web_socket_debugger_url,
+        target_id: target.id,
+    })
+}
+
+/// A screenshot through the direct tools, with nothing to mask: the
+/// integrated browser has no owner with typed secrets.
+async fn screenshot(call: &ToolCall) -> ToolResult {
+    let tab = match desktop_tab().await {
+        Ok(tab) => tab,
+        Err(error) => return error_result(call, error),
+    };
+    match DirectSession::attach(&tab, Arc::new(OpenGuard), false).await {
+        Ok(mut session) => {
+            let step = session.run("screenshot", &json!({})).await;
+            tool_result(&call.id, &call.name, &step)
         }
+        Err(error) => error_result(
+            call,
+            format!("connect to Desktop integrated browser failed: {error:#}"),
+        ),
     }
 }
 

@@ -11,22 +11,27 @@
 mod act;
 mod consent;
 mod fill;
+mod fingerprint;
+mod frames;
 mod open;
+mod resume;
 mod settle;
 mod tabs;
+mod uncover;
 
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::cdp::Connection;
-use crate::engine::{JevActOutcome, JevBrowser, JevDialog, StaleObservation};
-use crate::python_json;
+use crate::engine::{JevActOutcome, JevBrowser, JevDialog, JevPageFacts, StaleObservation};
+use fingerprint::fingerprint_with_frames;
 pub(crate) use open::{LoadFailed, close_target, create_target};
+pub(crate) use resume::TabsGone;
 use settle::{NAVIGATED, TRACK_JS, is_navigation};
-use tabs::Tab;
+pub(crate) use tabs::{OwnedTab, TabLedger};
+use tabs::{SharedLedger, Tab};
 
 /// The observation: `snapshot.js` called with `tree.js`'s helpers for the
 /// composed tree (open shadow roots and same-origin frames) and its parts:
@@ -59,6 +64,10 @@ pub(crate) struct Page {
     tabs: Vec<Tab>,
     /// Tabs Jev's tabs opened that it has not attached to, closed with it.
     stray: Vec<String>,
+    /// Tabs already open when a continued call re-attached: opened between
+    /// calls (the user's own clicks, a page's timer), never adopted or
+    /// closed as if this call's inputs had opened them.
+    seen: Vec<String>,
     /// Whether the task's tab is shown, so an adopted one is shown too.
     foreground: bool,
     /// The action whose effects still have to settle before the next read.
@@ -67,6 +76,10 @@ pub(crate) struct Page {
     opened_tab: bool,
     /// Inject DuckDuckGo's autoconsent into every document (see `consent`).
     autoconsent: bool,
+    /// The tabs above as the page's owner reads them (see `tabs`).
+    ledger: SharedLedger,
+    /// Read the text of frames of another origin (see `frames`).
+    frame_text: bool,
 }
 
 impl Page {
@@ -174,7 +187,15 @@ impl Page {
                     return Err(StaleObservation::new("Document is navigating").into());
                 }
                 Ok(mut observation) => {
-                    let fingerprint = fingerprint(&observation);
+                    let read = match self.frame_text {
+                        true => self.read_frames().await,
+                        false => Vec::new(),
+                    };
+                    // Taken before the frames' text joins the page text: a
+                    // frame's text is not the page's progress (see
+                    // `fingerprint_with_frames`).
+                    let fingerprint = fingerprint_with_frames(&observation, &read);
+                    frames::add_frames(&mut observation, read);
                     observation["fingerprint"] = json!(fingerprint);
                     add_dialogs(&mut observation, self.connection.take_dialogs());
                     self.add_opened_tab(&mut observation);
@@ -253,10 +274,18 @@ impl JevBrowser for Page {
     async fn refuse_cookie_banner(&mut self) -> anyhow::Result<Option<String>> {
         Page::refuse_cookie_banner(self).await
     }
+
+    async fn describe(&mut self) -> anyhow::Result<Option<JevPageFacts>> {
+        let facts = self.evaluate(DESCRIBE_JS).await?;
+        Ok(serde_json::from_value(facts).ok())
+    }
 }
 
+/// The main document's HTTP status and visible headings.
+const DESCRIBE_JS: &str = include_str!("assets/describe.js");
+
 /// Page text cap, as `snapshot.js` applies it.
-const TEXT_CHARS: usize = 6000;
+pub(crate) const TEXT_CHARS: usize = 6000;
 
 /// Put answered dialogs on an observation: as `dialogs`, and as one line
 /// each before the page text, where the model reads page content.
@@ -290,105 +319,9 @@ pub(crate) fn add_dialogs(observation: &mut Value, dialogs: Vec<JevDialog>) {
     observation["dialogs"] = json!(dialogs);
 }
 
-/// Upstream hashes a canonical dump of exactly these four fields. Jev hashes
-/// only the actions upstream would have observed: offscreen controls and the
-/// `context` naming each one are left out, so a countdown or carousel below
-/// the fold cannot make a no-op step look like progress and defeat the stall
-/// rule. An observation without either hashes exactly as upstream's does.
-pub(crate) fn fingerprint(observation: &Value) -> String {
-    let mut content = serde_json::Map::new();
-    for key in ["url", "text", "scroll"] {
-        content.insert(
-            key.into(),
-            observation.get(key).cloned().unwrap_or(Value::Null),
-        );
-    }
-    let actions = observation.get("actions").map(|actions| match actions {
-        Value::Array(actions) => Value::Array(
-            actions
-                .iter()
-                .filter(|action| action.get("offscreen") != Some(&Value::Bool(true)))
-                .map(|action| {
-                    let mut action = action.clone();
-                    if let Some(action) = action.as_object_mut() {
-                        action.remove("context");
-                    }
-                    action
-                })
-                .collect(),
-        ),
-        other => other.clone(),
-    });
-    content.insert("actions".into(), actions.unwrap_or(Value::Null));
-    let canonical = python_json::dumps_sorted(&Value::Object(content));
-    Sha256::digest(canonical.as_bytes())
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            use std::fmt::Write as _;
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fixture() -> Value {
-        serde_json::from_str(include_str!("../tests/fixtures/fingerprint.json")).unwrap()
-    }
-
-    #[test]
-    fn fingerprint_matches_upstreams_hash_exactly() {
-        let fixture = fixture();
-        let ours = fingerprint(&fixture["page"]);
-        assert_eq!(ours, fixture["upstream"].as_str().unwrap());
-        assert_eq!(ours, fixture["sha256"].as_str().unwrap());
-    }
-
-    #[test]
-    fn fingerprint_canonical_form_matches_upstream() {
-        let fixture = fixture();
-        let mut content = serde_json::Map::new();
-        for key in ["url", "text", "actions", "scroll"] {
-            content.insert(key.into(), fixture["page"][key].clone());
-        }
-        assert_eq!(
-            python_json::dumps_sorted(&Value::Object(content)),
-            fixture["canonical"].as_str().unwrap()
-        );
-    }
-
-    #[test]
-    fn fingerprint_ignores_fields_upstream_excludes() {
-        let fixture = fixture();
-        let mut page = fixture["page"].clone();
-        let before = fingerprint(&page);
-        page["title"] = json!("a different title");
-        page["guards"] = json!({});
-        page["marker"] = json!([1, 2, 3]);
-        assert_eq!(fingerprint(&page), before);
-
-        page["scroll"] = json!({"y": 400, "height": 2400});
-        assert_ne!(fingerprint(&page), before);
-    }
-
-    #[test]
-    fn fingerprint_ignores_offscreen_controls_and_context() {
-        let fixture = fixture();
-        let mut page = fixture["page"].clone();
-        let before = fingerprint(&page);
-        let actions = page["actions"].as_array_mut().unwrap();
-        actions.push(
-            json!({"id": "e99", "kind": "click", "label": "Sale ends in 59s",
-            "offscreen": true, "rect": {"x": 0, "y": 2400, "w": 90, "h": 20}}),
-        );
-        actions[0]["context"] = json!("Checkout");
-        assert_eq!(fingerprint(&page), before);
-
-        page["actions"][0]["label"] = json!("renamed");
-        assert_ne!(fingerprint(&page), before);
-    }
 
     #[test]
     fn dialogs_come_before_the_page_text_and_leave_the_fingerprint() {

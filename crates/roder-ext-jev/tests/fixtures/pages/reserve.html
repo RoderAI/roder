@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Tables · San Francisco</title>
+  <style>
+    body { font: 14px sans-serif; margin: 16px; }
+    .bar { display: flex; gap: 12px; align-items: flex-start; }
+    [role=listbox] { list-style: none; padding: 0; margin: 4px 0; border: 1px solid #aaa; }
+    [role=option] { padding: 4px 8px; cursor: pointer; }
+    #cal table button { width: 34px; height: 26px; }
+    #error { color: #b00; }
+  </style>
+</head>
+<body>
+  <h1>Book a table in San Francisco</h1>
+  <!-- A city page like a booking site's: a location autocomplete, a custom
+       date picker whose Today comes from the machine clock, a custom party
+       listbox, and a Search button that navigates with the choices in the
+       query. Nothing here is a native control a single fill could set. -->
+  <div class="bar">
+    <div>
+      <label for="loc">Location</label>
+      <input id="loc" role="combobox" aria-autocomplete="list" aria-controls="loc-list"
+             aria-expanded="false" autocomplete="off" placeholder="Neighbourhood">
+      <ul id="loc-list" role="listbox" hidden></ul>
+    </div>
+    <div>
+      <button type="button" id="date-btn" aria-haspopup="dialog" aria-expanded="false">Date: Today</button>
+      <div id="cal" role="dialog" aria-label="Choose a date" hidden>
+        <p id="month"></p>
+        <table><tbody id="days"></tbody></table>
+      </div>
+    </div>
+    <div>
+      <button type="button" id="party-btn" aria-haspopup="listbox" aria-expanded="false">2 Guests</button>
+      <ul id="party" role="listbox" aria-label="Party size" hidden></ul>
+    </div>
+    <button type="button" id="search">Search</button>
+  </div>
+  <p id="error"></p>
+  <script>
+    const places = ['Mission District', 'Marina', 'Mission Bay', 'Nob Hill', 'North Beach'];
+    const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+    const today = new Date();
+    const state = {loc: '', date: iso(today), seats: 2};
+    const loc = document.getElementById('loc'), locList = document.getElementById('loc-list');
+    loc.addEventListener('input', () => {
+      state.loc = '';
+      locList.innerHTML = '';
+      const typed = loc.value.trim().toLowerCase();
+      for (const name of places) {
+        if (!typed || !name.toLowerCase().startsWith(typed)) continue;
+        const option = document.createElement('li');
+        option.setAttribute('role', 'option');
+        option.textContent = name;
+        option.addEventListener('click', () => {
+          loc.value = name; state.loc = name; locList.innerHTML = '';
+          locList.hidden = true; loc.setAttribute('aria-expanded', 'false');
+        });
+        locList.append(option);
+      }
+      locList.hidden = !locList.children.length;
+      loc.setAttribute('aria-expanded', String(locList.children.length > 0));
+    });
+
+    const dateBtn = document.getElementById('date-btn'), cal = document.getElementById('cal');
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    dateBtn.addEventListener('click', () => {
+      cal.hidden = !cal.hidden;
+      dateBtn.setAttribute('aria-expanded', String(!cal.hidden));
+      if (cal.hidden) return;
+      document.getElementById('month').textContent =
+        today.toLocaleString('en-US', {month: 'long', year: 'numeric'});
+      const days = document.getElementById('days');
+      days.innerHTML = '';
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+      let row;
+      for (let n = 1; n <= last; n++) {
+        if ((n - 1) % 7 === 0) { row = document.createElement('tr'); days.append(row); }
+        const day = new Date(today.getFullYear(), today.getMonth(), n);
+        const cell = document.createElement('td'), button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = String(n);
+        const isToday = n === today.getDate();
+        button.setAttribute('aria-label', names[day.getDay()] + ', ' + months[day.getMonth()] + ' ' +
+          n + ', ' + day.getFullYear() + (isToday ? ' (Today)' : ''));
+        button.disabled = n < today.getDate();
+        button.addEventListener('click', () => {
+          state.date = iso(day);
+          dateBtn.textContent = 'Date: ' + (isToday ? 'Today' : months[day.getMonth()] + ' ' + n);
+          cal.hidden = true; dateBtn.setAttribute('aria-expanded', 'false');
+        });
+        cell.append(button); row.append(cell);
+      }
+    });
+
+    const partyBtn = document.getElementById('party-btn'), party = document.getElementById('party');
+    for (let n = 1; n <= 8; n++) {
+      const option = document.createElement('li');
+      option.setAttribute('role', 'option');
+      option.textContent = n + (n === 1 ? ' Guest' : ' Guests');
+      option.addEventListener('click', () => {
+        state.seats = n; partyBtn.textContent = option.textContent;
+        party.hidden = true; partyBtn.setAttribute('aria-expanded', 'false');
+      });
+      party.append(option);
+    }
+    partyBtn.addEventListener('click', () => {
+      party.hidden = !party.hidden;
+      partyBtn.setAttribute('aria-expanded', String(!party.hidden));
+    });
+
+    document.getElementById('search').addEventListener('click', () => {
+      if (!state.loc) {
+        document.getElementById('error').textContent = 'Choose a location from the list.';
+        return;
+      }
+      const query = new URLSearchParams({date: state.date, seats: state.seats, q: state.loc});
+      location.href = 'reserve-search.html?' + query;
+    });
+  </script>
+</body>
+</html>

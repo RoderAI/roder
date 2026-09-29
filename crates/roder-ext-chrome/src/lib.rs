@@ -6,11 +6,17 @@
 //! process bridge), so they can be unit-tested against a fake bridge without a
 //! real browser.
 //!
+//! [`direct`] is Roder's own direct CDP toolset, bound to one tab: the
+//! `chrome_*` tools use it for Roder Desktop's integrated browser when no
+//! extension is connected, and Jev binds it to its session's tab as
+//! `jev_tab_*` (see `roder-ext-jev`).
+//!
 //! This crate deliberately depends only on `roder-api` (not `roder-core`): the
 //! shared browser-bridge contract lives in [`roder_api::chrome`].
 
 mod artifacts;
 mod desktop_cdp;
+pub mod direct;
 mod extension;
 mod policy;
 mod session;

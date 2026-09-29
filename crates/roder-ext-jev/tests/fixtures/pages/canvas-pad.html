@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Canvas pad</title>
+  <style> body { font: 15px sans-serif; margin: 8px; } canvas { border: 1px solid #333; } </style>
+</head>
+<body>
+  <h1>Confirm on the pad</h1>
+  <p>Press the OK button drawn on the pad.</p>
+  <!-- A control only drawn on a canvas: Jev can press the canvas (it has a
+       click listener) but only at its centre, which is not the button. -->
+  <canvas id="pad" width="400" height="200" aria-label="Drawing pad"></canvas>
+  <p id="out"></p>
+  <script>
+    const pad = document.getElementById('pad'), g = pad.getContext('2d');
+    g.fillStyle = '#eee'; g.fillRect(0, 0, 400, 200);
+    g.fillStyle = '#2a7'; g.fillRect(290, 20, 90, 50);
+    g.fillStyle = '#fff'; g.font = '24px sans-serif'; g.fillText('OK', 318, 54);
+    pad.addEventListener('click', e => {
+      const r = pad.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      if (x >= 290 && x <= 380 && y >= 20 && y <= 70) {
+        document.getElementById('out').textContent = 'Canvas OK pressed';
+        window.canvasOk = true;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1363,7 +1363,10 @@
     "page": "one-time-code.html",
     "goal": "Verify the sign-in.",
     "expect": {
-      "status": ["needs_input", "blocked"],
+      "status": [
+        "needs_input",
+        "blocked"
+      ],
       "posts": [],
       "dom": {
         "document.querySelector('[name=code]').value": ""
@@ -1384,6 +1387,464 @@
         "stopped_because_contains": "\"Code\"",
         "acts": 0,
         "model_calls": 1
+      }
+    }
+  },
+  {
+    "id": "reserve_wrong_neighbourhood",
+    "covers": "results mix neighbourhoods and every card offers the same slot label: the slot must be taken in a Mission card, not the Marina card listed first; the booking widget opens in a frame of another site and nothing is reserved",
+    "page": "reserve-search.html?seats=3&q=Mission%20District",
+    "goal": "Choose the 8:15 PM Dining Room slot at a restaurant in the Mission District (not the Marina) and stop when the reservation details show. Do not log in or reserve.",
+    "expect": {
+      "status": "done",
+      "posts": [],
+      "dom": {
+        "new URL(document.getElementById('widget').src).searchParams.get('area')": "Mission District",
+        "new URL(document.getElementById('widget').src).searchParams.get('time')": "8:15 PM"
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "8:15 PM Dining Room",
+          "context": "Angie's Pizza"
+        }
+      ],
+      "expect": {
+        "acts": 1
+      }
+    }
+  },
+  {
+    "id": "access_denied_page",
+    "covers": "a page served 403 \"Access Denied\" ends the run as access_denied before any decision, with the evidence",
+    "page": "access-denied.html?status=403",
+    "goal": "Find a table for 3 people tonight.",
+    "expect": {
+      "status": "access_denied",
+      "stopped_because_contains": "HTTP 403",
+      "model_calls": 0,
+      "acts": 0
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Search"
+        }
+      ]
+    }
+  },
+  {
+    "id": "empty_first_look",
+    "covers": "a page that commits blank and renders 700 ms later is read again before any decision, instead of being judged blocked",
+    "page": "empty-then-render.html",
+    "goal": "Show tonight's specials.",
+    "expect": {
+      "status": "done",
+      "text_contains": [
+        "Mole negro"
+      ]
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Show specials"
+        }
+      ],
+      "expect": {
+        "acts": 1,
+        "model_calls": 2
+      }
+    }
+  },
+  {
+    "id": "rotating_frame_no_progress",
+    "covers": "a large frame of another site rotates its text on its own while the button Jev presses does nothing: the frame's text is read but does not count as progress, so the stall rule still ends the run",
+    "page": "rotating-ad.html",
+    "goal": "Apply the coupon and stop when the order total shows a discount.",
+    "expect": {
+      "status": "blocked",
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Apply coupon",
+          "repeat": 5
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click Apply coupon",
+          "click Apply coupon",
+          "click Apply coupon"
+        ],
+        "page_changed": [
+          false,
+          false,
+          false
+        ],
+        "model_calls": 3
+      }
+    }
+  },
+  {
+    "id": "popover_escape",
+    "covers": "a date picker Jev opened stays open over the results; Jev closes it (Escape) and takes the slot in the same step",
+    "page": "popover.html?close=escape",
+    "goal": "Set the date to Sep 28 in the date picker, then choose the 7:00 PM slot at Luna Cafe.",
+    "expect": {
+      "status": "done",
+      "text_contains": [
+        "Selected 7:00 PM at Luna Cafe"
+      ],
+      "dom": {
+        "window.slot ?? null": "7:00 PM at Luna Cafe",
+        "window.day ?? null": 28
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Date: Today"
+        },
+        {
+          "click": "28"
+        },
+        {
+          "click": "7:00 PM"
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click Date: Today",
+          "click 28",
+          "click 7:00 PM"
+        ],
+        "covered": [
+          false,
+          false,
+          false
+        ],
+        "model_calls": 4
+      }
+    }
+  },
+  {
+    "id": "popover_button",
+    "covers": "a date picker Jev opened stays open over the results; Jev closes it (its Close button) and takes the slot in the same step",
+    "page": "popover.html?close=button",
+    "goal": "Set the date to Sep 28 in the date picker, then choose the 7:00 PM slot at Luna Cafe.",
+    "expect": {
+      "status": "done",
+      "text_contains": [
+        "Selected 7:00 PM at Luna Cafe"
+      ],
+      "dom": {
+        "window.slot ?? null": "7:00 PM at Luna Cafe",
+        "window.day ?? null": 28
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Date: Today"
+        },
+        {
+          "click": "28"
+        },
+        {
+          "click": "7:00 PM"
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click Date: Today",
+          "click 28",
+          "click 7:00 PM"
+        ],
+        "covered": [
+          false,
+          false,
+          false
+        ],
+        "model_calls": 4
+      }
+    }
+  },
+  {
+    "id": "popover_outside",
+    "covers": "a date picker Jev opened stays open over the results; Jev closes it (a press outside it) and takes the slot in the same step",
+    "page": "popover.html?close=outside",
+    "goal": "Set the date to Sep 28 in the date picker, then choose the 7:00 PM slot at Luna Cafe.",
+    "expect": {
+      "status": "done",
+      "text_contains": [
+        "Selected 7:00 PM at Luna Cafe"
+      ],
+      "dom": {
+        "window.slot ?? null": "7:00 PM at Luna Cafe",
+        "window.day ?? null": 28
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Date: Today"
+        },
+        {
+          "click": "28"
+        },
+        {
+          "click": "7:00 PM"
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click Date: Today",
+          "click 28",
+          "click 7:00 PM"
+        ],
+        "covered": [
+          false,
+          false,
+          false
+        ],
+        "model_calls": 4
+      }
+    }
+  },
+  {
+    "id": "popover_icon_fallback",
+    "covers": "a picker only an unlabelled icon closes covers the slot: Jev stops blocked, and the fallback closes it and takes the slot in the same tab",
+    "page": "popover.html?close=icon",
+    "goal": "Set the date to Sep 28 in the date picker, then choose the 7:00 PM slot at Luna Cafe.",
+    "expect": {
+      "status": "blocked",
+      "dom": {
+        "window.slot ?? null": null
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Date: Today"
+        },
+        {
+          "click": "28"
+        },
+        {
+          "click": "7:00 PM",
+          "repeat": 3
+        }
+      ],
+      "expect": {
+        "covered": [
+          false,
+          false,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    "fallback": {
+      "plan": [
+        {
+          "tool": "click",
+          "args": {
+            "ref_of": "tag:span"
+          }
+        },
+        {
+          "tool": "click",
+          "args": {
+            "ref_of": "7:00 PM"
+          }
+        },
+        {
+          "say": "DONE: 7:00 PM at Luna Cafe is selected"
+        }
+      ],
+      "expect": {
+        "status": "done",
+        "text_contains": [
+          "Selected 7:00 PM at Luna Cafe"
+        ],
+        "dom": {
+          "window.slot ?? null": "7:00 PM at Luna Cafe"
+        }
+      }
+    }
+  },
+  {
+    "id": "canvas_fallback",
+    "covers": "a button drawn on a canvas: Jev can only press the canvas's centre and stalls; the fallback presses the drawn button by coordinates",
+    "page": "canvas-pad.html",
+    "goal": "Press the OK button drawn on the pad.",
+    "expect": {
+      "status": "blocked",
+      "dom": {
+        "window.canvasOk ?? false": false
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Drawing pad",
+          "repeat": 3
+        }
+      ]
+    },
+    "fallback": {
+      "plan": [
+        {
+          "tool": "click",
+          "args": {
+            "at": {
+              "label": "Drawing pad",
+              "fx": 0.84,
+              "fy": 0.22
+            }
+          }
+        },
+        {
+          "say": "DONE: the pad says Canvas OK pressed"
+        }
+      ],
+      "expect": {
+        "status": "done",
+        "text_contains": [
+          "Canvas OK pressed"
+        ],
+        "dom": {
+          "window.canvasOk ?? false": true
+        }
+      }
+    }
+  },
+  {
+    "id": "drag_fallback",
+    "covers": "a board whose cards move only by dragging: Jev's clicks change nothing; the fallback drags the card",
+    "page": "drag-cards.html",
+    "goal": "Move Card A to the Done column.",
+    "expect": {
+      "status": "blocked",
+      "dom": {
+        "window.moved ?? null": null
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Card A",
+          "repeat": 3
+        }
+      ]
+    },
+    "fallback": {
+      "plan": [
+        {
+          "tool": "drag",
+          "args": {
+            "from_ref_of": "Card A",
+            "to_ref_of": "Done column"
+          }
+        },
+        {
+          "say": "DONE: Card A is in the Done column"
+        }
+      ],
+      "expect": {
+        "status": "done",
+        "text_contains": [
+          "Moved Card A to Done"
+        ],
+        "dom": {
+          "window.moved ?? null": "Card A -> done"
+        }
+      }
+    }
+  },
+  {
+    "id": "hover_menu_fallback",
+    "covers": "a menu that opens only while the pointer rests on it and closes on a press: Jev never sees its items; the fallback hovers and opens one",
+    "page": "hover-menu.html",
+    "goal": "Open the Laptops page from the Products menu.",
+    "expect": {
+      "status": "blocked"
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Products",
+          "repeat": 3
+        }
+      ]
+    },
+    "fallback": {
+      "plan": [
+        {
+          "tool": "hover",
+          "args": {
+            "ref_of": "Products"
+          }
+        },
+        {
+          "tool": "click",
+          "args": {
+            "ref_of": "Laptops"
+          }
+        },
+        {
+          "say": "DONE: the Laptops page is open"
+        }
+      ],
+      "expect": {
+        "status": "done",
+        "url_ends_with": "/pages/landing.html?page=laptops",
+        "title": "Landing"
+      }
+    }
+  },
+  {
+    "id": "keyboard_only_fallback",
+    "covers": "a page with nothing to click, fill or choose, driven by a key: Jev is offered nothing; the fallback presses the key",
+    "page": "keyboard-only.html",
+    "goal": "Reveal the vault code and tell me what it is.",
+    "expect": {
+      "status": "blocked",
+      "dom": {
+        "window.revealed ?? false": false
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "blocked": true
+        }
+      ]
+    },
+    "fallback": {
+      "plan": [
+        {
+          "tool": "key",
+          "args": {
+            "key": "k"
+          }
+        },
+        {
+          "say": "DONE: the code is 4417"
+        }
+      ],
+      "expect": {
+        "status": "done",
+        "text_contains": [
+          "Code: 4417"
+        ],
+        "dom": {
+          "window.revealed ?? false": true
+        }
       }
     }
   }

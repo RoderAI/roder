@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::{JevDialog, JevStatus};
+use super::{JevDialog, JevStatus, JevStopCause};
+use crate::secret::Secrets;
 use crate::usage::JevUsage;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -13,6 +14,9 @@ pub struct JevActionRecord {
     pub step: usize,
     pub action: String,
     pub kind: String,
+    /// The card, row or section the control sat in, when the page named one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     /// What a fill typed; `[secret]` for a password or one-time-code field.
     pub text: Option<String>,
     pub url: String,
@@ -23,6 +27,10 @@ pub struct JevActionRecord {
     /// Why the page did not keep what the action asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    /// The target was covered and Jev dismissed what covered it first:
+    /// how (Escape, the layer's close control, a press outside it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uncovered: Option<String>,
     /// Dialogs the page opened after this action, and how Jev answered.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dialogs: Vec<JevDialog>,
@@ -31,8 +39,9 @@ pub struct JevActionRecord {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub opened_tab: bool,
     /// What the action visibly did: the address it went to, the controls
-    /// whose value or state changed, and those it showed or removed.
-    #[serde(skip)]
+    /// whose value or state changed, and those it showed or removed. Page
+    /// text, as untrusted as the rest.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub effect: Option<String>,
     pub elapsed_ms: u64,
     /// Detailed planner telemetry is available to embedded hosts without
@@ -60,6 +69,40 @@ pub struct JevActionRecord {
     pub usage: Value,
     #[serde(skip)]
     pub executed_ms: u64,
+}
+
+#[cfg(test)]
+impl JevActionRecord {
+    /// A step that clicked or typed into `label`, for tests.
+    pub(crate) fn for_tests(kind: &str, label: &str) -> Self {
+        Self {
+            step: 1,
+            action: label.into(),
+            kind: kind.into(),
+            context: None,
+            text: None,
+            url: String::new(),
+            page_changed: Some(false),
+            covered: false,
+            refused: None,
+            uncovered: None,
+            dialogs: Vec::new(),
+            opened_tab: false,
+            effect: None,
+            elapsed_ms: 0,
+            choice: "e1".into(),
+            probability: Value::Null,
+            confidence: 1.0,
+            target_confidence: None,
+            decision_latency_ms: 0,
+            text_helper: None,
+            text_latency_ms: 0,
+            operation: "CLICK".into(),
+            target: None,
+            usage: Value::Null,
+            executed_ms: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,7 +138,22 @@ pub struct JevRunResult {
     #[serde(skip)]
     pub decisions: Vec<JevDecisionRecord>,
     pub stopped_because: Option<String>,
+    /// What ended a run that stopped short of its goal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_cause: Option<JevStopCause>,
     pub untrusted: bool,
+    /// The controls the final page offered Jev, in the order it observed
+    /// them (on screen first). Page text, as untrusted as the rest.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub controls: Vec<JevControl>,
+    /// What else the final page showed: its HTTP status, headings and the
+    /// text of frames Jev reads but cannot act in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<JevPageFacts>,
+    /// Every secret typed so far, this run's and the ones it started with,
+    /// for the next run on the same tab (see `JevEngineConfig::with_secrets`).
+    #[serde(skip)]
+    pub(crate) typed_secrets: Secrets,
 }
 
 impl JevRunResult {
@@ -120,7 +178,61 @@ impl JevRunResult {
             usage: JevUsage::none(),
             decisions: Vec::new(),
             stopped_because: Some(reason.into()),
+            stop_cause: (status == JevStatus::Blocked).then_some(JevStopCause::NotLoaded),
             untrusted: true,
+            controls: Vec::new(),
+            page: None,
+            typed_secrets: Secrets::default(),
         }
     }
+}
+
+/// One control the final page offered, as the caller reads it. A secret
+/// field's value is never included.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct JevControl {
+    pub label: String,
+    /// `click`, `fill` or `select`.
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// The card, row or section that tells it apart from controls that read
+    /// the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    /// The nearest heading before it on the page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+    /// A field's text, a select's chosen option, or a toggle's state, cut to
+    /// 60 characters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// A select's options, at most 12.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub offscreen: bool,
+}
+
+/// What a page shows besides its text and controls, as far as the browser
+/// can tell ([`super::JevBrowser::describe`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JevPageFacts {
+    /// The main document's HTTP status, when the browser reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    /// Visible headings, at most 12 of 80 characters each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headings: Vec<String>,
+    /// Text of the frames Jev reads but does not act in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<JevFrameText>,
+}
+
+/// The text of one frame drawn over or in the page whose document Jev cannot
+/// reach from it (another origin): read only, never offered as actions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JevFrameText {
+    pub origin: String,
+    pub text: String,
 }

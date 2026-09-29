@@ -1,0 +1,362 @@
+[
+  {
+    "id": "catalog_session",
+    "covers": "page through a catalog in one call, then go on from that page in the same tab in the next",
+    "calls": [
+      {
+        "page": "catalog.html",
+        "goal": "Go to the second page of the catalog and stop there.",
+        "plan": [
+          {
+            "click": "Next page ›"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "new",
+          "url_ends_with": "/pages/catalog.html?page=2",
+          "tabs_open": 1
+        }
+      },
+      {
+        "goal": "Go to the next page of the catalog and open Widget 13.",
+        "plan": [
+          {
+            "click": "Next page ›"
+          },
+          {
+            "click": "Widget 13"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "continued",
+          "same_tab": true,
+          "title": "Landing",
+          "url_ends_with": "/pages/landing.html?item=13",
+          "tabs_open": 1
+        }
+      }
+    ]
+  },
+  {
+    "id": "report_session",
+    "covers": "a link opens a tab in one call; the next call goes on in that tab",
+    "calls": [
+      {
+        "page": "tabs.html",
+        "goal": "Open the Q3 report and stop when it is shown.",
+        "plan": [
+          {
+            "click": "Open the Q3 report"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "title": "Report Q3",
+          "tabs_open": 2
+        }
+      },
+      {
+        "goal": "Approve the report that is open.",
+        "plan": [
+          {
+            "click": "Approve report"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "continued",
+          "same_tab": true,
+          "title": "Report Q3",
+          "text_contains": [
+            "Report approved."
+          ],
+          "tabs_open": 2
+        }
+      }
+    ]
+  },
+  {
+    "id": "search_then_submit_session",
+    "covers": "choose an autocomplete suggestion in one call and submit the search in the next, the choice still on the page",
+    "values": {
+      "Destination": "Lisbon"
+    },
+    "posts": [
+      {
+        "path": "/submit/search",
+        "fields": {
+          "destination": "Lisbon, Portugal",
+          "place": "LIS"
+        }
+      }
+    ],
+    "calls": [
+      {
+        "page": "search.html",
+        "goal": "Enter Lisbon as the flight destination and pick Lisbon, Portugal from the suggestions; do not search yet.",
+        "plan": [
+          {
+            "fill": "Destination"
+          },
+          {
+            "click": "Lisbon, Portugal"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "new",
+          "tabs_open": 1
+        }
+      },
+      {
+        "goal": "Search flights for the destination already chosen.",
+        "plan": [
+          {
+            "click": "Search flights"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "continued",
+          "same_tab": true,
+          "url_ends_with": "/submit/search"
+        }
+      }
+    ]
+  },
+  {
+    "id": "navigate_in_session_tab",
+    "covers": "a call with a new url loads it in the session's tab instead of opening one",
+    "calls": [
+      {
+        "page": "counter.html",
+        "goal": "Add one to the counter.",
+        "plan": [
+          {
+            "click": "Add one"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "text_contains": [
+            "Count:\n1"
+          ],
+          "tabs_open": 1
+        }
+      },
+      {
+        "page": "catalog.html",
+        "goal": "Open Widget 2 from the catalog.",
+        "plan": [
+          {
+            "click": "Widget 2"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "navigated",
+          "same_tab": true,
+          "title": "Landing",
+          "url_ends_with": "/pages/landing.html?item=2",
+          "tabs_open": 1
+        }
+      }
+    ]
+  },
+  {
+    "id": "reserve_search_session",
+    "covers": "search tables on a city page in one call, then pick a slot in the next; the booking widget opens in a frame of another site, read but not acted in",
+    "values": {
+      "Location": "Mission"
+    },
+    "calls": [
+      {
+        "page": "reserve.html",
+        "goal": "Search tables for 3 people today in Mission District; stop when the results list shows time slots.",
+        "plan": [
+          {
+            "fill": "Location"
+          },
+          {
+            "click": "Mission District"
+          },
+          {
+            "click": "2 Guests"
+          },
+          {
+            "click": "3 Guests"
+          },
+          {
+            "click": "Search"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "new",
+          "text_contains": [
+            "3 Guests",
+            "Today",
+            "Mission District"
+          ],
+          "tabs_open": 1
+        }
+      },
+      {
+        "goal": "Pick the 8:15 PM Dining Room slot at Angie's Pizza and stop when the reservation details show. Do not log in or reserve.",
+        "plan": [
+          {
+            "click": "8:15 PM Dining Room",
+            "context": "Angie's Pizza"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "continued",
+          "same_tab": true,
+          "tabs_open": 1,
+          "frame_text_contains": [
+            "Complete Your Reservation",
+            "Angie's Pizza",
+            "{today}",
+            "8:15 PM",
+            "3 Guests"
+          ],
+          "digest_contains": [
+            "Frame http://localhost:",
+            "Complete Your Reservation",
+            "Angie's Pizza",
+            "8:15 PM"
+          ],
+          "forbid_actions": [
+            "click Reserve Now",
+            "click Log in"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "reserve_signin_wall",
+    "covers": "a slot leads to a same-origin sign-in wall; the call stops there without filling or submitting it",
+    "calls": [
+      {
+        "page": "reserve-search.html?seats=3&q=Mission%20District&variant=details",
+        "goal": "Show tonight's results for 3 guests in Mission District and stop there.",
+        "plan": [],
+        "expect": {
+          "status": "done",
+          "text_contains": [
+            "3 Guests",
+            "Angie's Pizza"
+          ],
+          "tabs_open": 1
+        }
+      },
+      {
+        "goal": "Pick the 8:15 PM Dining Room slot at Angie's Pizza and stop at the reservation details. Do not sign in or enter any details.",
+        "plan": [
+          {
+            "click": "8:15 PM Dining Room",
+            "context": "Angie's Pizza"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "continued",
+          "same_tab": true,
+          "title": "Complete your reservation",
+          "text_contains": [
+            "Angie's Pizza",
+            "3 Guests",
+            "Sign in to reserve."
+          ],
+          "forbid_actions": [
+            "fill Email",
+            "fill Password",
+            "click Continue"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "reserve_change_party",
+    "covers": "go on from a results page and change the party size through its summary chip",
+    "calls": [
+      {
+        "page": "reserve-search.html?seats=2&q=Mission%20District",
+        "goal": "Show tonight's results in Mission District and stop there.",
+        "plan": [],
+        "expect": {
+          "status": "done",
+          "text_contains": [
+            "2 Guests"
+          ],
+          "tabs_open": 1
+        }
+      },
+      {
+        "goal": "Change the party size to 3 guests with the guests chip; stop when the results show 3 Guests.",
+        "plan": [
+          {
+            "click": "2 Guests"
+          },
+          {
+            "click": "3 Guests"
+          }
+        ],
+        "expect": {
+          "status": "done",
+          "tab_note": "continued",
+          "same_tab": true,
+          "text_contains": [
+            "3 Guests"
+          ],
+          "digest_contains": [
+            "3 Guests"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "refused_then_next_site_session",
+    "covers": "the first site refuses access; the next call asks for a new tab for another site, which loads in the refused page's tab instead of leaving a dead tab open",
+    "calls": [
+      {
+        "page": "access-denied.html?status=403",
+        "goal": "Find a table for 3 people today in Mission District.",
+        "plan": [],
+        "expect": {
+          "status": "access_denied",
+          "tab_note": "new",
+          "tabs_open": 1,
+          "digest_contains": [
+            "the task is not finished",
+            "needs no confirmation from the user"
+          ]
+        }
+      },
+      {
+        "page": "reserve-search.html?seats=3&q=Mission%20District",
+        "tab": "new",
+        "goal": "Show the tables for 3 people today in Mission District and stop at the results.",
+        "plan": [],
+        "expect": {
+          "status": "done",
+          "tab_note": "navigated",
+          "same_tab": true,
+          "tabs_open": 1,
+          "text_contains": [
+            "3 Guests"
+          ],
+          "digest_contains": [
+            "had refused access"
+          ]
+        }
+      }
+    ]
+  }
+]

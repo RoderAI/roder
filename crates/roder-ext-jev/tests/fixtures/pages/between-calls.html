@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Inbox</title></head>
+<body>
+  <h1>Inbox</h1>
+  <!-- Between two jev_browse calls the user opens reports from this tab
+       (their opener is Jev's tab); the next call must leave them alone. -->
+  <ul>
+    <li><a id="q3" href="report.html?name=q3" target="_blank">Open the Q3 report</a></li>
+    <li><button id="annual" type="button" onclick="window.open('report.html?name=annual')">Open the annual report</button></li>
+  </ul>
+  <button type="button" onclick="document.getElementById('state').textContent = 'Marked read.'">Mark read</button>
+  <p id="state">Unread.</p>
+</body>
+</html>

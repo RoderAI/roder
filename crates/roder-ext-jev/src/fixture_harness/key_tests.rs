@@ -89,14 +89,6 @@ async fn escape_is_offered_while_a_list_is_open_and_closes_it() {
     assert_eq!(escape["id"], "press_escape");
     let space = action_space(open["actions"].as_array().unwrap());
     assert!(space.control("PRESS_ESCAPE").is_some());
-    // The open list covers the button.
-    let go = find(&open, "click", "Go").unwrap().clone();
-    let covered = page
-        .act(&go, &open, None, Duration::from_millis(100))
-        .await
-        .unwrap_err();
-    assert!(covered.is::<crate::engine::Covered>(), "{covered:#}");
-    let open = page.observe().await.unwrap();
     let escape = find(
         &open,
         "key",
@@ -123,6 +115,30 @@ async fn escape_is_offered_while_a_list_is_open_and_closes_it() {
         .await
         .unwrap();
     assert_eq!(outcome, JevActOutcome::done());
+    assert!(
+        clicked["text"]
+            .as_str()
+            .unwrap()
+            .contains("Go clicked for Par")
+    );
+}
+
+/// The open list covers the button; a click on it closes the list with
+/// Escape first (see `page::uncover`) and lands in the same step.
+#[tokio::test]
+async fn a_click_the_open_list_covers_closes_it_first() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("keys.html").await.unwrap();
+    let observation = page.observe().await.unwrap();
+    let (_, open) = act_on(&mut page, &observation, "fill", "City", Some("Par"))
+        .await
+        .unwrap();
+    let (outcome, clicked) = act_on(&mut page, &open, "click", "Go", None).await.unwrap();
+    assert_eq!(
+        outcome.uncovered.as_deref(),
+        Some("pressed Escape to close \"Paris\""),
+        "{outcome:?}"
+    );
     assert!(
         clicked["text"]
             .as_str()

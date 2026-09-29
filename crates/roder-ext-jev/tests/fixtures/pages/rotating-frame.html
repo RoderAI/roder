@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sponsored</title></head>
+<body>
+  <p id="offer">Sponsored: offer 0</p>
+  <script>
+    let n = 0;
+    setInterval(() => {
+      n += 1;
+      document.getElementById('offer').textContent = 'Sponsored: offer ' + n;
+    }, 250);
+  </script>
+</body>
+</html>

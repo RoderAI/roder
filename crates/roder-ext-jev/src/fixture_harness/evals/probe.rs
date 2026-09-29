@@ -83,6 +83,10 @@ impl JevBrowser for ProbedPage {
         self.page.fresh(observation, action).await
     }
 
+    async fn describe(&mut self) -> anyhow::Result<Option<crate::engine::JevPageFacts>> {
+        self.page.describe().await
+    }
+
     async fn act(
         &mut self,
         action: &Value,
@@ -114,4 +118,49 @@ impl JevBrowser for ProbedPage {
         }
         self.page.close().await
     }
+}
+
+/// Read `probes` from `target`'s document now, over a connection of its own
+/// (the engine still holds the page): Jev's end state before a fallback.
+pub(crate) async fn read(endpoint: &str, target: &str, probes: &[String]) -> Probed {
+    let mut probed = Probed::default();
+    let read = async {
+        let mut connection = crate::cdp::Connection::connect(endpoint).await?;
+        let attached = connection
+            .call(
+                "Target.attachToTarget",
+                serde_json::json!({"targetId": target, "flatten": true}),
+                None,
+            )
+            .await?;
+        let session = attached["sessionId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let mut values = BTreeMap::new();
+        for expression in probes {
+            let value = connection
+                .call(
+                    "Runtime.evaluate",
+                    serde_json::json!({"expression": expression, "returnByValue": true}),
+                    Some(&session),
+                )
+                .await
+                .map(|reply| reply["result"]["value"].clone())
+                .map_err(|error| format!("{error:#}"));
+            values.insert(expression.clone(), value);
+        }
+        anyhow::Ok(values)
+    };
+    match read.await {
+        Ok(values) => probed.dom = values,
+        Err(error) => {
+            for expression in probes {
+                probed
+                    .dom
+                    .insert(expression.clone(), Err(format!("{error:#}")));
+            }
+        }
+    }
+    probed
 }

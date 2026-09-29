@@ -27,7 +27,8 @@ docs_url = "https://code.claude.com/docs/en/chrome"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-tokio-tungstenite.workspace = true
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+rustls.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 roder-api.workspace = true

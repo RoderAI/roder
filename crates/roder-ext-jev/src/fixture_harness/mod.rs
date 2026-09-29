@@ -15,8 +15,10 @@
 //! add it to the eval corpus instead (see [`evals`]).
 
 mod browser;
+pub(crate) mod fallback_script;
 mod proxy;
 mod scripted;
+mod sessions;
 mod site;
 
 use std::path::PathBuf;
@@ -288,13 +290,19 @@ pub(crate) fn write_jsonl<T: Serialize>(name: &str, rows: &[T]) -> anyhow::Resul
 
 mod act_edge_tests;
 mod autoconsent_tests;
+mod booking_tests;
 mod clickable_tests;
 mod composed_tests;
 mod consent_tests;
 mod dialog_tests;
+mod digest_tests;
 mod evals;
+mod fallback_rule_tests;
+mod fallback_tests;
 mod field_tests;
 mod fill_tests;
+mod frame_text_tests;
+mod handover_tests;
 mod hidden_tab_tests;
 mod input_cost_tests;
 mod key_tests;
@@ -304,6 +312,9 @@ mod pointer_tests;
 mod reach_tests;
 mod region_tests;
 mod secret_tests;
+mod session_edge_tests;
+mod session_life_tests;
+mod session_tests;
 mod settle_tests;
 mod setup_tests;
 mod snapshot_cost_tests;
@@ -311,3 +322,4 @@ mod snapshot_tests;
 mod tab_tests;
 mod tests;
 mod twin_tests;
+mod uncover_tests;

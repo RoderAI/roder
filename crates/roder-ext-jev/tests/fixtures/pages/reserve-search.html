@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Tables · Search results</title>
+  <style>
+    body { font: 14px sans-serif; margin: 16px; }
+    .chips { display: flex; gap: 8px; margin-bottom: 12px; }
+    .card { border: 1px solid #ccc; padding: 8px 12px; margin: 8px 0; width: 560px; }
+    .card h3 { margin: 0 0 4px; }
+    .slots button { margin: 4px 4px 0 0; }
+    [role=listbox] { list-style: none; padding: 0; margin: 4px 0; border: 1px solid #aaa; }
+    [role=option] { padding: 4px 8px; cursor: pointer; }
+    #overlay { position: fixed; top: 60px; left: 180px; background: #fff; border: 2px solid #333;
+               padding: 8px; }
+    #overlay iframe { width: 460px; height: 320px; border: 0; display: block; }
+  </style>
+</head>
+<body>
+  <!-- Search results like a booking site's: summary chips that can be
+       changed in place, restaurant cards whose time slots read the same
+       across cards ("8:15 PM Dining Room"), some cards in the wrong
+       neighbourhood, and a Load more button. A slot opens the booking
+       widget in an overlay frame served from the other loopback host, so it
+       is another site: Jev can read it but not act in it. With
+       variant=details a slot instead goes to a same-origin sign-in page. -->
+  <div class="chips">
+    <button type="button" id="seats-btn" aria-haspopup="listbox" aria-expanded="false"></button>
+    <ul id="seats" role="listbox" aria-label="Party size" hidden></ul>
+    <span id="date-chip"></span>
+    <span id="loc-chip"></span>
+  </div>
+  <p id="count"></p>
+  <div id="cards"></div>
+  <button type="button" id="more">Load more</button>
+  <div id="overlay" hidden>
+    <button type="button" id="close">Close</button>
+    <iframe id="widget" title="Booking"></iframe>
+  </div>
+  <script>
+    const query = new URLSearchParams(location.search);
+    const pad = n => String(n).padStart(2, '0');
+    const now = new Date();
+    const todayIso = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    const date = query.get('date') || todayIso;
+    let seats = Number(query.get('seats') || 2);
+    const where = query.get('q') || 'San Francisco';
+    const restaurants = [
+      ['Marina Grill', 'Marina', 'American', ['7:00 PM Dining Room', '8:15 PM Dining Room']],
+      ["Angie's Pizza", 'Mission District', 'Pizza',
+        ['5:00 PM Dining Room', '5:15 PM Dining Room', '8:15 PM Dining Room']],
+      ['Kuma on Valencia', 'Mission District', 'Japanese', ['8:15 PM Dining Room', '9:00 PM Bar']],
+      ['Chestnut Bistro', 'Marina', 'French', ['6:30 PM Bar', '8:15 PM Dining Room']],
+      ['The Morris', 'Mission District', 'Californian', ['5:00 PM Dining Room', '7:30 PM Patio']],
+      ['Tartine Supper', 'Mission District', 'Bakery', ['7:45 PM Dining Room', '9:30 PM Bar']],
+    ];
+    const more = [
+      ['Nopa Kitchen', 'Western Addition', 'Californian', ['8:15 PM Dining Room']],
+      ['Delfina Trattoria', 'Mission District', 'Italian', ['6:00 PM Dining Room', '8:45 PM Bar']],
+    ];
+    let shown = restaurants.slice();
+
+    const seatsBtn = document.getElementById('seats-btn'), list = document.getElementById('seats');
+    const guests = n => n + (n === 1 ? ' Guest' : ' Guests');
+    for (let n = 1; n <= 8; n++) {
+      const option = document.createElement('li');
+      option.setAttribute('role', 'option');
+      option.textContent = guests(n);
+      option.addEventListener('click', () => {
+        seats = n; list.hidden = true; seatsBtn.setAttribute('aria-expanded', 'false');
+        query.set('seats', String(n));
+        history.replaceState(null, '', '?' + query);
+        render();
+      });
+      list.append(option);
+    }
+    seatsBtn.addEventListener('click', () => {
+      list.hidden = !list.hidden;
+      seatsBtn.setAttribute('aria-expanded', String(!list.hidden));
+    });
+
+    const dateWords = () => {
+      if (date === todayIso) return 'Today';
+      const [y, m, d] = date.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
+    };
+    const otherHost = () => {
+      const url = new URL(location.href);
+      url.hostname = url.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+      return url.origin;
+    };
+    function book(name, area, slot) {
+      const params = new URLSearchParams({name, area, date, time: slot.split(' ').slice(0, 2).join(' '),
+        room: slot.split(' ').slice(2).join(' '), seats: String(seats)});
+      if (query.get('variant') === 'details') {
+        location.href = 'reserve-details.html?' + params;
+        return;
+      }
+      document.getElementById('widget').src = otherHost() + '/pages/reserve-widget.html?' + params;
+      document.getElementById('overlay').hidden = false;
+    }
+    document.getElementById('close').addEventListener('click', () => {
+      document.getElementById('overlay').hidden = true;
+      document.getElementById('widget').removeAttribute('src');
+    });
+    function render() {
+      seatsBtn.textContent = guests(seats);
+      document.getElementById('date-chip').textContent = dateWords();
+      document.getElementById('loc-chip').textContent = where;
+      document.getElementById('count').textContent = shown.length + ' restaurants';
+      const cards = document.getElementById('cards');
+      cards.innerHTML = '';
+      for (const [name, area, cuisine, slots] of shown) {
+        const card = document.createElement('section');
+        card.className = 'card';
+        const title = document.createElement('h3');
+        title.textContent = name;
+        const about = document.createElement('p');
+        about.textContent = cuisine + ' · ' + area + ' · $$';
+        const row = document.createElement('div');
+        row.className = 'slots';
+        for (const slot of slots) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = slot;
+          button.addEventListener('click', () => book(name, area, slot));
+          row.append(button);
+        }
+        card.append(title, about, row);
+        cards.append(card);
+      }
+    }
+    document.getElementById('more').addEventListener('click', () => {
+      shown = restaurants.concat(more);
+      document.getElementById('more').remove();
+      render();
+    });
+    render();
+  </script>
+</body>
+</html>

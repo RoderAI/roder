@@ -17,8 +17,15 @@ pub(super) struct Row {
     pub(super) supported: bool,
     /// Whether the episode ran; an unsupported task runs only on request.
     pub(super) attempted: bool,
-    /// `raw_reward > 0`, BrowserGym's convention.
+    /// `raw_reward > 0`, BrowserGym's convention, at the episode's end
+    /// (after a fallback, when one ran).
     pub(super) success: bool,
+    /// The same when Jev stopped, before any fallback.
+    pub(super) jev_success: bool,
+    /// The fallback that followed Jev, when one ran: its status, steps,
+    /// model calls, tokens and time.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub(super) fallback: Value,
     pub(super) raw_reward: Option<f64>,
     /// Time-penalised; kept for reference, not comparable across harnesses.
     pub(super) reward: Option<f64>,
@@ -55,6 +62,8 @@ impl Row {
             supported: task.supported,
             attempted: false,
             success: false,
+            jev_success: false,
+            fallback: Value::Null,
             raw_reward: None,
             reward: None,
             reward_reason: None,
@@ -160,6 +169,28 @@ impl Row {
             }
             Err(error) => row.error = Some(format!("grade: {error}")),
         }
+        row.jev_success = match &episode.jev_grade {
+            Some(grade) => grade.done && grade.raw_reward > 0.0,
+            None => row.success,
+        };
+        if let Some(fallback) = &episode.fallback {
+            row.fallback = serde_json::json!({
+                "status": fallback.status,
+                "stopped_because": fallback.stopped_because,
+                "actions": fallback.actions.len(),
+                "model_calls": fallback.model_calls,
+                "input_tokens": fallback.usage.input_tokens,
+                "output_tokens": fallback.usage.output_tokens,
+                "elapsed_ms": fallback.elapsed_ms,
+                "model": fallback.model,
+                "trace": fallback.actions.iter().map(|action| format!(
+                    "{} {}{}",
+                    action.tool,
+                    action.target.clone().unwrap_or_default(),
+                    if action.error { " [error]" } else { "" }
+                )).collect::<Vec<_>>(),
+            });
+        }
         row.cause = cause(&row, result.actions.iter().map(|a| a.page_changed));
         row
     }
@@ -241,6 +272,40 @@ pub(super) fn summary(manifest: &Manifest, tasks: &[&TaskEntry], rows: &[Row]) -
             unsupported_attempted
         )
     ));
+    let fell_back = rows
+        .iter()
+        .filter(|row| !row.fallback.is_null())
+        .collect::<Vec<_>>();
+    if !fell_back.is_empty() {
+        let jev_alone = count(&|row| row.jev_success);
+        let sum = |key: &str| {
+            fell_back
+                .iter()
+                .map(|row| row.fallback[key].as_u64().unwrap_or(0))
+                .sum::<u64>()
+        };
+        out.push_str(&format!(
+            "Jev alone, every episode's own reward: {}; Jev + fallback: {}\n\
+             Jev alone, unsupported as failures: {}; Jev + fallback: {}\n\
+             the fallback ran on {} episodes and turned {} into successes: {} tool calls, {} \
+             model calls, {:.1} s ({:.1} s per fallback), {} input and {} output tokens\n",
+            rate(jev_alone, rows.len()),
+            rate(attempted_success, rows.len()),
+            rate(count(&|row| row.jev_success && row.supported), rows.len()),
+            rate(official, rows.len()),
+            fell_back.len(),
+            fell_back
+                .iter()
+                .filter(|row| row.success && !row.jev_success)
+                .count(),
+            sum("actions"),
+            sum("model_calls"),
+            sum("elapsed_ms") as f64 / 1000.0,
+            sum("elapsed_ms") as f64 / 1000.0 / fell_back.len() as f64,
+            sum("input_tokens"),
+            sum("output_tokens"),
+        ));
+    }
     let ran = rows.iter().filter(|row| row.attempted).collect::<Vec<_>>();
     let wall = ran.iter().map(|row| row.wall_ms).sum::<u64>();
     let steps = ran.iter().map(|row| row.steps).sum::<usize>();
@@ -254,8 +319,8 @@ pub(super) fn summary(manifest: &Manifest, tasks: &[&TaskEntry], rows: &[Row]) -
         wall as f64 / 1000.0 / steps.max(1) as f64,
     ));
     out.push_str(&format!(
-        "{:<30} {:<5} {:>7} {:>6} {:>7}  {}\n",
-        "task", "supp", "success", "steps", "mean_s", "causes"
+        "{:<30} {:<5} {:>7} {:>7} {:>6} {:>7}  {}\n",
+        "task", "supp", "jev", "success", "steps", "mean_s", "causes"
     ));
     for task in tasks {
         let task_rows = rows
@@ -263,6 +328,7 @@ pub(super) fn summary(manifest: &Manifest, tasks: &[&TaskEntry], rows: &[Row]) -
             .filter(|row| row.task == task.id)
             .collect::<Vec<_>>();
         let won = task_rows.iter().filter(|row| row.success).count();
+        let jev_won = task_rows.iter().filter(|row| row.jev_success).count();
         let mut causes = BTreeMap::<&str, usize>::new();
         for row in &task_rows {
             if !row.success {
@@ -271,9 +337,10 @@ pub(super) fn summary(manifest: &Manifest, tasks: &[&TaskEntry], rows: &[Row]) -
         }
         let n = task_rows.len().max(1);
         out.push_str(&format!(
-            "{:<30} {:<5} {:>7} {:>6.1} {:>7.1}  {}\n",
+            "{:<30} {:<5} {:>7} {:>7} {:>6.1} {:>7.1}  {}\n",
             task.id,
             if task.supported { "yes" } else { "no" },
+            format!("{jev_won}/{}", task_rows.len()),
             format!("{won}/{}", task_rows.len()),
             task_rows.iter().map(|row| row.steps).sum::<usize>() as f64 / n as f64,
             task_rows.iter().map(|row| row.wall_ms).sum::<u64>() as f64 / 1000.0 / n as f64,

@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+  <!-- A client-side app that commits a blank document and renders it a
+       moment later: the first read shows nothing to act on. -->
+  <div id="app"></div>
+  <script>
+    setTimeout(() => {
+      document.title = 'Specials';
+      document.getElementById('app').innerHTML =
+        '<h1>Tonight\'s specials</h1><p>Three dishes, served from 5 PM.</p>' +
+        '<button type="button" id="show">Show specials</button><p id="list"></p>';
+      document.getElementById('show').addEventListener('click', () => {
+        document.getElementById('list').textContent = 'Mole negro · Tlayudas · Churros';
+      });
+    }, 700);
+  </script>
+</body>
+</html>

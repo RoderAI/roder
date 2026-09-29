@@ -87,7 +87,7 @@ async fn typed_secrets_appear_nowhere_a_run_leaves_behind() {
             sent: contexts.clone(),
         });
         let probes = task.expect.probes().cloned().collect();
-        let outcome = run_task(&harness, task, decision, text, probes)
+        let outcome = run_task(&harness, task, decision, text, probes, None)
             .await
             .unwrap();
         let failures = task.expect.grade(&outcome);
