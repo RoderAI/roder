@@ -84,19 +84,32 @@ impl ToolExecutor for BrowserUseTool {
             return Ok(error_result(
                 &call,
                 format!(
-                    "{} needs an LLM inside the browser-use server, and Roder has no OpenAI or \
-                     Anthropic API key to give it. Set OPENAI_API_KEY or ANTHROPIC_API_KEY (or \
-                     [providers.openai] / [providers.anthropic] api_key in Roder config) and \
+                    "{} needs an LLM inside the pinned browser-use server, and Roder has no OpenAI \
+                     API key to give it. Set OPENAI_API_KEY (or \
+                     [providers.openai] api_key in Roder config) and \
                      restart Roder. The direct-control browser_use_* tools work without a key.",
                     self.def.name
                 ),
             ));
         }
-        let arguments = if call.arguments.is_object() {
+        let mut arguments = if call.arguments.is_object() {
             call.arguments.clone()
         } else {
-            json!({})
+            return Ok(error_result(
+                &call,
+                "browser-use arguments must be an object",
+            ));
         };
+        if self.def.class == BrowserUseActionClass::Agent {
+            let steps = arguments.get("max_steps").map_or(Some(50), Value::as_u64);
+            let Some(steps) = steps.filter(|steps| (1..=100).contains(steps)) else {
+                return Ok(error_result(
+                    &call,
+                    "max_steps must be an integer from 1 to 100",
+                ));
+            };
+            arguments["max_steps"] = json!(steps);
+        }
         let server = self.server.for_thread(&call.thread_id).await;
         let observe = matches!(
             self.def.class,
@@ -221,7 +234,8 @@ fn truncate(body: &str) -> String {
     )
 }
 
-fn error_result(call: &ToolCall, message: String) -> ToolResult {
+fn error_result(call: &ToolCall, message: impl Into<String>) -> ToolResult {
+    let message = message.into();
     ToolResult {
         id: call.id.clone(),
         name: call.name.clone(),
@@ -234,6 +248,35 @@ fn error_result(call: &ToolCall, message: String) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn invalid_agent_limits_and_nonobject_arguments_do_not_start_a_server() {
+        let server = Arc::new(BrowserUseServer::with_launch(
+            "test".into(),
+            Arc::new(|| panic!("invalid input reached server startup")),
+        ));
+        let tool = BrowserUseTool {
+            def: crate::catalog::tool_def("browser_use_agent").unwrap(),
+            server,
+            has_llm_key: true,
+        };
+        for arguments in [
+            json!([]),
+            json!({"task":"fixture","max_steps":0}),
+            json!({"task":"fixture","max_steps":101}),
+            json!({"task":"fixture","max_steps":1.5}),
+        ] {
+            let mut call = call("browser_use_agent");
+            call.arguments = arguments;
+            let result = tool
+                .execute(
+                    ToolExecutionContext::new("t", "u", roder_api::policy_mode::PolicyMode::Bypass),
+                    call,
+                )
+                .await
+                .unwrap();
+            assert!(result.is_error);
+        }
+    }
     use crate::catalog::tool_def;
 
     fn call(name: &str) -> ToolCall {

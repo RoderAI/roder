@@ -4,16 +4,17 @@ use std::time::Duration;
 use roder_api::tools::{ToolCall, ToolResult};
 use serde_json::{Value, json};
 
-use crate::direct::{DirectSession, DirectTab, OpenGuard, TabClient, tool_result};
+use crate::desktop_scope::DesktopScope;
+use crate::direct::{DirectGuard, DirectSession, DirectTab, TabClient, tool_result};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CdpTarget {
-    id: String,
+pub(crate) struct CdpTarget {
+    pub(crate) id: String,
     #[serde(default)]
-    title: String,
+    pub(crate) title: String,
     #[serde(default)]
-    url: String,
+    pub(crate) url: String,
     #[serde(default)]
     #[allow(dead_code)]
     r#type: String,
@@ -40,25 +41,16 @@ pub async fn execute(kind: &str, call: &ToolCall) -> Option<ToolResult> {
 async fn tabs_list(call: &ToolCall) -> ToolResult {
     match targets().await {
         Ok(targets) => {
-            let active_id = targets.first().map(|target| target.id.clone());
+            let data = crate::desktop_tabs::list(&call.thread_id, &targets);
             ToolResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
                 text: format!(
                     "{}\n{}",
                     crate::session::UNTRUSTED_NOTE,
-                    serde_json::to_string(&targets).unwrap_or_default()
+                    serde_json::to_string(&data).unwrap_or_default()
                 ),
-                data: json!({
-                    "tabs": targets.into_iter().enumerate().map(|(index, target)| json!({
-                        "id": index,
-                        "targetId": target.id,
-                        "title": target.title,
-                        "url": target.url,
-                        "active": Some(&target.id) == active_id.as_ref(),
-                        "browser": "roder-desktop"
-                    })).collect::<Vec<_>>()
-                }),
+                data,
                 is_error: false,
             }
         }
@@ -72,7 +64,11 @@ async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
         Ok(tab) => tab,
         Err(error) => return error_result(call, error),
     };
-    let mut session = match DirectSession::attach(&tab, Arc::new(OpenGuard), false).await {
+    let scope = match DesktopScope::from_env() {
+        Ok(scope) => scope,
+        Err(error) => return error_result(call, format!("{error:#}")),
+    };
+    let mut session = match DirectSession::attach(&tab, Arc::new(scope), false).await {
         Ok(session) => session,
         Err(error) => {
             return error_result(
@@ -123,6 +119,11 @@ async fn eval(call: &ToolCall) -> ToolResult {
     };
     let result = async {
         let mut client = TabClient::attach(&tab).await?;
+        let scope = DesktopScope::from_env()?;
+        let url = client.evaluate_isolated("location.href").await?;
+        if let Some(reason) = url.as_str().and_then(|url| scope.outside(url)) {
+            anyhow::bail!(reason);
+        }
         client.evaluate(expression).await
     }
     .await;
@@ -146,12 +147,11 @@ async fn eval(call: &ToolCall) -> ToolResult {
 
 /// Respect the tab id returned by tabs/list; never silently act on another tab.
 async fn desktop_tab(call: &ToolCall) -> Result<DirectTab, String> {
-    let mut listed = targets().await?;
-    let index = call.arguments["tabId"].as_u64().unwrap_or(0) as usize;
-    if index >= listed.len() {
-        return Err("Desktop browser tab id is not available; list tabs again".into());
-    }
-    let target = listed.remove(index);
+    let target = crate::desktop_tabs::target(
+        &call.thread_id,
+        call.arguments["tabId"].as_u64(),
+        targets().await?,
+    )?;
     Ok(DirectTab::Page {
         websocket: target.web_socket_debugger_url,
         target_id: target.id,

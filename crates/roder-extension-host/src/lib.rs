@@ -333,6 +333,7 @@ pub fn browser_use_config(
         uvx: settings.uvx.clone(),
         openai_api_key,
         anthropic_api_key,
+        allowed_domains: roder_ext_browser_use::BrowserUseConfig::from_env().allowed_domains,
     }
 }
 

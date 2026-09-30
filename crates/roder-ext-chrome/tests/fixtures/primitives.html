@@ -8,6 +8,8 @@ let count=0;
 inc.onclick=e=>{window.clickTrusted=e.isTrusted;document.querySelector('#count').textContent='Count: '+ ++count};
 document.querySelector('#name').oninput=e=>window.inputTrusted=e.isTrusted;
 document.addEventListener('keydown',e=>window.keyTrusted=e.isTrusted);
+document.addEventListener('mousedown',()=>window.dragHeld=true);
+document.addEventListener('mouseup',()=>window.dragHeld=false);
 document.querySelector('#origin').addEventListener('mousedown',e=>{if(e.button===2)window.rightButtons=e.buttons;else window.originClicked=true});
 document.querySelector('#origin').addEventListener('contextmenu',e=>e.preventDefault());
 </script>

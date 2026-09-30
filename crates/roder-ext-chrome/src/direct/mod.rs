@@ -20,6 +20,7 @@
 
 mod act;
 mod capture;
+mod cleanup;
 mod client;
 pub mod devtools;
 mod guard;

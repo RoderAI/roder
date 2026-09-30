@@ -4,6 +4,10 @@ Status: **in progress**. Primitive and observation repairs are implemented and
 have targeted test evidence. Safety parity is not yet established; the open
 items below remain part of the task.
 
+**User scope:** additional sensitive-action consent was explicitly excluded on
+2026-09-29. Existing permissions and approval modes remain in place. Consent
+parity is not claimed or included in the remaining implementation gates.
+
 Roder base: `a395cf0d49122fc1f6d76f15fc2c8ca2cadb28a4`.
 Branch: `pz/browser-computer-use-audit` in the attached audit worktree.
 
@@ -62,13 +66,59 @@ installation is not evidence that these implementations are open source.
 | Preserve screenshot resolution and coordinates | browser-use, direct CDP, and Chrome bridge screenshots use `original`. The direct screenshot at DPR=2 is 800×513 image pixels for an 800×513 CSS viewport. (0,0) succeeds; negative coordinates fail; right-click reports the correct button mask. | Repaired, browser evaluated |
 | Genuine UI input | Desktop fallback previously used DOM `.click()`, value assignments and synthetic keyboard events. It now uses shared CDP primitives. Browser fixtures observe `isTrusted=true` for click, text input and key events, including Tab moving focus. | Repaired, browser evaluated |
 | Fresh state and reliable targeting | Desktop actions and navigation return actual page text/refs. Missing and ambiguous targets fail. Ref identity survives DOM insertions; refs from a previous document fail. Typing rejects a non-editable target before clicking or inserting text. | Repaired, browser evaluated |
-| Browser-use session ownership | One process previously served every thread. Threads now own distinct lazy servers; each thread reuses its own process. Fake MCP integration tests compare browser PIDs. | Repaired, MCP evaluated |
-| Browser-use action/observation ordering | Calls within a thread are serialized; actions are followed by `browser_get_state` with screenshot. Fresh state precedes the action report so report text cannot crowd it out first. | Repaired, MCP evaluated; real pinned server recheck outstanding |
-| Cancellation | Cancelling an in-flight browser-use call stops its owned process tree. A subsequent call starts fresh. The integration test checks both old-PID death and a different replacement PID. | Repaired for browser-use; direct input cleanup still open |
+| Browser-use session ownership | One process previously served every thread. Threads now own distinct lazy servers and private profile/download/file directories. Separate processes alone were insufficient: the pinned upstream server defaults to a shared profile. Real pinned-runtime tests now prove thread cookie isolation and persistence within each thread. | Repaired, real runtime evaluated |
+| Browser-use action/observation ordering | Calls within a thread are serialized; actions are followed by `browser_get_state` with screenshot. Fresh state precedes the action report so report text cannot crowd it out first. Real pinned-runtime click outcomes are independently checked through the page HTML. | Repaired, real runtime evaluated |
+| Cancellation | In-flight browser-use cancellation stops the owned process tree; the next call starts fresh. Direct tools track held input and screenshot masks before sending commands, recover through a separate connection with a five-second cap, and await recovery before reusing a retained session. Real-browser tests cancel a drag and a key with a delayed acknowledgement, cancel a masked screenshot, and inject an error during a drag. Key cancellation retains the original session and immediately resumes it. Recovery is best effort if Chrome is unreachable or the runtime exits. | Repaired, browser evaluated |
 | Untrusted observations | Existing markers remain on reads. Desktop eval results and tab titles/URLs are labeled; action observations from browser-use are labeled even when an error is present. Direct helper state and permission probes now execute in a named CDP isolated world. A fixture poisons the page's `window.__roderDirect`; genuine state and input still work. | Improved and browser evaluated; separate extension enforcement review open |
 | Outcome verification | Jev fixture graders check actual page/DOM outcomes and recorded fixture POSTs; successful final model text alone does not determine a pass. The corpus passed 52/52, including 5 fallback tasks. | Deterministic harness evaluated |
 | ACP permission and result contract | Public `session/new`/`session/prompt` tests assert permission requests, call identity, inputs, completed/failed tool updates, observed page text and final `end_turn`. Rejection executes zero actions. | 6 ACP tests passed |
-| Site/action restrictions and sensitive transmission | Jev's irreversible gate is off by default; its label shortlist and direct typing gate do not cover all sensitive transmission. Desktop uses `OpenGuard`. browser-use domain restrictions are optional. These do not establish the guide's required runtime controls. | Open |
+| Site/action restrictions | Desktop has an optional exact-origin ceiling, stable numeric tab identity, and a binding per thread. Missing tab ids fail. Direct tools recheck current origin before each read/input, including external navigation and after a stop. Browser-use has an optional exact-host operator ceiling; direct navigation is rejected before transmission and an agent call cannot widen it. Restrictions remain opt-in. Redirect checks on direct tools stop subsequent interaction after the destination has loaded; they are not a network firewall. | Repaired and browser evaluated within configured scope; extension review findings below |
+| Execution bounds | browser-use agent calls default to 50 steps and accept only 1–100. Direct commands have a 30-second response timeout; waits/repeats/drag steps are bounded. | Implemented |
+
+## Live model evaluation
+
+The complete fixture corpus used the hosted decision model, resolved by server
+telemetry to **`jev-1.13.0`**: **49/52 outcome graders passed (94.2%)**. Typed values
+were supplied by the fixtures; this does not measure the text-helper model.
+Expected blocked/budget/confirmation outcomes are included in the corpus.
+
+- `icon_by_picture`: deleted the wrong mail rows, including a row the grader
+  required to remain; it ended blocked.
+- `scroll_region`: did not successfully scroll/unlock and submit the terms form.
+- `enter_to_search`: reported `done` although no search POST occurred. This is
+  direct evidence that a final success claim is insufficient.
+
+A separate seven-task run with **Codex `gpt-6-sol`, low reasoning** enabled as
+fallback passed 4/7 combined graders. The fallback ran on five tasks, with four
+passing their post-fallback grader: region scrolling, canvas, hover and keyboard
+tasks. Wrong-row deletion remained failed. Search reported `done`, so fallback
+did not run. The drag task also reported `done` where this fixture expected
+handover; this is separate from the shared direct drag primitive's verified
+input behavior. This selected run is not comparable to the full corpus's rate.
+
+- [Complete live-model rows](../evals/reports/browser-computer-use/2026-09-29/live-jev.jsonl).
+- [Focused fallback rows](../evals/reports/browser-computer-use/2026-09-29/live-fallback-focused.jsonl).
+
+## Separate Chrome extension gaps
+
+The Rust Desktop fallback is repaired; the paired MV3 extension still has its
+own implementation in `/Users/pz/w/roder-web-extention`:
+
+1. `src/content/actions.ts:54` returns before a delayed DOM `.click()`;
+   typing and keypresses assign values/dispatch synthetic events. These do not
+   have the browser-default behavior of the verified CDP input primitives.
+2. `src/background/service-worker.ts:691` sends action reports without a fresh
+   page observation. Roder's extension dispatch path currently forwards those
+   reports; it does not establish the actual UI outcome.
+3. `src/background/service-worker.ts:684` uses `captureVisibleTab` for the
+   resolved tab's window. An explicit inactive tab can therefore yield another
+   tab's pixels.
+4. The permission gate checks one resolved tab, then privileged execution
+   resolves it again. A default active-tab change while approval is pending can
+   change the target. A concrete tab id and origin must survive that boundary.
+
+These are actionable gaps; this audit does not claim the separate extension
+has been repaired or evaluated with a loaded extension.
 
 ## Evaluation artifacts and scope
 
@@ -78,6 +128,14 @@ installation is not evidence that these implementations are open source.
 - [`computer_use.rs`](../crates/roder-ext-chrome/tests/computer_use.rs): local HTTP fixture and isolated headless Chrome; no user profile or account.
 - [`fake_server.rs`](../crates/roder-ext-browser-use/tests/fake_server.rs): MCP protocol, process cleanup, cancellation, per-thread ownership and fresh observation tests.
 - [`acp_browser.rs`](../crates/roder-app-server/tests/acp_browser.rs): public ACP request/notification boundary with allow and reject outcomes.
+- `roder-ext-chrome/tests/support/cancellation.rs`: real Chrome behind a
+  one-shot faulty CDP relay; browser-applied input is verified before cancellation.
+- `roder-ext-chrome/tests/support/scope.rs`: stable tab id after a new tab opens,
+  direct/off-origin navigation, redirect reporting, denied subsequent input and
+  eval, and recovery to an allowed site.
+- `roder-ext-browser-use/tests/support/live_fixture.rs`: real pinned server,
+  separate cookies per thread, own-thread persistence, click outcome and domain
+  rejection before an HTTP request.
 
 Reproduce from the repository root:
 
@@ -89,8 +147,9 @@ mise exec -- env JEV_REQUIRE_CHROME=1 cargo test -p roder-ext-jev keyless_corpus
 mise exec -- cargo test -p roder-app-server --features e2e-tests --test acp
 ```
 
-This is primitive and deterministic harness evaluation, **not a measured success
-rate for a live model**. Ignored live/network tests have not been run. The first workspace build failed when the shared Cargo target files disappeared
+The deterministic 52/52 result is distinct from the live-model results above.
+Both real pinned browser-use tests passed, including tool-schema comparison.
+The first workspace build failed when the shared Cargo target files disappeared
 during compilation (`could not parse/generate dep info`, `No such file or directory`).
 The isolated targeted rerun passed: browser-use 24 unit + 9 integration tests,
 Chrome 28 unit + 1 browser evaluation, Responses 114 unit tests. The isolated full workspace run reached app-server e2e and failed 3 checks
@@ -102,20 +161,27 @@ same 126/3/1 counts. These are baseline failures in this environment; the full
 workspace gate remains unverified past that package. The ACP suite passed again
 within the isolated run (6/6).
 
+Later workspace runs found an old Jev handover test using `(0,0)` as an omitted
+point; its caller was updated to canonical null coordinates. A core mailbox
+interrupt test failed during a workspace run and passed its isolated rerun.
+A Jev fixture Chrome was SIGKILLed during startup; that test passed its isolated
+rerun. All workspace packages except app-server/core/Jev passed in the final
+remaining-package run. The Jev broad run reached 446 passes with the single
+Chrome-startup failure; these results do not constitute a green full-workspace
+run. Final targeted suites passed: browser-use 25 unit + 9 integration,
+Chrome 28 unit + 1 real-browser evaluation, Responses 114 unit.
+
+The pinned upstream implementation also only instantiates OpenAI for its MCP
+LLM tools. An Anthropic key alone is no longer reported as sufficient. Content
+extraction initializes from the private configuration; the configured OpenAI
+key is included there with private permissions and removed on shutdown. No
+real OpenAI extraction/agent call was made in the pinned-server evaluation.
+
 ## Remaining completion gates
 
-1. Enforce site and action scope across browser-use, Desktop fallback, Jev and
-   the separate Chrome extension; verify redirect/off-origin and tab-switch cases.
-2. Confirm sensitive typing before the first input event. Make consequential
-   action checks effective by default and verify ambiguous commitment labels,
-   cookie consent, forms and subframes. A whole autonomous-agent approval does
-   not prove step-specific consent for its hidden internal actions.
-3. Verify direct-tool cancellation releases held mouse buttons/modifiers and
-   removes screenshot masks; exercise failure partway through a drag.
-4. Recheck the real pinned browser-use server, including screenshot/state shape,
-   session profile isolation and operation ordering; fake MCP evidence proves
-   Roder's protocol behavior, not the upstream runtime's behavior.
-5. Run live-model fixture evaluation with observed outcome graders and compare
-   supported primitives, outcome rate, limits and consent outcomes.
-6. Finish workspace/app-server gates, rerun changed browser fixtures after the
-   last changes, and validate the release changeset against the committed branch.
+1. Repair and evaluate the paired Chrome extension's input, observation,
+   screenshot-target and permission-target boundary issues listed above.
+2. Evaluate a runtime outcome-verification strategy for false `done` results;
+   measured model decisions remain fallible even with correct input primitives.
+3. Obtain a green workspace/app-server gate in a clean environment; the known
+   baseline failures and intermittent infrastructure/timing failures remain.

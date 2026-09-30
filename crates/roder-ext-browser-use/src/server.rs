@@ -30,6 +30,7 @@ pub struct BrowserUseServer {
     threads: Mutex<HashMap<String, Arc<BrowserUseServer>>>,
     operation: Mutex<()>,
     cancelled: Arc<AtomicBool>,
+    profile: std::sync::Mutex<Option<crate::profile::OwnedProfile>>,
 }
 
 impl BrowserUseServer {
@@ -52,6 +53,7 @@ impl BrowserUseServer {
             threads: Mutex::new(HashMap::new()),
             operation: Mutex::new(()),
             cancelled: Arc::new(AtomicBool::new(false)),
+            profile: std::sync::Mutex::new(None),
         }
     }
 
@@ -77,6 +79,31 @@ impl BrowserUseServer {
     ) -> anyhow::Result<Value> {
         let _operation = self.operation.lock().await;
         let client = self.client().await?;
+        if remote == "browser_navigate"
+            && let Some(ceiling) = client.config().env.get("BROWSER_USE_ALLOWED_DOMAINS")
+        {
+            let url = arguments["url"].as_str().unwrap_or_default();
+            let url = reqwest::Url::parse(url)?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some_and(|host| ceiling
+                        .split(',')
+                        .any(|domain| domain.eq_ignore_ascii_case(host))),
+                "Navigation blocked by RODER_BROWSER_USE_ALLOWED_DOMAINS"
+            );
+        }
+        if remote == "retry_with_browser_use_agent"
+            && let Some(ceiling) = client.config().env.get("BROWSER_USE_ALLOWED_DOMAINS")
+            && let Some(requested) = arguments.get("allowed_domains").and_then(Value::as_array)
+        {
+            let allowed: Vec<_> = ceiling.split(',').collect();
+            anyhow::ensure!(
+                requested.iter().all(|domain| domain
+                    .as_str()
+                    .is_some_and(|domain| allowed.contains(&domain))),
+                "allowed_domains must be a subset of RODER_BROWSER_USE_ALLOWED_DOMAINS"
+            );
+        }
         let mut pending = PendingCall {
             client: client.clone(),
             cancelled: self.cancelled.clone(),
@@ -154,6 +181,7 @@ impl BrowserUseServer {
             }
             client.shutdown().await;
         }
+        self.profile.lock().unwrap().take();
     }
 
     async fn client(&self) -> anyhow::Result<Arc<McpStdioClient>> {
@@ -164,8 +192,10 @@ impl BrowserUseServer {
             }
             client.shutdown().await;
             *slot = None;
+            self.profile.lock().unwrap().take();
         }
-        let spec = (self.launch)()?;
+        let mut spec = (self.launch)()?;
+        let profile = crate::profile::OwnedProfile::configure(&mut spec)?;
         let client = McpStdioClient::start(spec).await.map_err(|error| {
             anyhow::anyhow!(
                 "browser-use: the MCP server failed to start ({error:#}). Check that \
@@ -187,6 +217,7 @@ impl BrowserUseServer {
         }
         let client = Arc::new(client);
         self.cancelled.store(false, Ordering::SeqCst);
+        *self.profile.lock().unwrap() = Some(profile);
         *slot = Some(client.clone());
         Ok(client)
     }

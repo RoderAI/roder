@@ -22,6 +22,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
+use super::cleanup::{Cleanup, Pending};
 use super::devtools::{accepts_dialog, browser_websocket, decode_message};
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -63,6 +64,8 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 pub(crate) struct TabClient {
+    tab: DirectTab,
+    pending: Pending,
     socket: Socket,
     next_id: u64,
     /// The flat session on the target; `None` on a page websocket.
@@ -90,6 +93,8 @@ impl TabClient {
             .await
             .context("open the Chrome DevTools websocket")?;
         let mut client = Self {
+            tab: tab.clone(),
+            pending: Pending::default(),
             socket,
             next_id: 1,
             session: None,
@@ -106,6 +111,7 @@ impl TabClient {
 
     /// Move the session to another target of the same browser.
     pub(crate) async fn attach_to(&mut self, target: &str) -> anyhow::Result<()> {
+        self.cleanup().finish().await;
         let attached = self
             .browser_call(
                 "Target.attachToTarget",
@@ -122,6 +128,9 @@ impl TabClient {
                 .await;
         }
         self.target_id = target.to_string();
+        if let DirectTab::Target { target_id, .. } = &mut self.tab {
+            *target_id = target.to_string();
+        }
         self.set_up().await
     }
 
@@ -150,8 +159,27 @@ impl TabClient {
 
     /// A command to the tab.
     pub(crate) async fn call(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
+        self.pending.before(method, &params);
         let session = self.session.clone();
-        self.send_and_wait(method, params, session.as_deref()).await
+        let result = self
+            .send_and_wait(method, params.clone(), session.as_deref())
+            .await;
+        if result.is_ok() {
+            self.pending.after(method, &params);
+        }
+        result
+    }
+
+    pub(crate) fn cleanup(&self) -> Cleanup {
+        Cleanup::new(self.tab.clone(), self.pending.clone())
+    }
+
+    pub(crate) async fn wait_cleanup(&self) {
+        self.pending.wait().await;
+    }
+
+    pub(crate) fn mask_pending(&self, armed: bool) {
+        self.pending.mask(armed);
     }
 
     /// A command to the browser (the Target domain).
@@ -297,6 +325,12 @@ impl TabClient {
             }
             return Ok(value.get("result").cloned().unwrap_or(Value::Null));
         }
+    }
+}
+
+impl Drop for TabClient {
+    fn drop(&mut self) {
+        drop(self.cleanup());
     }
 }
 

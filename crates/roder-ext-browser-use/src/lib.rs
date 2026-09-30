@@ -15,6 +15,7 @@
 mod catalog;
 mod launch;
 mod policy;
+mod profile;
 mod server;
 mod tools;
 

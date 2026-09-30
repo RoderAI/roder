@@ -32,6 +32,7 @@ impl DirectSession {
             .await?;
         let number = |index: usize| view[index].as_f64().unwrap_or(0.0);
         let (width, height, ratio) = (number(2), number(3), number(4).max(0.1));
+        self.client.mask_pending(true);
         let masked = helper(&mut self.client, "mask(true)").await?;
         // Viewport CSS pixels, one image pixel each, so a point in the
         // picture is the point to press.
@@ -49,6 +50,7 @@ impl DirectSession {
             .await;
         // Always taken off again, whether or not the picture was taken.
         helper(&mut self.client, "mask(false)").await?;
+        self.client.mask_pending(false);
         let data = captured?["data"].as_str().unwrap_or_default().to_string();
         let masked = masked.as_u64().unwrap_or(0);
         let mut text = format!(

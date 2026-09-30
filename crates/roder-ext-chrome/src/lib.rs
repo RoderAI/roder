@@ -16,6 +16,8 @@
 
 mod artifacts;
 mod desktop_cdp;
+mod desktop_scope;
+mod desktop_tabs;
 pub mod direct;
 mod extension;
 mod policy;

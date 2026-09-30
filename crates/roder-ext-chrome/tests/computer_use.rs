@@ -19,6 +19,9 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+include!("support/cancellation.rs");
+include!("support/scope.rs");
+
 struct Browser {
     child: Child,
     profile: PathBuf,
@@ -145,12 +148,21 @@ async fn eval(registry: &ToolRegistry, expression: &str) -> Value {
 async fn fixture() -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
+    let redirect = url.replace("127.0.0.1", "localhost");
     let handle = tokio::spawn(async move {
         loop {
             let (mut stream, _) = listener.accept().await.unwrap();
+            let redirect = redirect.clone();
             tokio::spawn(async move {
                 let mut request = [0; 4096];
-                let _ = stream.read(&mut request).await;
+                let length = stream.read(&mut request).await.unwrap_or(0);
+                if String::from_utf8_lossy(&request[..length]).starts_with("GET /redirect ") {
+                    let response = format!(
+                        "HTTP/1.1 302 Found\r\nLocation: {redirect}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    return;
+                }
                 let body = include_str!("fixtures/primitives.html");
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -322,6 +334,41 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
         stale.is_error,
         "Refs from the previous document must not resolve in a new document"
     );
+    let mut dragging = DirectSession::attach(&tab, Arc::new(OpenGuard), false)
+        .await
+        .unwrap();
+    let task = tokio::spawn(async move {
+        dragging
+            .run(
+                "drag",
+                &json!({"from_x":0,"from_y":0,"to_x":100,"to_y":100}),
+            )
+            .await
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while eval(&registry, "window.dragHeld === true").await != true {
+        assert!(
+            !task.is_finished(),
+            "drag ended before cancellation was exercised"
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "drag never pressed its mouse"
+        );
+    }
+    assert!(!task.is_finished());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while eval(&registry, "window.dragHeld === false").await != true {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "cancelled drag left its mouse held"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    cancellation_faults(&tab, &registry).await;
+    desktop_scope_and_tab_identity(&browser, &registry, &url).await;
     eprintln!(
         "PASS: navigation/state, stable refs, trusted click/type/key, missing/ambiguous targets, secret masking, DPR2 screenshot mapping, origin/out-of-bounds coordinates, right-button mask, screenshot attachment"
     );

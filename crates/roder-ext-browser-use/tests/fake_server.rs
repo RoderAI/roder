@@ -273,11 +273,7 @@ async fn without_a_key_llm_tools_fail_clearly_and_direct_tools_work() {
     for name in ["browser_use_extract_content", "browser_use_agent"] {
         let result = run(&registry, name, json!({"query": "title", "task": "x"})).await;
         assert!(result.is_error, "{name}");
-        assert!(
-            result.text.contains("OPENAI_API_KEY or ANTHROPIC_API_KEY"),
-            "{}",
-            result.text
-        );
+        assert!(result.text.contains("OPENAI_API_KEY"), "{}", result.text);
     }
     server.shutdown().await;
 }
