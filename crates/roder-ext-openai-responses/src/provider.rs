@@ -1,3 +1,6 @@
+#[path = "computer.rs"]
+mod computer;
+use computer::*;
 #[path = "native_compaction.rs"]
 mod native_compaction;
 use roder_api::provider_error::{ProviderFailure, ProviderFailureKind};
@@ -315,16 +318,25 @@ impl OpenAiResponsesEngine {
                 }
                 roder_api::tools::ToolChoice::None => json!("none"),
                 roder_api::tools::ToolChoice::Specific(name) => {
-                    let name = tool_name_map.api_name(name);
-                    json!({ "type": "function", "name": name })
+                    if name == roder_api::computer::COMPUTER_TOOL_NAME {
+                        json!({"type":"computer"})
+                    } else {
+                        let name = tool_name_map.api_name(name);
+                        json!({ "type": "function", "name": name })
+                    }
                 }
                 roder_api::tools::ToolChoice::Auto | roder_api::tools::ToolChoice::Any => {
                     json!("auto")
                 }
             };
             if !request.tools.is_empty() {
-                body["parallel_tool_calls"] =
-                    json!(request.runtime.parallel_tool_calls.unwrap_or(true));
+                body["parallel_tool_calls"] = json!(
+                    !request
+                        .tools
+                        .iter()
+                        .any(|tool| tool.name == roder_api::computer::COMPUTER_TOOL_NAME)
+                        && request.runtime.parallel_tool_calls.unwrap_or(true)
+                );
             }
         }
         let prompt_cache_key = match options.profile {
@@ -735,6 +747,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        validate_computer_request(&request, self.profile)?;
         let Some(api_key) = self.api_key.as_ref() else {
             // Known API-key providers name their env var; custom providers
             // have no canonical one so the guidance stays generic.
@@ -779,7 +792,12 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 policy: request.runtime.reliability.clone(),
                 definitions: client_search_definitions(&body, &tool_name_map),
                 catalog: roder_api::tool_search_catalog::ToolSearchCatalog::build(
-                    &request.tools,
+                    &request
+                        .tools
+                        .iter()
+                        .filter(|tool| tool.name != roder_api::computer::COMPUTER_TOOL_NAME)
+                        .cloned()
+                        .collect::<Vec<_>>(),
                     &request.runtime.tool_search,
                 ),
             });
@@ -3589,3 +3607,7 @@ mod audit_regressions;
 #[cfg(test)]
 #[path = "patch_stream_tests.rs"]
 mod patch_stream_tests;
+
+#[cfg(test)]
+#[path = "computer_tests.rs"]
+mod computer_tests;

@@ -1,5 +1,7 @@
 #[path = "runtime/sampling.rs"]
 pub(crate) mod sampling;
+#[path = "tool_advertisement.rs"]
+mod tool_advertisement;
 use sampling::{
     SamplingPreempted, SamplingRetry, completed_call_replayed, preemptible, wait_for_steer,
 };
@@ -3813,7 +3815,14 @@ impl Runtime {
         let cfg = self.config.read().await;
         let model_profile =
             model_profile_for_provider_model(&cfg, &cfg.default_provider, &cfg.default_model);
-        self.filtered_tool_specs(&cfg, &cfg.default_model, model_profile.as_ref(), &[], &[])
+        self.filtered_tool_specs(
+            &cfg,
+            &cfg.default_model,
+            &cfg.default_provider,
+            model_profile.as_ref(),
+            &[],
+            &[],
+        )
     }
 
     pub fn subagent_definitions(&self) -> Vec<SubagentDefinition> {
@@ -4020,9 +4029,11 @@ impl Runtime {
                     Some(collect_inference_routing_candidates(&self.registry).await);
             }
             let routing_tools_model = model.clone();
+            let routing_tools_provider = provider.clone();
             let routing_tools = self.filtered_tool_specs(
                 &cfg,
                 &model,
+                &provider,
                 model_profile.as_ref(),
                 &thread_overrides.tool_allowlist,
                 &thread_overrides.external_tools,
@@ -4079,12 +4090,13 @@ impl Runtime {
             let capabilities = engine.capabilities();
             model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
             let tools = if capabilities.tool_calls {
-                if model == routing_tools_model {
+                if model == routing_tools_model && provider == routing_tools_provider {
                     routing_tools.clone()
                 } else {
                     self.filtered_tool_specs(
                         &cfg,
                         &model,
+                        &provider,
                         model_profile.as_ref(),
                         &thread_overrides.tool_allowlist,
                         &thread_overrides.external_tools,
@@ -5597,36 +5609,6 @@ impl Runtime {
             profile, provider, model, segment,
         ));
         self.persist_turn_item(thread_id, turn_id, &item).await
-    }
-
-    /**
-     * Allowlists apply to built-in tools only; external tools are advertised with their
-     * host-supplied schemas as given. An external tool shadows a built-in with the same name in
-     * both advertisement and dispatch (see `route_tool_call`).
-     */
-    fn filtered_tool_specs(
-        &self,
-        cfg: &RuntimeConfig,
-        model: &str,
-        profile: Option<&ModelHarnessProfile>,
-        thread_allowlist: &[String],
-        external_tools: &[roder_api::tools::ToolSpec],
-    ) -> Vec<roder_api::tools::ToolSpec> {
-        let mut specs = self
-            .tool_registry
-            .specs_for_edit_tool_with_schema_policy(
-                edit_tool_for_model(cfg, model),
-                schema_policy_for_model(profile),
-            )
-            .into_iter()
-            .filter(|spec| {
-                allowlist_permits(&cfg.tool_allowlist, &spec.name)
-                    && allowlist_permits(thread_allowlist, &spec.name)
-                    && !external_tools.iter().any(|tool| tool.name == spec.name)
-            })
-            .collect::<Vec<_>>();
-        specs.extend(external_tools.iter().cloned());
-        specs
     }
 
     fn task_ledger_tool_specs(

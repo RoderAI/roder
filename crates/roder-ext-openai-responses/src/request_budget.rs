@@ -78,7 +78,10 @@ pub(super) fn prepare_request_payload(
 fn image_sizes(value: &Value) -> (usize, usize) {
     match value {
         Value::Object(fields)
-            if fields.get("type").and_then(Value::as_str) == Some("input_image") =>
+            if fields
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| matches!(kind, "input_image" | "computer_screenshot")) =>
         {
             (
                 1,

@@ -20,6 +20,10 @@ pub(crate) struct Chord {
 /// Named keys: DOM `key`, DOM `code`, Windows virtual key code, and what
 /// they type.
 const NAMED: &[(&str, &str, u32, Option<&str>)] = &[
+    ("Control", "ControlLeft", 17, None),
+    ("Alt", "AltLeft", 18, None),
+    ("Shift", "ShiftLeft", 16, None),
+    ("Meta", "MetaLeft", 91, None),
     ("Enter", "Enter", 13, Some("\r")),
     ("Escape", "Escape", 27, None),
     ("Tab", "Tab", 9, None),
@@ -34,6 +38,17 @@ const NAMED: &[(&str, &str, u32, Option<&str>)] = &[
     ("PageUp", "PageUp", 33, None),
     ("PageDown", "PageDown", 34, None),
     (" ", "Space", 32, Some(" ")),
+    ("F1", "F1", 112, None),
+    ("F2", "F2", 113, None),
+    ("F3", "F3", 114, None),
+    ("F4", "F4", 115, None),
+    ("F6", "F6", 117, None),
+    ("F7", "F7", 118, None),
+    ("F8", "F8", 119, None),
+    ("F9", "F9", 120, None),
+    ("F10", "F10", 121, None),
+    ("F11", "F11", 122, None),
+    ("F12", "F12", 123, None),
     ("F5", "F5", 116, None),
 ];
 
@@ -49,6 +64,16 @@ fn alias(name: &str) -> &str {
         "right" => "ArrowRight",
         "del" => "Delete",
         _ => name,
+    }
+}
+
+fn modifier_bit(key: &str) -> u8 {
+    match key {
+        "Control" => 2,
+        "Alt" => 1,
+        "Meta" => 4,
+        "Shift" => 8,
+        _ => 0,
     }
 }
 
@@ -129,7 +154,7 @@ impl Chord {
     pub(crate) fn events(&self) -> [Value; 2] {
         let mut down = json!({
             "type": if self.text.is_some() { "keyDown" } else { "rawKeyDown" },
-            "modifiers": self.modifiers,
+            "modifiers": self.modifiers | modifier_bit(&self.key),
             "key": self.key,
             "code": self.code,
             "windowsVirtualKeyCode": self.virtual_code,
@@ -146,6 +171,51 @@ impl Chord {
             "windowsVirtualKeyCode": self.virtual_code,
         });
         [down, up]
+    }
+
+    /// Full physical chord: modifiers down, key down/up, modifiers up.
+    pub(crate) fn press_events(&self) -> Vec<Value> {
+        let mut events = Vec::new();
+        let mut modifiers = 0;
+        let mut releases = Vec::new();
+        for (bit, key, code, virtual_code) in [
+            (2, "Control", "ControlLeft", 17),
+            (1, "Alt", "AltLeft", 18),
+            (4, "Meta", "MetaLeft", 91),
+            (8, "Shift", "ShiftLeft", 16),
+        ] {
+            if self.modifiers & bit == 0 {
+                continue;
+            }
+            modifiers |= bit;
+            events.push(json!({"type":"rawKeyDown","key":key,"code":code,
+                "windowsVirtualKeyCode":virtual_code,"modifiers":modifiers}));
+            releases.push((bit, key, code, virtual_code));
+        }
+        events.extend(self.events());
+        for (bit, key, code, virtual_code) in releases.into_iter().rev() {
+            modifiers &= !bit;
+            events.push(json!({"type":"keyUp","key":key,"code":code,
+                "windowsVirtualKeyCode":virtual_code,"modifiers":modifiers}));
+        }
+        events
+    }
+
+    /// macOS editing shortcuts need CDP editing commands in addition to the
+    /// DOM modifier bits. Remote Linux/Windows tabs use their native defaults.
+    pub(crate) fn editing_command(&self, mac: bool) -> Option<&'static str> {
+        if !mac {
+            return None;
+        }
+        match (self.modifiers, self.key.to_ascii_lowercase().as_str()) {
+            (4, "a") => Some("selectAll"),
+            (4, "c") => Some("copy"),
+            (4, "v") => Some("paste"),
+            (4, "x") => Some("cut"),
+            (4, "z") => Some("undo"),
+            (12, "z") => Some("redo"),
+            _ => None,
+        }
     }
 
     /// Enter: what submits a form or presses a focused control.
@@ -216,5 +286,28 @@ mod tests {
         assert!(Chord::parse("").is_err());
         assert!(Chord::parse("Hyper+a").is_err());
         assert!(Chord::parse("Launch").is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_chord_tests {
+    use super::*;
+    #[test]
+    fn modifier_down_and_up_bracket_the_key_and_mac_edit_command() {
+        let chord = Chord::parse("Meta+a").unwrap();
+        let events = chord.press_events();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event["key"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["Meta", "a", "a", "Meta"]
+        );
+        assert_eq!(events[0]["modifiers"], 4);
+        assert_eq!(events[3]["modifiers"], 0);
+        assert_eq!(chord.editing_command(true), Some("selectAll"));
+        assert_eq!(chord.editing_command(false), None);
+        assert_eq!(Chord::parse("Shift").unwrap().events()[0]["modifiers"], 8);
+        assert_eq!(Chord::parse("Shift").unwrap().events()[1]["modifiers"], 0);
     }
 }

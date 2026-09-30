@@ -7,6 +7,7 @@
 //! or its other fields' values, a value typed into a secret field (the
 //! owner's guard scrubs it: whatever it would change is on screen).
 
+use anyhow::Context;
 use serde_json::{Value, json};
 
 use super::client::cut;
@@ -51,7 +52,11 @@ impl DirectSession {
         // Always taken off again, whether or not the picture was taken.
         helper(&mut self.client, "mask(false)").await?;
         self.client.mask_pending(false);
-        let data = captured?["data"].as_str().unwrap_or_default().to_string();
+        let data = captured?["data"]
+            .as_str()
+            .filter(|data| !data.is_empty())
+            .context("CDP screenshot contained no image")?
+            .to_string();
         let masked = masked.as_u64().unwrap_or(0);
         let mut text = format!(
             "Screenshot of the tab attached ({width:.0}x{height:.0} viewport px; a point in the \

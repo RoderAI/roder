@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8"><title>Native computer fixture</title>
+<style>
+body{font:16px Arial;margin:0;background:#fff;color:#111}button,input{font:16px Arial;box-sizing:border-box}
+#filters{position:absolute;left:20px;top:20px;width:160px;height:40px}
+#panel{position:absolute;left:200px;top:25px}#search{position:absolute;left:20px;top:80px;width:260px;height:40px}
+#double{position:absolute;left:20px;top:150px;width:160px;height:40px}#right{position:absolute;left:200px;top:150px;width:160px;height:40px}
+#hover{position:absolute;left:20px;top:210px;width:160px;height:40px;background:#ddd}
+#drag{position:absolute;left:20px;top:270px;width:400px;height:80px;background:#eef;touch-action:none}
+#scroll{position:absolute;left:500px;top:20px;width:180px;height:180px;overflow:auto;border:2px solid #333}#scroll div{height:1000px;background:linear-gradient(#eef,#aaf)}
+#status{position:absolute;left:20px;top:380px}#password{position:absolute;left:20px;top:440px;width:260px;height:40px}
+</style>
+<button id="filters">Show filters</button><span id="panel" hidden>Filters open</span>
+<form id="form"><input id="search" aria-label="Search" placeholder="Search"></form>
+<button id="double">Double click</button><button id="right">Right click</button><div id="hover">Hover here</div>
+<div id="drag">Drag along this area</div><div id="scroll"><div>Scroll this panel</div></div>
+<div id="status">Search not submitted</div><input id="password" type="password" aria-label="Secret" value="fixture-password">
+<script>
+const el=id=>document.getElementById(id);let dragging=false,path=[];
+const record=(type,event,data={})=>fetch('/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type,trusted:event?.isTrusted??false,...data})});
+el('filters').onclick=e=>{el('panel').hidden=false;record('filters',e,{shift:e.shiftKey})};
+el('search').oninput=e=>record('input',e,{value:e.target.value});
+el('search').onkeydown=e=>record('key',e,{key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey});
+el('form').onsubmit=e=>{e.preventDefault();el('status').textContent='Submitted: '+el('search').value;record('submit',e,{value:el('search').value})};
+el('double').ondblclick=e=>record('double',e);el('right').oncontextmenu=e=>{e.preventDefault();record('right',e)};
+el('right').onauxclick=e=>{e.preventDefault();if(e.button===1)record('wheel',e)};
+el('hover').onmouseenter=e=>record('move',e);el('scroll').onscroll=e=>record('scroll',e,{top:el('scroll').scrollTop});
+el('drag').onmousedown=e=>{dragging=true;path=[[e.clientX,e.clientY]]};
+el('drag').onmousemove=e=>{if(dragging)path.push([e.clientX,e.clientY])};
+el('drag').onmouseup=e=>{if(dragging){dragging=false;path.push([e.clientX,e.clientY]);record('drag',e,{path})}};
+</script>

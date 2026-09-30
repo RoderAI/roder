@@ -127,6 +127,13 @@ fn looks_like_side_effect(call: &ToolCall) -> bool {
 }
 
 fn looks_like_write(call: &ToolCall) -> bool {
+    if call.name == roder_api::computer::COMPUTER_TOOL_NAME {
+        return call.arguments["actions"].as_array().is_none_or(|actions| {
+            actions
+                .iter()
+                .any(|action| !matches!(action["type"].as_str(), Some("screenshot" | "wait")))
+        });
+    }
     if matches!(
         call.name.as_str(),
         "roadmap_create"
@@ -410,5 +417,41 @@ mod tests {
             TurnId::from("turn-1"),
             PolicyMode::Default,
         )
+    }
+}
+
+#[cfg(test)]
+mod computer_policy_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn native_observations_and_input_follow_existing_policy_modes() {
+        let ctx = ToolExecutionContext::new("computer-policy", "turn", PolicyMode::Plan);
+        let call = |actions| ToolCall {
+            id: "native".into(),
+            name: "computer".into(),
+            arguments: json!({"actions":actions}),
+            raw_arguments: String::new(),
+            thread_id: ctx.thread_id.clone(),
+            turn_id: ctx.turn_id.clone(),
+        };
+        let gate = DefaultPolicyGate::new();
+        assert!(matches!(
+            gate.decide(
+                &call(json!([{"type":"screenshot"}])),
+                PolicyMode::Plan,
+                &ctx
+            ),
+            PolicyDecision::Allowed
+        ));
+        let input = call(json!([{"type":"click","button":"left","x":0,"y":0}]));
+        assert!(matches!(
+            gate.decide(&input, PolicyMode::Plan, &ctx),
+            PolicyDecision::Denied { .. }
+        ));
+        assert!(matches!(
+            gate.decide(&input, PolicyMode::Bypass, &ctx),
+            PolicyDecision::AutoApproved { .. }
+        ));
     }
 }

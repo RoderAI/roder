@@ -12,6 +12,7 @@ pub(super) fn response_input_items(
     let completed_tool_call_ids = completed_tool_call_ids(&request.transcript);
     let known_tool_call_ids = known_tool_call_ids(&request.transcript);
     let custom_tool_call_ids = custom_tool_call_ids(&request.transcript);
+    let computer_ids = computer_call_ids(&request.transcript);
     let mut replayed_item_ids = HashSet::new();
     let search_ids = paired_search_ids(&request.transcript);
     let mut raw_reasoning = raw_reasoning_summaries(&request.transcript);
@@ -24,7 +25,7 @@ pub(super) fn response_input_items(
         .filter(|item| {
             matches!(
                 item["type"].as_str(),
-                Some("function_call" | "custom_tool_call")
+                Some("function_call" | "custom_tool_call" | "computer_call")
             )
         })
         .filter_map(|item| item.get("call_id").and_then(Value::as_str))
@@ -62,6 +63,15 @@ pub(super) fn response_input_items(
                 {
                     None
                 } else {
+                    if computer_ids.contains(&call.id) {
+                        let arguments: Value =
+                            serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
+                        items.push(
+                            json!({"type":"computer_call", "id":format!("cu_{}",call.id),
+                            "call_id":call.id,"actions":arguments["actions"],"status":"completed"}),
+                        );
+                        continue;
+                    }
                     let item_id = fallback_function_call_item_id(&call.id);
                     let name = tool_name_map.replay_api_name(&call.name);
                     Some(json!({
@@ -75,6 +85,16 @@ pub(super) fn response_input_items(
                 }
             }
             roder_api::transcript::TranscriptItem::ToolResult(result) => {
+                if computer_ids.contains(&result.id) {
+                    if let Some(output) = computer_output(result) {
+                        items.push(output);
+                        if result.is_error {
+                            items.push(json!({"type":"message","role":"user","content":[{
+                                "type":"input_text", "text":format!("Computer execution failed; inspect the returned screen before continuing: {}", result.result)}]}));
+                        }
+                    }
+                    continue;
+                }
                 if known_tool_call_ids.contains(&result.id) {
                     // Results for freeform/custom calls must be replayed as
                     // `custom_tool_call_output`, not `function_call_output`.
@@ -296,6 +316,16 @@ fn append_provider_output_items(
                 }
                 items.push(item);
             }
+            Some("computer_call") => {
+                let Some(call_id) = item["call_id"].as_str() else {
+                    continue;
+                };
+                if completed_tool_call_ids.contains(call_id)
+                    && provider_output_call_ids.insert(call_id.to_string())
+                {
+                    items.push(item.clone());
+                }
+            }
             Some("custom_tool_call") => {
                 let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
                     continue;
@@ -337,7 +367,7 @@ fn append_provider_output_items(
     }
 }
 
-fn raw_output(
+pub(super) fn raw_output(
     transcript: &[roder_api::transcript::TranscriptItem],
 ) -> impl Iterator<Item = &Value> {
     transcript

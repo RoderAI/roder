@@ -5,6 +5,13 @@ and all workspace packages passed in the clean runs described below. This
 report distinguishes primitive correctness, model task outcomes, profile
 isolation limits and intermittent full-run failures.
 
+Native Responses follow-up — 2026-09-30: the OpenAI `computer` adapter now
+advertises the native tool, executes ordered action batches, and returns matching
+`computer_call_output` screenshots. The new ACP/real-Chrome protocol eval covers
+all nine action types. Its decision endpoint is scripted; a live OpenAI model
+run still needs an API key. See [native computer use](native-computer-use.md)
+for implementation locations, configuration and reproducible evidence.
+
 **User scope:** additional sensitive-action consent was explicitly excluded on
 2026-09-29. Existing permissions and approval modes remain in place. Consent
 parity is not claimed or included in the remaining implementation gates.

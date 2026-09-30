@@ -15,6 +15,7 @@
 //! shared browser-bridge contract lives in [`roder_api::chrome`].
 
 mod artifacts;
+mod computer;
 mod desktop_cdp;
 mod desktop_scope;
 mod desktop_tabs;
@@ -25,6 +26,7 @@ mod session;
 mod tools;
 
 pub use artifacts::{ChromeArtifact, ChromeArtifactKind};
+pub use computer::{ComputerCdpBinding, ComputerTool, ComputerToolContributor};
 pub use extension::ChromeExtension;
 pub use policy::{ChromeActionClass, classify_action};
 pub use tools::{ChromeToolContributor, chrome_tool_specs};

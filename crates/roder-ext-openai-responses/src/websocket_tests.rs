@@ -425,3 +425,25 @@ fn rotated_credentials_or_account_headers_never_reuse_a_session() {
     account.headers[0].1 = "account-two".into();
     assert!(!Arc::ptr_eq(&first, &session(account).unwrap()));
 }
+
+#[test]
+fn native_computer_continuation_uses_previous_response_id_and_only_new_screenshot() {
+    let previous = json!({"model":"gpt-6-sol","tools":[{"type":"computer"}],"input":[{"role":"user","content":"go"}]});
+    let output = json!({"type":"computer_call","id":"cu_1","call_id":"native_1","actions":[{"type":"screenshot"}],"status":"completed"});
+    let last = LastResponse {
+        request: previous.clone(),
+        output: vec![output.clone()],
+        id: "resp_native".into(),
+    };
+    let mut next = previous;
+    let screenshot = json!({"type":"computer_call_output","call_id":"native_1","output":{
+        "type":"computer_screenshot","image_url":"data:image/png;base64,YWJj","detail":"original"}});
+    next["input"]
+        .as_array_mut()
+        .unwrap()
+        .extend([output, screenshot.clone()]);
+    let delta = incremental_request(&next, Some(&last));
+    assert_eq!(delta["previous_response_id"], "resp_native");
+    assert_eq!(delta["input"], json!([screenshot]));
+    assert_eq!(delta["tools"], json!([{"type":"computer"}]));
+}

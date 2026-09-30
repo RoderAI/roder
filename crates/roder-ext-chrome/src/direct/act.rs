@@ -18,7 +18,7 @@ use super::session::{DirectSession, DirectStep};
 use super::target::Point;
 
 /// Why the guard held a press back.
-enum Held {
+pub(super) enum Held {
     /// Never pressed by these tools; the caller may try something else.
     Refused(String),
     /// Needs the user's confirmation; the run stops.
@@ -145,7 +145,7 @@ impl DirectSession {
         .await
     }
 
-    async fn type_text(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
+    pub(super) async fn type_text(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
         let Some(text) = args["text"].as_str() else {
             return Ok(DirectStep::error("type needs text"));
         };
@@ -223,7 +223,7 @@ impl DirectSession {
         Ok(step)
     }
 
-    async fn key(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
+    pub(super) async fn key(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
         let Some(raw) = args["key"].as_str() else {
             return Ok(DirectStep::error(
                 "key needs a key, such as Escape or Enter",
@@ -352,7 +352,7 @@ impl DirectSession {
     /// lets the tools press (an error the caller can work around), or one
     /// that needs the user's confirmation, unless the call is authorized and
     /// the host may authorize it (which stops the run).
-    fn gate(&self, action: GateAction, probe: &Value, args: &Value) -> Option<Held> {
+    pub(super) fn gate(&self, action: GateAction, probe: &Value, args: &Value) -> Option<Held> {
         if action == GateAction::Click && probe["control"] != json!(true) {
             return None;
         }
@@ -398,7 +398,7 @@ impl DirectSession {
     }
 
     /// The step a held press comes to, after `done` (what already ran).
-    fn held(&self, held: Held, done: String) -> DirectStep {
+    pub(super) fn held(&self, held: Held, done: String) -> DirectStep {
         match held {
             Held::Refused(reason) => DirectStep::error(format!("{done}{reason}")),
             Held::Confirm(reason) => self.confirm_first(format!("{done}{reason}")),
@@ -406,7 +406,18 @@ impl DirectSession {
     }
 
     async fn press(&mut self, chord: &Chord) -> anyhow::Result<()> {
-        for event in chord.events() {
+        let mac = self
+            .client
+            .evaluate_isolated("navigator.platform")
+            .await?
+            .as_str()
+            .is_some_and(|platform| platform.contains("Mac"));
+        for mut event in chord.press_events() {
+            if event["type"] != "keyUp" && event["key"] == chord.events()[0]["key"] {
+                if let Some(command) = chord.editing_command(mac) {
+                    event["commands"] = json!([command]);
+                }
+            }
             self.client.call("Input.dispatchKeyEvent", event).await?;
         }
         Ok(())

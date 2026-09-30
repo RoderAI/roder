@@ -1,0 +1,153 @@
+{
+  "mode": "scripted_native_responses_real_browser_acp",
+  "openai_api_validated": false,
+  "requests": 7,
+  "computer_calls": 6,
+  "action_count": 18,
+  "action_types": [
+    "click",
+    "double_click",
+    "drag",
+    "keypress",
+    "move",
+    "screenshot",
+    "scroll",
+    "type",
+    "wait"
+  ],
+  "errors": 0,
+  "grade": {
+    "passed": true,
+    "checks": {
+      "filters": true,
+      "submitted_value": true,
+      "double_click": true,
+      "right_click": true,
+      "wheel_click": true,
+      "move": true,
+      "nested_scroll": true,
+      "drag_path": true,
+      "shift_click": true
+    },
+    "events": [
+      {
+        "type": "filters",
+        "trusted": true,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguin 🐧"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Meta",
+        "ctrl": false,
+        "meta": true,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "a",
+        "ctrl": false,
+        "meta": true,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "orca"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Shift",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "A",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "orcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Enter",
+        "ctrl": false,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "submit",
+        "trusted": true,
+        "value": "orcaA"
+      },
+      {
+        "type": "double",
+        "trusted": true
+      },
+      {
+        "type": "right",
+        "trusted": true
+      },
+      {
+        "type": "move",
+        "trusted": true
+      },
+      {
+        "type": "filters",
+        "trusted": true,
+        "shift": true
+      },
+      {
+        "type": "wheel",
+        "trusted": true
+      },
+      {
+        "type": "scroll",
+        "trusted": true,
+        "top": 200
+      },
+      {
+        "type": "drag",
+        "trusted": true,
+        "path": [
+          [
+            40,
+            300
+          ],
+          [
+            80,
+            320
+          ],
+          [
+            120,
+            285
+          ],
+          [
+            180,
+            300
+          ],
+          [
+            180,
+            300
+          ]
+        ]
+      }
+    ]
+  },
+  "screenshot_path": "/Users/pz/.codex/worktrees/browser-computer-use-audit/roder/evals/reports/native-computer/2026-09-30/native-protocol.jpg"
+}

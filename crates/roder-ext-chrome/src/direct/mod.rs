@@ -22,6 +22,7 @@ mod act;
 mod capture;
 mod cleanup;
 mod client;
+mod computer;
 pub mod devtools;
 mod guard;
 mod keys;

@@ -314,3 +314,7 @@ fn pending_test_adapter() -> (AcpAdapter<LocalAppClient>, Arc<Runtime>) {
 mod browser {
     include!("acp_browser.rs");
 }
+
+mod native_computer {
+    include!("acp_native_computer.rs");
+}

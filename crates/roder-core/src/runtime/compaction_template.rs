@@ -23,6 +23,7 @@ impl Runtime {
         let tools = self.filtered_tool_specs(
             &cfg,
             model,
+            provider,
             profile.as_ref(),
             &overrides.tool_allowlist,
             &overrides.external_tools,
