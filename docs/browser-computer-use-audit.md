@@ -1,8 +1,9 @@
 # Browser computer-use audit — 2026-09-29
 
-Status: **in progress**. Primitive and observation repairs are implemented and
-have targeted test evidence. Safety parity is not yet established; the open
-items below remain part of the task.
+Status: **repairs implemented and runtime evaluations passed**. Changes are
+local to the two audit branches; final workspace validation is running. This
+report distinguishes correct primitives, observed task outcomes, and profile
+isolation limits.
 
 **User scope:** additional sensitive-action consent was explicitly excluded on
 2026-09-29. Existing permissions and approval modes remain in place. Consent
@@ -69,10 +70,10 @@ installation is not evidence that these implementations are open source.
 | Browser-use session ownership | One process previously served every thread. Threads now own distinct lazy servers and private profile/download/file directories. Separate processes alone were insufficient: the pinned upstream server defaults to a shared profile. Real pinned-runtime tests now prove thread cookie isolation and persistence within each thread. | Repaired, real runtime evaluated |
 | Browser-use action/observation ordering | Calls within a thread are serialized; actions are followed by `browser_get_state` with screenshot. Fresh state precedes the action report so report text cannot crowd it out first. Real pinned-runtime click outcomes are independently checked through the page HTML. | Repaired, real runtime evaluated |
 | Cancellation | In-flight browser-use cancellation stops the owned process tree; the next call starts fresh. Direct tools track held input and screenshot masks before sending commands, recover through a separate connection with a five-second cap, and await recovery before reusing a retained session. Real-browser tests cancel a drag and a key with a delayed acknowledgement, cancel a masked screenshot, and inject an error during a drag. Key cancellation retains the original session and immediately resumes it. Recovery is best effort if Chrome is unreachable or the runtime exits. | Repaired, browser evaluated |
-| Untrusted observations | Existing markers remain on reads. Desktop eval results and tab titles/URLs are labeled; action observations from browser-use are labeled even when an error is present. Direct helper state and permission probes now execute in a named CDP isolated world. A fixture poisons the page's `window.__roderDirect`; genuine state and input still work. | Improved and browser evaluated; separate extension enforcement review open |
+| Untrusted observations | Existing markers remain on reads. Desktop eval results and tab titles/URLs are labeled; action observations from browser-use are labeled even when an error is present. Direct helper state and permission probes now execute in a named CDP isolated world. A fixture poisons the page's `window.__roderDirect`; genuine state and input still work. | Improved and browser evaluated; paired extension evaluated |
 | Outcome verification | Jev fixture graders check actual page/DOM outcomes and recorded fixture POSTs; successful final model text alone does not determine a pass. The corpus passed 52/52, including 5 fallback tasks. | Deterministic harness evaluated |
 | ACP permission and result contract | Public `session/new`/`session/prompt` tests assert permission requests, call identity, inputs, completed/failed tool updates, observed page text and final `end_turn`. Rejection executes zero actions. | 6 ACP tests passed |
-| Site/action restrictions | Desktop has an optional exact-origin ceiling, stable numeric tab identity, and a binding per thread. Missing tab ids fail. Direct tools recheck current origin before each read/input, including external navigation and after a stop. Browser-use has an optional exact-host operator ceiling; direct navigation is rejected before transmission and an agent call cannot widen it. Restrictions remain opt-in. Redirect checks on direct tools stop subsequent interaction after the destination has loaded; they are not a network firewall. | Repaired and browser evaluated within configured scope; extension review findings below |
+| Site/action restrictions | Desktop has an optional exact-origin ceiling, stable numeric tab identity, and a binding per thread. Missing tab ids fail. Direct tools recheck current origin before each read/input, including external navigation and after a stop. Browser-use has an optional exact-host operator ceiling; direct navigation is rejected before transmission and an agent call cannot widen it. Restrictions remain opt-in. Redirect checks on direct tools stop subsequent interaction after the destination has loaded; they are not a network firewall. | Repaired and browser evaluated within configured scope; paired extension evaluated below |
 | Execution bounds | browser-use agent calls default to 50 steps and accept only 1–100. Direct commands have a 30-second response timeout; waits/repeats/drag steps are bounded. | Implemented |
 
 ## Live model evaluation
@@ -99,26 +100,72 @@ input behavior. This selected run is not comparable to the full corpus's rate.
 - [Complete live-model rows](../evals/reports/browser-computer-use/2026-09-29/live-jev.jsonl).
 - [Focused fallback rows](../evals/reports/browser-computer-use/2026-09-29/live-fallback-focused.jsonl).
 
-## Separate Chrome extension gaps
+## Paired Chrome extension repairs
 
-The Rust Desktop fallback is repaired; the paired MV3 extension still has its
-own implementation in `/Users/pz/w/roder-web-extention`:
+The separate MV3 repository was repaired in an isolated Git worktree:
+`/Users/pz/.codex/worktrees/browser-extension-audit/roder-web-extention`, branch
+`pz/computer-use-primitives`, based on `7c77daa`. Unknown work in its main
+checkout was preserved. These changes must be installed with the Roder audit
+branch; the installed extension was not replaced by this evaluation.
 
-1. `src/content/actions.ts:54` returns before a delayed DOM `.click()`;
-   typing and keypresses assign values/dispatch synthetic events. These do not
-   have the browser-default behavior of the verified CDP input primitives.
-2. `src/background/service-worker.ts:691` sends action reports without a fresh
-   page observation. Roder's extension dispatch path currently forwards those
-   reports; it does not establish the actual UI outcome.
-3. `src/background/service-worker.ts:684` uses `captureVisibleTab` for the
-   resolved tab's window. An explicit inactive tab can therefore yield another
-   tab's pixels.
-4. The permission gate checks one resolved tab, then privileged execution
-   resolves it again. A default active-tab change while approval is pending can
-   change the target. A concrete tab id and origin must survive that boundary.
+- Click, type, keypress and wheel scrolling now use tab-targeted Chrome CDP
+  `Input` commands. Editable targets and actual focus are checked first.
+- Select remains a semantic DOM selection with an independently checked value
+  and explicit `eventsTrusted: false` provenance. macOS native select popups
+  did not respond to tab-targeted CDP keys in the loaded-extension evaluation.
+  Code/function interfaces permit this higher-level operation; it is not
+  claimed to be a native keyboard gesture.
+- References use a document UUID and isolated-world maps. Forged DOM attributes,
+  stale references, ambiguous selectors and covered targets fail.
+- Actions serialize through the resulting fresh, untrusted observation. Queued
+  approvals retain a concrete tab, origin and document, with current settings
+  and permission checked again before input.
+- Screenshots use tab-targeted CDP rather than `captureVisibleTab`, support
+  validated viewport crops, and preserve CSS coordinate mapping. The genuine
+  DPR2 capture is 800x600; its filled fake password is masked in opaque black.
+- Rust dispatch cancellation/timeout sends `command/cancel` to its original
+  extension client. Running input and screenshot work is aborted, held input
+  released, masks removed, and pending approvals rejected. Disconnect cancels
+  pending/running work. Cleanup remains best effort when Chrome is unreachable.
+- Debugger reads and streamed events recheck the attached origin's permission;
+  typed values and eval expressions are no longer copied into command logs.
+- Content/pair scripts now build as self-contained IIFEs for the MV3 classic
+  content-script loader. The service worker remains an ES module.
 
-These are actionable gaps; this audit does not claim the separate extension
-has been repaired or evaluated with a loaded extension.
+Loaded MV3 extension evaluation: **15/15 checks**, through the real WebSocket
+bridge and Chrome APIs in a throwaway Chromium profile. Includes trusted input,
+Enter submission, nested wheel scrolling, inactive-tab screenshot/crop/masking,
+stale/forged references, readonly/ambiguous rejection, parallel action ordering,
+cancellation after browser-applied input/capture, document changes, active-tab
+switches, and permission revocation while approval is queued. Its 24 existing
+unit tests, TypeScript check and production build pass.
+
+Artifacts and reproducible harness in the extension worktree:
+
+- `scripts/eval-computer-use.mjs` (`pnpm eval:computer-use`).
+- `output/playwright/extension-eval.json`.
+- `output/playwright/extension-viewport.png` (visually inspected).
+- `docs/computer-use-primitives.md`.
+
+## Runtime completion verification
+
+`jev_browse` now supports optional caller-defined `success_condition` predicates:
+`url_contains` and `text_contains`. The runtime reads actual browser state again
+after Jev reports DONE. Failure changes the status to blocked with
+`outcome_mismatch`, allowing the existing bounded fallback to continue. A
+fallback success claim is checked against fresh UI state again; a failed or
+missing observation cannot establish success. Both result data and the calling
+model's text state whether verification passed, failed, or was not requested.
+
+Real-browser session tests cover premature search DONE, premature counter DONE,
+verified progress, successful fallback recovery, and rejection of a fallback's
+own false DONE. Input validation rejects unknown fields and oversized strings.
+
+These checks verify only the supplied URL/text predicates. They are not proof
+of an entire natural-language goal or a server transaction; fixture graders
+still independently check DOM outcomes and POSTs. Without conditions, done is
+explicitly a model claim. The 49/52 live-model result above predates this new
+completion gate and does not demonstrate a new success rate for it.
 
 ## Evaluation artifacts and scope
 
@@ -177,11 +224,27 @@ extraction initializes from the private configuration; the configured OpenAI
 key is included there with private permissions and removed on shutdown. No
 real OpenAI extraction/agent call was made in the pinned-server evaluation.
 
-## Remaining completion gates
+## Deployment and evaluation limits
 
-1. Repair and evaluate the paired Chrome extension's input, observation,
-   screenshot-target and permission-target boundary issues listed above.
-2. Evaluate a runtime outcome-verification strategy for false `done` results;
-   measured model decisions remain fallible even with correct input primitives.
-3. Obtain a green workspace/app-server gate in a clean environment; the known
-   baseline failures and intermittent infrastructure/timing failures remain.
+- These are local audit-branch commits, not landed or deployed changes. Roder and
+  its paired extension must be updated together.
+- Browser-use creates an isolated owned profile. The Chrome extension controls
+  the profile to which it is paired, and an external CDP endpoint can belong to
+  an existing profile. Use a dedicated agent profile when isolation is required;
+  a plugin cannot retroactively isolate a user's existing logged-in browser.
+- Site/action ceilings remain operator-configured. Redirects may load before
+  the next permission check; the restrictions stop subsequent input/inspection
+  and are not a network firewall.
+- Masking uses sensitive-field heuristics. It is not a guarantee that arbitrary
+  pages cannot show secrets elsewhere.
+- Native macOS select-popup keyboard behavior is not claimed. Select is labeled
+  as a semantic DOM operation and its actual value is verified.
+- No new sensitive-action consent was added, per user scope.
+- Live model decisions remain fallible; the new optional completion gate verifies
+  specific UI predicates. The model corpus result remains 49/52, not 100%.
+
+The clean app-server run passed **129 tests, one ignored**, with a temporary
+`RODER_CONFIG_DIR` and ambient credential variables removed from the child
+process. Earlier identical baseline failures therefore reflected this test
+environment's credentials/configuration, not a browser regression. Final full
+workspace results will be recorded below after the same clean-environment run.

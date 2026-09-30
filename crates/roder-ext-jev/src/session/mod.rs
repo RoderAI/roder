@@ -16,6 +16,7 @@
 //! whose tabs nothing would ever close.
 
 mod call;
+pub(crate) mod completion;
 pub(crate) mod log;
 mod state;
 mod sweep;

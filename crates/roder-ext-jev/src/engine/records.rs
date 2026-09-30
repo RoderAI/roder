@@ -189,7 +189,7 @@ impl JevRunResult {
 
 /// One control the final page offered, as the caller reads it. A secret
 /// field's value is never included.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JevControl {
     pub label: String,
     /// `click`, `fill` or `select`.

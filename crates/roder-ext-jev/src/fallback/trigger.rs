@@ -23,6 +23,8 @@ use crate::engine::{JevRunResult, JevStatus, JevStopCause};
 pub(crate) enum Trigger {
     /// The model answered BLOCKED on a page that offered controls.
     ModelBlocked,
+    /// A model DONE was rejected by independent UI postconditions.
+    OutcomeMismatch,
     /// Three actions in a row changed nothing.
     Stalled,
     /// Its targets stayed covered (three covered attempts, or DONE after
@@ -40,6 +42,9 @@ impl Trigger {
         match self {
             Self::ModelBlocked => {
                 "Jev's model judged it could not go on with the controls it can use"
+            }
+            Self::OutcomeMismatch => {
+                "Jev reported DONE, but fresh UI state failed the caller-defined success condition"
             }
             Self::Stalled => "three of Jev's actions in a row changed nothing on the page",
             Self::Covered => "the controls Jev tried were covered by another element",
@@ -60,6 +65,7 @@ pub(crate) fn trigger(result: &JevRunResult) -> Option<Trigger> {
                 return None;
             }
             let cause = match result.stop_cause? {
+                JevStopCause::OutcomeMismatch => Trigger::OutcomeMismatch,
                 JevStopCause::ModelBlocked => Trigger::ModelBlocked,
                 JevStopCause::Stalled => Trigger::Stalled,
                 JevStopCause::Covered | JevStopCause::DoneAfterCovered => Trigger::Covered,

@@ -76,6 +76,13 @@ pub fn is_untrusted_kind(kind: &str) -> bool {
     matches!(
         kind,
         "page/snapshot"
+            | "tab/navigate"
+            | "page/click"
+            | "page/type"
+            | "page/keypress"
+            | "page/scroll"
+            | "page/select"
+            | "page/highlight"
             | "tabs/list"
             | "page/eval"
             | "page/getText"

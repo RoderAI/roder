@@ -53,6 +53,7 @@ impl TabChoice {
 #[derive(Debug)]
 pub(crate) struct JevRequest {
     pub(crate) goal: String,
+    pub(crate) success_condition: Option<crate::session::completion::Completion>,
     /// Where to load, or `None` to go on from the page the tab shows.
     pub(crate) url: Option<String>,
     pub(crate) tab: TabChoice,
@@ -147,6 +148,7 @@ impl JevRequest {
         }
         Ok(Self {
             goal: goal.into(),
+            success_condition: crate::session::completion::Completion::parse(args)?,
             url,
             tab,
             timeout,

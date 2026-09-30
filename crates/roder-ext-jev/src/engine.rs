@@ -305,6 +305,8 @@ impl JevStatus {
 pub enum JevStopCause {
     /// The model answered BLOCKED.
     ModelBlocked,
+    /// A fresh UI observation failed the caller-defined completion predicates.
+    OutcomeMismatch,
     /// Three actions in a row changed nothing.
     Stalled,
     /// Three actions in a row found their target covered.
