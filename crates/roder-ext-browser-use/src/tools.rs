@@ -13,6 +13,7 @@ use roder_ext_mcp::redact_secrets;
 use serde_json::{Value, json};
 
 use crate::catalog::{BrowserUseToolDef, tool_defs};
+use crate::policy::BrowserUseActionClass;
 use crate::server::BrowserUseServer;
 
 pub const TOOL_PROVIDER_ID: &str = "browser-use";
@@ -83,30 +84,49 @@ impl ToolExecutor for BrowserUseTool {
             return Ok(error_result(
                 &call,
                 format!(
-                    "{} needs an LLM inside the browser-use server, and Roder has no OpenAI or \
-                     Anthropic API key to give it. Set OPENAI_API_KEY or ANTHROPIC_API_KEY (or \
-                     [providers.openai] / [providers.anthropic] api_key in Roder config) and \
+                    "{} needs an LLM inside the pinned browser-use server, and Roder has no OpenAI \
+                     API key to give it. Set OPENAI_API_KEY (or \
+                     [providers.openai] api_key in Roder config) and \
                      restart Roder. The direct-control browser_use_* tools work without a key.",
                     self.def.name
                 ),
             ));
         }
-        let arguments = if call.arguments.is_object() {
+        let mut arguments = if call.arguments.is_object() {
             call.arguments.clone()
         } else {
-            json!({})
+            return Ok(error_result(
+                &call,
+                "browser-use arguments must be an object",
+            ));
         };
-        match self
-            .server
-            .call(self.def.remote, arguments, self.def.timeout)
+        if self.def.class == BrowserUseActionClass::Agent {
+            let steps = arguments.get("max_steps").map_or(Some(50), Value::as_u64);
+            let Some(steps) = steps.filter(|steps| (1..=100).contains(steps)) else {
+                return Ok(error_result(
+                    &call,
+                    "max_steps must be an integer from 1 to 100",
+                ));
+            };
+            arguments["max_steps"] = json!(steps);
+        }
+        let server = self.server.for_thread(&call.thread_id).await;
+        let observe = matches!(
+            self.def.class,
+            BrowserUseActionClass::Navigate
+                | BrowserUseActionClass::Act
+                | BrowserUseActionClass::Agent
+        );
+        match server
+            .call_observed(self.def.remote, arguments, self.def.timeout, observe)
             .await
         {
             Ok(result) => {
-                let secrets = self.server.redactions().await;
+                let secrets = server.redactions().await;
                 Ok(render_result(self.def, &call, &result, &secrets))
             }
             Err(error) => {
-                let secrets = self.server.redactions().await;
+                let secrets = server.redactions().await;
                 Ok(error_result(
                     &call,
                     redact_secrets(&format!("{error:#}"), &secrets),
@@ -165,7 +185,14 @@ pub(crate) fn render_result(
     }
     let body = redact_secrets(&texts.join("\n"), secrets);
     let body = truncate(&body);
-    let text = if def.untrusted && !is_error {
+    let untrusted = def.untrusted
+        || matches!(
+            def.class,
+            BrowserUseActionClass::Navigate
+                | BrowserUseActionClass::Act
+                | BrowserUseActionClass::Agent
+        );
+    let text = if untrusted {
         format!("{UNTRUSTED_NOTE}\n---\n{body}")
     } else {
         body.clone()
@@ -174,14 +201,14 @@ pub(crate) fn render_result(
     let mut data = json!({
         "provider": "browser-use",
         "tool": def.remote,
-        "untrusted": def.untrusted,
+        "untrusted": untrusted,
         "content": body,
     });
-    if def.untrusted {
+    if untrusted {
         data["note"] = json!(UNTRUSTED_NOTE);
     }
     if let Some(url) = image {
-        data[VIEW_IMAGE_DISPLAY_KEY] = json!({ "image_url": url, "detail": "auto" });
+        data[VIEW_IMAGE_DISPLAY_KEY] = json!({ "image_url": url, "detail": "original" });
     }
     ToolResult {
         id: call.id.clone(),
@@ -207,7 +234,8 @@ fn truncate(body: &str) -> String {
     )
 }
 
-fn error_result(call: &ToolCall, message: String) -> ToolResult {
+fn error_result(call: &ToolCall, message: impl Into<String>) -> ToolResult {
+    let message = message.into();
     ToolResult {
         id: call.id.clone(),
         name: call.name.clone(),
@@ -220,6 +248,35 @@ fn error_result(call: &ToolCall, message: String) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn invalid_agent_limits_and_nonobject_arguments_do_not_start_a_server() {
+        let server = Arc::new(BrowserUseServer::with_launch(
+            "test".into(),
+            Arc::new(|| panic!("invalid input reached server startup")),
+        ));
+        let tool = BrowserUseTool {
+            def: crate::catalog::tool_def("browser_use_agent").unwrap(),
+            server,
+            has_llm_key: true,
+        };
+        for arguments in [
+            json!([]),
+            json!({"task":"fixture","max_steps":0}),
+            json!({"task":"fixture","max_steps":101}),
+            json!({"task":"fixture","max_steps":1.5}),
+        ] {
+            let mut call = call("browser_use_agent");
+            call.arguments = arguments;
+            let result = tool
+                .execute(
+                    ToolExecutionContext::new("t", "u", roder_api::policy_mode::PolicyMode::Bypass),
+                    call,
+                )
+                .await
+                .unwrap();
+            assert!(result.is_error);
+        }
+    }
     use crate::catalog::tool_def;
 
     fn call(name: &str) -> ToolCall {
@@ -253,13 +310,14 @@ mod tests {
     }
 
     #[test]
-    fn navigation_results_are_plain() {
+    fn navigation_results_preserve_the_untrusted_boundary() {
         let def = tool_def("browser_use_navigate").unwrap();
         let result =
             json!({ "content": [{ "type": "text", "text": "Navigated to: https://example.com" }] });
         let rendered = render_result(def, &call(def.name), &result, &[]);
-        assert_eq!(rendered.text, "Navigated to: https://example.com");
-        assert_eq!(rendered.data["untrusted"], json!(false));
+        assert!(rendered.text.starts_with(UNTRUSTED_NOTE));
+        assert!(rendered.text.contains("Navigated to: https://example.com"));
+        assert_eq!(rendered.data["untrusted"], json!(true));
     }
 
     #[test]
@@ -284,7 +342,7 @@ mod tests {
         let result = json!({ "content": [{ "type": "text", "text": "Element 9 not found" }], "isError": true });
         let rendered = render_result(def, &call(def.name), &result, &[]);
         assert!(rendered.is_error);
-        assert_eq!(rendered.text, "Element 9 not found");
+        assert!(rendered.text.contains("Element 9 not found"));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! Before a click on a control, or Enter, the owner's guard is asked whether
 //! the control needs the user's confirmation first.
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 use serde_json::{Value, json};
 
 use super::client::cut;
@@ -15,20 +15,14 @@ use super::guard::{GateAction, GateQuery};
 use super::keys::Chord;
 use super::look::helper;
 use super::session::{DirectSession, DirectStep};
+use super::target::Point;
 
 /// Why the guard held a press back.
-enum Held {
+pub(super) enum Held {
     /// Never pressed by these tools; the caller may try something else.
     Refused(String),
     /// Needs the user's confirmation; the run stops.
     Confirm(String),
-}
-
-/// A point in viewport CSS pixels.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Point {
-    x: f64,
-    y: f64,
 }
 
 /// Steps a drag moves through between press and release.
@@ -151,13 +145,18 @@ impl DirectSession {
         .await
     }
 
-    async fn type_text(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
+    pub(super) async fn type_text(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
         let Some(text) = args["text"].as_str() else {
             return Ok(DirectStep::error("type needs text"));
         };
         let target = args["ref"]
             .as_str()
             .filter(|reference| !reference.is_empty());
+        if helper(&mut self.client, &format!("editable({})", json!(target))).await? != json!(true) {
+            return Ok(DirectStep::error(
+                "Target is not an editable text field; nothing was clicked or typed. Look again for a field.",
+            ));
+        }
         // A ref's content is replaced unless the call appends to it.
         let clear = target.is_some() && args["append"] != json!(true);
         if let Some(reference) = target {
@@ -178,6 +177,11 @@ impl DirectSession {
             if focused["gone"] == json!(true) {
                 return Ok(DirectStep::error(format!(
                     "{reference} is gone from the page; look again"
+                )));
+            }
+            if focused["focused"] != json!(true) || focused["editable"] != json!(true) {
+                return Ok(DirectStep::error(format!(
+                    "{reference} is not a focused editable text field; nothing was typed. Look again for a field."
                 )));
             }
         }
@@ -219,7 +223,7 @@ impl DirectSession {
         Ok(step)
     }
 
-    async fn key(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
+    pub(super) async fn key(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
         let Some(raw) = args["key"].as_str() else {
             return Ok(DirectStep::error(
                 "key needs a key, such as Escape or Enter",
@@ -272,15 +276,18 @@ impl DirectSession {
         let located = args["ref"]
             .as_str()
             .is_some_and(|reference| !reference.is_empty())
-            || args["x"].as_f64().is_some_and(|x| x != 0.0)
-            || args["y"].as_f64().is_some_and(|y| y != 0.0);
+            || args["x"].is_number()
+            || args["y"].is_number();
         let point = match located {
             true => match self.point(args, "").await? {
                 Ok(point) => point,
                 Err(why) => return Ok(DirectStep::error(why)),
             },
             false => {
-                let size = self.client.evaluate("[innerWidth, innerHeight]").await?;
+                let size = self
+                    .client
+                    .evaluate_isolated("[innerWidth, innerHeight]")
+                    .await?;
                 Point {
                     x: size[0].as_f64().unwrap_or(800.0) / 2.0,
                     y: size[1].as_f64().unwrap_or(600.0) / 2.0,
@@ -341,79 +348,11 @@ impl DirectSession {
         .await
     }
 
-    /// The point `args` names under `prefix`: a ref's (centre, or `fx`/`fy`
-    /// within its box), or `x`/`y`. `Err` explains what is wrong.
-    async fn point(&mut self, args: &Value, prefix: &str) -> anyhow::Result<Result<Point, String>> {
-        let at = |key: &str| args[format!("{prefix}{key}")].as_f64();
-        if let Some(reference) = args[format!("{prefix}ref")]
-            .as_str()
-            .filter(|reference| !reference.is_empty())
-        {
-            let resolved = helper(
-                &mut self.client,
-                &format!(
-                    "point({}, {}, {})",
-                    json!(reference),
-                    at("fx").map_or(json!(null), |fx| json!(fx.clamp(0.0, 1.0))),
-                    at("fy").map_or(json!(null), |fy| json!(fy.clamp(0.0, 1.0))),
-                ),
-            )
-            .await?;
-            if resolved["gone"] == json!(true) {
-                return Ok(Err(format!(
-                    "{reference} is not on the page any more (or not shown); look again for \
-                     current refs"
-                )));
-            }
-            let point = Point {
-                x: resolved["x"].as_f64().context("a point")?,
-                y: resolved["y"].as_f64().context("a point")?,
-            };
-            if resolved["covered"] == json!(true) {
-                return Ok(Err(format!(
-                    "{reference} is covered at ({:.0},{:.0}) by {}; nothing was pressed. Close \
-                     what covers it (Escape, or its close control) and try again, or press at \
-                     x/y if you mean to press what is on top.",
-                    point.x,
-                    point.y,
-                    resolved["by"]
-                        .as_str()
-                        .map_or("another element".to_string(), |by| format!("\"{by}\""))
-                )));
-            }
-            return Ok(Ok(point));
-        }
-        // Roder sends every property, so 0,0 is how a call leaves x/y out.
-        match (at("x"), at("y")) {
-            (Some(x), Some(y)) if x != 0.0 || y != 0.0 => Ok(Ok(Point { x, y })),
-            _ => Ok(Err(format!(
-                "give {prefix}ref (from the last look) or {prefix}x and {prefix}y (viewport px)"
-            ))),
-        }
-    }
-
-    /// What sits at the point: the ref's element when a ref was given, else
-    /// whatever the point hits.
-    async fn probe(&mut self, args: &Value, prefix: &str, point: Point) -> anyhow::Result<Value> {
-        let call = match args[format!("{prefix}ref")]
-            .as_str()
-            .filter(|reference| !reference.is_empty())
-        {
-            Some(reference) => format!("probeRef({})", json!(reference)),
-            None => format!("probe({}, {})", point.x, point.y),
-        };
-        let mut probe = helper(&mut self.client, &call).await?;
-        if let Some(label) = probe["label"].as_str() {
-            probe["label"] = json!(self.guard.scrub(label));
-        }
-        Ok(probe)
-    }
-
     /// Whether the guard holds back this press: a control the owner never
     /// lets the tools press (an error the caller can work around), or one
     /// that needs the user's confirmation, unless the call is authorized and
     /// the host may authorize it (which stops the run).
-    fn gate(&self, action: GateAction, probe: &Value, args: &Value) -> Option<Held> {
+    pub(super) fn gate(&self, action: GateAction, probe: &Value, args: &Value) -> Option<Held> {
         if action == GateAction::Click && probe["control"] != json!(true) {
             return None;
         }
@@ -459,7 +398,7 @@ impl DirectSession {
     }
 
     /// The step a held press comes to, after `done` (what already ran).
-    fn held(&self, held: Held, done: String) -> DirectStep {
+    pub(super) fn held(&self, held: Held, done: String) -> DirectStep {
         match held {
             Held::Refused(reason) => DirectStep::error(format!("{done}{reason}")),
             Held::Confirm(reason) => self.confirm_first(format!("{done}{reason}")),
@@ -467,7 +406,18 @@ impl DirectSession {
     }
 
     async fn press(&mut self, chord: &Chord) -> anyhow::Result<()> {
-        for event in chord.events() {
+        let mac = self
+            .client
+            .evaluate_isolated("navigator.platform")
+            .await?
+            .as_str()
+            .is_some_and(|platform| platform.contains("Mac"));
+        for mut event in chord.press_events() {
+            if event["type"] != "keyUp" && event["key"] == chord.events()[0]["key"] {
+                if let Some(command) = chord.editing_command(mac) {
+                    event["commands"] = json!([command]);
+                }
+            }
             self.client.call("Input.dispatchKeyEvent", event).await?;
         }
         Ok(())
@@ -484,7 +434,16 @@ impl DirectSession {
         if kind != "mouseMoved" {
             params["button"] = json!(button);
             params["clickCount"] = json!(clicks);
-            params["buttons"] = json!(if kind == "mousePressed" { 1 } else { 0 });
+            params["buttons"] = json!(if kind == "mousePressed" {
+                match button {
+                    "left" => 1,
+                    "right" => 2,
+                    "middle" => 4,
+                    _ => 0,
+                }
+            } else {
+                0
+            });
         }
         self.client
             .call("Input.dispatchMouseEvent", params)

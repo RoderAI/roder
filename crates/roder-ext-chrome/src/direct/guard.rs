@@ -89,6 +89,9 @@ pub trait DirectGuard: Send + Sync {
     }
 
     /// Page-supplied text with the owner's typed secrets taken out.
+    /// Retain secrets typed by a batched computer call before its screenshot.
+    fn remember_secret(&self, _value: &str) {}
+
     fn scrub(&self, text: &str) -> String {
         text.to_string()
     }

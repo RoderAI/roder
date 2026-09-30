@@ -310,3 +310,11 @@ fn pending_test_adapter() -> (AcpAdapter<LocalAppClient>, Arc<Runtime>) {
     ));
     (AcpAdapter::new(LocalAppClient::new(server)), runtime)
 }
+
+mod browser {
+    include!("acp_browser.rs");
+}
+
+mod native_computer {
+    include!("acp_native_computer.rs");
+}

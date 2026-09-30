@@ -50,9 +50,12 @@ pub(super) fn prepare_request_payload(
                     image_sizes(&compact["input"][*index]["output"]);
                 images -= removed_images;
                 image_bytes -= removed_bytes;
-                compact["input"][*index]["output"] = json!(
-                    "Previously viewed image omitted from this request to fit the byte budget. Reopen it with view_image if needed."
-                );
+                let blocks = compact["input"][*index]["output"]
+                    .as_array_mut()
+                    .expect("image output blocks");
+                blocks.retain(|block| block["type"] != "input_image");
+                blocks.push(json!({"type":"input_text", "text":
+                    "Previously viewed image omitted to fit the byte budget. Capture a fresh screenshot if needed."}));
                 shed_tool_images += 1;
                 bytes = serde_json::to_vec(&compact)?;
                 if bytes.len() <= limit {
@@ -75,7 +78,10 @@ pub(super) fn prepare_request_payload(
 fn image_sizes(value: &Value) -> (usize, usize) {
     match value {
         Value::Object(fields)
-            if fields.get("type").and_then(Value::as_str) == Some("input_image") =>
+            if fields
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| matches!(kind, "input_image" | "computer_screenshot")) =>
         {
             (
                 1,
@@ -101,6 +107,29 @@ fn image_sizes(value: &Value) -> (usize, usize) {
 mod tests {
     use super::*;
     #[test]
+    fn shedding_old_screenshots_preserves_page_observations_and_newest_image() {
+        let image = |id, observation| {
+            json!({"type":"function_call_output", "call_id":id,
+            "output":[{"type":"input_text", "text":observation},
+                {"type":"input_image", "image_url":format!("data:image/png;base64,{}", "A".repeat(1000)), "detail":"original"}]})
+        };
+        let body = json!({"input":[image("old", "Cart total: 12.00"), image("new", "Order still pending")]});
+        let payload =
+            prepare_request_payload(&body, serde_json::to_vec(&body).unwrap().len() - 500).unwrap();
+        let wire: Value = serde_json::from_slice(&payload.bytes).unwrap();
+        assert_eq!(wire["input"][0]["call_id"], "old");
+        assert_eq!(wire["input"][0]["output"][0]["text"], "Cart total: 12.00");
+        assert!(
+            wire["input"][0]["output"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|block| block["type"] != "input_image")
+        );
+        assert_eq!(wire["input"][1]["output"], body["input"][1]["output"]);
+    }
+
+    #[test]
     fn budget_counts_serialized_schemas_and_opaque_state() {
         let body = json!({"input":[{"type":"reasoning","encrypted_content":"x".repeat(1000)}],"tools":[{"description":"é".repeat(1000)}]});
         let limit = serde_json::to_vec(&body).unwrap().len();
@@ -124,7 +153,7 @@ mod tests {
         let body = json!({"input":[image("old"),image("new")]});
         let payload = prepare_request_payload(&body, 1500).unwrap();
         let wire: Value = serde_json::from_slice(&payload.bytes).unwrap();
-        assert!(wire["input"][0]["output"].is_string());
+        assert_eq!(wire["input"][0]["output"][0]["type"], "input_text");
         assert!(wire["input"][1]["output"].is_array());
         assert!(body["input"][0]["output"].is_array());
         assert_eq!(payload.metadata["image_count"], 1);

@@ -1,0 +1,15 @@
+<!doctype html><title>Primitive fixture</title>
+<style>body { margin:40px } #origin { position:fixed; left:0; top:0; width:20px; height:20px; z-index:99 }</style>
+<div id="origin"></div><h1>Primitive fixture</h1><p id="count">Count: 0</p>
+<button id="inc">Increment</button><label>Name<input id="name"></label><button id="next">Next</button>
+<label>Password<input type="password" value="fixture-secret"></label>
+<script>
+let count=0;
+inc.onclick=e=>{window.clickTrusted=e.isTrusted;document.querySelector('#count').textContent='Count: '+ ++count};
+document.querySelector('#name').oninput=e=>window.inputTrusted=e.isTrusted;
+document.addEventListener('keydown',e=>window.keyTrusted=e.isTrusted);
+document.addEventListener('mousedown',()=>window.dragHeld=true);
+document.addEventListener('mouseup',()=>window.dragHeld=false);
+document.querySelector('#origin').addEventListener('mousedown',e=>{if(e.button===2)window.rightButtons=e.buttons;else window.originClicked=true});
+document.querySelector('#origin').addEventListener('contextmenu',e=>e.preventDefault());
+</script>

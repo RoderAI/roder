@@ -16,6 +16,14 @@ pub fn label_result(kind: &str, value: Value) -> Value {
         let mut obj = Map::new();
         obj.insert("untrusted".to_string(), json!(true));
         obj.insert("note".to_string(), json!(UNTRUSTED_NOTE));
+        if kind == "page/screenshot"
+            && let Some(url) = value.get("dataUrl").and_then(Value::as_str)
+        {
+            obj.insert(
+                roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY.into(),
+                json!({"image_url": url, "detail": "original"}),
+            );
+        }
         obj.insert("content".to_string(), value);
         Value::Object(obj)
     } else {
@@ -46,7 +54,7 @@ pub fn result_text(kind: &str, value: &Value) -> String {
             .map(str::len)
             .unwrap_or(0);
         return format!(
-            "Captured a PNG screenshot of the visible tab ({bytes} base64 chars).              The image is attached to this tool result, not inlined here."
+            "{UNTRUSTED_NOTE}\nCaptured a PNG screenshot of the visible tab ({bytes} base64 chars). The image is attached to this tool result."
         );
     }
 
@@ -68,6 +76,15 @@ pub fn is_untrusted_kind(kind: &str) -> bool {
     matches!(
         kind,
         "page/snapshot"
+            | "tab/navigate"
+            | "page/click"
+            | "page/type"
+            | "page/keypress"
+            | "page/scroll"
+            | "page/select"
+            | "page/highlight"
+            | "tabs/list"
+            | "page/eval"
             | "page/getText"
             | "page/screenshot"
             | "debug/console/read"
@@ -130,8 +147,8 @@ mod tests {
     }
 
     #[test]
-    fn tab_lists_are_not_labeled() {
+    fn tab_titles_and_urls_are_untrusted() {
         let labeled = label_result("tabs/list", json!({ "tabs": [] }));
-        assert!(labeled.get("untrusted").is_none());
+        assert_eq!(labeled["untrusted"], true);
     }
 }

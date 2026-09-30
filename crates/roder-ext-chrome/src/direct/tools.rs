@@ -33,9 +33,9 @@ pub fn reads_only(short: &str) -> bool {
 
 fn point(prefix: &str, what: &str) -> Value {
     json!({
-        format!("{prefix}ref"): {"type": "string", "description": format!("{what}: a ref from the last look, such as e12.")},
-        format!("{prefix}x"): {"type": "number", "description": format!("{what}, instead of a ref: x in viewport CSS px (as in a screenshot).")},
-        format!("{prefix}y"): {"type": "number", "description": format!("{what}, instead of a ref: y in viewport CSS px.")},
+        format!("{prefix}ref"): {"type": "string", "description": format!("{what}: a ref from the last look, such as e6a2b1f0c-12.")},
+        format!("{prefix}x"): {"type": ["number", "null"], "description": format!("{what}, instead of a ref: x in viewport CSS px (as in a screenshot). Null when using a ref.")},
+        format!("{prefix}y"): {"type": ["number", "null"], "description": format!("{what}, instead of a ref: y in viewport CSS px. Null when using a ref.")},
     })
 }
 
@@ -279,7 +279,7 @@ impl ToolExecutor for DirectTool {
 pub fn tool_result(id: &str, name: &str, step: &DirectStep) -> ToolResult {
     let mut data = step.data.clone();
     if let Some(image) = &step.image {
-        data[VIEW_IMAGE_DISPLAY_KEY] = json!({"image_url": image, "detail": "auto"});
+        data[VIEW_IMAGE_DISPLAY_KEY] = json!({"image_url": image, "detail": "original"});
     }
     ToolResult {
         id: id.to_string(),

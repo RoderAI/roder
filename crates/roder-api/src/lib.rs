@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod chrome;
 pub mod code_index;
 pub mod command_shell;
+pub mod computer;
 pub mod context;
 pub mod discovery;
 pub mod distribution;

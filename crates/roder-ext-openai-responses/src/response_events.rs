@@ -122,6 +122,10 @@ pub(super) fn events_from_sse_event(
         .or(event.event.as_deref())
         .unwrap_or_default();
 
+    if let Some(message) = computer_protocol_error(kind, &event.data) {
+        state.protocol_failure = Some(message.clone());
+        return vec![InferenceEvent::Failed(InferenceFailure { message })];
+    }
     match kind {
         "response.created" => {
             state.response_id = event
@@ -198,6 +202,9 @@ pub(super) fn events_from_sse_event(
                     return emit_hosted_tool_start_once(call, state)
                         .into_iter()
                         .collect();
+                }
+                if let Some(call) = started_computer_call(item) {
+                    return vec![InferenceEvent::ToolCallStarted(call)];
                 }
                 if let Some(call) = started_function_call(item, state) {
                     return vec![InferenceEvent::ToolCallStarted(call)];

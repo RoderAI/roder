@@ -18,6 +18,13 @@ out of reads and screenshots, what an access block looks like), and
 browser when no extension is connected, and `roder-ext-jev` binds it to its
 session's tab as the `jev_tab_*` tools and its automatic fallback.
 
+The native OpenAI `computer` executor uses the same direct session with ordered
+action batches and a fresh screenshot. `ComputerToolContributor` accepts a
+host-supplied binding; `ComputerCdpBinding` owns a page target per thread.
+ChromeExtension enables it with `RODER_COMPUTER_USE_CDP_URL` and
+`RODER_COMPUTER_USE_URL`. See [native computer use](../../docs/native-computer-use.md)
+for provider support, configuration and evaluation evidence.
+
 ## How It Fits Into Roder
 
 Roder is an agentic software development system with a Rust CLI/TUI, a JSON-RPC app-server, SDKs, package resources, and first-party runtime extensions. This package is released as part of that workspace so downstream users can depend on the same component boundaries that Roder itself uses.

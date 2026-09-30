@@ -309,6 +309,9 @@ pub(super) fn extract_tool_calls_from_item(
     item: &Value,
     tool_name_map: &HashMap<String, String>,
 ) -> Vec<ToolCallCompleted> {
+    if let Some(call) = computer_call(item) {
+        return vec![call];
+    }
     if let Some(call) = custom_tool_call_completed(item, tool_name_map) {
         return vec![call];
     }

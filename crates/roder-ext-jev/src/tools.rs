@@ -51,6 +51,7 @@ pub fn jev_tool_spec() -> ToolSpec {
              either inside the call, with the result saying which driver did what, or, when \
              the result says so, through the jev_tab_* tools, which act only in this thread's \
              Jev tab. \
+             A done status is the driver model's claim. Verify the returned UI state before reporting success. Supply success_condition with URL/text predicates to reject false DONE claims and allow fallback to continue. A passed check covers only those predicates. \
              Requires JEV_API_KEY. Roder asks for approval in default policy mode.",
             today = report::today(),
         ),
@@ -61,6 +62,7 @@ pub fn jev_tool_spec() -> ToolSpec {
                 "goal":{"type":"string","description":"What Jev should do on the page, complete and self-contained, ending in a visible stop point. Write out every detail the site will ask for: dates as YYYY-MM-DD (or 'today'), times, quantities, names. Example: 'Filter the catalogue to paperback books under $20, sort by price, and stop when the sorted list shows.'"},
                 "url":{"type":"string","description":"The http(s) page to start on. Required on the thread's first jev_browse call, when there is no page yet. After that, leave it empty (\"\") to continue on the page this thread's Jev tab is showing, or give another URL to go somewhere else; it loads in the same tab and is not reloaded if the tab is already there."},
                 "tab":{"type":"string","enum":["current","new","reset","close"],"description":"\"current\" (default): use this thread's Jev tab. \"new\": open a second tab in the session for url (the first stays open); only when you need the earlier page too, since another site loads fine in the current tab. \"reset\": close the session's tabs and start over at url. \"close\": close the session's tabs and stop; nothing is browsed."},
+                "success_condition":{"type":"object","properties":{"url_contains":{"type":"string","description":"Substring required in the final URL. Empty skips this predicate."},"text_contains":{"type":"string","description":"Substring required in the freshly observed visible page text. Empty skips this predicate."}},"additionalProperties":false,"description":"Independent UI predicates checked after model completion. Both must match when provided; failure blocks DONE and permits bounded fallback. Empty object skips verification. This checks only these predicates, not the entire natural-language goal."},
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"description":"Maximum runtime for this call; 120 by default."},
                 "foreground":{"type":"boolean","description":"Show the tab while Jev works (default true). false keeps it hidden; either way the tab stays open for the next call."},
                 "authorize_irreversible":{"type":"boolean","description":"Defaults to false. When the operator has turned on Jev's irreversible-action gate, a run stops with status needs_confirmation before a purchase, payment, send, publish, delete or other change that cannot be undone. Set true only after the user has confirmed that exact step; the call then always needs the user's approval, and Jev still stops unless it is confident it has the right control."}
@@ -207,6 +209,7 @@ mod tests {
                 "authorize_irreversible",
                 "foreground",
                 "goal",
+                "success_condition",
                 "tab",
                 "timeout_seconds",
                 "url"

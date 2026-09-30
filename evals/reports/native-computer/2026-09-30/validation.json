@@ -1,0 +1,58 @@
+{
+  "date": "2026-09-30",
+  "workspace_validation": {
+    "command": "mise exec -- cargo test --workspace --features e2e-tests -- --test-threads=1",
+    "configuration": "temporary isolated Roder configuration; API-key environment variables removed; RODER_REQUIRE_CHROME=1; JEV_REQUIRE_CHROME=1",
+    "exit_code": 0,
+    "test_suites": 386,
+    "passed": 3827,
+    "failed": 0,
+    "ignored": 67
+  },
+  "native_protocol_eval": {
+    "report": "native-protocol.json",
+    "mode": "scripted_native_responses_real_browser_acp",
+    "passed": true,
+    "requests": 7,
+    "computer_calls": 6,
+    "actions": 18,
+    "action_types_covered": 9,
+    "independent_checks_passed": 9,
+    "screenshot_visually_inspected": true,
+    "screenshot_dimensions": [
+      800,
+      513
+    ],
+    "filled_password_masked": true,
+    "nullable_mouse_modifiers_covered": true
+  },
+  "live_openai_eval": {
+    "status": "passed",
+    "openai_api_validated": true,
+    "model": "gpt-6.1-sol",
+    "report": "live-openai/report.json",
+    "elapsed_seconds": 74.787823791,
+    "computer_calls": 5,
+    "action_count": 20,
+    "failed_computer_calls": 0,
+    "nullable_mouse_modifiers_executed": 2,
+    "fixture_grade_passed": true,
+    "final_ui_passed": true,
+    "final_screenshot": "live-openai/final.jpg",
+    "screenshot_visually_inspected": true,
+    "screenshot_dimensions": [
+      800,
+      513
+    ],
+    "filled_password_masked": true,
+    "key_source": "Composal secret owned by an app in the Vex organization; value held in memory and passed only in the eval process environment",
+    "codex_endpoint_probe": {
+      "endpoint": "https://chatgpt.com/backend-api/codex/responses",
+      "tool": {
+        "type": "computer"
+      },
+      "http_status": 400,
+      "detail": "Unsupported tool type: computer"
+    }
+  }
+}

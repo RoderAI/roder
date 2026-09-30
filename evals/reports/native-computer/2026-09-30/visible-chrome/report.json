@@ -1,0 +1,179 @@
+{
+  "mode": "live_openai_native_computer_real_browser_acp",
+  "model": "gpt-6.1-sol",
+  "elapsed_seconds": 28.821240500000002,
+  "visible": true,
+  "openai_api_validated": true,
+  "passed": true,
+  "computer_calls": 3,
+  "failed_computer_calls": 0,
+  "actions": [
+    "screenshot",
+    "click",
+    "click",
+    "click",
+    "type",
+    "keypress",
+    "type",
+    "keypress",
+    "keypress"
+  ],
+  "call_trace": [
+    {
+      "call_id": "call_dw5SqiS336CMLUmGqC9f8VXm",
+      "actions": [
+        {
+          "type": "screenshot"
+        }
+      ]
+    },
+    {
+      "call_id": "call_XhYgBSNo7nG07XFdXnfdCFuk",
+      "actions": [
+        {
+          "type": "click",
+          "button": "left",
+          "keys": null,
+          "x": 147,
+          "y": 209
+        }
+      ]
+    },
+    {
+      "call_id": "call_JR7ZB1L6KFySKlsF91rk6xqB",
+      "actions": [
+        {
+          "type": "click",
+          "button": "left",
+          "keys": null,
+          "x": 95,
+          "y": 40
+        },
+        {
+          "type": "click",
+          "button": "left",
+          "keys": null,
+          "x": 113,
+          "y": 99
+        },
+        {
+          "type": "type",
+          "text": "penguin"
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "META",
+            "a"
+          ]
+        },
+        {
+          "type": "type",
+          "text": "orca"
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "SHIFT",
+            "a"
+          ]
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "ENTER"
+          ]
+        }
+      ]
+    }
+  ],
+  "grade": {
+    "passed": true,
+    "checks": {
+      "filters": true,
+      "submitted_value": true
+    },
+    "events": [
+      {
+        "type": "filters",
+        "trusted": true,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguin"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "a",
+        "ctrl": false,
+        "meta": true,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Meta",
+        "ctrl": false,
+        "meta": true,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "orca"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Shift",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "A",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "orcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Enter",
+        "ctrl": false,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "submit",
+        "trusted": true,
+        "value": "orcaA"
+      }
+    ]
+  },
+  "final_ui": {
+    "passed": true,
+    "text": "Show filters\nFilters open\nDouble click\nRight click\nHover here\nDrag along this area\nScroll this panel\nSubmitted: orcaA",
+    "screenshot": "final.jpg",
+    "width": 800.0,
+    "height": 513.0,
+    "masked_fields": 1
+  },
+  "prompt_response": {
+    "jsonrpc": "2.0",
+    "id": "session/prompt",
+    "result": {
+      "stopReason": "end_turn"
+    }
+  }
+}

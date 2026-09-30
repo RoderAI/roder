@@ -43,7 +43,7 @@ pub struct BrowserUseToolDef {
     /// Tool name on the browser-use MCP server.
     pub remote: &'static str,
     pub class: BrowserUseActionClass,
-    /// Needs an OpenAI or Anthropic key inside the server.
+    /// Needs an OpenAI key inside the pinned server.
     pub llm_backed: bool,
     /// Returns page-derived content.
     pub untrusted: bool,
@@ -72,9 +72,15 @@ impl BrowserUseToolDef {
 
     /// Input schema from the pinned release.
     pub fn parameters(&self) -> Value {
-        pinned_descriptor(self.remote)
+        let mut schema = pinned_descriptor(self.remote)
             .and_then(|tool| tool.input_schema.clone())
-            .unwrap_or_else(|| json!({ "type": "object", "properties": {} }))
+            .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+        if self.class == BrowserUseActionClass::Agent {
+            schema["properties"]["max_steps"]["minimum"] = json!(1);
+            schema["properties"]["max_steps"]["maximum"] = json!(100);
+            schema["properties"]["max_steps"]["default"] = json!(50);
+        }
+        schema
     }
 }
 
@@ -128,7 +134,7 @@ pub fn tool_defs() -> &'static [BrowserUseToolDef] {
                     "browser_extract_content",
                     Read,
                     true,
-                    "Runs an LLM inside the browser-use server and needs an OpenAI or Anthropic \
+                    "Runs an LLM inside the browser-use server and needs an OpenAI \
                      key; prefer browser_use_get_state or browser_use_get_html when they suffice.",
                 )
             },
@@ -172,7 +178,7 @@ pub fn tool_defs() -> &'static [BrowserUseToolDef] {
                     Agent,
                     true,
                     "Hands the whole task to browser-use's autonomous agent (an LLM inside the \
-                     server; needs an OpenAI or Anthropic key). Always asks for approval unless \
+                     server; needs an OpenAI key). Always asks for approval unless \
                      the user bypasses approvals; denied in plan mode. Pass allowed_domains to \
                      keep it on the sites the task needs. Its report is a claim: check the page \
                      afterwards.",

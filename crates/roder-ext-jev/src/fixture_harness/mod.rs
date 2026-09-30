@@ -323,3 +323,6 @@ mod tab_tests;
 mod tests;
 mod twin_tests;
 mod uncover_tests;
+
+#[cfg(test)]
+mod completion_tests;

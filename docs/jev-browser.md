@@ -6,6 +6,33 @@ through Roder's normal tool result, whose text shows the caller the page (see
 "The result text"). The page content is untrusted; a `done`
 result is an agent claim that should be checked against the observed page.
 
+## Checking completion against the UI
+
+`jev_browse` accepts an optional `success_condition` with `url_contains` and
+`text_contains` strings. Each nonempty predicate must match a fresh browser
+observation after the driver reports completion. Empty strings skip a predicate;
+an empty object skips verification. Strings are limited to 4096 bytes.
+
+```json
+{
+  "goal": "Submit the search for hiking boots and stop when results appear",
+  "success_condition": {"url_contains": "/search", "text_contains": "Search results"}
+}
+```
+
+A premature Jev `done` becomes `blocked` with `stop_cause: outcome_mismatch`,
+which can trigger the existing bounded fallback. The fallback's own completion
+is checked again and stays blocked if the predicates fail. A failed or timed-out
+observation cannot establish success. The result includes
+`completion_verification`, and its text shows the check to the calling model.
+
+A passed check verifies only those URL/text predicates. It does not prove every
+part of a natural-language goal or a server-side transaction. Without conditions,
+`completion_verification.status` is `not_requested`; `done` remains a model
+claim and the caller should inspect the returned UI state. Visible text is
+bounded by the normal observation budget, so select short, explicit outcome
+markers. Conditions must not contain credentials or other secrets.
+
 The implementation started as a Rust port of
 [Jev Ultrafast](https://github.com/browser-use/jev-ultrafast) (MIT) at
 revision `1231850a`, and runs inside the Roder binary: no Python, no `uv`, and

@@ -1,3 +1,6 @@
+#[path = "computer.rs"]
+mod computer;
+use computer::*;
 #[path = "native_compaction.rs"]
 mod native_compaction;
 use roder_api::provider_error::{ProviderFailure, ProviderFailureKind};
@@ -315,16 +318,25 @@ impl OpenAiResponsesEngine {
                 }
                 roder_api::tools::ToolChoice::None => json!("none"),
                 roder_api::tools::ToolChoice::Specific(name) => {
-                    let name = tool_name_map.api_name(name);
-                    json!({ "type": "function", "name": name })
+                    if name == roder_api::computer::COMPUTER_TOOL_NAME {
+                        json!({"type":"computer"})
+                    } else {
+                        let name = tool_name_map.api_name(name);
+                        json!({ "type": "function", "name": name })
+                    }
                 }
                 roder_api::tools::ToolChoice::Auto | roder_api::tools::ToolChoice::Any => {
                     json!("auto")
                 }
             };
             if !request.tools.is_empty() {
-                body["parallel_tool_calls"] =
-                    json!(request.runtime.parallel_tool_calls.unwrap_or(true));
+                body["parallel_tool_calls"] = json!(
+                    !request
+                        .tools
+                        .iter()
+                        .any(|tool| tool.name == roder_api::computer::COMPUTER_TOOL_NAME)
+                        && request.runtime.parallel_tool_calls.unwrap_or(true)
+                );
             }
         }
         let prompt_cache_key = match options.profile {
@@ -735,6 +747,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         _ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        validate_computer_request(&request, self.profile)?;
         let Some(api_key) = self.api_key.as_ref() else {
             // Known API-key providers name their env var; custom providers
             // have no canonical one so the guidance stays generic.
@@ -779,7 +792,12 @@ impl InferenceEngine for OpenAiResponsesEngine {
                 policy: request.runtime.reliability.clone(),
                 definitions: client_search_definitions(&body, &tool_name_map),
                 catalog: roder_api::tool_search_catalog::ToolSearchCatalog::build(
-                    &request.tools,
+                    &request
+                        .tools
+                        .iter()
+                        .filter(|tool| tool.name != roder_api::computer::COMPUTER_TOOL_NAME)
+                        .cloned()
+                        .collect::<Vec<_>>(),
                     &request.runtime.tool_search,
                 ),
             });
@@ -2372,60 +2390,8 @@ mod tests {
         assert_eq!(input[1]["role"], "user");
     }
 
-    fn view_image_transcript() -> Vec<TranscriptItem> {
-        vec![
-            TranscriptItem::ToolCall(ToolCallRecord {
-                id: "call_img".to_string(),
-                name: "view_image".to_string(),
-                arguments: "{\"path\":\"board.png\"}".to_string(),
-            }),
-            TranscriptItem::ToolResult(ToolResultRecord {
-                id: "call_img".to_string(),
-                name: Some("view_image".to_string()),
-                result: "Viewing image board.png".to_string(),
-                display_payload: Some(json!({
-                    "__view_image": {
-                        "image_url": "data:image/png;base64,YWJj",
-                        "detail": "auto"
-                    }
-                })),
-                is_error: false,
-            }),
-        ]
-    }
-
-    #[test]
-    fn forwards_view_image_output_as_input_image() {
-        let mut request = request();
-        request.transcript = view_image_transcript();
-
-        let input = input_items(&request);
-        let output = input
-            .iter()
-            .find(|item| item["type"] == "function_call_output")
-            .expect("tool output present");
-        let content = output["output"].as_array().expect("image array output");
-        assert_eq!(content[0]["type"], "input_image");
-        assert_eq!(content[0]["image_url"], "data:image/png;base64,YWJj");
-    }
-
-    #[test]
-    fn view_image_output_falls_back_to_string_without_image_support() {
-        let mut request = request();
-        request.transcript = view_image_transcript();
-
-        let (_, tool_name_map) = responses_tools(&request, ResponsesProviderProfile::OpenAi);
-        let input = response_input_items(
-            &request,
-            &tool_name_map,
-            ResponsesProviderProfile::OpenAi,
-            false,
-        );
-        let output = input
-            .iter()
-            .find(|item| item["type"] == "function_call_output")
-            .expect("tool output present");
-        assert_eq!(output["output"], "Viewing image board.png");
+    mod image_replay_tests {
+        include!("image_replay_tests.rs");
     }
 
     #[test]
@@ -3641,3 +3607,7 @@ mod audit_regressions;
 #[cfg(test)]
 #[path = "patch_stream_tests.rs"]
 mod patch_stream_tests;
+
+#[cfg(test)]
+#[path = "computer_tests.rs"]
+mod computer_tests;

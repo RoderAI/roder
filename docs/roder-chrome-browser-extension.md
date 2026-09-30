@@ -43,6 +43,36 @@ There are four layers, connected in a single chain:
    (`/chrome` slash command, plus a ctrl+p palette entry) and the CLI exposes
    `roder --chrome` / `roder chrome status|enable|disable|reconnect`.
 
+### Computer-use primitive repairs in the audit branches
+
+The paired extension changes are local to branch `pz/computer-use-primitives` in
+`/Users/pz/.codex/worktrees/browser-extension-audit/roder-web-extention`; they
+must be installed together with the Roder audit branch. They are not a claim
+that the existing installed extension has been updated.
+
+Click, type, keypress and wheel input use tab-targeted `chrome.debugger` CDP
+commands. Type verifies an editable target and actual focus first. Select is a
+semantic DOM operation: it checks the requested value and explicitly reports
+`eventsTrusted: false`, since macOS native select popups did not respond to
+CDP keys in the evaluation. Missing, covered and ambiguous targets fail.
+References live in the content script's isolated world, with a unique document
+identity; page attributes cannot forge them.
+
+Actions return a fresh, untrusted page observation. Queued actions preserve the
+concrete tab, origin and document from the permission gate, then recheck current
+settings and site permission before input. Screenshots target that tab through
+CDP, support validated viewport crops and preserve CSS pixel coordinate mapping.
+Filled sensitive fields are covered during capture; masks are removed on errors
+and cancellation. Masking is heuristic, not an exhaustive secret detector.
+
+A dropped or timed-out Rust dispatch sends
+`{"type":"command/cancel","targetId":"<corr>"}` to the same extension client.
+The extension aborts running input or removes a pending approval, releases held
+input and removes masks. Disconnection cancels its pending/running commands.
+Recovery remains best effort if Chrome is unreachable or the extension exits.
+The connected Chrome profile remains the user's selected profile; use an
+isolated agent profile when isolation is required.
+
 ### Wire envelope
 
 The extension and app-server exchange JSON frames:

@@ -90,12 +90,12 @@ async fn the_caller_goes_on_in_the_same_tab_with_the_full_tools() {
     // A ref read before an action still names the same element after it.
     assert_eq!(ref_of(&hover, "Products"), products);
     let laptops = ref_of(&hover, "Laptops");
-    // Roder sends every property, empty ones included: 0,0 is no point.
+    // Omitted coordinates are null; (0,0) is a valid viewport point.
     let nowhere = run_tool(
         &tools,
         "caller",
         "jev_tab_click",
-        json!({"ref": "", "x": 0, "y": 0, "button": "", "double": false}),
+        json!({"ref": "", "x": null, "y": null, "button": "", "double": false}),
     )
     .await;
     assert!(nowhere.is_error, "{}", nowhere.text);
@@ -103,7 +103,7 @@ async fn the_caller_goes_on_in_the_same_tab_with_the_full_tools() {
         &tools,
         "caller",
         "jev_tab_click",
-        json!({"ref": laptops, "x": 0, "y": 0, "button": "", "double": false,
+        json!({"ref": laptops, "x": null, "y": null, "button": "", "double": false,
             "authorize_irreversible": false}),
     )
     .await;

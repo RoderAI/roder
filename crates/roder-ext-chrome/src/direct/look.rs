@@ -38,7 +38,7 @@ pub(crate) async fn read(
         "{DIRECT_JS}; window.__roderDirect.look({})",
         json!({"max": detail.elements, "text": detail.text})
     );
-    let mut look = client.evaluate(&expression).await?;
+    let mut look = client.evaluate_isolated(&expression).await?;
     scrub_strings(&mut look, guard);
     Ok(look)
 }
@@ -46,7 +46,7 @@ pub(crate) async fn read(
 /// Call one helper of the page script, installing it first.
 pub(crate) async fn helper(client: &mut TabClient, call: &str) -> anyhow::Result<Value> {
     client
-        .evaluate(&format!("{DIRECT_JS}; window.__roderDirect.{call}"))
+        .evaluate_isolated(&format!("{DIRECT_JS}; window.__roderDirect.{call}"))
         .await
 }
 

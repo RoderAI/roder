@@ -46,6 +46,11 @@ impl RoderExtension for ChromeExtension {
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.tool_contributor(Arc::new(ChromeToolContributor::new()));
+        if let Some(binding) = crate::computer::ComputerCdpBinding::from_env()? {
+            registry.tool_contributor(Arc::new(crate::ComputerToolContributor::new(Arc::new(
+                binding,
+            ))));
+        }
         Ok(())
     }
 }

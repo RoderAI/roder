@@ -129,15 +129,28 @@ impl DirectSession {
 
     /// Run the tool `name` (a short name from [`super::DIRECT_TOOLS`]).
     pub async fn run(&mut self, name: &str, args: &Value) -> DirectStep {
+        self.client.wait_cleanup().await;
+        // Own cleanup outside the borrowed dispatch future: aborting a run
+        // must release input even when its owner retains this session.
+        let cleanup = self.client.cleanup();
         let mut step = match self.dispatch(name, args).await {
             Ok(step) => step,
             Err(error) => DirectStep::error(format!("{name} failed: {error:#}")),
         };
+        cleanup.finish().await;
         step.data["tool"] = json!(name);
         step
     }
 
     async fn dispatch(&mut self, name: &str, args: &Value) -> anyhow::Result<DirectStep> {
+        // Recheck on every call, including after external navigation or a stop
+        // the caller ignored. Navigation to an allowed URL remains a recovery.
+        if name != "navigate" {
+            let current = self.client.evaluate_isolated("location.href").await?;
+            if let Some(reason) = current.as_str().and_then(|url| self.guard.outside(url)) {
+                return Ok(DirectStep::stopped(StopKind::OutsideScope, reason));
+            }
+        }
         match name {
             "look" => {
                 let look = look::read(&mut self.client, self.guard.as_ref(), Detail::FULL).await?;
@@ -228,7 +241,7 @@ impl DirectSession {
         tokio::time::sleep(AFTER_INPUT).await;
         let deadline = tokio::time::Instant::now() + LOAD_WAIT;
         while tokio::time::Instant::now() < deadline {
-            match self.client.evaluate("document.readyState").await {
+            match self.client.evaluate_isolated("document.readyState").await {
                 Ok(state) if state != "loading" => break,
                 _ => tokio::time::sleep(LOAD_POLL).await,
             }

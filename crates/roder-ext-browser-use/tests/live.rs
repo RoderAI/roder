@@ -19,6 +19,9 @@ use roder_ext_browser_use::{
 use roder_ext_mcp::McpStdioClient;
 use serde_json::json;
 
+#[path = "support/live_fixture.rs"]
+mod live_fixture;
+
 fn live_config() -> BrowserUseConfig {
     // No LLM keys: the direct-control tools must work without them.
     BrowserUseConfig {

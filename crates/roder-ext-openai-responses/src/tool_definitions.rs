@@ -25,6 +25,10 @@ pub(super) fn responses_tools(
         }
     }
     for tool in &request.tools {
+        if tool.name == roder_api::computer::COMPUTER_TOOL_NAME {
+            tools.push(json!({"type":"computer"}));
+            continue;
+        }
         let tool = tool.normalized_for_model(roder_api::ToolSchemaPolicy::warning());
         let api_name = responses_tool_name(&tool.name, &mut used_tool_names);
         tool_name_map.register(&tool.name, &api_name);
@@ -50,7 +54,12 @@ pub(super) fn responses_tools(
         }
         tools.push(entry);
     }
-    if openai_provider_native_tool_search(request) && !request.tools.is_empty() {
+    if openai_provider_native_tool_search(request)
+        && request
+            .tools
+            .iter()
+            .any(|tool| tool.name != roder_api::computer::COMPUTER_TOOL_NAME)
+    {
         tools.push(json!({ "type": "tool_search", "execution": "client", "description": "Search deferred tool names and descriptions and load their full definitions.", "parameters": { "type": "object", "properties": {"query": {"type":"string"}, "limit": {"type":"integer", "minimum":0}}, "required":["query"], "additionalProperties":false } }));
     }
     (tools, tool_name_map)

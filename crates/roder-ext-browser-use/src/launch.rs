@@ -39,6 +39,8 @@ pub struct BrowserUseConfig {
     pub openai_api_key: Option<String>,
     /// Passed to the server as `ANTHROPIC_API_KEY` for its LLM-backed tools.
     pub anthropic_api_key: Option<String>,
+    /// Operator ceiling for every upstream browser session, including the agent.
+    pub allowed_domains: Vec<String>,
 }
 
 impl std::fmt::Debug for BrowserUseConfig {
@@ -48,6 +50,7 @@ impl std::fmt::Debug for BrowserUseConfig {
             .field("headless", &self.headless)
             .field("package", &self.package)
             .field("uvx", &self.uvx)
+            .field("allowed_domains", &self.allowed_domains)
             .field("openai_api_key", &present(&self.openai_api_key))
             .field("anthropic_api_key", &present(&self.anthropic_api_key))
             .finish()
@@ -62,6 +65,7 @@ impl Default for BrowserUseConfig {
             uvx: None,
             openai_api_key: None,
             anthropic_api_key: None,
+            allowed_domains: Vec::new(),
         }
     }
 }
@@ -77,13 +81,24 @@ impl BrowserUseConfig {
                 .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on")),
             openai_api_key: env_nonempty("OPENAI_API_KEY"),
             anthropic_api_key: env_nonempty("ANTHROPIC_API_KEY"),
+            allowed_domains: env_nonempty("RODER_BROWSER_USE_ALLOWED_DOMAINS")
+                .map(|list| {
+                    list.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
             ..Self::default()
         }
     }
 
     /// Whether the server's LLM-backed tools have a key to use.
     pub fn has_llm_key(&self) -> bool {
-        nonempty(&self.openai_api_key).is_some() || nonempty(&self.anthropic_api_key).is_some()
+        // The pinned MCP tools instantiate ChatOpenAI; an Anthropic key alone
+        // cannot run them.
+        nonempty(&self.openai_api_key).is_some()
     }
 
     /// The keys that must never appear in anything Roder reports.
@@ -177,6 +192,12 @@ pub fn server_env(
     // browser-use sends anonymous usage telemetry by default; a coding agent
     // driving it on the user's behalf should not opt them in.
     env.insert("ANONYMIZED_TELEMETRY".into(), "false".into());
+    if !config.allowed_domains.is_empty() {
+        env.insert(
+            "BROWSER_USE_ALLOWED_DOMAINS".into(),
+            config.allowed_domains.join(","),
+        );
+    }
     if let Some(key) = nonempty(&config.openai_api_key) {
         env.insert("OPENAI_API_KEY".into(), key.to_string());
     }
@@ -323,6 +344,13 @@ mod tests {
         assert!(config.secrets().is_empty());
         assert!(!server_env(&config, parent()).contains_key("OPENAI_API_KEY"));
         assert!(keyed().has_llm_key());
+        assert!(
+            !BrowserUseConfig {
+                anthropic_api_key: Some("test-anthropic".into()),
+                ..Default::default()
+            }
+            .has_llm_key()
+        );
     }
 
     #[test]

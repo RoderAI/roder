@@ -20,12 +20,15 @@
 
 mod act;
 mod capture;
+mod cleanup;
 mod client;
+mod computer;
 pub mod devtools;
 mod guard;
 mod keys;
 mod look;
 mod session;
+mod target;
 mod tools;
 
 pub use client::{DirectDialog, DirectTab};

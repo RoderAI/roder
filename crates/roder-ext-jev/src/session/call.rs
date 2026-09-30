@@ -123,7 +123,7 @@ impl JevSessions {
             Ok(endpoint) => Some(endpoint?),
             Err(_) => None,
         };
-        let driven = match &endpoint {
+        let mut driven = match &endpoint {
             Some(endpoint) => {
                 if state.endpoint.as_ref() != Some(endpoint) {
                     // Tabs of another browser: found gone on the next resume.
@@ -159,6 +159,13 @@ impl JevSessions {
                 moved_to: None,
             },
         };
+        let mut checked_page = None;
+        if driven.result.status == JevStatus::Done
+            && let Some(condition) = &request.success_condition
+        {
+            checked_page = verified_page(endpoint.as_ref(), state, request, deadline).await;
+            super::completion::apply(&mut driven.result, condition, checked_page.as_ref());
+        }
         let fallback = match &endpoint {
             Some(endpoint) => {
                 fall_back(
@@ -173,6 +180,30 @@ impl JevSessions {
                 .await
             }
             None => Fallback::none(),
+        };
+        let mut fallback = fallback;
+        let final_check = if let Some(condition) = &request.success_condition {
+            if let Report::Ran { outcome, .. } = &mut fallback.report {
+                if outcome.status == JevStatus::Done {
+                    checked_page = verified_page(endpoint.as_ref(), state, request, deadline).await;
+                    if !checked_page
+                        .as_ref()
+                        .is_some_and(|page| condition.matches(page))
+                    {
+                        outcome.status = JevStatus::Blocked;
+                        outcome.stopped_because = Some("Fallback reported success, but fresh UI state failed the caller's success_condition".into());
+                    }
+                    fallback.page = checked_page.clone();
+                } else {
+                    // Preserve the fallback's final observation after partial progress;
+                    // the pre-fallback snapshot cannot describe its ending UI state.
+                    checked_page = None;
+                }
+            }
+            let page = checked_page;
+            condition.report(page.as_ref())
+        } else {
+            json!({"status":"not_requested", "scope":"done is a model claim. Inspect the returned UI state before reporting task success."})
         };
         let mut recorded = driven.result.clone();
         if let Report::Ran { outcome, .. } = &fallback.report {
@@ -194,6 +225,7 @@ impl JevSessions {
             state.tabs.current().map(|tab| tab.id.as_str()),
             fallback.page,
         );
+        value["completion_verification"] = final_check;
         // The model that wrote values, which is not the one resolved when an
         // unusable Codex sign-in fell back.
         let text = helper.map(|helper| helper.current());
@@ -367,4 +399,26 @@ async fn fall_back(
         },
         page,
     }
+}
+
+async fn verified_page(
+    endpoint: Option<&ChromeEndpoint>,
+    state: &SessionState,
+    request: &JevRequest,
+    deadline: Instant,
+) -> Option<FinalPage> {
+    let endpoint = endpoint?;
+    tokio::time::timeout_at(
+        deadline,
+        look_again(
+            endpoint.url(),
+            &state.tabs,
+            &state.secrets,
+            request.refuse_cookie_banners,
+        ),
+    )
+    .await
+    .ok()
+    .flatten()
+    .filter(|page| request.scope.allows(&page.url))
 }

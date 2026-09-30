@@ -16,6 +16,9 @@ description = "Inspect, control, debug, and record the user's live Chrome sessio
 default_in_profiles = ["full"]
 required_env = []
 optional_env = [
+    "RODER_COMPUTER_USE_CDP_URL",
+    "RODER_COMPUTER_USE_URL",
+    "RODER_DESKTOP_ALLOWED_ORIGINS",
     "RODER_CHROME_LIVE",
     "RODER_CHROME_PROFILE_DIR",
 ]
@@ -39,4 +42,5 @@ time.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 uuid = { workspace = true, features = ["v4"] }
