@@ -47,8 +47,27 @@ fn request(method: &str, params: Value) -> JsonRpcRequest {
         params: Some(params),
     }
 }
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+const STACK_BYTES: usize = 32 * 1024 * 1024;
+
+fn main() -> anyhow::Result<()> {
+    // Match the CLI bootstrap: workspace dependencies enable both Rustls
+    // providers, so HTTPS clients need an explicit process default.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    std::thread::Builder::new()
+        .name("native-computer-eval".into())
+        .stack_size(STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .thread_stack_size(STACK_BYTES)
+                .enable_all()
+                .build()?
+                .block_on(run_eval())
+        })?
+        .join()
+        .map_err(|panic| anyhow::anyhow!("Native computer eval panicked: {panic:?}"))?
+}
+
+async fn run_eval() -> anyhow::Result<()> {
     let config = roder_config::load_config()?;
     let provider = config.providers.get("openai");
     let key = std::env::var("OPENAI_API_KEY")
@@ -139,18 +158,31 @@ async fn main() -> anyhow::Result<()> {
     )
     .await;
     let grade = fixture.grade(false).await;
+    let final_ui = final_browser_state(&browser, &fixture.url, &output)
+        .await
+        .unwrap_or_else(|error| json!({"passed":false,"error":error.to_string()}));
     let notifications = peer.notifications.lock().await;
-    let mut calls = std::collections::BTreeMap::new();
+    let mut calls = Vec::new();
+    let mut seen_calls = std::collections::HashSet::new();
+    let mut failed_calls = std::collections::HashSet::new();
     for n in notifications
         .iter()
         .filter(|n| n.method == "session/update")
     {
         let u = &n.params["update"];
-        if u["sessionUpdate"] == "tool_call" && u["rawInput"]["actions"].is_array() {
-            calls.insert(
-                u["toolCallId"].as_str().unwrap_or_default().to_string(),
-                u["rawInput"].clone(),
-            );
+        if u["sessionUpdate"] == "tool_call_update"
+            && u["status"] == "failed"
+            && let Some(id) = u["toolCallId"].as_str()
+        {
+            failed_calls.insert(id.to_string());
+        }
+        if u["sessionUpdate"] == "tool_call"
+            && u["rawInput"]["actions"].is_array()
+            && let Some(id) = u["toolCallId"].as_str().filter(|id| !id.is_empty())
+            && seen_calls.insert(id.to_string())
+        {
+            // Preserve execution order; sorting random call ids changes the trace.
+            calls.push(json!({"call_id":id,"actions":u["rawInput"]["actions"]}));
         }
     }
     let result = match response {
@@ -160,12 +192,16 @@ async fn main() -> anyhow::Result<()> {
         Err(error) => json!({"error":format!("ACP prompt timed out: {error}")}),
     };
     let passed = grade["passed"] == true
+        && final_ui["passed"] == true
         && !calls.is_empty()
         && result
             .pointer("/result/stopReason")
             .is_some_and(|reason| reason == "end_turn");
     let report = json!({"mode":"live_openai_native_computer_real_browser_acp","model":model,"elapsed_seconds":started.elapsed().as_secs_f64(),
-        "passed":passed,"computer_calls":calls.len(),"actions":calls.values().flat_map(|call|call["actions"].as_array().unwrap().iter().map(|action|action["type"].clone())).collect::<Vec<_>>(),"grade":grade,"prompt_response":result});
+        "openai_api_validated":!calls.is_empty(),"passed":passed,"computer_calls":calls.len(),
+        "failed_computer_calls":failed_calls.len(),
+        "actions":calls.iter().flat_map(|call|call["actions"].as_array().unwrap().iter().map(|action|action["type"].clone())).collect::<Vec<_>>(),
+        "call_trace":calls,"grade":grade,"final_ui":final_ui,"prompt_response":result});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report)?,
@@ -177,4 +213,52 @@ async fn main() -> anyhow::Result<()> {
         output.display()
     );
     Ok(())
+}
+
+async fn final_browser_state(
+    browser: &support::Browser,
+    url: &str,
+    output: &std::path::Path,
+) -> anyhow::Result<Value> {
+    use base64::Engine;
+    use roder_ext_chrome::direct::{DirectSession, DirectTab, OpenGuard};
+    let targets: Vec<Value> = reqwest::get(format!("{}/json/list", browser.endpoint))
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let target = targets
+        .iter()
+        .find(|target| target["type"] == "page" && target["url"] == url)
+        .ok_or_else(|| anyhow::anyhow!("Fixture page is no longer open at its expected URL"))?;
+    let tab = DirectTab::Target {
+        endpoint: browser.endpoint.clone(),
+        target_id: target["id"].as_str().unwrap_or_default().into(),
+    };
+    let mut session = DirectSession::attach(&tab, Arc::new(OpenGuard), false).await?;
+    let look = session.run("look", &json!({})).await;
+    anyhow::ensure!(!look.is_error, "Final browser read failed: {}", look.text);
+    let text = look.data["page"]["text"].as_str().unwrap_or_default();
+    let visible =
+        text.contains("Filters open") && text.lines().any(|line| line.trim() == "Submitted: orcaA");
+    let screenshot = session.run("screenshot", &json!({})).await;
+    anyhow::ensure!(
+        !screenshot.is_error,
+        "Final screenshot failed: {}",
+        screenshot.text
+    );
+    let image = screenshot
+        .image
+        .ok_or_else(|| anyhow::anyhow!("No final screenshot"))?;
+    let (_, encoded) = image
+        .split_once(',')
+        .ok_or_else(|| anyhow::anyhow!("Invalid screenshot data URL"))?;
+    std::fs::write(
+        output.join("final.jpg"),
+        base64::engine::general_purpose::STANDARD.decode(encoded)?,
+    )?;
+    Ok(
+        json!({"passed":visible,"text":text,"screenshot":"final.jpg",
+        "width":screenshot.data["width"],"height":screenshot.data["height"],"masked_fields":screenshot.data["masked"]}),
+    )
 }

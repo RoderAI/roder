@@ -196,7 +196,7 @@ pub fn scripted_batches() -> Vec<Value> {
     };
     vec![
         json!([{"type":"screenshot"}]),
-        json!([{"type":"click","button":"left","x":60,"y":40},
+        json!([{"type":"click","button":"left","keys":null,"x":60,"y":40},
             {"type":"click","button":"left","x":60,"y":100},{"type":"type","text":"penguin 🐧"},
             {"type":"keypress","keys":[select,"a"]},{"type":"type","text":"orca"},
             {"type":"keypress","keys":["SHIFT","a"]},{"type":"keypress","keys":["ENTER"]}]),

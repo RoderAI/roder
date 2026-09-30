@@ -18,24 +18,24 @@ pub enum ComputerAction {
         x: f64,
         y: f64,
         button: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_mouse_keys")]
         keys: Vec<String>,
     },
     DoubleClick {
         x: f64,
         y: f64,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_mouse_keys")]
         keys: Vec<String>,
     },
     Drag {
         path: Vec<ComputerPoint>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_mouse_keys")]
         keys: Vec<String>,
     },
     Move {
         x: f64,
         y: f64,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_mouse_keys")]
         keys: Vec<String>,
     },
     Scroll {
@@ -43,7 +43,7 @@ pub enum ComputerAction {
         y: f64,
         scroll_x: f64,
         scroll_y: f64,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_mouse_keys")]
         keys: Vec<String>,
     },
     Keypress {
@@ -60,6 +60,46 @@ pub enum ComputerAction {
 #[serde(deny_unknown_fields)]
 pub struct ComputerActions {
     pub actions: Vec<ComputerAction>,
+}
+
+// Native mouse modifiers are optional: OpenAI emits omission, null or an array.
+fn deserialize_mouse_keys<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn native_mouse_modifiers_accept_api_null_without_weakening_keypress_shape() {
+        for action in [
+            json!({"type":"click","button":"left","x":10,"y":20}),
+            json!({"type":"double_click","x":10,"y":20}),
+            json!({"type":"drag","path":[{"x":10,"y":20},{"x":20,"y":30}]}),
+            json!({"type":"move","x":10,"y":20}),
+            json!({"type":"scroll","x":10,"y":20,"scroll_x":0,"scroll_y":100}),
+        ] {
+            let omitted: ComputerAction = serde_json::from_value(action.clone()).unwrap();
+            let mut nullable = action.clone();
+            nullable["keys"] = json!(null);
+            assert_eq!(
+                serde_json::from_value::<ComputerAction>(nullable).unwrap(),
+                omitted
+            );
+            let mut invalid = action;
+            invalid["keys"] = json!("CTRL");
+            assert!(serde_json::from_value::<ComputerAction>(invalid).is_err());
+        }
+        assert!(
+            serde_json::from_value::<ComputerAction>(json!({"type":"keypress","keys":null}))
+                .is_err()
+        );
+    }
 }
 
 /// Internal dispatch schema; OpenAI receives only `{ "type": "computer" }`.

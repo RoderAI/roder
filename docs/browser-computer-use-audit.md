@@ -8,8 +8,9 @@ isolation limits and intermittent full-run failures.
 Native Responses follow-up — 2026-09-30: the OpenAI `computer` adapter now
 advertises the native tool, executes ordered action batches, and returns matching
 `computer_call_output` screenshots. The new ACP/real-Chrome protocol eval covers
-all nine action types. Its decision endpoint is scripted; a live OpenAI model
-run still needs an API key. See [native computer use](native-computer-use.md)
+all nine action types. Its decision endpoint is scripted; a separate live
+OpenAI model run passed the basic fixture and final browser-state check.
+See [native computer use](native-computer-use.md)
 for implementation locations, configuration and reproducible evidence.
 
 **User scope:** additional sensitive-action consent was explicitly excluded on

@@ -31,6 +31,7 @@ Roder executes that batch once and sends a fresh screenshot with the same id:
 Supported actions: `click`, `double_click`, `drag`, `move`, `scroll`, `keypress`,
 `type`, `wait`, and `screenshot`. Native mouse button `wheel` maps to Chrome's
 middle button. Drag follows every supplied `{x,y}` point. Mouse modifiers and
+their native nullable representation (`keys: null`) are supported. Mouse input and
 keyboard chords use physical CDP key events; macOS editing shortcuts also send
 Chrome editing commands. `type` appends at the current caret; replacement
 requires selecting the existing text. `wait` pauses for two seconds.
@@ -118,13 +119,36 @@ provider tests cover registration, parsing, replay, missing screenshots,
 malformed protocol items, budgeting, and a two-round WebSocket transport.
 
 The full workspace run with `--features e2e-tests -- --test-threads=1` passed
-3,826 tests in 386 suites, with zero failures and 67 intentionally ignored
+3,827 tests in 386 suites, with zero failures and 67 intentionally ignored
 tests. It used a temporary Roder configuration and required real Chrome for
 browser tests. See [validation summary](../evals/reports/native-computer/2026-09-30/validation.json).
 
-These runs verify the local native protocol and executor. **They do not measure
-an OpenAI model's task success rate or validate acceptance by the live OpenAI
-API.** No OpenAI API key was available for the live run.
+The scripted runs verify local protocol and primitive correctness. A separate
+live OpenAI run now validates native API acceptance and the model's basic UI
+task through the same ACP/runtime path. It also reads the final browser page
+independently and saves a masked screenshot. See the
+[live result](../evals/reports/native-computer/2026-09-30/live-openai/report.json)
+and [final screenshot](../evals/reports/native-computer/2026-09-30/live-openai/final.jpg).
+This single fixture is not a general model task-success benchmark; all-nine
+primitive coverage comes from the scripted real-browser evaluation.
+
+The final live run used `gpt-6.1-sol`: **five native calls, 20 actions, zero
+failed calls**, completing in 74.8 seconds. It executed two mouse actions whose
+modifiers were null, passed the independent submission grader, ended ACP with
+`end_turn`, and left `Filters open` and `Submitted: orcaA` visible. The actual
+800 × 513 screenshot was visually inspected; its filled password field is
+masked. The live task exercised click, keypress, type and screenshot.
+
+The key was retrieved from the OpenAI secret's owning app in the Vex
+organization using `com secrets get`. It was held in memory and passed through
+the eval process environment, with no key in commands, reports, or repository
+configuration. Org listing includes app secrets; reading this particular
+secret requires its app scope.
+
+Live execution exposed two runner bootstrap requirements already handled by
+the CLI: selecting a Rustls crypto provider and using larger worker stacks.
+It also exposed native mouse calls containing `keys: null`; the API type now
+accepts that representation, and the real-browser ACP fixture exercises it.
 
 ### Reproduce local protocol and browser checks
 
@@ -161,7 +185,9 @@ browser events and the submitted value. The default model is `gpt-6.1-sol`;
 `RODER_NATIVE_EVAL_MODEL` changes it. Output defaults to
 `evals/reports/native-computer/live/report.json`; override its directory with
 `RODER_NATIVE_EVAL_OUTPUT`. The runner fails unless a native call occurred,
-ACP ended the turn, and the independent fixture grader passed. Its startup
+ACP ended the turn, the independent fixture grader passed, and the final page
+still displays the required state. It preserves native call order in the saved
+trace and records failed calls. Its startup
 requires a key before opening Chrome and does not print the key.
 
 ## Source locations

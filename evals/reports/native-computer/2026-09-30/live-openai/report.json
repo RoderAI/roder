@@ -1,0 +1,429 @@
+{
+  "mode": "live_openai_native_computer_real_browser_acp",
+  "model": "gpt-6.1-sol",
+  "elapsed_seconds": 74.787823791,
+  "openai_api_validated": true,
+  "passed": true,
+  "computer_calls": 5,
+  "failed_computer_calls": 0,
+  "actions": [
+    "screenshot",
+    "click",
+    "click",
+    "type",
+    "keypress",
+    "type",
+    "keypress",
+    "keypress",
+    "keypress",
+    "type",
+    "keypress",
+    "keypress",
+    "keypress",
+    "type",
+    "keypress",
+    "keypress",
+    "keypress",
+    "type",
+    "keypress",
+    "keypress"
+  ],
+  "call_trace": [
+    {
+      "call_id": "call_9kdVNIJnxzaZKpJyrdEJbmov",
+      "actions": [
+        {
+          "type": "screenshot"
+        }
+      ]
+    },
+    {
+      "call_id": "call_PT5H7zIqiMUvC5axM3cN4vco",
+      "actions": [
+        {
+          "type": "click",
+          "button": "left",
+          "keys": null,
+          "x": 95,
+          "y": 40
+        },
+        {
+          "type": "click",
+          "button": "left",
+          "keys": null,
+          "x": 108,
+          "y": 99
+        },
+        {
+          "type": "type",
+          "text": "penguin"
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "CTRL",
+            "a"
+          ]
+        },
+        {
+          "type": "type",
+          "text": "orca"
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "SHIFT",
+            "a"
+          ]
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "ENTER"
+          ]
+        }
+      ]
+    },
+    {
+      "call_id": "call_qI9GXMJGsARhcZGjekyW45fT",
+      "actions": [
+        {
+          "type": "keypress",
+          "keys": [
+            "CTRL",
+            "A"
+          ]
+        },
+        {
+          "type": "type",
+          "text": "orca"
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "SHIFT",
+            "a"
+          ]
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "ENTER"
+          ]
+        }
+      ]
+    },
+    {
+      "call_id": "call_sY9CvYOvTSMj0gYH1ufKi12C",
+      "actions": [
+        {
+          "type": "keypress",
+          "keys": [
+            "Control",
+            "a"
+          ]
+        },
+        {
+          "type": "type",
+          "text": "orca"
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "Shift",
+            "a"
+          ]
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    },
+    {
+      "call_id": "call_7cu4wOXyBpHMF0g3AGYadwUr",
+      "actions": [
+        {
+          "type": "keypress",
+          "keys": [
+            "META",
+            "a"
+          ]
+        },
+        {
+          "type": "type",
+          "text": "orca"
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "SHIFT",
+            "a"
+          ]
+        },
+        {
+          "type": "keypress",
+          "keys": [
+            "ENTER"
+          ]
+        }
+      ]
+    }
+  ],
+  "grade": {
+    "passed": true,
+    "checks": {
+      "filters": true,
+      "submitted_value": true
+    },
+    "events": [
+      {
+        "type": "filters",
+        "trusted": true,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguin"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Control",
+        "ctrl": true,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "a",
+        "ctrl": true,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguinorca"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Shift",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "A",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguinorcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Enter",
+        "ctrl": false,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "submit",
+        "trusted": true,
+        "value": "penguinorcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Control",
+        "ctrl": true,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "A",
+        "ctrl": true,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguinorcaAorca"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Shift",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "A",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguinorcaAorcaA"
+      },
+      {
+        "type": "submit",
+        "trusted": true,
+        "value": "penguinorcaAorcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Enter",
+        "ctrl": false,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Control",
+        "ctrl": true,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "a",
+        "ctrl": true,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguinorcaAorcaAorca"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Shift",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "penguinorcaAorcaAorcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "A",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "submit",
+        "trusted": true,
+        "value": "penguinorcaAorcaAorcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Enter",
+        "ctrl": false,
+        "meta": false,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Meta",
+        "ctrl": false,
+        "meta": true,
+        "shift": false
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "a",
+        "ctrl": false,
+        "meta": true,
+        "shift": false
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "orca"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Shift",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "A",
+        "ctrl": false,
+        "meta": false,
+        "shift": true
+      },
+      {
+        "type": "input",
+        "trusted": true,
+        "value": "orcaA"
+      },
+      {
+        "type": "submit",
+        "trusted": true,
+        "value": "orcaA"
+      },
+      {
+        "type": "key",
+        "trusted": true,
+        "key": "Enter",
+        "ctrl": false,
+        "meta": false,
+        "shift": false
+      }
+    ]
+  },
+  "final_ui": {
+    "passed": true,
+    "text": "Show filters\nFilters open\nDouble click\nRight click\nHover here\nDrag along this area\nScroll this panel\nSubmitted: orcaA",
+    "screenshot": "final.jpg",
+    "width": 800.0,
+    "height": 513.0,
+    "masked_fields": 1
+  },
+  "prompt_response": {
+    "jsonrpc": "2.0",
+    "id": "session/prompt",
+    "result": {
+      "stopReason": "end_turn"
+    }
+  }
+}
