@@ -26,6 +26,7 @@ mod guard;
 mod keys;
 mod look;
 mod session;
+mod target;
 mod tools;
 
 pub use client::{DirectDialog, DirectTab};

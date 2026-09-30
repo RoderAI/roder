@@ -89,7 +89,12 @@ pub(super) fn response_input_items(
                     // pixels. Custom-tool outputs stay plain strings.
                     let output = tool_output_image_block(result)
                         .filter(|_| supports_images && !is_custom)
-                        .map(|image| json!([{ "type": "input_image", "image_url": image }]))
+                        .map(|image| {
+                            json!([
+                                { "type": "input_text", "text": result.result },
+                                image
+                            ])
+                        })
                         .unwrap_or_else(|| Value::String(result.result.clone()));
                     Some(json!({
                         "type": output_type,
@@ -152,14 +157,19 @@ pub(super) fn response_input_items(
 /// display payload, so it can be replayed to the model as `input_image`.
 pub(super) fn tool_output_image_block(
     result: &roder_api::transcript::ToolResultRecord,
-) -> Option<String> {
-    result
+) -> Option<Value> {
+    let image = result
         .display_payload
         .as_ref()?
-        .get(roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY)?
-        .get("image_url")?
-        .as_str()
-        .map(str::to_string)
+        .get(roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY)?;
+    let url = image.get("image_url")?.as_str()?;
+    let mut block = json!({ "type": "input_image", "image_url": url });
+    if let Some(detail @ ("auto" | "low" | "high" | "original")) =
+        image.get("detail").and_then(Value::as_str)
+    {
+        block["detail"] = json!(detail);
+    }
+    Some(block)
 }
 
 /**

@@ -1,13 +1,13 @@
 // Roder's direct tools, inside the page: installed once per document as
 // window.__roderDirect, and called through it. Everything here reads the
 // page or resolves a point; input itself is sent as real DevTools events.
-// Refs (e1, e2, ...) name elements a look listed; an element keeps its ref
+// Refs (e<document>-1, e<document>-2, ...) name elements a look listed; an element keeps its ref
 // for as long as it is in the document, across looks, so a ref read before
 // an action still names the same element after it. A secret field (a
 // password, a one-time code, or a field masked as one) is never read: only
 // whether it holds anything.
 (() => {
-  if (window.__roderDirect?.v === 1) return;
+  if (window.__roderDirect?.v === 2) return;
   const ROLES = ['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'menuitemcheckbox','option','combobox','textbox','searchbox','slider','spinbutton','gridcell',
     'treeitem'];
@@ -19,11 +19,11 @@
     '[role="menuitem"],[role="tab"],[role="checkbox"],[role="radio"]';
   const FIELD = 'input,textarea,select,[contenteditable=""],[contenteditable="true"]';
   const GRAPHIC = 'canvas,svg,video,iframe';
-  const S = { v: 1, nodes: new Map(), ids: new WeakMap(), next: 1, secrets: new WeakSet(),
+  const S = { v: 2, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
     masks: [] };
   const refOf = el => {
     let ref = S.ids.get(el);
-    if (!ref) { ref = 'e' + S.next++; S.ids.set(el, ref); }
+    if (!ref) { ref = 'e' + S.document + '-' + S.next++; S.ids.set(el, ref); }
     S.nodes.set(ref, el);
     return ref;
   };
@@ -190,6 +190,18 @@
   // Where a ref is on screen now, scrolled into view when it is not; at a
   // fraction of its box (the centre by default). `covered` when another
   // element would take a press there.
+  S.resolve = (selector, visibleText) => {
+    let nodes;
+    try {
+      nodes = selector ? [...document.querySelectorAll(selector)] :
+        [...document.querySelectorAll(INTERACTIVE)].filter(el =>
+          cut(label(el), 200).includes(visibleText));
+    } catch { return {error: 'Invalid CSS selector'}; }
+    nodes = nodes.filter(el => box(el));
+    if (nodes.length !== 1) return {error: nodes.length ?
+      'Target is ambiguous; use a unique selector or a ref from look' : 'No visible target; look again'};
+    return {ref: refOf(nodes[0])};
+  };
   S.point = (ref, fx, fy) => {
     const el = S.nodes.get(ref);
     if (!el?.isConnected) return { gone: true };
@@ -232,6 +244,10 @@
   };
   // Focus a field by ref and, when asked, select what it holds, so typing
   // replaces it. Whether it is a secret field.
+  const editable = el => !!el?.isConnected && !el.disabled && !el.readOnly &&
+    (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' &&
+      ['text','search','email','url','tel','password','number'].includes(el.type)));
+  S.editable = ref => editable(ref ? S.nodes.get(ref) : focused());
   S.focus = (ref, clear) => {
     const el = S.nodes.get(ref);
     if (!el?.isConnected) return { gone: true };
@@ -243,7 +259,7 @@
         const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
       }
     }
-    return { focused: focused() === el || el.contains(focused()), secret: secret(el) };
+    return { focused: focused() === el || el.contains(focused()), editable: editable(el), secret: secret(el) };
   };
   // What covers the focused control at its centre, when something does: a
   // key that presses it would get around that.

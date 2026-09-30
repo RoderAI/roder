@@ -39,4 +39,5 @@ time.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 uuid = { workspace = true, features = ["v4"] }

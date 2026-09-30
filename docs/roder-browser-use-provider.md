@@ -50,8 +50,8 @@ uvx --from 'browser-use[cli]==0.13.10' browser-use --mcp
 
 and the first browser call opens the browser. The first launch downloads
 browser-use and its dependencies from PyPI into uv's cache, which can take a
-minute; later launches take a few seconds. One server (and one browser) serves
-every thread of a Roder process.
+minute; later launches take a few seconds. Each thread starts its own server and browser. Calls in the same thread reuse
+that session; other threads cannot switch or close its tabs.
 
 With `--browser-use`, Roder checks for `uvx` at startup and prints a warning
 with install instructions when it is missing.
@@ -143,11 +143,14 @@ forms on their own.
 
 ## Untrusted content
 
-Results of the page-reading tools (`get_state`, `get_html`, `screenshot`,
-`extract_content`, `list_tabs`, `agent`) start with a note that the content is
+Results of the page-reading tools and actions that return page observations start
+with a note that the content is
 untrusted and must not be followed as instructions, and their result data
-carries `"untrusted": true`, as the `chrome_*` tools do. A report from
-`browser_use_agent` is the agent's claim; check the page afterwards.
+carries `"untrusted": true`, as the `chrome_*` tools do. Navigation, clicks, typing, and agent calls return a fresh `browser_get_state`
+observation with a screenshot after the operation. The action and observation
+are serialized within the thread. Agent reports remain claims: verify the actual
+page state against the task. Screenshots use `detail: "original"`, and Responses
+replay preserves the accompanying text and original call id.
 
 ## Lifecycle
 
@@ -161,8 +164,11 @@ including the browser.
   group within about a second if Roder exits without cleaning up (a crash or
   `kill -9`).
 - If the server crashes, the next `browser_use_*` call starts a new one.
-- There is no per-thread browser: Roder has no "thread ended" event, so the
-  browser lives until Roder exits or the model calls `browser_use_close_all`.
+- A thread's browser lives until Roder exits or that thread calls
+  `browser_use_close_all`. There is no automatic idle eviction yet.
+- Cancelling an in-flight browser tool invalidates that thread's server and
+  stops its process tree. Its next call starts a fresh browser. Other threads
+  retain their sessions.
 
 On Windows the process-group and guard steps are not available; only the
 direct child is killed when Roder drops it.

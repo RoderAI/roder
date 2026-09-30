@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::direct::{DirectSession, DirectTab, OpenGuard, TabClient, tool_result};
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CdpTarget {
     id: String,
@@ -25,43 +25,15 @@ pub async fn execute(kind: &str, call: &ToolCall) -> Option<ToolResult> {
         return None;
     }
     match kind {
-        "tab/open" | "tab/navigate" => Some(navigate(call).await),
+        "tab/open" | "tab/navigate" => Some(direct(call, kind).await),
         "tabs/list" => Some(tabs_list(call).await),
-        "page/snapshot" => Some(page_snapshot(call).await),
-        "page/screenshot" => Some(screenshot(call).await),
+        "page/snapshot" => Some(direct(call, kind).await),
+        "page/screenshot" => Some(direct(call, kind).await),
         "page/eval" => Some(eval(call).await),
-        "page/click" => Some(page_action(call, click_script(call)).await),
-        "page/type" => Some(page_action(call, type_script(call)).await),
-        "page/scroll" => Some(page_action(call, scroll_script(call)).await),
-        "page/keypress" => Some(page_action(call, keypress_script(call)).await),
+        "page/click" | "page/type" | "page/scroll" | "page/keypress" => {
+            Some(direct(call, kind).await)
+        }
         _ => None,
-    }
-}
-
-async fn navigate(call: &ToolCall) -> ToolResult {
-    let Some(url) = call
-        .arguments
-        .get("url")
-        .and_then(Value::as_str)
-        .map(str::trim)
-    else {
-        return error_result(call, "chrome_tab_open requires a url");
-    };
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return error_result(
-            call,
-            "Desktop integrated browser only supports http(s) URLs",
-        );
-    }
-    match cdp_call("Page.navigate", json!({ "url": url })).await {
-        Ok(_) => ToolResult {
-            id: call.id.clone(),
-            name: call.name.clone(),
-            text: format!("opened {url}"),
-            data: json!({ "url": url, "opened": true, "fallback": "desktop-cdp" }),
-            is_error: false,
-        },
-        Err(error) => error_result(call, error),
     }
 }
 
@@ -72,7 +44,11 @@ async fn tabs_list(call: &ToolCall) -> ToolResult {
             ToolResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
-                text: format!("{} integrated browser target(s)", targets.len()),
+                text: format!(
+                    "{}\n{}",
+                    crate::session::UNTRUSTED_NOTE,
+                    serde_json::to_string(&targets).unwrap_or_default()
+                ),
                 data: json!({
                     "tabs": targets.into_iter().enumerate().map(|(index, target)| json!({
                         "id": index,
@@ -90,243 +66,128 @@ async fn tabs_list(call: &ToolCall) -> ToolResult {
     }
 }
 
-async fn page_snapshot(call: &ToolCall) -> ToolResult {
-    let script = r#"(() => {
-  const controls = Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[aria-label],[contenteditable="true"]'))
-    .filter((el) => {
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-    })
-    .slice(0, 200)
-    .map((el, index) => {
-      const rect = el.getBoundingClientRect();
-      const tag = el.tagName.toLowerCase();
-      const id = el.id ? `#${CSS.escape(el.id)}` : '';
-      const name = el.getAttribute('name') ? `[name="${CSS.escape(el.getAttribute('name'))}"]` : '';
-      const selector = id || `${tag}${name}`;
-      return {
-        ref: `c${index}`,
-        tag,
-        text: (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 500),
-        ariaLabel: el.getAttribute('aria-label'),
-        role: el.getAttribute('role'),
-        type: el.getAttribute('type'),
-        selector,
-        box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-      };
-    });
-  return { visible: true, url: location.href, title: document.title, text: document.body?.innerText || '', controls, untrusted: true, browser: 'roder-desktop' };
-})()"#;
-    match runtime_eval(script).await {
-        Ok(value) => ToolResult {
-            id: call.id.clone(),
-            name: call.name.clone(),
-            text: "chrome page/snapshot ok".to_string(),
-            data: value,
-            is_error: false,
-        },
-        Err(error) => error_result(call, error),
+/// Execute the canonical direct tools: real input, stable refs, and observed state.
+async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
+    let tab = match desktop_tab(call).await {
+        Ok(tab) => tab,
+        Err(error) => return error_result(call, error),
+    };
+    let mut session = match DirectSession::attach(&tab, Arc::new(OpenGuard), false).await {
+        Ok(session) => session,
+        Err(error) => {
+            return error_result(
+                call,
+                format!("connect to Desktop browser failed: {error:#}"),
+            );
+        }
+    };
+    let mut args = call.arguments.clone();
+    let short = match kind {
+        "tab/open" | "tab/navigate" => "navigate",
+        "page/snapshot" => "look",
+        "page/screenshot" => "screenshot",
+        "page/click" => "click",
+        "page/type" => "type",
+        "page/scroll" => "scroll",
+        "page/keypress" => "key",
+        _ => return error_result(call, "Unsupported Desktop browser action"),
+    };
+    if matches!(short, "click" | "type" | "scroll") {
+        let reference = args["ref"].as_str().filter(|r| !r.is_empty());
+        let selector = args["selector"].as_str().unwrap_or_default();
+        let label = if short == "click" {
+            args["text"].as_str().unwrap_or_default()
+        } else {
+            ""
+        };
+        if reference.is_none() && (!selector.is_empty() || !label.is_empty()) {
+            match session.resolve_ref(selector, label).await {
+                Ok(reference) => args["ref"] = json!(reference),
+                Err(error) => return error_result(call, format!("{error:#}")),
+            }
+        }
     }
+    let step = session.run(short, &args).await;
+    let mut result = tool_result(&call.id, &call.name, &step);
+    result.data["fallback"] = json!("desktop-cdp");
+    result
 }
 
 async fn eval(call: &ToolCall) -> ToolResult {
     let Some(expression) = call.arguments.get("expression").and_then(Value::as_str) else {
         return error_result(call, "chrome_eval requires expression");
     };
-    match runtime_eval(expression).await {
-        Ok(value) => ToolResult {
-            id: call.id.clone(),
-            name: call.name.clone(),
-            text: "chrome page/eval ok".to_string(),
-            data: json!({ "result": value, "untrusted": true, "browser": "roder-desktop" }),
-            is_error: false,
-        },
-        Err(error) => error_result(call, error),
-    }
-}
-
-async fn page_action(call: &ToolCall, script: Result<String, String>) -> ToolResult {
-    let script = match script {
-        Ok(script) => script,
+    let tab = match desktop_tab(call).await {
+        Ok(tab) => tab,
         Err(error) => return error_result(call, error),
     };
-    match runtime_eval(&script).await {
-        Ok(value) => ToolResult {
-            id: call.id.clone(),
-            name: call.name.clone(),
-            text: "chrome page action ok".to_string(),
-            data: json!({ "result": value, "browser": "roder-desktop" }),
-            is_error: false,
-        },
-        Err(error) => error_result(call, error),
+    let result = async {
+        let mut client = TabClient::attach(&tab).await?;
+        client.evaluate(expression).await
+    }
+    .await;
+    match result {
+        Ok(value) => {
+            let data = crate::session::label_result(
+                "page/eval",
+                json!({"result": value, "browser": "roder-desktop"}),
+            );
+            ToolResult {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                text: crate::session::result_text("page/eval", &data),
+                data,
+                is_error: false,
+            }
+        }
+        Err(error) => error_result(call, format!("browser evaluation failed: {error:#}")),
     }
 }
 
-async fn runtime_eval(expression: &str) -> Result<Value, String> {
-    let value = cdp_call(
-        "Runtime.evaluate",
-        json!({ "expression": expression, "awaitPromise": true, "returnByValue": true }),
-    )
-    .await?;
-    if let Some(exception) = value.get("exceptionDetails") {
-        return Err(format!("browser evaluation failed: {exception}"));
+/// Respect the tab id returned by tabs/list; never silently act on another tab.
+async fn desktop_tab(call: &ToolCall) -> Result<DirectTab, String> {
+    let mut listed = targets().await?;
+    let index = call.arguments["tabId"].as_u64().unwrap_or(0) as usize;
+    if index >= listed.len() {
+        return Err("Desktop browser tab id is not available; list tabs again".into());
     }
-    Ok(value
-        .get("result")
-        .and_then(|result| result.get("value"))
-        .cloned()
-        .unwrap_or(Value::Null))
-}
-
-async fn cdp_call(method: &str, params: Value) -> Result<Value, String> {
-    let mut client = TabClient::attach(&desktop_tab().await?)
-        .await
-        .map_err(|error| format!("connect to Desktop integrated browser failed: {error:#}"))?;
-    tokio::time::timeout(Duration::from_secs(10), client.call(method, params))
-        .await
-        .map_err(|_| "Desktop integrated browser did not respond in time".to_string())?
-        .map_err(|error| format!("browser command failed: {error:#}"))
-}
-
-/// The integrated browser's active page, as the direct tools attach to it.
-async fn desktop_tab() -> Result<DirectTab, String> {
-    let target = active_target().await?;
+    let target = listed.remove(index);
     Ok(DirectTab::Page {
         websocket: target.web_socket_debugger_url,
         target_id: target.id,
     })
 }
 
-/// A screenshot through the direct tools, with nothing to mask: the
-/// integrated browser has no owner with typed secrets.
-async fn screenshot(call: &ToolCall) -> ToolResult {
-    let tab = match desktop_tab().await {
-        Ok(tab) => tab,
-        Err(error) => return error_result(call, error),
-    };
-    match DirectSession::attach(&tab, Arc::new(OpenGuard), false).await {
-        Ok(mut session) => {
-            let step = session.run("screenshot", &json!({})).await;
-            tool_result(&call.id, &call.name, &step)
-        }
-        Err(error) => error_result(
-            call,
-            format!("connect to Desktop integrated browser failed: {error:#}"),
-        ),
-    }
-}
-
-async fn active_target() -> Result<CdpTarget, String> {
-    let mut targets = targets().await?;
-    targets
-        .drain(..)
-        .find(|target| {
-            !target.web_socket_debugger_url.is_empty()
-                && !target.url.starts_with("devtools://")
-                && !target.url.starts_with("chrome-extension://")
-        })
-        .ok_or_else(|| "Desktop integrated browser target is not available".to_string())
-}
-
 async fn targets() -> Result<Vec<CdpTarget>, String> {
     let port = std::env::var("RODER_DESKTOP_CDP_PORT").unwrap_or_else(|_| "9334".to_string());
     let url = format!("http://127.0.0.1:{port}/json");
-    let response = reqwest::get(&url).await.map_err(|error| {
-        format!("Desktop integrated browser is not reachable at {url}: {error}")
-    })?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| {
+            format!("Desktop integrated browser is not reachable at {url}: {error}")
+        })?;
     if !response.status().is_success() {
         return Err(format!(
             "Desktop integrated browser returned HTTP {} at {url}",
             response.status()
         ));
     }
-    response
+    let mut listed = response
         .json::<Vec<CdpTarget>>()
         .await
-        .map_err(|error| format!("invalid Desktop integrated browser target list: {error}"))
-}
-
-fn click_script(call: &ToolCall) -> Result<String, String> {
-    let target = target_expression(call)?;
-    Ok(format!(
-        "(() => {{ const el = {target}; if (!el) return false; el.click(); return true; }})()"
-    ))
-}
-
-fn type_script(call: &ToolCall) -> Result<String, String> {
-    let text = call
-        .arguments
-        .get("text")
-        .and_then(Value::as_str)
-        .ok_or("chrome_type requires text")?;
-    let submit = call
-        .arguments
-        .get("submit")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let target = target_expression(call)?;
-    Ok(format!(
-        "(() => {{ const el = {target}; if (!el) return false; el.focus(); el.value = {}; el.dispatchEvent(new Event('input', {{ bubbles: true }})); el.dispatchEvent(new Event('change', {{ bubbles: true }})); if ({submit}) {{ const form = el.form || el.closest('form'); if (form) form.requestSubmit ? form.requestSubmit() : form.submit(); }} return true; }})()",
-        json!(text)
-    ))
-}
-
-fn scroll_script(call: &ToolCall) -> Result<String, String> {
-    let dx = call
-        .arguments
-        .get("dx")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let dy = call
-        .arguments
-        .get("dy")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    if let Some(selector) = call.arguments.get("selector").and_then(Value::as_str) {
-        Ok(format!(
-            "(() => {{ const el = document.querySelector({}); if (!el) return false; el.scrollBy({}, {}); return true; }})()",
-            json!(selector),
-            dx,
-            dy
-        ))
-    } else {
-        Ok(format!(
-            "(() => {{ window.scrollBy({}, {}); return true; }})()",
-            dx, dy
-        ))
-    }
-}
-
-fn keypress_script(call: &ToolCall) -> Result<String, String> {
-    let key = call
-        .arguments
-        .get("key")
-        .and_then(Value::as_str)
-        .ok_or("chrome_keypress requires key")?;
-    Ok(format!(
-        "(() => {{ const event = new KeyboardEvent('keydown', {{ key: {}, bubbles: true }}); (document.activeElement || document.body).dispatchEvent(event); return true; }})()",
-        json!(key)
-    ))
-}
-
-fn target_expression(call: &ToolCall) -> Result<String, String> {
-    if let Some(selector) = call.arguments.get("selector").and_then(Value::as_str) {
-        return Ok(format!("document.querySelector({})", json!(selector)));
-    }
-    if let Some(text) = call.arguments.get("text").and_then(Value::as_str) {
-        return Ok(format!(
-            "Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[aria-label],[contenteditable=\\\"true\\\"]')).find((el) => ((el.innerText || el.value || el.getAttribute('aria-label') || '').trim()).includes({}))",
-            json!(text)
-        ));
-    }
-    if let Some(reference) = call.arguments.get("ref").and_then(Value::as_str) {
-        let index = reference.strip_prefix('c').and_then(|value| value.parse::<usize>().ok()).ok_or("Desktop integrated browser refs must come from chrome_page_snapshot (for example c0)")?;
-        return Ok(format!(
-            "Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[aria-label],[contenteditable=\\\"true\\\"]')).filter((el) => {{ const rect = el.getBoundingClientRect(); const style = getComputedStyle(el); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'; }})[{index}]"
-        ));
-    }
-    Err("browser action requires selector, text, or ref".to_string())
+        .map_err(|error| format!("invalid Desktop integrated browser target list: {error}"))?;
+    listed.retain(|target| {
+        target.r#type == "page"
+            && !target.web_socket_debugger_url.is_empty()
+            && !target.url.starts_with("devtools://")
+            && !target.url.starts_with("chrome-extension://")
+    });
+    Ok(listed)
 }
 
 fn error_result(call: &ToolCall, message: impl Into<String>) -> ToolResult {

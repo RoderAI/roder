@@ -13,6 +13,7 @@ use roder_ext_mcp::redact_secrets;
 use serde_json::{Value, json};
 
 use crate::catalog::{BrowserUseToolDef, tool_defs};
+use crate::policy::BrowserUseActionClass;
 use crate::server::BrowserUseServer;
 
 pub const TOOL_PROVIDER_ID: &str = "browser-use";
@@ -96,17 +97,23 @@ impl ToolExecutor for BrowserUseTool {
         } else {
             json!({})
         };
-        match self
-            .server
-            .call(self.def.remote, arguments, self.def.timeout)
+        let server = self.server.for_thread(&call.thread_id).await;
+        let observe = matches!(
+            self.def.class,
+            BrowserUseActionClass::Navigate
+                | BrowserUseActionClass::Act
+                | BrowserUseActionClass::Agent
+        );
+        match server
+            .call_observed(self.def.remote, arguments, self.def.timeout, observe)
             .await
         {
             Ok(result) => {
-                let secrets = self.server.redactions().await;
+                let secrets = server.redactions().await;
                 Ok(render_result(self.def, &call, &result, &secrets))
             }
             Err(error) => {
-                let secrets = self.server.redactions().await;
+                let secrets = server.redactions().await;
                 Ok(error_result(
                     &call,
                     redact_secrets(&format!("{error:#}"), &secrets),
@@ -165,7 +172,14 @@ pub(crate) fn render_result(
     }
     let body = redact_secrets(&texts.join("\n"), secrets);
     let body = truncate(&body);
-    let text = if def.untrusted && !is_error {
+    let untrusted = def.untrusted
+        || matches!(
+            def.class,
+            BrowserUseActionClass::Navigate
+                | BrowserUseActionClass::Act
+                | BrowserUseActionClass::Agent
+        );
+    let text = if untrusted {
         format!("{UNTRUSTED_NOTE}\n---\n{body}")
     } else {
         body.clone()
@@ -174,14 +188,14 @@ pub(crate) fn render_result(
     let mut data = json!({
         "provider": "browser-use",
         "tool": def.remote,
-        "untrusted": def.untrusted,
+        "untrusted": untrusted,
         "content": body,
     });
-    if def.untrusted {
+    if untrusted {
         data["note"] = json!(UNTRUSTED_NOTE);
     }
     if let Some(url) = image {
-        data[VIEW_IMAGE_DISPLAY_KEY] = json!({ "image_url": url, "detail": "auto" });
+        data[VIEW_IMAGE_DISPLAY_KEY] = json!({ "image_url": url, "detail": "original" });
     }
     ToolResult {
         id: call.id.clone(),
@@ -253,13 +267,14 @@ mod tests {
     }
 
     #[test]
-    fn navigation_results_are_plain() {
+    fn navigation_results_preserve_the_untrusted_boundary() {
         let def = tool_def("browser_use_navigate").unwrap();
         let result =
             json!({ "content": [{ "type": "text", "text": "Navigated to: https://example.com" }] });
         let rendered = render_result(def, &call(def.name), &result, &[]);
-        assert_eq!(rendered.text, "Navigated to: https://example.com");
-        assert_eq!(rendered.data["untrusted"], json!(false));
+        assert!(rendered.text.starts_with(UNTRUSTED_NOTE));
+        assert!(rendered.text.contains("Navigated to: https://example.com"));
+        assert_eq!(rendered.data["untrusted"], json!(true));
     }
 
     #[test]
@@ -284,7 +299,7 @@ mod tests {
         let result = json!({ "content": [{ "type": "text", "text": "Element 9 not found" }], "isError": true });
         let rendered = render_result(def, &call(def.name), &result, &[]);
         assert!(rendered.is_error);
-        assert_eq!(rendered.text, "Element 9 not found");
+        assert!(rendered.text.contains("Element 9 not found"));
     }
 
     #[test]

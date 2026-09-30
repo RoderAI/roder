@@ -74,6 +74,9 @@ fn run_fake_server() {
             Some("tools/call") => {
                 let name = message["params"]["name"].as_str().unwrap_or_default();
                 let args = &message["params"]["arguments"];
+                if name == "browser_click" && args["index"] == 999 {
+                    std::thread::sleep(std::time::Duration::from_secs(300));
+                }
                 let text = match name {
                     "browser_navigate" => {
                         format!("Navigated to: {}", args["url"].as_str().unwrap_or(""))
@@ -97,9 +100,12 @@ fn run_fake_server() {
                     "retry_with_browser_use_agent" => "Task completed".to_string(),
                     other => format!("{other} ok"),
                 };
+                let mut content = vec![json!({"type": "text", "text": text})];
+                if name == "browser_get_state" && args["include_screenshot"] == true {
+                    content.push(json!({"type":"image", "data":"YWJj", "mimeType":"image/png"}));
+                }
                 send(json!({"jsonrpc": "2.0", "id": id, "result": {
-                    "content": [{"type": "text", "text": text}],
-                    "isError": false
+                    "content": content, "isError": false
                 }}));
             }
             None if message.get("result").is_some() => {
@@ -162,17 +168,26 @@ fn registry_for(server: Arc<BrowserUseServer>, has_llm_key: bool) -> ToolRegistr
 }
 
 async fn run(registry: &ToolRegistry, name: &str, args: Value) -> roder_api::tools::ToolResult {
+    run_thread(registry, "thread", name, args).await
+}
+
+async fn run_thread(
+    registry: &ToolRegistry,
+    thread: &str,
+    name: &str,
+    args: Value,
+) -> roder_api::tools::ToolResult {
     let tool = registry
         .get(name)
         .unwrap_or_else(|| panic!("{name} registered"));
     tool.execute(
-        ToolExecutionContext::new("thread", "turn", PolicyMode::Default),
+        ToolExecutionContext::new(thread, "turn", PolicyMode::Default),
         ToolCall {
             id: "call".into(),
             name: name.into(),
             raw_arguments: args.to_string(),
             arguments: args,
-            thread_id: "thread".into(),
+            thread_id: thread.into(),
             turn_id: "turn".into(),
         },
     )
@@ -206,7 +221,10 @@ async fn tools_drive_the_server_with_a_scoped_environment() {
     )
     .await;
     assert!(!navigated.is_error, "{}", navigated.text);
-    assert_eq!(navigated.text, "Navigated to: https://example.com");
+    assert!(navigated.text.contains("Navigated to: https://example.com"));
+    assert!(navigated.text.contains("Observed page after the action"));
+    assert!(navigated.text.contains("Example Domain"));
+    assert_eq!(navigated.data["__view_image"]["detail"], "original");
 
     let state = run(&registry, "browser_use_get_state", json!({})).await;
     assert!(state.text.starts_with(UNTRUSTED_NOTE), "{}", state.text);
@@ -351,4 +369,47 @@ async fn a_server_that_fails_to_start_is_reported() {
     assert!(result.text.contains("failed to start"), "{}", result.text);
     assert!(result.text.contains("boom"), "{}", result.text);
     assert!(!result.text.contains(OPENAI_KEY), "{}", result.text);
+}
+
+#[tokio::test]
+async fn threads_own_distinct_browser_processes_and_reuse_their_own_session() {
+    let server = fake_launch(BrowserUseConfig::default(), None);
+    let registry = registry_for(server.clone(), false);
+    let first = run_thread(&registry, "first", "browser_use_get_state", json!({})).await;
+    let second = run_thread(&registry, "second", "browser_use_get_state", json!({})).await;
+    let again = run_thread(&registry, "first", "browser_use_get_state", json!({})).await;
+    let pid = |result: &roder_api::tools::ToolResult| {
+        state_json(&result.text)["browser_pid"].as_u64().unwrap()
+    };
+    assert_ne!(pid(&first), pid(&second));
+    assert_eq!(pid(&first), pid(&again));
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cancelling_a_tool_stops_browser_work_and_next_call_starts_fresh() {
+    let server = fake_launch(BrowserUseConfig::default(), None);
+    let registry = Arc::new(registry_for(server.clone(), false));
+    let state = run(&registry, "browser_use_get_state", json!({})).await;
+    let pid = state_json(&state.text)["browser_pid"].as_u64().unwrap();
+    let running_registry = registry.clone();
+    let task = tokio::spawn(async move {
+        run(&running_registry, "browser_use_click", json!({"index":999})).await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!task.is_finished());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while alive(pid) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(!alive(pid), "Cancelled tool left browser running");
+    let fresh = run(&registry, "browser_use_get_state", json!({})).await;
+    assert_ne!(
+        state_json(&fresh.text)["browser_pid"].as_u64().unwrap(),
+        pid
+    );
+    server.shutdown().await;
 }
