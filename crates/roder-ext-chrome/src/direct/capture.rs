@@ -28,7 +28,7 @@ impl DirectSession {
         }
         let view = self
             .client
-            .evaluate("[scrollX, scrollY, innerWidth, innerHeight, devicePixelRatio || 1]")
+            .evaluate_isolated("[scrollX, scrollY, innerWidth, innerHeight, devicePixelRatio || 1]")
             .await?;
         let number = |index: usize| view[index].as_f64().unwrap_or(0.0);
         let (width, height, ratio) = (number(2), number(3), number(4).max(0.1));

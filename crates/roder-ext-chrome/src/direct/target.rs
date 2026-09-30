@@ -80,7 +80,10 @@ impl DirectSession {
         }
         match (at("x"), at("y")) {
             (Some(x), Some(y)) if x.is_finite() && y.is_finite() => {
-                let size = self.client.evaluate("[innerWidth, innerHeight]").await?;
+                let size = self
+                    .client
+                    .evaluate_isolated("[innerWidth, innerHeight]")
+                    .await?;
                 if x < 0.0
                     || y < 0.0
                     || x >= size[0].as_f64().unwrap_or(0.0)

@@ -166,12 +166,42 @@ impl TabClient {
     /// `Runtime.evaluate` by value, awaiting a promise; a page-side
     /// exception is an error.
     pub(crate) async fn evaluate(&mut self, expression: &str) -> anyhow::Result<Value> {
-        let result = self
+        self.evaluate_context(expression, None).await
+    }
+
+    /// Keep ref maps and permission probes outside the page's JavaScript world.
+    /// Re-resolve the world after navigation; the named world persists within a
+    /// document across tool calls and page-websocket connections.
+    pub(crate) async fn evaluate_isolated(&mut self, expression: &str) -> anyhow::Result<Value> {
+        let tree = self.call("Page.getFrameTree", json!({})).await?;
+        let frame = tree["frameTree"]["frame"]["id"]
+            .as_str()
+            .context("page frame id")?;
+        let world = self
             .call(
-                "Runtime.evaluate",
-                json!({"expression": expression, "returnByValue": true, "awaitPromise": true}),
+                "Page.createIsolatedWorld",
+                json!({
+                    "frameId": frame, "worldName": "roder-direct-v2", "grantUniveralAccess": false
+                }),
             )
             .await?;
+        let context = world["executionContextId"]
+            .as_u64()
+            .context("isolated execution context")?;
+        self.evaluate_context(expression, Some(context)).await
+    }
+
+    async fn evaluate_context(
+        &mut self,
+        expression: &str,
+        context: Option<u64>,
+    ) -> anyhow::Result<Value> {
+        let mut params =
+            json!({"expression": expression, "returnByValue": true, "awaitPromise": true});
+        if let Some(context) = context {
+            params["contextId"] = json!(context);
+        }
+        let result = self.call("Runtime.evaluate", params).await?;
         if let Some(exception) = result.get("exceptionDetails") {
             let detail = exception["exception"]["description"]
                 .as_str()

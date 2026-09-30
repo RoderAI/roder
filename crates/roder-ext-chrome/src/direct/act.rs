@@ -284,7 +284,10 @@ impl DirectSession {
                 Err(why) => return Ok(DirectStep::error(why)),
             },
             false => {
-                let size = self.client.evaluate("[innerWidth, innerHeight]").await?;
+                let size = self
+                    .client
+                    .evaluate_isolated("[innerWidth, innerHeight]")
+                    .await?;
                 Point {
                     x: size[0].as_f64().unwrap_or(800.0) / 2.0,
                     y: size[1].as_f64().unwrap_or(600.0) / 2.0,

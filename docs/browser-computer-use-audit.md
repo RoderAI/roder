@@ -65,7 +65,7 @@ installation is not evidence that these implementations are open source.
 | Browser-use session ownership | One process previously served every thread. Threads now own distinct lazy servers; each thread reuses its own process. Fake MCP integration tests compare browser PIDs. | Repaired, MCP evaluated |
 | Browser-use action/observation ordering | Calls within a thread are serialized; actions are followed by `browser_get_state` with screenshot. Fresh state precedes the action report so report text cannot crowd it out first. | Repaired, MCP evaluated; real pinned server recheck outstanding |
 | Cancellation | Cancelling an in-flight browser-use call stops its owned process tree. A subsequent call starts fresh. The integration test checks both old-PID death and a different replacement PID. | Repaired for browser-use; direct input cleanup still open |
-| Untrusted observations | Existing markers remain on reads. Desktop eval results and tab titles/URLs are labeled; action observations from browser-use are labeled even when an error is present. | Improved; separate extension enforcement review open |
+| Untrusted observations | Existing markers remain on reads. Desktop eval results and tab titles/URLs are labeled; action observations from browser-use are labeled even when an error is present. Direct helper state and permission probes now execute in a named CDP isolated world. A fixture poisons the page's `window.__roderDirect`; genuine state and input still work. | Improved and browser evaluated; separate extension enforcement review open |
 | Outcome verification | Jev fixture graders check actual page/DOM outcomes and recorded fixture POSTs; successful final model text alone does not determine a pass. The corpus passed 52/52, including 5 fallback tasks. | Deterministic harness evaluated |
 | ACP permission and result contract | Public `session/new`/`session/prompt` tests assert permission requests, call identity, inputs, completed/failed tool updates, observed page text and final `end_turn`. Rejection executes zero actions. | 6 ACP tests passed |
 | Site/action restrictions and sensitive transmission | Jev's irreversible gate is off by default; its label shortlist and direct typing gate do not cover all sensitive transmission. Desktop uses `OpenGuard`. browser-use domain restrictions are optional. These do not establish the guide's required runtime controls. | Open |
@@ -93,9 +93,14 @@ This is primitive and deterministic harness evaluation, **not a measured success
 rate for a live model**. Ignored live/network tests have not been run. The first workspace build failed when the shared Cargo target files disappeared
 during compilation (`could not parse/generate dep info`, `No such file or directory`).
 The isolated targeted rerun passed: browser-use 24 unit + 9 integration tests,
-Chrome 28 unit + 1 browser evaluation, Responses 114 unit tests. A full workspace
-run, including app-server e2e features, is running with
-`CARGO_TARGET_DIR=.target-browser-audit` and is not yet reported as passed.
+Chrome 28 unit + 1 browser evaluation, Responses 114 unit tests. The isolated full workspace run reached app-server e2e and failed 3 checks
+(126 passed, 1 ignored): `providers_clear_removes_api_key`,
+`runners_methods_list_select_status_and_delete_destination`, and
+`tools_list_discovers_configured_web_search_without_secret_material`. A clean
+worktree at the original base revision reproduced the same 3 failures and the
+same 126/3/1 counts. These are baseline failures in this environment; the full
+workspace gate remains unverified past that package. The ACP suite passed again
+within the isolated run (6/6).
 
 ## Remaining completion gates
 

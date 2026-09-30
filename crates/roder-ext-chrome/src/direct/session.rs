@@ -228,7 +228,7 @@ impl DirectSession {
         tokio::time::sleep(AFTER_INPUT).await;
         let deadline = tokio::time::Instant::now() + LOAD_WAIT;
         while tokio::time::Instant::now() < deadline {
-            match self.client.evaluate("document.readyState").await {
+            match self.client.evaluate_isolated("document.readyState").await {
                 Ok(state) if state != "loading" => break,
                 _ => tokio::time::sleep(LOAD_POLL).await,
             }

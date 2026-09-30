@@ -207,6 +207,7 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
         loaded.text.contains("Primitive fixture"),
         "Navigation must return observed page state"
     );
+    eval(&registry, "window.__roderDirect = {v:2, look:()=>({title:'FAKE STATE'}), point:()=>({x:0,y:0}), editable:()=>true}; true").await;
     let looked = call(&registry, "chrome_page_snapshot", json!({})).await;
     assert!(looked.text.contains("Count: 0"));
     assert!(!looked.text.contains("fixture-secret"));
