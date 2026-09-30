@@ -24,6 +24,42 @@ impl Drop for Browser {
     }
 }
 impl Browser {
+    pub async fn focus_tab(&self, target_id: &str) -> anyhow::Result<()> {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let targets: Vec<Value> = reqwest::get(format!("{}/json/list", self.endpoint))
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let websocket = targets
+            .iter()
+            .find(|target| target["id"] == target_id)
+            .and_then(|target| target["webSocketDebuggerUrl"].as_str())
+            .ok_or_else(|| anyhow::anyhow!("Demo tab has no page websocket"))?;
+        let (mut socket, _) = tokio_tungstenite::connect_async(websocket).await?;
+        socket
+            .send(Message::Text(
+                json!({"id":1,"method":"Page.bringToFront"})
+                    .to_string()
+                    .into(),
+            ))
+            .await?;
+        while let Some(message) = socket.next().await {
+            if let Message::Text(text) = message? {
+                let result: Value = serde_json::from_str(&text)?;
+                if result["id"] == 1 {
+                    anyhow::ensure!(
+                        result.get("error").is_none(),
+                        "Bring demo to front failed: {result}"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        anyhow::bail!("Demo page websocket closed before focusing")
+    }
+
     pub async fn start() -> anyhow::Result<Option<Self>> {
         let path = std::env::var("RODER_CHROME_BINARY").unwrap_or_else(|_| {
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into()
@@ -39,9 +75,12 @@ impl Browser {
         let profile =
             std::env::temp_dir().join(format!("roder-native-computer-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&profile)?;
-        let child = Command::new(path)
+        let mut command = Command::new(path);
+        if std::env::var("RODER_NATIVE_EVAL_VISIBLE").as_deref() != Ok("1") {
+            command.arg("--headless=new");
+        }
+        let child = command
             .args([
-                "--headless=new",
                 "--remote-debugging-port=0",
                 "--no-first-run",
                 "--no-default-browser-check",
@@ -105,6 +144,8 @@ impl Fixture {
                             recorded.lock().await.push(event);
                         }
                         "ok".to_string()
+                    } else if path == "/start" {
+                        include_str!("start.html").to_string()
                     } else {
                         include_str!("fixture.html").to_string()
                     };

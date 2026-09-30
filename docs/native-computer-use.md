@@ -190,6 +190,18 @@ still displays the required state. It preserves native call order in the saved
 trace and records failed calls. Its startup
 requires a key before opening Chrome and does not print the key.
 
+To watch the same native API loop in a visible Chrome window:
+
+```sh
+RODER_NATIVE_EVAL_VISIBLE=1 RODER_REQUIRE_CHROME=1 mise exec -- cargo run \
+  -p roder-app-server --example native_computer_eval
+```
+
+This starts a separate Chrome profile, brings its window to the front, and waits
+ten seconds before starting the model. It navigates from a demo start page by
+clicking a link and leaves the final page open for ten minutes. Set
+`RODER_NATIVE_EVAL_HOLD_SECONDS` to change that inspection period (0–3600).
+
 ## Source locations
 
 | Responsibility | Source |

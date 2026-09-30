@@ -94,6 +94,17 @@ async fn run_eval() -> anyhow::Result<()> {
         .await?
         .ok_or_else(|| anyhow::anyhow!("Chrome required for the live eval"))?;
     let fixture = support::Fixture::start().await?;
+    let visible = std::env::var("RODER_NATIVE_EVAL_VISIBLE").as_deref() == Ok("1");
+    let initial_url = if visible {
+        format!("{}start", fixture.url)
+    } else {
+        fixture.url.clone()
+    };
+    if visible {
+        println!(
+            "Visible Chrome demo ready; the model will navigate from the start page to the form."
+        );
+    }
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(OpenAiResponsesEngine::new_with_config(
         key,
@@ -101,9 +112,8 @@ async fn run_eval() -> anyhow::Result<()> {
         "https://api.openai.com/v1",
         Vec::new(),
     )));
-    builder.tool_contributor(Arc::new(ComputerToolContributor::new(Arc::new(
-        ComputerCdpBinding::new(&browser.endpoint, &fixture.url),
-    ))));
+    let binding = Arc::new(ComputerCdpBinding::new(&browser.endpoint, initial_url));
+    builder.tool_contributor(Arc::new(ComputerToolContributor::new(binding.clone())));
     let runtime = Arc::new(Runtime::new(
         builder.build()?,
         RuntimeConfig {
@@ -141,7 +151,40 @@ async fn run_eval() -> anyhow::Result<()> {
         .as_str()
         .unwrap()
         .to_string();
+    if visible {
+        use roder_api::tools::{ToolCall, ToolExecutionContext};
+        use roder_ext_chrome::direct::{DirectBinding, DirectStep, DirectTab};
+        let ctx = ToolExecutionContext::new(&session, "demo-setup", PolicyMode::Bypass);
+        let setup = ToolCall {
+            id: "demo-setup".into(),
+            name: "computer".into(),
+            arguments: json!({}),
+            raw_arguments: String::new(),
+            thread_id: session.clone(),
+            turn_id: "demo-setup".into(),
+        };
+        let lease = binding
+            .lease(&ctx, &setup)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let DirectTab::Target { target_id, .. } = lease.tab() else {
+            anyhow::bail!("Visible demo requires an owned page target");
+        };
+        browser.focus_tab(&target_id).await?;
+        lease.finish(&DirectStep::default(), &target_id).await;
+        println!("Visible Chrome window is in front; starting native actions in 10 seconds.");
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
     let goal=std::env::var("RODER_NATIVE_EVAL_GOAL").unwrap_or_else(|_|"Use only the native computer tool for UI interaction. Capture the current screen, click Show filters, type penguin into Search, select all that text and replace it with orca, then press Shift+a to append an uppercase A and Enter to submit. Verify the page visibly says Filters open and Submitted: orcaA. Leave that state in the browser.".into());
+    let goal = if visible {
+        format!(
+            "This is Chrome on {}. First capture the screen and click Open the demo to navigate to the form. {goal}",
+            std::env::consts::OS
+        )
+    } else {
+        goal
+    };
+    println!("Native computer demo running with {model}.");
     let started = Instant::now();
     let response = tokio::time::timeout(
         Duration::from_secs(260),
@@ -198,6 +241,7 @@ async fn run_eval() -> anyhow::Result<()> {
             .pointer("/result/stopReason")
             .is_some_and(|reason| reason == "end_turn");
     let report = json!({"mode":"live_openai_native_computer_real_browser_acp","model":model,"elapsed_seconds":started.elapsed().as_secs_f64(),
+        "visible":visible,
         "openai_api_validated":!calls.is_empty(),"passed":passed,"computer_calls":calls.len(),
         "failed_computer_calls":failed_calls.len(),
         "actions":calls.iter().flat_map(|call|call["actions"].as_array().unwrap().iter().map(|action|action["type"].clone())).collect::<Vec<_>>(),
@@ -207,6 +251,20 @@ async fn run_eval() -> anyhow::Result<()> {
         serde_json::to_vec_pretty(&report)?,
     )?;
     println!("{}", serde_json::to_string_pretty(&report)?);
+    println!(
+        "Native computer demo complete: passed={passed}; report={}",
+        output.join("report.json").display()
+    );
+    let hold_seconds = std::env::var("RODER_NATIVE_EVAL_HOLD_SECONDS")
+        .ok()
+        .map(|value| value.parse::<u64>())
+        .transpose()?
+        .unwrap_or(if visible { 600 } else { 0 })
+        .min(3600);
+    if hold_seconds > 0 {
+        println!("Visible Chrome page remains open for {hold_seconds} seconds.");
+        tokio::time::sleep(Duration::from_secs(hold_seconds)).await;
+    }
     anyhow::ensure!(
         passed,
         "Live native computer eval did not meet its independent browser grader; report saved to {}",
