@@ -1,0 +1,52 @@
+{
+  "roder_code_commit": "8c6ca4c3",
+  "extension_code_commit": "607afa7",
+  "codex_checkout_commit": "90abcfac02665ad882853a04155591cd863b2ca7",
+  "configuration": "Temporary private .roder directory; ambient credential variables removed in child test processes; no HOME change; one test thread; real Chrome required for Jev.",
+  "runs": [
+    {
+      "scope": "roder-core tests and docs",
+      "passed": 346,
+      "failed": 0,
+      "ignored": 1,
+      "command": "cargo test -p roder-core -- --test-threads=1"
+    },
+    {
+      "scope": "workspace except roder-core and roder-ext-jev, including app-server e2e and docs",
+      "passed": 2964,
+      "failed": 0,
+      "ignored": 57,
+      "command": "cargo test --workspace --exclude roder-core --exclude roder-ext-jev --features roder-app-server/e2e-tests -- --test-threads=1"
+    },
+    {
+      "scope": "roder-ext-jev unit and integration tests, in the workspace run",
+      "passed": 499,
+      "failed": 0,
+      "ignored": 9,
+      "detail": "452 unit tests plus 47 integration tests; Jev doc tests separately passed with zero tests."
+    }
+  ],
+  "total_passed": 3809,
+  "total_ignored": 67,
+  "single_full_workspace_pass": false,
+  "full_run_failures": [
+    "Intermittent core mailbox interrupt test and process-host cancellation-event test; both suites passed independently.",
+    "An isolated config path without the canonical .roder suffix conflicted with a TUI config-path assertion; the private .roder layout passed."
+  ],
+  "loaded_extension": {
+    "passed": 17,
+    "failed": 0,
+    "existing_unit_tests_passed": 24
+  },
+  "live_model_baseline": {
+    "passed": 49,
+    "tasks": 52,
+    "model": "jev-1.13.0",
+    "completion_gate_enabled": false
+  },
+  "deterministic_browser_corpus": {
+    "passed": 52,
+    "tasks": 52
+  },
+  "deployment": "Local commits only. Paired extension and Roder need to be installed together."
+}

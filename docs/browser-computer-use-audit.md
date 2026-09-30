@@ -1,9 +1,9 @@
 # Browser computer-use audit — 2026-09-29
 
-Status: **repairs implemented and runtime evaluations passed**. Changes are
-local to the two audit branches; final workspace validation is running. This
-report distinguishes correct primitives, observed task outcomes, and profile
-isolation limits.
+Status: **audit complete; repairs committed locally**. Runtime evaluations
+and all workspace packages passed in the clean runs described below. This
+report distinguishes primitive correctness, model task outcomes, profile
+isolation limits and intermittent full-run failures.
 
 **User scope:** additional sensitive-action consent was explicitly excluded on
 2026-09-29. Existing permissions and approval modes remain in place. Consent
@@ -40,7 +40,8 @@ typing sensitive data. These controls need enforcement in the application.
 ### Codex implementations
 
 `/Users/pz/w/codex` is on upstream **main**, not master, at
-`b1e72963c3b71a9265a551e54beff078384efed9` after the requested fast-forward pull.
+`90abcfac02665ad882853a04155591cd863b2ca7` after the requested fast-forward pull
+and a final refresh (the initial pull was `b1e72963c3b71a9265a551e54beff078384efed9`).
 The public checkout contains plugin integration, lifecycle, approval and rendering
 hooks, including `codex-rs/core-plugins/src/executor_hooks_tests.rs`; it does not
 contain the installed CUA package implementations listed below.
@@ -51,13 +52,50 @@ Installed implementation locations verified on this machine:
 - `/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua`
 - `/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop`
 - `/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky`
-- `~/.codex/plugins/cache/openai-bundled/unified-computer-use/26.924.22138/.mcp.json`
+- `~/.codex/plugins/cache/openai-bundled/unified-computer-use/26.928.20755/.mcp.json`
 - `~/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService`
 
+Concrete installed entry points (paths relative to the `@oai` directory above):
+
+| Component | Entry point |
+| --- | --- |
+| MCP JavaScript runner | `cua-repl/bin/cua-repl.mjs`; `cua-repl/dist/lib/js/oai_js_cua_repl/src/index.js` |
+| Unified API | `cua/dist/lib/js/oai_js_cua/src/index.js`; `tinysky_alt/globals.js`; `tinysky_browser/create_tinysky_browser.js` under that source directory |
+| Browser client/service | `browser-desktop/scripts/browser-client.mjs`, `browser-service.mjs` |
+| Native client/service | `sky/dist/project/cua/sky_js/src/index.js`, `service.js`; native `SkyComputerUseService` executable listed above |
+
+The SDK versions are `cua-repl` 0.1.0, `cua` 0.2.5, `browser-desktop` 0.1.1,
+and `sky` 0.7.5. The plugin cache refreshed during the audit; the current
+manifest is 26.928.20755, and the current source locations were rechecked.
+
 The exposed tools are `cua_repl.js` and `cua_repl.js_reset`, with a hidden lifecycle
-hook. Native/browser operations live behind the initialized `cua` runtime.
+`turn_ended` hook. Native/browser operations live behind the initialized `cua` runtime.
 The four installed package manifests do not declare an open-source license;
 installation is not evidence that these implementations are open source.
+
+### Codex primitive inventory
+
+The installed `@oai/cua/docs/tinysky-alt-core-cua-repl.md` describes:
+
+- Discovery/binding: `getState`, `getApp`, `listApps`, `listWindows`, `getBrowser`,
+  `createBrowserTab`, `getTab`, `listBrowsers`, `listTabs`.
+- Observations: `getAXState`, `getScreenshot`, `getAXStateAndScreenshot`.
+- Target actions: `click` (button/click-count options), `drag`, `scroll`,
+  `selectText`, `setValue`, `performSecondaryAction`.
+- App/tab input: `paste`, `pressKey`, `typeText`.
+- Browser navigation/lifecycle where supported: `goto`, `back`, `forward`,
+  `reload`, `close`, `markDeliverable`, `markHandoff`.
+- Browser-specific APIs include `tab.playwright` locators/DOM snapshots,
+  `tab.dom_cua.get_visible_dom`, `tab.ax` and screenshots. Availability depends
+  on the backend: DOM-only tabs reject native input wrappers and use locators.
+
+Public configuration/integration source remains in the Codex checkout:
+`codex-rs/config/src/{browser_use,computer_use,browser_computer_use_requirements}.rs`,
+`codex-rs/app-server-protocol/src/protocol/v2/{browser_use_config,computer_use_config}.rs`,
+`codex-rs/core-plugins/src/executor_hooks_tests.rs`, and the TUI
+`history_cell/computer_activity.rs` / `thread_transcript/computer_groups.rs`.
+These files configure, gate, hook and render the tool; the installed packages
+above implement the browser/native actions.
 
 ## Findings, repairs, and evidence
 
@@ -104,7 +142,7 @@ input behavior. This selected run is not comparable to the full corpus's rate.
 
 The separate MV3 repository was repaired in an isolated Git worktree:
 `/Users/pz/.codex/worktrees/browser-extension-audit/roder-web-extention`, branch
-`pz/computer-use-primitives`, based on `7c77daa`. Unknown work in its main
+`pz/computer-use-primitives`, based on `7c77daa`. Extension commit: `607afa7`. Roder repair commit: `8c6ca4c3`. Unknown work in its main
 checkout was preserved. These changes must be installed with the Roder audit
 branch; the installed extension was not replaced by this evaluation.
 
@@ -115,7 +153,7 @@ branch; the installed extension was not replaced by this evaluation.
   did not respond to tab-targeted CDP keys in the loaded-extension evaluation.
   Code/function interfaces permit this higher-level operation; it is not
   claimed to be a native keyboard gesture.
-- References use a document UUID and isolated-world maps. Forged DOM attributes,
+- References use a cryptographic document nonce and isolated-world maps. Forged DOM attributes,
   stale references, ambiguous selectors and covered targets fail.
 - Actions serialize through the resulting fresh, untrusted observation. Queued
   approvals retain a concrete tab, origin and document, with current settings
@@ -132,10 +170,10 @@ branch; the installed extension was not replaced by this evaluation.
 - Content/pair scripts now build as self-contained IIFEs for the MV3 classic
   content-script loader. The service worker remains an ES module.
 
-Loaded MV3 extension evaluation: **15/15 checks**, through the real WebSocket
+Loaded MV3 extension evaluation: **17/17 checks**, through the real WebSocket
 bridge and Chrome APIs in a throwaway Chromium profile. Includes trusted input,
 Enter submission, nested wheel scrolling, inactive-tab screenshot/crop/masking,
-stale/forged references, readonly/ambiguous rejection, parallel action ordering,
+stale/forged references, readonly/ambiguous rejection, parallel action ordering, Shift plus printable keys, ordinary insecure HTTP,
 cancellation after browser-applied input/capture, document changes, active-tab
 switches, and permission revocation while approval is queued. Its 24 existing
 unit tests, TypeScript check and production build pass.
@@ -246,5 +284,20 @@ real OpenAI extraction/agent call was made in the pinned-server evaluation.
 The clean app-server run passed **129 tests, one ignored**, with a temporary
 `RODER_CONFIG_DIR` and ambient credential variables removed from the child
 process. Earlier identical baseline failures therefore reflected this test
-environment's credentials/configuration, not a browser regression. Final full
-workspace results will be recorded below after the same clean-environment run.
+environment's credentials/configuration, not a browser regression. Final verification used a private `.roder` subdirectory, preserving the
+canonical config-path shape expected by the TUI test without changing HOME.
+
+Final package coverage passed **3,809 tests, 67 ignored**, across clean runs:
+core 346; the workspace excluding core/Jev 2,964; Jev 499 (452 unit + 47
+integration). Jev doc tests passed separately. The browser fixtures required
+real Chrome. Extension production build, TypeScript check and 24 unit tests
+also passed, with 17/17 checks against a loaded MV3 extension.
+
+This is green package coverage, not a single green full-workspace invocation.
+Full invocations encountered the previously observed core mailbox timing failure
+and a process-host cancellation-event race; both suites passed independently.
+An earlier temporary config directory without the `.roder` suffix conflicted
+with the TUI's config-path assertion; the final canonical private layout passed.
+No unrelated runtime or tests were changed to obtain those results.
+
+[Structured validation summary](../evals/reports/browser-computer-use/2026-09-29/workspace-validation.json).
