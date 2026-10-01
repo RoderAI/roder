@@ -213,3 +213,12 @@ clicking a link and leaves the final page open for ten minutes. Set
 | Ordered input and capture | [`direct/computer.rs`](../crates/roder-ext-chrome/src/direct/computer.rs) |
 | Full ACP protocol/browser eval | [`acp_native_computer.rs`](../crates/roder-app-server/tests/acp_native_computer.rs) |
 | Live OpenAI runner | [`native_computer_eval.rs`](../crates/roder-app-server/examples/native_computer_eval.rs) |
+
+## Release validation corrections
+
+The Chrome extension declares its native `computer` contributor when installed.
+`computer` is reserved for the native browser binding; host-supplied external
+function tools must use a different name. Cleanup attempts every held input and
+mask independently, retains failed releases, and blocks subsequent input until
+recovery succeeds. Desktop origin ceilings also disable arbitrary `chrome_eval`;
+use the scoped input tools when an origin ceiling is configured.

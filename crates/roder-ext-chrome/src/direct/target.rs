@@ -18,6 +18,10 @@ impl DirectSession {
         selector: &str,
         text: &str,
     ) -> anyhow::Result<String> {
+        let url = self.client.evaluate_isolated("location.href").await?;
+        if let Some(reason) = url.as_str().and_then(|url| self.guard.outside(url)) {
+            bail!(reason);
+        }
         let resolved = helper(
             &mut self.client,
             &format!("resolve({}, {})", json!(selector), json!(text)),
@@ -117,9 +121,37 @@ impl DirectSession {
             None => format!("probe({}, {})", point.x, point.y),
         };
         let mut probe = helper(&mut self.client, &call).await?;
-        if let Some(label) = probe["label"].as_str() {
-            probe["label"] = json!(self.guard.scrub(label));
-        }
+        scrub_probe(&mut probe, self.guard.as_ref());
         Ok(probe)
+    }
+}
+
+fn scrub_probe(value: &mut Value, guard: &dyn super::DirectGuard) {
+    match value {
+        Value::String(text) => *text = guard.scrub(text),
+        Value::Array(values) => values
+            .iter_mut()
+            .for_each(|value| scrub_probe(value, guard)),
+        Value::Object(values) => values
+            .values_mut()
+            .for_each(|value| scrub_probe(value, guard)),
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Scrub;
+    impl super::super::DirectGuard for Scrub {
+        fn scrub(&self, text: &str) -> String {
+            text.replace("secret", "[REDACTED]")
+        }
+    }
+    #[test]
+    fn all_nested_probe_strings_are_scrubbed() {
+        let mut value = json!({"href":"https://example.com/secret", "form_labels":["secret"], "context":{"label":"secret"}});
+        scrub_probe(&mut value, &Scrub);
+        assert!(!value.to_string().contains("secret"));
     }
 }

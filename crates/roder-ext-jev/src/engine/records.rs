@@ -208,9 +208,9 @@ pub struct JevControl {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
     /// A select's options, at most 12.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub offscreen: bool,
 }
 
@@ -235,4 +235,28 @@ pub struct JevPageFacts {
 pub struct JevFrameText {
     pub origin: String,
     pub text: String,
+}
+
+#[cfg(test)]
+mod control_roundtrip_tests {
+    use super::*;
+    #[test]
+    fn sparse_control_round_trips_empty_options_and_offscreen() {
+        let control = JevControl {
+            label: "Search".into(),
+            kind: "fill".into(),
+            role: None,
+            context: None,
+            section: None,
+            value: None,
+            options: vec![],
+            offscreen: false,
+        };
+        let value = serde_json::to_value(&control).unwrap();
+        assert!(value.get("options").is_none() && value.get("offscreen").is_none());
+        assert_eq!(
+            serde_json::from_value::<JevControl>(value).unwrap(),
+            control
+        );
+    }
 }

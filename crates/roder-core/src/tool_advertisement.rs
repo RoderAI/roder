@@ -32,7 +32,7 @@ impl Runtime {
         specs.extend(
             external_tools
                 .iter()
-                .filter(|tool| native_tool_supported(&tool.name, provider))
+                .filter(|tool| tool.name != roder_api::computer::COMPUTER_TOOL_NAME)
                 .cloned(),
         );
         specs
@@ -47,6 +47,15 @@ fn native_tool_supported(name: &str, provider: &str) -> bool {
 mod tests {
     use super::*;
     #[test]
+    fn external_functions_cannot_shadow_the_native_computer_binding() {
+        assert!(
+            validate_external_tool_names(&[roder_api::computer::computer_tool_spec()]).is_err()
+        );
+        let mut external = roder_api::computer::computer_tool_spec();
+        external.name = "host_computer".into();
+        validate_external_tool_names(&[external]).unwrap();
+    }
+    #[test]
     fn computer_is_native_openai_only() {
         assert!(native_tool_supported("computer", "openai"));
         for provider in ["codex", "anthropic", "openrouter", "xai", "mock"] {
@@ -54,4 +63,16 @@ mod tests {
             assert!(native_tool_supported("chrome_click", provider));
         }
     }
+}
+
+pub(super) fn validate_external_tool_names(
+    tools: &[roder_api::tools::ToolSpec],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !tools
+            .iter()
+            .any(|tool| tool.name == roder_api::computer::COMPUTER_TOOL_NAME),
+        "computer is reserved for the native browser binding; rename the external function tool"
+    );
+    Ok(())
 }

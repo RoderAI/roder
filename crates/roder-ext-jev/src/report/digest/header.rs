@@ -41,7 +41,11 @@ pub(super) fn header(data: &Value, status: &str, now: &str) -> Vec<String> {
     lines.push(outcome(data, status));
     match data["completion_verification"]["status"].as_str() {
         Some("passed") => lines.push("Completion check: caller-defined URL/text predicates passed on fresh UI state; this verifies only those predicates.".into()),
-        Some("failed") => lines.push("Completion check: failed. The fresh UI state did not satisfy the caller-defined predicates; do not report success.".into()),
+        Some("failed") => lines.push(if data["completion_verification"]["observation_available"] == true {
+            "Completion check: failed. The fresh UI state did not satisfy the caller-defined predicates; do not report success."
+        } else {
+            "Completion check: failed. No fresh UI observation was available; do not report success."
+        }.into()),
         Some("not_requested") => lines.push("Completion check: not requested. Done is a model claim; inspect the returned UI state before reporting success.".into()),
         _ => {}
     }

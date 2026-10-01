@@ -12035,3 +12035,6 @@ async fn create_workspace_for_path(
         root_id: result.workspace.default_root_id,
     }
 }
+
+#[path = "computer_external_tools.rs"]
+mod computer_external_tools;

@@ -4,9 +4,20 @@ use crate::direct::DirectGuard;
 pub(crate) struct DesktopScope(Vec<String>);
 
 impl DesktopScope {
+    pub(crate) fn restricted(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unrestricted() -> Self {
+        Self(Vec::new())
+    }
+
     pub(crate) fn from_env() -> anyhow::Result<Self> {
-        let Some(raw) = std::env::var("RODER_DESKTOP_ALLOWED_ORIGINS").ok() else {
-            return Ok(Self(Vec::new()));
+        let raw = match std::env::var("RODER_DESKTOP_ALLOWED_ORIGINS") {
+            Ok(raw) => raw,
+            Err(std::env::VarError::NotPresent) => return Ok(Self(Vec::new())),
+            Err(error) => return Err(error.into()),
         };
         let origins = raw
             .split([',', ' ', '\n', '\t'])

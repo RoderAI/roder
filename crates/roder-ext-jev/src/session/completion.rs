@@ -15,7 +15,9 @@ pub(crate) struct Completion {
 }
 impl Completion {
     pub(crate) fn parse(args: &Value) -> anyhow::Result<Option<Self>> {
-        let Some(raw) = args.get("success_condition").filter(|v| !v.is_null()) else {
+        let Some(raw) = args.get("success_condition").filter(|v| {
+            !v.is_null() && v.as_str() != Some("") && !v.as_array().is_some_and(Vec::is_empty)
+        }) else {
             return Ok(None);
         };
         let condition: Self = serde_json::from_value(raw.clone()).context(
@@ -52,5 +54,26 @@ pub(crate) fn apply(result: &mut JevRunResult, condition: &Completion, page: Opt
         result.status = JevStatus::Blocked;
         result.stop_cause = Some(JevStopCause::OutcomeMismatch);
         result.stopped_because=Some("Model reported DONE, but a fresh browser observation did not satisfy the caller's success_condition".into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn optional_completion_accepts_all_documented_empty_values() {
+        for value in [Value::Null, json!(""), json!([]), json!({})] {
+            assert!(
+                Completion::parse(&json!({"success_condition":value}))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(Completion::parse(&json!({"success_condition":42})).is_err());
+        assert!(
+            Completion::parse(&json!({"success_condition":{"text_contains":"Submitted"}}))
+                .unwrap()
+                .is_some()
+        );
     }
 }

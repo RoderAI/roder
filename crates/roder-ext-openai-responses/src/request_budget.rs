@@ -55,7 +55,7 @@ pub(super) fn prepare_request_payload(
                     .expect("image output blocks");
                 blocks.retain(|block| block["type"] != "input_image");
                 blocks.push(json!({"type":"input_text", "text":
-                    "Previously viewed image omitted to fit the byte budget. Capture a fresh screenshot if needed."}));
+                    "Previously viewed image omitted to fit the byte budget. Reopen it with view_image, or capture a fresh screenshot with the browser tool if needed."}));
                 shed_tool_images += 1;
                 bytes = serde_json::to_vec(&compact)?;
                 if bytes.len() <= limit {

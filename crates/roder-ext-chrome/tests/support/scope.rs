@@ -53,6 +53,13 @@ async fn desktop_scope_and_tab_identity(browser: &Browser, registry: &ToolRegist
     )
     .await;
     assert!(unavailable.is_error);
+    let invalid = call(
+        registry,
+        "chrome_click",
+        json!({"tabId":-1,"selector":"#inc"}),
+    )
+    .await;
+    assert!(invalid.is_error && invalid.text.contains("nonnegative"));
     unsafe {
         std::env::set_var("RODER_DESKTOP_ALLOWED_ORIGINS", url.trim_end_matches('/'));
     }
@@ -64,7 +71,12 @@ async fn desktop_scope_and_tab_identity(browser: &Browser, registry: &ToolRegist
     .await;
     assert!(rejected.is_error);
     assert_eq!(
-        eval(registry, "document.querySelector('#count').textContent").await,
+        fixture_eval(
+            browser,
+            &target,
+            "document.querySelector('#count').textContent"
+        )
+        .await,
         "Count: 0"
     );
     let redirected = call(
@@ -81,8 +93,9 @@ async fn desktop_scope_and_tab_identity(browser: &Browser, registry: &ToolRegist
     let reset = call(registry, "chrome_navigate", json!({"url":url})).await;
     assert!(!reset.is_error, "{}", reset.text);
     // An external navigation must be checked again before the next action.
-    eval(
-        registry,
+    fixture_eval(
+        browser,
+        &target,
         &format!(
             "location.href={}; true",
             json!(url.replace("127.0.0.1", "localhost"))
@@ -118,4 +131,36 @@ async fn desktop_scope_and_tab_identity(browser: &Browser, registry: &ToolRegist
     unsafe {
         std::env::remove_var("RODER_DESKTOP_ALLOWED_ORIGINS");
     }
+}
+
+// Test-only external browser activity; independent of the restricted tool API.
+async fn fixture_eval(browser: &Browser, target: &Value, expression: &str) -> Value {
+    let pages: Value = reqwest::get(format!("{}/json", browser.endpoint))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let page = pages
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|page| page["id"] == *target)
+        .unwrap();
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(page["webSocketDebuggerUrl"].as_str().unwrap())
+            .await
+            .unwrap();
+    socket.send(Message::Text(json!({"id":1,"method":"Runtime.evaluate","params":{"expression":expression,"returnByValue":true}}).to_string().into())).await.unwrap();
+    while let Some(Ok(Message::Text(text))) = socket.next().await {
+        let data: Value = serde_json::from_str(&text).unwrap();
+        if data["id"] == 1 {
+            assert!(
+                data.get("error").is_none() && data["result"].get("exceptionDetails").is_none(),
+                "{data}"
+            );
+            return data["result"]["result"]["value"].clone();
+        }
+    }
+    panic!("external browser observation disconnected");
 }
