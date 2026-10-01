@@ -70,16 +70,28 @@ fn main() -> anyhow::Result<()> {
 async fn run_eval() -> anyhow::Result<()> {
     let config = roder_config::load_config()?;
     let provider = config.providers.get("openai");
-    let key = std::env::var("OPENAI_API_KEY")
-        .ok()
-        .filter(|key| !key.is_empty())
-        .or_else(|| provider.and_then(|p| p.api_key.clone()))
+    let nonblank = |value: String| (!value.trim().is_empty()).then(|| value.trim().to_string());
+    let environment_key = std::env::var("OPENAI_API_KEY").ok().and_then(nonblank);
+    let base_url = if environment_key.is_some() {
+        "https://api.openai.com/v1".to_string()
+    } else {
+        provider
+            .and_then(|provider| provider.base_url.clone())
+            .and_then(nonblank)
+            .unwrap_or_else(|| "https://api.openai.com/v1".into())
+    };
+    let key = environment_key
         .or_else(|| {
             provider
-                .and_then(|p| p.api_key_env.as_ref())
-                .and_then(|name| std::env::var(name).ok())
+                .and_then(|provider| provider.api_key.clone())
+                .and_then(nonblank)
         })
-        .filter(|key| !key.trim().is_empty());
+        .or_else(|| {
+            provider
+                .and_then(|provider| provider.api_key_env.as_ref())
+                .and_then(|name| std::env::var(name).ok())
+                .and_then(nonblank)
+        });
     anyhow::ensure!(
         key.is_some(),
         "Live native computer eval requires OPENAI_API_KEY or an OpenAI provider key in Roder config. Codex account auth does not support this tool."
@@ -109,7 +121,7 @@ async fn run_eval() -> anyhow::Result<()> {
     builder.inference_engine(Arc::new(OpenAiResponsesEngine::new_with_config(
         key,
         "openai",
-        "https://api.openai.com/v1",
+        base_url,
         Vec::new(),
     )));
     let binding = Arc::new(ComputerCdpBinding::new(&browser.endpoint, initial_url));

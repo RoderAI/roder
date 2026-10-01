@@ -284,6 +284,7 @@ async fn native_computer_protocol_all_primitives_through_acp_and_real_browser() 
 #[tokio::test]
 async fn native_computer_partial_failure_returns_screen_and_stops_remaining_actions() {
     let batches = vec![json!([{"type":"click","button":"left","x":60,"y":40},
+        {"type":"click","button":"left","x":60,"y":100},
         {"type":"click","button":"invalid","x":60,"y":100},
         {"type":"type","text":"must not be typed"}])];
     let Some((grade, requests)) = exercise(batches, 1).await else {

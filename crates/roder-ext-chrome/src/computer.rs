@@ -58,10 +58,9 @@ impl ToolExecutor for ComputerTool {
         };
         let mut cached = slot.lock().await;
         let tab = lease.tab();
-        if cached
-            .as_ref()
-            .is_none_or(|state| state.binding_target != tab.target_id())
-        {
+        if cached.as_ref().is_none_or(|state| {
+            state.binding_target != tab.target_id() || state.session.target_id() != tab.target_id()
+        }) {
             *cached = Some(CachedSession {
                 binding_target: tab.target_id().into(),
                 session: DirectSession::attach(&tab, lease.guard(), lease.may_authorize()).await?,
@@ -132,13 +131,11 @@ impl DirectGuard for ComputerGuard {
         }
     }
     fn scrub(&self, text: &str) -> String {
-        self.secrets
-            .lock()
-            .unwrap()
-            .iter()
-            .fold(text.to_string(), |text, secret| {
-                text.replace(secret, "[REDACTED]")
-            })
+        let mut secrets = self.secrets.lock().unwrap().clone();
+        secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+        secrets.iter().fold(text.to_string(), |text, secret| {
+            text.replace(secret, "[REDACTED]")
+        })
     }
 }
 impl ComputerCdpBinding {
@@ -255,4 +252,19 @@ async fn create_target(endpoint: &str, url: &str) -> anyhow::Result<String> {
     })
     .await;
     result.map_err(|_| anyhow::anyhow!("CDP target creation timed out"))?
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    #[test]
+    fn overlapping_secrets_are_scrubbed_longest_first() {
+        let guard = ComputerGuard {
+            scope: crate::desktop_scope::DesktopScope::unrestricted(),
+            secrets: Default::default(),
+        };
+        guard.remember_secret("foo");
+        guard.remember_secret("foobar");
+        assert_eq!(guard.scrub("foobar foo"), "[REDACTED] [REDACTED]");
+    }
 }

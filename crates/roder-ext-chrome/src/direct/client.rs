@@ -111,7 +111,7 @@ impl TabClient {
 
     /// Move the session to another target of the same browser.
     pub(crate) async fn attach_to(&mut self, target: &str) -> anyhow::Result<()> {
-        self.cleanup().finish().await;
+        self.cleanup().finish().await?;
         let attached = self
             .browser_call(
                 "Target.attachToTarget",
@@ -174,8 +174,8 @@ impl TabClient {
         Cleanup::new(self.tab.clone(), self.pending.clone())
     }
 
-    pub(crate) async fn wait_cleanup(&self) {
-        self.pending.wait().await;
+    pub(crate) async fn wait_cleanup(&self) -> anyhow::Result<()> {
+        self.pending.wait(&self.tab).await
     }
 
     pub(crate) fn mask_pending(&self, armed: bool) {

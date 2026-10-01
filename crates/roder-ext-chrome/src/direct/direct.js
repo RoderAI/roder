@@ -244,10 +244,20 @@
   };
   // Focus a field by ref and, when asked, select what it holds, so typing
   // replaces it. Whether it is a secret field.
+  const activeField = () => {
+    let el = focused();
+    while (el && (el.tagName === 'IFRAME' || el.tagName === 'FRAME') && inner(el)) {
+      const sub = inner(el).activeElement;
+      if (!sub || sub === inner(el).body) break;
+      el = sub;
+    }
+    return el;
+  };
   const editable = el => !!el?.isConnected && !el.disabled && !el.readOnly &&
+    !el.closest('[aria-disabled="true"],fieldset[disabled]') &&
     (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' &&
       ['text','search','email','url','tel','password','number'].includes(el.type)));
-  S.editable = ref => editable(ref ? S.nodes.get(ref) : focused());
+  S.editable = ref => editable(ref ? S.nodes.get(ref) : activeField());
   S.focus = (ref, clear) => {
     const el = S.nodes.get(ref);
     if (!el?.isConnected) return { gone: true };

@@ -10,7 +10,11 @@ impl DirectSession {
     /// Execute in order, stop at the first failed action, and always observe the
     /// resulting screen. A failed action must never be reported as completion.
     pub async fn run_computer(&mut self, batch: &ComputerActions) -> DirectStep {
-        self.client.wait_cleanup().await;
+        if let Err(error) = self.client.wait_cleanup().await {
+            return DirectStep::error(format!(
+                "Browser cleanup prevented computer actions: {error:#}"
+            ));
+        }
         let cleanup = self.client.cleanup();
         let mut completed = 0;
         let mut failure = None;
@@ -41,7 +45,9 @@ impl DirectSession {
         }
         // Release input after a failure before taking the observation. Drop
         // still owns cleanup if this future is cancelled anywhere in the batch.
-        cleanup.finish().await;
+        if let Err(error) = cleanup.finish().await {
+            failure = Some(format!("Browser cleanup failed: {error:#}"));
+        }
         let mut observed = self.run("screenshot", &json!({})).await;
         observed.data["completed_actions"] = json!(completed);
         observed.data["requested_actions"] = json!(batch.actions.len());

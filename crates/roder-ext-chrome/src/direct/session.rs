@@ -129,7 +129,9 @@ impl DirectSession {
 
     /// Run the tool `name` (a short name from [`super::DIRECT_TOOLS`]).
     pub async fn run(&mut self, name: &str, args: &Value) -> DirectStep {
-        self.client.wait_cleanup().await;
+        if let Err(error) = self.client.wait_cleanup().await {
+            return DirectStep::error(format!("Browser cleanup prevented {name}: {error:#}"));
+        }
         // Own cleanup outside the borrowed dispatch future: aborting a run
         // must release input even when its owner retains this session.
         let cleanup = self.client.cleanup();
@@ -137,7 +139,11 @@ impl DirectSession {
             Ok(step) => step,
             Err(error) => DirectStep::error(format!("{name} failed: {error:#}")),
         };
-        cleanup.finish().await;
+        if let Err(error) = cleanup.finish().await {
+            step.is_error = true;
+            step.text = format!("{error:#}\n{}", step.text);
+            step.data["cleanup_error"] = json!(format!("{error:#}"));
+        }
         step.data["tool"] = json!(name);
         step
     }

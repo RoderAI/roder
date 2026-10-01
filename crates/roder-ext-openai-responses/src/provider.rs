@@ -739,6 +739,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         ctx: InferenceTurnContext<'_>,
         request: AgentInferenceRequest,
     ) -> anyhow::Result<Option<InferenceEventStream>> {
+        validate_computer_request(&request, self.profile)?;
         native_compaction::compact(self, ctx, request).await
     }
 

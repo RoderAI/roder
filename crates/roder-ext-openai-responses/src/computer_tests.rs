@@ -23,7 +23,7 @@ fn native_registration_and_forced_choice_do_not_create_a_function_or_defer_compu
     let mut request = native_request();
     request.runtime.tool_search = roder_api::inference::ToolSearchConfig::provider_native();
     let body = OpenAiResponsesEngine::map_request(&request);
-    assert_eq!(body["tools"][0], json!({"type":"computer"}));
+    assert_eq!(body["tools"], json!([{ "type":"computer" }]));
     assert_eq!(body["tool_choice"], json!({"type":"computer"}));
     assert_eq!(body["parallel_tool_calls"], false);
 }

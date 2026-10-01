@@ -120,6 +120,7 @@ async fn eval(call: &ToolCall) -> ToolResult {
     let result = async {
         let mut client = TabClient::attach(&tab).await?;
         let scope = DesktopScope::from_env()?;
+        anyhow::ensure!(!scope.restricted(), "chrome_eval is unavailable with RODER_DESKTOP_ALLOWED_ORIGINS; use the scoped browser input tools");
         let url = client.evaluate_isolated("location.href").await?;
         if let Some(reason) = url.as_str().and_then(|url| scope.outside(url)) {
             anyhow::bail!(reason);
@@ -147,11 +148,15 @@ async fn eval(call: &ToolCall) -> ToolResult {
 
 /// Respect the tab id returned by tabs/list; never silently act on another tab.
 async fn desktop_tab(call: &ToolCall) -> Result<DirectTab, String> {
-    let target = crate::desktop_tabs::target(
-        &call.thread_id,
-        call.arguments["tabId"].as_u64(),
-        targets().await?,
-    )?;
+    let id = match call.arguments.get("tabId").filter(|value| !value.is_null()) {
+        Some(value) => Some(
+            value
+                .as_u64()
+                .ok_or("tabId must be a nonnegative integer")?,
+        ),
+        None => None,
+    };
+    let target = crate::desktop_tabs::target(&call.thread_id, id, targets().await?)?;
     Ok(DirectTab::Page {
         websocket: target.web_socket_debugger_url,
         target_id: target.id,

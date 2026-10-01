@@ -1801,6 +1801,7 @@ impl Runtime {
         &self,
         req: CreateThreadRequest,
     ) -> anyhow::Result<ThreadMetadata> {
+        tool_advertisement::validate_external_tool_names(&req.external_tools)?;
         let cfg = self.config.read().await.clone();
         let now = OffsetDateTime::now_utc();
         let workspace = validate_thread_workspace(&req.workspace)?;
