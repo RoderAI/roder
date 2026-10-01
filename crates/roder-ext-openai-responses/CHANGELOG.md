@@ -1,3 +1,55 @@
+## 0.2.1 (2026-10-01)
+
+### Features
+
+#### Native OpenAI Responses computer use
+
+Register the native `computer` tool for an explicitly bound CDP browser, execute
+ordered action batches with retained per-thread sessions and cancellation
+cleanup, and return original-detail `computer_screenshot` observations through
+`computer_call_output`. Preserve native call identities through transcript
+replay, WebSocket continuation, and ACP tool updates. Include an independent
+real-browser protocol eval and a live OpenAI eval runner.
+
+Accept the native API's nullable mouse modifiers. Initialize TLS and large
+worker stacks in the live runner, preserve call execution order in its trace,
+and independently verify the final browser UI and masked screenshot.
+
+### Fixes
+
+#### Preserve browser observations and execute Desktop input through CDP
+
+Keep screenshot text and original resolution in Responses tool replay, including
+when older images are removed to fit the request budget. Attach Chrome extension
+screenshots to the model input. Use stable document-scoped refs, real CDP input,
+validated typing targets, isolated script state, and explicit action failures in the Desktop fallback.
+Isolate browser-use servers by thread, serialize actions with fresh page state,
+and stop the owned process tree when an in-flight tool is cancelled. Cover
+browser observations and permission rejection through the ACP transport.
+Give each browser-use server a private profile and file directories, enforce
+optional operator navigation ceilings, and bound agent steps. Preserve Desktop
+tab identity across enumeration changes. Release held input and screenshot
+masks on cancellation or failure, including sessions retained by their owner.
+
+Cancel a pending Chrome bridge command on dispatch timeout or dropped futures,
+and label the paired extension action observations as untrusted page data.
+
+Support optional caller-defined Jev completion conditions checked against fresh
+UI state. Reject premature model DONE and permit bounded fallback recovery;
+report unverified model completion explicitly when no conditions were supplied.
+
+#### Validate native browser registration and recover failed input cleanup
+
+Declare the native computer tool in Chrome's extension manifest, reserve its
+name from external function tools, and reconcile cancelled cached sessions.
+Retry failed input releases before reusing a session and attempt all key, mouse,
+and screenshot-mask cleanup independently. Scrub overlapping secrets and every
+nested element observation. Reject malformed Desktop origin and tab settings,
+check origin scope before resolving targets, and disable arbitrary eval under
+an origin ceiling. Honor the configured eval provider endpoint, validate native
+compaction, preserve generic image-reopen guidance, and accept documented empty
+Jev completion conditions and sparse serialized controls.
+
 ## 0.2.0 (2026-09-26)
 
 ### Breaking Changes
