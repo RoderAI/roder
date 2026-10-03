@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[path = "runtime_pool_drain.rs"]
 mod drain;
 pub use drain::HostedOwnerDrainStatus;
+pub(crate) use drain::allowed_while_draining;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};

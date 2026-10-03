@@ -33,6 +33,9 @@ pub fn authorize_method(context: &HostedRequestContext, method: &str) -> Authori
     if method == "tools/bind_executor" && !context.has_scope(HostedScope::Read) {
         return AuthorizationDecision::deny("executor_requires_read_scope");
     }
+    if method == "hosted/owner/drain" {
+        return require_scope(context, HostedScope::Write);
+    }
     if method == "hosted/whoami" {
         return AuthorizationDecision::Allow;
     }

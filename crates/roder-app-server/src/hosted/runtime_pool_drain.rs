@@ -73,6 +73,27 @@ impl HostedRuntimePool {
         Ok(RequestAdmission(entry.active_requests.clone()))
     }
 
+    /// Release one resident owner on behalf of a retiring authenticated relay.
+    /// Other tenant sessions remain available. New owners are resolved through
+    /// the factory after the old generation has been sealed and released.
+    pub(crate) async fn release_idle_tenant(&self, tenant: &str) -> anyhow::Result<bool> {
+        let _operation = self.drain_operation.lock().await;
+        // Hold request admission through sealing: another connection must not
+        // dispatch an untracked command after the idle observation.
+        let mut tenants = self.tenants.lock().await;
+        let Some(entry) = tenants.get(tenant) else {
+            return Ok(true);
+        };
+        if entry.active_requests.load(Ordering::Acquire) != 0 {
+            return Ok(false);
+        }
+        if !entry.server.release_idle_runtime_owner().await? {
+            return Ok(false);
+        }
+        tenants.remove(tenant);
+        Ok(true)
+    }
+
     /// Poll after removing this replica from new-session routing. Only zero
     /// remaining tenant and relay counts with no error is a successful drain receipt. Failed or
     /// unknown releases remain resident and cannot be hidden by idle eviction.
@@ -117,7 +138,7 @@ impl HostedRuntimePool {
     }
 }
 
-fn allowed_while_draining(method: &str) -> bool {
+pub(crate) fn allowed_while_draining(method: &str) -> bool {
     matches!(
         method,
         "hosted/whoami"

@@ -329,7 +329,7 @@ async fn serve_connection(
                     // policy. A forwarded connection can never forward again.
                     match pool.admit_owner_relay().await {
                         Ok(_relay) => super::owner_routing::relay_to_owner(
-                            websocket, route.endpoint, &bearer_token, &context.tenant.tenant_id,
+                            websocket, route.endpoint, &bearer_token, &context.tenant.tenant_id, pool.clone(), context.has_scope(HostedScope::Write),
                         ).await.err().map(|_| "owner_connection_unavailable"),
                         Err(_) => {
                             let _ = websocket.close(None).await;
@@ -453,6 +453,7 @@ async fn serve_connection(
     auth_revalidation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     auth_revalidation.tick().await;
 
+    let mut relay_draining = false;
     'connection: loop {
         if app_server.runtime.ensure_execution_authority().is_err() {
             connection_authorized.store(false, Ordering::Release);
@@ -493,6 +494,11 @@ async fn serve_connection(
                             .send(OutboundMessage::Control(Message::Close(None)));
                         break 'connection;
                     }
+                }
+                if relay_draining {
+                    // Registered once by the retiring relay; internal idle
+                    // checks must not consume the user's request-rate budget.
+                    let _ = pool.release_idle_tenant(&context.tenant.tenant_id).await;
                 }
                 continue;
             }
@@ -633,6 +639,19 @@ async fn serve_connection(
                 "forbidden: local_workspace_disabled (hosted execution requires a configured \
                  runner destination)",
             );
+            continue;
+        }
+
+        if request.method == "hosted/owner/drain" {
+            if !authentication.forwarded {
+                send_error(&outbound_tx, id, -32012, "owner drain requires an authenticated relay");
+            } else if let Some(draining) = request.params.as_ref().and_then(|params| params.get("draining")).and_then(serde_json::Value::as_bool) {
+                relay_draining = draining;
+                let response = serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"draining":draining}});
+                let _ = outbound_tx.send(OutboundMessage::Control(Message::Text(response.to_string().into())));
+            } else {
+                send_error(&outbound_tx, id, -32602, "draining must be a boolean");
+            }
             continue;
         }
 

@@ -61,8 +61,12 @@ messages. `/readyz` returns 503 during drain; `/healthz` stays healthy.
 must be zero, with no error, before termination. Unknown releases remain visible
 and cannot be removed by idle eviction. `resume_owner_admission` restores admission
 for rollback, reconstructing released runtimes through the ownership factory.
-Forwarded sockets are counted until they close; moving those connections without
-interrupting remote work remains a host coordination responsibility.
+Forwarded sockets register drain once at their authenticated owner. Mutating
+connections remain open for active tool results and recovery until the owner
+can seal and release its idle runtime; clients then reconnect through a healthy
+replica. Read-only subscriptions can close without releasing the owner. Rollback
+cancels the drain registration. The owner control requires a forwarded connection
+and write scope; ordinary browser connections cannot invoke it directly.
 
 Embedders may install `HostedGatewayOptions::lifecycle` to handle signed
 `POST /lifecycle` requests on the same port. The handler receives the exact body
