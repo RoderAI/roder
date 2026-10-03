@@ -71,7 +71,7 @@ export class LocalProcessTransport implements RoderTransport {
     });
   }
 
-  request<M extends AppServerMethod, P = unknown, R = unknown>(
+  async request<M extends AppServerMethod, P = unknown, R = unknown>(
     request: JsonRpcRequest<M, P>,
     options: RequestOptions = {},
   ): Promise<JsonRpcResponse<R>> {
@@ -83,7 +83,8 @@ export class LocalProcessTransport implements RoderTransport {
     if (id === undefined || id === null) {
       return Promise.reject(new RoderTransportError("requests require a non-null id"));
     }
-    const key = String(id);
+    const key = JSON.stringify(id);
+    if (this.pending.has(key)) return Promise.reject(new RoderTransportError("Request id is already pending"));
     const promise = new Promise<JsonRpcResponse<R>>((resolve, reject) => {
       const abort = () => {
         this.pending.delete(key);
@@ -124,9 +125,18 @@ export class LocalProcessTransport implements RoderTransport {
   }
 
   private handleLine(line: string): void {
-    const message = JSON.parse(line) as JsonRpcResponse | JsonRpcNotification;
+    let message: JsonRpcResponse | JsonRpcNotification;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid JSON-RPC frame");
+      message = parsed as JsonRpcResponse | JsonRpcNotification;
+    } catch (error) {
+      this.rejectAll(new RoderTransportError("Invalid app-server JSON-RPC frame", {cause: error}));
+      void this.close();
+      return;
+    }
     if ("id" in message) {
-      const key = String(message.id);
+      const key = JSON.stringify(message.id);
       const pending = this.pending.get(key);
       if (pending) {
         this.pending.delete(key);
@@ -141,6 +151,7 @@ export class LocalProcessTransport implements RoderTransport {
   }
 
   private rejectAll(error: Error): void {
+    this.closed = true;
     for (const pending of this.pending.values()) {
       pending.cleanup();
       pending.reject(error);

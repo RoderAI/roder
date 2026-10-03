@@ -2340,7 +2340,7 @@ export const appServerManifest = {
       "resultType": "ToolsUnbindExecutorResult",
       "stability": "stable",
       "featureGroup": "tools",
-      "idempotency": "idempotent",
+      "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
     {

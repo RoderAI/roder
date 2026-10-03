@@ -131,8 +131,10 @@ export class ExternalToolExecutor {
     this.pending.clear();
   }
 
+  get isActive(): boolean { return this.active; }
+
   async close(): Promise<void> {
     this.stop();
-    await this.client.call("tools/unbind_executor", {executor: this.lease});
+    await this.client.call("tools/unbind_executor", {executor: this.lease}).catch(() => {});
   }
 }

@@ -109,6 +109,7 @@ export interface PlanExitDecision {
 export class RoderAgent {
   readonly client: RoderRpcClient;
   private threadId: string | undefined;
+  private threadStarting: Promise<string> | undefined;
   private callbackLoopStarted = false;
   private executor: ExternalToolExecutor | undefined;
   private executorBinding: Promise<ExternalToolExecutor> | undefined;
@@ -140,9 +141,14 @@ export class RoderAgent {
       developerContext?: string;
     } = {},
   ): Promise<RoderRun> {
-    const threadId = this.threadId ?? (await this.startThread());
+    if (!this.threadId) {
+      this.threadStarting ??= this.startThread().catch(error => {this.threadStarting=undefined;throw error;});
+      this.threadId = await this.threadStarting;
+    }
+    const threadId = this.threadId;
     this.threadId = threadId;
     if ((this.options.externalToolExecution ?? (this.options.remote ? "hosted" : "local")) === "hosted" && this.options.onToolExecute) {
+      if (this.executor && !this.executor.isActive) { this.executor = undefined; this.executorBinding = undefined; }
       this.executorBinding ??= ExternalToolExecutor.bind(this.client, threadId, this.options.onToolExecute)
         .catch(error => { this.executorBinding = undefined; throw error; });
       this.executor = await this.executorBinding;

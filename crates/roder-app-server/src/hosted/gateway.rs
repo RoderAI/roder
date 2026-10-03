@@ -347,7 +347,18 @@ async fn serve_connection(
         let executor_server = app_server.clone();
         let executor_id = executor_connection.id.clone();
         notification_tasks.spawn(async move {
-            while let Ok(notification) = notifications.recv().await {
+            loop {
+                let notification = match notifications.recv().await {
+                    Ok(notification) => notification,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        for revoked in executor_server.external_tool_executors.disconnect(&executor_id).await {
+                            super::executor_gateway::revoke(&executor_server, revoked, "notification_lag").await;
+                        }
+                        let _ = notification_tx.send(OutboundMessage::Control(Message::Close(None)));
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
                 let notification = match executor_server
                     .external_tool_executors
                     .observe(&executor_id, notification)

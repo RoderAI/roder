@@ -9,6 +9,7 @@ mod deadline_policy;
 pub mod dynamic_workflows;
 mod event_sink_dispatch;
 pub mod fake_provider;
+pub mod external_tools;
 pub mod forks;
 mod goals;
 pub mod hooks;

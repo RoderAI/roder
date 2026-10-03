@@ -2344,7 +2344,7 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "resultType": "ToolsUnbindExecutorResult",
             "stability": "stable",
             "featureGroup": "tools",
-            "idempotency": "idempotent",
+            "idempotency": "nonIdempotent",
             "sideEffect": "localState"
         },
         {

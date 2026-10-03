@@ -115,14 +115,13 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefine
   if (!signal) {
     return promise;
   }
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      signal.addEventListener("abort", () => reject(new DOMException("Request aborted", "AbortError")), {
-        once: true,
-      });
-    }),
-  ]);
+  if (signal.aborted) return Promise.reject(new DOMException("Request aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", aborted);
+    const aborted = () => { cleanup(); reject(new DOMException("Request aborted", "AbortError")); };
+    signal.addEventListener("abort", aborted, {once:true});
+    promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
 }
 
 export function isNotification(

@@ -755,7 +755,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("tools/execution_read", "tools", ReadOnly, Idempotent),
     method_spec!("tools/list", "tools", ReadOnly, Idempotent),
     method_spec!("tools/resolve", "tools", LocalState, NonIdempotent),
-    method_spec!("tools/unbind_executor", "tools", LocalState, Idempotent),
+    method_spec!("tools/unbind_executor", "tools", LocalState, NonIdempotent),
     method_spec!("turn/interrupt", "turns", LocalState, NonIdempotent),
     method_spec!("turn/start", "turns", LocalState, NonIdempotent),
     method_spec!("turn/steer", "turns", LocalState, NonIdempotent),

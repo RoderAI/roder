@@ -43,7 +43,7 @@ pub(crate) async fn reject_execution(server: &AppServer, request: &str, reason: 
     }).await;
 }
 
-async fn revoke(server: &AppServer, revoked: RevokedExecutor, reason: &str) {
+pub(super) async fn revoke(server: &AppServer, revoked: RevokedExecutor, reason: &str) {
     server.publish_notification(roder_protocol::JsonRpcNotification {
         jsonrpc: "2.0".into(),
         method: "tools/executorRevoked".into(),
@@ -148,10 +148,10 @@ pub(crate) async fn dispatch(
             Err(error) => Err(error.to_string()),
             Ok(params) => match server
                 .external_tool_executors
-                .authorize_resolution(connection, &params)
+                .resolve(connection, params, &server.runtime)
                 .await
             {
-                Ok(()) => return None,
+                Ok(resolved) => Ok(serde_json::json!({"resolved":resolved})),
                 Err(error) => Err(error.into()),
             },
         },

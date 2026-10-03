@@ -2,7 +2,7 @@
 //! State is tenant-runtime scoped and never contains tool input/output bodies.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use roder_protocol::{
@@ -56,6 +56,29 @@ impl Bindings {
             .is_some_and(|binding| binding.connection == connection && binding.lease == *lease)
     }
 
+    fn validate_resolution(
+        &self,
+        connection: &str,
+        params: &ToolsResolveParams,
+    ) -> Result<(), &'static str> {
+        let lease = params.executor.as_ref().ok_or("executor_required")?;
+        if !self.owns(connection, lease) {
+            return Err("executor_not_owned");
+        }
+        let call = self
+            .calls
+            .get(&params.request_id)
+            .ok_or("unknown_execution")?;
+        if call.executor.as_ref() != Some(lease)
+            || Some(call.state.turn_id.as_str()) != params.turn_id.as_deref()
+            || call.state.thread_id != lease.thread_id
+            || call.state.state != "pending"
+        {
+            return Err("execution_not_owned_or_terminal");
+        }
+        Ok(())
+    }
+
     fn revoke(&mut self, thread: &str, state: &str) -> Option<RevokedExecutor> {
         let binding = self.leases.remove(thread)?;
         let mut requests = Vec::new();
@@ -75,7 +98,7 @@ impl Bindings {
 
     fn prune(&mut self) {
         self.calls
-            .retain(|_, call| call.state.state == "pending" || call.updated.elapsed() < STATE_TTL);
+            .retain(|_, call| call.updated.elapsed() < STATE_TTL);
         if self.calls.len() > MAX_TERMINAL_STATES {
             let mut terminal = self
                 .calls
@@ -103,33 +126,6 @@ impl Drop for ExecutorBindings {
 }
 
 impl ExecutorBindings {
-    /// Observe requests even after the last socket disappears, so a call that
-    /// races disconnect is rejected promptly instead of waiting for its timeout.
-    pub fn monitor(self: &Arc<Self>, server: &Arc<crate::AppServer>) {
-        self.monitor.get_or_init(|| {
-            let bindings = Arc::downgrade(self);
-            let runtime = Arc::downgrade(&server.runtime);
-            let mut notifications = server.subscribe_notifications();
-            tokio::spawn(async move {
-                loop {
-                    let notification = match notifications.recv().await {
-                        Ok(notification) => notification,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    };
-                    let Some(bindings) = bindings.upgrade() else { break; };
-                    if let Delivery::Reject(request) = bindings.observe("", notification).await {
-                        let Some(runtime) = runtime.upgrade() else { break; };
-                        let _ = runtime.resolve_external_tool_call(&request, roder_core::ExternalToolResolution {
-                            output: "Executor unavailable. Read fresh page state; do not replay this request.".into(),
-                            is_error: true,
-                        }).await;
-                    }
-                }
-            }).abort_handle()
-        });
-    }
-
     pub async fn bind(
         &self,
         connection: &str,
@@ -198,28 +194,42 @@ impl ExecutorBindings {
             .is_some_and(|binding| binding.connection == connection)
     }
 
+    #[cfg(test)]
     pub async fn authorize_resolution(
         &self,
         connection: &str,
         params: &ToolsResolveParams,
     ) -> Result<(), &'static str> {
-        let bindings = self.inner.lock().await;
-        let lease = params.executor.as_ref().ok_or("executor_required")?;
-        if !bindings.owns(connection, lease) {
-            return Err("executor_not_owned");
+        self.inner
+            .lock()
+            .await
+            .validate_resolution(connection, params)
+    }
+
+    pub async fn resolve(
+        &self,
+        connection: &str,
+        params: ToolsResolveParams,
+        runtime: &roder_core::Runtime,
+    ) -> Result<bool, String> {
+        let mut bindings = self.inner.lock().await;
+        bindings.validate_resolution(connection, &params)?;
+        let resolved = runtime
+            .resolve_external_tool_call(
+                &params.request_id,
+                roder_core::ExternalToolResolution {
+                    output: params.output,
+                    is_error: params.is_error,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(call) = bindings.calls.get_mut(&params.request_id) {
+            call.state.state = if resolved { "resolved" } else { "uncertain" }.into();
+            call.state.is_error = params.is_error || !resolved;
+            call.updated = Instant::now();
         }
-        let call = bindings
-            .calls
-            .get(&params.request_id)
-            .ok_or("unknown_execution")?;
-        if call.executor.as_ref() != Some(lease)
-            || Some(call.state.turn_id.as_str()) != params.turn_id.as_deref()
-            || call.state.thread_id != lease.thread_id
-            || call.state.state != "pending"
-        {
-            return Err("execution_not_owned_or_terminal");
-        }
-        Ok(())
+        Ok(resolved)
     }
 
     pub async fn read(
@@ -319,128 +329,6 @@ impl ExecutorBindings {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    fn requested(id: &str, thread: &str) -> JsonRpcNotification {
-        JsonRpcNotification {
-            jsonrpc: "2.0".into(),
-            method: "thread/toolExecutionRequested".into(),
-            params: serde_json::json!({"threadId":thread,"turnId":"turn-1","requestId":id,
-                "call":{"id":"call-1","name":"edit_draft","arguments":{"value":"private"}}}),
-        }
-    }
-
-    #[tokio::test]
-    async fn only_bound_connection_receives_or_resolves_execution() {
-        let bindings = ExecutorBindings::default();
-        let (lease, _) = bindings.bind("owner", "thread-1", false).await.unwrap();
-        assert!(bindings.bind("other", "thread-1", false).await.is_err());
-        assert!(matches!(
-            bindings
-                .observe("other", requested("request-1", "thread-1"))
-                .await,
-            Delivery::Suppress
-        ));
-        assert!(matches!(
-            bindings
-                .observe("owner", requested("request-1", "thread-1"))
-                .await,
-            Delivery::Send(_)
-        ));
-        let mut resolution = ToolsResolveParams {
-            request_id: "request-1".into(),
-            output: "ok".into(),
-            is_error: false,
-            executor: Some(lease.clone()),
-            turn_id: Some("wrong-turn".into()),
-        };
-        assert!(
-            bindings
-                .authorize_resolution("owner", &resolution)
-                .await
-                .is_err()
-        );
-        resolution.turn_id = Some("turn-1".into());
-        assert!(
-            bindings
-                .authorize_resolution("other", &resolution)
-                .await
-                .is_err()
-        );
-        assert!(
-            bindings
-                .authorize_resolution("owner", &resolution)
-                .await
-                .is_ok()
-        );
-        assert_eq!(
-            bindings
-                .read("owner", &lease, "request-1")
-                .await
-                .unwrap()
-                .unwrap()
-                .state,
-            "pending"
-        );
-    }
-
-    #[tokio::test]
-    async fn takeover_cancels_old_calls_without_transferring_them() {
-        let bindings = ExecutorBindings::default();
-        let (old, _) = bindings.bind("owner", "thread-1", false).await.unwrap();
-        bindings
-            .observe("owner", requested("request-1", "thread-1"))
-            .await;
-        let (new, revoked) = bindings.bind("other", "thread-1", true).await.unwrap();
-        assert_eq!(revoked.unwrap().requests, vec!["request-1"]);
-        assert!(bindings.unbind("owner", &old).await.is_err());
-        assert!(matches!(
-            bindings
-                .observe("other", requested("request-1", "thread-1"))
-                .await,
-            Delivery::Suppress
-        ));
-        assert_eq!(
-            bindings
-                .read("other", &new, "request-1")
-                .await
-                .unwrap()
-                .unwrap()
-                .state,
-            "cancelled"
-        );
-    }
-
-    #[tokio::test]
-    async fn disconnect_is_terminal_and_rebind_only_allows_fresh_requests() {
-        let bindings = ExecutorBindings::default();
-        bindings.bind("owner", "thread-1", false).await.unwrap();
-        bindings
-            .observe("owner", requested("request-1", "thread-1"))
-            .await;
-        assert_eq!(bindings.disconnect("owner").await.len(), 1);
-        let (lease, _) = bindings.bind("new", "thread-1", false).await.unwrap();
-        assert_eq!(
-            bindings
-                .read("new", &lease, "request-1")
-                .await
-                .unwrap()
-                .unwrap()
-                .state,
-            "disconnected"
-        );
-        assert!(matches!(
-            bindings
-                .observe("new", requested("request-1", "thread-1"))
-                .await,
-            Delivery::Suppress
-        ));
-        assert!(matches!(
-            bindings
-                .observe("new", requested("request-2", "thread-1"))
-                .await,
-            Delivery::Send(_)
-        ));
-    }
-}
+mod monitor;

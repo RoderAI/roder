@@ -91,3 +91,38 @@ test("a late completion of another turn cannot abort the active call", async () 
   finish();await running;
   assert.equal(resolutions.length,1);
 });
+
+test('concurrent initial sends share one thread and hosted binding', async () => {
+  const {RoderAgent} = await import('../src/index.js');
+  const methods: string[] = [];
+  const transport = new InMemoryTransport(async request => {
+    methods.push(request.method);
+    await new Promise(resolve=>setTimeout(resolve,1));
+    const result=request.method === 'thread/start' ? {thread:{id:'thread'}} :
+      request.method === 'tools/bind_executor' ? {executor:lease} : {turn:{id:'turn'}};
+    return {jsonrpc:'2.0',id:request.id,result};
+  });
+  const agent = await RoderAgent.create({transport,workspaceId:'workspace',externalToolExecution:'hosted',onToolExecute:()=>({output:'ok'})});
+  await Promise.all([agent.send('one'),agent.send('two')]);
+  assert.equal(methods.filter(method=>method==='thread/start').length,1);
+  assert.equal(methods.filter(method=>method==='tools/bind_executor').length,1);
+  await agent.close();
+});
+
+test('a revoked executor permits a fresh bind on the next send and teardown is best effort', async () => {
+  const {RoderAgent} = await import('../src/index.js');
+  let binds=0;
+  const transport = new InMemoryTransport(request => {
+    if (request.method==='tools/bind_executor') binds++;
+    if (request.method==='tools/unbind_executor') return {jsonrpc:'2.0',id:request.id,error:{code:-32012,message:'executor_not_owned'}};
+    const result = request.method==='tools/bind_executor' ? {executor:lease} : {turn:{id:'turn'}};
+    return {jsonrpc:'2.0',id:request.id,result};
+  });
+  const agent=await RoderAgent.create({transport,threadId:'thread',externalToolExecution:'hosted',onToolExecute:()=>({output:'ok'})});
+  await agent.send('one');
+  transport.emit({jsonrpc:'2.0',method:'tools/executorRevoked',params:{executor:lease}});
+  await new Promise(resolve=>setTimeout(resolve,1));
+  await agent.send('two');
+  assert.equal(binds,2);
+  await agent.close();
+});

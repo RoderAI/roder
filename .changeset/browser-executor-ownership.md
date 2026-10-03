@@ -1,6 +1,7 @@
 ---
 roder-protocol: major
 roder-app-server: major
+roder-core: minor
 roder-sdk-typescript: minor
 roder-sdk-python: minor
 ---
