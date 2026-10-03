@@ -12,11 +12,15 @@ pub trait HostedRuntimeLeaseBackend: Send + Sync + 'static {
     /// Return true only after confirming that exact generation was renewed for
     /// at least `ttl`. False means lost authority; errors are unknown outcomes.
     async fn renew(&self, ttl: Duration) -> anyhow::Result<bool>;
+    /// Release this exact generation after local execution has been sealed.
+    async fn release(&self) -> anyhow::Result<bool>;
 }
 
 pub(crate) struct HostedRuntimeLeaseSupervisor {
     authority: Arc<RuntimeExecutionLease>,
     task: tokio::task::JoinHandle<()>,
+    backend: Arc<dyn HostedRuntimeLeaseBackend>,
+    ttl: Duration,
 }
 
 impl Drop for HostedRuntimeLeaseSupervisor {
@@ -36,6 +40,33 @@ impl Drop for RevokeOnExit {
 }
 
 impl AppServer {
+    /// Poll after stopping new inbound work. Busy runtimes are untouched. A
+    /// successful result proves local quiescence and durable lease release;
+    /// errors are not safe-to-terminate receipts and cannot revive this runtime.
+    pub async fn release_idle_runtime_owner(&self) -> anyhow::Result<bool> {
+        let (backend, timeout) = {
+            let installed = self
+                .runtime_lease_supervisor
+                .lock()
+                .map_err(|_| anyhow::anyhow!("runtime lease supervisor unavailable"))?;
+            let supervisor = installed
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("runtime lease supervisor is not installed"))?;
+            (supervisor.backend.clone(), supervisor.ttl / 3)
+        };
+        if !self.runtime.seal_idle_owner().await? {
+            return Ok(false);
+        }
+        // Stop renewal before releasing. Drop revokes any surviving guard clones.
+        self.runtime_lease_supervisor
+            .lock()
+            .map_err(|_| anyhow::anyhow!("runtime lease supervisor unavailable"))?
+            .take();
+        let released = tokio::time::timeout(timeout, backend.release()).await??;
+        anyhow::ensure!(released, "runtime owner release was not confirmed");
+        Ok(true)
+    }
+
     /// Install before publishing this server. The same guard must already be
     /// bound to its runtime; duplicate installation cannot replace ownership.
     pub fn supervise_runtime_lease(
@@ -66,10 +97,15 @@ impl AppServer {
         let task = tokio::runtime::Handle::try_current()?.spawn(supervise(
             server,
             task_authority,
-            backend,
+            backend.clone(),
             ttl,
         ));
-        *installed = Some(HostedRuntimeLeaseSupervisor { authority, task });
+        *installed = Some(HostedRuntimeLeaseSupervisor {
+            authority,
+            task,
+            backend,
+            ttl,
+        });
         Ok(())
     }
 }
@@ -120,6 +156,9 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl HostedRuntimeLeaseBackend for Backend {
+        async fn release(&self) -> anyhow::Result<bool> {
+            Ok(self.valid.swap(false, Ordering::SeqCst))
+        }
         async fn renew(&self, _ttl: Duration) -> anyhow::Result<bool> {
             self.renewals.fetch_add(1, Ordering::SeqCst);
             if self.hang {
@@ -215,5 +254,28 @@ mod tests {
                 .is_err()
         );
         authority.require_live().unwrap();
+    }
+    #[tokio::test]
+    async fn idle_handoff_revokes_authority_and_confirms_release() {
+        let (server, authority) = fixture();
+        let backend = backend(false);
+        server
+            .supervise_runtime_lease(authority.clone(), backend.clone(), Duration::from_secs(1))
+            .unwrap();
+        assert!(server.release_idle_runtime_owner().await.unwrap());
+        assert!(!backend.valid.load(Ordering::SeqCst));
+        assert!(authority.require_live().is_err());
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_release_cannot_restore_local_execution() {
+        let (server, authority) = fixture();
+        let backend = backend(false);
+        server
+            .supervise_runtime_lease(authority.clone(), backend.clone(), Duration::from_secs(1))
+            .unwrap();
+        backend.valid.store(false, Ordering::SeqCst);
+        assert!(server.release_idle_runtime_owner().await.is_err());
+        assert!(authority.require_live().is_err());
     }
 }

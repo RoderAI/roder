@@ -74,6 +74,7 @@ async fn mysql_generation_loss_revokes_the_runtime_and_closes_its_socket() {
     }
     #[async_trait::async_trait]
     impl HostedRuntimeLeaseBackend for Backend {
+        async fn release(&self) -> anyhow::Result<bool> { self.store.release_runtime_owner(&self.lease).await }
         async fn renew(&self, ttl: Duration) -> anyhow::Result<bool> {
             Ok(self
                 .store

@@ -45,3 +45,11 @@ This routing primitive does not acquire leases, transfer active turns, or
 reconcile external side effects. Hosts must bind an owner-fenced store and
 `RuntimeExecutionLease`, install renewal supervision, and coordinate graceful
 drain before removing an owning replica.
+
+For a planned handoff, first stop new inbound work, then poll
+`AppServer::release_idle_runtime_owner`. It returns false without interrupting
+busy work. Success seals local admission and confirms release of the exact
+durable generation. Lost authority, failed lifecycle persistence, timeout, or
+unconfirmed release are errors, not successful handoff receipts. This differs
+from shutdown drain, which requests interruption. The host still coordinates
+traffic removal, replacement ownership, and final process termination.

@@ -12,6 +12,7 @@ mod compaction_template;
 #[path = "runtime/eager_tools.rs"]
 mod eager_tools;
 mod thread_admission;
+mod owner_handoff;
 use eager_tools::EagerTools;
 #[path = "runtime/patch_progress.rs"]
 mod patch_progress;

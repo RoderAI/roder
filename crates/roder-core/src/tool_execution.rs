@@ -37,7 +37,7 @@ impl Runtime {
         workspace: Option<&str>,
         deadline: Option<OffsetDateTime>,
     ) -> anyhow::Result<ToolResultRecord> {
-        self.ensure_execution_authority()?;
+        let _execution_permit = self.execution_lease.as_ref().map(|lease| lease.enter()).transpose()?;
         let mut parsed_args: Value = serde_json::from_str(&call.arguments)
             .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
         if is_subagent_task_tool(&call.name)
