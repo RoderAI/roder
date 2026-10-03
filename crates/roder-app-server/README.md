@@ -53,3 +53,13 @@ durable generation. Lost authority, failed lifecycle persistence, timeout, or
 unconfirmed release are errors, not successful handoff receipts. This differs
 from shutdown drain, which requests interruption. The host still coordinates
 traffic removal, replacement ownership, and final process termination.
+
+At replica level, `HostedRuntimePool::begin_owner_drain` closes new-work admission
+while preserving resident-owner reconnects, tool results, approvals, and recovery
+messages. `/readyz` returns 503 during drain; `/healthz` stays healthy.
+`poll_owner_drain` reports remaining tenants and forwarded sockets. Both counts
+must be zero, with no error, before termination. Unknown releases remain visible
+and cannot be removed by idle eviction. `resume_owner_admission` restores admission
+for rollback, reconstructing released runtimes through the ownership factory.
+Forwarded sockets are counted until they close; moving those connections without
+interrupting remote work remains a host coordination responsibility.

@@ -457,22 +457,32 @@ async fn hosted_health_endpoints_do_not_require_auth() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let fixture = fixture("health", RateLimitConfig::default(), true).await;
-    for path in ["/readyz", "/healthz"] {
-        let mut stream = tokio::net::TcpStream::connect(fixture.controller.listen_addr)
-            .await
-            .unwrap();
-        stream
-            .write_all(format!("GET {path} HTTP/1.1\r\nHost: roder\r\n\r\n").as_bytes())
-            .await
-            .unwrap();
-        let mut buffer = [0_u8; 512];
-        let bytes_read = stream.read(&mut buffer).await.unwrap();
-        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+    for draining in [false, true, false] {
+        if draining {
+            fixture.pool.begin_owner_drain().await;
+        } else {
+            fixture.pool.resume_owner_admission().await;
+        }
+        for path in ["/readyz", "/healthz"] {
+            let mut stream = tokio::net::TcpStream::connect(fixture.controller.listen_addr)
+                .await
+                .unwrap();
+            stream
+                .write_all(format!("GET {path} HTTP/1.1\r\nHost: roder\r\n\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut buffer = [0_u8; 512];
+            let bytes_read = stream.read(&mut buffer).await.unwrap();
+            let response = String::from_utf8_lossy(&buffer[..bytes_read]);
 
-        assert!(response.starts_with("HTTP/1.1 200 OK"));
-        assert!(response.ends_with("\r\n\r\nok\n"));
+            if draining && path == "/readyz" {
+                assert!(response.starts_with("HTTP/1.1 503"));
+            } else {
+                assert!(response.starts_with("HTTP/1.1 200 OK"));
+                assert!(response.ends_with("\r\n\r\nok\n"));
+            }
+        }
     }
-
     fixture.controller.stop().await.unwrap();
 }
 

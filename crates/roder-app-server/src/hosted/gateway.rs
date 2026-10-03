@@ -212,7 +212,7 @@ async fn serve_connection(
     request_policy: Arc<dyn HostedRequestPolicy>,
     mut stream: tokio::net::TcpStream,
 ) {
-    if respond_to_health_probe(&mut stream).await {
+    if respond_to_health_probe(&mut stream, &pool).await {
         return;
     }
     // Authenticate at handshake time, before any request dispatch.
@@ -320,9 +320,15 @@ async fn serve_connection(
                 } else {
                     // The owning gateway authenticates again and applies its
                     // policy. A forwarded connection can never forward again.
-                    super::owner_routing::relay_to_owner(
-                        websocket, route.endpoint, &bearer_token, &context.tenant.tenant_id,
-                    ).await.err().map(|_| "owner_connection_unavailable")
+                    match pool.admit_owner_relay().await {
+                        Ok(_relay) => super::owner_routing::relay_to_owner(
+                            websocket, route.endpoint, &bearer_token, &context.tenant.tenant_id,
+                        ).await.err().map(|_| "owner_connection_unavailable"),
+                        Err(_) => {
+                            let _ = websocket.close(None).await;
+                            Some("owner_relay_draining")
+                        }
+                    }
                 };
                 if let Some(reason) = reason {
                     audit.record(AuditRecord {
@@ -623,6 +629,13 @@ async fn serve_connection(
             continue;
         }
 
+        let _request_admission = match pool.admit_request(&context.tenant.tenant_id, &request.method).await {
+            Ok(admission) => admission,
+            Err(_) => {
+                send_error(&outbound_tx, id, -32015, "hosted replica is draining; request was not dispatched");
+                continue;
+            }
+        };
         let response = if let Some(response) =
             super::executor_gateway::dispatch(&app_server, &executor_connection.id, &request).await
         {
@@ -780,7 +793,7 @@ fn same_connection_identity(
         && established.credential_id == revalidated.credential_id
 }
 
-async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream) -> bool {
+async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream, pool: &HostedRuntimePool) -> bool {
     let mut buffer = [0_u8; 512];
     let Ok(bytes_read) = stream.peek(&mut buffer).await else {
         return false;
@@ -788,7 +801,11 @@ async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream) -> bool {
     if !is_health_probe(&buffer[..bytes_read]) {
         return false;
     }
-    let response = b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n";
+    let response: &[u8] = if pool.is_draining() && buffer[..bytes_read].starts_with(b"GET /readyz ") {
+        b"HTTP/1.1 503 Service Unavailable\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\ndraining\n"
+    } else {
+        b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n"
+    };
     let _ = stream.write_all(response).await;
     true
 }
