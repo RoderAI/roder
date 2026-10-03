@@ -55,8 +55,18 @@ cannot renew. Release retains the generation, so an old handle cannot release a
 later owner. Tenant keys compare byte-for-byte. TTLs are bounded to 1–300 seconds.
 Renewal never shortens an existing lease.
 
-This is a storage primitive, not enabled gateway HA. A routing observation is
-not execution authority. Integration must fence durable writes and tool actions,
+Use `with_runtime_owner(&lease)` to derive the runtime's store handle, then install
+it with `MysqlSessionExtension::from_store` to retain the fence in the runtime's
+thread-store factory. Every
+session, event, checkpoint, and artifact write validates the live generation and
+holds the ownership row lock through commit. New ownership cannot be granted
+between validation and the write. Once a tenant has claimed ownership, unbound
+handles cannot write, even after the lease is released. Read access remains
+available for recovery. All writer binaries must support this protocol before
+enabling ownership; older binaries do not enforce these transaction guards.
+
+This is not enabled gateway HA. A routing observation is not execution authority.
+Integration must fence tool actions,
 stop admission on lease loss, reconcile uncertain external actions before replay,
 and quiesce work before release. A lost database response is an unknown outcome:
 reconcile the process UUID and generation; do not start another runtime blindly.

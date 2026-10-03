@@ -8,12 +8,15 @@
 //! timezone pitfalls.
 
 pub mod artifacts;
+pub mod config;
 mod event_log;
 pub(crate) mod executor;
 pub mod extension;
 pub mod ownership;
 pub mod schema;
 pub mod store;
+mod write_guard;
 
 pub use extension::*;
-pub use store::{MysqlSessionConfig, MysqlSessionStore, redact_database_url, validate_tenant_id};
+pub use config::{MysqlSessionConfig, redact_database_url, validate_tenant_id};
+pub use store::MysqlSessionStore;

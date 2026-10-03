@@ -26,6 +26,15 @@ pub enum RuntimeOwnerClaim {
 }
 
 impl MysqlSessionStore {
+    /// Derive a handle whose writes require this exact live generation.
+    /// The database checks authority atomically on every mutation.
+    pub fn with_runtime_owner(&self, lease: &RuntimeOwnerLease) -> anyhow::Result<Self> {
+        self.validate_owner_lease(lease)?;
+        let mut store = self.clone();
+        store.owner = Some(lease.clone());
+        Ok(store)
+    }
+
     /// Claim a tenant only if no unexpired owner exists. The database clock owns
     /// expiry; generation rows are retained after release and never reset.
     pub async fn claim_runtime_owner(
@@ -158,7 +167,7 @@ fn ttl_micros(ttl: Duration) -> anyhow::Result<i64> {
     Ok(ttl.as_micros().try_into()?)
 }
 
-async fn database_time(connection: &mut MySqlConnection) -> anyhow::Result<i64> {
+pub(crate) async fn database_time(connection: &mut MySqlConnection) -> anyhow::Result<i64> {
     Ok(sqlx_core::query_scalar::query_scalar::<MySql, i64>(
         "SELECT TIMESTAMPDIFF(MICROSECOND, '1970-01-01', UTC_TIMESTAMP(6))",
     )
