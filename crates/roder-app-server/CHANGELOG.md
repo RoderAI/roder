@@ -1,3 +1,9 @@
+## 0.3.1 (2026-10-03)
+
+### Fixes
+
+- Preserve interrupted and failed turn outcomes when restoring thread history, matching live notifications instead of treating every terminated turn as successful.
+
 ## 0.3.0 (2026-10-03)
 
 ### Breaking Changes

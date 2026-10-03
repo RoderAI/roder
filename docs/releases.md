@@ -73,7 +73,9 @@ Bypasses:
    make registry-readmes
    ```
 
-Unchanged packages are untouched: no version bump, no tag, no release.
+Unchanged packages are untouched: no version bump, no tag, no release. CLI
+binary uploads and Homebrew updates run only when the release changes the CLI
+version; all release jobs check out the exact release merge commit.
 
 ## Configuration
 
