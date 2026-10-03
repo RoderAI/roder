@@ -81,3 +81,14 @@ Real database checks:
 ```sh
 RODER_MYSQL_TEST_URL=mysql://... cargo test -p roder-ext-mysql-session --test runtime_ownership -- --ignored
 ```
+
+
+The host can bind `roder_core::RuntimeExecutionLease` with
+`Runtime::with_execution_lease` before publishing the runtime. Its deadline uses
+local monotonic time and must be extended only after a confirmed renewal of the
+same durable generation. Expiry and explicit revocation are irreversible for
+that runtime. Turn admission, tool entry, and dispatch after approval waits
+check this lease. Hosted WebSockets close when it is lost and drop queued
+notifications from the stale owner. Operations already in flight still require
+outcome reconciliation; these checks do not implement remote action fencing,
+owner routing, or automatic renewal supervision.

@@ -321,9 +321,15 @@ async fn serve_connection(
     let connection_authorized = Arc::new(AtomicBool::new(true));
     let writer_authorized = connection_authorized.clone();
     let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<OutboundMessage>();
+    let writer_server = app_server.clone();
     let mut writer_tasks = tokio::task::JoinSet::new();
     writer_tasks.spawn(async move {
         while let Some(outbound) = outbound_rx.recv().await {
+            if writer_server.runtime.ensure_execution_authority().is_err() {
+                writer_authorized.store(false, Ordering::Release);
+                let _ = ws_write.send(Message::Close(None)).await;
+                break;
+            }
             let message = match outbound {
                 OutboundMessage::Control(message) => message,
                 OutboundMessage::Notification(message)
@@ -399,6 +405,11 @@ async fn serve_connection(
     auth_revalidation.tick().await;
 
     'connection: loop {
+        if app_server.runtime.ensure_execution_authority().is_err() {
+            connection_authorized.store(false, Ordering::Release);
+            let _ = outbound_tx.send(OutboundMessage::Control(Message::Close(None)));
+            break;
+        }
         let message = tokio::select! {
             _ = auth_revalidation.tick() => {
                 match revalidate_connection(
@@ -441,6 +452,11 @@ async fn serve_connection(
                 _ => break 'connection,
             },
         };
+        if app_server.runtime.ensure_execution_authority().is_err() {
+            connection_authorized.store(false, Ordering::Release);
+            let _ = outbound_tx.send(OutboundMessage::Control(Message::Close(None)));
+            break;
+        }
         let text = match message {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => break 'connection,

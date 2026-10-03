@@ -8,6 +8,7 @@ pub mod conversation_forks;
 mod deadline_policy;
 pub mod dynamic_workflows;
 mod event_sink_dispatch;
+pub mod execution_lease;
 pub mod fake_provider;
 pub mod external_tools;
 pub mod forks;
@@ -50,3 +51,5 @@ pub use instructions::*;
 pub use reliability::RuntimeReliabilityConfig;
 pub use runtime::*;
 pub use teams::*;
+
+pub use execution_lease::RuntimeExecutionLease;

@@ -97,6 +97,14 @@ async fn fixture_with_policy(
     allow_local_workspaces: bool,
     request_policy: Arc<dyn HostedRequestPolicy>,
 ) -> Fixture {
+    fixture_with_pool(tenant_pool(label, allow_local_workspaces), limits, request_policy).await
+}
+
+async fn fixture_with_pool(
+    pool: Arc<HostedRuntimePool>,
+    limits: RateLimitConfig,
+    request_policy: Arc<dyn HostedRequestPolicy>,
+) -> Fixture {
     let authenticator = Arc::new(HostedAuthenticator::default());
     let tenants = Arc::new(TenantRegistry::default());
     let audit = Arc::new(AuditLog::default());
@@ -120,7 +128,6 @@ async fn fixture_with_policy(
             )
             .unwrap();
     }
-    let pool = tenant_pool(label, allow_local_workspaces);
     let controller = serve_hosted_gateway(
         pool.clone(),
         HostedGatewayOptions {
@@ -930,3 +937,6 @@ async fn rate_and_size_limits_fail_requests_deterministically() {
 
 #[path = "hosted_gateway/executor.rs"]
 mod hosted_executor;
+
+#[path = "hosted_gateway/ownership.rs"]
+mod hosted_ownership;

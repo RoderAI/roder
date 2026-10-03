@@ -37,6 +37,7 @@ impl Runtime {
         workspace: Option<&str>,
         deadline: Option<OffsetDateTime>,
     ) -> anyhow::Result<ToolResultRecord> {
+        self.ensure_execution_authority()?;
         let mut parsed_args: Value = serde_json::from_str(&call.arguments)
             .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
         if is_subagent_task_tool(&call.name)
@@ -591,7 +592,11 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        let mut result = if let Some(error) = runner_workspace_execution_lease_error {
+        let mut result = if let Err(error) = self.ensure_execution_authority() {
+            // Keep the common cleanup path: a workspace execution lease may
+            // already have been acquired while ownership was expiring.
+            tool_execution_error(&tool_call, "runtime_ownership_lost", error.to_string())
+        } else if let Some(error) = runner_workspace_execution_lease_error {
             tool_execution_error(&tool_call, "workspace_execution_lease_unavailable", error)
         } else if crate::agent_control_tools::is_agent_control_tool(&tool_call.name) {
             self.execute_agent_control_tool(thread_id, turn_id, &call, tool_call.arguments.clone())
@@ -986,7 +991,9 @@ impl Runtime {
         .await;
         let request_id = format!("exttool-{}", uuid::Uuid::new_v4());
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending_external_tool_calls.lock().await.insert(
+        let mut pending = self.pending_external_tool_calls.lock().await;
+        self.ensure_execution_authority()?;
+        pending.insert(
             request_id.clone(),
             crate::runtime::PendingExternalToolCall {
                 thread_id: thread_id.clone(),
@@ -996,6 +1003,7 @@ impl Runtime {
                 tx,
             },
         );
+        drop(pending);
         self.emit(RoderEvent::ExternalToolCallRequested(
             ExternalToolCallRequested {
                 thread_id: thread_id.clone(),
