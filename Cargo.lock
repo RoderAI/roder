@@ -3330,7 +3330,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3404,7 +3404,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3605,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "roder-dist-hosted"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "futures",
@@ -4084,7 +4084,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-mysql-session"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4728,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4967,7 +4967,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
