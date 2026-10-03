@@ -5779,7 +5779,7 @@ impl Runtime {
         let seq = self.next_thread_item_event_seq(thread_id).await?;
         let item_event = ThreadItemEvent {
             seq,
-            event_id: format!("{turn_id}-item-event-{seq}"),
+            event_id: uuid::Uuid::new_v4().to_string(),
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             timestamp,
@@ -6421,6 +6421,10 @@ pub fn validate_edit_tool(value: &str) -> anyhow::Result<()> {
 fn should_persist_thread_event(thread_id: &str) -> bool {
     !is_synthetic_event_thread_id(thread_id)
 }
+
+#[cfg(test)]
+#[path = "runtime/item_identity_tests.rs"]
+mod item_identity_tests;
 
 #[cfg(test)]
 #[path = "runtime/codex_v2_tests.rs"]

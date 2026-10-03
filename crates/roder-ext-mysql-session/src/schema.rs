@@ -1,7 +1,7 @@
 use sqlx_core::pool::Pool;
 use sqlx_mysql::MySql;
 
-pub const MIGRATION_VERSION: i32 = 1;
+pub const MIGRATION_VERSION: i32 = 2;
 
 /// Key columns use VARCHAR(191) so composite primary keys stay within
 /// InnoDB's index size limits under utf8mb4. Timestamps are unix
@@ -64,6 +64,7 @@ pub async fn migrate(pool: &Pool<MySql>) -> anyhow::Result<()> {
             .execute(pool)
             .await?;
     }
+    migrate_event_ordering(pool).await?;
     sqlx_core::query::query::<MySql>(
         "INSERT IGNORE INTO roder_session_migrations (version, applied_at) VALUES (?, ?)",
     )
@@ -71,5 +72,41 @@ pub async fn migrate(pool: &Pool<MySql>) -> anyhow::Result<()> {
     .bind(crate::store::unix_micros_now())
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Runtime counters restart and are not durable identities. Existing payloads stay intact.
+async fn migrate_event_ordering(pool: &Pool<MySql>) -> anyhow::Result<()> {
+    // Detach so cancellation closes this connection and releases its advisory lock.
+    let mut connection = pool.acquire().await?.detach();
+    let locked: Option<i64> = sqlx_core::query_scalar::query_scalar::<MySql, Option<i64>>(
+        "SELECT GET_LOCK(CONCAT('roder-v2-', MD5(DATABASE())), 60)",
+    )
+    .fetch_one(&mut connection)
+    .await?;
+    anyhow::ensure!(
+        locked == Some(1),
+        "Timed out acquiring session schema migration lock"
+    );
+    for (table, statement) in [
+        (
+            "roder_session_events",
+            "ALTER TABLE roder_session_events ADD KEY idx_durable_seq (seq), MODIFY seq BIGINT NOT NULL AUTO_INCREMENT, ADD COLUMN event_id BINARY(32) GENERATED ALWAYS AS (UNHEX(SHA2(JSON_UNQUOTE(JSON_EXTRACT(event, '$.event_id')), 256))) STORED, ADD UNIQUE KEY idx_event_identity (tenant_id, thread_id, event_id)",
+        ),
+        (
+            "roder_session_item_events",
+            "ALTER TABLE roder_session_item_events ADD KEY idx_durable_seq (seq), MODIFY seq BIGINT NOT NULL AUTO_INCREMENT, ADD COLUMN event_id BINARY(32) GENERATED ALWAYS AS (UNHEX(SHA2(JSON_UNQUOTE(JSON_EXTRACT(item_event, '$.eventId')), 256))) STORED, ADD UNIQUE KEY idx_event_identity (tenant_id, thread_id, event_id)",
+        ),
+    ] {
+        let migrated: i64 = sqlx_core::query_scalar::query_scalar::<MySql, i64>(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = 'event_id'",
+        ).bind(table).fetch_one(&mut connection).await?;
+        if migrated == 0 {
+            // One atomic DDL per table; reconnecting resumes after either completed table.
+            sqlx_core::query::query::<MySql>(statement)
+                .execute(&mut connection)
+                .await?;
+        }
+    }
     Ok(())
 }

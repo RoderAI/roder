@@ -364,22 +364,24 @@ impl ThreadStore for MysqlSessionStore {
                 let Some(metadata) = load_metadata_on(&pool, &tenant_id, &thread_id).await? else {
                     return Ok(None);
                 };
-                let event_rows = sqlx_core::query::query::<MySql>("SELECT event FROM roder_session_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
+                let event_rows = sqlx_core::query::query::<MySql>("SELECT seq, event FROM roder_session_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
                     .bind(&tenant_id).bind(&thread_id).fetch_all(&pool).await?;
                 let events = event_rows
                     .into_iter()
                     .map(|row| {
-                        let json: sqlx_core::types::Json<EventEnvelope> = row.try_get("event")?;
+                        let mut json: sqlx_core::types::Json<EventEnvelope> = row.try_get("event")?;
+                        json.0.seq = u64::try_from(row.try_get::<i64, _>("seq")?)?;
                         Ok(json.0)
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 let turns = project_turns_from_events(&thread_id, &events);
-                let item_rows = sqlx_core::query::query::<MySql>("SELECT item_event FROM roder_session_item_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
+                let item_rows = sqlx_core::query::query::<MySql>("SELECT seq, item_event FROM roder_session_item_events WHERE tenant_id = ? AND thread_id = ? ORDER BY seq ASC")
                     .bind(&tenant_id).bind(&thread_id).fetch_all(&pool).await?;
                 let item_events = item_rows
                     .into_iter()
                     .map(|row| {
-                        let json: sqlx_core::types::Json<ThreadItemEvent> = row.try_get("item_event")?;
+                        let mut json: sqlx_core::types::Json<ThreadItemEvent> = row.try_get("item_event")?;
+                        json.0.seq = u64::try_from(row.try_get::<i64, _>("seq")?)?;
                         Ok(json.0)
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
@@ -443,23 +445,13 @@ impl ThreadStore for MysqlSessionStore {
         let tenant_id = self.tenant_id.clone();
         let row_thread_id = thread_id.clone();
         let row_envelope = envelope.clone();
-        self.executor
+        let inserted = self.executor
             .run(async move {
-                sqlx_core::query::query::<MySql>(
-                    "INSERT INTO roder_session_events (tenant_id, thread_id, seq, event, created_at) VALUES (?,?,?,?,?) \
-                     ON DUPLICATE KEY UPDATE event = VALUES(event)",
-                )
-                .bind(&tenant_id)
-                .bind(&row_thread_id)
-                .bind(row_envelope.seq as i64)
-                .bind(sqlx_core::types::Json(&row_envelope))
-                .bind(unix_micros_now())
-                .execute(&pool)
-                .await?;
-                Ok(())
+                crate::event_log::append_event(&pool, &tenant_id, &row_thread_id, &row_envelope).await
             })
             .await?;
-        if let RoderEvent::TranscriptItemAppended(event) = &envelope.event
+        if inserted
+            && let RoderEvent::TranscriptItemAppended(event) = &envelope.event
             && let Some(item) = &event.item
         {
             self.metadata_for_thread_item(thread_id, item).await?;
@@ -478,17 +470,7 @@ impl ThreadStore for MysqlSessionStore {
         let item_event = item_event.clone();
         self.executor
             .run(async move {
-                sqlx_core::query::query::<MySql>(
-                    "INSERT INTO roder_session_item_events (tenant_id, thread_id, seq, item_event, created_at) VALUES (?,?,?,?,?) \
-                     ON DUPLICATE KEY UPDATE item_event = VALUES(item_event)",
-                )
-                .bind(&tenant_id)
-                .bind(&thread_id)
-                .bind(item_event.seq as i64)
-                .bind(sqlx_core::types::Json(&item_event))
-                .bind(unix_micros_now())
-                .execute(&pool)
-                .await?;
+                crate::event_log::append_item_event(&pool, &tenant_id, &thread_id, &item_event).await?;
                 Ok(())
             })
             .await
