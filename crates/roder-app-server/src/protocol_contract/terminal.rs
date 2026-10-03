@@ -19,11 +19,13 @@ pub(super) fn restore_outcomes(turns: &mut [Turn], events: &[EventEnvelope]) {
         match outcomes.get(turn.id.as_str()) {
             Some(RoderEvent::TurnInterrupted(event)) => {
                 turn.status = "interrupted".into();
+                turn.duration_ms = None;
                 turn.error = None;
                 turn.completed_at = Some(event.timestamp.unix_timestamp());
             }
             Some(RoderEvent::TurnFailed(event)) => {
                 turn.status = "failed".into();
+                turn.duration_ms = None;
                 turn.error = Some(serde_json::json!({ "message": event.error }));
                 turn.completed_at = Some(event.timestamp.unix_timestamp());
             }
@@ -86,6 +88,8 @@ mod tests {
         });
         assert_eq!(turns[0].status, "interrupted");
         assert_eq!(turns[0].error, None);
+        assert_eq!(turns[0].duration_ms, None);
+        assert_eq!(turns[1].duration_ms, None);
         assert_eq!(turns[1].status, "failed");
         assert_eq!(
             turns[1].error,
