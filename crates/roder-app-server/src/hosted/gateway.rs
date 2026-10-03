@@ -100,6 +100,7 @@ impl HostedRequestPolicy for AllowAllHostedRequestPolicy {
 
 pub struct HostedGatewayOptions {
     pub listen: String,
+    pub lifecycle: Option<Arc<dyn super::HostedLifecycleHandler>>,
     pub authenticator: Arc<HostedAuthenticator>,
     pub tenants: Arc<TenantRegistry>,
     pub audit: Arc<AuditLog>,
@@ -156,6 +157,7 @@ pub async fn serve_hosted_gateway(
                 break;
             };
             let pool = pool.clone();
+            let lifecycle = options.lifecycle.clone();
             let authenticator = options.authenticator.clone();
             let tenants = options.tenants.clone();
             let audit = options.audit.clone();
@@ -165,6 +167,7 @@ pub async fn serve_hosted_gateway(
             let request_policy = options.request_policy.clone();
             connections.spawn(async move {
                 serve_connection(
+                    lifecycle,
                     pool,
                     authenticator,
                     tenants,
@@ -202,6 +205,7 @@ fn idle_eviction_interval(idle_ttl: Duration) -> Duration {
 
 #[allow(clippy::too_many_arguments)]
 async fn serve_connection(
+    lifecycle: Option<Arc<dyn super::HostedLifecycleHandler>>,
     pool: Arc<HostedRuntimePool>,
     authenticator: Arc<HostedAuthenticator>,
     tenants: Arc<TenantRegistry>,
@@ -212,7 +216,10 @@ async fn serve_connection(
     request_policy: Arc<dyn HostedRequestPolicy>,
     mut stream: tokio::net::TcpStream,
 ) {
-    if respond_to_health_probe(&mut stream).await {
+    if super::lifecycle_http::try_handle(&mut stream, lifecycle.as_ref()).await {
+        return;
+    }
+    if respond_to_health_probe(&mut stream, &pool).await {
         return;
     }
     // Authenticate at handshake time, before any request dispatch.
@@ -260,6 +267,13 @@ async fn serve_connection(
             OffsetDateTime::now_utc(),
         ) {
             Ok(mut resolved) => {
+                if request.headers().contains_key(super::owner_routing::OWNER_HOP_HEADER) {
+                    let expected = super::owner_routing::tenant_digest(&resolved.tenant.tenant_id);
+                    if request.headers().get(super::owner_routing::OWNER_TENANT_HEADER)
+                        .and_then(|value| value.to_str().ok()) != Some(expected.as_str()) {
+                        return Err(deny("owner_tenant_mismatch"));
+                    }
+                }
                 resolved.credential_id = resolved
                     .credential_id
                     .map(|id| redact_bearer(&id, bearer.token));
@@ -275,6 +289,7 @@ async fn serve_connection(
                 *callback_authentication.lock().unwrap() = Some(AuthenticatedConnection {
                     context: resolved,
                     bearer_token: bearer.token.to_string(),
+                    forwarded: request.headers().contains_key(super::owner_routing::OWNER_HOP_HEADER),
                 });
                 if request_supports_remote_protocol(request) {
                     response.headers_mut().insert(
@@ -288,7 +303,7 @@ async fn serve_connection(
         }
     };
 
-    let Ok(websocket) = tokio_tungstenite::accept_hdr_async(stream, callback).await else {
+    let Ok(mut websocket) = tokio_tungstenite::accept_hdr_async(stream, callback).await else {
         return;
     };
     let Some(authentication) = authentication.lock().unwrap().clone() else {
@@ -302,6 +317,40 @@ async fn serve_connection(
     let lease = match pool.lease(&context.tenant.tenant_id).await {
         Ok(lease) => lease,
         Err(error) => {
+            if let Some(route) = error.downcast_ref::<super::owner_routing::HostedRuntimeRedirect>() {
+                let reason = if authentication.forwarded {
+                    let _ = websocket.close(None).await;
+                    Some("owner_route_hop_limit")
+                } else if route.tenant_id != context.tenant.tenant_id {
+                    let _ = websocket.close(None).await;
+                    Some("owner_route_tenant_mismatch")
+                } else {
+                    // The owning gateway authenticates again and applies its
+                    // policy. A forwarded connection can never forward again.
+                    match pool.admit_owner_relay().await {
+                        Ok(_relay) => super::owner_routing::relay_to_owner(
+                            websocket, route.endpoint, &bearer_token, &context.tenant.tenant_id, pool.clone(), context.has_scope(HostedScope::Write),
+                        ).await.err().map(|_| "owner_connection_unavailable"),
+                        Err(_) => {
+                            let _ = websocket.close(None).await;
+                            Some("owner_relay_draining")
+                        }
+                    }
+                };
+                if let Some(reason) = reason {
+                    audit.record(AuditRecord {
+                        kind: "owner_routing_failed".to_string(),
+                        tenant_id: Some(context.tenant.tenant_id.clone()),
+                        principal_id: Some(context.principal.id().to_string()),
+                        credential_id: context.credential_id.clone(),
+                        method: None,
+                        reason: Some(reason.to_string()),
+                        timestamp: OffsetDateTime::now_utc(),
+                    });
+                }
+                return;
+            }
+            let _ = websocket.close(None).await;
             audit.record(AuditRecord {
                 kind: "runtime_unavailable".to_string(),
                 tenant_id: Some(context.tenant.tenant_id.clone()),
@@ -321,9 +370,15 @@ async fn serve_connection(
     let connection_authorized = Arc::new(AtomicBool::new(true));
     let writer_authorized = connection_authorized.clone();
     let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<OutboundMessage>();
+    let writer_server = app_server.clone();
     let mut writer_tasks = tokio::task::JoinSet::new();
     writer_tasks.spawn(async move {
         while let Some(outbound) = outbound_rx.recv().await {
+            if writer_server.runtime.ensure_execution_authority().is_err() {
+                writer_authorized.store(false, Ordering::Release);
+                let _ = ws_write.send(Message::Close(None)).await;
+                break;
+            }
             let message = match outbound {
                 OutboundMessage::Control(message) => message,
                 OutboundMessage::Notification(message)
@@ -398,7 +453,13 @@ async fn serve_connection(
     auth_revalidation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     auth_revalidation.tick().await;
 
+    let mut relay_draining = false;
     'connection: loop {
+        if app_server.runtime.ensure_execution_authority().is_err() {
+            connection_authorized.store(false, Ordering::Release);
+            let _ = outbound_tx.send(OutboundMessage::Control(Message::Close(None)));
+            break;
+        }
         let message = tokio::select! {
             _ = auth_revalidation.tick() => {
                 match revalidate_connection(
@@ -434,6 +495,11 @@ async fn serve_connection(
                         break 'connection;
                     }
                 }
+                if relay_draining {
+                    // Registered once by the retiring relay; internal idle
+                    // checks must not consume the user's request-rate budget.
+                    let _ = pool.release_idle_tenant(&context.tenant.tenant_id).await;
+                }
                 continue;
             }
             message = ws_read.next() => match message {
@@ -441,6 +507,11 @@ async fn serve_connection(
                 _ => break 'connection,
             },
         };
+        if app_server.runtime.ensure_execution_authority().is_err() {
+            connection_authorized.store(false, Ordering::Release);
+            let _ = outbound_tx.send(OutboundMessage::Control(Message::Close(None)));
+            break;
+        }
         let text = match message {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => break 'connection,
@@ -571,6 +642,26 @@ async fn serve_connection(
             continue;
         }
 
+        if request.method == "hosted/owner/drain" {
+            if !authentication.forwarded {
+                send_error(&outbound_tx, id, -32012, "owner drain requires an authenticated relay");
+            } else if let Some(draining) = request.params.as_ref().and_then(|params| params.get("draining")).and_then(serde_json::Value::as_bool) {
+                relay_draining = draining;
+                let response = serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"draining":draining}});
+                let _ = outbound_tx.send(OutboundMessage::Control(Message::Text(response.to_string().into())));
+            } else {
+                send_error(&outbound_tx, id, -32602, "draining must be a boolean");
+            }
+            continue;
+        }
+
+        let _request_admission = match pool.admit_request(&context.tenant.tenant_id, &request.method).await {
+            Ok(admission) => admission,
+            Err(_) => {
+                send_error(&outbound_tx, id, -32015, "hosted replica is draining; request was not dispatched");
+                continue;
+            }
+        };
         let response = if let Some(response) =
             super::executor_gateway::dispatch(&app_server, &executor_connection.id, &request).await
         {
@@ -627,6 +718,7 @@ async fn serve_connection(
 struct AuthenticatedConnection {
     context: HostedRequestContext,
     bearer_token: String,
+    forwarded: bool,
 }
 
 enum OutboundMessage {
@@ -727,7 +819,7 @@ fn same_connection_identity(
         && established.credential_id == revalidated.credential_id
 }
 
-async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream) -> bool {
+async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream, pool: &HostedRuntimePool) -> bool {
     let mut buffer = [0_u8; 512];
     let Ok(bytes_read) = stream.peek(&mut buffer).await else {
         return false;
@@ -735,7 +827,11 @@ async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream) -> bool {
     if !is_health_probe(&buffer[..bytes_read]) {
         return false;
     }
-    let response = b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n";
+    let response: &[u8] = if pool.is_draining() && buffer[..bytes_read].starts_with(b"GET /readyz ") {
+        b"HTTP/1.1 503 Service Unavailable\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\ndraining\n"
+    } else {
+        b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n"
+    };
     let _ = stream.write_all(response).await;
     true
 }

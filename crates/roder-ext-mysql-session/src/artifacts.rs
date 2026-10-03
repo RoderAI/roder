@@ -21,6 +21,7 @@ pub struct MysqlArtifactStore {
     pub(crate) executor: Arc<DbExecutor>,
     pub(crate) pool: Pool<MySql>,
     pub(crate) tenant_id: String,
+    pub(crate) owner: Option<crate::ownership::RuntimeOwnerLease>,
 }
 
 impl ContextArtifactAccess for MysqlArtifactStore {
@@ -48,9 +49,11 @@ impl ContextArtifactAccess for MysqlArtifactStore {
             roder_owned: true,
         };
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
         let artifact_for_db = artifact.clone();
         self.executor.run_blocking(async move {
+            let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
             sqlx_core::query::query::<MySql>(
                 "INSERT INTO roder_context_artifacts (tenant_id, thread_id, artifact_id, turn_id, metadata, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
             )
@@ -62,8 +65,9 @@ impl ContextArtifactAccess for MysqlArtifactStore {
             .bind(bytes)
             .bind(unix_micros(artifact_for_db.created_at))
             .bind(unix_micros(artifact_for_db.created_at))
-            .execute(&pool)
+            .execute(&mut *tx)
             .await?;
+            tx.commit().await?;
             Ok(())
         })?;
         Ok(artifact)
@@ -75,28 +79,30 @@ impl ContextArtifactAccess for MysqlArtifactStore {
         artifact_id: &ContextArtifactId,
         bytes: &[u8],
     ) -> anyhow::Result<ContextArtifact> {
-        let (mut artifact, mut body) = self.read_body_scoped(thread_id, artifact_id)?;
-        body.extend_from_slice(bytes);
-        artifact.byte_count = body.len() as u64;
-        artifact.line_count = line_count_lossy(&body) as u64;
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
-        let artifact_for_db = artifact.clone();
+        let thread_id = thread_id.clone();
+        let artifact_id = artifact_id.clone();
+        let bytes = bytes.to_vec();
         self.executor.run_blocking(async move {
+            let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
+            let row = sqlx_core::query::query::<MySql>("SELECT metadata, body FROM roder_context_artifacts WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?")
+                .bind(&tenant_id).bind(&thread_id).bind(&artifact_id).fetch_optional(&mut *tx).await?
+                .ok_or_else(|| anyhow::anyhow!("unknown artifact {artifact_id}"))?;
+            let mut artifact = row.try_get::<sqlx_core::types::Json<ContextArtifact>, _>("metadata")?.0;
+            let mut body: Vec<u8> = row.try_get("body")?;
+            body.extend_from_slice(&bytes);
+            artifact.byte_count = body.len() as u64;
+            artifact.line_count = line_count_lossy(&body) as u64;
             sqlx_core::query::query::<MySql>(
                 "UPDATE roder_context_artifacts SET metadata = ?, body = ?, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND artifact_id = ?",
             )
-            .bind(sqlx_core::types::Json(&artifact_for_db))
-            .bind(body)
-            .bind(unix_micros_now())
-            .bind(&tenant_id)
-            .bind(&artifact_for_db.thread_id)
-            .bind(&artifact_for_db.id)
-            .execute(&pool)
-            .await?;
-            Ok(())
-        })?;
-        Ok(artifact)
+            .bind(sqlx_core::types::Json(&artifact)).bind(body).bind(unix_micros_now())
+            .bind(&tenant_id).bind(&thread_id).bind(&artifact_id).execute(&mut *tx).await?;
+            tx.commit().await?;
+            Ok(artifact)
+        })
     }
 
     fn list_artifacts(&self, thread_id: &ThreadId) -> anyhow::Result<Vec<ContextArtifact>> {

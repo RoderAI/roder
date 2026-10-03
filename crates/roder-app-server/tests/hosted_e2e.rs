@@ -141,6 +141,7 @@ async fn hosted_e2e_two_tenants_service_account_hooks_and_isolation() {
     let controller = serve_hosted_gateway(
         pool,
         HostedGatewayOptions {
+            lifecycle: None,
             listen: "127.0.0.1:0".to_string(),
             authenticator: authenticator.clone(),
             tenants,

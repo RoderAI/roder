@@ -92,6 +92,11 @@ async fn hosted_executor_owns_execution_and_disconnect_never_replays() {
     })
     .await;
     assert!(drain.is_err());
+    fixture.pool.begin_owner_drain().await;
+    let denied = call(&mut owner, "turn/start", serde_json::json!({
+        "threadId":thread,"prompt":"new work during drain"
+    })).await;
+    assert_eq!(denied.error.unwrap().code, -32015);
     let result = serde_json::json!({"executor":lease,"turnId":request["turnId"],
         "requestId":request["requestId"],"output":"ok","isError":false});
     assert!(
@@ -120,7 +125,8 @@ async fn hosted_executor_owns_execution_and_disconnect_never_replays() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    assert!(resolved);
+    assert!(resolved, "drain must accept the active browser tool result");
+    fixture.pool.resume_owner_admission().await;
     let rebound = call(
         &mut other,
         "tools/bind_executor",

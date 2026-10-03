@@ -1,15 +1,15 @@
+use crate::{MysqlSessionConfig, validate_tenant_id};
 use std::sync::Arc;
 
 use anyhow::Context;
 use roder_api::artifacts::ContextArtifactStore;
-use roder_api::events::{EventEnvelope, RoderEvent, ThreadId};
+use roder_api::events::{EventEnvelope, ThreadId};
 use roder_api::extension::ThreadStoreId;
 use roder_api::extension_state::ExtensionStateRecord;
 use roder_api::thread::{
     ThreadItemEvent, ThreadListOptions, ThreadListPage, ThreadMetadata, ThreadSnapshot,
     ThreadStore, ThreadStoreFactory, project_turns_from_events, validate_thread_workspace,
 };
-use roder_api::transcript::TranscriptItem;
 use sqlx_core::pool::Pool;
 use sqlx_core::row::Row;
 use sqlx_mysql::MySql;
@@ -18,74 +18,6 @@ use time::OffsetDateTime;
 use crate::artifacts::MysqlArtifactStore;
 use crate::executor::DbExecutor;
 use crate::schema;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MysqlSessionConfig {
-    pub database_url: String,
-    pub tenant_id: String,
-    pub max_connections: Option<u32>,
-}
-
-impl MysqlSessionConfig {
-    pub fn new(
-        database_url: impl Into<String>,
-        tenant_id: impl Into<String>,
-    ) -> anyhow::Result<Self> {
-        let config = Self {
-            database_url: database_url.into(),
-            tenant_id: tenant_id.into(),
-            max_connections: None,
-        };
-        config.validate()?;
-        Ok(config)
-    }
-
-    pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !self.database_url.trim().is_empty(),
-            "MySQL session database URL is required"
-        );
-        anyhow::ensure!(
-            !self.tenant_id.trim().is_empty(),
-            "MySQL session tenant id is required"
-        );
-        anyhow::ensure!(
-            !self.tenant_id.contains('/'),
-            "MySQL session tenant id cannot contain '/'"
-        );
-        Ok(())
-    }
-
-    pub fn redacted_database_url(&self) -> String {
-        redact_database_url(&self.database_url)
-    }
-}
-
-/// Validates a tenant id for store scoping (shared by config validation
-/// and `for_tenant` handles).
-pub fn validate_tenant_id(tenant_id: &str) -> anyhow::Result<String> {
-    let tenant_id = tenant_id.trim();
-    anyhow::ensure!(!tenant_id.is_empty(), "tenant id is required");
-    anyhow::ensure!(
-        !tenant_id.contains('/'),
-        "tenant id cannot contain '/': {tenant_id}"
-    );
-    Ok(tenant_id.to_string())
-}
-
-pub fn redact_database_url(url: &str) -> String {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return "<redacted>".to_string();
-    };
-    let Some((auth_host, tail)) = rest.split_once('@') else {
-        return format!("{scheme}://{rest}");
-    };
-    let user = auth_host
-        .split_once(':')
-        .map(|(user, _)| user)
-        .unwrap_or(auth_host);
-    format!("{scheme}://{user}:<redacted>@{tail}")
-}
 
 pub(crate) fn unix_micros(timestamp: OffsetDateTime) -> i64 {
     (timestamp.unix_timestamp_nanos() / 1_000) as i64
@@ -97,9 +29,10 @@ pub(crate) fn unix_micros_now() -> i64 {
 
 #[derive(Clone)]
 pub struct MysqlSessionStore {
-    executor: Arc<DbExecutor>,
-    pool: Pool<MySql>,
+    pub(crate) executor: Arc<DbExecutor>,
+    pub(crate) pool: Pool<MySql>,
     tenant_id: String,
+    pub(crate) owner: Option<crate::ownership::RuntimeOwnerLease>,
 }
 
 impl MysqlSessionStore {
@@ -118,6 +51,7 @@ impl MysqlSessionStore {
             executor,
             pool,
             tenant_id: config.tenant_id,
+            owner: None,
         })
     }
 
@@ -130,6 +64,7 @@ impl MysqlSessionStore {
             executor,
             pool,
             tenant_id: config.tenant_id,
+            owner: None,
         })
     }
 
@@ -137,10 +72,12 @@ impl MysqlSessionStore {
     /// mirroring the PostgreSQL store's hosted-tenancy contract.
     pub fn for_tenant(&self, tenant_id: &str) -> anyhow::Result<Self> {
         let tenant_id = validate_tenant_id(tenant_id)?;
+        anyhow::ensure!(self.owner.is_none() || tenant_id == self.tenant_id, "cannot rescope an owned session store");
         Ok(Self {
             executor: self.executor.clone(),
             pool: self.pool.clone(),
             tenant_id,
+            owner: self.owner.clone(),
         })
     }
 
@@ -154,36 +91,8 @@ impl MysqlSessionStore {
             executor: self.executor.clone(),
             pool: self.pool.clone(),
             tenant_id: self.tenant_id.clone(),
+            owner: self.owner.clone(),
         }))
-    }
-
-    async fn metadata_for_thread_item(
-        &self,
-        thread_id: &ThreadId,
-        item: &TranscriptItem,
-    ) -> anyhow::Result<()> {
-        if !matches!(
-            item,
-            TranscriptItem::UserMessage(_) | TranscriptItem::AssistantMessage(_)
-        ) {
-            return Ok(());
-        }
-        let mut metadata = match self.load_metadata(thread_id).await? {
-            Some(metadata) => metadata,
-            None => anyhow::bail!("thread metadata missing for {thread_id}"),
-        };
-        metadata.updated_at = OffsetDateTime::now_utc();
-        metadata.message_count = metadata.message_count.saturating_add(1);
-        if metadata
-            .title
-            .as_ref()
-            .is_none_or(|title| title.trim().is_empty())
-            && let TranscriptItem::UserMessage(message) = item
-        {
-            metadata.title = title_from_user_text(&message.text);
-        }
-        self.update_thread_metadata(metadata).await?;
-        Ok(())
     }
 
     async fn load_metadata(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadMetadata>> {
@@ -260,10 +169,12 @@ impl ThreadStore for MysqlSessionStore {
     async fn create_thread(&self, metadata: ThreadMetadata) -> anyhow::Result<ThreadMetadata> {
         validate_thread_workspace(&metadata.workspace)?;
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
         let row_metadata = metadata.clone();
         self.executor
             .run(async move {
+                let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
                 sqlx_core::query::query::<MySql>(
                     "INSERT INTO roder_sessions (tenant_id, thread_id, metadata, archived, created_at, updated_at) VALUES (?,?,?,FALSE,?,?) \
                      ON DUPLICATE KEY UPDATE metadata = VALUES(metadata), archived = FALSE, updated_at = VALUES(updated_at)",
@@ -273,8 +184,9 @@ impl ThreadStore for MysqlSessionStore {
                 .bind(sqlx_core::types::Json(&row_metadata))
                 .bind(unix_micros(row_metadata.created_at))
                 .bind(unix_micros(row_metadata.updated_at))
-                .execute(&pool)
+                .execute(&mut *tx)
                 .await?;
+                tx.commit().await?;
                 Ok(())
             })
             .await?;
@@ -287,17 +199,20 @@ impl ThreadStore for MysqlSessionStore {
     ) -> anyhow::Result<ThreadMetadata> {
         validate_thread_workspace(&metadata.workspace)?;
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
         let row_metadata = metadata.clone();
         self.executor
             .run(async move {
+                let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
                 sqlx_core::query::query::<MySql>("UPDATE roder_sessions SET metadata = ?, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
                     .bind(sqlx_core::types::Json(&row_metadata))
                     .bind(unix_micros(row_metadata.updated_at))
                     .bind(&tenant_id)
                     .bind(&row_metadata.thread_id)
-                    .execute(&pool)
+                    .execute(&mut *tx)
                     .await?;
+                tx.commit().await?;
                 Ok(())
             })
             .await?;
@@ -421,16 +336,19 @@ impl ThreadStore for MysqlSessionStore {
 
     async fn archive_thread(&self, thread_id: &ThreadId) -> anyhow::Result<bool> {
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
         let thread_id = thread_id.clone();
         self.executor
             .run(async move {
+                let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
                 let result = sqlx_core::query::query::<MySql>("UPDATE roder_sessions SET archived = TRUE, updated_at = ? WHERE tenant_id = ? AND thread_id = ? AND archived = FALSE")
                     .bind(unix_micros_now())
                     .bind(&tenant_id)
                     .bind(&thread_id)
-                    .execute(&pool)
+                    .execute(&mut *tx)
                     .await?;
+                tx.commit().await?;
                 Ok(result.rows_affected() > 0)
             })
             .await
@@ -442,20 +360,18 @@ impl ThreadStore for MysqlSessionStore {
         envelope: &EventEnvelope,
     ) -> anyhow::Result<()> {
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
         let row_thread_id = thread_id.clone();
         let row_envelope = envelope.clone();
-        let inserted = self.executor
+        self.executor
             .run(async move {
-                crate::event_log::append_event(&pool, &tenant_id, &row_thread_id, &row_envelope).await
+                let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
+                crate::event_log::append_event(&mut tx, &tenant_id, &row_thread_id, &row_envelope).await?;
+                tx.commit().await?;
+                Ok(())
             })
             .await?;
-        if inserted
-            && let RoderEvent::TranscriptItemAppended(event) = &envelope.event
-            && let Some(item) = &event.item
-        {
-            self.metadata_for_thread_item(thread_id, item).await?;
-        }
         Ok(())
     }
 
@@ -465,12 +381,15 @@ impl ThreadStore for MysqlSessionStore {
         item_event: &ThreadItemEvent,
     ) -> anyhow::Result<()> {
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
         let thread_id = thread_id.clone();
         let item_event = item_event.clone();
         self.executor
             .run(async move {
-                crate::event_log::append_item_event(&pool, &tenant_id, &thread_id, &item_event).await?;
+                let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
+                crate::event_log::append_item_event(&mut tx, &tenant_id, &thread_id, &item_event).await?;
+                tx.commit().await?;
                 Ok(())
             })
             .await
@@ -482,22 +401,30 @@ impl ThreadStore for MysqlSessionStore {
         record: &ExtensionStateRecord,
     ) -> anyhow::Result<()> {
         let pool = self.pool.clone();
+        let owner = self.owner.clone();
         let tenant_id = self.tenant_id.clone();
         let thread_id = thread_id.clone();
         let record = record.clone();
         self.executor
             .run(async move {
+                let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
                 sqlx_core::query::query::<MySql>("INSERT INTO roder_session_extension_state (tenant_id, thread_id, record, created_at) VALUES (?,?,?,?)")
                     .bind(&tenant_id)
                     .bind(&thread_id)
                     .bind(sqlx_core::types::Json(&record))
                     .bind(unix_micros_now())
-                    .execute(&pool)
+                    .execute(&mut *tx)
                     .await?;
+                tx.commit().await?;
                 Ok(())
             })
             .await
     }
+}
+
+impl ThreadStoreFactory for MysqlSessionStore {
+    fn id(&self) -> ThreadStoreId { "mysql-session".to_string() }
+    fn create(&self) -> Arc<dyn ThreadStore> { Arc::new(self.clone()) }
 }
 
 pub struct MysqlSessionStoreFactory {
@@ -515,7 +442,7 @@ impl ThreadStoreFactory for MysqlSessionStoreFactory {
     }
 }
 
-fn title_from_user_text(text: &str) -> Option<String> {
+pub(crate) fn title_from_user_text(text: &str) -> Option<String> {
     let folded = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if folded.is_empty() {
         None
@@ -534,29 +461,4 @@ fn truncate_chars(value: &str, max: usize) -> String {
     let mut out = value.chars().take(max - 3).collect::<String>();
     out.push_str("...");
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validates_config() {
-        assert!(MysqlSessionConfig::new("mysql://u:p@localhost/db", "tenant").is_ok());
-        assert!(MysqlSessionConfig::new("", "tenant").is_err());
-        assert!(MysqlSessionConfig::new("mysql://u:p@localhost/db", "").is_err());
-        assert!(MysqlSessionConfig::new("mysql://u:p@localhost/db", "a/b").is_err());
-    }
-
-    #[test]
-    fn redacts_database_url() {
-        assert_eq!(
-            redact_database_url("mysql://user:secret@host:3306/db"),
-            "mysql://user:<redacted>@host:3306/db"
-        );
-        assert_eq!(
-            redact_database_url("mysql://host:3306/db"),
-            "mysql://host:3306/db"
-        );
-    }
 }

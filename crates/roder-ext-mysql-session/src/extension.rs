@@ -6,15 +6,25 @@ use roder_api::extension::{
 };
 use semver::Version;
 
-use crate::store::{MysqlSessionConfig, MysqlSessionStoreFactory};
+use crate::{MysqlSessionConfig, MysqlSessionStore, store::MysqlSessionStoreFactory};
+use roder_api::thread::ThreadStoreFactory;
 
 pub struct MysqlSessionExtension {
-    config: MysqlSessionConfig,
+    factory: Arc<dyn ThreadStoreFactory>,
 }
 
 impl MysqlSessionExtension {
     pub fn new(config: MysqlSessionConfig) -> Self {
-        Self { config }
+        Self {
+            factory: Arc::new(MysqlSessionStoreFactory { config }),
+        }
+    }
+
+    /// Install an already connected store, preserving its runtime-owner fence.
+    pub fn from_store(store: MysqlSessionStore) -> Self {
+        Self {
+            factory: Arc::new(store),
+        }
     }
 }
 
@@ -32,9 +42,7 @@ impl RoderExtension for MysqlSessionExtension {
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
-        registry.thread_store_factory(Arc::new(MysqlSessionStoreFactory {
-            config: self.config.clone(),
-        }));
+        registry.thread_store_factory(self.factory.clone());
         Ok(())
     }
 }
@@ -44,7 +52,7 @@ mod tests {
     use roder_api::extension::{ExtensionRegistryBuilder, ProvidedService, RoderExtension};
 
     use super::*;
-    use crate::store::MysqlSessionConfig;
+    use crate::MysqlSessionConfig;
 
     #[test]
     fn manifest_declares_mysql_thread_store() {

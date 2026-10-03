@@ -12,6 +12,7 @@ mod compaction_template;
 #[path = "runtime/eager_tools.rs"]
 mod eager_tools;
 mod thread_admission;
+mod owner_handoff;
 use eager_tools::EagerTools;
 #[path = "runtime/patch_progress.rs"]
 mod patch_progress;
@@ -526,6 +527,7 @@ pub struct Runtime {
     pub bus: EventBus,
     pub registry: ExtensionRegistry,
     config: RwLock<RuntimeConfig>,
+    pub(crate) execution_lease: Option<Arc<crate::execution_lease::RuntimeExecutionLease>>,
     pending_plan_exit: RwLock<Option<PendingPlanExit>>,
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
     pub(crate) pending_user_inputs: Mutex<HashMap<String, PendingUserInput>>,
@@ -722,6 +724,7 @@ impl Runtime {
             bus,
             registry,
             config: RwLock::new(config),
+            execution_lease: None,
             pending_plan_exit: RwLock::new(None),
             pending_tool_approvals: Mutex::new(HashMap::new()),
             pending_user_inputs: Mutex::new(HashMap::new()),
@@ -3237,6 +3240,7 @@ impl Runtime {
         Box::pin(async move {
             let _thread_admission = self.thread_admission(&req.thread_id).await;
             let turn_admission = self.turn_admission.lock().await;
+            self.ensure_execution_authority()?;
             anyhow::ensure!(
                 self.accepting_turns.load(Ordering::Acquire),
                 "runtime is quiescing and cannot accept new turns"
@@ -3841,6 +3845,7 @@ impl Runtime {
         initial_mailbox_ack: Option<MailboxDeliveryAck>,
         mut steering: tokio::sync::watch::Receiver<u64>,
     ) -> anyhow::Result<TurnRunOutcome> {
+        self.ensure_execution_authority()?;
         let turn_started_at = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TurnStarted(TurnStarted {
             thread_id: req.thread_id.clone(),

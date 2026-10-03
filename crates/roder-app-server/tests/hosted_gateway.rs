@@ -97,6 +97,14 @@ async fn fixture_with_policy(
     allow_local_workspaces: bool,
     request_policy: Arc<dyn HostedRequestPolicy>,
 ) -> Fixture {
+    fixture_with_pool(tenant_pool(label, allow_local_workspaces), limits, request_policy).await
+}
+
+async fn fixture_with_pool(
+    pool: Arc<HostedRuntimePool>,
+    limits: RateLimitConfig,
+    request_policy: Arc<dyn HostedRequestPolicy>,
+) -> Fixture {
     let authenticator = Arc::new(HostedAuthenticator::default());
     let tenants = Arc::new(TenantRegistry::default());
     let audit = Arc::new(AuditLog::default());
@@ -120,10 +128,10 @@ async fn fixture_with_policy(
             )
             .unwrap();
     }
-    let pool = tenant_pool(label, allow_local_workspaces);
     let controller = serve_hosted_gateway(
         pool.clone(),
         HostedGatewayOptions {
+            lifecycle: None,
             listen: "127.0.0.1:0".to_string(),
             authenticator: authenticator.clone(),
             tenants,
@@ -337,6 +345,7 @@ async fn idle_external_bearers_are_revalidated_and_closed_without_notification_l
     let controller = serve_hosted_gateway(
         tenant_pool("external-revalidation", true),
         HostedGatewayOptions {
+            lifecycle: None,
             listen: "127.0.0.1:0".to_string(),
             authenticator,
             tenants: Arc::new(TenantRegistry::default()),
@@ -450,22 +459,32 @@ async fn hosted_health_endpoints_do_not_require_auth() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let fixture = fixture("health", RateLimitConfig::default(), true).await;
-    for path in ["/readyz", "/healthz"] {
-        let mut stream = tokio::net::TcpStream::connect(fixture.controller.listen_addr)
-            .await
-            .unwrap();
-        stream
-            .write_all(format!("GET {path} HTTP/1.1\r\nHost: roder\r\n\r\n").as_bytes())
-            .await
-            .unwrap();
-        let mut buffer = [0_u8; 512];
-        let bytes_read = stream.read(&mut buffer).await.unwrap();
-        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+    for draining in [false, true, false] {
+        if draining {
+            fixture.pool.begin_owner_drain().await;
+        } else {
+            fixture.pool.resume_owner_admission().await;
+        }
+        for path in ["/readyz", "/healthz"] {
+            let mut stream = tokio::net::TcpStream::connect(fixture.controller.listen_addr)
+                .await
+                .unwrap();
+            stream
+                .write_all(format!("GET {path} HTTP/1.1\r\nHost: roder\r\n\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut buffer = [0_u8; 512];
+            let bytes_read = stream.read(&mut buffer).await.unwrap();
+            let response = String::from_utf8_lossy(&buffer[..bytes_read]);
 
-        assert!(response.starts_with("HTTP/1.1 200 OK"));
-        assert!(response.ends_with("\r\n\r\nok\n"));
+            if draining && path == "/readyz" {
+                assert!(response.starts_with("HTTP/1.1 503"));
+            } else {
+                assert!(response.starts_with("HTTP/1.1 200 OK"));
+                assert!(response.ends_with("\r\n\r\nok\n"));
+            }
+        }
     }
-
     fixture.controller.stop().await.unwrap();
 }
 
@@ -835,6 +854,7 @@ async fn gateway_periodically_evicts_idle_runtimes_and_stops_on_shutdown() {
     let controller = serve_hosted_gateway(
         pool.clone(),
         HostedGatewayOptions {
+            lifecycle: None,
             listen: "127.0.0.1:0".to_string(),
             authenticator: Arc::new(HostedAuthenticator::default()),
             tenants: Arc::new(TenantRegistry::default()),
@@ -930,3 +950,9 @@ async fn rate_and_size_limits_fail_requests_deterministically() {
 
 #[path = "hosted_gateway/executor.rs"]
 mod hosted_executor;
+
+#[path = "hosted_gateway/ownership.rs"]
+mod hosted_ownership;
+
+#[path = "hosted_gateway/routing.rs"]
+mod hosted_routing;

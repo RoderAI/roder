@@ -1,13 +1,20 @@
 use sqlx_core::pool::Pool;
 use sqlx_mysql::MySql;
 
-pub const MIGRATION_VERSION: i32 = 2;
+pub const MIGRATION_VERSION: i32 = 3;
 
 /// Key columns use VARCHAR(191) so composite primary keys stay within
 /// InnoDB's index size limits under utf8mb4. Timestamps are unix
 /// microseconds (BIGINT).
 pub async fn migrate(pool: &Pool<MySql>) -> anyhow::Result<()> {
     let statements = [
+        r#"CREATE TABLE IF NOT EXISTS roder_runtime_owners (
+            tenant_id VARBINARY(191) PRIMARY KEY,
+            owner_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+            generation BIGINT UNSIGNED NOT NULL,
+            endpoint VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+            expires_at BIGINT NOT NULL
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS roder_session_migrations (
             version INT PRIMARY KEY,
             applied_at BIGINT NOT NULL

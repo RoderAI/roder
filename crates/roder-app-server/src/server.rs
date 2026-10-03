@@ -96,6 +96,7 @@ struct RoadmapThreadParams {
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
+    pub(crate) runtime_lease_supervisor: std::sync::Mutex<Option<crate::hosted::lease_supervisor::HostedRuntimeLeaseSupervisor>>,
     pub(crate) external_tool_executors: Arc<crate::hosted::external_tools::ExecutorBindings>,
     pub(crate) agent_backend: Option<crate::backend::AgentBackendBridge>,
     pub(crate) workflows: crate::workflows::AppWorkflowService,

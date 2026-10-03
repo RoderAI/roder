@@ -343,6 +343,11 @@ pub enum SessionStoreConfig {
     Jsonl,
     Postgres(PostgresSessionConfig),
     Mysql(MysqlSessionConfig),
+    /// Bind persistence to a previously acquired durable runtime generation.
+    MysqlOwned {
+        config: MysqlSessionConfig,
+        owner: roder_ext_mysql_session::ownership::RuntimeOwnerLease,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -615,6 +620,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
                 )
             })?;
             builder.install(MysqlSessionExtension::new(mysql))?;
+        }
+        SessionStoreConfig::MysqlOwned { config, owner } => {
+            let store = roder_ext_mysql_session::MysqlSessionStore::connect_blocking(&config)?;
+            builder.install(MysqlSessionExtension::from_store(store.with_runtime_owner(&owner)?))?;
         }
     }
     match selected_memory_backend().as_deref() {

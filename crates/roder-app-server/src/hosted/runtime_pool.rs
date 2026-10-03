@@ -19,7 +19,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+#[path = "runtime_pool_drain.rs"]
+mod drain;
+pub use drain::HostedOwnerDrainStatus;
+pub(crate) use drain::allowed_while_draining;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -66,12 +71,16 @@ struct TenantEntry {
     server: Arc<AppServer>,
     in_flight: Arc<AtomicUsize>,
     last_used: Instant,
+    active_requests: Arc<AtomicUsize>,
 }
 
 pub struct HostedRuntimePool {
     profile: HostedRuntimeProfile,
     factory: TenantAppServerFactory,
     tenants: Mutex<HashMap<String, TenantEntry>>,
+    draining: AtomicBool,
+    drain_operation: Mutex<()>,
+    active_relays: Arc<AtomicUsize>,
 }
 
 /// RAII guard counting an in-flight request against a tenant runtime.
@@ -92,6 +101,9 @@ impl HostedRuntimePool {
             profile,
             factory,
             tenants: Mutex::new(HashMap::new()),
+            draining: AtomicBool::new(false),
+            drain_operation: Mutex::new(()),
+            active_relays: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -103,10 +115,21 @@ impl HostedRuntimePool {
     /// in-flight request against it until the lease drops.
     pub async fn lease(&self, tenant_id: &str) -> anyhow::Result<TenantLease> {
         let mut tenants = self.tenants.lock().await;
+        // Revocation is permanent. Existing sockets still hold their fenced
+        // server, but reconnects must resolve durable ownership again instead
+        // of pinning the tenant to a dead cached runtime forever.
+        if tenants.get(tenant_id).is_some_and(|entry| {
+            entry.server.runtime.ensure_execution_authority().is_err()
+        }) {
+            anyhow::ensure!(!self.is_draining(), "hosted replica is draining");
+            tenants.remove(tenant_id);
+        }
         if !tenants.contains_key(tenant_id) {
+            anyhow::ensure!(!self.is_draining(), "hosted replica is draining");
             let data_dir = tenant_data_dir(&self.profile.data_root, tenant_id);
             std::fs::create_dir_all(&data_dir)?;
             let server = (self.factory)(tenant_id.to_string(), data_dir).await?;
+            server.runtime.ensure_execution_authority()?;
             // The gateway rejects obvious host-local workspace requests, but
             // native workspace tools also enforce this policy inside the
             // runtime. This closes paths that do not pass through those
@@ -120,6 +143,7 @@ impl HostedRuntimePool {
                     server,
                     in_flight: Arc::new(AtomicUsize::new(0)),
                     last_used: Instant::now(),
+                    active_requests: Arc::new(AtomicUsize::new(0)),
                 },
             );
         }
@@ -150,6 +174,7 @@ impl HostedRuntimePool {
     pub async fn evict_idle(&self) -> Vec<String> {
         let mut evicted = Vec::new();
         let mut tenants = self.tenants.lock().await;
+        if self.is_draining() { return evicted; }
         let mut keep = HashMap::new();
         for (tenant_id, entry) in tenants.drain() {
             let idle = entry.last_used.elapsed() >= self.profile.idle_ttl;
