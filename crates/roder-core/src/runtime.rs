@@ -13,6 +13,7 @@ mod compaction_template;
 mod eager_tools;
 mod thread_admission;
 mod owner_handoff;
+mod execution_receipts;
 use eager_tools::EagerTools;
 #[path = "runtime/patch_progress.rs"]
 mod patch_progress;
@@ -1525,7 +1526,7 @@ impl Runtime {
         let Some(pending) = pending else {
             return Ok(false);
         };
-        self.emit(RoderEvent::ExternalToolCallResolved(
+        self.emit_external_execution(RoderEvent::ExternalToolCallResolved(
             ExternalToolCallResolved {
                 thread_id: pending.thread_id,
                 turn_id: pending.turn_id,
@@ -1537,7 +1538,7 @@ impl Runtime {
                 timestamp: OffsetDateTime::now_utc(),
             },
         ))
-        .await;
+        .await?;
         let _ = pending.tx.send(resolution);
         Ok(true)
     }
@@ -5653,21 +5654,7 @@ impl Runtime {
         {
             let _ = store.append_event(thread_id, &envelope).await;
         }
-        // Registered event sinks (e.g. process extensions) receive the
-        // persisted envelope through bounded per-sink queues; a slow sink
-        // never blocks emit or turn progress.
-        let dispatcher = self
-            .event_sink_dispatcher
-            .get_or_init(|| async {
-                crate::event_sink_dispatch::EventSinkDispatcher::start(
-                    &self.registry.event_sinks,
-                    self.bus.clone(),
-                )
-            })
-            .await;
-        if !dispatcher.is_empty() {
-            dispatcher.dispatch(&envelope, &self.bus);
-        }
+        self.dispatch_event_sinks(&envelope).await;
         envelope
     }
 

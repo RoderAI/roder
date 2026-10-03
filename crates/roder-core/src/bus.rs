@@ -58,7 +58,13 @@ impl EventBus {
     }
 
     pub fn emit(&self, event: RoderEvent) -> EventEnvelope {
-        let envelope = EventEnvelope {
+        let envelope = self.prepare(event);
+        self.publish(envelope.clone());
+        envelope
+    }
+
+    pub(crate) fn prepare(&self, event: RoderEvent) -> EventEnvelope {
+        EventEnvelope {
             event_id: uuid::Uuid::new_v4().to_string(),
             seq: self.next_seq.fetch_add(1, Ordering::SeqCst),
             timestamp: OffsetDateTime::now_utc(),
@@ -67,9 +73,11 @@ impl EventBus {
             thread_id: event.thread_id().cloned(),
             turn_id: event.turn_id().cloned(),
             event,
-        };
-        let _ = self.sender.send(envelope.clone());
-        envelope
+        }
+    }
+
+    pub(crate) fn publish(&self, envelope: EventEnvelope) {
+        let _ = self.sender.send(envelope);
     }
 }
 

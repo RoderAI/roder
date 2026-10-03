@@ -336,3 +336,4 @@ impl ExecutorBindings {
 mod tests;
 
 mod monitor;
+mod recovery;
