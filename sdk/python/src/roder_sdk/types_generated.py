@@ -225,6 +225,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "readOnly"
         },
         {
+            "method": "chrome/debug/attach",
+            "paramsType": "ChromeDebugAttachParams",
+            "resultType": "ChromeDebugAttachResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
             "method": "chrome/debug/console",
             "paramsType": "ChromeDebugConsoleParams",
             "resultType": "ChromeDebugConsoleResult",
@@ -232,6 +241,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "featureGroup": "chrome",
             "idempotency": "idempotent",
             "sideEffect": "readOnly"
+        },
+        {
+            "method": "chrome/debug/detach",
+            "paramsType": "ChromeDebugDetachParams",
+            "resultType": "ChromeDebugDetachResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
         },
         {
             "method": "chrome/debug/network",
@@ -270,6 +288,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "externalProcess"
         },
         {
+            "method": "chrome/page/getText",
+            "paramsType": "ChromePageGetTextParams",
+            "resultType": "ChromePageGetTextResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
+        },
+        {
             "method": "chrome/page/snapshot",
             "paramsType": "ChromePageSnapshotParams",
             "resultType": "ChromePageSnapshotResult",
@@ -306,6 +333,24 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "readOnly"
         },
         {
+            "method": "chrome/recording/start",
+            "paramsType": "ChromeRecordingStartParams",
+            "resultType": "ChromeRecordingStartResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
+            "method": "chrome/recording/stop",
+            "paramsType": "ChromeRecordingStopParams",
+            "resultType": "ChromeRecordingStopResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
             "method": "chrome/setMode",
             "paramsType": "ChromeSetModeParams",
             "resultType": "ChromeSetModeResult",
@@ -333,6 +378,24 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "externalProcess"
         },
         {
+            "method": "chrome/tabs/close",
+            "paramsType": "ChromeTabsCloseParams",
+            "resultType": "ChromeTabsCloseResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
+            "method": "chrome/tabs/group",
+            "paramsType": "ChromeTabsGroupParams",
+            "resultType": "ChromeTabsGroupResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
             "method": "chrome/tabs/list",
             "paramsType": "ChromeTabsListParams",
             "resultType": "ChromeTabsListResult",
@@ -345,6 +408,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "method": "chrome/tabs/navigate",
             "paramsType": "ChromeTabsNavigateParams",
             "resultType": "ChromeTabsNavigateResult",
+            "stability": "stable",
+            "featureGroup": "chrome",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "externalProcess"
+        },
+        {
+            "method": "chrome/tabs/open",
+            "paramsType": "ChromeTabsOpenParams",
+            "resultType": "ChromeTabsOpenResult",
             "stability": "stable",
             "featureGroup": "chrome",
             "idempotency": "nonIdempotent",
@@ -2186,18 +2258,18 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "localState"
         },
         {
-            "method": "thread/set_ultra_mode",
-            "paramsType": "ThreadSetUltraModeParams",
-            "resultType": "ThreadSetUltraModeResult",
+            "method": "thread/set_mode",
+            "paramsType": "ThreadSetModeParams",
+            "resultType": "ThreadSetModeResult",
             "stability": "stable",
             "featureGroup": "thread",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
         },
         {
-            "method": "thread/set_mode",
-            "paramsType": "ThreadSetModeParams",
-            "resultType": "ThreadSetModeResult",
+            "method": "thread/set_ultra_mode",
+            "paramsType": "ThreadSetUltraModeParams",
+            "resultType": "ThreadSetUltraModeResult",
             "stability": "stable",
             "featureGroup": "thread",
             "idempotency": "nonIdempotent",
@@ -2222,6 +2294,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "sideEffect": "readOnly"
         },
         {
+            "method": "tools/bind_executor",
+            "paramsType": "ToolsBindExecutorParams",
+            "resultType": "ToolsBindExecutorResult",
+            "stability": "stable",
+            "featureGroup": "tools",
+            "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
             "method": "tools/call",
             "paramsType": "ToolsCallParams",
             "resultType": "ToolsCallResult",
@@ -2229,6 +2310,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "featureGroup": "tools",
             "idempotency": "nonIdempotent",
             "sideEffect": "localState"
+        },
+        {
+            "method": "tools/execution_read",
+            "paramsType": "ToolsExecutionReadParams",
+            "resultType": "ToolsExecutionReadResult",
+            "stability": "stable",
+            "featureGroup": "tools",
+            "idempotency": "idempotent",
+            "sideEffect": "readOnly"
         },
         {
             "method": "tools/list",
@@ -2246,6 +2336,15 @@ APP_SERVER_MANIFEST: dict[str, Any] = {
             "stability": "stable",
             "featureGroup": "tools",
             "idempotency": "nonIdempotent",
+            "sideEffect": "localState"
+        },
+        {
+            "method": "tools/unbind_executor",
+            "paramsType": "ToolsUnbindExecutorParams",
+            "resultType": "ToolsUnbindExecutorResult",
+            "stability": "stable",
+            "featureGroup": "tools",
+            "idempotency": "idempotent",
             "sideEffect": "localState"
         },
         {
@@ -2775,20 +2874,28 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "automations/status",
     "automations/update",
     "chrome/browsers/list",
+    "chrome/debug/attach",
     "chrome/debug/console",
+    "chrome/debug/detach",
     "chrome/debug/network",
     "chrome/disable",
     "chrome/enable",
     "chrome/page/action",
+    "chrome/page/getText",
     "chrome/page/snapshot",
     "chrome/permissions/list",
     "chrome/permissions/update",
     "chrome/reconnect",
+    "chrome/recording/start",
+    "chrome/recording/stop",
     "chrome/setMode",
     "chrome/status",
     "chrome/tabs/activate",
+    "chrome/tabs/close",
+    "chrome/tabs/group",
     "chrome/tabs/list",
     "chrome/tabs/navigate",
+    "chrome/tabs/open",
     "command/exec",
     "commands/expand",
     "commands/list",
@@ -2988,13 +3095,16 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "thread/resolve_user_input",
     "thread/roadmap/open",
     "thread/set_agent_swarm_mode",
-    "thread/set_ultra_mode",
     "thread/set_mode",
+    "thread/set_ultra_mode",
     "thread/start",
     "thread/state",
+    "tools/bind_executor",
     "tools/call",
+    "tools/execution_read",
     "tools/list",
     "tools/resolve",
+    "tools/unbind_executor",
     "turn/interrupt",
     "turn/start",
     "turn/steer",
@@ -3049,7 +3159,7 @@ APP_SERVER_METHODS: tuple[str, ...] = (
     "workspace/update",
 )
 
-AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/kimi-code/login", "auth/kimi-code/logout", "auth/kimi-code/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "chrome/browsers/list", "chrome/debug/console", "chrome/debug/network", "chrome/disable", "chrome/enable", "chrome/page/action", "chrome/page/snapshot", "chrome/permissions/list", "chrome/permissions/update", "chrome/reconnect", "chrome/setMode", "chrome/status", "chrome/tabs/activate", "chrome/tabs/list", "chrome/tabs/navigate", "command/exec", "commands/expand", "commands/list", "commands/run", "design/batch_get", "design/export_nodes", "design/get_editor_state", "design/get_guidelines", "design/get_screenshot", "design/get_variables", "design/patch", "design/read", "design/set_selection", "design/set_variables", "design/snapshot_layout", "design/spawn_agents", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "forks/create", "forks/list", "forks/providers/list", "forks/remove", "fs/readDirectory", "fs/readFile", "hosted/audit/list", "hosted/hooks/create", "hosted/hooks/delete", "hosted/hooks/list", "hosted/hooks/update", "hosted/service_accounts/create", "hosted/service_accounts/list", "hosted/service_accounts/revoke", "hosted/tenant/read", "hosted/tenants/list", "hosted/usage/read", "hosted/whoami", "hunk/list", "hunk/read", "hunk/rollback", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "inference/routing/metrics", "inference/routing/status", "initialize", "knowledge/delete", "knowledge/links/set", "knowledge/list", "knowledge/read", "knowledge/revisions/list", "knowledge/save", "knowledge/search", "knowledge/update", "lifecycle/metrics", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/image/generate", "media/image/providers/list", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "model/select", "node/status", "packages/approve_extensions", "packages/install", "packages/list", "packages/remove", "packages/set_enabled", "packages/set_filters", "packages/sync", "packages/update", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/clear", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "review/publish", "review/publishers/list", "review/start", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/detach", "runners/list", "runners/pause", "runners/ports", "runners/rejoin", "runners/resume", "runners/select", "runners/session", "runners/snapshot", "runtime/drain", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_shell", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "speech/providers/list", "speech/synthesis/providers/list", "speech/synthesize", "speech/transcribe", "stats/backfill", "stats/export", "stats/sessions", "stats/summary", "stats/tokens", "stats/tools", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/compact", "thread/exit_plan", "thread/fork", "thread/fork_status", "thread/goal/clear", "thread/goal/get", "thread/goal/set", "thread/list", "thread/read", "thread/remove_fork", "thread/resolve_approval", "thread/resolve_user_input", "thread/roadmap/open", "thread/set_agent_swarm_mode", "thread/set_ultra_mode", "thread/set_mode", "thread/start", "thread/state", "tools/call", "tools/list", "tools/resolve", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "vcs/changes/list", "vcs/changes/read", "vcs/lines/list", "vcs/lines/switch", "vcs/restore", "vcs/select", "vcs/snapshot/create", "vcs/status", "vcs/sync", "webwright/artifacts", "webwright/export", "webwright/latestRun", "webwright/prepare", "webwright/report", "webwright/rerun", "webwright/setup", "webwright/submit", "webwright/verify", "webwright/visualJudge", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan", "workflows/approve", "workflows/get", "workflows/list", "workflows/pause", "workflows/plan", "workflows/restartAgent", "workflows/resume", "workflows/save", "workflows/scripts/delete", "workflows/scripts/list", "workflows/scripts/read", "workflows/stop", "workspace/changes/list", "workspace/create", "workspace/files/children", "workspace/files/query", "workspace/files/read", "workspace/files/rebuild", "workspace/files/status", "workspace/forget", "workspace/list", "workspace/update"]
+AppServerMethod: TypeAlias = Literal["agents/list", "artifact/delete", "artifact/grep", "artifact/list", "artifact/read", "artifact/tail", "auth/codex/login", "auth/codex/logout", "auth/codex/status", "auth/kimi-code/login", "auth/kimi-code/logout", "auth/kimi-code/status", "auth/supergrok/login", "auth/supergrok/logout", "auth/supergrok/status", "automations/cancelRun", "automations/create", "automations/delete", "automations/list", "automations/runNow", "automations/runs", "automations/status", "automations/update", "chrome/browsers/list", "chrome/debug/attach", "chrome/debug/console", "chrome/debug/detach", "chrome/debug/network", "chrome/disable", "chrome/enable", "chrome/page/action", "chrome/page/getText", "chrome/page/snapshot", "chrome/permissions/list", "chrome/permissions/update", "chrome/reconnect", "chrome/recording/start", "chrome/recording/stop", "chrome/setMode", "chrome/status", "chrome/tabs/activate", "chrome/tabs/close", "chrome/tabs/group", "chrome/tabs/list", "chrome/tabs/navigate", "chrome/tabs/open", "command/exec", "commands/expand", "commands/list", "commands/run", "design/batch_get", "design/export_nodes", "design/get_editor_state", "design/get_guidelines", "design/get_screenshot", "design/get_variables", "design/patch", "design/read", "design/set_selection", "design/set_variables", "design/snapshot_layout", "design/spawn_agents", "discovery/groups", "discovery/promote", "discovery/promoted/clear", "discovery/promoted/list", "discovery/read", "discovery/refresh", "discovery/search", "eval/report/read", "eval/reports/list", "extensions/list", "forks/create", "forks/list", "forks/providers/list", "forks/remove", "fs/readDirectory", "fs/readFile", "hosted/audit/list", "hosted/hooks/create", "hosted/hooks/delete", "hosted/hooks/list", "hosted/hooks/update", "hosted/service_accounts/create", "hosted/service_accounts/list", "hosted/service_accounts/revoke", "hosted/tenant/read", "hosted/tenants/list", "hosted/usage/read", "hosted/whoami", "hunk/list", "hunk/read", "hunk/rollback", "index/proofs/list", "index/readChunk", "index/rebuild", "index/search", "index/status", "inference/routing/metrics", "inference/routing/status", "initialize", "knowledge/delete", "knowledge/links/set", "knowledge/list", "knowledge/read", "knowledge/revisions/list", "knowledge/save", "knowledge/search", "knowledge/update", "lifecycle/metrics", "marketplaces/add", "marketplaces/install_default", "marketplaces/list", "marketplaces/plugin", "marketplaces/refresh", "marketplaces/remove", "marketplaces/search", "media/attachToTurn", "media/delete", "media/image/generate", "media/image/providers/list", "media/list", "media/read", "media/thumbnail", "memory/delete", "memory/list", "memory/provider/list", "memory/provider/set", "memory/query", "memory/read", "memory/recall/preview", "memory/save", "memory/update", "model/list", "model/select", "node/status", "packages/approve_extensions", "packages/install", "packages/list", "packages/remove", "packages/set_enabled", "packages/set_filters", "packages/sync", "packages/update", "plan/review/approve", "plan/review/comment", "plan/review/read", "plan/review/reject", "plan/review/rewrite", "plugins/disable", "plugins/install", "plugins/install_all_variants", "plugins/list_installed", "plugins/preview_install", "plugins/uninstall", "processes/get", "processes/list", "processes/stop", "processes/stopAll", "processes/subscribe", "providers/clear", "providers/configure", "providers/list", "providers/select", "retrieval/metrics", "retrieval/promoted", "retrieval/recommendations", "review/publish", "review/publishers/list", "review/start", "roadmap/create", "roadmap/list", "roadmap/patch", "roadmap/read", "roadmap/task/update", "roadmap/thread/attach", "roadmap/thread/list", "roadmap/thread/spawn", "roadmap/validate", "runners/delete", "runners/detach", "runners/list", "runners/pause", "runners/ports", "runners/rejoin", "runners/resume", "runners/select", "runners/session", "runners/snapshot", "runtime/drain", "search_index/clear", "search_index/rebuild", "search_index/status", "search_index/warmup", "settings/get", "settings/set_default_mode", "settings/set_file_backed_dynamic_context", "settings/set_search_index", "settings/set_shell", "settings/set_web_search", "skills/list", "skills/read", "skills/setEnabled", "skills/setExposure", "speech/providers/list", "speech/synthesis/providers/list", "speech/synthesize", "speech/transcribe", "stats/backfill", "stats/export", "stats/sessions", "stats/summary", "stats/tokens", "stats/tools", "tasks/cancel", "tasks/get", "tasks/list", "tasks/submit", "tasks/subscribe", "team/cleanup", "team/list", "team/member/focus", "team/member/interrupt", "team/member/message", "team/member/start", "team/pane/cleanup", "team/pane/focus", "team/read", "team/start", "thread/archive", "thread/attach", "thread/compact", "thread/exit_plan", "thread/fork", "thread/fork_status", "thread/goal/clear", "thread/goal/get", "thread/goal/set", "thread/list", "thread/read", "thread/remove_fork", "thread/resolve_approval", "thread/resolve_user_input", "thread/roadmap/open", "thread/set_agent_swarm_mode", "thread/set_mode", "thread/set_ultra_mode", "thread/start", "thread/state", "tools/bind_executor", "tools/call", "tools/execution_read", "tools/list", "tools/resolve", "tools/unbind_executor", "turn/interrupt", "turn/start", "turn/steer", "turn/subagentTrace/read", "turn/subagentTraces/list", "vcs/changes/list", "vcs/changes/read", "vcs/lines/list", "vcs/lines/switch", "vcs/restore", "vcs/select", "vcs/snapshot/create", "vcs/status", "vcs/sync", "webwright/artifacts", "webwright/export", "webwright/latestRun", "webwright/prepare", "webwright/report", "webwright/rerun", "webwright/setup", "webwright/submit", "webwright/verify", "webwright/visualJudge", "workflow/enable", "workflow/ignore", "workflow/preview", "workflow/refresh", "workflow/remove", "workflow/scan", "workflows/approve", "workflows/get", "workflows/list", "workflows/pause", "workflows/plan", "workflows/restartAgent", "workflows/resume", "workflows/save", "workflows/scripts/delete", "workflows/scripts/list", "workflows/scripts/read", "workflows/stop", "workspace/changes/list", "workspace/create", "workspace/files/children", "workspace/files/query", "workspace/files/read", "workspace/files/rebuild", "workspace/files/status", "workspace/forget", "workspace/list", "workspace/update"]
 
 
 class JsonRpcError(TypedDict, total=False):

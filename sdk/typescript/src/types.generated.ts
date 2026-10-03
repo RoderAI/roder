@@ -221,6 +221,15 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "chrome/debug/attach",
+      "paramsType": "ChromeDebugAttachParams",
+      "resultType": "ChromeDebugAttachResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "chrome/debug/console",
       "paramsType": "ChromeDebugConsoleParams",
       "resultType": "ChromeDebugConsoleResult",
@@ -228,6 +237,15 @@ export const appServerManifest = {
       "featureGroup": "chrome",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "chrome/debug/detach",
+      "paramsType": "ChromeDebugDetachParams",
+      "resultType": "ChromeDebugDetachResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
     },
     {
       "method": "chrome/debug/network",
@@ -266,6 +284,15 @@ export const appServerManifest = {
       "sideEffect": "externalProcess"
     },
     {
+      "method": "chrome/page/getText",
+      "paramsType": "ChromePageGetTextParams",
+      "resultType": "ChromePageGetTextResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "chrome/page/snapshot",
       "paramsType": "ChromePageSnapshotParams",
       "resultType": "ChromePageSnapshotResult",
@@ -302,6 +329,24 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "chrome/recording/start",
+      "paramsType": "ChromeRecordingStartParams",
+      "resultType": "ChromeRecordingStartResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/recording/stop",
+      "paramsType": "ChromeRecordingStopParams",
+      "resultType": "ChromeRecordingStopResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "chrome/setMode",
       "paramsType": "ChromeSetModeParams",
       "resultType": "ChromeSetModeResult",
@@ -329,6 +374,24 @@ export const appServerManifest = {
       "sideEffect": "externalProcess"
     },
     {
+      "method": "chrome/tabs/close",
+      "paramsType": "ChromeTabsCloseParams",
+      "resultType": "ChromeTabsCloseResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/tabs/group",
+      "paramsType": "ChromeTabsGroupParams",
+      "resultType": "ChromeTabsGroupResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
       "method": "chrome/tabs/list",
       "paramsType": "ChromeTabsListParams",
       "resultType": "ChromeTabsListResult",
@@ -341,6 +404,15 @@ export const appServerManifest = {
       "method": "chrome/tabs/navigate",
       "paramsType": "ChromeTabsNavigateParams",
       "resultType": "ChromeTabsNavigateResult",
+      "stability": "stable",
+      "featureGroup": "chrome",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "externalProcess"
+    },
+    {
+      "method": "chrome/tabs/open",
+      "paramsType": "ChromeTabsOpenParams",
+      "resultType": "ChromeTabsOpenResult",
       "stability": "stable",
       "featureGroup": "chrome",
       "idempotency": "nonIdempotent",
@@ -2182,18 +2254,18 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
-      "method": "thread/set_ultra_mode",
-      "paramsType": "ThreadSetUltraModeParams",
-      "resultType": "ThreadSetUltraModeResult",
+      "method": "thread/set_mode",
+      "paramsType": "ThreadSetModeParams",
+      "resultType": "ThreadSetModeResult",
       "stability": "stable",
       "featureGroup": "thread",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
     },
     {
-      "method": "thread/set_mode",
-      "paramsType": "ThreadSetModeParams",
-      "resultType": "ThreadSetModeResult",
+      "method": "thread/set_ultra_mode",
+      "paramsType": "ThreadSetUltraModeParams",
+      "resultType": "ThreadSetUltraModeResult",
       "stability": "stable",
       "featureGroup": "thread",
       "idempotency": "nonIdempotent",
@@ -2218,6 +2290,15 @@ export const appServerManifest = {
       "sideEffect": "readOnly"
     },
     {
+      "method": "tools/bind_executor",
+      "paramsType": "ToolsBindExecutorParams",
+      "resultType": "ToolsBindExecutorResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "tools/call",
       "paramsType": "ToolsCallParams",
       "resultType": "ToolsCallResult",
@@ -2225,6 +2306,15 @@ export const appServerManifest = {
       "featureGroup": "tools",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "tools/execution_read",
+      "paramsType": "ToolsExecutionReadParams",
+      "resultType": "ToolsExecutionReadResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "tools/list",
@@ -2242,6 +2332,15 @@ export const appServerManifest = {
       "stability": "stable",
       "featureGroup": "tools",
       "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "tools/unbind_executor",
+      "paramsType": "ToolsUnbindExecutorParams",
+      "resultType": "ToolsUnbindExecutorResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "idempotent",
       "sideEffect": "localState"
     },
     {
@@ -2773,20 +2872,28 @@ export const appServerMethods = [
   "automations/status",
   "automations/update",
   "chrome/browsers/list",
+  "chrome/debug/attach",
   "chrome/debug/console",
+  "chrome/debug/detach",
   "chrome/debug/network",
   "chrome/disable",
   "chrome/enable",
   "chrome/page/action",
+  "chrome/page/getText",
   "chrome/page/snapshot",
   "chrome/permissions/list",
   "chrome/permissions/update",
   "chrome/reconnect",
+  "chrome/recording/start",
+  "chrome/recording/stop",
   "chrome/setMode",
   "chrome/status",
   "chrome/tabs/activate",
+  "chrome/tabs/close",
+  "chrome/tabs/group",
   "chrome/tabs/list",
   "chrome/tabs/navigate",
+  "chrome/tabs/open",
   "command/exec",
   "commands/expand",
   "commands/list",
@@ -2986,13 +3093,16 @@ export const appServerMethods = [
   "thread/resolve_user_input",
   "thread/roadmap/open",
   "thread/set_agent_swarm_mode",
-  "thread/set_ultra_mode",
   "thread/set_mode",
+  "thread/set_ultra_mode",
   "thread/start",
   "thread/state",
+  "tools/bind_executor",
   "tools/call",
+  "tools/execution_read",
   "tools/list",
   "tools/resolve",
+  "tools/unbind_executor",
   "turn/interrupt",
   "turn/start",
   "turn/steer",

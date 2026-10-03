@@ -1,15 +1,4 @@
-export {
-  RoderAgent,
-  type ApprovalDecision,
-  type ExternalToolResult,
-  type PlanExitDecision,
-  type RoderAgentOptions,
-  type RoderApprovals,
-  type RoderExternalTool,
-  type RoderExternalToolCall,
-  type RoderThreadRunner,
-  type UserInputDecision,
-} from "./agent.js";
+/** Browser entry: remote transports and tool execution, without Node process imports. */
 export { RoderRpcClient, type MethodHelpers } from "./client.js";
 export {
   HostedClient,
@@ -93,5 +82,3 @@ export {
 } from "./types.generated.js";
 export { ExternalToolExecutor, type ToolExecutorLease, type ExternalToolExecutionContext,
   type ExternalToolExecutionResult, type ToolExecutionState } from "./external-tools.js";
-
-export {LocalProcessTransport, type LocalProcessTransportOptions} from "./local-process.js";

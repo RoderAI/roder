@@ -9656,6 +9656,8 @@ async fn external_tool_call_round_trips_through_tools_resolve() {
         "tools/resolve",
         Some(
             serde_json::to_value(ToolsResolveParams {
+                executor: None,
+                turn_id: None,
                 request_id: request_id.clone(),
                 output: "2 open threads".to_string(),
                 is_error: false,
@@ -9770,6 +9772,8 @@ async fn external_tool_call_times_out_into_error_result() {
         "tools/resolve",
         Some(
             serde_json::to_value(ToolsResolveParams {
+                executor: None,
+                turn_id: None,
                 request_id,
                 output: "too late".to_string(),
                 is_error: false,
@@ -9830,6 +9834,8 @@ async fn turn_interrupt_cancels_pending_external_tool_call() {
         "tools/resolve",
         Some(
             serde_json::to_value(ToolsResolveParams {
+                executor: None,
+                turn_id: None,
                 request_id,
                 output: "too late".to_string(),
                 is_error: false,

@@ -10,6 +10,7 @@
 pub mod audit;
 pub mod auth;
 pub mod authorization;
+pub(crate) mod external_tools;
 pub mod gateway;
 pub mod hook_delivery;
 pub mod hooks;
@@ -31,3 +32,5 @@ pub use hooks::HookStore;
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use runtime_pool::{HostedRuntimePool, HostedRuntimeProfile, TenantAppServerFactory};
 pub use tenant::TenantRegistry;
+
+pub(crate) mod executor_gateway;

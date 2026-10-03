@@ -9,7 +9,11 @@
     "access": "public"
   },
   "exports": {
-    ".": "./dist/src/index.js"
+    ".": {
+      "browser": "./dist/src/browser.js",
+      "default": "./dist/src/index.js"
+    },
+    "./browser": "./dist/src/browser.js"
   },
   "files": [
     "dist/src",
