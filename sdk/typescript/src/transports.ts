@@ -9,6 +9,8 @@ export interface JsonRpcNotification<P = unknown> {
 }
 
 export interface RoderTransport {
+  /** Aborted synchronously on closure, before buffered notifications drain. */
+  readonly closedSignal: AbortSignal;
   request<M extends AppServerMethod, P = unknown, R = unknown>(
     request: JsonRpcRequest<M, P>,
     options?: RequestOptions,
@@ -27,6 +29,8 @@ export type InMemoryHandler = (
 
 export class InMemoryTransport implements RoderTransport {
   private readonly notificationHub = new NotificationHub();
+  private readonly lifetime = new AbortController();
+  readonly closedSignal = this.lifetime.signal;
   private closed = false;
 
   constructor(private readonly handler: InMemoryHandler) {}
@@ -53,6 +57,7 @@ export class InMemoryTransport implements RoderTransport {
 
   close(): void {
     this.closed = true;
+    this.lifetime.abort();
     this.notificationHub.close();
   }
 }
@@ -92,6 +97,8 @@ export class WebSocketTransport implements RoderTransport {
   private readonly opened: Promise<void>;
   private readonly pending = new Map<string, PendingResponse>();
   private readonly notificationHub = new NotificationHub();
+  private readonly lifetime = new AbortController();
+  readonly closedSignal = this.lifetime.signal;
 
   constructor(options: WebSocketTransportOptions) {
     const bearerAuth = options.bearerAuth ?? "header";
@@ -118,6 +125,7 @@ export class WebSocketTransport implements RoderTransport {
     });
     this.socket.addEventListener("message", (event) => this.handleMessage(String(event.data)));
     this.socket.addEventListener("close", () => {
+      this.lifetime.abort();
       this.rejectAll(new RoderTransportError("websocket closed"));
       this.notificationHub.close();
     });
@@ -128,7 +136,8 @@ export class WebSocketTransport implements RoderTransport {
     options: RequestOptions = {},
   ): Promise<JsonRpcResponse<R>> {
     throwIfAborted(options.signal);
-    await abortable(this.opened, options.signal);
+    if (this.closedSignal.aborted) throw new RoderTransportError("transport is closed");
+    await abortable(this.opened, AbortSignal.any([this.closedSignal, ...(options.signal ? [options.signal] : [])]));
     const id = request.id;
     if (id === undefined || id === null) {
       throw new RoderTransportError("requests require a non-null id");
@@ -155,6 +164,7 @@ export class WebSocketTransport implements RoderTransport {
   }
 
   close(): void {
+    this.lifetime.abort();
     this.socket.close();
     this.notificationHub.close();
   }

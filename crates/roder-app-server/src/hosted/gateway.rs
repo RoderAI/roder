@@ -313,7 +313,7 @@ async fn serve_connection(
         }
     };
     let app_server = lease.server.clone();
-    let executor_connection = super::executor_gateway::ExecutorConnection::new(app_server.clone());
+    let mut executor_connection = super::executor_gateway::ExecutorConnection::new(app_server.clone());
 
     let (mut ws_write, mut ws_read) = websocket.split();
     let connection_authorized = Arc::new(AtomicBool::new(true));
@@ -611,6 +611,7 @@ async fn serve_connection(
             let _ = outbound_tx.send(OutboundMessage::Control(Message::Text(text.into())));
         }
     }
+    executor_connection.close().await;
     // Stop tenant notifications first, then close the outbound channel and
     // let the writer drain any final authentication error + close frame.
     notification_tasks.abort_all();

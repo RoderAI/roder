@@ -60,3 +60,5 @@ for await (const notification of client.notifications()) {
 }
 executor.stop();
 ```
+
+Custom TypeScript transports must expose `closedSignal: AbortSignal` and abort it synchronously when the connection closes. The SDK executor observes that signal before any buffered requests can execute. Normal gateway disconnects await lease revocation; the drop guard also handles task cancellation.

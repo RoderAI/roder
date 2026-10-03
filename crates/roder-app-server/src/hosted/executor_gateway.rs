@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub(crate) struct ExecutorConnection {
     server: Arc<AppServer>,
     pub id: String,
+    closed: bool,
 }
 
 impl ExecutorConnection {
@@ -19,12 +20,33 @@ impl ExecutorConnection {
         Self {
             server,
             id: uuid::Uuid::new_v4().to_string(),
+            closed: false,
+        }
+    }
+}
+
+impl ExecutorConnection {
+    pub async fn close(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.closed = true;
+        for revoked in self
+            .server
+            .external_tool_executors
+            .disconnect(&self.id)
+            .await
+        {
+            revoke(&self.server, revoked, "disconnected").await;
         }
     }
 }
 
 impl Drop for ExecutorConnection {
     fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
         let server = self.server.clone();
         let connection = self.id.clone();
         // Also runs when the gateway aborts this connection task on shutdown.

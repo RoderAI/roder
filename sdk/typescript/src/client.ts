@@ -46,6 +46,8 @@ export class RoderRpcClient {
     return this.transport.request<M, P, R>(request, options);
   }
 
+  get closedSignal(): AbortSignal { return this.transport.closedSignal; }
+
   notifications() {
     return this.transport.notifications();
   }

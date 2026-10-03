@@ -126,3 +126,25 @@ test('a revoked executor permits a fresh bind on the next send and teardown is b
   assert.equal(binds,2);
   await agent.close();
 });
+
+test('transport closure immediately aborts callbacks and suppresses buffered requests', async () => {
+  const {client,resolutions} = fixture();
+  let signal: AbortSignal | undefined;
+  let finish!: () => void;
+  let calls = 0;
+  const waiting = new Promise<void>(resolve=>{finish=resolve;});
+  const executor = await ExternalToolExecutor.bind(client,'thread',async (_,context)=>{
+    calls++;signal=context.signal;await waiting;return {output:'late'};
+  });
+  const running=executor.handle(request());
+  client.close();
+  assert.equal(signal?.aborted,true);
+  assert.equal(executor.isActive,false);
+  const buffered=request();
+  (buffered.params as Record<string,unknown>).requestId='buffered';
+  await executor.handle(buffered);
+  assert.equal(calls,1);
+  finish();await running;
+  assert.equal(resolutions.length,0);
+  await assert.rejects(ExternalToolExecutor.bind(client,'thread',()=>({output:'never'})),/closed transport/);
+});

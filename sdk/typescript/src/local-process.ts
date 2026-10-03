@@ -16,7 +16,6 @@ export interface LocalProcessTransportOptions {
    * to true.
    */
   inheritEnv?: boolean;
-  startupTimeoutMs?: number;
 }
 
 /** Number of recent stderr lines retained for error reporting. */
@@ -30,6 +29,8 @@ export class LocalProcessTransport implements RoderTransport {
   private readonly pending = new Map<string, PendingResponse>();
   private readonly notificationHub = new NotificationHub();
   private closed = false;
+  private readonly lifetime = new AbortController();
+  readonly closedSignal = this.lifetime.signal;
 
   constructor(options: LocalProcessTransportOptions = {}) {
     const command = options.command ?? "roder";
@@ -109,6 +110,7 @@ export class LocalProcessTransport implements RoderTransport {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.lifetime.abort();
     this.lines.close();
     this.stderrLines.close();
     this.notificationHub.close();
@@ -152,6 +154,7 @@ export class LocalProcessTransport implements RoderTransport {
 
   private rejectAll(error: Error): void {
     this.closed = true;
+    this.lifetime.abort();
     for (const pending of this.pending.values()) {
       pending.cleanup();
       pending.reject(error);

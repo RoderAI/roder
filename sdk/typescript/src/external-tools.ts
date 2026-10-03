@@ -55,10 +55,16 @@ export class ExternalToolExecutor {
     private readonly client: RoderRpcClient,
     readonly lease: ToolExecutorLease,
     private readonly execute: Execute,
-  ) {}
+  ) {
+    client.closedSignal.addEventListener("abort", this.onTransportClosed, {once:true});
+    if (client.closedSignal.aborted) this.stop();
+  }
+
+  private readonly onTransportClosed = () => this.stop();
 
   static async bind(client: RoderRpcClient, threadId: string, execute: Execute,
     options: { takeover?: boolean } = {}): Promise<ExternalToolExecutor> {
+    if (client.closedSignal.aborted) throw new Error("Cannot bind a closed transport");
     const result = await client.call<"tools/bind_executor", unknown, {executor: ToolExecutorLease}>(
       "tools/bind_executor", {threadId, takeover: options.takeover ?? false});
     if (result.executor.threadId !== threadId || result.executor.contractVersion !== 1) {
@@ -127,6 +133,7 @@ export class ExternalToolExecutor {
   /** Call synchronously when transport drops, before any retry or new binding. */
   stop(): void {
     this.active = false;
+    this.client.closedSignal.removeEventListener("abort", this.onTransportClosed);
     for (const pending of this.pending.values()) pending.controller.abort();
     this.pending.clear();
   }
