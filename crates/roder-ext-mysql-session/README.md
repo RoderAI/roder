@@ -28,10 +28,10 @@ python3 scripts/generate-knope-config.py --check
 
 MySQL allocates persisted event ordering independently of runtime counters. Both
 runtime and item events deduplicate by their event IDs; replay does not replace an
-existing payload. Loaded event sequences reflect durable database ordering.
+existing payload. Loaded event sequences reflect stable database allocation order, not a cross-process causal clock. Callers must await causally dependent appends.
 
 Schema version 2 adds database sequence allocation and unique event identity
-indexes to both event tables. Startup serializes this DDL with a database-scoped
+indexes of SHA-256 event-ID digests to both event tables. Long IDs remain supported. Startup serializes this DDL with a database-scoped
 advisory lock; an interrupted migration resumes at the unfinished table. Existing
 payloads and sequences are retained. The ALTER operations can rebuild/lock large
 tables: schedule the upgrade with sufficient startup time and stop older writers

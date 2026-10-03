@@ -91,11 +91,11 @@ async fn migrate_event_ordering(pool: &Pool<MySql>) -> anyhow::Result<()> {
     for (table, statement) in [
         (
             "roder_session_events",
-            "ALTER TABLE roder_session_events ADD KEY idx_durable_seq (seq), MODIFY seq BIGINT NOT NULL AUTO_INCREMENT, ADD COLUMN event_id VARCHAR(191) COLLATE utf8mb4_bin GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(event, '$.event_id'))) STORED, ADD UNIQUE KEY idx_event_identity (tenant_id, thread_id, event_id)",
+            "ALTER TABLE roder_session_events ADD KEY idx_durable_seq (seq), MODIFY seq BIGINT NOT NULL AUTO_INCREMENT, ADD COLUMN event_id BINARY(32) GENERATED ALWAYS AS (UNHEX(SHA2(JSON_UNQUOTE(JSON_EXTRACT(event, '$.event_id')), 256))) STORED, ADD UNIQUE KEY idx_event_identity (tenant_id, thread_id, event_id)",
         ),
         (
             "roder_session_item_events",
-            "ALTER TABLE roder_session_item_events ADD KEY idx_durable_seq (seq), MODIFY seq BIGINT NOT NULL AUTO_INCREMENT, ADD COLUMN event_id VARCHAR(191) COLLATE utf8mb4_bin GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(item_event, '$.eventId'))) STORED, ADD UNIQUE KEY idx_event_identity (tenant_id, thread_id, event_id)",
+            "ALTER TABLE roder_session_item_events ADD KEY idx_durable_seq (seq), MODIFY seq BIGINT NOT NULL AUTO_INCREMENT, ADD COLUMN event_id BINARY(32) GENERATED ALWAYS AS (UNHEX(SHA2(JSON_UNQUOTE(JSON_EXTRACT(item_event, '$.eventId')), 256))) STORED, ADD UNIQUE KEY idx_event_identity (tenant_id, thread_id, event_id)",
         ),
     ] {
         let migrated: i64 = sqlx_core::query_scalar::query_scalar::<MySql, i64>(

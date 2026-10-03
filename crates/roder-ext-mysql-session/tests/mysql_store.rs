@@ -182,6 +182,7 @@ async fn runtime_sequence_restart_preserves_distinct_events_and_terminal_history
             turn_id: "turn-1".into(),
             timestamp: terminal.timestamp,
         });
+    terminal.kind = terminal.event.kind().to_string();
     store
         .append_event(&thread, &terminal)
         .await
@@ -196,8 +197,11 @@ async fn runtime_sequence_restart_preserves_distinct_events_and_terminal_history
         .append_event(&thread, &next)
         .await
         .expect("new event with reused runtime sequence");
+    let mut replay = next.clone();
+    replay.event = terminal.event.clone();
+    replay.kind = replay.event.kind().to_string();
     restarted
-        .append_event(&thread, &next)
+        .append_event(&thread, &replay)
         .await
         .expect("idempotent replay");
     let snapshot = restarted
@@ -214,7 +218,18 @@ async fn runtime_sequence_restart_preserves_distinct_events_and_terminal_history
         snapshot
             .events
             .iter()
-            .any(|event| event.event_id == terminal.event_id)
+            .any(|event| event.event_id == terminal.event_id
+                && matches!(
+                    event.event,
+                    roder_api::events::RoderEvent::TurnInterrupted(_)
+                ))
+    );
+    assert!(
+        snapshot
+            .events
+            .iter()
+            .any(|event| event.event_id == next.event_id
+                && matches!(event.event, roder_api::events::RoderEvent::TurnStarted(_)))
     );
 }
 
@@ -237,7 +252,7 @@ async fn independent_writers_preserve_distinct_event_and_item_identities() {
         .await
         .expect("create");
     let mut a = envelope(&thread, 1);
-    a.event_id = "left-event".into();
+    a.event_id = "left-event".repeat(100);
     let mut b = envelope(&thread, 1);
     b.event_id = "right-event".into();
     let (a_result, b_result) = tokio::join!(
@@ -247,7 +262,7 @@ async fn independent_writers_preserve_distinct_event_and_item_identities() {
     a_result.expect("left event");
     b_result.expect("right event");
     let mut ia = item_event(&thread, 1);
-    ia.event_id = "left-item-event".into();
+    ia.event_id = "left-item-event".repeat(100);
     let mut ib = item_event(&thread, 1);
     ib.event_id = "right-item-event".into();
     let (a_result, b_result) = tokio::join!(
@@ -273,4 +288,43 @@ async fn independent_writers_preserve_distinct_event_and_item_identities() {
     assert_eq!(snapshot.item_events.len(), 2);
     assert!(snapshot.events[0].seq < snapshot.events[1].seq);
     assert!(snapshot.item_events[0].seq < snapshot.item_events[1].seq);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn duplicate_transcript_event_does_not_inflate_message_count() {
+    let Some(url) = test_url() else { return };
+    let config = MysqlSessionConfig {
+        database_url: url,
+        tenant_id: format!("replay-{}", uuid::Uuid::new_v4()),
+        max_connections: Some(2),
+    };
+    let store = MysqlSessionStore::connect(&config).await.expect("store");
+    let thread = "replayed-transcript".to_string();
+    store
+        .create_thread(metadata(&thread, "2026-06-12T00:00:00Z"))
+        .await
+        .expect("create");
+    let mut event = envelope(&thread, 1);
+    event.event = roder_api::events::RoderEvent::TranscriptItemAppended(
+        roder_api::events::TranscriptItemAppended {
+            thread_id: thread.clone(),
+            turn_id: "turn-1".into(),
+            timestamp: event.timestamp,
+            item_type: "user_message".into(),
+            item_index: Some(0),
+            item: Some(roder_api::transcript::TranscriptItem::UserMessage(
+                roder_api::transcript::UserMessage::text("Hello"),
+            )),
+        },
+    );
+    event.kind = event.event.kind().to_string();
+    store.append_event(&thread, &event).await.expect("append");
+    store.append_event(&thread, &event).await.expect("replay");
+    let snapshot = store
+        .load_thread(&thread)
+        .await
+        .expect("load")
+        .expect("exists");
+    assert_eq!(snapshot.metadata.expect("metadata").message_count, 1);
+    assert_eq!(snapshot.events.len(), 1);
 }

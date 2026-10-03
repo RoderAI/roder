@@ -10,14 +10,23 @@ pub(crate) async fn append_event(
     tenant: &str,
     thread: &str,
     event: &EventEnvelope,
-) -> anyhow::Result<()> {
-    sqlx_core::query::query::<MySql>(
-        "INSERT INTO roder_session_events (tenant_id, thread_id, event, created_at) VALUES (?,?,?,?) \
-         ON DUPLICATE KEY UPDATE event = event",
+) -> anyhow::Result<bool> {
+    let result = sqlx_core::query::query::<MySql>(
+        "INSERT INTO roder_session_events (tenant_id, thread_id, event, created_at) VALUES (?,?,?,?)",
     )
     .bind(tenant).bind(thread).bind(sqlx_core::types::Json(event))
-    .bind(crate::store::unix_micros_now()).execute(pool).await?;
-    Ok(())
+    .bind(crate::store::unix_micros_now()).execute(pool).await;
+    match result {
+        Ok(_) => Ok(true),
+        Err(error)
+            if error
+                .as_database_error()
+                .is_some_and(|error| error.is_unique_violation()) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(crate) async fn append_item_event(
@@ -25,12 +34,21 @@ pub(crate) async fn append_item_event(
     tenant: &str,
     thread: &str,
     event: &ThreadItemEvent,
-) -> anyhow::Result<()> {
-    sqlx_core::query::query::<MySql>(
-        "INSERT INTO roder_session_item_events (tenant_id, thread_id, item_event, created_at) VALUES (?,?,?,?) \
-         ON DUPLICATE KEY UPDATE item_event = item_event",
+) -> anyhow::Result<bool> {
+    let result = sqlx_core::query::query::<MySql>(
+        "INSERT INTO roder_session_item_events (tenant_id, thread_id, item_event, created_at) VALUES (?,?,?,?)",
     )
     .bind(tenant).bind(thread).bind(sqlx_core::types::Json(event))
-    .bind(crate::store::unix_micros_now()).execute(pool).await?;
-    Ok(())
+    .bind(crate::store::unix_micros_now()).execute(pool).await;
+    match result {
+        Ok(_) => Ok(true),
+        Err(error)
+            if error
+                .as_database_error()
+                .is_some_and(|error| error.is_unique_violation()) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
+    }
 }

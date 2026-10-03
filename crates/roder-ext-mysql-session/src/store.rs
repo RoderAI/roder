@@ -445,13 +445,13 @@ impl ThreadStore for MysqlSessionStore {
         let tenant_id = self.tenant_id.clone();
         let row_thread_id = thread_id.clone();
         let row_envelope = envelope.clone();
-        self.executor
+        let inserted = self.executor
             .run(async move {
-                crate::event_log::append_event(&pool, &tenant_id, &row_thread_id, &row_envelope).await?;
-                Ok(())
+                crate::event_log::append_event(&pool, &tenant_id, &row_thread_id, &row_envelope).await
             })
             .await?;
-        if let RoderEvent::TranscriptItemAppended(event) = &envelope.event
+        if inserted
+            && let RoderEvent::TranscriptItemAppended(event) = &envelope.event
             && let Some(item) = &event.item
         {
             self.metadata_for_thread_item(thread_id, item).await?;
