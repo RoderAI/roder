@@ -67,6 +67,12 @@ impl Runtime {
         self
     }
 
+    pub fn uses_execution_lease(&self, lease: &Arc<RuntimeExecutionLease>) -> bool {
+        self.execution_lease
+            .as_ref()
+            .is_some_and(|bound| Arc::ptr_eq(bound, lease))
+    }
+
     pub fn ensure_execution_authority(&self) -> anyhow::Result<()> {
         if let Some(lease) = &self.execution_lease {
             lease.require_live()?;

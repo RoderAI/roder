@@ -3435,6 +3435,7 @@ dependencies = [
  "roder-ext-kimi-code",
  "roder-ext-knowledge-md",
  "roder-ext-memory",
+ "roder-ext-mysql-session",
  "roder-ext-openai-embeddings",
  "roder-ext-openai-responses",
  "roder-ext-process-host",

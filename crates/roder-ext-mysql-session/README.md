@@ -91,4 +91,9 @@ that runtime. Turn admission, tool entry, and dispatch after approval waits
 check this lease. Hosted WebSockets close when it is lost and drop queued
 notifications from the stale owner. Operations already in flight still require
 outcome reconciliation; these checks do not implement remote action fencing,
-owner routing, or automatic renewal supervision.
+owner routing. `AppServer::supervise_runtime_lease` supplies bounded renewal
+supervision through a host-provided `HostedRuntimeLeaseBackend`. The backend
+must confirm the exact durable generation; uncertainty, timeout, or rejection
+revokes the local guard and starts bounded runtime cleanup. Dropping the server
+also revokes surviving runtime clones. Supervision does not release the durable
+lease or implement graceful owner transfer; those remain host coordination work.

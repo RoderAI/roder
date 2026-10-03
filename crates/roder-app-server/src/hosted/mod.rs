@@ -14,6 +14,7 @@ pub(crate) mod external_tools;
 pub mod gateway;
 pub mod hook_delivery;
 pub mod hooks;
+pub mod lease_supervisor;
 pub mod rate_limit;
 pub mod runtime_pool;
 pub mod tenant;
@@ -34,3 +35,5 @@ pub use runtime_pool::{HostedRuntimePool, HostedRuntimeProfile, TenantAppServerF
 pub use tenant::TenantRegistry;
 
 pub(crate) mod executor_gateway;
+
+pub use lease_supervisor::HostedRuntimeLeaseBackend;
