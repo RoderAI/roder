@@ -30,7 +30,7 @@ use roder_commands::{
 use roder_core::{
     CreateThreadRequest, Runtime, RuntimeDrainOutcome, StartTurnRequest,
     TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
-    TeamStartRequest as RuntimeTeamStartRequest, TeamState, default_instructions,
+    TeamStartRequest as RuntimeTeamStartRequest, TeamState,
     media_artifacts::MediaArtifactStore, policy_gate::DefaultPolicyGate,
 };
 use roder_protocol::*;
@@ -96,6 +96,7 @@ struct RoadmapThreadParams {
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
+    pub(crate) system_instructions: Option<String>,
     pub(crate) runtime_lease_supervisor: std::sync::Mutex<Option<crate::hosted::lease_supervisor::HostedRuntimeLeaseSupervisor>>,
     pub(crate) external_tool_executors: Arc<crate::hosted::external_tools::ExecutorBindings>,
     pub(crate) agent_backend: Option<crate::backend::AgentBackendBridge>,
@@ -3433,7 +3434,7 @@ impl AppServer {
                 model_override,
                 reasoning_override,
                 workspace,
-                instructions: default_instructions(),
+                instructions: self.turn_instructions(),
                 developer_context: params.developer_context,
                 task_ledger_required: params.task_ledger_required,
                 service_tier_override: None,
@@ -4100,7 +4101,7 @@ impl AppServer {
                 model_override: expanded.model.clone(),
                 reasoning_override: None,
                 workspace,
-                instructions: default_instructions(),
+                instructions: self.turn_instructions(),
                 developer_context: None,
                 task_ledger_required: false,
                 service_tier_override: None,

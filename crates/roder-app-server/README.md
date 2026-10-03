@@ -74,3 +74,11 @@ and `X-Roder-Lifecycle-Signature`; it must authenticate and validate commands
 before changing pool state. The transport bounds headers/body and read time,
 rejects duplicate length/signature headers and transfer encoding, and returns
 404 when no handler is installed. WebSocket authentication remains separate.
+
+### Host system identity
+
+Embedded hosts can call `AppServer::new(runtime).with_system_instructions(prompt)`
+to replace the default terminal-agent system prompt for app-server turns and
+commands. This is host configuration, not a client request option. It applies
+to resumed threads too; thread developer instructions and runtime overlays are
+preserved. Direct runtime and alternate backend integrations own their prompts.

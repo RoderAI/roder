@@ -12044,3 +12044,6 @@ async fn create_workspace_for_path(
 
 #[path = "computer_external_tools.rs"]
 mod computer_external_tools;
+
+#[path = "e2e/host_system_instructions.rs"]
+mod host_system_instructions;
