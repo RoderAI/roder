@@ -5,6 +5,8 @@ use roder_api::transcript::{InputImage, TranscriptItem};
 use roder_protocol::{Thread, ThreadRunnerParams, ThreadStatus, Turn, TurnInputItem};
 
 mod terminal;
+#[cfg(test)]
+mod chronology_tests;
 
 pub(crate) fn protocol_thread_from_metadata(
     metadata: roder_api::thread::ThreadMetadata,
@@ -99,7 +101,7 @@ pub(crate) fn protocol_turns_from_snapshot(
                     thread_items_from_transcript_items(&record.turn_id, &record.items)
                 })
             };
-            protocol_turn_from_items(record, items)
+            (record.created_at, protocol_turn_from_items(record, items))
         })
         .collect::<Vec<_>>();
     for item_turn in item_turns.iter().filter(|item_turn| {
@@ -108,8 +110,12 @@ pub(crate) fn protocol_turns_from_snapshot(
             .iter()
             .any(|record| record.turn_id == item_turn.turn_id)
     }) {
-        turns.push(protocol_turn_from_item_turn(item_turn));
+        turns.push((item_turn.created_at, protocol_turn_from_item_turn(item_turn)));
     }
+    // Event-only historical turns can precede saved records. Sort before losing
+    // subsecond precision in the public protocol timestamps.
+    turns.sort_by_key(|(created_at, _)| *created_at);
+    let mut turns = turns.into_iter().map(|(_, turn)| turn).collect::<Vec<_>>();
     terminal::restore_outcomes(&mut turns, &snapshot.events);
     turns
 }
