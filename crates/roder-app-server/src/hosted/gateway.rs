@@ -100,6 +100,7 @@ impl HostedRequestPolicy for AllowAllHostedRequestPolicy {
 
 pub struct HostedGatewayOptions {
     pub listen: String,
+    pub lifecycle: Option<Arc<dyn super::HostedLifecycleHandler>>,
     pub authenticator: Arc<HostedAuthenticator>,
     pub tenants: Arc<TenantRegistry>,
     pub audit: Arc<AuditLog>,
@@ -156,6 +157,7 @@ pub async fn serve_hosted_gateway(
                 break;
             };
             let pool = pool.clone();
+            let lifecycle = options.lifecycle.clone();
             let authenticator = options.authenticator.clone();
             let tenants = options.tenants.clone();
             let audit = options.audit.clone();
@@ -165,6 +167,7 @@ pub async fn serve_hosted_gateway(
             let request_policy = options.request_policy.clone();
             connections.spawn(async move {
                 serve_connection(
+                    lifecycle,
                     pool,
                     authenticator,
                     tenants,
@@ -202,6 +205,7 @@ fn idle_eviction_interval(idle_ttl: Duration) -> Duration {
 
 #[allow(clippy::too_many_arguments)]
 async fn serve_connection(
+    lifecycle: Option<Arc<dyn super::HostedLifecycleHandler>>,
     pool: Arc<HostedRuntimePool>,
     authenticator: Arc<HostedAuthenticator>,
     tenants: Arc<TenantRegistry>,
@@ -212,6 +216,9 @@ async fn serve_connection(
     request_policy: Arc<dyn HostedRequestPolicy>,
     mut stream: tokio::net::TcpStream,
 ) {
+    if super::lifecycle_http::try_handle(&mut stream, lifecycle.as_ref()).await {
+        return;
+    }
     if respond_to_health_probe(&mut stream, &pool).await {
         return;
     }

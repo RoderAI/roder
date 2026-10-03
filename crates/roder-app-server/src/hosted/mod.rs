@@ -40,3 +40,6 @@ pub use lease_supervisor::HostedRuntimeLeaseBackend;
 
 mod owner_routing;
 pub use owner_routing::HostedRuntimeRedirect;
+
+mod lifecycle_http;
+pub use lifecycle_http::{HostedLifecycleHandler, HostedLifecycleResponse};

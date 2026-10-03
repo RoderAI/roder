@@ -131,6 +131,7 @@ async fn fixture_with_pool(
     let controller = serve_hosted_gateway(
         pool.clone(),
         HostedGatewayOptions {
+            lifecycle: None,
             listen: "127.0.0.1:0".to_string(),
             authenticator: authenticator.clone(),
             tenants,
@@ -344,6 +345,7 @@ async fn idle_external_bearers_are_revalidated_and_closed_without_notification_l
     let controller = serve_hosted_gateway(
         tenant_pool("external-revalidation", true),
         HostedGatewayOptions {
+            lifecycle: None,
             listen: "127.0.0.1:0".to_string(),
             authenticator,
             tenants: Arc::new(TenantRegistry::default()),
@@ -852,6 +854,7 @@ async fn gateway_periodically_evicts_idle_runtimes_and_stops_on_shutdown() {
     let controller = serve_hosted_gateway(
         pool.clone(),
         HostedGatewayOptions {
+            lifecycle: None,
             listen: "127.0.0.1:0".to_string(),
             authenticator: Arc::new(HostedAuthenticator::default()),
             tenants: Arc::new(TenantRegistry::default()),

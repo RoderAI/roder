@@ -3412,6 +3412,7 @@ dependencies = [
  "base64",
  "dirs 6.0.0",
  "futures",
+ "httparse",
  "if-addrs",
  "ignore",
  "qrcode",

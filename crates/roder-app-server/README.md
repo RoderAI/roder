@@ -63,3 +63,10 @@ and cannot be removed by idle eviction. `resume_owner_admission` restores admiss
 for rollback, reconstructing released runtimes through the ownership factory.
 Forwarded sockets are counted until they close; moving those connections without
 interrupting remote work remains a host coordination responsibility.
+
+Embedders may install `HostedGatewayOptions::lifecycle` to handle signed
+`POST /lifecycle` requests on the same port. The handler receives the exact body
+and `X-Roder-Lifecycle-Signature`; it must authenticate and validate commands
+before changing pool state. The transport bounds headers/body and read time,
+rejects duplicate length/signature headers and transfer encoding, and returns
+404 when no handler is installed. WebSocket authentication remains separate.

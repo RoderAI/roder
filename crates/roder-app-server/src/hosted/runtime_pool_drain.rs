@@ -24,6 +24,14 @@ impl HostedRuntimePool {
         self.draining.load(Ordering::Acquire)
     }
 
+    pub async fn owner_drain_status(&self) -> HostedOwnerDrainStatus {
+        HostedOwnerDrainStatus {
+            remaining_tenants: self.tenants.lock().await.len(),
+            remaining_relays: self.active_relays.load(Ordering::Acquire),
+            released_tenants: 0,
+        }
+    }
+
     /// Stops constructing new tenant runtimes and admitting new client work.
     /// Reconnects to resident owners and completion/recovery messages remain
     /// available so active work can finish. Internal child turns are unaffected.

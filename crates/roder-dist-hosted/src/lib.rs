@@ -117,6 +117,7 @@ pub async fn launch(
     serve_hosted_gateway(
         pool,
         HostedGatewayOptions {
+            lifecycle: None,
             listen: config.listen.clone(),
             authenticator,
             tenants,
