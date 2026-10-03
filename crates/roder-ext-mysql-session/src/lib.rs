@@ -11,6 +11,7 @@ pub mod artifacts;
 mod event_log;
 pub(crate) mod executor;
 pub mod extension;
+pub mod ownership;
 pub mod schema;
 pub mod store;
 

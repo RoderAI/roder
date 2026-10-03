@@ -43,3 +43,31 @@ Do not roll back to writers that key records by runtime sequence. Roll back the
 application with this store version retained, or restore a database backup with
 writers stopped. Events overwritten before this upgrade cannot be recovered by
 the migration.
+
+
+## Runtime ownership primitive
+
+`claim_runtime_owner`, `renew_runtime_owner`, `release_runtime_owner`, and
+`runtime_owner` use a tenant-scoped MySQL row with a process UUID, internal socket
+address, and monotonically increasing generation. The database clock determines
+expiry. A competing claim observes the existing live owner; an expired owner
+cannot renew. Release retains the generation, so an old handle cannot release a
+later owner. Tenant keys compare byte-for-byte. TTLs are bounded to 1–300 seconds.
+Renewal never shortens an existing lease.
+
+This is a storage primitive, not enabled gateway HA. A routing observation is
+not execution authority. Integration must fence durable writes and tool actions,
+stop admission on lease loss, reconcile uncertain external actions before replay,
+and quiesce work before release. A lost database response is an unknown outcome:
+reconcile the process UUID and generation; do not start another runtime blindly.
+The store's dedicated executor can finish an operation after its caller cancels.
+Use a conservative local monotonic deadline measured from before the lease request
+when deciding whether work can continue; the returned database timestamp is not a
+local-clock deadline. Gateway routing and these execution guards remain separate
+integration work.
+
+Real database checks:
+
+```sh
+RODER_MYSQL_TEST_URL=mysql://... cargo test -p roder-ext-mysql-session --test runtime_ownership -- --ignored
+```

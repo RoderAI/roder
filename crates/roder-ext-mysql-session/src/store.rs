@@ -97,8 +97,8 @@ pub(crate) fn unix_micros_now() -> i64 {
 
 #[derive(Clone)]
 pub struct MysqlSessionStore {
-    executor: Arc<DbExecutor>,
-    pool: Pool<MySql>,
+    pub(crate) executor: Arc<DbExecutor>,
+    pub(crate) pool: Pool<MySql>,
     tenant_id: String,
 }
 
