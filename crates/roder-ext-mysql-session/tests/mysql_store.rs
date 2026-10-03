@@ -110,7 +110,7 @@ async fn round_trips_threads_events_and_archive() {
     assert_eq!(page.threads.len(), 1);
     assert!(page.next_cursor.is_some());
 
-    // Events + item events round-trip (idempotent on seq).
+    // Events + item events round-trip (idempotent on event identity).
     store
         .append_event(&thread_a, &envelope(&thread_a, 1))
         .await
@@ -154,4 +154,123 @@ async fn round_trips_threads_events_and_archive() {
     let listed = store.list_threads().await.expect("list after archive");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].thread_id, thread_b);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runtime_sequence_restart_preserves_distinct_events_and_terminal_history() {
+    let Some(url) = test_url() else {
+        eprintln!("skipping: RODER_MYSQL_TEST_URL not set");
+        return;
+    };
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let config = MysqlSessionConfig {
+        database_url: url,
+        tenant_id: format!("restart-{suffix}"),
+        max_connections: Some(2),
+    };
+    let thread = format!("thread-{suffix}");
+    let store = MysqlSessionStore::connect(&config).await.expect("connect");
+    store
+        .create_thread(metadata(&thread, "2026-06-12T00:00:00Z"))
+        .await
+        .expect("create");
+    let mut terminal = envelope(&thread, 1);
+    terminal.event_id = "terminal-before-restart".into();
+    terminal.event =
+        roder_api::events::RoderEvent::TurnInterrupted(roder_api::events::TurnInterrupted {
+            thread_id: thread.clone(),
+            turn_id: "turn-1".into(),
+            timestamp: terminal.timestamp,
+        });
+    store
+        .append_event(&thread, &terminal)
+        .await
+        .expect("terminal event");
+    drop(store);
+    let restarted = MysqlSessionStore::connect(&config)
+        .await
+        .expect("reconnect");
+    let mut next = envelope(&thread, 1);
+    next.event_id = "distinct-after-restart".into();
+    restarted
+        .append_event(&thread, &next)
+        .await
+        .expect("new event with reused runtime sequence");
+    restarted
+        .append_event(&thread, &next)
+        .await
+        .expect("idempotent replay");
+    let snapshot = restarted
+        .load_thread(&thread)
+        .await
+        .expect("load")
+        .expect("exists");
+    assert_eq!(
+        snapshot.events.len(),
+        2,
+        "distinct event identities must survive a runtime counter reset"
+    );
+    assert!(
+        snapshot
+            .events
+            .iter()
+            .any(|event| event.event_id == terminal.event_id)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn independent_writers_preserve_distinct_event_and_item_identities() {
+    let Some(url) = test_url() else { return };
+    let config = MysqlSessionConfig {
+        database_url: url,
+        tenant_id: format!("writers-{}", uuid::Uuid::new_v4()),
+        max_connections: Some(2),
+    };
+    let left = MysqlSessionStore::connect(&config)
+        .await
+        .expect("left store");
+    let right = MysqlSessionStore::connect(&config)
+        .await
+        .expect("right store");
+    let thread = "concurrent-thread".to_string();
+    left.create_thread(metadata(&thread, "2026-06-12T00:00:00Z"))
+        .await
+        .expect("create");
+    let mut a = envelope(&thread, 1);
+    a.event_id = "left-event".into();
+    let mut b = envelope(&thread, 1);
+    b.event_id = "right-event".into();
+    let (a_result, b_result) = tokio::join!(
+        left.append_event(&thread, &a),
+        right.append_event(&thread, &b)
+    );
+    a_result.expect("left event");
+    b_result.expect("right event");
+    let mut ia = item_event(&thread, 1);
+    ia.event_id = "left-item-event".into();
+    let mut ib = item_event(&thread, 1);
+    ib.event_id = "right-item-event".into();
+    let (a_result, b_result) = tokio::join!(
+        left.append_item_event(&thread, &ia),
+        right.append_item_event(&thread, &ib)
+    );
+    a_result.expect("left item");
+    b_result.expect("right item");
+    right
+        .append_item_event(&thread, &ia)
+        .await
+        .expect("duplicate item");
+    right
+        .append_event(&thread, &a)
+        .await
+        .expect("duplicate event");
+    let snapshot = left
+        .load_thread(&thread)
+        .await
+        .expect("load")
+        .expect("exists");
+    assert_eq!(snapshot.events.len(), 2);
+    assert_eq!(snapshot.item_events.len(), 2);
+    assert!(snapshot.events[0].seq < snapshot.events[1].seq);
+    assert!(snapshot.item_events[0].seq < snapshot.item_events[1].seq);
 }
