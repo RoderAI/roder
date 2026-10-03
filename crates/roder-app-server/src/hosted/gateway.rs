@@ -180,7 +180,7 @@ pub async fn serve_hosted_gateway(
         }
         connections.abort_all();
         while connections.join_next().await.is_some() {}
-        pool.drain_on_shutdown(Duration::from_secs(10)).await
+        pool.drain_on_shutdown().await
     });
 
     Ok(HostedGatewayController {
