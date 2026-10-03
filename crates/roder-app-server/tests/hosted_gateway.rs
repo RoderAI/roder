@@ -74,6 +74,7 @@ fn tenant_pool_with_ttl(
 }
 
 struct Fixture {
+    pool: Arc<HostedRuntimePool>,
     controller: roder_app_server::hosted::HostedGatewayController,
     authenticator: Arc<HostedAuthenticator>,
     audit: Arc<AuditLog>,
@@ -119,8 +120,9 @@ async fn fixture_with_policy(
             )
             .unwrap();
     }
+    let pool = tenant_pool(label, allow_local_workspaces);
     let controller = serve_hosted_gateway(
-        tenant_pool(label, allow_local_workspaces),
+        pool.clone(),
         HostedGatewayOptions {
             listen: "127.0.0.1:0".to_string(),
             authenticator: authenticator.clone(),
@@ -138,6 +140,7 @@ async fn fixture_with_policy(
     .unwrap();
     let url = format!("ws://{}", controller.listen_addr);
     Fixture {
+        pool,
         controller,
         authenticator,
         audit,

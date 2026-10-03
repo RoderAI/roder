@@ -165,6 +165,31 @@ impl HostedRuntimePool {
         evicted
     }
 
+    /// Stop turn admission and persist terminal cleanup before the gateway exits.
+    pub(crate) async fn drain_on_shutdown(&self) -> anyhow::Result<()> {
+        let servers = self.tenants.lock().await.values()
+            .map(|entry| entry.server.clone()).collect::<Vec<_>>();
+        let mut drains = tokio::task::JoinSet::new();
+        for server in servers {
+            let timeout = Duration::from_millis(server.features.lifecycle.shutdown_drain_timeout_ms);
+            let deadline = tokio::time::Instant::now() + timeout;
+            let task = tokio::spawn(async move { server.drain_runtime(timeout).await });
+            drains.spawn(wait_for_shutdown_drain(task, deadline));
+        }
+        let mut failures = Vec::new();
+        while let Some(outcome) = drains.join_next().await {
+            match outcome {
+                Ok(Ok(result)) if result.status == roder_protocol::RuntimeDrainStatus::Clean => {}
+                Ok(Ok(result)) => failures.push(format!("{:?}", result.status)),
+                Ok(Err(error)) => failures.push(error.to_string()),
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+        self.tenants.lock().await.clear();
+        anyhow::ensure!(failures.is_empty(), "hosted shutdown did not drain cleanly: {}", failures.join(", "));
+        Ok(())
+    }
+
     /// Graceful shutdown: waits (bounded) for active turns to finish, then
     /// drops all tenant runtimes.
     pub async fn shutdown(&self, max_wait: Duration) {
@@ -189,6 +214,19 @@ impl HostedRuntimePool {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         self.tenants.lock().await.clear();
+    }
+}
+
+// Bound the entire coordinator, including interruption and persistence before
+// its internal wait begins. On timeout, detach rather than cancel persistence:
+// an embedder that stays alive can still finish recording terminal outcomes.
+async fn wait_for_shutdown_drain(
+    task: tokio::task::JoinHandle<roder_protocol::RuntimeDrainResult>,
+    deadline: tokio::time::Instant,
+) -> anyhow::Result<roder_protocol::RuntimeDrainResult> {
+    match tokio::time::timeout_at(deadline, task).await {
+        Ok(result) => Ok(result?),
+        Err(_) => anyhow::bail!("shutdown drain deadline exceeded; cleanup may still be pending"),
     }
 }
 
@@ -224,6 +262,26 @@ fn is_legacy_safe_tenant_id(tenant_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shutdown_deadline_does_not_cancel_pending_persistence() {
+        let (release, pending) = tokio::sync::oneshot::channel();
+        let (persisted, completion) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            pending.await.unwrap();
+            persisted.send(()).unwrap();
+            std::future::pending::<roder_protocol::RuntimeDrainResult>().await
+        });
+        let abort = task.abort_handle();
+        let result = wait_for_shutdown_drain(
+            task,
+            tokio::time::Instant::now() + Duration::from_millis(10),
+        ).await;
+        assert!(result.unwrap_err().to_string().contains("deadline exceeded"));
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), completion).await.unwrap().unwrap();
+        abort.abort();
+    }
 
     #[test]
     fn tenant_dirs_are_path_safe_and_collision_resistant() {

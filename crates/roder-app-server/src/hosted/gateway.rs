@@ -112,7 +112,7 @@ pub struct HostedGatewayOptions {
 pub struct HostedGatewayController {
     pub listen_addr: SocketAddr,
     shutdown: Option<oneshot::Sender<()>>,
-    task: tokio::task::JoinHandle<()>,
+    task: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
 impl HostedGatewayController {
@@ -120,7 +120,7 @@ impl HostedGatewayController {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
-        self.task.await?;
+        self.task.await??;
         Ok(())
     }
 }
@@ -179,6 +179,8 @@ pub async fn serve_hosted_gateway(
             });
         }
         connections.abort_all();
+        while connections.join_next().await.is_some() {}
+        pool.drain_on_shutdown().await
     });
 
     Ok(HostedGatewayController {
