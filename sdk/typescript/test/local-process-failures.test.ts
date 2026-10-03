@@ -31,3 +31,12 @@ test('numeric and string request ids have independent pending responses', async 
   assert.deepEqual(number.result,{id:1});assert.deepEqual(string.result,{id:'1'});
   await transport.close();
 });
+
+test('serialization failure does not poison a reusable request id', async () => {
+  const script = `require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const request=JSON.parse(line);console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{ok:true}}))});`;
+  const transport = new LocalProcessTransport({command:process.execPath,args:['-e',script]});
+  await assert.rejects(transport.request({jsonrpc:'2.0',id:1,method:'initialize',params:{unserializable:1n}}),/BigInt/);
+  const response=await transport.request({jsonrpc:'2.0',id:1,method:'initialize'});
+  assert.deepEqual(response.result,{ok:true});
+  await transport.close();
+});

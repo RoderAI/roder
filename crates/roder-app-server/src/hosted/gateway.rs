@@ -351,7 +351,7 @@ async fn serve_connection(
                 let notification = match notifications.recv().await {
                     Ok(notification) => notification,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        for revoked in executor_server.external_tool_executors.disconnect(&executor_id).await {
+                        for revoked in executor_server.external_tool_executors.revoke_connection(&executor_id, "uncertain").await {
                             super::executor_gateway::revoke(&executor_server, revoked, "notification_lag").await;
                         }
                         let _ = notification_tx.send(OutboundMessage::Control(Message::Close(None)));

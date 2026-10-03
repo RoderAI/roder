@@ -172,6 +172,10 @@ impl ExecutorBindings {
     }
 
     pub async fn disconnect(&self, connection: &str) -> Vec<RevokedExecutor> {
+        self.revoke_connection(connection, "disconnected").await
+    }
+
+    pub async fn revoke_connection(&self, connection: &str, state: &str) -> Vec<RevokedExecutor> {
         let mut bindings = self.inner.lock().await;
         let threads = bindings
             .leases
@@ -181,7 +185,7 @@ impl ExecutorBindings {
             .collect::<Vec<_>>();
         threads
             .iter()
-            .filter_map(|id| bindings.revoke(id, "disconnected"))
+            .filter_map(|id| bindings.revoke(id, state))
             .collect()
     }
 

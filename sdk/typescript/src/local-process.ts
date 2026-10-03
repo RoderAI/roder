@@ -84,6 +84,7 @@ export class LocalProcessTransport implements RoderTransport {
     if (id === undefined || id === null) {
       return Promise.reject(new RoderTransportError("requests require a non-null id"));
     }
+    const serialized = `${JSON.stringify(request)}\n`;
     const key = JSON.stringify(id);
     if (this.pending.has(key)) return Promise.reject(new RoderTransportError("Request id is already pending"));
     const promise = new Promise<JsonRpcResponse<R>>((resolve, reject) => {
@@ -100,7 +101,7 @@ export class LocalProcessTransport implements RoderTransport {
         cleanup: () => options.signal?.removeEventListener("abort", abort),
       });
     });
-    this.process.stdin.write(`${JSON.stringify(request)}\n`);
+    this.process.stdin.write(serialized);
     return promise;
   }
 
