@@ -924,3 +924,6 @@ async fn rate_and_size_limits_fail_requests_deterministically() {
 
     fixture.controller.stop().await.unwrap();
 }
+
+#[path = "hosted_gateway/executor.rs"]
+mod hosted_executor;

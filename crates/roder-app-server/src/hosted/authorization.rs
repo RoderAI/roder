@@ -30,6 +30,9 @@ fn is_system_admin_method(method: &str) -> bool {
 }
 
 pub fn authorize_method(context: &HostedRequestContext, method: &str) -> AuthorizationDecision {
+    if method == "tools/bind_executor" && !context.has_scope(HostedScope::Read) {
+        return AuthorizationDecision::deny("executor_requires_read_scope");
+    }
     if method == "hosted/whoami" {
         return AuthorizationDecision::Allow;
     }

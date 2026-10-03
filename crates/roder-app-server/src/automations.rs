@@ -140,6 +140,7 @@ impl AppServer {
         let workspace_files =
             crate::workspace_files::WorkspaceFileService::new(protocol_notifications.clone());
         Self {
+            external_tool_executors: Arc::default(),
             runtime,
             agent_backend: None,
             workflows,

@@ -9,7 +9,18 @@
     "access": "public"
   },
   "exports": {
-    ".": "./dist/src/index.js"
+    ".": {
+      "browser": {
+        "types": "./dist/src/browser.d.ts",
+        "default": "./dist/src/browser.js"
+      },
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./browser": {
+      "types": "./dist/src/browser.d.ts",
+      "default": "./dist/src/browser.js"
+    }
   },
   "files": [
     "dist/src",

@@ -2288,6 +2288,15 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "tools/bind_executor",
+      "paramsType": "ToolsBindExecutorParams",
+      "resultType": "ToolsBindExecutorResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "tools/call",
       "paramsType": "ToolsCallParams",
       "resultType": "ToolsCallResult",
@@ -2295,6 +2304,15 @@
       "featureGroup": "tools",
       "idempotency": "nonIdempotent",
       "sideEffect": "localState"
+    },
+    {
+      "method": "tools/execution_read",
+      "paramsType": "ToolsExecutionReadParams",
+      "resultType": "ToolsExecutionReadResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "tools/list",
@@ -2309,6 +2327,15 @@
       "method": "tools/resolve",
       "paramsType": "ToolsResolveParams",
       "resultType": "ToolsResolveResult",
+      "stability": "stable",
+      "featureGroup": "tools",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "tools/unbind_executor",
+      "paramsType": "ToolsUnbindExecutorParams",
+      "resultType": "ToolsUnbindExecutorResult",
       "stability": "stable",
       "featureGroup": "tools",
       "idempotency": "nonIdempotent",

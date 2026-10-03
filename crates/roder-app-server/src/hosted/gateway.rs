@@ -313,6 +313,7 @@ async fn serve_connection(
         }
     };
     let app_server = lease.server.clone();
+    let mut executor_connection = super::executor_gateway::ExecutorConnection::new(app_server.clone());
 
     let (mut ws_write, mut ws_read) = websocket.split();
     let connection_authorized = Arc::new(AtomicBool::new(true));
@@ -343,8 +344,38 @@ async fn serve_connection(
     if context.has_scope(HostedScope::Read) {
         let mut notifications = app_server.subscribe_notifications();
         let notification_tx = outbound_tx.clone();
+        let executor_server = app_server.clone();
+        let executor_id = executor_connection.id.clone();
         notification_tasks.spawn(async move {
-            while let Ok(notification) = notifications.recv().await {
+            loop {
+                let notification = match notifications.recv().await {
+                    Ok(notification) => notification,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        for revoked in executor_server.external_tool_executors.revoke_connection(&executor_id, "uncertain").await {
+                            super::executor_gateway::revoke(&executor_server, revoked, "notification_lag").await;
+                        }
+                        let _ = notification_tx.send(OutboundMessage::Control(Message::Close(None)));
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+                let notification = match executor_server
+                    .external_tool_executors
+                    .observe(&executor_id, notification)
+                    .await
+                {
+                    super::external_tools::Delivery::Send(notification) => notification,
+                    super::external_tools::Delivery::Suppress => continue,
+                    super::external_tools::Delivery::Reject(request) => {
+                        super::executor_gateway::reject_execution(
+                            &executor_server,
+                            &request,
+                            "executor_unavailable",
+                        )
+                        .await;
+                        continue;
+                    }
+                };
                 let Ok(text) = serde_json::to_string(&notification) else {
                     continue;
                 };
@@ -538,7 +569,11 @@ async fn serve_connection(
             continue;
         }
 
-        let response = if request.method.starts_with("hosted/") {
+        let response = if let Some(response) =
+            super::executor_gateway::dispatch(&app_server, &executor_connection.id, &request).await
+        {
+            response
+        } else if request.method.starts_with("hosted/") {
             handle_hosted_method(&context, &authenticator, &tenants, &audit, &hooks, request)
         } else {
             let method = request.method.clone();
@@ -576,6 +611,7 @@ async fn serve_connection(
             let _ = outbound_tx.send(OutboundMessage::Control(Message::Text(text.into())));
         }
     }
+    executor_connection.close().await;
     // Stop tenant notifications first, then close the outbound channel and
     // let the writer drain any final authentication error + close frame.
     notification_tasks.abort_all();

@@ -186,7 +186,7 @@ test("websocket transport sends bearer headers and resolves responses", async ()
     id: 7,
     method: "providers/list",
   });
-  await Promise.resolve();
+  await new Promise<void>(resolve => setImmediate(resolve));
   assert.equal(JSON.parse(socket.sent[0] ?? "{}").method, "providers/list");
   socket.message({ jsonrpc: "2.0", id: 7, result: { providers: [] } });
 

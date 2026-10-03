@@ -1,8 +1,9 @@
+import { LocalProcessTransport } from "./local-process.js";
+import { ExternalToolExecutor, type ExternalToolExecutionContext } from "./external-tools.js";
 import { RoderRpcClient } from "./client.js";
 import { RoderRun } from "./run.js";
 import {
   InMemoryTransport,
-  LocalProcessTransport,
   WebSocketTransport,
   type RoderTransport,
 } from "./transports.js";
@@ -45,7 +46,9 @@ export interface RoderAgentOptions {
    * Executes a host tool call published by thread/toolExecutionRequested and replies via
    * tools/resolve. A thrown error resolves the call as an error result.
    */
-  onToolExecute?(call: RoderExternalToolCall): Promise<ExternalToolResult> | ExternalToolResult;
+  onToolExecute?(call: RoderExternalToolCall, context?: ExternalToolExecutionContext): Promise<ExternalToolResult> | ExternalToolResult;
+  /** Hosted gateway connections bind one authenticated executor before sending a turn. */
+  externalToolExecution?: "hosted" | "local";
   threadId?: string;
   workspaceId?: string;
   approvals?: RoderApprovals;
@@ -106,7 +109,10 @@ export interface PlanExitDecision {
 export class RoderAgent {
   readonly client: RoderRpcClient;
   private threadId: string | undefined;
+  private threadStarting: Promise<string> | undefined;
   private callbackLoopStarted = false;
+  private executor: ExternalToolExecutor | undefined;
+  private executorBinding: Promise<ExternalToolExecutor> | undefined;
 
   private constructor(
     private readonly transport: RoderTransport,
@@ -135,8 +141,18 @@ export class RoderAgent {
       developerContext?: string;
     } = {},
   ): Promise<RoderRun> {
-    const threadId = this.threadId ?? (await this.startThread());
+    if (!this.threadId) {
+      this.threadStarting ??= this.startThread().catch(error => {this.threadStarting=undefined;throw error;});
+      this.threadId = await this.threadStarting;
+    }
+    const threadId = this.threadId;
     this.threadId = threadId;
+    if ((this.options.externalToolExecution ?? (this.options.remote ? "hosted" : "local")) === "hosted" && this.options.onToolExecute) {
+      if (this.executor && !this.executor.isActive) { this.executor = undefined; this.executorBinding = undefined; }
+      this.executorBinding ??= ExternalToolExecutor.bind(this.client, threadId, this.options.onToolExecute)
+        .catch(error => { this.executorBinding = undefined; throw error; });
+      this.executor = await this.executorBinding;
+    }
     /**
      * Subscribe before turn/start: while the callback loop is active the hub
      * buffers nothing, so a turn/completed delivered in the same I/O chunk as
@@ -207,7 +223,7 @@ export class RoderAgent {
   }
 
   async close(): Promise<void> {
-    await this.client.close();
+    try { await this.executor?.close(); } finally { await this.client.close(); }
   }
 
   private async startThread(): Promise<string> {
@@ -281,6 +297,7 @@ export class RoderAgent {
            */
         }
       }
+      this.executor?.stop();
     })();
   }
 
@@ -291,6 +308,10 @@ export class RoderAgent {
      * another host's tools/resolve would silently feed it the wrong result
      * (first writer wins, the loser just sees resolved:false).
      */
+    if (this.executor) {
+      void this.executor.handle({jsonrpc: "2.0", method, params}).catch(() => {});
+      if (method === "thread/toolExecutionRequested") return;
+    }
     if (extractString(params, "threadId") !== this.threadId) {
       return;
     }

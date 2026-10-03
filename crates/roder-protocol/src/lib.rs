@@ -1,11 +1,14 @@
 pub mod agent_node;
 pub mod chrome;
+pub mod external_tools;
 pub mod hosted;
 pub mod methods;
 pub mod schema;
 pub mod speech;
 pub mod stats;
 pub mod workflows;
+
+pub use external_tools::*;
 
 use roder_api::artifacts::{
     ArtifactGrepPage, ArtifactReadPage, ArtifactTailPage, ContextArtifactDescriptor,
@@ -1404,6 +1407,8 @@ pub struct ToolExecutionRequestedNotification {
     pub turn_id: TurnId,
     pub request_id: String,
     pub call: ExternalToolCall,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<ToolExecutorLease>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4226,6 +4231,10 @@ pub struct ToolsResolveParams {
     pub output: String,
     #[serde(default)]
     pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<ToolExecutorLease>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

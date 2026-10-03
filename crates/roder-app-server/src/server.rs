@@ -96,6 +96,7 @@ struct RoadmapThreadParams {
 
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
+    pub(crate) external_tool_executors: Arc<crate::hosted::external_tools::ExecutorBindings>,
     pub(crate) agent_backend: Option<crate::backend::AgentBackendBridge>,
     pub(crate) workflows: crate::workflows::AppWorkflowService,
     pub(crate) tasks: BackgroundRunner,

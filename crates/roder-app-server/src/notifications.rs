@@ -205,6 +205,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
             protocol_notification(
                 "thread/toolExecutionRequested",
                 ToolExecutionRequestedNotification {
+                    executor: None,
                     thread_id: event.thread_id.clone(),
                     turn_id: event.turn_id.clone(),
                     request_id: event.request_id.clone(),
