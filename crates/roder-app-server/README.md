@@ -23,3 +23,25 @@ This package is versioned and published with the Roder workspace. Before publish
 make registry-readmes
 python3 scripts/generate-knope-config.py --check
 ```
+
+### Routing hosted sessions to their owner
+
+A `TenantAppServerFactory` can return `HostedRuntimeRedirect` when its durable
+ownership registry reports a different live owner. The gateway forwards the
+connection to that endpoint without constructing a local runtime. The owner
+revalidates the original bearer and the authenticated tenant, then applies its
+normal request authorization, limits, and deployment policy. Forwarding is
+limited to one hop; failed or broken connections are not retried or replayed.
+Rotated credentials for the same tenant therefore resolve through the same
+ownership record rather than a hash of the credential.
+
+The host must validate that registry endpoints belong to its trusted replica
+network. Replicas must share authentication and policy, and their private
+transport must protect credentials. Client-supplied endpoints are never valid
+owner routes. The runtime pool discards permanently revoked cached runtimes on
+reconnect so the factory can resolve current ownership again.
+
+This routing primitive does not acquire leases, transfer active turns, or
+reconcile external side effects. Hosts must bind an owner-fenced store and
+`RuntimeExecutionLease`, install renewal supervision, and coordinate graceful
+drain before removing an owning replica.

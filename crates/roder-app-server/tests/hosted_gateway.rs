@@ -940,3 +940,6 @@ mod hosted_executor;
 
 #[path = "hosted_gateway/ownership.rs"]
 mod hosted_ownership;
+
+#[path = "hosted_gateway/routing.rs"]
+mod hosted_routing;

@@ -37,3 +37,6 @@ pub use tenant::TenantRegistry;
 pub(crate) mod executor_gateway;
 
 pub use lease_supervisor::HostedRuntimeLeaseBackend;
+
+mod owner_routing;
+pub use owner_routing::HostedRuntimeRedirect;

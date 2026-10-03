@@ -260,6 +260,13 @@ async fn serve_connection(
             OffsetDateTime::now_utc(),
         ) {
             Ok(mut resolved) => {
+                if request.headers().contains_key(super::owner_routing::OWNER_HOP_HEADER) {
+                    let expected = super::owner_routing::tenant_digest(&resolved.tenant.tenant_id);
+                    if request.headers().get(super::owner_routing::OWNER_TENANT_HEADER)
+                        .and_then(|value| value.to_str().ok()) != Some(expected.as_str()) {
+                        return Err(deny("owner_tenant_mismatch"));
+                    }
+                }
                 resolved.credential_id = resolved
                     .credential_id
                     .map(|id| redact_bearer(&id, bearer.token));
@@ -275,6 +282,7 @@ async fn serve_connection(
                 *callback_authentication.lock().unwrap() = Some(AuthenticatedConnection {
                     context: resolved,
                     bearer_token: bearer.token.to_string(),
+                    forwarded: request.headers().contains_key(super::owner_routing::OWNER_HOP_HEADER),
                 });
                 if request_supports_remote_protocol(request) {
                     response.headers_mut().insert(
@@ -288,7 +296,7 @@ async fn serve_connection(
         }
     };
 
-    let Ok(websocket) = tokio_tungstenite::accept_hdr_async(stream, callback).await else {
+    let Ok(mut websocket) = tokio_tungstenite::accept_hdr_async(stream, callback).await else {
         return;
     };
     let Some(authentication) = authentication.lock().unwrap().clone() else {
@@ -302,6 +310,34 @@ async fn serve_connection(
     let lease = match pool.lease(&context.tenant.tenant_id).await {
         Ok(lease) => lease,
         Err(error) => {
+            if let Some(route) = error.downcast_ref::<super::owner_routing::HostedRuntimeRedirect>() {
+                let reason = if authentication.forwarded {
+                    let _ = websocket.close(None).await;
+                    Some("owner_route_hop_limit")
+                } else if route.tenant_id != context.tenant.tenant_id {
+                    let _ = websocket.close(None).await;
+                    Some("owner_route_tenant_mismatch")
+                } else {
+                    // The owning gateway authenticates again and applies its
+                    // policy. A forwarded connection can never forward again.
+                    super::owner_routing::relay_to_owner(
+                        websocket, route.endpoint, &bearer_token, &context.tenant.tenant_id,
+                    ).await.err().map(|_| "owner_connection_unavailable")
+                };
+                if let Some(reason) = reason {
+                    audit.record(AuditRecord {
+                        kind: "owner_routing_failed".to_string(),
+                        tenant_id: Some(context.tenant.tenant_id.clone()),
+                        principal_id: Some(context.principal.id().to_string()),
+                        credential_id: context.credential_id.clone(),
+                        method: None,
+                        reason: Some(reason.to_string()),
+                        timestamp: OffsetDateTime::now_utc(),
+                    });
+                }
+                return;
+            }
+            let _ = websocket.close(None).await;
             audit.record(AuditRecord {
                 kind: "runtime_unavailable".to_string(),
                 tenant_id: Some(context.tenant.tenant_id.clone()),
@@ -643,6 +679,7 @@ async fn serve_connection(
 struct AuthenticatedConnection {
     context: HostedRequestContext,
     bearer_token: String,
+    forwarded: bool,
 }
 
 enum OutboundMessage {

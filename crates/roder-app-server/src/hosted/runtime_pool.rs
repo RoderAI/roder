@@ -103,10 +103,19 @@ impl HostedRuntimePool {
     /// in-flight request against it until the lease drops.
     pub async fn lease(&self, tenant_id: &str) -> anyhow::Result<TenantLease> {
         let mut tenants = self.tenants.lock().await;
+        // Revocation is permanent. Existing sockets still hold their fenced
+        // server, but reconnects must resolve durable ownership again instead
+        // of pinning the tenant to a dead cached runtime forever.
+        if tenants.get(tenant_id).is_some_and(|entry| {
+            entry.server.runtime.ensure_execution_authority().is_err()
+        }) {
+            tenants.remove(tenant_id);
+        }
         if !tenants.contains_key(tenant_id) {
             let data_dir = tenant_data_dir(&self.profile.data_root, tenant_id);
             std::fs::create_dir_all(&data_dir)?;
             let server = (self.factory)(tenant_id.to_string(), data_dir).await?;
+            server.runtime.ensure_execution_authority()?;
             // The gateway rejects obvious host-local workspace requests, but
             // native workspace tools also enforce this policy inside the
             // runtime. This closes paths that do not pass through those

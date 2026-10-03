@@ -184,3 +184,39 @@ async fn mysql_generation_loss_revokes_the_runtime_and_closes_its_socket() {
     fixture.controller.stop().await.unwrap();
     assert!(store.release_runtime_owner(&replacement).await.unwrap());
 }
+
+#[tokio::test]
+async fn reconnect_resolves_ownership_again_after_cached_runtime_revocation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let authorities = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_calls = calls.clone();
+    let factory_authorities = authorities.clone();
+    let pool = Arc::new(HostedRuntimePool::new(
+        HostedRuntimeProfile { data_root: temp_dir("owner-recovery"), ..Default::default() },
+        Arc::new(move |_, _| {
+            factory_calls.fetch_add(1, Ordering::SeqCst);
+            let authority = Arc::new(RuntimeExecutionLease::new(
+                std::time::Instant::now() + Duration::from_secs(30),
+            ));
+            factory_authorities.lock().unwrap().push(authority.clone());
+            Box::pin(async move {
+                let mut builder = ExtensionRegistryBuilder::new();
+                builder.inference_engine(Arc::new(FakeInferenceEngine));
+                let runtime = Runtime::new(builder.build()?, RuntimeConfig::default())?
+                    .with_execution_lease(authority);
+                Ok(Arc::new(AppServer::new(Arc::new(runtime))))
+            })
+        }),
+    ));
+    let fixture = fixture_with_pool(pool, RateLimitConfig::default(), Arc::new(AllowAllHostedRequestPolicy)).await;
+    let mut old = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+    assert!(call(&mut old, "hosted/whoami", serde_json::json!({})).await.error.is_none());
+    authorities.lock().unwrap()[0].revoke();
+    let mut replacement = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+    assert!(call(&mut replacement, "hosted/whoami", serde_json::json!({})).await.error.is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.pool.len().await, 1);
+    assert!(authorities.lock().unwrap()[0].require_live().is_err());
+    replacement.close(None).await.unwrap();
+    fixture.controller.stop().await.unwrap();
+}
