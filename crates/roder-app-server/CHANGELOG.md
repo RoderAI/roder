@@ -1,3 +1,9 @@
+## 0.4.1 (2026-10-03)
+
+### Fixes
+
+- Allow hosts to replace default system instructions for app-server turns and commands, preserving thread developer instructions and runtime overlays. The host-only override applies to existing and new threads.
+
 ## 0.4.0 (2026-10-03)
 
 ### Breaking Changes
