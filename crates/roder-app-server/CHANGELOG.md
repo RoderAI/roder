@@ -1,3 +1,9 @@
+## 0.3.2 (2026-10-03)
+
+### Fixes
+
+- Drain active tenant turns and persist terminal outcomes before the hosted gateway exits; report shutdown cleanup failures instead of silently dropping active work.
+
 ## 0.3.1 (2026-10-03)
 
 ### Fixes
