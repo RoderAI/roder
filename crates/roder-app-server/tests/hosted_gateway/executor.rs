@@ -202,3 +202,35 @@ async fn hosted_executor_owns_execution_and_disconnect_never_replays() {
     outsider.close(None).await.unwrap();
     fixture.controller.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn gateway_shutdown_terminalizes_pending_external_turn_before_returning() {
+    let fixture = fixture("executor-shutdown", RateLimitConfig::default(), true).await;
+    let mut owner = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
+    let directory = temp_dir("executor-shutdown-workspace");
+    let workspace = call(&mut owner, "workspace/create", serde_json::json!({
+        "roots":[{"path":directory}],"defaultRootPath":directory
+    })).await.result.unwrap()["workspace"].clone();
+    let thread = call(&mut owner, "thread/start", serde_json::json!({
+        "workspaceId":workspace["id"],"model":"mock",
+        "externalTools":[{"name":"acme_lookup","description":"lookup","parameters":{"type":"object"}}]
+    })).await.result.unwrap()["thread"]["id"].clone();
+    call(&mut owner, "tools/bind_executor", serde_json::json!({"threadId":thread})).await.result.unwrap();
+    call(&mut owner, "turn/start", serde_json::json!({
+        "threadId":thread,"prompt":"FAKE_EXTERNAL_TOOL lookup"
+    })).await.result.unwrap();
+    let pending = notification(&mut owner, "thread/toolExecutionRequested").await;
+    let server = fixture.pool.lease("tenant-a").await.unwrap().server.clone();
+    assert_eq!(server.runtime.active_turn_count().await, 1);
+    fixture.controller.stop().await.unwrap();
+    assert_eq!(server.runtime.active_turn_count().await, 0);
+    let restored = server.handle_request(JsonRpcRequest {
+        jsonrpc: "2.0".into(), id: Some(serde_json::json!("read-after-shutdown")),
+        method: "thread/read".into(),
+        params: Some(serde_json::json!({"threadId":thread,"includeTurns":true})),
+    }).await.result.unwrap();
+    let turns = restored["thread"]["turns"].as_array().unwrap();
+    let turn = turns.iter().find(|turn| turn["id"] == pending["turnId"]).unwrap();
+    assert_ne!(turn["status"], "inProgress", "{restored}");
+    assert!(server.runtime.lifecycle_metrics().clean_shutdown_count > 0);
+}

@@ -165,6 +165,27 @@ impl HostedRuntimePool {
         evicted
     }
 
+    /// Stop turn admission and persist terminal cleanup before the gateway exits.
+    pub(crate) async fn drain_on_shutdown(&self, timeout: Duration) -> anyhow::Result<()> {
+        let servers = self.tenants.lock().await.values()
+            .map(|entry| entry.server.clone()).collect::<Vec<_>>();
+        let mut drains = tokio::task::JoinSet::new();
+        for server in servers {
+            drains.spawn(async move { server.drain_runtime(timeout).await });
+        }
+        let mut failures = Vec::new();
+        while let Some(outcome) = drains.join_next().await {
+            match outcome {
+                Ok(result) if result.status == roder_protocol::RuntimeDrainStatus::Clean => {}
+                Ok(result) => failures.push(format!("{:?}", result.status)),
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+        self.tenants.lock().await.clear();
+        anyhow::ensure!(failures.is_empty(), "hosted shutdown did not drain cleanly: {}", failures.join(", "));
+        Ok(())
+    }
+
     /// Graceful shutdown: waits (bounded) for active turns to finish, then
     /// drops all tenant runtimes.
     pub async fn shutdown(&self, max_wait: Duration) {
