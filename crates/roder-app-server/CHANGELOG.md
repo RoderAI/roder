@@ -1,3 +1,9 @@
+## 0.3.3 (2026-10-03)
+
+### Fixes
+
+- Restore saved and event-only thread turns in chronological order, preserving subsecond ordering when historical turns are absent from the saved transcript records.
+
 ## 0.3.2 (2026-10-03)
 
 ### Fixes
