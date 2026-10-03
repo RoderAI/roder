@@ -79,13 +79,13 @@ which = "8"
 roder-api = { path = "crates/roder-api", version = "0.2.2" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.2.0" }
-roder-app-server = { path = "crates/roder-app-server", version = "0.2.3" }
+roder-app-server = { path = "crates/roder-app-server", version = "0.3.0" }
 roder-codex-auth = { path = "crates/roder-codex-auth", version = "0.1.0" }
 roder-commands = { path = "crates/roder-commands", version = "0.2.0" }
 roder-config = { path = "crates/roder-config", version = "0.2.1" }
 roder-context = { path = "crates/roder-context", version = "0.2.0" }
-roder-core = { path = "crates/roder-core", version = "0.2.1" }
-roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.2.2" }
+roder-core = { path = "crates/roder-core", version = "0.3.0" }
+roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.3.0" }
 roder-code-index = { path = "crates/roder-code-index", version = "0.2.0" }
 roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.2.0" }
 roder-edit-core = { path = "crates/roder-edit-core", version = "0.2.0" }
@@ -94,7 +94,7 @@ roder-supergrok-auth = { path = "crates/roder-supergrok-auth", version = "0.1.0"
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic", version = "0.2.0" }
 roder-ext-chrome = { path = "crates/roder-ext-chrome", version = "0.2.2" }
 roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.4.1" }
-roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.2.0" }
+roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.3.0" }
 roder-ext-cursor = { path = "crates/roder-ext-cursor", version = "0.2.0" }
 roder-ext-deepseek = { path = "crates/roder-ext-deepseek", version = "0.2.0" }
 roder-ext-disk-context = { path = "crates/roder-ext-disk-context", version = "0.2.0" }
@@ -126,7 +126,7 @@ roder-ext-zeroentropy-embeddings = { path = "crates/roder-ext-zeroentropy-embedd
 roder-ext-google-speech = { path = "crates/roder-ext-google-speech", version = "0.2.0" }
 roder-ext-opencode = { path = "crates/roder-ext-opencode", version = "0.2.0" }
 roder-ext-fork-rift = { path = "crates/roder-ext-fork-rift", version = "0.2.0" }
-roder-ext-postgres-session = { path = "crates/roder-ext-postgres-session", version = "0.2.0" }
+roder-ext-postgres-session = { path = "crates/roder-ext-postgres-session", version = "0.3.0" }
 roder-ext-process-host = { path = "crates/roder-ext-process-host", version = "0.2.0" }
 roder-usage-analytics = { path = "crates/roder-usage-analytics", version = "0.2.0" }
 roder-ext-parallel-search = { path = "crates/roder-ext-parallel-search", version = "0.2.0" }
@@ -142,7 +142,7 @@ roder-ext-runner-e2b = { path = "crates/roder-ext-runner-e2b", version = "0.2.0"
 roder-ext-runner-hosted-common = { path = "crates/roder-ext-runner-hosted-common", version = "0.2.0" }
 roder-ext-runner-modal = { path = "crates/roder-ext-runner-modal", version = "0.2.0" }
 roder-ext-runner-runloop = { path = "crates/roder-ext-runner-runloop", version = "0.2.0" }
-roder-ext-runner-sprites = { path = "crates/roder-ext-runner-sprites", version = "0.2.0" }
+roder-ext-runner-sprites = { path = "crates/roder-ext-runner-sprites", version = "0.3.0" }
 roder-ext-runner-unix-local = { path = "crates/roder-ext-runner-unix-local", version = "0.2.0" }
 roder-ext-runner-vercel = { path = "crates/roder-ext-runner-vercel", version = "0.2.0" }
 roder-ext-subagents = { path = "crates/roder-ext-subagents", version = "0.2.0" }
@@ -158,16 +158,16 @@ roder-ext-web-search = { path = "crates/roder-ext-web-search", version = "0.2.0"
 roder-ext-xai = { path = "crates/roder-ext-xai", version = "0.2.0" }
 roder-ext-xiaomi-mimo = { path = "crates/roder-ext-xiaomi-mimo", version = "0.2.0" }
 roder-ext-zerolang = { path = "crates/roder-ext-zerolang", version = "0.2.0" }
-roder-extension-host = { path = "crates/roder-extension-host", version = "0.2.3" }
-roder-evals = { path = "crates/roder-evals", version = "0.2.0" }
-roder-protocol = { path = "crates/roder-protocol", version = "0.2.0" }
+roder-extension-host = { path = "crates/roder-extension-host", version = "0.3.0" }
+roder-evals = { path = "crates/roder-evals", version = "0.3.0" }
+roder-protocol = { path = "crates/roder-protocol", version = "0.3.0" }
 roder-sandbox = { path = "crates/roder-sandbox", version = "0.2.0" }
 roder-search = { path = "crates/roder-search", version = "0.1.0" }
 roder-skills = { path = "crates/roder-skills", version = "0.2.0" }
 roder-theme = { path = "crates/roder-theme", version = "0.1.0" }
 roder-tasks = { path = "crates/roder-tasks", version = "0.2.0" }
 roder-tools = { path = "crates/roder-tools", version = "0.2.0" }
-roder-tui = { path = "crates/roder-tui", version = "0.2.2" }
+roder-tui = { path = "crates/roder-tui", version = "0.3.0" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
 [profile.dev]
