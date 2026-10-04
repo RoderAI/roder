@@ -388,6 +388,9 @@ impl ThreadStore for JsonlThreadStore {
         file.write_all(&line)
             .await
             .with_context(|| format!("append event record to {}", file_path.display()))?;
+        // Tokio may still have a background write after write_all returns.
+        // Delivery after append must survive process exit, not just task cancellation.
+        file.flush().await.context("flush event record")?;
         if let RoderEvent::TranscriptItemAppended(event) = &envelope.event
             && let Some(item) = &event.item
         {

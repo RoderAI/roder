@@ -13,6 +13,7 @@ mod compaction_template;
 mod eager_tools;
 mod thread_admission;
 mod owner_handoff;
+mod execution_receipts;
 use eager_tools::EagerTools;
 #[path = "runtime/patch_progress.rs"]
 mod patch_progress;
@@ -1517,27 +1518,27 @@ impl Runtime {
         request_id: &str,
         resolution: ExternalToolResolution,
     ) -> anyhow::Result<bool> {
-        let pending = self
-            .pending_external_tool_calls
-            .lock()
-            .await
-            .remove(request_id);
-        let Some(pending) = pending else {
+        let mut calls = self.pending_external_tool_calls.lock().await;
+        let Some(pending) = calls.get(request_id) else {
             return Ok(false);
         };
-        self.emit(RoderEvent::ExternalToolCallResolved(
+        self.emit_external_execution(RoderEvent::ExternalToolCallResolved(
             ExternalToolCallResolved {
-                thread_id: pending.thread_id,
-                turn_id: pending.turn_id,
+                thread_id: pending.thread_id.clone(),
+                turn_id: pending.turn_id.clone(),
                 request_id: request_id.to_string(),
-                tool_id: pending.tool_id,
-                tool_name: pending.tool_name,
+                tool_id: pending.tool_id.clone(),
+                tool_name: pending.tool_name.clone(),
                 outcome: ExternalToolCallOutcome::Resolved,
                 is_error: resolution.is_error,
                 timestamp: OffsetDateTime::now_utc(),
             },
         ))
-        .await;
+        .await?;
+        let Some(pending) = calls.remove(request_id) else {
+            return Ok(false);
+        };
+        drop(calls);
         let _ = pending.tx.send(resolution);
         Ok(true)
     }
@@ -5653,21 +5654,7 @@ impl Runtime {
         {
             let _ = store.append_event(thread_id, &envelope).await;
         }
-        // Registered event sinks (e.g. process extensions) receive the
-        // persisted envelope through bounded per-sink queues; a slow sink
-        // never blocks emit or turn progress.
-        let dispatcher = self
-            .event_sink_dispatcher
-            .get_or_init(|| async {
-                crate::event_sink_dispatch::EventSinkDispatcher::start(
-                    &self.registry.event_sinks,
-                    self.bus.clone(),
-                )
-            })
-            .await;
-        if !dispatcher.is_empty() {
-            dispatcher.dispatch(&envelope, &self.bus);
-        }
+        self.dispatch_event_sinks(&envelope).await;
         envelope
     }
 

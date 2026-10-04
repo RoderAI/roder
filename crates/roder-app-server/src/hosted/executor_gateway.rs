@@ -160,10 +160,14 @@ pub(crate) async fn dispatch(
                 Err(error) => Err(error.to_string()),
                 Ok(params) => server
                     .external_tool_executors
-                    .read(connection, &params.executor, &params.request_id)
+                    .read_with_history(
+                        connection,
+                        &params.executor,
+                        &params.request_id,
+                        &server.runtime,
+                    )
                     .await
-                    .map(|execution| serde_json::json!({"execution":execution}))
-                    .map_err(str::to_string),
+                    .map(|execution| serde_json::json!({"execution":execution})),
             }
         }
         "tools/resolve" => match serde_json::from_value::<ToolsResolveParams>(params) {

@@ -312,7 +312,7 @@ impl ExecutorBindings {
                 .get("requestId")
                 .and_then(|v| v.as_str())
                 .and_then(|id| bindings.calls.get_mut(id))
-                && call.state.state == "pending"
+                && (call.state.state == "pending" || call.executor.is_none())
             {
                 call.state.state = notification
                     .params
@@ -336,3 +336,4 @@ impl ExecutorBindings {
 mod tests;
 
 mod monitor;
+mod recovery;

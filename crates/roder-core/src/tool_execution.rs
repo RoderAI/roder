@@ -1004,8 +1004,8 @@ impl Runtime {
             },
         );
         drop(pending);
-        self.emit(RoderEvent::ExternalToolCallRequested(
-            ExternalToolCallRequested {
+        let delivered = self
+            .emit_external_execution(RoderEvent::ExternalToolCallRequested(ExternalToolCallRequested {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
                 request_id: request_id.clone(),
@@ -1013,9 +1013,15 @@ impl Runtime {
                 tool_name: call.name.clone(),
                 arguments: parsed_args.clone(),
                 timestamp: OffsetDateTime::now_utc(),
-            },
-        ))
-        .await;
+            }))
+            .await;
+        if let Err(error) = delivered {
+            self.pending_external_tool_calls
+                .lock()
+                .await
+                .remove(&request_id);
+            return Err(error);
+        }
         let timeout_seconds = self.status().await.external_tool_timeout_seconds;
         let timeout = std::time::Duration::from_secs(timeout_seconds);
         let mut rx = rx;
