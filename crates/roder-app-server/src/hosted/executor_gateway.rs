@@ -27,33 +27,33 @@ impl ExecutorConnection {
 
 impl ExecutorConnection {
     pub async fn revoke(&mut self, reason: &str) {
-        if self.closed {
-            return;
-        }
-        self.closed = true;
-        for revoked in self
-            .server
-            .external_tool_executors
-            .revoke_connection(&self.id, "cancelled")
-            .await
-        {
-            revoke(&self.server, revoked, reason).await;
-        }
+        self.cleanup("cancelled", reason).await;
     }
 
     pub async fn close(&mut self) {
+        self.cleanup("disconnected", "disconnected").await;
+    }
+
+    async fn cleanup(&mut self, state: &'static str, reason: &str) {
         if self.closed {
             return;
         }
+        let server = self.server.clone();
+        let connection = self.id.clone();
+        let reason = reason.to_string();
+        // Spawn the complete transition before awaiting it. If the gateway
+        // task is aborted, dropping this JoinHandle does not abort cleanup.
+        let cleanup = tokio::spawn(async move {
+            for revoked in server
+                .external_tool_executors
+                .revoke_connection(&connection, state)
+                .await
+            {
+                revoke(&server, revoked, &reason).await;
+            }
+        });
         self.closed = true;
-        for revoked in self
-            .server
-            .external_tool_executors
-            .disconnect(&self.id)
-            .await
-        {
-            revoke(&self.server, revoked, "disconnected").await;
-        }
+        let _ = cleanup.await;
     }
 }
 
@@ -224,4 +224,106 @@ pub(crate) async fn dispatch(
         },
         Err(error) => failure(request, error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::extension::ExtensionRegistryBuilder;
+    use roder_core::{Runtime, RuntimeConfig, fake_provider::FakeInferenceEngine};
+    use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
+    use serde_json::{Value, json};
+
+    async fn rpc(server: &AppServer, method: &str, params: Value) -> Value {
+        let response = server
+            .handle_request(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(method)),
+                method: method.into(),
+                params: Some(params),
+            })
+            .await;
+        assert!(response.error.is_none(), "{:?}", response.error);
+        response.result.unwrap()
+    }
+
+    #[tokio::test]
+    async fn aborting_revocation_after_its_first_poll_still_terminalizes_the_pending_turn() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: directory.path().join("threads"),
+        }));
+        let server = Arc::new(AppServer::new(Arc::new(
+            Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap(),
+        )));
+        let workspace = rpc(
+            &server,
+            "workspace/create",
+            json!({"roots":[{"path":directory.path()}],"defaultRootPath":directory.path()}),
+        )
+        .await["workspace"]
+            .clone();
+        let thread = rpc(&server, "thread/start", json!({"workspaceId":workspace["id"],"model":"mock",
+            "externalTools":[{"name":"acme_lookup","description":"lookup","parameters":{"type":"object"}}]
+        })).await["thread"]["id"].as_str().unwrap().to_string();
+        let mut connection = ExecutorConnection::new(server.clone());
+        server
+            .external_tool_executors
+            .bind(&connection.id, &thread, false)
+            .await
+            .unwrap();
+        let mut notifications = server.subscribe_notifications();
+        rpc(
+            &server,
+            "turn/start",
+            json!({"threadId":thread,"prompt":"FAKE_EXTERNAL_TOOL lookup"}),
+        )
+        .await;
+        let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let notification = notifications.recv().await.unwrap();
+                if notification.method == "thread/toolExecutionRequested" {
+                    let request = notification.params["requestId"]
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    server
+                        .external_tool_executors
+                        .observe(&connection.id, notification)
+                        .await;
+                    break request;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(server.runtime.active_turn_count().await, 1);
+        // On this current-thread runtime, the detached task cannot run until
+        // we yield. Cancel the caller after spawning it but before cleanup.
+        let mut cleanup = Box::pin(connection.revoke("authorization_revoked"));
+        assert!(futures::poll!(cleanup.as_mut()).is_pending());
+        drop(cleanup);
+        drop(connection);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while server.runtime.active_turn_count().await != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let (lease, _) = server
+            .external_tool_executors
+            .bind("fresh", &thread, false)
+            .await
+            .unwrap();
+        let state = server
+            .external_tool_executors
+            .read("fresh", &lease, &request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.state, "cancelled");
+    }
 }

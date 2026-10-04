@@ -117,8 +117,66 @@ fn same_connection_identity(
     revalidated: &HostedRequestContext,
 ) -> bool {
     established.tenant.tenant_id == revalidated.tenant.tenant_id
-        && established.principal == revalidated.principal
+        && std::mem::discriminant(&established.principal)
+            == std::mem::discriminant(&revalidated.principal)
+        && established.principal.id() == revalidated.principal.id()
         && established.role == revalidated.role
-        && established.scopes == revalidated.scopes
+        && established
+            .scopes
+            .iter()
+            .all(|scope| revalidated.scopes.contains(scope))
+        && revalidated
+            .scopes
+            .iter()
+            .all(|scope| established.scopes.contains(scope))
         && established.credential_id == revalidated.credential_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::identity::{HostedRole, HostedScope, PrincipalContext, TenantContext};
+
+    fn context() -> HostedRequestContext {
+        HostedRequestContext {
+            tenant: TenantContext {
+                tenant_id: "tenant".into(),
+                display_name: None,
+            },
+            principal: PrincipalContext::User {
+                user_id: "user".into(),
+                display_name: None,
+            },
+            role: HostedRole::Member,
+            scopes: vec![HostedScope::Read, HostedScope::Write],
+            credential_id: Some("credential".into()),
+            authenticated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn labels_and_scope_order_do_not_change_authority_but_ids_roles_and_scope_sets_do() {
+        let original = context();
+        let mut refreshed = context();
+        refreshed.principal = PrincipalContext::User {
+            user_id: "user".into(),
+            display_name: Some("Renamed".into()),
+        };
+        refreshed.scopes.reverse();
+        assert!(same_connection_identity(&original, &refreshed));
+        refreshed.scopes.pop();
+        assert!(!same_connection_identity(&original, &refreshed));
+        refreshed = context();
+        refreshed.role = HostedRole::TenantAdmin;
+        assert!(!same_connection_identity(&original, &refreshed));
+        refreshed = context();
+        refreshed.tenant.tenant_id = "other".into();
+        assert!(!same_connection_identity(&original, &refreshed));
+        refreshed = context();
+        refreshed.principal = PrincipalContext::User {
+            user_id: "other".into(),
+            display_name: None,
+        };
+        assert!(!same_connection_identity(&original, &refreshed));
+    }
 }

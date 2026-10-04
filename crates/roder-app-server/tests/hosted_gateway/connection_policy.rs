@@ -6,9 +6,18 @@ use futures::future::BoxFuture;
 struct RevocablePolicy {
     denied: AtomicBool,
     hanging: AtomicBool,
+    dispatch_only: AtomicBool,
 }
 
 impl HostedRequestPolicy for RevocablePolicy {
+    fn revalidation_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(if self.dispatch_only.load(Ordering::Acquire) {
+            60
+        } else {
+            1
+        })
+    }
+
     fn evaluate(
         &self,
         _: &HostedRequestContext,
@@ -186,6 +195,7 @@ async fn idle_revocation_terminalizes_pending_executor_without_client_requests()
 #[tokio::test]
 async fn live_policy_denies_before_dispatch_and_admission_does_not_start_runtime() {
     let policy = Arc::new(RevocablePolicy::default());
+    policy.dispatch_only.store(true, Ordering::Release);
     let fixture = fixture_with_policy(
         "live-dispatch",
         RateLimitConfig::default(),
