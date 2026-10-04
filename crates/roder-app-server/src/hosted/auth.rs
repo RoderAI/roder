@@ -76,6 +76,9 @@ pub struct ServiceAccountKey {
 /// built-in tenant registration is intentionally not required for that path.
 pub trait ExternalBearerVerifier: Send + Sync {
     /// Verifies one bearer credential at the supplied authentication time.
+    /// This synchronous boundary must perform only bounded local credential
+    /// decoding; do not block or perform I/O here. Live remote authorization
+    /// belongs in `HostedRequestPolicy::revalidate`, whose future is timed out.
     fn verify_bearer(
         &self,
         token: &str,

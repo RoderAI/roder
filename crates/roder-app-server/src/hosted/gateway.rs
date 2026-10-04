@@ -38,65 +38,14 @@ use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
 use super::audit::{AuditLog, AuditRecord};
 use super::auth::{HostedAuthenticator, PrincipalSeed};
 use super::authorization::authorize_method;
+use super::connection_policy::{redact_bearer, revalidate_connection};
 use super::hook_delivery::HookDeliveryService;
 use super::hooks::HookStore;
 use super::rate_limit::{RateLimitConfig, RateLimiter};
 use super::runtime_pool::HostedRuntimePool;
 use super::tenant::TenantRegistry;
+use super::{HostedRequestPolicy, HostedRequestPolicyDecision};
 use crate::remote::REMOTE_PROTOCOL;
-
-/// Result of applying deployment-specific hosted request policy.
-#[derive(Debug, Clone)]
-pub enum HostedRequestPolicyDecision {
-    /// Dispatch this request after the gateway's built-in authorization and
-    /// workspace checks. The request may differ from the original.
-    Allow(JsonRpcRequest),
-    /// Reject the request with a JSON-RPC forbidden response.
-    Deny { reason: String },
-}
-
-impl HostedRequestPolicyDecision {
-    /// Allows a request, optionally after rewriting it.
-    pub fn allow(request: JsonRpcRequest) -> Self {
-        Self::Allow(request)
-    }
-
-    /// Denies a request with an audit-safe reason code or message.
-    pub fn deny(reason: impl Into<String>) -> Self {
-        Self::Deny {
-            reason: reason.into(),
-        }
-    }
-}
-
-/// Applies deployment-specific policy to authenticated hosted requests.
-///
-/// The bearer is provided so a host can bind request capabilities to the
-/// authenticated connection. Implementations must not log or persist it.
-pub trait HostedRequestPolicy: Send + Sync {
-    /// Inspects, rewrites, or denies a request before JSON-RPC dispatch.
-    fn evaluate(
-        &self,
-        context: &HostedRequestContext,
-        bearer_token: &str,
-        request: JsonRpcRequest,
-    ) -> HostedRequestPolicyDecision;
-}
-
-/// Default hosted request policy that leaves every request unchanged.
-#[derive(Debug, Default)]
-pub struct AllowAllHostedRequestPolicy;
-
-impl HostedRequestPolicy for AllowAllHostedRequestPolicy {
-    fn evaluate(
-        &self,
-        _context: &HostedRequestContext,
-        _bearer_token: &str,
-        request: JsonRpcRequest,
-    ) -> HostedRequestPolicyDecision {
-        HostedRequestPolicyDecision::Allow(request)
-    }
-}
 
 pub struct HostedGatewayOptions {
     pub listen: String,
@@ -195,7 +144,6 @@ pub async fn serve_hosted_gateway(
 
 const MIN_IDLE_EVICTION_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_IDLE_EVICTION_INTERVAL: Duration = Duration::from_secs(60);
-const AUTH_REVALIDATION_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Scans often enough to make the configured TTL meaningful while bounding
 /// both zero-TTL spin loops and work done by long-lived hosted gateways.
@@ -267,10 +215,17 @@ async fn serve_connection(
             OffsetDateTime::now_utc(),
         ) {
             Ok(mut resolved) => {
-                if request.headers().contains_key(super::owner_routing::OWNER_HOP_HEADER) {
+                if request
+                    .headers()
+                    .contains_key(super::owner_routing::OWNER_HOP_HEADER)
+                {
                     let expected = super::owner_routing::tenant_digest(&resolved.tenant.tenant_id);
-                    if request.headers().get(super::owner_routing::OWNER_TENANT_HEADER)
-                        .and_then(|value| value.to_str().ok()) != Some(expected.as_str()) {
+                    if request
+                        .headers()
+                        .get(super::owner_routing::OWNER_TENANT_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        != Some(expected.as_str())
+                    {
                         return Err(deny("owner_tenant_mismatch"));
                     }
                 }
@@ -289,7 +244,9 @@ async fn serve_connection(
                 *callback_authentication.lock().unwrap() = Some(AuthenticatedConnection {
                     context: resolved,
                     bearer_token: bearer.token.to_string(),
-                    forwarded: request.headers().contains_key(super::owner_routing::OWNER_HOP_HEADER),
+                    forwarded: request
+                        .headers()
+                        .contains_key(super::owner_routing::OWNER_HOP_HEADER),
                 });
                 if request_supports_remote_protocol(request) {
                     response.headers_mut().insert(
@@ -312,12 +269,38 @@ async fn serve_connection(
     let mut context = authentication.context;
     let bearer_token = authentication.bearer_token;
 
+    context = match revalidate_connection(
+        &authenticator,
+        &tenants,
+        request_policy.as_ref(),
+        &context,
+        &bearer_token,
+    )
+    .await
+    {
+        Ok(context) => context,
+        Err(reason) => {
+            audit.record(AuditRecord {
+                kind: "auth_revalidation_failed".to_string(),
+                tenant_id: Some(context.tenant.tenant_id.clone()),
+                principal_id: Some(context.principal.id().to_string()),
+                credential_id: context.credential_id.clone(),
+                method: None,
+                reason: Some(reason),
+                timestamp: OffsetDateTime::now_utc(),
+            });
+            let _ = websocket.close(None).await;
+            return;
+        }
+    };
+
     // Resolve the tenant's runtime and hold the lease for the lifetime of
     // the connection so it is never idle-evicted mid-session.
     let lease = match pool.lease(&context.tenant.tenant_id).await {
         Ok(lease) => lease,
         Err(error) => {
-            if let Some(route) = error.downcast_ref::<super::owner_routing::HostedRuntimeRedirect>() {
+            if let Some(route) = error.downcast_ref::<super::owner_routing::HostedRuntimeRedirect>()
+            {
                 let reason = if authentication.forwarded {
                     let _ = websocket.close(None).await;
                     Some("owner_route_hop_limit")
@@ -329,8 +312,16 @@ async fn serve_connection(
                     // policy. A forwarded connection can never forward again.
                     match pool.admit_owner_relay().await {
                         Ok(_relay) => super::owner_routing::relay_to_owner(
-                            websocket, route.endpoint, &bearer_token, &context.tenant.tenant_id, pool.clone(), context.has_scope(HostedScope::Write),
-                        ).await.err().map(|_| "owner_connection_unavailable"),
+                            websocket,
+                            route.endpoint,
+                            &bearer_token,
+                            &context.tenant.tenant_id,
+                            pool.clone(),
+                            context.has_scope(HostedScope::Write),
+                        )
+                        .await
+                        .err()
+                        .map(|_| "owner_connection_unavailable"),
                         Err(_) => {
                             let _ = websocket.close(None).await;
                             Some("owner_relay_draining")
@@ -364,7 +355,8 @@ async fn serve_connection(
         }
     };
     let app_server = lease.server.clone();
-    let mut executor_connection = super::executor_gateway::ExecutorConnection::new(app_server.clone());
+    let mut executor_connection =
+        super::executor_gateway::ExecutorConnection::new(app_server.clone());
 
     let (mut ws_write, mut ws_read) = websocket.split();
     let connection_authorized = Arc::new(AtomicBool::new(true));
@@ -408,10 +400,20 @@ async fn serve_connection(
                 let notification = match notifications.recv().await {
                     Ok(notification) => notification,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        for revoked in executor_server.external_tool_executors.revoke_connection(&executor_id, "uncertain").await {
-                            super::executor_gateway::revoke(&executor_server, revoked, "notification_lag").await;
+                        for revoked in executor_server
+                            .external_tool_executors
+                            .revoke_connection(&executor_id, "uncertain")
+                            .await
+                        {
+                            super::executor_gateway::revoke(
+                                &executor_server,
+                                revoked,
+                                "notification_lag",
+                            )
+                            .await;
                         }
-                        let _ = notification_tx.send(OutboundMessage::Control(Message::Close(None)));
+                        let _ =
+                            notification_tx.send(OutboundMessage::Control(Message::Close(None)));
                         break;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -449,7 +451,11 @@ async fn serve_connection(
     // Revalidate even when a client is completely idle. Otherwise an expired
     // or revoked socket could keep consuming tenant notifications forever by
     // never sending another request.
-    let mut auth_revalidation = tokio::time::interval(AUTH_REVALIDATION_INTERVAL);
+    let mut auth_revalidation = tokio::time::interval(
+        request_policy
+            .revalidation_interval()
+            .clamp(Duration::from_secs(1), Duration::from_secs(60)),
+    );
     auth_revalidation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     auth_revalidation.tick().await;
 
@@ -465,9 +471,10 @@ async fn serve_connection(
                 match revalidate_connection(
                     &authenticator,
                     &tenants,
+                    request_policy.as_ref(),
                     &context,
                     &bearer_token,
-                ) {
+                ).await {
                     Ok(revalidated) => context = revalidated,
                     Err(reason) => {
                         audit.record(AuditRecord {
@@ -483,6 +490,7 @@ async fn serve_connection(
                         // producer. The writer drops any notification already
                         // queued ahead of the terminal error and close frame.
                         connection_authorized.store(false, Ordering::Release);
+                        executor_connection.revoke("authorization_revoked").await;
                         notification_tasks.abort_all();
                         send_error(
                             &outbound_tx,
@@ -536,7 +544,15 @@ async fn serve_connection(
         // A valid handshake does not grant an unbounded session: external
         // JWT/session verifiers, expiring service-account keys, and revoked
         // service-account keys are checked again before every dispatch.
-        context = match revalidate_connection(&authenticator, &tenants, &context, &bearer_token) {
+        context = match revalidate_connection(
+            &authenticator,
+            &tenants,
+            request_policy.as_ref(),
+            &context,
+            &bearer_token,
+        )
+        .await
+        {
             Ok(revalidated) => revalidated,
             Err(reason) => {
                 audit.record(AuditRecord {
@@ -551,6 +567,7 @@ async fn serve_connection(
                 // Prevent queued tenant events from racing ahead of the
                 // terminal auth error once this failure is known.
                 connection_authorized.store(false, Ordering::Release);
+                executor_connection.revoke("authorization_revoked").await;
                 notification_tasks.abort_all();
                 send_error(
                     &outbound_tx,
@@ -644,21 +661,42 @@ async fn serve_connection(
 
         if request.method == "hosted/owner/drain" {
             if !authentication.forwarded {
-                send_error(&outbound_tx, id, -32012, "owner drain requires an authenticated relay");
-            } else if let Some(draining) = request.params.as_ref().and_then(|params| params.get("draining")).and_then(serde_json::Value::as_bool) {
+                send_error(
+                    &outbound_tx,
+                    id,
+                    -32012,
+                    "owner drain requires an authenticated relay",
+                );
+            } else if let Some(draining) = request
+                .params
+                .as_ref()
+                .and_then(|params| params.get("draining"))
+                .and_then(serde_json::Value::as_bool)
+            {
                 relay_draining = draining;
-                let response = serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"draining":draining}});
-                let _ = outbound_tx.send(OutboundMessage::Control(Message::Text(response.to_string().into())));
+                let response =
+                    serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"draining":draining}});
+                let _ = outbound_tx.send(OutboundMessage::Control(Message::Text(
+                    response.to_string().into(),
+                )));
             } else {
                 send_error(&outbound_tx, id, -32602, "draining must be a boolean");
             }
             continue;
         }
 
-        let _request_admission = match pool.admit_request(&context.tenant.tenant_id, &request.method).await {
+        let _request_admission = match pool
+            .admit_request(&context.tenant.tenant_id, &request.method)
+            .await
+        {
             Ok(admission) => admission,
             Err(_) => {
-                send_error(&outbound_tx, id, -32015, "hosted replica is draining; request was not dispatched");
+                send_error(
+                    &outbound_tx,
+                    id,
+                    -32015,
+                    "hosted replica is draining; request was not dispatched",
+                );
                 continue;
             }
         };
@@ -784,42 +822,10 @@ fn request_supports_remote_protocol(request: &Request) -> bool {
         })
 }
 
-fn redact_bearer(reason: &str, bearer_token: &str) -> String {
-    reason.replace(bearer_token, "[REDACTED]")
-}
-
-fn revalidate_connection(
-    authenticator: &HostedAuthenticator,
-    tenants: &TenantRegistry,
-    established: &HostedRequestContext,
-    bearer_token: &str,
-) -> Result<HostedRequestContext, String> {
-    let mut revalidated = authenticator
-        .authenticate(bearer_token, tenants, OffsetDateTime::now_utc())
-        .map_err(|error| redact_bearer(&error.to_string().replace(' ', "_"), bearer_token))?;
-    revalidated.credential_id = revalidated
-        .credential_id
-        .map(|id| redact_bearer(&id, bearer_token));
-    if !same_connection_identity(established, &revalidated) {
-        return Err("credential_identity_changed".to_string());
-    }
-    // The refreshed authentication timestamp is intentionally updated;
-    // identity, role, and scopes remain bound to this tenant connection.
-    Ok(revalidated)
-}
-
-fn same_connection_identity(
-    established: &HostedRequestContext,
-    revalidated: &HostedRequestContext,
+async fn respond_to_health_probe(
+    stream: &mut tokio::net::TcpStream,
+    pool: &HostedRuntimePool,
 ) -> bool {
-    established.tenant.tenant_id == revalidated.tenant.tenant_id
-        && established.principal == revalidated.principal
-        && established.role == revalidated.role
-        && established.scopes == revalidated.scopes
-        && established.credential_id == revalidated.credential_id
-}
-
-async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream, pool: &HostedRuntimePool) -> bool {
     let mut buffer = [0_u8; 512];
     let Ok(bytes_read) = stream.peek(&mut buffer).await else {
         return false;
@@ -827,7 +833,8 @@ async fn respond_to_health_probe(stream: &mut tokio::net::TcpStream, pool: &Host
     if !is_health_probe(&buffer[..bytes_read]) {
         return false;
     }
-    let response: &[u8] = if pool.is_draining() && buffer[..bytes_read].starts_with(b"GET /readyz ") {
+    let response: &[u8] = if pool.is_draining() && buffer[..bytes_read].starts_with(b"GET /readyz ")
+    {
         b"HTTP/1.1 503 Service Unavailable\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\ndraining\n"
     } else {
         b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 3\r\nconnection: close\r\n\r\nok\n"

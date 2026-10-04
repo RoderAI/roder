@@ -82,3 +82,20 @@ to replace the default terminal-agent system prompt for app-server turns and
 commands. This is host configuration, not a client request option. It applies
 to resumed threads too; thread developer instructions and runtime overlays are
 preserved. Direct runtime and alternate backend integrations own their prompts.
+
+### Live connection authority
+
+`hosted::HostedRequestPolicy::revalidate` is an asynchronous host-policy check
+at admission, before each request, and on the idle timer. The gateway bounds
+it to five seconds. Denial, failure or timeout revokes that connection's
+executor leases, marks pending calls cancelled and closes the socket; another
+connection's authority is unchanged. This is independent of browser timers or
+client unbind messages. Restoring access requires a new connection and executor;
+old requests cannot be resolved or replayed. A completed external transaction
+still requires reconciliation and is not rolled back by cancellation.
+
+Hosts can choose `revalidation_interval` (clamped to 1–60 seconds; default 1).
+The credential is also checked before every request. Policy implementations
+must return coarse reasons, must not log or persist the bearer, and should
+consult current application policy without issuing or extending credentials.
+Policy types are exported from `hosted` and `hosted::connection_policy`.
