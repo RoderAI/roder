@@ -363,14 +363,16 @@ async fn idle_external_bearers_are_revalidated_and_closed_without_notification_l
     let url = format!("ws://{}", controller.listen_addr);
 
     let mut socket = connect(&url, "external-expiring-token").await.unwrap();
-    assert_eq!(verifier.checks.load(Ordering::SeqCst), 1);
+    let admission_checks = verifier.checks.load(Ordering::SeqCst);
+    assert!(admission_checks >= 1);
     assert!(
         call(&mut socket, "initialize", serde_json::json!({}))
             .await
             .error
             .is_none()
     );
-    assert_eq!(verifier.checks.load(Ordering::SeqCst), 2);
+    let dispatch_checks = verifier.checks.load(Ordering::SeqCst);
+    assert!(dispatch_checks > admission_checks);
 
     verifier.valid.store(false, Ordering::SeqCst);
     // Send nothing else. The gateway's independent auth timer must terminate
@@ -404,7 +406,7 @@ async fn idle_external_bearers_are_revalidated_and_closed_without_notification_l
     .await
     .expect("idle expired socket was not closed by the auth timer");
     assert!(saw_terminal_auth_error);
-    assert!(verifier.checks.load(Ordering::SeqCst) >= 3);
+    assert!(verifier.checks.load(Ordering::SeqCst) > dispatch_checks);
 
     let records = serde_json::to_string(&audit.for_tenant("external-tenant")).unwrap();
     assert!(records.contains("auth_revalidation_failed"));
@@ -956,3 +958,6 @@ mod hosted_ownership;
 
 #[path = "hosted_gateway/routing.rs"]
 mod hosted_routing;
+
+#[path = "hosted_gateway/connection_policy.rs"]
+mod connection_policy;

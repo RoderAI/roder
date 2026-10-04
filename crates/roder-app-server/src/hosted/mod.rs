@@ -10,6 +10,7 @@
 pub mod audit;
 pub mod auth;
 pub mod authorization;
+pub mod connection_policy;
 pub(crate) mod external_tools;
 pub mod gateway;
 pub mod hook_delivery;
@@ -22,10 +23,10 @@ pub mod tenant;
 pub use audit::{AuditLog, AuditRecord};
 pub use auth::{ExternalBearerVerifier, HostedAuthError, HostedAuthenticator, ServiceAccountKey};
 pub use authorization::authorize_method;
-pub use gateway::{
-    AllowAllHostedRequestPolicy, HostedGatewayController, HostedGatewayOptions,
-    HostedRequestPolicy, HostedRequestPolicyDecision, serve_hosted_gateway,
+pub use connection_policy::{
+    AllowAllHostedRequestPolicy, HostedRequestPolicy, HostedRequestPolicyDecision,
 };
+pub use gateway::{HostedGatewayController, HostedGatewayOptions, serve_hosted_gateway};
 pub use hook_delivery::{
     HookDeliveryConfig, HookDeliveryService, HookFailureMode, SIGNATURE_HEADER,
 };

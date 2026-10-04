@@ -26,6 +26,21 @@ impl ExecutorConnection {
 }
 
 impl ExecutorConnection {
+    pub async fn revoke(&mut self, reason: &str) {
+        if self.closed {
+            return;
+        }
+        self.closed = true;
+        for revoked in self
+            .server
+            .external_tool_executors
+            .revoke_connection(&self.id, "cancelled")
+            .await
+        {
+            revoke(&self.server, revoked, reason).await;
+        }
+    }
+
     pub async fn close(&mut self) {
         if self.closed {
             return;

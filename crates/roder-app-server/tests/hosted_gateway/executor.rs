@@ -1,7 +1,7 @@
 //! Authenticated executor contract exercised through real WebSocket connections.
 use super::*;
 
-async fn notification(socket: &mut Socket, method: &str) -> serde_json::Value {
+pub(super) async fn notification(socket: &mut Socket, method: &str) -> serde_json::Value {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if let Some(Ok(Message::Text(text))) = socket.next().await {
