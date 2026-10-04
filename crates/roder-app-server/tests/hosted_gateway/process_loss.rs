@@ -139,6 +139,82 @@ async fn spawn_gateway(namespace: &str) -> (KillOnDrop, String) {
     (child, url)
 }
 
+// Inspect every frame while waiting for recovery RPC replies. A replay may arrive
+// before the response; checking only the later quiet window would miss it.
+async fn recovery_call(
+    socket: &mut Socket,
+    method: &str,
+    params: serde_json::Value,
+) -> JsonRpcResponse {
+    socket
+        .send(Message::Text(
+            serde_json::json!({
+                "jsonrpc":"2.0", "id":method, "method":method, "params":params
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let Message::Text(text) = socket
+                .next()
+                .await
+                .expect("recovery socket closed")
+                .unwrap()
+            else {
+                continue;
+            };
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_ne!(
+                value["method"], "thread/toolExecutionRequested",
+                "history must never replay effects during recovery RPCs"
+            );
+            if value["id"] == method {
+                return serde_json::from_value(value).unwrap();
+            }
+        }
+    })
+    .await
+    .expect("recovery RPC deadline")
+}
+
+#[tokio::test]
+async fn recovery_observer_rejects_replay_before_rpc_response() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut server = tokio_tungstenite::accept_async(stream).await.unwrap();
+        server.next().await.unwrap().unwrap();
+        server.send(Message::Text(serde_json::json!({"jsonrpc":"2.0","method":"thread/toolExecutionRequested","params":{}}).to_string().into())).await.unwrap();
+    });
+    let mut socket = connect(&format!("ws://{address}"), "test-only")
+        .await
+        .unwrap();
+    let observed = tokio::spawn(async move {
+        recovery_call(&mut socket, "thread/read", serde_json::json!({})).await
+    })
+    .await
+    .expect_err("the injected replay must fail the recovery observer");
+    server_task.await.expect("replay fixture failed");
+    assert!(
+        observed.is_panic(),
+        "observer must reject replay, not be cancelled"
+    );
+    let panic = observed.into_panic();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("");
+    assert!(
+        message.contains("history must never replay effects during recovery RPCs"),
+        "unexpected observer failure: {message}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires isolated RODER_MYSQL_TEST_URL; kills only its own child gateway"]
 async fn killed_gateway_recovers_thread_without_replaying_pending_browser_call() {
@@ -249,7 +325,7 @@ async fn killed_gateway_recovers_thread_without_replaying_pending_browser_call()
     .await
     .expect("killed owner lease expiry");
     let mut recovered = connect(&url, "rk_test_tenant_a_writer").await.unwrap();
-    let read = call(
+    let read = recovery_call(
         &mut recovered,
         "thread/read",
         serde_json::json!({"threadId":thread,"includeTurns":true}),
@@ -270,14 +346,14 @@ async fn killed_gateway_recovers_thread_without_replaying_pending_browser_call()
     let new_owner = store.runtime_owner().await.unwrap().unwrap();
     assert!(new_owner.generation > old_owner.generation);
     assert_ne!(new_owner.owner_id, old_owner.owner_id);
-    let replay = call(&mut recovered, "tools/resolve", serde_json::json!({
+    let replay = recovery_call(&mut recovered, "tools/resolve", serde_json::json!({
         "executor":lease, "turnId":pending["turnId"], "requestId":pending["requestId"], "output":"old result", "isError":false
     })).await;
     assert!(
         replay.error.is_some(),
         "old process lease cannot resolve after crash"
     );
-    let fresh = call(
+    let fresh = recovery_call(
         &mut recovered,
         "tools/bind_executor",
         serde_json::json!({"threadId":thread}),
@@ -286,7 +362,7 @@ async fn killed_gateway_recovers_thread_without_replaying_pending_browser_call()
     assert!(fresh.error.is_none(), "{:?}", fresh.error);
     let fresh_lease = fresh.result.unwrap()["executor"].clone();
     assert_ne!(fresh_lease["leaseId"], lease["leaseId"]);
-    let receipt = call(
+    let receipt = recovery_call(
         &mut recovered,
         "tools/execution_read",
         serde_json::json!({
@@ -302,7 +378,7 @@ async fn killed_gateway_recovers_thread_without_replaying_pending_browser_call()
         "a killed process cannot prove whether the browser applied its pending action"
     );
     assert_eq!(receipt["turnId"], pending["turnId"]);
-    let late = call(&mut recovered, "tools/resolve", serde_json::json!({
+    let late = recovery_call(&mut recovered, "tools/resolve", serde_json::json!({
         "executor":fresh_lease, "turnId":pending["turnId"], "requestId":pending["requestId"], "output":"late result", "isError":false
     })).await;
     assert!(
@@ -321,7 +397,7 @@ async fn killed_gateway_recovers_thread_without_replaying_pending_browser_call()
     .await;
     assert!(quiet.is_err(), "successor connection should remain usable");
     assert!(
-        call(&mut recovered, "hosted/whoami", serde_json::json!({}))
+        recovery_call(&mut recovered, "hosted/whoami", serde_json::json!({}))
             .await
             .error
             .is_none()
