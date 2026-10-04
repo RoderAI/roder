@@ -63,10 +63,6 @@ impl RuntimeExecutionLease {
             .deadline
             .lock()
             .map_err(|_| anyhow::anyhow!("runtime execution lease unavailable"))?;
-        anyhow::ensure!(
-            deadline.is_some_and(|deadline| deadline > Instant::now()),
-            "runtime execution lease expired or revoked"
-        );
         if self.executions.load(Ordering::Acquire) != 0 {
             return Ok(false);
         }
@@ -150,6 +146,26 @@ mod tests {
         assert!(live.require_live().is_err());
         assert!(
             live.renew(Instant::now() + Duration::from_secs(60))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn revoked_owner_sealing_waits_for_admitted_execution() {
+        let lease = Arc::new(RuntimeExecutionLease::new(
+            Instant::now() + Duration::from_secs(30),
+        ));
+        let permit = lease.enter().unwrap();
+        lease.revoke();
+        assert!(!lease.seal_if_idle().unwrap());
+        drop(permit);
+        assert!(lease.seal_if_idle().unwrap());
+        assert!(lease.seal_if_idle().unwrap());
+        assert!(lease.require_live().is_err());
+        assert!(lease.enter().is_err());
+        assert!(
+            lease
+                .renew(Instant::now() + Duration::from_secs(30))
                 .is_err()
         );
     }

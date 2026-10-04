@@ -163,6 +163,7 @@ impl AppServer {
             command_registry: tokio::sync::OnceCell::new(),
             node_identity: std::sync::OnceLock::new(),
             runtime_lease_supervisor: std::sync::Mutex::new(None),
+            runtime_owner_release: tokio::sync::Mutex::new(()),
         }
     }
 

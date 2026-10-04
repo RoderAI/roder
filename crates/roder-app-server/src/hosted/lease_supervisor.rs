@@ -12,7 +12,8 @@ pub trait HostedRuntimeLeaseBackend: Send + Sync + 'static {
     /// Return true only after confirming that exact generation was renewed for
     /// at least `ttl`. False means lost authority; errors are unknown outcomes.
     async fn renew(&self, ttl: Duration) -> anyhow::Result<bool>;
-    /// Release this exact generation after local execution has been sealed.
+    /// Confirm this exact generation no longer has durable authority, after
+    /// local execution has been sealed. Repeated confirmation must be safe.
     async fn release(&self) -> anyhow::Result<bool>;
 }
 
@@ -21,6 +22,8 @@ pub(crate) struct HostedRuntimeLeaseSupervisor {
     task: tokio::task::JoinHandle<()>,
     backend: Arc<dyn HostedRuntimeLeaseBackend>,
     ttl: Duration,
+    sealed: bool,
+    released: bool,
 }
 
 impl Drop for HostedRuntimeLeaseSupervisor {
@@ -44,7 +47,8 @@ impl AppServer {
     /// successful result proves local quiescence and durable lease release;
     /// errors are not safe-to-terminate receipts and cannot revive this runtime.
     pub async fn release_idle_runtime_owner(&self) -> anyhow::Result<bool> {
-        let (backend, timeout) = {
+        let _release = self.runtime_owner_release.lock().await;
+        let (backend, timeout, sealed) = {
             let installed = self
                 .runtime_lease_supervisor
                 .lock()
@@ -52,18 +56,40 @@ impl AppServer {
             let supervisor = installed
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("runtime lease supervisor is not installed"))?;
-            (supervisor.backend.clone(), supervisor.ttl / 3)
+            if supervisor.released {
+                return Ok(true);
+            }
+            (
+                supervisor.backend.clone(),
+                supervisor.ttl / 3,
+                supervisor.sealed,
+            )
         };
-        if !self.runtime.seal_idle_owner().await? {
+        if !sealed && !self.runtime.seal_idle_owner().await? {
             return Ok(false);
         }
-        // Stop renewal before releasing. Drop revokes any surviving guard clones.
+        // Retain confirmation state across timeouts, errors and cancellation.
+        // The sealed runtime cannot execute or renew while confirmation retries.
+        {
+            let mut installed = self
+                .runtime_lease_supervisor
+                .lock()
+                .map_err(|_| anyhow::anyhow!("runtime lease supervisor unavailable"))?;
+            let supervisor = installed
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("runtime lease supervisor is not installed"))?;
+            supervisor.authority.revoke();
+            supervisor.task.abort();
+            supervisor.sealed = true;
+        }
+        let released = tokio::time::timeout(timeout, backend.release()).await??;
+        anyhow::ensure!(released, "runtime owner release was not confirmed");
         self.runtime_lease_supervisor
             .lock()
             .map_err(|_| anyhow::anyhow!("runtime lease supervisor unavailable"))?
-            .take();
-        let released = tokio::time::timeout(timeout, backend.release()).await??;
-        anyhow::ensure!(released, "runtime owner release was not confirmed");
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("runtime lease supervisor is not installed"))?
+            .released = true;
         Ok(true)
     }
 
@@ -105,6 +131,8 @@ impl AppServer {
             task,
             backend,
             ttl,
+            sealed: false,
+            released: false,
         });
         Ok(())
     }
@@ -277,5 +305,72 @@ mod tests {
         backend.valid.store(false, Ordering::SeqCst);
         assert!(server.release_idle_runtime_owner().await.is_err());
         assert!(authority.require_live().is_err());
+        backend.valid.store(true, Ordering::SeqCst);
+        assert!(server.release_idle_runtime_owner().await.unwrap());
+        assert!(server.release_idle_runtime_owner().await.unwrap());
+        assert!(authority.require_live().is_err());
+        assert!(
+            authority
+                .renew(Instant::now() + Duration::from_secs(30))
+                .is_err()
+        );
+    }
+
+    struct DelayedRelease {
+        attempts: AtomicUsize,
+        started: tokio::sync::Notify,
+    }
+    #[async_trait::async_trait]
+    impl HostedRuntimeLeaseBackend for DelayedRelease {
+        async fn release(&self) -> anyhow::Result<bool> {
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                self.started.notify_one();
+                return std::future::pending().await;
+            }
+            Ok(true)
+        }
+        async fn renew(&self, _: Duration) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_release_retains_confirmation_state_and_never_renews() {
+        let (server, authority) = fixture();
+        let backend = Arc::new(DelayedRelease {
+            attempts: AtomicUsize::new(0),
+            started: tokio::sync::Notify::new(),
+        });
+        server
+            .supervise_runtime_lease(authority.clone(), backend.clone(), Duration::from_secs(1))
+            .unwrap();
+        let releasing = server.clone();
+        let task = tokio::spawn(async move { releasing.release_idle_runtime_owner().await });
+        tokio::time::timeout(Duration::from_secs(3), backend.started.notified())
+            .await
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(authority.require_live().is_err());
+        assert!(server.release_idle_runtime_owner().await.unwrap());
+        assert!(server.release_idle_runtime_owner().await.unwrap());
+        assert_eq!(backend.attempts.load(Ordering::SeqCst), 2);
+        assert!(authority.require_live().is_err());
+    }
+
+    #[tokio::test]
+    async fn timed_out_release_can_be_confirmed_on_a_later_poll() {
+        let (server, authority) = fixture();
+        let backend = Arc::new(DelayedRelease {
+            attempts: AtomicUsize::new(0),
+            started: tokio::sync::Notify::new(),
+        });
+        server
+            .supervise_runtime_lease(authority.clone(), backend.clone(), Duration::from_secs(1))
+            .unwrap();
+        assert!(server.release_idle_runtime_owner().await.is_err());
+        assert!(authority.require_live().is_err());
+        assert!(server.release_idle_runtime_owner().await.unwrap());
+        assert_eq!(backend.attempts.load(Ordering::SeqCst), 2);
     }
 }
