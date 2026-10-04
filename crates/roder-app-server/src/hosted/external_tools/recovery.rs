@@ -44,7 +44,7 @@ impl ExecutorBindings {
                             tool_name: event.tool_name,
                             state: match event.outcome {
                                 ExternalToolCallOutcome::Resolved => "resolved",
-                                ExternalToolCallOutcome::TimedOut => "timed_out",
+                                ExternalToolCallOutcome::TimedOut => "timedOut",
                                 ExternalToolCallOutcome::Cancelled => "cancelled",
                             }
                             .into(),

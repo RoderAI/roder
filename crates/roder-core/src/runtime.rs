@@ -1518,27 +1518,27 @@ impl Runtime {
         request_id: &str,
         resolution: ExternalToolResolution,
     ) -> anyhow::Result<bool> {
-        let pending = self
-            .pending_external_tool_calls
-            .lock()
-            .await
-            .remove(request_id);
-        let Some(pending) = pending else {
+        let mut calls = self.pending_external_tool_calls.lock().await;
+        let Some(pending) = calls.get(request_id) else {
             return Ok(false);
         };
         self.emit_external_execution(RoderEvent::ExternalToolCallResolved(
             ExternalToolCallResolved {
-                thread_id: pending.thread_id,
-                turn_id: pending.turn_id,
+                thread_id: pending.thread_id.clone(),
+                turn_id: pending.turn_id.clone(),
                 request_id: request_id.to_string(),
-                tool_id: pending.tool_id,
-                tool_name: pending.tool_name,
+                tool_id: pending.tool_id.clone(),
+                tool_name: pending.tool_name.clone(),
                 outcome: ExternalToolCallOutcome::Resolved,
                 is_error: resolution.is_error,
                 timestamp: OffsetDateTime::now_utc(),
             },
         ))
         .await?;
+        let Some(pending) = calls.remove(request_id) else {
+            return Ok(false);
+        };
+        drop(calls);
         let _ = pending.tx.send(resolution);
         Ok(true)
     }

@@ -212,43 +212,50 @@ async fn process_loss_restores_uncertainty_and_rejects_old_or_rebound_results() 
 
     // A later restart can recover a durable terminal receipt too.
     use roder_api::events::{ExternalToolCallOutcome, ExternalToolCallResolved, RoderEvent};
-    server
-        .runtime
-        .emit(RoderEvent::ExternalToolCallResolved(
-            ExternalToolCallResolved {
-                thread_id: execution["threadId"].as_str().unwrap().into(),
-                turn_id: execution["turnId"].as_str().unwrap().into(),
-                request_id: execution["requestId"].as_str().unwrap().into(),
-                tool_id: execution["call"]["id"].as_str().unwrap().into(),
-                tool_name: execution["call"]["name"].as_str().unwrap().into(),
-                outcome: ExternalToolCallOutcome::Resolved,
-                is_error: false,
-                timestamp: time::OffsetDateTime::now_utc(),
-            },
-        ))
-        .await;
-    drop(server);
-    let recovered = self::server(directory.path());
-    let (lease, _) = recovered
-        .external_tool_executors
-        .bind(
-            "replacement",
-            execution["threadId"].as_str().unwrap(),
-            false,
-        )
-        .await
-        .unwrap();
-    let terminal = recovered
-        .external_tool_executors
-        .read_with_history(
-            "replacement",
-            &lease,
-            execution["requestId"].as_str().unwrap(),
-            &recovered.runtime,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(terminal.state, "resolved");
-    assert!(!terminal.is_error);
+    for outcome in [
+        ExternalToolCallOutcome::Resolved,
+        ExternalToolCallOutcome::TimedOut,
+        ExternalToolCallOutcome::Cancelled,
+    ] {
+        let expected = serde_json::to_value(&outcome).unwrap();
+        let is_error = !matches!(outcome, ExternalToolCallOutcome::Resolved);
+        server
+            .runtime
+            .emit(RoderEvent::ExternalToolCallResolved(
+                ExternalToolCallResolved {
+                    thread_id: execution["threadId"].as_str().unwrap().into(),
+                    turn_id: execution["turnId"].as_str().unwrap().into(),
+                    request_id: execution["requestId"].as_str().unwrap().into(),
+                    tool_id: execution["call"]["id"].as_str().unwrap().into(),
+                    tool_name: execution["call"]["name"].as_str().unwrap().into(),
+                    outcome,
+                    is_error,
+                    timestamp: time::OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
+        let recovered = self::server(directory.path());
+        let (lease, _) = recovered
+            .external_tool_executors
+            .bind(
+                "replacement",
+                execution["threadId"].as_str().unwrap(),
+                false,
+            )
+            .await
+            .unwrap();
+        let terminal = recovered
+            .external_tool_executors
+            .read_with_history(
+                "replacement",
+                &lease,
+                execution["requestId"].as_str().unwrap(),
+                &recovered.runtime,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal.state, expected.as_str().unwrap());
+        assert_eq!(terminal.is_error, is_error);
+    }
 }

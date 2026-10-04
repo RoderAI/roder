@@ -5,14 +5,21 @@ impl Runtime {
     /// before the configured store can recover its execution identity.
     pub(crate) async fn emit_external_execution(&self, event: RoderEvent) -> anyhow::Result<()> {
         self.ensure_execution_authority()?;
-        let envelope = self.bus.prepare(event);
+        let prepared = self.bus.prepare(event);
+        let envelope = prepared.envelope();
         if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref())
             && should_persist_thread_event(thread_id)
         {
-            store.append_event(thread_id, &envelope).await?;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                store.append_event(thread_id, envelope),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("external execution receipt persistence timed out"))??;
         }
         self.ensure_execution_authority()?;
-        self.bus.publish(envelope.clone());
+        let envelope = envelope.clone();
+        prepared.publish();
         self.dispatch_event_sinks(&envelope).await;
         Ok(())
     }
@@ -42,7 +49,7 @@ mod tests {
     struct GatedStore {
         entered: Notify,
         release: Notify,
-        fail: bool,
+        fail: AtomicBool,
     }
 
     #[async_trait::async_trait]
@@ -62,7 +69,10 @@ mod tests {
         async fn append_event(&self, _: &ThreadId, _: &EventEnvelope) -> anyhow::Result<()> {
             self.entered.notify_one();
             self.release.notified().await;
-            anyhow::ensure!(!self.fail, "injected persistence failure");
+            anyhow::ensure!(
+                !self.fail.load(Ordering::SeqCst),
+                "injected persistence failure"
+            );
             Ok(())
         }
     }
@@ -78,7 +88,7 @@ mod tests {
                 let store = Arc::new(GatedStore {
                     entered: Notify::new(),
                     release: Notify::new(),
-                    fail,
+                    fail: AtomicBool::new(fail),
                 });
                 runtime.thread_store = Some(store.clone());
                 let runtime = Arc::new(runtime);
@@ -119,5 +129,61 @@ mod tests {
                 assert_eq!(notifications.try_recv().is_ok(), !fail);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn failed_resolution_receipt_keeps_the_original_waiter_available_for_retry() {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(crate::fake_provider::FakeInferenceEngine));
+        let mut runtime = Runtime::new(builder.build().unwrap(), Default::default()).unwrap();
+        let store = Arc::new(GatedStore {
+            entered: Notify::new(),
+            release: Notify::new(),
+            fail: AtomicBool::new(true),
+        });
+        runtime.thread_store = Some(store.clone());
+        let runtime = Arc::new(runtime);
+        let (sender, mut receiver) = tokio::sync::oneshot::channel();
+        runtime.pending_external_tool_calls.lock().await.insert(
+            "request".into(),
+            PendingExternalToolCall {
+                thread_id: "thread-1".into(),
+                turn_id: "turn".into(),
+                tool_id: "tool".into(),
+                tool_name: "save".into(),
+                tx: sender,
+            },
+        );
+        for fail in [true, false] {
+            store.fail.store(fail, Ordering::SeqCst);
+            let runtime = runtime.clone();
+            let resolution = tokio::spawn(async move {
+                runtime
+                    .resolve_external_tool_call(
+                        "request",
+                        ExternalToolResolution {
+                            output: "saved".into(),
+                            is_error: false,
+                        },
+                    )
+                    .await
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(5), store.entered.notified())
+                .await
+                .unwrap();
+            assert!(matches!(
+                receiver.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ));
+            store.release.notify_one();
+            let outcome = resolution.await.unwrap();
+            if fail {
+                assert!(outcome.is_err());
+            } else {
+                assert!(outcome.unwrap());
+            }
+        }
+        assert_eq!(receiver.await.unwrap().output, "saved");
+        assert!(runtime.pending_external_executions().await.is_empty());
     }
 }
