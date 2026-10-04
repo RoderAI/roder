@@ -1,3 +1,13 @@
+## 0.3.3 (2026-10-04)
+
+### Fixes
+
+#### Recover hosted owner drain after unconfirmed lease release
+
+Retain sealed owner confirmation state across errors, timeouts and cancellation.
+Idle expired owners can prove local quiescence without restoring authority;
+active execution and failed lifecycle persistence still block completion.
+
 ## 0.3.2 (2026-10-04)
 
 ### Fixes
