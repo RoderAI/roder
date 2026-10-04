@@ -181,27 +181,38 @@ async fn recovery_call(
 }
 
 #[tokio::test]
-#[should_panic(expected = "history must never replay effects during recovery RPCs")]
 async fn recovery_observer_rejects_replay_before_rpc_response() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    tokio::spawn(async move {
+    let server_task = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut server = tokio_tungstenite::accept_async(stream).await.unwrap();
         server.next().await.unwrap().unwrap();
         server.send(Message::Text(serde_json::json!({"jsonrpc":"2.0","method":"thread/toolExecutionRequested","params":{}}).to_string().into())).await.unwrap();
-        let _ = server
-            .send(Message::Text(
-                serde_json::json!({"jsonrpc":"2.0","id":"thread/read","result":{}})
-                    .to_string()
-                    .into(),
-            ))
-            .await;
     });
     let mut socket = connect(&format!("ws://{address}"), "test-only")
         .await
         .unwrap();
-    recovery_call(&mut socket, "thread/read", serde_json::json!({})).await;
+    let observed = tokio::spawn(async move {
+        recovery_call(&mut socket, "thread/read", serde_json::json!({})).await
+    })
+    .await
+    .expect_err("the injected replay must fail the recovery observer");
+    server_task.await.expect("replay fixture failed");
+    assert!(
+        observed.is_panic(),
+        "observer must reject replay, not be cancelled"
+    );
+    let panic = observed.into_panic();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("");
+    assert!(
+        message.contains("history must never replay effects during recovery RPCs"),
+        "unexpected observer failure: {message}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
