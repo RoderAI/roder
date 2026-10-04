@@ -79,12 +79,12 @@ which = "8"
 roder-api = { path = "crates/roder-api", version = "0.2.2" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.2.0" }
-roder-app-server = { path = "crates/roder-app-server", version = "0.4.1" }
+roder-app-server = { path = "crates/roder-app-server", version = "0.4.2" }
 roder-codex-auth = { path = "crates/roder-codex-auth", version = "0.1.0" }
 roder-commands = { path = "crates/roder-commands", version = "0.2.0" }
 roder-config = { path = "crates/roder-config", version = "0.2.1" }
 roder-context = { path = "crates/roder-context", version = "0.2.0" }
-roder-core = { path = "crates/roder-core", version = "0.3.1" }
+roder-core = { path = "crates/roder-core", version = "0.3.2" }
 roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.3.1" }
 roder-code-index = { path = "crates/roder-code-index", version = "0.2.0" }
 roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.2.0" }
@@ -107,7 +107,7 @@ roder-ext-google-embeddings = { path = "crates/roder-ext-google-embeddings", ver
 roder-ext-google-images = { path = "crates/roder-ext-google-images", version = "0.2.0" }
 roder-ext-honcho = { path = "crates/roder-ext-honcho", version = "0.2.0" }
 roder-ext-inference-router = { path = "crates/roder-ext-inference-router", version = "0.2.0" }
-roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store", version = "0.2.0" }
+roder-ext-jsonl-thread-store = { path = "crates/roder-ext-jsonl-thread-store", version = "0.2.1" }
 roder-ext-knowledge-md = { path = "crates/roder-ext-knowledge-md", version = "0.2.0" }
 roder-ext-kimi-code = { path = "crates/roder-ext-kimi-code", version = "0.2.0" }
 roder-ext-browser-use = { path = "crates/roder-ext-browser-use", version = "0.1.2" }
