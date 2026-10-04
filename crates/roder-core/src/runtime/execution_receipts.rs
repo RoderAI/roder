@@ -10,12 +10,9 @@ impl Runtime {
         if let (Some(store), Some(thread_id)) = (&self.thread_store, envelope.thread_id.as_ref())
             && should_persist_thread_event(thread_id)
         {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                store.append_event(thread_id, envelope),
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!("external execution receipt persistence timed out"))??;
+            // The store owns its I/O deadline. Do not cancel a potentially
+            // partial append with a separate receipt-level timeout.
+            store.append_event(thread_id, envelope).await?;
         }
         self.ensure_execution_authority()?;
         let envelope = envelope.clone();

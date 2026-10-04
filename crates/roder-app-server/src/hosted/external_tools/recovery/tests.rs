@@ -138,7 +138,13 @@ async fn process_loss_restores_uncertainty_and_rejects_old_or_rebound_results() 
     .result
     .unwrap()["executor"]
         .clone();
-    for _ in 0..2 {
+    let history = directory
+        .path()
+        .join("threads")
+        .join(execution["threadId"].as_str().unwrap())
+        .join("events.jsonl");
+    let hidden_history = history.with_extension("hidden");
+    for index in 0..2 {
         let read = hosted(
             &server,
             "replacement",
@@ -152,7 +158,11 @@ async fn process_loss_restores_uncertainty_and_rejects_old_or_rebound_results() 
         assert_eq!(read["isError"], true);
         assert_eq!(read["turnId"], execution["turnId"]);
         assert!(read.get("arguments").is_none());
+        if index == 0 {
+            std::fs::rename(&history, &hidden_history).unwrap();
+        }
     }
+    std::fs::rename(&hidden_history, &history).unwrap();
     for executor in [&saved["lease"], &lease] {
         let response = hosted(&server, "replacement", "tools/resolve", json!({
             "executor":executor,"requestId":execution["requestId"],"turnId":execution["turnId"],"output":"late","isError":false
@@ -211,22 +221,39 @@ async fn process_loss_restores_uncertainty_and_rejects_old_or_rebound_results() 
     );
 
     // A later restart can recover a durable terminal receipt too.
-    use roder_api::events::{ExternalToolCallOutcome, ExternalToolCallResolved, RoderEvent};
+    use roder_api::events::{
+        ExternalToolCallOutcome, ExternalToolCallRequested, ExternalToolCallResolved, RoderEvent,
+    };
     for outcome in [
         ExternalToolCallOutcome::Resolved,
         ExternalToolCallOutcome::TimedOut,
         ExternalToolCallOutcome::Cancelled,
     ] {
         let expected = serde_json::to_value(&outcome).unwrap();
+        let request_id = format!("terminal-{}", expected.as_str().unwrap());
         let is_error = !matches!(outcome, ExternalToolCallOutcome::Resolved);
+        server
+            .runtime
+            .emit(RoderEvent::ExternalToolCallRequested(
+                ExternalToolCallRequested {
+                    thread_id: execution["threadId"].as_str().unwrap().into(),
+                    turn_id: execution["turnId"].as_str().unwrap().into(),
+                    request_id: request_id.clone(),
+                    tool_id: request_id.clone(),
+                    tool_name: "acme_lookup".into(),
+                    arguments: json!({}),
+                    timestamp: time::OffsetDateTime::now_utc(),
+                },
+            ))
+            .await;
         server
             .runtime
             .emit(RoderEvent::ExternalToolCallResolved(
                 ExternalToolCallResolved {
                     thread_id: execution["threadId"].as_str().unwrap().into(),
                     turn_id: execution["turnId"].as_str().unwrap().into(),
-                    request_id: execution["requestId"].as_str().unwrap().into(),
-                    tool_id: execution["call"]["id"].as_str().unwrap().into(),
+                    request_id: request_id.clone(),
+                    tool_id: request_id.clone(),
                     tool_name: execution["call"]["name"].as_str().unwrap().into(),
                     outcome,
                     is_error,
@@ -246,12 +273,7 @@ async fn process_loss_restores_uncertainty_and_rejects_old_or_rebound_results() 
             .unwrap();
         let terminal = recovered
             .external_tool_executors
-            .read_with_history(
-                "replacement",
-                &lease,
-                execution["requestId"].as_str().unwrap(),
-                &recovered.runtime,
-            )
+            .read_with_history("replacement", &lease, &request_id, &recovered.runtime)
             .await
             .unwrap()
             .unwrap();

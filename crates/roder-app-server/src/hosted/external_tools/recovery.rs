@@ -1,7 +1,8 @@
 //! Recover execution receipts without replaying browser actions after host loss.
-use super::ExecutorBindings;
+use super::{Call, ExecutorBindings};
 use roder_api::events::{ExternalToolCallOutcome, RoderEvent};
 use roder_protocol::{ToolExecutionState, ToolExecutorLease};
+use std::time::Instant;
 
 impl ExecutorBindings {
     pub async fn read_with_history(
@@ -55,10 +56,27 @@ impl ExecutorBindings {
                 }
             }
         }
-        // A takeover may have happened during storage I/O. Revalidate the lease
-        // and prefer any live receipt that arrived meanwhile. Never insert a
-        // restored request into the new executor's resolvable pending calls.
-        Ok(self.read(connection, lease, request).await?.or(restored))
+        // Revalidate under the insertion lock: a takeover may happen during I/O.
+        // Cache bounded metadata only, without granting execution ownership.
+        let mut bindings = self.inner.lock().await;
+        if !bindings.owns(connection, lease) {
+            return Err("executor_not_owned".into());
+        }
+        if let Some(call) = bindings.calls.get(request) {
+            return Ok((call.state.thread_id == lease.thread_id).then(|| call.state.clone()));
+        }
+        if let Some(state) = restored.as_ref() {
+            bindings.calls.insert(
+                request.into(),
+                Call {
+                    executor: None,
+                    state: state.clone(),
+                    updated: Instant::now(),
+                },
+            );
+            bindings.prune();
+        }
+        Ok(restored)
     }
 }
 
