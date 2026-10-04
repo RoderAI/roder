@@ -959,3 +959,6 @@ mod hosted_routing;
 
 #[path = "hosted_gateway/connection_policy.rs"]
 mod connection_policy;
+
+#[path = "hosted_gateway/process_loss.rs"]
+mod process_loss;
