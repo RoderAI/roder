@@ -36,6 +36,8 @@ pub struct MysqlSessionStore {
 }
 
 impl MysqlSessionStore {
+    /// Opens an already-provisioned session schema without DDL or migration locks.
+    /// Run `roder-mysql-migrate` (or `schema::migrate`) before starting workers.
     pub async fn connect(config: &MysqlSessionConfig) -> anyhow::Result<Self> {
         let executor = DbExecutor::new()?;
         Self::connect_on(executor, config.clone()).await
@@ -117,9 +119,9 @@ async fn open_pool(config: MysqlSessionConfig) -> anyhow::Result<Pool<MySql>> {
                 config.redacted_database_url()
             )
         })?;
-    schema::migrate(&pool).await.with_context(|| {
+    schema::check(&pool).await.with_context(|| {
         format!(
-            "migrate MySQL session store at {}",
+            "check MySQL session schema at {}",
             config.redacted_database_url()
         )
     })?;
