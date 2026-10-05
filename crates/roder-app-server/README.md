@@ -26,6 +26,12 @@ python3 scripts/generate-knope-config.py --check
 
 ### Routing hosted sessions to their owner
 
+MySQL-backed hosts must provision their database with `roder-mysql-migrate`
+before starting workers. The command reads `RODER_MYSQL_SESSION_URL` from the
+environment. Runtime session-store connections only check the schema version;
+they do not acquire a schema migration lock or execute DDL. Use matching
+extension-host and MySQL-store package versions in embedded applications.
+
 A `TenantAppServerFactory` can return `HostedRuntimeRedirect` when its durable
 ownership registry reports a different live owner. The gateway forwards the
 connection to that endpoint without constructing a local runtime. The owner
