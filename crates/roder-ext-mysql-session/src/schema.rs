@@ -1,8 +1,27 @@
+use anyhow::Context;
 use sqlx_core::pool::Pool;
 use sqlx_mysql::MySql;
 
 pub const MIGRATION_VERSION: i32 = 3;
 
+/// Runtime connections only read the migration marker. Schema changes belong
+/// in a release step, never tenant admission or thread-store construction.
+pub async fn check(pool: &Pool<MySql>) -> anyhow::Result<()> {
+    let version = sqlx_core::query_scalar::query_scalar::<MySql, i32>(
+        "SELECT version FROM roder_session_migrations WHERE version = ?",
+    )
+    .bind(MIGRATION_VERSION)
+    .fetch_optional(pool)
+    .await
+    .context("Cannot read MySQL session schema; run roder-mysql-migrate before starting Roder")?;
+    anyhow::ensure!(
+        version == Some(MIGRATION_VERSION),
+        "MySQL session schema version {MIGRATION_VERSION} is required; run roder-mysql-migrate before starting Roder"
+    );
+    Ok(())
+}
+
+/// Explicit release-time migration, requiring schema-change privileges.
 /// Key columns use VARCHAR(191) so composite primary keys stay within
 /// InnoDB's index size limits under utf8mb4. Timestamps are unix
 /// microseconds (BIGINT).

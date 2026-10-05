@@ -31,10 +31,27 @@ runtime and item events deduplicate by their event IDs; replay does not replace 
 existing payload. Loaded event sequences reflect stable database allocation order, not a cross-process causal clock. Callers must await causally dependent appends.
 
 Schema version 2 adds database sequence allocation and unique event identity
-indexes of SHA-256 event-ID digests to both event tables. Long IDs remain supported. Startup serializes this DDL with a database-scoped
+indexes of SHA-256 event-ID digests to both event tables. Long IDs remain supported.
+Run schema setup once as a release step, before admitting workers:
+
+```sh
+# Supply the database URL through your secret environment, not command arguments.
+cargo run -p roder-ext-mysql-session --bin roder-mysql-migrate
+```
+
+The command reads `RODER_MYSQL_SESSION_URL`. You can also install the command with
+`cargo install roder-ext-mysql-session --bin roder-mysql-migrate`.
+Embedders can call `schema::migrate(&pool)` from
+their release tooling. Runtime connections only read the required migration
+version and fail with setup instructions if it is missing. They never perform
+DDL or acquire a schema advisory lock; runtime users only need data privileges.
+Provision isolated test databases with the same command before running the live
+store, ownership, fencing, or gateway suites.
+
+The explicit migration serializes event-table DDL with a database-scoped
 advisory lock; an interrupted migration resumes at the unfinished table. Existing
 payloads and sequences are retained. The ALTER operations can rebuild/lock large
-tables: schedule the upgrade with sufficient startup time and stop older writers
+tables: schedule the upgrade as a maintenance operation and stop older writers
 before admitting the new version. Old writers still supply runtime sequences and
 must not run concurrently with the upgraded store. After upgrading, confirm the
 migration version and test history restoration after restarting the runtime.
