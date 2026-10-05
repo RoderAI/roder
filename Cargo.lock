@@ -3404,7 +3404,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -4084,7 +4084,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-mysql-session"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4728,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
