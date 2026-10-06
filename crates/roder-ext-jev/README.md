@@ -73,7 +73,8 @@ notice is `third-party/duckduckgo-autoconsent/`.
   model (`JEV_FALLBACK=auto`, the default), or handed to the caller as the
   `jev_tab_*` tools.
 
-Requires `JEV_API_KEY`. In Roder's default policy mode each goal needs approval
+Requires `JEV_API_KEY`, or `JEV_DECISION_PROVIDER=openai` with an OpenAI API key
+(see [OpenAI Decisions](../../docs/openai-decisions-browser.md)). In Roder's default policy mode each goal needs approval
 before the browser starts; plan mode denies it. The goal is sent to the hosted
 decision service and to the text model and is stored in the transcript, so a
 password or one-time code placed in the goal goes there too. An embedding host

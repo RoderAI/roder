@@ -283,13 +283,13 @@ pub(crate) fn request_body(
 /// contradict its own argmax.
 pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<()> {
     let Some(probabilities) = answer.get("probabilities").and_then(Value::as_object) else {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     };
     let Some(choice) = answer.get("choice").and_then(Value::as_str) else {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     };
     let Some(confidence) = answer.get("confidence").and_then(Value::as_f64) else {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     };
     let known = ids.iter().any(|id| id == choice)
         && probabilities.len() == ids.len()
@@ -298,7 +298,7 @@ pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<
     for value in probabilities.values() {
         match value.as_f64() {
             Some(number) => numbers.push(number),
-            None => bail!("Invalid TypeSafe response; no action executed."),
+            None => bail!("Invalid browser decision response; no action executed."),
         }
     }
     numbers.push(confidence);
@@ -318,7 +318,7 @@ pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<
         .and_then(Value::as_f64)
         .unwrap_or(f64::NEG_INFINITY);
     if !(known && bounded && (total - 1.0).abs() < 0.02 && chosen >= highest - 1e-6) {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     }
     Ok(())
 }
@@ -415,7 +415,7 @@ fn read_answer(
             .to_string();
         let action = space
             .target_action(&operation, &selected)
-            .context("TypeSafe chose an unoffered target")?;
+            .context("Decision service chose an unoffered target")?;
         choice = action["id"].as_str().unwrap_or_default().to_string();
         for (index, candidate) in candidates {
             let id = candidate["id"].as_str().unwrap_or_default().to_string();

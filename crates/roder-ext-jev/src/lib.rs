@@ -16,6 +16,7 @@ mod block;
 mod cdp;
 mod chrome;
 mod decide;
+mod decisions;
 mod effects;
 mod engine;
 mod fallback;
@@ -47,6 +48,7 @@ use roder_api::extension::{
 use semver::Version;
 
 pub use decide::JevTypeSafeDecisionClient;
+pub use decisions::OpenAiDecisionsClient;
 pub use engine::{
     Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
     JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
@@ -97,6 +99,7 @@ impl RoderExtension for JevExtension {
             required_capabilities: vec![
                 CapabilityRequest::new("network.web"),
                 CapabilityRequest::new("secret.read.JEV_API_KEY"),
+                CapabilityRequest::new("secret.read.OPENAI_API_KEY"),
             ],
         }
     }
