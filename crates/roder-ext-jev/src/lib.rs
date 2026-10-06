@@ -48,7 +48,7 @@ use roder_api::extension::{
 use semver::Version;
 
 pub use decide::JevTypeSafeDecisionClient;
-pub use decisions::OpenAiDecisionsClient;
+pub use decisions::{ComputerCandidate, ComputerDecision, OpenAiDecisionsClient};
 pub use engine::{
     Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
     JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,

@@ -15,6 +15,7 @@
 //! add it to the eval corpus instead (see [`evals`]).
 
 mod browser;
+mod decisions_computer_tests;
 pub(crate) mod fallback_script;
 mod proxy;
 mod scripted;

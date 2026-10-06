@@ -37,3 +37,37 @@ and provider-reported usage; omitted token counts stay unknown.
 The integration is covered by local HTTP contract tests, including action
 selection, predicate mapping, malformed answers and authentication failures.
 Those tests do not establish live model quality or account access.
+
+## Native computer choices
+
+Embedding hosts can call `OpenAiDecisionsClient::choose_computer` with a fresh
+inline screenshot and `ComputerCandidate` values containing descriptions and
+native `ComputerActions` batches. Decisions chooses one supplied batch or
+`blocked`; it cannot invent coordinates or tool arguments. The result includes
+confidence and provider-reported usage. The host must apply its usual approval,
+origin, and stale-observation checks before executing through `run_computer`
+or the registered computer tool. This is an embedding API, not a new chat tool
+or an automatic replacement for the session's Responses computer model.
+
+## Live validation
+
+With an OpenAI API key configured, run the dedicated evals (these spend API
+calls against throwaway local fixture pages):
+
+```sh
+JEV_REQUIRE_CHROME=1 JEV_EVAL_TASKS=contact_form,select_dropdown,below_the_fold,gate_pay_now \
+  mise exec -- cargo test -p roder-ext-jev --lib decisions_live_browser_corpus -- --ignored --nocapture
+JEV_REQUIRE_CHROME=1 mise exec -- cargo test -p roder-ext-jev --lib \
+  decisions_live_computer_canvas -- --ignored --nocapture
+```
+
+The browser corpus checks resulting DOM/form outcomes with the real Decisions
+model. Its field values come from task fixtures to isolate decision quality;
+it does not validate text-model generation. It disables fallback so another
+model cannot silently complete failed Decisions tasks. Results are written to
+`jev-evals/decisions-live-<timestamp>.jsonl` under Cargo's target directory.
+The computer test sends an actual screenshot, asks the live model to choose
+between two coordinate clicks and `blocked`, executes the native batch, and
+checks the canvas success marker. Both tests fail on missing credentials or
+Chrome; neither silently skips. An unignored counterpart tests the same native
+computer execution with a scripted response, which is not live-model proof.

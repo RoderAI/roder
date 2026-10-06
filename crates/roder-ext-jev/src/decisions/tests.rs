@@ -139,3 +139,50 @@ async fn authorization_error_is_redacted_and_not_retried() {
     assert!(!error.to_string().contains("test-openai-key"));
     assert_eq!(server.hits(), 1);
 }
+
+#[tokio::test]
+async fn computer_choices_can_block_and_reject_unoffered_actions() {
+    use crate::ComputerCandidate;
+    use roder_api::computer::{ComputerAction, ComputerActions};
+    let candidates = vec![ComputerCandidate {
+        id: "wait".into(),
+        description: "Wait for loading".into(),
+        actions: ComputerActions {
+            actions: vec![ComputerAction::Wait],
+        },
+    }];
+    let response = json!({"answers":[{"type":"choice","name":"computer_action", "choice":"blocked","confidence":0.99,
+        "probabilities":[{"value":"blocked","probability":0.99},{"value":"wait","probability":0.01}]}],"usage":{"input_tokens":23}});
+    let client = OpenAiDecisionsClient::with_transport(Arc::new(Fixed(response.clone())));
+    let result = client
+        .choose_computer(
+            "Do something useful",
+            "data:image/png;base64,YQ==",
+            &candidates,
+        )
+        .await
+        .unwrap();
+    assert!(result.actions.is_none());
+    assert_eq!(result.choice, "blocked");
+    assert!(
+        client
+            .choose_computer("goal", "https://example.test/screenshot.png", &candidates)
+            .await
+            .is_err()
+    );
+    assert!(
+        client
+            .choose_computer("goal", "data:image/png;base64,YQ==", &[])
+            .await
+            .is_err()
+    );
+    let mut invalid = response;
+    invalid["answers"][0]["choice"] = json!("invented");
+    let client = OpenAiDecisionsClient::with_transport(Arc::new(Fixed(invalid)));
+    let error = client
+        .choose_computer("goal", "data:image/png;base64,YQ==", &candidates)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(JevBilled::usage_of(&error).unwrap()["input_tokens"], 23);
+}

@@ -3,6 +3,9 @@
 //! Keeps action-space construction, validation and irreversible-action handling
 //! identical across providers. Only this boundary knows the Decisions schema.
 
+mod computer;
+pub use computer::{ComputerCandidate, ComputerDecision};
+
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
@@ -21,6 +24,7 @@ pub(crate) const MODEL: &str = "gpt-6-luna";
 /// Text generation continues to use the browser's configured text helper.
 pub struct OpenAiDecisionsClient {
     inner: JevTypeSafeDecisionClient,
+    transport: Arc<dyn JevDecisionTransport>,
 }
 
 impl OpenAiDecisionsClient {
@@ -37,8 +41,11 @@ impl OpenAiDecisionsClient {
         Self {
             inner: JevTypeSafeDecisionClient::with_transport(
                 MODEL,
-                Arc::new(Adapter { transport }),
+                Arc::new(Adapter {
+                    transport: transport.clone(),
+                }),
             ),
+            transport,
         }
     }
 }
