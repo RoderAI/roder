@@ -12,3 +12,7 @@ Expose screenshot-based selection among host-supplied native computer action
 batches, with a blocked outcome and normal host-owned permissions. Add strict
 live browser and computer evals and register the backend's environment settings
 in distribution metadata.
+
+Resolve single-target choices locally because the live Decisions API requires
+at least two choices. Validate authenticated browser tasks and screenshot-based
+native computer execution against the live endpoint.

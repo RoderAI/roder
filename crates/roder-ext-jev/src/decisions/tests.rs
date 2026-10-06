@@ -186,3 +186,39 @@ async fn computer_choices_can_block_and_reject_unoffered_actions() {
         .unwrap();
     assert_eq!(JevBilled::usage_of(&error).unwrap()["input_tokens"], 23);
 }
+
+#[tokio::test]
+async fn singleton_target_is_resolved_locally_without_invalid_api_question() {
+    let response: Value = serde_json::from_str(ANSWER).unwrap();
+    let mut response = response;
+    response["answers"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|answer| answer["name"] != "click_target");
+    let client = OpenAiDecisionsClient::with_transport(Arc::new(Fixed(response)));
+    let decision = client.choose(&page(), "Buy item", &[]).await.unwrap();
+    assert_eq!(decision.choice, "e1");
+    assert_eq!(decision.target_confidence, Some(1.0));
+    let (shared, _, _) = crate::decide::request_body(
+        &page(),
+        "Buy item",
+        &[],
+        MODEL,
+        chrono::Local::now().date_naive(),
+    );
+    let wire = request_body(&shared).unwrap();
+    assert!(
+        wire["questions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|q| q["name"] != "click_target")
+    );
+    assert!(
+        wire["questions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|q| q["name"] == "operation")
+    );
+}

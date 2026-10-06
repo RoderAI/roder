@@ -1,30 +1,49 @@
 # Decisions validation — 2026-10-06
 
-## Proven locally
+## Live API results
 
-`mise exec -- cargo test -p roder-ext-jev --lib decisions -- --test-threads=1`
-passed 6 tests; 2 live tests were ignored as intended.
+Both live tests passed against OpenAI's authenticated Decisions endpoint using
+`gpt-6-luna`, on throwaway local Chrome fixture pages. The final combined run
+completed in 22.38 seconds. No fallback model was used.
 
-Coverage: Decisions HTTP request/response mapping, malformed response rejection,
-usage retention on rejected responses, irreversible predicates, credential-error
-redaction, bounded screenshot choice with a blocked outcome, and real Chrome
-native computer execution. The native test captured a screenshot, supplied a
-scripted Decisions reply, executed the selected coordinate click through
-`DirectSession::run_computer`, and verified `window.canvasOk === true`.
-The model reply in this test was mocked; it does not prove model quality.
+| Scenario | Outcome | Browser actions | Decisions calls |
+|---|---|---:|---:|
+| Contact form | Submitted; expected form POST and thank-you page verified | 4 | 5 |
+| Dropdown | Selected and submitted; expected order POST verified | 2 | 3 |
+| Below the fold | Observed target clicked; completion verified | 1 | 2 |
+| Payment gate | Stopped for confirmation before executing payment | 0 | 1 |
+| Native computer canvas | Screenshot selected the correct coordinate click; `run_computer` executed it and `window.canvasOk` became true | 1 | 1 |
 
-Distribution metadata now names `JEV_DECISION_PROVIDER` and `OPENAI_API_KEY`,
-and the OpenAI secret capability matches the extension manifest. Release config
-and whitespace checks passed.
+The screenshot request reported 1,128 input tokens, zero output tokens and
+confidence 1.0. The browser corpus uses fixture-provided text values to isolate
+decision quality; it does not validate text generation. The native computer
+test validates selection among two host-supplied clicks plus `blocked`, not
+unrestricted generation of coordinates or arbitrary desktop control.
 
-## Not yet proven
+Evidence: [test output](decisions-2026-10-06-live.txt) and
+[browser outcome rows](decisions-2026-10-06-live.jsonl).
 
-The explicit live run of both `decisions_live_browser_corpus` and
-`decisions_live_computer_canvas` failed at credential preflight. Neither the
-process environment nor Roder's OpenAI provider configuration supplied an API
-key. No authenticated Decisions request was made in this validation run.
+## Issues found and fixed
 
-Completion requires running both live tests with a configured OpenAI API key,
-checking the browser JSONL outcome report and the native canvas success marker,
-and addressing any API-contract or model-behavior failures they reveal.
+Live requests revealed that Decisions rejects choice questions containing only
+one option (HTTP 400, `array_below_min_length`). The adapter now omits those
+target questions and resolves the sole target locally after the model selects
+the operation. A regression test checks both the request and action mapping.
+
+One earlier contact-form attempt returned an unsupported answer type and stopped
+without executing that decision. A focused retry and the final combined suite
+passed. Unsupported responses still fail closed; this small successful sample
+does not establish a production reliability rate.
+
+## Local checks
+
+The focused Decisions suite passed seven tests, including HTTP contract,
+malformed response rejection, billed usage retention, irreversible predicates,
+credential-error redaction, bounded screenshot selection with a blocked outcome,
+single-target handling, and real native computer execution with a mocked reply.
+Live tests are separate and require explicit opt-in. Release metadata and
+whitespace checks pass.
+
+The key was retrieved from the Roder app's Composal secrets and configured in
+`~/.zshrc` with mode 0600. Its value is absent from this report and the repository.
 See [setup and commands](../openai-decisions-browser.md#live-validation).

@@ -105,7 +105,22 @@ impl JevDecisionTransport for Adapter {
     async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
         let body = request_body(request)?;
         let response = self.transport.decide(&body).await?;
-        normalize_response(&response).map_err(|error| {
+        normalize_response(&response).map(|mut normalized| {
+            // Decisions requires at least two choices. A single observed target
+            // is deterministic once the operation has been chosen by the model.
+            for (name, question) in request["questions"].as_object().into_iter().flatten() {
+                if question["type"] == "choice"
+                    && let Some(criteria) = question["criteria"].as_object()
+                    && criteria.len() == 1
+                    && let Some((value, _)) = criteria.iter().next()
+                {
+                    normalized["answers"].as_object_mut().unwrap().entry(name.clone()).or_insert_with(|| {
+                        json!({"choice":value,"confidence":1.0,"probabilities":{value:1.0}})
+                    });
+                }
+            }
+            normalized
+        }).map_err(|error| {
             JevBilled::new(
                 response.get("usage").cloned().unwrap_or_else(|| json!({})),
                 error,
@@ -131,9 +146,13 @@ fn request_body(request: &Value) -> anyhow::Result<Value> {
         let mut instructions = description(&question["instructions"]);
         let converted_question = match question["type"].as_str() {
             Some("choice") => {
-                let choices = question["criteria"]
+                let criteria = question["criteria"]
                     .as_object()
-                    .context("Missing browser choices")?
+                    .context("Missing browser choices")?;
+                if criteria.len() == 1 {
+                    continue;
+                }
+                let choices = criteria
                     .iter()
                     .map(|(value, criterion)| {
                         json!({
@@ -187,7 +206,7 @@ fn normalize_response(response: &Value) -> anyhow::Result<Value> {
                 json!({"choice": answer["choice"], "confidence": answer["confidence"], "probabilities": probabilities})
             }
             Some("predicate") => json!({"type": "noul", "noul": answer["probability"]}),
-            _ => bail!("Invalid OpenAI Decisions answer type"),
+            _ => bail!("Invalid OpenAI Decisions answer type: {:?}", answer["type"].as_str()),
         };
         if answers.insert(name.into(), converted).is_some() {
             bail!("Duplicate OpenAI Decisions answer name");

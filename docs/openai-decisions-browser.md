@@ -26,7 +26,8 @@ ACP clients use the same tool-call updates and permission flow; this does not
 add a protocol method or capability. Browser page text, indexed elements and
 recent actions are sent as text evidence. The operation and each potential
 operation's target are independent conditional choice questions; only the
-selected operation's target is executed. If enabled, the irreversible-action
+selected operation's target is executed. Single-target questions are resolved
+locally because the API requires at least two choices. If enabled, the irreversible-action
 gate uses predicate questions and fails closed on missing or invalid answers.
 
 Decisions does not generate text to fill fields: the existing Roder text helper
@@ -36,7 +37,7 @@ and provider-reported usage; omitted token counts stay unknown.
 
 The integration is covered by local HTTP contract tests, including action
 selection, predicate mapping, malformed answers and authentication failures.
-Those tests do not establish live model quality or account access.
+See the [live validation report](validation/decisions-2026-10-06.md) for authenticated browser and native computer results and their limits.
 
 ## Native computer choices
 
