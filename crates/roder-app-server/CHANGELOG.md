@@ -1,3 +1,22 @@
+## 0.6.1 (2026-10-07)
+
+### Fixes
+
+#### Align thread goals with Codex
+
+Protect unfinished goals, support explicit model-requested pause, account in-flight
+usage, enforce exhausted budgets, preserve stopped states when editing, and audit
+completion and repeated blockers before ending autonomous goal work.
+Automatic continuation preserves turn configuration and rechecks goal state
+under turn admission to avoid racing a pause or user turn.
+Conversation forks inherit the source goal snapshot after flushing usage.
+
+#### Align autonomous goals with the selected Full Access permissions: suppress
+
+ordinary extension approval requests in bypass mode, refresh permission guidance
+across inference and compaction, and resolve permission-switch races without
+widening restricted child permissions or overriding explicit policy denials.
+
 ## 0.6.0 (2026-10-05)
 
 ### Breaking Changes

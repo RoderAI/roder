@@ -76,15 +76,15 @@ uuid = "1.23.1"
 wasm-bindgen = "0.2.106"
 which = "8"
 
-roder-api = { path = "crates/roder-api", version = "0.2.2" }
+roder-api = { path = "crates/roder-api", version = "0.2.3" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.2.0" }
-roder-app-server = { path = "crates/roder-app-server", version = "0.6.0" }
+roder-app-server = { path = "crates/roder-app-server", version = "0.6.1" }
 roder-codex-auth = { path = "crates/roder-codex-auth", version = "0.1.0" }
 roder-commands = { path = "crates/roder-commands", version = "0.2.0" }
 roder-config = { path = "crates/roder-config", version = "0.2.1" }
 roder-context = { path = "crates/roder-context", version = "0.2.0" }
-roder-core = { path = "crates/roder-core", version = "0.3.3" }
+roder-core = { path = "crates/roder-core", version = "0.3.4" }
 roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.3.1" }
 roder-code-index = { path = "crates/roder-code-index", version = "0.2.0" }
 roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.2.0" }
@@ -166,8 +166,8 @@ roder-search = { path = "crates/roder-search", version = "0.1.0" }
 roder-skills = { path = "crates/roder-skills", version = "0.2.0" }
 roder-theme = { path = "crates/roder-theme", version = "0.1.0" }
 roder-tasks = { path = "crates/roder-tasks", version = "0.2.0" }
-roder-tools = { path = "crates/roder-tools", version = "0.2.0" }
-roder-tui = { path = "crates/roder-tui", version = "0.3.1" }
+roder-tools = { path = "crates/roder-tools", version = "0.2.1" }
+roder-tui = { path = "crates/roder-tui", version = "0.3.2" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
 [profile.dev]
