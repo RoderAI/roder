@@ -5,9 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
-use super::{
-    ConfirmChoice, ConfirmDialog, ConfirmDialogState, Theme, UserInputDialogState, centered_rect,
-};
+use super::{ConfirmChoice, ConfirmDialogState, Theme, UserInputDialogState, centered_rect};
 
 struct DialogCopy {
     title: String,
@@ -135,6 +133,13 @@ fn key_hint(label: &'static str, theme: Theme) -> Span<'static> {
 
 fn dialog_copy(dialog: &ConfirmDialog) -> DialogCopy {
     match dialog {
+        ConfirmDialog::ReplaceGoal { objective } => DialogCopy {
+            title: "Replace goal".to_string(),
+            context: "unfinished goal".to_string(),
+            heading: "Replace the current goal?".to_string(),
+            detail: format!("Start a new goal with fresh usage accounting: {objective}"),
+            confirm_label: "Replace".to_string(),
+        },
         ConfirmDialog::Interrupt => DialogCopy {
             title: "Interrupt turn".to_string(),
             context: "running model".to_string(),
@@ -376,4 +381,26 @@ mod tests {
 
         assert_eq!(shadow, Rect::new(4, 3, 16, 5));
     }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) enum ConfirmDialog {
+    ReplaceGoal {
+        objective: String,
+    },
+    Interrupt,
+    Exit,
+    ToolApproval {
+        approval_id: String,
+        tool_name: String,
+        reason: Option<String>,
+    },
+    /// Offered when agent-swarm mode is enabled from an approval-gating policy
+    /// mode (`Default`/`Plan`): every swarm child tool call would otherwise
+    /// block on a separate approval. Confirming switches to `target_mode`
+    /// (a non-gating mode) so the fan-out can run unattended.
+    SwarmPolicySwitch {
+        from_mode: super::PolicyMode,
+        target_mode: super::PolicyMode,
+    },
 }

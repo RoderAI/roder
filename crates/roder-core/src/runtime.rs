@@ -11,9 +11,13 @@ use sampling_output::{OutputContext, SamplingOutput};
 mod compaction_template;
 #[path = "runtime/eager_tools.rs"]
 mod eager_tools;
-mod thread_admission;
-mod owner_handoff;
 mod execution_receipts;
+mod owner_handoff;
+mod thread_admission;
+#[path = "runtime/tool_approvals.rs"]
+mod tool_approvals;
+#[path = "runtime/turn_start.rs"]
+mod turn_start;
 use eager_tools::EagerTools;
 #[path = "runtime/patch_progress.rs"]
 mod patch_progress;
@@ -240,7 +244,8 @@ pub struct StartTurnRequest {
     /**
      * Per-turn developer-authority context for this turn's InstructionBundle.
      * Applies to every inference round of the turn, is never written to
-     * thread state, and does not carry over to later turns.
+     * thread state. Automatic goal continuations retain it; later explicit
+     * turns receive only the context supplied by their host.
      */
     pub developer_context: Option<String>,
     pub task_ledger_required: bool,
@@ -309,6 +314,7 @@ pub(crate) struct PendingToolApproval {
     pub(crate) tool_id: String,
     pub(crate) tool_name: String,
     pub(crate) call: roder_api::tools::ToolCall,
+    pub(crate) context: Option<ToolExecutionContext>,
     pub(crate) tx: oneshot::Sender<bool>,
 }
 
@@ -1191,8 +1197,7 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        self.auto_resolve_pending_tool_approvals_for_mode(mode)
-            .await;
+        self.auto_resolve_pending_tool_approvals().await;
         Ok(next)
     }
 
@@ -1331,75 +1336,6 @@ impl Runtime {
         Ok(cfg.clone())
     }
 
-    async fn auto_resolve_pending_tool_approvals_for_mode(&self, mode: PolicyMode) {
-        let gate = DefaultPolicyGate::new();
-        let mut pending = self.pending_tool_approvals.lock().await;
-        let approval_ids = pending
-            .iter()
-            .filter_map(|(approval_id, approval)| {
-                let ctx = ToolExecutionContext::new(
-                    approval.thread_id.clone(),
-                    approval.turn_id.clone(),
-                    mode,
-                );
-                matches!(
-                    gate.decide(&approval.call, mode, &ctx),
-                    PolicyDecision::AutoApproved { .. }
-                )
-                .then_some(approval_id.clone())
-            })
-            .collect::<Vec<_>>();
-        let approvals = approval_ids
-            .into_iter()
-            .filter_map(|approval_id| {
-                pending
-                    .remove(&approval_id)
-                    .map(|approval| (approval_id, approval))
-            })
-            .collect::<Vec<_>>();
-        drop(pending);
-
-        for (approval_id, approval) in approvals {
-            let ctx = ToolExecutionContext::new(
-                approval.thread_id.clone(),
-                approval.turn_id.clone(),
-                mode,
-            );
-            let decision = gate.decide(&approval.call, mode, &ctx);
-            self.emit(RoderEvent::PolicyDecisionRecorded(PolicyDecisionRecorded {
-                thread_id: approval.thread_id.clone(),
-                turn_id: approval.turn_id.clone(),
-                tool_id: approval.tool_id.clone(),
-                tool_name: approval.tool_name.clone(),
-                mode,
-                decision,
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
-            if mode == PolicyMode::Bypass {
-                self.emit(RoderEvent::PolicyBypassActive(PolicyBypassActive {
-                    thread_id: approval.thread_id.clone(),
-                    turn_id: approval.turn_id.clone(),
-                    tool_id: approval.tool_id.clone(),
-                    tool_name: approval.tool_name.clone(),
-                    timestamp: OffsetDateTime::now_utc(),
-                }))
-                .await;
-            }
-            self.emit(RoderEvent::ApprovalResolved(ApprovalResolved {
-                thread_id: approval.thread_id,
-                turn_id: approval.turn_id,
-                approval_id,
-                tool_id: approval.tool_id,
-                tool_name: approval.tool_name,
-                approved: true,
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
-            let _ = approval.tx.send(true);
-        }
-    }
-
     pub async fn record_pending_plan_exit(&self, pending: PendingPlanExit) {
         *self.pending_plan_exit.write().await = Some(pending.clone());
         self.emit(RoderEvent::PolicyExitPlanRequested(
@@ -1446,8 +1382,7 @@ impl Runtime {
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
-            self.auto_resolve_pending_tool_approvals_for_mode(current.target_mode)
-                .await;
+            self.auto_resolve_pending_tool_approvals().await;
             current.target_mode
         } else {
             self.status().await.policy_mode
@@ -1478,37 +1413,6 @@ impl Runtime {
         .await;
         let _ = pending.tx.send(approved);
         Ok(true)
-    }
-
-    pub async fn request_app_server_tool_approval(
-        &self,
-        call: ToolCall,
-        reason: Option<String>,
-    ) -> anyhow::Result<bool> {
-        let approval_id = call.id.clone();
-        let (tx, rx) = oneshot::channel();
-        self.pending_tool_approvals.lock().await.insert(
-            approval_id.clone(),
-            PendingToolApproval {
-                thread_id: call.thread_id.clone(),
-                turn_id: call.turn_id.clone(),
-                tool_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                call: call.clone(),
-                tx,
-            },
-        );
-        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
-            thread_id: call.thread_id.clone(),
-            turn_id: call.turn_id.clone(),
-            approval_id,
-            tool_id: call.id.clone(),
-            tool_name: call.name.clone(),
-            reason,
-            timestamp: OffsetDateTime::now_utc(),
-        }))
-        .await;
-        Ok(rx.await.unwrap_or(false))
     }
 
     /// Completes a pending host-executed tool call (`tools/resolve`). Returns false when the
@@ -3234,294 +3138,6 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn start_turn(
-        self: &Arc<Self>,
-        mut req: StartTurnRequest,
-    ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
-        Box::pin(async move {
-            let _thread_admission = self.thread_admission(&req.thread_id).await;
-            let turn_admission = self.turn_admission.lock().await;
-            self.ensure_execution_authority()?;
-            anyhow::ensure!(
-                self.accepting_turns.load(Ordering::Acquire),
-                "runtime is quiescing and cannot accept new turns"
-            );
-            req.workspace = validate_thread_workspace(&req.workspace)?;
-            let team_member = self.teams.member_for_thread(&req.thread_id).await;
-            let cfg = self.config.read().await.clone();
-            let provider = req
-                .provider_override
-                .clone()
-                .unwrap_or_else(|| cfg.default_provider.clone());
-            self.engine_for(&provider)?;
-            let turn_id = uuid::Uuid::new_v4().to_string();
-            let mut initial_mailbox_ack = None;
-            if let Some((team_id, member)) = &team_member {
-                let pending = self
-                    .teams
-                    .reserve_pending_mailbox_messages(team_id, &member.id, &turn_id)
-                    .await?;
-                if !pending.is_empty()
-                    && let Some(team) = self.read_team(team_id).await
-                {
-                    let mailbox = format_mailbox_messages(&team, &pending);
-                    req.message = if req.message.trim().is_empty() {
-                        mailbox
-                    } else {
-                        format!("{mailbox}\n\n[Direct task input]\n{}", req.message)
-                    };
-                    initial_mailbox_ack = Some(MailboxDeliveryAck {
-                        team_id: team_id.clone(),
-                        message_ids: pending.iter().map(|message| message.id.clone()).collect(),
-                    });
-                }
-            }
-            let (abort_handle, abort_registration) = AbortHandle::new_pair();
-            let drain = Arc::new(TurnDrainHandle {
-                thread_id: req.thread_id.clone(),
-                interrupt_requested: AtomicBool::new(false),
-                interrupt_reason: Mutex::new(None),
-                completed: AtomicBool::new(false),
-                completed_notify: Notify::new(),
-            });
-            let (steer_changed, steering) = tokio::sync::watch::channel(0);
-            let active = ActiveTurnHandle {
-                thread_id: req.thread_id.clone(),
-                abort: abort_handle,
-                steers: Arc::new(Mutex::new(Vec::new())),
-                steer_changed,
-                drain,
-            };
-            self.active_turns
-                .write()
-                .await
-                .insert(turn_id.clone(), active);
-            self.record_turn_lifecycle(
-                req.thread_id.clone(),
-                turn_id.clone(),
-                TurnLifecycleState::Running,
-                TurnCleanupState::NotRequested,
-                None,
-            )
-            .await;
-            self.active_turn_contexts.write().await.insert(
-                turn_id.clone(),
-                InheritedTurnContext {
-                    workspace: req.workspace.clone(),
-                    instructions: req.instructions.clone(),
-                    developer_context: req.developer_context.clone(),
-                },
-            );
-            if let Some((team_id, member)) = team_member {
-                let updated = match self
-                    .teams
-                    .update_member(&team_id, &member.id, |member| {
-                        member.current_turn_id = Some(turn_id.clone());
-                        member.status = TeamMemberStatus::Running;
-                        member.final_message = None;
-                        member.terminal_error = None;
-                    })
-                    .await
-                {
-                    Ok(updated) => updated,
-                    Err(error) => {
-                        self.active_turns.write().await.remove(&turn_id);
-                        self.active_turn_contexts.write().await.remove(&turn_id);
-                        self.teams
-                            .release_mailbox_reservations_for_turn(&turn_id)
-                            .await;
-                        return Err(error);
-                    }
-                };
-                if let Some(member) = updated
-                    .members
-                    .into_iter()
-                    .find(|candidate| candidate.id == member.id)
-                {
-                    self.emit(RoderEvent::TeamMemberStatusChanged(
-                        TeamMemberStatusChanged {
-                            team_id,
-                            member_id: member.id,
-                            member_thread_id: member.thread_id,
-                            status: TeamMemberStatus::Running,
-                            timestamp: OffsetDateTime::now_utc(),
-                        },
-                    ))
-                    .await;
-                }
-            }
-            let runtime = Arc::clone(self);
-            let turn_req = req;
-            let thread_id_for_task = turn_req.thread_id.clone();
-            let turn_id_for_task = turn_id.clone();
-            tokio::spawn(async move {
-                let result = Abortable::new(
-                    runtime.run_turn(
-                        turn_req,
-                        turn_id_for_task.clone(),
-                        initial_mailbox_ack,
-                        steering,
-                    ),
-                    abort_registration,
-                )
-                .await;
-                /*
-                 * A failed sibling in a parallel tool batch drops in-flight external tool
-                 * futures (`try_join_all` in `route_tool_calls`), stranding their
-                 * `pending_external_tool_calls` entries. Sweep before reporting the turn
-                 * outcome so every `thread/toolExecutionRequested` gets a terminal
-                 * resolution; on clean completion the map holds nothing for this turn.
-                 */
-                runtime
-                    .cancel_pending_external_tool_calls_for_turn(&turn_id_for_task)
-                    .await;
-                let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
-                match &result {
-                    Ok(Err(err)) => {
-                        let (cleanup, ownership) =
-                            runtime.await_provider_turn_cleanup(&turn_id_for_task).await;
-                        // This wrapper owns terminal failure emission for returned errors.
-                        runtime
-                            .emit(RoderEvent::TurnFailed(TurnFailed {
-                                thread_id: thread_id_for_task.clone(),
-                                turn_id: turn_id_for_task.clone(),
-                                error: err.to_string(),
-                                error_kind: err
-                                    .downcast_ref::<roder_api::provider_error::ProviderFailure>()
-                                    .map(|failure| failure.kind.retry_cause().to_string()),
-                                usage: None,
-                                timestamp: OffsetDateTime::now_utc(),
-                            }))
-                            .await;
-                        runtime
-                            .record_turn_lifecycle_with_ownership(
-                                thread_id_for_task.clone(),
-                                turn_id_for_task.clone(),
-                                TurnLifecycleState::Failed,
-                                cleanup,
-                                Some(TurnLifecycleReason::ProviderFailure),
-                                ownership,
-                            )
-                            .await;
-                        let _ = runtime
-                            .complete_team_member_turn_with_result(
-                                &thread_id_for_task,
-                                &turn_id_for_task,
-                                TeamMemberStatus::Failed,
-                                None,
-                                Some(err.to_string()),
-                            )
-                            .await;
-                    }
-                    Ok(Ok(TurnRunOutcome::Stopped)) => {
-                        let (cleanup, ownership) =
-                            runtime.await_provider_turn_cleanup(&turn_id_for_task).await;
-                        runtime
-                            .record_turn_lifecycle_with_ownership(
-                                thread_id_for_task.clone(),
-                                turn_id_for_task.clone(),
-                                TurnLifecycleState::Failed,
-                                cleanup,
-                                Some(TurnLifecycleReason::ProviderFailure),
-                                ownership,
-                            )
-                            .await;
-                        let _ = runtime
-                            .complete_team_member_turn_with_result(
-                                &thread_id_for_task,
-                                &turn_id_for_task,
-                                TeamMemberStatus::Failed,
-                                None,
-                                Some("turn stopped before completion".to_string()),
-                            )
-                            .await;
-                    }
-                    Err(_) => {
-                        let reason = if let Some(handle) = runtime
-                            .turn_drains
-                            .read()
-                            .await
-                            .get(&turn_id_for_task)
-                            .cloned()
-                        {
-                            handle
-                                .interrupt_reason
-                                .lock()
-                                .await
-                                .unwrap_or(TurnLifecycleReason::RuntimeFailure)
-                        } else {
-                            TurnLifecycleReason::RuntimeFailure
-                        };
-                        let (cleanup, ownership) =
-                            runtime.await_provider_turn_cleanup(&turn_id_for_task).await;
-                        runtime
-                            .record_turn_lifecycle_with_ownership(
-                                thread_id_for_task.clone(),
-                                turn_id_for_task.clone(),
-                                TurnLifecycleState::Interrupted,
-                                cleanup,
-                                Some(reason),
-                                ownership,
-                            )
-                            .await;
-                        runtime
-                            .emit(RoderEvent::TurnInterrupted(TurnInterrupted {
-                                thread_id: thread_id_for_task.clone(),
-                                turn_id: turn_id_for_task.clone(),
-                                timestamp: OffsetDateTime::now_utc(),
-                            }))
-                            .await;
-                        let _ = runtime
-                            .complete_team_member_turn_with_result(
-                                &thread_id_for_task,
-                                &turn_id_for_task,
-                                TeamMemberStatus::Interrupted,
-                                None,
-                                None,
-                            )
-                            .await;
-                    }
-                    Ok(Ok(TurnRunOutcome::Completed)) => {}
-                }
-                runtime
-                    .teams
-                    .release_mailbox_reservations_for_turn(&turn_id_for_task)
-                    .await;
-                runtime.active_turns.write().await.remove(&turn_id_for_task);
-                if let Some(drain) = runtime.turn_drains.write().await.remove(&turn_id_for_task) {
-                    drain.completed.store(true, Ordering::Release);
-                    drain.completed_notify.notify_waiters();
-                }
-                runtime
-                    .active_turn_selections
-                    .write()
-                    .await
-                    .remove(&turn_id_for_task);
-                runtime
-                    .active_turn_contexts
-                    .write()
-                    .await
-                    .remove(&turn_id_for_task);
-                if !completed {
-                    // Completion paths above consume registered provider cleanup
-                    // handles. A setup failure before an engine can stream has no
-                    // such handle; this is a harmless final defensive sweep.
-                    let _ = runtime.provider_turn_cleanups.lock().map(|mut cleanups| {
-                        cleanups.remove(&turn_id_for_task);
-                    });
-                }
-                runtime.active_turns_changed.notify_waiters();
-                if completed {
-                    let _ = runtime
-                        .continue_active_goal_after_turn(thread_id_for_task)
-                        .await;
-                }
-            });
-            drop(turn_admission);
-            Ok(turn_id)
-        })
-    }
-
     pub(crate) async fn has_active_turn_for_thread(&self, thread_id: &ThreadId) -> bool {
         self.active_turns
             .read()
@@ -3688,6 +3304,15 @@ impl Runtime {
             )
             .await;
             handle.abort.abort();
+            if reason == TurnLifecycleReason::UserInterrupt {
+                self.goals
+                    .finish_turn(
+                        &thread_id,
+                        &turn_id,
+                        Some(roder_api::goals::ThreadGoalStatus::Paused),
+                    )
+                    .await?;
+            }
             self.active_turns_changed.notify_waiters();
         }
         self.active_turn_selections.write().await.remove(&turn_id);
@@ -3845,8 +3470,12 @@ impl Runtime {
         turn_id: TurnId,
         initial_mailbox_ack: Option<MailboxDeliveryAck>,
         mut steering: tokio::sync::watch::Receiver<u64>,
+        automatic_goal_turn: bool,
     ) -> anyhow::Result<TurnRunOutcome> {
         self.ensure_execution_authority()?;
+        self.goals
+            .begin_turn(&req.thread_id, &turn_id, automatic_goal_turn)
+            .await?;
         let turn_started_at = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TurnStarted(TurnStarted {
             thread_id: req.thread_id.clone(),
@@ -3937,7 +3566,6 @@ impl Runtime {
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
         let mut compacted_this_turn =
             self.compaction_generation(&req.thread_id) != compaction_generation_at_start;
-        let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
         let agent_swarm_mode_active = self
             .effective_agent_swarm_mode_for_thread(&req.thread_id)
             .await;
@@ -4225,6 +3853,7 @@ impl Runtime {
             {
                 instructions = apply_task_ledger_required(instructions);
             }
+            let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
             if effective_policy_mode == PolicyMode::Plan {
                 instructions = apply_plan_mode(instructions);
             }
@@ -4242,9 +3871,10 @@ impl Runtime {
             if ultra_mode_active || model_has_ultra_effort {
                 instructions = apply_codex_multi_agent_mode(instructions, proactive_multi_agent);
             }
+            let compaction_instructions = instructions.clone();
             instructions = self
                 .goals
-                .apply_goal_instructions(&req.thread_id, instructions)
+                .apply_goal_instructions(&req.thread_id, instructions, effective_policy_mode)
                 .await?;
             instructions =
                 apply_parallel_web_tools(instructions, tools.iter().map(|spec| spec.name.as_str()));
@@ -4342,6 +3972,7 @@ impl Runtime {
             };
 
             let mut compaction_template = request.clone();
+            compaction_template.instructions = compaction_instructions;
             compaction_template.transcript.clear();
             self.compaction_templates
                 .write()
@@ -4664,6 +4295,9 @@ impl Runtime {
 
                 match event {
                     InferenceEvent::MessageDelta(delta) => {
+                        if !delta.text.trim().is_empty() {
+                            self.goals.record_activity(&turn_id).await;
+                        }
                         if let Some((team_id, member)) =
                             self.teams.member_for_thread(&req.thread_id).await
                         {
@@ -4692,6 +4326,7 @@ impl Runtime {
                     }
                     InferenceEvent::ReasoningDelta(delta) => reasoning_text.push_str(&delta.text),
                     InferenceEvent::ToolCallCompleted(call) => {
+                        self.goals.record_activity(&turn_id).await;
                         if completed_call_replayed(&transcript, &call)? {
                             replayed_tool_call = true;
                             continue;
@@ -4773,6 +4408,12 @@ impl Runtime {
                         return Ok(TurnRunOutcome::Stopped);
                     }
                     InferenceEvent::Usage(usage) => {
+                        self.record_goal_token_usage(
+                            &req.thread_id,
+                            &turn_id,
+                            usage.total_tokens as i64,
+                        )
+                        .await?;
                         turn_usage.add_assign(&usage);
                     }
                     InferenceEvent::Completed(metadata) => {
@@ -5143,16 +4784,8 @@ impl Runtime {
             .await?;
         }
 
-        let turn_usage_tokens = turn_usage.total_tokens as i64;
         let completed_usage = (!turn_usage.is_empty()).then_some(turn_usage.clone());
         self.record_thread_usage_metadata(&req.thread_id, &turn_usage)
-            .await?;
-        self.goals
-            .account_turn_usage(
-                &req.thread_id,
-                turn_usage_tokens,
-                OffsetDateTime::now_utc() - turn_started_at,
-            )
             .await?;
         let (cleanup, ownership) = self.await_provider_turn_cleanup(&turn_id).await;
         self.record_turn_lifecycle_with_ownership(

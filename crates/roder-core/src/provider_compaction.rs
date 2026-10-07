@@ -103,13 +103,12 @@ impl Runtime {
                         }
                         InferenceEvent::Usage(usage) => {
                             self.record_thread_usage_metadata(thread_id, &usage).await?;
-                            self.goals
-                                .account_turn_usage(
-                                    thread_id,
-                                    usage.total_tokens as i64,
-                                    time::Duration::ZERO,
-                                )
-                                .await?;
+                            self.record_goal_token_usage(
+                                thread_id,
+                                turn_id,
+                                usage.total_tokens as i64,
+                            )
+                            .await?;
                         }
                         InferenceEvent::Completed(_) => {
                             completed = true;

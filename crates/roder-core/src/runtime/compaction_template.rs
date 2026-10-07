@@ -1,5 +1,73 @@
 use super::*;
 
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cached_goal_compaction_uses_current_permissions() {
+        let runtime = Runtime::fake().unwrap();
+        let id = "goal-compaction-permissions".to_string();
+        let template = runtime
+            .compaction_request_template(
+                &id,
+                &"turn".into(),
+                roder_api::catalog::PROVIDER_MOCK,
+                "mock-model",
+            )
+            .await
+            .unwrap();
+        runtime
+            .compaction_templates
+            .write()
+            .await
+            .insert(id.clone(), template);
+        runtime
+            .thread_goal_set(
+                &id,
+                roder_api::goals::ThreadGoalPatch {
+                    objective: Some("Finish the authorized task".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        for (mode, expected) in [
+            (PolicyMode::Bypass, "Full Access"),
+            (PolicyMode::Default, "Default mode"),
+        ] {
+            runtime.set_policy_mode(mode, None).await.unwrap();
+            let template = runtime
+                .compaction_request_template(
+                    &id,
+                    &"turn".into(),
+                    roder_api::catalog::PROVIDER_MOCK,
+                    "mock-model",
+                )
+                .await
+                .unwrap();
+            assert!(
+                template
+                    .instructions
+                    .developer
+                    .as_ref()
+                    .unwrap()
+                    .contains(&format!("Goal permissions: {expected}"))
+            );
+            if mode == PolicyMode::Default {
+                assert!(
+                    !template
+                        .instructions
+                        .developer
+                        .as_ref()
+                        .unwrap()
+                        .contains("Goal permissions: Full Access")
+                );
+            }
+        }
+    }
+}
+
 impl Runtime {
     pub(crate) async fn compaction_request_template(
         &self,
@@ -8,13 +76,18 @@ impl Runtime {
         provider: &str,
         model: &str,
     ) -> anyhow::Result<AgentInferenceRequest> {
-        if let Some(template) = self
+        let mode = self.effective_policy_mode_for_thread(thread_id).await;
+        if let Some(mut template) = self
             .compaction_templates
             .read()
             .await
             .get(thread_id)
             .cloned()
         {
+            template.instructions = self
+                .goals
+                .apply_goal_instructions(thread_id, template.instructions, mode)
+                .await?;
             return Ok(template);
         }
         let cfg = self.status().await;
@@ -42,7 +115,7 @@ impl Runtime {
         instructions.developer_context = context.and_then(|context| context.developer_context);
         instructions = self
             .goals
-            .apply_goal_instructions(thread_id, instructions)
+            .apply_goal_instructions(thread_id, instructions, mode)
             .await?;
         Ok(AgentInferenceRequest {
             model: ModelSelection {

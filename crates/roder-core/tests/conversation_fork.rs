@@ -19,6 +19,9 @@ use roder_core::{CreateThreadRequest, Runtime, RuntimeConfig, StartTurnRequest};
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;
 use time::OffsetDateTime;
 
+#[path = "conversation_fork/goals.rs"]
+mod goals;
+
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
         .arg("-C")

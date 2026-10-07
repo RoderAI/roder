@@ -20,6 +20,7 @@ use serde_json::json;
 
 struct GoalContinuationEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
+    empty: bool,
 }
 
 #[async_trait::async_trait]
@@ -50,6 +51,10 @@ impl InferenceEngine for GoalContinuationEngine {
         drop(requests);
 
         let events = match request_number {
+            _ if self.empty => vec![Ok(InferenceEvent::Completed(CompletionMetadata {
+                stop_reason: Some("stop".to_string()),
+                provider_response_id: None,
+            }))],
             1 => vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: "leaving goal active for continuation".to_string(),
@@ -184,12 +189,17 @@ impl ToolExecutor for TestGoalTool {
 async fn active_goal_continues_after_turn_until_model_completes_goal() {
     let engine = Arc::new(GoalContinuationEngine {
         requests: Mutex::new(Vec::new()),
+        empty: false,
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
     builder.tool_contributor(Arc::new(GoalToolsContributor));
     let runtime =
         Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    runtime
+        .set_policy_mode(roder_api::policy_mode::PolicyMode::Bypass, None)
+        .await
+        .unwrap();
     let mut events = runtime.subscribe_events();
     let thread_id = "thread_goal_continuation".to_string();
 
@@ -210,14 +220,19 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
             thread_id: thread_id.clone(),
             message: "start goal work".to_string(),
             images: Vec::new(),
-            provider_override: None,
-            model_override: None,
-            reasoning_override: None,
+            provider_override: Some(PROVIDER_MOCK.to_string()),
+            model_override: Some("goal-model".to_string()),
+            reasoning_override: Some("high".to_string()),
             workspace: std::env::current_dir().unwrap().display().to_string(),
-            instructions: default_instructions(),
-            developer_context: None,
+            instructions: {
+                let mut instructions = default_instructions();
+                instructions.system = Some("goal-specific system instructions".to_string());
+                instructions.developer = Some("goal-specific developer instructions".to_string());
+                instructions
+            },
+            developer_context: Some("goal-specific authority context".to_string()),
             task_ledger_required: false,
-            service_tier_override: None,
+            service_tier_override: Some("priority".to_string()),
         })
         .await
         .unwrap();
@@ -259,7 +274,7 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
         requests[1].transcript.iter().any(|item| matches!(
             item,
             TranscriptItem::UserMessage(message)
-                if message.text.contains("Continue working autonomously toward the active goal")
+                if message.text.contains("Continue working toward the active thread goal")
         )),
         "continuation request should be started by the runtime: {:?}",
         requests[1].transcript
@@ -271,4 +286,77 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
         .collect::<Vec<_>>();
     assert!(continuation_tools.contains(&"get_goal"));
     assert!(continuation_tools.contains(&"update_goal"));
+    for request in &requests[..2] {
+        assert!(
+            request
+                .instructions
+                .developer
+                .as_ref()
+                .unwrap()
+                .contains("Goal permissions: Full Access")
+        );
+    }
+    for request in &requests[1..] {
+        assert_eq!(request.model, requests[0].model);
+        assert_eq!(request.reasoning, requests[0].reasoning);
+        assert_eq!(request.runtime.service_tier.as_deref(), Some("priority"));
+        assert_eq!(
+            request.instructions.system.as_deref(),
+            Some("goal-specific system instructions")
+        );
+        assert!(
+            request
+                .instructions
+                .developer
+                .as_deref()
+                .unwrap()
+                .contains("goal-specific developer instructions")
+        );
+        assert_eq!(
+            request.instructions.developer_context.as_deref(),
+            Some("goal-specific authority context")
+        );
+    }
+}
+
+#[tokio::test]
+async fn empty_automatic_goal_turns_stop_after_three_attempts() {
+    let engine = Arc::new(GoalContinuationEngine {
+        requests: Mutex::new(Vec::new()),
+        empty: true,
+    });
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(engine.clone());
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    let mut events = runtime.subscribe_events();
+    let thread_id = "empty-goal-continuation".to_string();
+    runtime
+        .thread_goal_set(
+            &thread_id,
+            ThreadGoalPatch {
+                objective: Some("Stop after repeated empty responses".into()),
+                status: Some(ThreadGoalStatus::Active),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    runtime
+        .continue_active_goal_if_idle(thread_id.clone())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if matches!(event.event, roder_api::events::RoderEvent::ThreadGoalUpdated(update)
+                if update.thread_id == thread_id && update.goal.status == ThreadGoalStatus::Blocked)
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(engine.requests.lock().unwrap().len(), 3);
 }

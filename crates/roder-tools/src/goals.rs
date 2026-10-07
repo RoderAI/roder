@@ -45,8 +45,8 @@ impl ToolExecutor for GetGoalTool {
         let goal = controller.get_thread_goal(&ctx.thread_id).await?;
         Ok(result(
             call,
-            goal_text(goal.as_ref()),
-            goal_data(goal.as_ref()),
+            goal_output_text(goal.as_ref(), false),
+            goal_data(goal.as_ref(), false),
             false,
         ))
     }
@@ -58,19 +58,19 @@ impl ToolExecutor for CreateGoalTool {
         ToolSpec {
             name: "create_goal".to_string(),
             description:
-                "Create a new active goal for this thread. Fails only if an active goal already exists; completed, blocked, paused, or limited goals are replaced."
+                "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks. Set token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status."
                     .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "objective": {
                         "type": "string",
-                        "description": "The concrete objective to start pursuing. Fails only while an active goal is still in progress."
+                        "description": "The concrete objective to start pursuing. Starts a new active goal when no goal exists or replaces the current goal when it is complete."
                     },
                     "token_budget": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional positive token budget for the active goal."
+                        "description": "Positive token budget for the new goal. Omit unless explicitly requested."
                     }
                 },
                 "required": ["objective"],
@@ -87,20 +87,11 @@ impl ToolExecutor for CreateGoalTool {
         let args = parse::<CreateGoalArgs>(&call)?;
         validate_thread_goal_objective(&args.objective)?;
         let controller = ctx.require_goal_controller()?;
-        // Only an in-progress active goal blocks create. Terminal / non-active
-        // states (complete, blocked, paused, limits) must be replaceable so a
-        // resumed session can start the next objective after the previous one
-        // finished. create_thread_goal already overwrites stored goal state.
         if let Some(existing) = controller.get_thread_goal(&ctx.thread_id).await?
-            && existing.status.is_active()
+            && existing.status != ThreadGoalStatus::Complete
         {
-            return Ok(error_result(
-                call,
-                format!(
-                    "cannot create a new goal because this thread already has an active goal: {}",
-                    existing.objective
-                ),
-            ));
+            return Ok(error_result(call,
+                "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first".to_string()));
         }
         let goal = match controller
             .create_thread_goal(&ctx.thread_id, args.objective, args.token_budget)
@@ -111,8 +102,8 @@ impl ToolExecutor for CreateGoalTool {
         };
         Ok(result(
             call,
-            goal_text(Some(&goal)),
-            goal_data(Some(&goal)),
+            goal_output_text(Some(&goal), false),
+            goal_data(Some(&goal), false),
             false,
         ))
     }
@@ -124,14 +115,14 @@ impl ToolExecutor for UpdateGoalTool {
         ToolSpec {
             name: "update_goal".to_string(),
             description:
-                "Mark the existing goal complete or blocked. Pause, resume, limits, and clear are controlled by the user or runtime."
+                "Update the existing goal. Set paused only at the user's explicit request, report the returned status, and stop goal work; a later resume revokes that request. Budget limits take precedence over pausing. Set complete only when the full objective has actually been achieved and no required work remains. Set blocked only when the same blocking condition has repeated for at least three consecutive goal turns and meaningful progress is impossible without user input or an external state change. Resuming a blocked goal starts a fresh blocked audit. Once that threshold is satisfied, set blocked instead of leaving the goal active. Do not use blocked merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification. Do not mark complete merely because the budget is nearly exhausted or because you are stopping work. Resume and limit changes are controlled by the user or system. When marking a budgeted goal complete, report final token usage from this tool result."
                     .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["complete", "blocked"]
+                        "enum": ["complete", "blocked", "paused"]
                     }
                 },
                 "required": ["status"],
@@ -149,6 +140,7 @@ impl ToolExecutor for UpdateGoalTool {
         let status = match args.status {
             ModelGoalStatus::Complete => ThreadGoalStatus::Complete,
             ModelGoalStatus::Blocked => ThreadGoalStatus::Blocked,
+            ModelGoalStatus::Paused => ThreadGoalStatus::Paused,
         };
         let controller = ctx.require_goal_controller()?;
         let Some(goal) = controller
@@ -166,8 +158,8 @@ impl ToolExecutor for UpdateGoalTool {
         };
         Ok(result(
             call,
-            goal_text(Some(&goal)),
-            goal_data(Some(&goal)),
+            goal_output_text(Some(&goal), status == ThreadGoalStatus::Complete),
+            goal_data(Some(&goal), status == ThreadGoalStatus::Complete),
             false,
         ))
     }
@@ -189,6 +181,7 @@ struct UpdateGoalArgs {
 enum ModelGoalStatus {
     Complete,
     Blocked,
+    Paused,
 }
 
 fn empty_params() -> Value {
@@ -213,22 +206,33 @@ fn error_result(call: ToolCall, message: String) -> ToolResult {
     )
 }
 
-fn goal_data(goal: Option<&ThreadGoal>) -> Value {
+fn goal_data(goal: Option<&ThreadGoal>, report_completion: bool) -> Value {
     let remaining_tokens = goal
-        .and_then(|goal| goal.token_budget.map(|budget| budget - goal.tokens_used))
-        .map(|remaining| remaining.max(0));
-    let completion_budget_report = goal.and_then(|goal| {
-        (goal.status == ThreadGoalStatus::Complete).then(|| match goal.token_budget {
-            Some(budget) => format!("Used {} of {} goal tokens.", goal.tokens_used, budget),
-            None => format!("Used {} goal tokens.", goal.tokens_used),
+        .and_then(|goal| {
+            goal.token_budget
+                .map(|budget| budget.saturating_sub(goal.tokens_used))
         })
-    });
+        .map(|remaining| remaining.max(0));
+    let completion_budget_report = goal.filter(|goal| report_completion
+        && goal.status == ThreadGoalStatus::Complete
+        && (goal.token_budget.is_some() || goal.time_used_seconds > 0))
+        .map(|_| "Goal achieved. Report final usage from this tool result's structured goal fields. If goal.tokenBudget is present, include goal.tokensUsed and goal.tokenBudget. If goal.timeUsedSeconds is greater than zero, summarize elapsed time in a concise human-friendly form.");
     json!({
         "goal": goal,
         "hasActiveGoal": goal.is_some_and(|goal| goal.status == ThreadGoalStatus::Active),
         "remainingTokens": remaining_tokens,
         "completionBudgetReport": completion_budget_report,
     })
+}
+
+// The runtime sends ToolResult.text to inference providers. Keep structured goal
+// fields and completion guidance there as well as in the native tools/call data.
+fn goal_output_text(goal: Option<&ThreadGoal>, report_completion: bool) -> String {
+    format!(
+        "{}\n{}",
+        goal_text(goal),
+        goal_data(goal, report_completion)
+    )
 }
 
 fn goal_text(goal: Option<&ThreadGoal>) -> String {
@@ -249,221 +253,4 @@ fn goal_text(goal: Option<&ThreadGoal>) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use roder_api::events::{ThreadId, TurnId};
-    use roder_api::goals::ThreadGoalController;
-    use roder_api::policy_mode::PolicyMode;
-    use time::OffsetDateTime;
-    use tokio::sync::Mutex;
-
-    use super::*;
-
-    #[derive(Default)]
-    struct FakeGoalController {
-        goal: Mutex<Option<ThreadGoal>>,
-    }
-
-    #[async_trait::async_trait]
-    impl ThreadGoalController for FakeGoalController {
-        async fn get_thread_goal(
-            &self,
-            _thread_id: &ThreadId,
-        ) -> anyhow::Result<Option<ThreadGoal>> {
-            Ok(self.goal.lock().await.clone())
-        }
-
-        async fn create_thread_goal(
-            &self,
-            thread_id: &ThreadId,
-            objective: String,
-            token_budget: Option<i64>,
-        ) -> anyhow::Result<ThreadGoal> {
-            let now = OffsetDateTime::now_utc();
-            let goal = ThreadGoal {
-                thread_id: thread_id.clone(),
-                objective,
-                status: ThreadGoalStatus::Active,
-                token_budget,
-                tokens_used: 0,
-                time_used_seconds: 0,
-                created_at: now,
-                updated_at: now,
-            };
-            *self.goal.lock().await = Some(goal.clone());
-            Ok(goal)
-        }
-
-        async fn set_thread_goal(
-            &self,
-            _thread_id: &ThreadId,
-            patch: ThreadGoalPatch,
-        ) -> anyhow::Result<Option<ThreadGoal>> {
-            let mut guard = self.goal.lock().await;
-            let Some(goal) = guard.as_mut() else {
-                return Ok(None);
-            };
-            if let Some(status) = patch.status {
-                goal.status = status;
-            }
-            if let Some(objective) = patch.objective {
-                goal.objective = objective;
-            }
-            if let Some(token_budget) = patch.token_budget {
-                goal.token_budget = token_budget;
-            }
-            Ok(Some(goal.clone()))
-        }
-
-        async fn clear_thread_goal(&self, _thread_id: &ThreadId) -> anyhow::Result<bool> {
-            Ok(self.goal.lock().await.take().is_some())
-        }
-    }
-
-    #[tokio::test]
-    async fn goal_tools_create_get_and_complete_goal() {
-        let controller = Arc::new(FakeGoalController::default());
-        let create = CreateGoalTool;
-        let get = GetGoalTool;
-        let update = UpdateGoalTool;
-
-        let created = create
-            .execute(
-                context(controller.clone()),
-                call("create_goal", json!({ "objective": "Ship parity" })),
-            )
-            .await
-            .unwrap();
-        assert!(!created.is_error);
-        assert_eq!(created.data["hasActiveGoal"], true);
-
-        let current = get
-            .execute(context(controller.clone()), call("get_goal", json!({})))
-            .await
-            .unwrap();
-        assert!(current.text.contains("Ship parity"));
-
-        let completed = update
-            .execute(
-                context(controller),
-                call("update_goal", json!({ "status": "complete" })),
-            )
-            .await
-            .unwrap();
-        assert!(!completed.is_error);
-        assert_eq!(completed.data["hasActiveGoal"], false);
-        assert_eq!(completed.data["goal"]["status"], "complete");
-    }
-
-    #[tokio::test]
-    async fn create_goal_fails_when_active_goal_exists() {
-        let controller = Arc::new(FakeGoalController::default());
-        let create = CreateGoalTool;
-
-        let original = create
-            .execute(
-                context(controller.clone()),
-                call(
-                    "create_goal",
-                    json!({ "objective": "Original goal", "token_budget": 100 }),
-                ),
-            )
-            .await
-            .unwrap();
-        assert!(!original.is_error);
-
-        let duplicate = create
-            .execute(
-                context(controller),
-                call(
-                    "create_goal",
-                    json!({ "objective": "Replacement goal", "token_budget": 200 }),
-                ),
-            )
-            .await
-            .unwrap();
-
-        assert!(duplicate.is_error, "{duplicate:?}");
-        assert!(
-            duplicate.text.contains(
-                "cannot create a new goal because this thread already has an active goal"
-            ),
-            "{duplicate:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn create_goal_replaces_completed_goal() {
-        let controller = Arc::new(FakeGoalController::default());
-        let create = CreateGoalTool;
-        let update = UpdateGoalTool;
-
-        let original = create
-            .execute(
-                context(controller.clone()),
-                call("create_goal", json!({ "objective": "Finish phase 111" })),
-            )
-            .await
-            .unwrap();
-        assert!(!original.is_error);
-
-        let completed = update
-            .execute(
-                context(controller.clone()),
-                call("update_goal", json!({ "status": "complete" })),
-            )
-            .await
-            .unwrap();
-        assert!(!completed.is_error);
-        assert_eq!(completed.data["hasActiveGoal"], false);
-        assert_eq!(completed.data["goal"]["status"], "complete");
-
-        // Resume-session shape: completed goal is still stored on disk, but a
-        // new create_goal must succeed so the harness can start the next job.
-        let next = create
-            .execute(
-                context(controller.clone()),
-                call(
-                    "create_goal",
-                    json!({ "objective": "Ship the release", "token_budget": 24000 }),
-                ),
-            )
-            .await
-            .unwrap();
-        assert!(!next.is_error, "create after complete failed: {next:?}");
-        assert_eq!(next.data["hasActiveGoal"], true);
-        assert_eq!(next.data["goal"]["status"], "active");
-        assert_eq!(next.data["goal"]["objective"], "Ship the release");
-        assert_eq!(next.data["goal"]["tokenBudget"], 24000);
-        assert_eq!(next.data["goal"]["tokensUsed"], 0);
-
-        let stored = controller
-            .get_thread_goal(&"thread-goals".to_string())
-            .await
-            .unwrap()
-            .expect("replacement goal should be stored");
-        assert_eq!(stored.objective, "Ship the release");
-        assert_eq!(stored.status, ThreadGoalStatus::Active);
-    }
-
-    fn call(name: &str, arguments: Value) -> ToolCall {
-        ToolCall {
-            id: format!("call-{name}"),
-            name: name.to_string(),
-            arguments,
-            raw_arguments: "{}".to_string(),
-            thread_id: "thread-goals".to_string(),
-            turn_id: "turn-goals".to_string(),
-        }
-    }
-
-    fn context(controller: Arc<dyn ThreadGoalController>) -> ToolExecutionContext {
-        ToolExecutionContext::new(
-            ThreadId::from("thread-goals"),
-            TurnId::from("turn-goals"),
-            PolicyMode::Default,
-        )
-        .with_goal_controller(controller)
-    }
-}
+mod tests;

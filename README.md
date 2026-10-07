@@ -466,6 +466,13 @@ File-backed dynamic context is enabled by default. To disable it in config:
 file_backed_dynamic_context = false
 ```
 
+Thread goals use Roder's native [goal API and model tools](docs/roder-goals.md).
+Goals honor the selected permissions: `bypass` (Full Access) suppresses ordinary
+tool approval prompts, including extension review, while explicit policy denials
+and configured runner boundaries remain enforced.
+ACP `session/cancel` pauses an active goal and returns the existing `cancelled`
+stop reason. Goal management is not advertised as an optional ACP capability.
+
 `tools/list` exposes the built-in coding tools plus Roder workflow helpers: `exec_command`, `write_stdin`, `update_plan`, `get_goal`, `create_goal`, `update_goal`, and `request_user_input`. `exec_command` starts a shell session and returns either final output or a `session_id`; `write_stdin` writes to or polls that session. When a model calls `request_user_input`, Roder emits `thread/userInputRequested` and pauses the turn until a client answers with:
 
 ```json
