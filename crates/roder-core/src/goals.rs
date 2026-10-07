@@ -18,7 +18,8 @@ mod runtime;
 #[cfg(test)]
 mod tests;
 
-use prompts::{continuation_prompt, objective_updated_prompt};
+pub(crate) use prompts::continuation_prompt;
+use prompts::objective_updated_prompt;
 use tokio::sync::Mutex;
 
 use crate::bus::EventBus;
@@ -31,6 +32,7 @@ struct GoalCache {
     goals: HashMap<ThreadId, Option<ThreadGoal>>,
     turns: HashMap<String, accounting::GoalTurnProgress>,
     empty_turns: HashMap<ThreadId, u8>,
+    continuation_requests: HashMap<ThreadId, StartTurnRequest>,
 }
 
 #[derive(Clone)]
@@ -117,17 +119,6 @@ impl RuntimeGoalController {
         Ok(Some(goal))
     }
 
-    pub(crate) async fn is_continuation(
-        &self,
-        thread_id: &ThreadId,
-        message: &str,
-    ) -> anyhow::Result<bool> {
-        Ok(self
-            .load_goal(thread_id)
-            .await?
-            .is_some_and(|goal| message == continuation_prompt(&goal)))
-    }
-
     pub async fn active_goal(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadGoal>> {
         Ok(self
             .get_thread_goal(thread_id)
@@ -203,7 +194,7 @@ impl RuntimeGoalController {
             .map(|root| root.join(thread_id).join(GOAL_STATE_FILE))
     }
 
-    async fn emit_goal_updated(&self, goal: ThreadGoal) {
+    pub(crate) async fn emit_goal_updated(&self, goal: ThreadGoal) {
         let event = RoderEvent::ThreadGoalUpdated(ThreadGoalUpdated {
             thread_id: goal.thread_id.clone(),
             goal,

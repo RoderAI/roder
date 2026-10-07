@@ -33,7 +33,7 @@ fn render(template: &str, goal: &ThreadGoal) -> String {
         )
 }
 
-pub(super) fn continuation_prompt(goal: &ThreadGoal) -> String {
+pub(crate) fn continuation_prompt(goal: &ThreadGoal) -> String {
     render(include_str!("continuation.md"), goal)
 }
 

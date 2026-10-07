@@ -34,6 +34,16 @@ stop automatic continuation. User interruption pauses the goal. A terminal
 provider error blocks the goal, or marks it usage-limited for a typed usage/quota
 failure. Three automatic turns without visible activity also block continuation.
 
+Automatic continuation retains the admitted turn's instructions, developer
+context, workspace, provider, model, reasoning, and service tier. It does not
+replay user input or attachments, and a new explicit turn supplies its own
+context. The runtime rechecks idle and active goal state under turn admission,
+with goal mutations excluded until admission commits.
+
+Conversation forks flush the source goal's in-flight progress and copy its
+objective, status, budgets, usage, and timestamps into an independent child
+snapshot. Clearing or updating the parent afterward does not alter the child.
+
 Provider token usage is accounted as it arrives, including compaction and tokens
 spent by descendant agents. Usage and elapsed time are flushed before status
 changes and on turn termination. Work before creation or after completion/pause
@@ -98,6 +108,9 @@ The alignment corrects the following differences from the reference:
 | Edit | Always resumed the goal | Preserves paused/blocked/usage-limited status |
 | Replacement | Immediately cleared unfinished goal | Requires confirmation and validates before clearing |
 | Empty responses | Could continue indefinitely | Blocks after three empty automatic turns |
+| Continuation context | Reset turn configuration | Retains the admitted turn's configuration |
+| Continuation admission | Used an earlier idle/status snapshot | Rechecks state atomically before launch |
+| Conversation forks | Lost the source goal | Inherit an independent goal snapshot with current usage |
 
 Roder retains its native goal storage and transport, rather than importing Codex's
 SQLite extension host, telemetry, attachment UI, or Guardian infrastructure.

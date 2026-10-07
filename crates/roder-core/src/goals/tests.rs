@@ -11,6 +11,89 @@ fn runtime() -> Arc<Runtime> {
 }
 
 #[tokio::test]
+async fn fork_goal_snapshot_preserves_status_budget_and_flushed_usage() {
+    let runtime = runtime();
+    let source = "goal-fork-source".to_string();
+    let target = "goal-fork-target".to_string();
+    runtime
+        .goals
+        .create_thread_goal(&source, "Finish the objective".into(), Some(100))
+        .await
+        .unwrap();
+    runtime
+        .goals
+        .begin_turn(&source, "fork-turn", false)
+        .await
+        .unwrap();
+    runtime
+        .goals
+        .record_turn_usage(&source, "fork-turn", 12)
+        .await
+        .unwrap();
+    for status in [
+        ThreadGoalStatus::Active,
+        ThreadGoalStatus::Paused,
+        ThreadGoalStatus::Blocked,
+        ThreadGoalStatus::UsageLimited,
+        ThreadGoalStatus::BudgetLimited,
+        ThreadGoalStatus::Complete,
+    ] {
+        let mut expected = runtime
+            .thread_goal_set(
+                &source,
+                ThreadGoalPatch {
+                    status: Some(status),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let inherited = runtime
+            .goals
+            .inherit_thread_goal_snapshot(&source, &target)
+            .await
+            .unwrap()
+            .unwrap();
+        expected.thread_id = target.clone();
+        assert_eq!(inherited, expected);
+        assert_eq!(inherited.tokens_used, 12);
+        assert_eq!(
+            runtime.thread_goal_get(&target).await.unwrap(),
+            Some(inherited)
+        );
+    }
+}
+
+#[tokio::test]
+async fn paused_goal_is_rechecked_when_continuation_admission_unblocks() {
+    let runtime = runtime();
+    let thread_id = "goal-admission-race".to_string();
+    runtime
+        .goals
+        .create_thread_goal(&thread_id, "Keep working".into(), None)
+        .await
+        .unwrap();
+    let admission = runtime.thread_admission(&thread_id).await;
+    let continuation = runtime.continue_active_goal_if_idle(thread_id.clone());
+    tokio::pin!(continuation);
+    assert!(futures::poll!(continuation.as_mut()).is_pending());
+    runtime
+        .thread_goal_set(
+            &thread_id,
+            ThreadGoalPatch {
+                status: Some(ThreadGoalStatus::Paused),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    drop(admission);
+    assert!(continuation.await.unwrap().is_none());
+    assert!(!runtime.has_active_turn_for_thread(&thread_id).await);
+}
+
+#[tokio::test]
 async fn goal_controller_creates_sets_and_clears_thread_goal() {
     let runtime = runtime();
     let thread_id = "thread-goal".to_string();

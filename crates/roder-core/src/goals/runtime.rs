@@ -1,5 +1,71 @@
 use super::*;
 
+impl RuntimeGoalController {
+    pub(crate) async fn continuation_request(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Option<StartTurnRequest> {
+        self.cache
+            .lock()
+            .await
+            .continuation_requests
+            .get(thread_id)
+            .cloned()
+    }
+
+    pub(crate) async fn inherit_thread_goal_snapshot(
+        &self,
+        source: &ThreadId,
+        target: &ThreadId,
+    ) -> anyhow::Result<Option<ThreadGoal>> {
+        let _guard = self.mutation.lock().await;
+        self.flush_thread_progress(source).await?;
+        let Some(mut goal) = self.load_goal(source).await? else {
+            return Ok(None);
+        };
+        validate_thread_goal_objective(&goal.objective)?;
+        goal.thread_id = target.clone();
+        self.store_goal(goal.clone()).await?;
+        Ok(Some(goal))
+    }
+
+    /// Keep goal mutations excluded until idle turn admission is committed.
+    pub(crate) async fn admit_continuation(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<(tokio::sync::OwnedMutexGuard<()>, ThreadGoal)>> {
+        let guard = self.mutation.clone().lock_owned().await;
+        self.flush_thread_progress(thread_id).await?;
+        Ok(self
+            .load_goal(thread_id)
+            .await?
+            .filter(|goal| goal.status.is_active())
+            .map(|goal| (guard, goal)))
+    }
+
+    /// Keep the admitted turn's configuration for automatic continuation. A
+    /// later explicit turn replaces it; user input and attachments are never
+    /// replayed, and this authority context is never persisted to disk.
+    pub(crate) async fn remember_turn_options(&self, request: &StartTurnRequest) {
+        self.cache.lock().await.continuation_requests.insert(
+            request.thread_id.clone(),
+            StartTurnRequest {
+                thread_id: request.thread_id.clone(),
+                message: String::new(),
+                images: Vec::new(),
+                provider_override: request.provider_override.clone(),
+                model_override: request.model_override.clone(),
+                reasoning_override: request.reasoning_override.clone(),
+                workspace: request.workspace.clone(),
+                instructions: request.instructions.clone(),
+                developer_context: request.developer_context.clone(),
+                task_ledger_required: request.task_ledger_required,
+                service_tier_override: request.service_tier_override.clone(),
+            },
+        );
+    }
+}
+
 impl Runtime {
     pub async fn thread_goal_get(
         &self,
@@ -85,23 +151,25 @@ impl Runtime {
         let Some(goal) = self.goals.active_goal(&thread_id).await? else {
             return Ok(None);
         };
-        let workspace = self.workspace_for_thread(&thread_id).await?;
-        let turn_id = self
-            .start_turn(StartTurnRequest {
+        let previous = self.goals.continuation_request(&thread_id).await;
+        let mut request = match previous {
+            Some(request) => request,
+            None => StartTurnRequest {
                 thread_id: thread_id.clone(),
-                message: continuation_prompt(&goal),
+                message: String::new(),
                 images: Vec::new(),
                 provider_override: None,
                 model_override: None,
                 reasoning_override: None,
-                workspace,
+                workspace: self.workspace_for_thread(&thread_id).await?,
                 instructions: crate::default_instructions(),
                 developer_context: None,
                 task_ledger_required: false,
                 service_tier_override: None,
-            })
-            .await?;
-        Ok(Some(turn_id))
+            },
+        };
+        request.message = continuation_prompt(&goal);
+        self.start_goal_turn_if_idle(request).await
     }
 
     pub(crate) async fn continue_active_goal_after_turn(
