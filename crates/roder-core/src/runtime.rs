@@ -14,6 +14,8 @@ mod eager_tools;
 mod execution_receipts;
 mod owner_handoff;
 mod thread_admission;
+#[path = "runtime/tool_approvals.rs"]
+mod tool_approvals;
 #[path = "runtime/turn_start.rs"]
 mod turn_start;
 use eager_tools::EagerTools;
@@ -312,6 +314,7 @@ pub(crate) struct PendingToolApproval {
     pub(crate) tool_id: String,
     pub(crate) tool_name: String,
     pub(crate) call: roder_api::tools::ToolCall,
+    pub(crate) context: Option<ToolExecutionContext>,
     pub(crate) tx: oneshot::Sender<bool>,
 }
 
@@ -1194,8 +1197,7 @@ impl Runtime {
             timestamp: OffsetDateTime::now_utc(),
         }))
         .await;
-        self.auto_resolve_pending_tool_approvals_for_mode(mode)
-            .await;
+        self.auto_resolve_pending_tool_approvals().await;
         Ok(next)
     }
 
@@ -1334,75 +1336,6 @@ impl Runtime {
         Ok(cfg.clone())
     }
 
-    async fn auto_resolve_pending_tool_approvals_for_mode(&self, mode: PolicyMode) {
-        let gate = DefaultPolicyGate::new();
-        let mut pending = self.pending_tool_approvals.lock().await;
-        let approval_ids = pending
-            .iter()
-            .filter_map(|(approval_id, approval)| {
-                let ctx = ToolExecutionContext::new(
-                    approval.thread_id.clone(),
-                    approval.turn_id.clone(),
-                    mode,
-                );
-                matches!(
-                    gate.decide(&approval.call, mode, &ctx),
-                    PolicyDecision::AutoApproved { .. }
-                )
-                .then_some(approval_id.clone())
-            })
-            .collect::<Vec<_>>();
-        let approvals = approval_ids
-            .into_iter()
-            .filter_map(|approval_id| {
-                pending
-                    .remove(&approval_id)
-                    .map(|approval| (approval_id, approval))
-            })
-            .collect::<Vec<_>>();
-        drop(pending);
-
-        for (approval_id, approval) in approvals {
-            let ctx = ToolExecutionContext::new(
-                approval.thread_id.clone(),
-                approval.turn_id.clone(),
-                mode,
-            );
-            let decision = gate.decide(&approval.call, mode, &ctx);
-            self.emit(RoderEvent::PolicyDecisionRecorded(PolicyDecisionRecorded {
-                thread_id: approval.thread_id.clone(),
-                turn_id: approval.turn_id.clone(),
-                tool_id: approval.tool_id.clone(),
-                tool_name: approval.tool_name.clone(),
-                mode,
-                decision,
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
-            if mode == PolicyMode::Bypass {
-                self.emit(RoderEvent::PolicyBypassActive(PolicyBypassActive {
-                    thread_id: approval.thread_id.clone(),
-                    turn_id: approval.turn_id.clone(),
-                    tool_id: approval.tool_id.clone(),
-                    tool_name: approval.tool_name.clone(),
-                    timestamp: OffsetDateTime::now_utc(),
-                }))
-                .await;
-            }
-            self.emit(RoderEvent::ApprovalResolved(ApprovalResolved {
-                thread_id: approval.thread_id,
-                turn_id: approval.turn_id,
-                approval_id,
-                tool_id: approval.tool_id,
-                tool_name: approval.tool_name,
-                approved: true,
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
-            let _ = approval.tx.send(true);
-        }
-    }
-
     pub async fn record_pending_plan_exit(&self, pending: PendingPlanExit) {
         *self.pending_plan_exit.write().await = Some(pending.clone());
         self.emit(RoderEvent::PolicyExitPlanRequested(
@@ -1449,8 +1382,7 @@ impl Runtime {
                 timestamp: OffsetDateTime::now_utc(),
             }))
             .await;
-            self.auto_resolve_pending_tool_approvals_for_mode(current.target_mode)
-                .await;
+            self.auto_resolve_pending_tool_approvals().await;
             current.target_mode
         } else {
             self.status().await.policy_mode
@@ -1481,37 +1413,6 @@ impl Runtime {
         .await;
         let _ = pending.tx.send(approved);
         Ok(true)
-    }
-
-    pub async fn request_app_server_tool_approval(
-        &self,
-        call: ToolCall,
-        reason: Option<String>,
-    ) -> anyhow::Result<bool> {
-        let approval_id = call.id.clone();
-        let (tx, rx) = oneshot::channel();
-        self.pending_tool_approvals.lock().await.insert(
-            approval_id.clone(),
-            PendingToolApproval {
-                thread_id: call.thread_id.clone(),
-                turn_id: call.turn_id.clone(),
-                tool_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                call: call.clone(),
-                tx,
-            },
-        );
-        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
-            thread_id: call.thread_id.clone(),
-            turn_id: call.turn_id.clone(),
-            approval_id,
-            tool_id: call.id.clone(),
-            tool_name: call.name.clone(),
-            reason,
-            timestamp: OffsetDateTime::now_utc(),
-        }))
-        .await;
-        Ok(rx.await.unwrap_or(false))
     }
 
     /// Completes a pending host-executed tool call (`tools/resolve`). Returns false when the
@@ -3665,7 +3566,6 @@ impl Runtime {
         let mut transcript = self.transcript_for_turn(&req, &turn_id, &model).await?;
         let mut compacted_this_turn =
             self.compaction_generation(&req.thread_id) != compaction_generation_at_start;
-        let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
         let agent_swarm_mode_active = self
             .effective_agent_swarm_mode_for_thread(&req.thread_id)
             .await;
@@ -3953,6 +3853,7 @@ impl Runtime {
             {
                 instructions = apply_task_ledger_required(instructions);
             }
+            let effective_policy_mode = self.effective_policy_mode_for_thread(&req.thread_id).await;
             if effective_policy_mode == PolicyMode::Plan {
                 instructions = apply_plan_mode(instructions);
             }
@@ -3970,9 +3871,10 @@ impl Runtime {
             if ultra_mode_active || model_has_ultra_effort {
                 instructions = apply_codex_multi_agent_mode(instructions, proactive_multi_agent);
             }
+            let compaction_instructions = instructions.clone();
             instructions = self
                 .goals
-                .apply_goal_instructions(&req.thread_id, instructions)
+                .apply_goal_instructions(&req.thread_id, instructions, effective_policy_mode)
                 .await?;
             instructions =
                 apply_parallel_web_tools(instructions, tools.iter().map(|spec| spec.name.as_str()));
@@ -4070,6 +3972,7 @@ impl Runtime {
             };
 
             let mut compaction_template = request.clone();
+            compaction_template.instructions = compaction_instructions;
             compaction_template.transcript.clear();
             self.compaction_templates
                 .write()

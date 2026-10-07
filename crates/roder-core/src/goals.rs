@@ -62,6 +62,7 @@ impl RuntimeGoalController {
         &self,
         thread_id: &ThreadId,
         mut instructions: InstructionBundle,
+        mode: roder_api::policy_mode::PolicyMode,
     ) -> anyhow::Result<InstructionBundle> {
         let Some(goal) = self.get_thread_goal(thread_id).await? else {
             return Ok(instructions);
@@ -72,7 +73,7 @@ impl RuntimeGoalController {
         ) {
             return Ok(instructions);
         }
-        let addition = if goal.status == ThreadGoalStatus::BudgetLimited {
+        let mut addition = if goal.status == ThreadGoalStatus::BudgetLimited {
             if !self
                 .cache
                 .lock()
@@ -87,6 +88,8 @@ impl RuntimeGoalController {
         } else {
             continuation_prompt(&goal)
         };
+        addition.push_str("\n\n");
+        addition.push_str(prompts::permission_prompt(mode));
         instructions.developer = Some(match instructions.developer {
             Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{addition}"),
             _ => addition,

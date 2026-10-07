@@ -37,7 +37,11 @@ impl Runtime {
         workspace: Option<&str>,
         deadline: Option<OffsetDateTime>,
     ) -> anyhow::Result<ToolResultRecord> {
-        let _execution_permit = self.execution_lease.as_ref().map(|lease| lease.enter()).transpose()?;
+        let _execution_permit = self
+            .execution_lease
+            .as_ref()
+            .map(|lease| lease.enter())
+            .transpose()?;
         let mut parsed_args: Value = serde_json::from_str(&call.arguments)
             .unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }));
         if is_subagent_task_tool(&call.name)
@@ -423,7 +427,7 @@ impl Runtime {
 
         if let PolicyDecision::RequiresApproval { reason } = &decision
             && !self
-                .request_tool_approval(thread_id, turn_id, &tool_call, reason.clone())
+                .request_tool_approval(thread_id, turn_id, &tool_call, reason.clone(), &ctx)
                 .await?
         {
             let item = ToolResultRecord {
@@ -1005,15 +1009,17 @@ impl Runtime {
         );
         drop(pending);
         let delivered = self
-            .emit_external_execution(RoderEvent::ExternalToolCallRequested(ExternalToolCallRequested {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                request_id: request_id.clone(),
-                tool_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                arguments: parsed_args.clone(),
-                timestamp: OffsetDateTime::now_utc(),
-            }))
+            .emit_external_execution(RoderEvent::ExternalToolCallRequested(
+                ExternalToolCallRequested {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    request_id: request_id.clone(),
+                    tool_id: call.id.clone(),
+                    tool_name: call.name.clone(),
+                    arguments: parsed_args.clone(),
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
             .await;
         if let Err(error) = delivered {
             self.pending_external_tool_calls
@@ -1104,50 +1110,6 @@ impl Runtime {
         }))
         .await;
         Ok(item)
-    }
-
-    async fn request_tool_approval(
-        &self,
-        thread_id: &ThreadId,
-        turn_id: &TurnId,
-        call: &ToolCall,
-        reason: Option<String>,
-    ) -> anyhow::Result<bool> {
-        let approval_id = call.id.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending_tool_approvals.lock().await.insert(
-            approval_id.clone(),
-            crate::runtime::PendingToolApproval {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                tool_id: call.id.clone(),
-                tool_name: call.name.clone(),
-                call: call.clone(),
-                tx,
-            },
-        );
-        let runtime_config = self.status().await;
-        crate::hooks::run_lifecycle(
-            self,
-            thread_id,
-            turn_id,
-            runtime_config.workspace.as_deref(),
-            "PermissionRequest",
-            Some(&call.name),
-            serde_json::json!({"toolName": call.name, "toolInput": call.arguments, "reason": reason}),
-        )
-        .await;
-        self.emit(RoderEvent::ApprovalRequested(ApprovalRequested {
-            thread_id: thread_id.clone(),
-            turn_id: turn_id.clone(),
-            approval_id,
-            tool_id: call.id.clone(),
-            tool_name: call.name.clone(),
-            reason,
-            timestamp: OffsetDateTime::now_utc(),
-        }))
-        .await;
-        Ok(rx.await.unwrap_or(false))
     }
 
     async fn emit_subagent_events(

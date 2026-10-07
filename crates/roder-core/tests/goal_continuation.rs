@@ -196,6 +196,10 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
     builder.tool_contributor(Arc::new(GoalToolsContributor));
     let runtime =
         Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    runtime
+        .set_policy_mode(roder_api::policy_mode::PolicyMode::Bypass, None)
+        .await
+        .unwrap();
     let mut events = runtime.subscribe_events();
     let thread_id = "thread_goal_continuation".to_string();
 
@@ -282,6 +286,16 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
         .collect::<Vec<_>>();
     assert!(continuation_tools.contains(&"get_goal"));
     assert!(continuation_tools.contains(&"update_goal"));
+    for request in &requests[..2] {
+        assert!(
+            request
+                .instructions
+                .developer
+                .as_ref()
+                .unwrap()
+                .contains("Goal permissions: Full Access")
+        );
+    }
     for request in &requests[1..] {
         assert_eq!(request.model, requests[0].model);
         assert_eq!(request.reasoning, requests[0].reasoning);

@@ -30,6 +30,14 @@ impl DefaultPolicyGate {
                 .await?;
             decision = merge_policy_decision(decision, contributor.id(), contribution);
         }
+        // Full Access disables approval prompts, including requests contributed
+        // by extensions. Explicit policy denials remain authoritative.
+        if mode == PolicyMode::Bypass && matches!(decision, PolicyDecision::RequiresApproval { .. })
+        {
+            decision = PolicyDecision::AutoApproved {
+                matched_rule: Some("*".into()),
+            };
+        }
         Ok(decision)
     }
 }

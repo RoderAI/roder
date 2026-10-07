@@ -15,6 +15,9 @@ use roder_core::policy_gate::DefaultPolicyGate;
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
 use serde_json::json;
 
+#[path = "policy/full_access.rs"]
+mod full_access;
+
 #[test]
 fn plan_mode_allows_read_like_tool_with_write_like_arguments() {
     let decision = DefaultPolicyGate::new().decide(

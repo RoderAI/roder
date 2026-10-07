@@ -1,4 +1,20 @@
 use roder_api::goals::ThreadGoal;
+use roder_api::policy_mode::PolicyMode;
+
+pub(super) fn permission_prompt(mode: PolicyMode) -> &'static str {
+    match mode {
+        PolicyMode::Bypass => include_str!("full_access.md"),
+        PolicyMode::Plan => {
+            "Goal permissions: Plan mode. Inspect and plan within the current permissions; file modifications remain denied. A goal does not grant permission to leave Plan mode."
+        }
+        PolicyMode::AcceptAll => {
+            "Goal permissions: Accept All mode. Continue authorized work using the configured auto-approved tools. Other tools may require approval. A goal does not expand these permissions."
+        }
+        PolicyMode::Default => {
+            "Goal permissions: Default mode. Continue authorized work; side-effecting tools use the normal approval flow. A goal does not grant Full Access or expand these permissions."
+        }
+    }
+}
 
 // Semantics from openai/codex 87be737b664: ext/goal/templates/goals.
 fn render(template: &str, goal: &ThreadGoal) -> String {

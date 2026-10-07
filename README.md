@@ -467,6 +467,9 @@ file_backed_dynamic_context = false
 ```
 
 Thread goals use Roder's native [goal API and model tools](docs/roder-goals.md).
+Goals honor the selected permissions: `bypass` (Full Access) suppresses ordinary
+tool approval prompts, including extension review, while explicit policy denials
+and configured runner boundaries remain enforced.
 ACP `session/cancel` pauses an active goal and returns the existing `cancelled`
 stop reason. Goal management is not advertised as an optional ACP capability.
 

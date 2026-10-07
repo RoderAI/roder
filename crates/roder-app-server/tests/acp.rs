@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 #[derive(Clone, Default)]
 struct RecordingPeer {
     notifications: Arc<Mutex<Vec<JsonRpcNotification>>>,
+    permission_requests: Arc<Mutex<usize>>,
 }
 
 struct PendingEngine;
@@ -60,6 +61,7 @@ impl AcpClientPeer for RecordingPeer {
         &self,
         _request: acp::RequestPermissionRequest,
     ) -> anyhow::Result<acp::RequestPermissionResponse> {
+        *self.permission_requests.lock().await += 1;
         Ok(acp::RequestPermissionResponse::new(
             acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
                 "allow_once",
@@ -338,3 +340,6 @@ mod browser {
 mod native_computer {
     include!("acp_native_computer.rs");
 }
+
+#[path = "acp/full_access.rs"]
+mod full_access;

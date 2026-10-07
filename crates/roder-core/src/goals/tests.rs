@@ -201,10 +201,60 @@ async fn active_goal_instructions_are_injected() {
         .unwrap();
     let instructions = runtime
         .goals
-        .apply_goal_instructions(&thread_id, InstructionBundle::default())
+        .apply_goal_instructions(
+            &thread_id,
+            InstructionBundle::default(),
+            roder_api::policy_mode::PolicyMode::Default,
+        )
         .await
         .unwrap();
     assert!(instructions.developer.unwrap().contains("Finish docs"));
+}
+
+#[tokio::test]
+async fn goal_permission_instructions_follow_selected_mode_without_escalation() {
+    use roder_api::policy_mode::PolicyMode;
+    let runtime = runtime();
+    let thread_id = "goal-permission-guidance".into();
+    runtime
+        .goals
+        .create_thread_goal(&thread_id, "Finish authorized work".into(), None)
+        .await
+        .unwrap();
+    for (mode, label) in [
+        (PolicyMode::Bypass, "Full Access"),
+        (PolicyMode::Default, "Default mode"),
+        (PolicyMode::AcceptAll, "Accept All mode"),
+        (PolicyMode::Plan, "Plan mode"),
+    ] {
+        runtime.set_policy_mode(mode, None).await.unwrap();
+        let instructions = runtime
+            .goals
+            .apply_goal_instructions(
+                &thread_id,
+                InstructionBundle::default(),
+                runtime.effective_policy_mode_for_thread(&thread_id).await,
+            )
+            .await
+            .unwrap();
+        assert!(
+            instructions
+                .developer
+                .as_ref()
+                .unwrap()
+                .contains(&format!("Goal permissions: {label}"))
+        );
+        if mode != PolicyMode::Bypass {
+            assert!(
+                !instructions
+                    .developer
+                    .as_ref()
+                    .unwrap()
+                    .contains("Goal permissions: Full Access")
+            );
+        }
+        assert_eq!(runtime.status().await.policy_mode, mode);
+    }
 }
 
 #[tokio::test]

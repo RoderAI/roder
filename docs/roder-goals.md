@@ -56,6 +56,35 @@ Goal mutations are serialized within a runtime and local goal files are replaced
 atomically. Each update emits `thread/goal/updated`; clearing emits
 `thread/goal/cleared`.
 
+## Full Access permissions
+
+Goals use the thread's selected permission mode. Roder's `bypass` mode disables
+tool approval prompts, including ordinary extension review requests. Goal
+instructions tell the model to finish authorized implementation and validation
+autonomously and preserve user authorization across continuations. Permission
+guidance refreshes each inference round and during compaction.
+
+Select it through the native transport:
+
+```json
+{"jsonrpc":"2.0","id":"permissions","method":"thread/set_mode","params":{"mode":"bypass"}}
+```
+
+This changes the runtime's default mode; independent team-member modes remain
+in force.
+
+Builtin local tools use global path scope by default, allowing edits outside
+the workspace. Explicit workspace-only tool configuration, policy denials,
+tool allowlists, and remote runner boundaries still apply. Full Access is
+execution permission; it does not authorize unrelated tasks or messages to
+other people. Starting or resuming a goal never changes permissions. Default,
+Accept All, and Plan retain their existing approval and write restrictions.
+
+Switching to bypass resolves eligible pending approvals, including a request
+registered concurrently with the mode change. The runtime rechecks extension
+denials and each thread's effective permissions before auto-resolving; a global
+mode change cannot elevate an independently restricted child.
+
 ## Model Tools
 
 - `get_goal` returns current status, usage, and remaining tokens.
