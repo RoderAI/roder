@@ -32,6 +32,7 @@ mod text_sources;
 mod variants;
 
 mod decisions_live;
+mod decisions_comparison;
 mod keyless;
 mod live;
 mod miniwob;

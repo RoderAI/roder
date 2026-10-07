@@ -16,3 +16,6 @@ in distribution metadata.
 Resolve single-target choices locally because the live Decisions API requires
 at least two choices. Validate authenticated browser tasks and screenshot-based
 native computer execution against the live endpoint.
+
+Add a reproducible paired live Decisions/Jev browser benchmark with alternating
+provider order, repeated outcome grading, latency, and provider-reported usage.

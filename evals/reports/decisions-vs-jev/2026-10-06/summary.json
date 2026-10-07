@@ -1,0 +1,63 @@
+{
+  "decisions": {
+    "attempts": 72,
+    "passed": 47,
+    "pass_percent": 65.28,
+    "median_wall_seconds": 2.0575,
+    "median_success_wall_seconds": 1.619,
+    "total_wall_seconds": 157.25,
+    "decision_calls": 225,
+    "median_decision_ms": 182.5,
+    "parsed_decisions": 216,
+    "reported_input_tokens": 276940,
+    "unknown_usage_rows": 0,
+    "models": [
+      "gpt-6-luna"
+    ],
+    "failed_tasks": {
+      "pagination": 1,
+      "twin_by_context": 3,
+      "table_row_by_context": 2,
+      "menu_button": 2,
+      "styled_checkbox": 1,
+      "icon_by_picture": 3,
+      "enter_to_search": 3,
+      "shadow_component": 3,
+      "frame_form": 3,
+      "contact_form": 2,
+      "scroll_region": 1,
+      "unlabelled_fields": 1
+    }
+  },
+  "jev": {
+    "attempts": 72,
+    "passed": 63,
+    "pass_percent": 87.5,
+    "median_wall_seconds": 1.7025,
+    "median_success_wall_seconds": 1.648,
+    "total_wall_seconds": 139.408,
+    "decision_calls": 214,
+    "median_decision_ms": 139.5,
+    "parsed_decisions": 214,
+    "reported_input_tokens": 392389,
+    "unknown_usage_rows": 0,
+    "models": [
+      "jev-1.13.0"
+    ],
+    "failed_tasks": {
+      "icon_by_picture": 3,
+      "scroll_region": 3,
+      "enter_to_search": 3
+    }
+  },
+  "pairs": {
+    "complete": 72,
+    "both_pass": 45,
+    "decisions_only": 2,
+    "jev_only": 18,
+    "both_fail": 7,
+    "median_jev_over_decisions_wall_ratio_both_pass": 0.9596977329974811,
+    "median_decisions_seconds_both_pass": 1.614,
+    "median_jev_seconds_both_pass": 1.648
+  }
+}
