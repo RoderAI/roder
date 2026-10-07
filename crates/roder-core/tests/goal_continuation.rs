@@ -259,7 +259,7 @@ async fn active_goal_continues_after_turn_until_model_completes_goal() {
         requests[1].transcript.iter().any(|item| matches!(
             item,
             TranscriptItem::UserMessage(message)
-                if message.text.contains("Continue working autonomously toward the active goal")
+                if message.text.contains("Continue working toward the active thread goal")
         )),
         "continuation request should be started by the runtime: {:?}",
         requests[1].transcript

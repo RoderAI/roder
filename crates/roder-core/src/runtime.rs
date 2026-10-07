@@ -11,9 +11,9 @@ use sampling_output::{OutputContext, SamplingOutput};
 mod compaction_template;
 #[path = "runtime/eager_tools.rs"]
 mod eager_tools;
-mod thread_admission;
-mod owner_handoff;
 mod execution_receipts;
+mod owner_handoff;
+mod thread_admission;
 use eager_tools::EagerTools;
 #[path = "runtime/patch_progress.rs"]
 mod patch_progress;
@@ -3376,6 +3376,21 @@ impl Runtime {
                     .cancel_pending_external_tool_calls_for_turn(&turn_id_for_task)
                     .await;
                 let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
+                let stopped_status = match &result {
+                    Ok(Err(error)) => Some(crate::goals::status_after_error(error)),
+                    Ok(Ok(TurnRunOutcome::Stopped)) => {
+                        Some(roder_api::goals::ThreadGoalStatus::Blocked)
+                    }
+                    Err(_) => Some(roder_api::goals::ThreadGoalStatus::Paused),
+                    _ => None,
+                };
+                if let Err(error) = runtime
+                    .goals
+                    .finish_turn(&thread_id_for_task, &turn_id_for_task, stopped_status)
+                    .await
+                {
+                    eprintln!("failed to finalize goal accounting: {error}");
+                }
                 match &result {
                     Ok(Err(err)) => {
                         let (cleanup, ownership) =
@@ -3688,6 +3703,15 @@ impl Runtime {
             )
             .await;
             handle.abort.abort();
+            if reason == TurnLifecycleReason::UserInterrupt {
+                self.goals
+                    .finish_turn(
+                        &thread_id,
+                        &turn_id,
+                        Some(roder_api::goals::ThreadGoalStatus::Paused),
+                    )
+                    .await?;
+            }
             self.active_turns_changed.notify_waiters();
         }
         self.active_turn_selections.write().await.remove(&turn_id);
@@ -3847,6 +3871,15 @@ impl Runtime {
         mut steering: tokio::sync::watch::Receiver<u64>,
     ) -> anyhow::Result<TurnRunOutcome> {
         self.ensure_execution_authority()?;
+        self.goals
+            .begin_turn(
+                &req.thread_id,
+                &turn_id,
+                self.goals
+                    .is_continuation(&req.thread_id, &req.message)
+                    .await?,
+            )
+            .await?;
         let turn_started_at = OffsetDateTime::now_utc();
         self.emit(RoderEvent::TurnStarted(TurnStarted {
             thread_id: req.thread_id.clone(),
@@ -4664,6 +4697,9 @@ impl Runtime {
 
                 match event {
                     InferenceEvent::MessageDelta(delta) => {
+                        if !delta.text.trim().is_empty() {
+                            self.goals.record_activity(&turn_id).await;
+                        }
                         if let Some((team_id, member)) =
                             self.teams.member_for_thread(&req.thread_id).await
                         {
@@ -4692,6 +4728,7 @@ impl Runtime {
                     }
                     InferenceEvent::ReasoningDelta(delta) => reasoning_text.push_str(&delta.text),
                     InferenceEvent::ToolCallCompleted(call) => {
+                        self.goals.record_activity(&turn_id).await;
                         if completed_call_replayed(&transcript, &call)? {
                             replayed_tool_call = true;
                             continue;
@@ -4773,6 +4810,12 @@ impl Runtime {
                         return Ok(TurnRunOutcome::Stopped);
                     }
                     InferenceEvent::Usage(usage) => {
+                        self.record_goal_token_usage(
+                            &req.thread_id,
+                            &turn_id,
+                            usage.total_tokens as i64,
+                        )
+                        .await?;
                         turn_usage.add_assign(&usage);
                     }
                     InferenceEvent::Completed(metadata) => {
@@ -5143,16 +5186,8 @@ impl Runtime {
             .await?;
         }
 
-        let turn_usage_tokens = turn_usage.total_tokens as i64;
         let completed_usage = (!turn_usage.is_empty()).then_some(turn_usage.clone());
         self.record_thread_usage_metadata(&req.thread_id, &turn_usage)
-            .await?;
-        self.goals
-            .account_turn_usage(
-                &req.thread_id,
-                turn_usage_tokens,
-                OffsetDateTime::now_utc() - turn_started_at,
-            )
             .await?;
         let (cleanup, ownership) = self.await_provider_turn_cleanup(&turn_id).await;
         self.record_turn_lifecycle_with_ownership(

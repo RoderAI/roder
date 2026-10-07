@@ -878,24 +878,7 @@ impl WorkingSpinner {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum ConfirmDialog {
-    Interrupt,
-    Exit,
-    ToolApproval {
-        approval_id: String,
-        tool_name: String,
-        reason: Option<String>,
-    },
-    /// Offered when agent-swarm mode is enabled from an approval-gating policy
-    /// mode (`Default`/`Plan`): every swarm child tool call would otherwise
-    /// block on a separate approval. Confirming switches to `target_mode`
-    /// (a non-gating mode) so the fan-out can run unattended.
-    SwarmPolicySwitch {
-        from_mode: PolicyMode,
-        target_mode: PolicyMode,
-    },
-}
+use dialog::ConfirmDialog;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ConfirmChoice {
@@ -2690,7 +2673,8 @@ where
                         if let Some(timeline) = self.team_timeline_for_thread_mut(&ev.thread_id) {
                             timeline.record_tool_output_delta(&ev.tool_id, &ev.delta);
                         } else {
-                            self.timeline.record_tool_output_delta(&ev.tool_id, &ev.delta);
+                            self.timeline
+                                .record_tool_output_delta(&ev.tool_id, &ev.delta);
                         }
                     }
                     RoderEvent::ThreadGoalUpdated(ev) if ev.thread_id == self.thread_id => {
@@ -2850,6 +2834,9 @@ where
             ConfirmKeyAction::Confirm => {
                 self.confirm_dialog = None;
                 match state.dialog {
+                    ConfirmDialog::ReplaceGoal { objective } => {
+                        self.replace_goal_objective(&objective).await
+                    }
                     ConfirmDialog::Interrupt => self.interrupt_active_turn().await,
                     ConfirmDialog::Exit => return true,
                     ConfirmDialog::ToolApproval { approval_id, .. } => {
@@ -2872,7 +2859,9 @@ where
                             policy_mode_label(from_mode)
                         ));
                     }
-                    ConfirmDialog::Interrupt | ConfirmDialog::Exit => {}
+                    ConfirmDialog::ReplaceGoal { .. }
+                    | ConfirmDialog::Interrupt
+                    | ConfirmDialog::Exit => {}
                 }
                 self.confirm_dialog = None;
             }
@@ -10448,7 +10437,10 @@ mod tests {
         assert_eq!(provider_model_label("mock", "mock"), "mock/mock");
     }
 
-    fn test_app_with_client<C: AppClient>(client: C, server: Arc<AppServer>) -> TuiApp<C> {
+    pub(super) fn test_app_with_client<C: AppClient>(
+        client: C,
+        server: Arc<AppServer>,
+    ) -> TuiApp<C> {
         let theme = Theme::for_dark_background(true);
         TuiApp {
             client,

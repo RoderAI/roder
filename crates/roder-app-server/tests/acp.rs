@@ -196,6 +196,17 @@ async fn acp_session_cancel_returns_cancelled_prompt_stop_reason() {
         .expect("session id")
         .to_string();
 
+    runtime
+        .thread_goal_set(
+            &session_id,
+            roder_api::goals::ThreadGoalPatch {
+                objective: Some("Wait for cancellation".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
     let prompt_adapter = adapter.clone();
     let prompt_peer = peer.clone();
     let prompt = acp::PromptRequest::new(
@@ -231,7 +242,7 @@ async fn acp_session_cancel_returns_cancelled_prompt_stop_reason() {
                 id: None,
                 method: "session/cancel".to_string(),
                 params: Some(
-                    serde_json::to_value(acp::CancelNotification::new(session_id)).unwrap(),
+                    serde_json::to_value(acp::CancelNotification::new(session_id.clone())).unwrap(),
                 ),
             },
             &peer,
@@ -258,6 +269,15 @@ async fn acp_session_cancel_returns_cancelled_prompt_stop_reason() {
         "cancelled"
     );
     assert_eq!(runtime.active_turn_count().await, 0);
+    assert_eq!(
+        runtime
+            .thread_goal_get(&session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        roder_api::goals::ThreadGoalStatus::Paused
+    );
 }
 
 #[tokio::test]

@@ -4,7 +4,10 @@ use roder_protocol::{
     ThreadGoalGetResult, ThreadGoalSetParams, ThreadGoalSetResult, ThreadGoalStatus,
 };
 
-use super::{TuiApp, composer_textarea, decode_response, slash_command_suffix, truncate};
+use super::{
+    ConfirmDialog, ConfirmDialogState, TuiApp, composer_textarea, decode_response,
+    slash_command_suffix, truncate,
+};
 
 impl<C> TuiApp<C>
 where
@@ -101,23 +104,34 @@ where
             }
             return;
         }
-        self.update_goal_objective(objective).await;
+        match thread_goal_get(&self.client, &self.thread_id).await {
+            Ok(result) => {
+                self.current_goal = result.goal;
+                let Some(goal) = self.current_goal.as_ref() else {
+                    self.timeline.push_system("No goal to edit.");
+                    return;
+                };
+                let status = edited_goal_status(goal.status);
+                self.update_goal_objective(objective, status).await;
+            }
+            Err(err) => self.record_error(format!("thread/goal/get failed: {err}")),
+        }
     }
 
     async fn set_goal_objective(&mut self, objective: &str) {
         match thread_goal_get(&self.client, &self.thread_id).await {
             Ok(result) => {
                 self.current_goal = result.goal;
-                if self.current_goal.is_some() {
-                    match thread_goal_clear(&self.client, &self.thread_id).await {
-                        Ok(_) => {
-                            self.current_goal = None;
-                        }
-                        Err(err) => {
-                            self.record_error(format!("thread/goal/replace failed: {err}"));
-                            return;
-                        }
-                    }
+                if self
+                    .current_goal
+                    .as_ref()
+                    .is_some_and(|goal| goal.status != ThreadGoalStatus::Complete)
+                {
+                    self.confirm_dialog =
+                        Some(ConfirmDialogState::new(ConfirmDialog::ReplaceGoal {
+                            objective: objective.to_string(),
+                        }));
+                    return;
                 }
             }
             Err(err) => {
@@ -125,16 +139,35 @@ where
                 return;
             }
         }
-        self.update_goal_objective(objective).await;
+        self.replace_goal_objective(objective).await;
     }
 
-    async fn update_goal_objective(&mut self, objective: &str) {
+    pub(super) async fn replace_goal_objective(&mut self, objective: &str) {
+        // Validate before clearing so an invalid replacement cannot discard the old goal.
+        if let Err(err) = roder_api::goals::validate_thread_goal_objective(objective) {
+            self.record_error(err.to_string());
+            return;
+        }
+        if self.current_goal.is_some() {
+            match thread_goal_clear(&self.client, &self.thread_id).await {
+                Ok(_) => self.current_goal = None,
+                Err(err) => {
+                    self.record_error(format!("thread/goal/replace failed: {err}"));
+                    return;
+                }
+            }
+        }
+        self.update_goal_objective(objective, ThreadGoalStatus::Active)
+            .await;
+    }
+
+    async fn update_goal_objective(&mut self, objective: &str, status: ThreadGoalStatus) {
         match thread_goal_set(
             &self.client,
             ThreadGoalSetParams {
                 thread_id: self.thread_id.clone(),
                 objective: Some(objective.trim().to_string()),
-                status: Some(ThreadGoalStatus::Active),
+                status: Some(status),
                 token_budget: None,
             },
         )
@@ -211,12 +244,20 @@ fn goal_summary(goal: Option<&ThreadGoal>) -> String {
         Some(budget) => format!("{}/{} tokens", goal.tokens_used, budget),
         None => format!("{} tokens", goal.tokens_used),
     };
+    let commands = match goal.status {
+        ThreadGoalStatus::Active => "/goal edit, /goal pause, /goal clear",
+        ThreadGoalStatus::Paused | ThreadGoalStatus::Blocked | ThreadGoalStatus::UsageLimited => {
+            "/goal edit, /goal resume, /goal clear"
+        }
+        ThreadGoalStatus::BudgetLimited | ThreadGoalStatus::Complete => "/goal edit, /goal clear",
+    };
     format!(
-        "Goal {}: {}\nUsage: {}, {}s elapsed.\nCommands: /goal pause, /goal resume, /goal edit, /goal clear.",
+        "Goal {}: {}\nUsage: {}, {}s elapsed.\nCommands: {}.",
         goal.status.as_str(),
         goal.objective,
         budget,
-        goal.time_used_seconds
+        goal.time_used_seconds,
+        commands
     )
 }
 
@@ -226,3 +267,13 @@ fn split_goal_action(args: &str) -> (&str, &str) {
     let rest = parts.next().unwrap_or_default().trim();
     (action, rest)
 }
+
+fn edited_goal_status(status: ThreadGoalStatus) -> ThreadGoalStatus {
+    match status {
+        ThreadGoalStatus::Complete | ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::Active,
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests;
