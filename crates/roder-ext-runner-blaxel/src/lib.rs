@@ -14,6 +14,7 @@ use semver::Version;
 mod cancellation;
 mod client;
 pub mod config;
+mod ports;
 mod session;
 mod standby;
 
@@ -24,6 +25,7 @@ pub use config::{
     ExpirationPolicyType, LIVE_ENV, MAX_STANDBY_AFTER_SECONDS, PROVIDER_ID, Redacted,
     SandboxLifecycle, TOKEN_ENV, WORKSPACE_ENV,
 };
+pub use ports::{PortProtocol, SandboxPort};
 pub use session::BlaxelRunnerSession;
 
 const READINESS_ATTEMPTS: u32 = 20;

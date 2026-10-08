@@ -18,6 +18,62 @@ use fake_server::FakeBlaxelServer;
 
 static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
+#[tokio::test]
+async fn additional_ports_are_created_before_workload_operations_and_survive_rejoin() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+    }
+    let server = FakeBlaxelServer::start().await;
+    let ports =
+        serde_json::json!([{ "name": "verify-control", "target": 4319, "protocol": "HTTP" }]);
+    let provider = BlaxelRunnerProvider::default();
+    let session = provider
+        .create_session(RunnerDestination {
+            id: "ports".into(),
+            provider_id: PROVIDER_ID.into(),
+            config: serde_json::json!({
+                "token": "test-token", "base_url": server.base_url(),
+                "ports": ports, "standby_after": "5m", "cleanup": "delete-on-close"
+            }),
+            default_manifest: RunnerManifest::default(),
+        })
+        .await
+        .unwrap();
+    let requests = server.requests();
+    let creation: serde_json::Value =
+        serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert!(requests[0].starts_with("POST /sandboxes?createIfNotExist=true "));
+    assert_eq!(creation["spec"]["runtime"]["ports"], ports);
+    assert!(!requests.iter().any(|r| r.starts_with("PUT /sandboxes/")));
+    let state = session.state();
+    assert_eq!(state.metadata["ports"], ports);
+    let rejoined = provider.rejoin_session(state.clone()).await.unwrap();
+    assert_eq!(rejoined.state().metadata["ports"], ports);
+    assert_eq!(BlaxelConfig::from_state(&state).unwrap().ports.len(), 1);
+    rejoined.close().await.unwrap();
+    clear_env();
+}
+
+#[tokio::test]
+async fn invalid_ports_are_rejected_before_sandbox_creation() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    let server = FakeBlaxelServer::start().await;
+    let result = BlaxelRunnerProvider::default()
+        .create_session(RunnerDestination {
+            id: "invalid-ports".into(),
+            provider_id: PROVIDER_ID.into(),
+            config: serde_json::json!({ "token": "test-token", "base_url": server.base_url(),
+            "ports": [{ "target": 0, "protocol": "HTTP" }] }),
+            default_manifest: RunnerManifest::default(),
+        })
+        .await;
+    assert!(result.is_err());
+    assert!(server.requests().is_empty());
+}
+
 fn clear_env() {
     unsafe {
         for var in [

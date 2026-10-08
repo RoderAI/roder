@@ -159,6 +159,9 @@ impl BlaxelClient {
         if let Some(ttl) = &config.ttl {
             runtime["ttl"] = json!(ttl);
         }
+        if !config.ports.is_empty() {
+            runtime["ports"] = json!(config.ports);
+        }
         let mut spec = json!({ "runtime": runtime });
         if let Some(region) = &config.region {
             spec["region"] = json!(region);

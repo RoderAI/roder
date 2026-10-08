@@ -189,6 +189,8 @@ pub struct BlaxelConfig {
     pub sandbox_name_prefix: String,
     pub image: String,
     pub memory_mb: u32,
+    /// Additional ports are immutable runtime configuration, declared at creation.
+    pub ports: Vec<crate::SandboxPort>,
     pub region: Option<String>,
     pub ttl: Option<String>,
     /// Seconds to keep a bounded process lease alive after each runner operation.
@@ -357,6 +359,7 @@ impl BlaxelConfig {
                 .unwrap_or_else(|| "roder".to_string()),
             image: string_field(config, "image").unwrap_or_else(|| DEFAULT_IMAGE.to_string()),
             memory_mb,
+            ports: crate::ports::parse_ports(config)?,
             region: string_field(config, "region"),
             ttl: string_field(config, "ttl"),
             standby_after_seconds,

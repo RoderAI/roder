@@ -46,6 +46,7 @@ Config keys (all optional except where the sandbox cannot start without them):
 | `region` | nearest | e.g. `us-pdx-1`, `eu-lon-1` |
 | `ttl` | none | Max-age before auto-deletion, e.g. `24h` |
 | `standby_after` | none | Keep the sandbox active after each operation, e.g. `5m`; `0s` disables and positive values are capped at `24h` |
+| `ports` | none | Additional ports declared at creation, e.g. `[{ name = "verify-control", target = 4319, protocol = "HTTP" }]`; `HTTP`/`TCP`, unique nonzero targets, reserved 80/443/8080 excluded. Does not modify an existing sandbox. |
 | `lifecycle` | unmanaged | Server-side expiration policies; see below |
 | `working_dir` | `/home/user/roder` | Sandbox working directory |
 | `cleanup` | see below | `delete-on-close`, `detach-on-close`, or `keep` |
