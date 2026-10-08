@@ -23,6 +23,12 @@ lifecycle expiration policies such as `{ type = "ttl-idle", value = "7d" }`.
 Policies are reconciled in place on create and rejoin, preserving persistent
 checkouts and uncommitted work instead of creating a new sandbox generation.
 
+Declare additional runtime ports in destination config at creation, for example
+`ports = [{ name = "verify-control", target = 4319, protocol = "HTTP" }]`.
+Declare at most 16 ports. Protocols are `HTTP` or `TCP`; targets and names must be unique. Blaxel reserves
+80, 443 and 8080. Ports are retained in session state for rejoin; requesting ports
+does not change an existing sandbox's immutable runtime configuration.
+
 The cleanup proof requires a Linux sandbox image with `/proc`, Python 3 with
 `os.pidfd_open` and `signal.pidfd_send_signal`, and permission to read the
 environment of extant userspace processes. The scanner opens a pidfd before

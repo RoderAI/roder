@@ -40,6 +40,7 @@ pub struct BlaxelRunnerSession {
     region: Option<String>,
     image: String,
     memory_mb: u32,
+    ports: Vec<crate::SandboxPort>,
     ttl: Option<String>,
     standby_after_seconds: Option<u64>,
     lifecycle: Option<SandboxLifecycle>,
@@ -71,6 +72,7 @@ impl BlaxelRunnerSession {
             region: config.region.clone(),
             image: config.image.clone(),
             memory_mb: config.memory_mb,
+            ports: config.ports.clone(),
             ttl: config.ttl.clone(),
             standby_after_seconds: config.standby_after_seconds,
             lifecycle: config.lifecycle.clone(),
@@ -219,6 +221,9 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
         }
         if let Some(ttl) = &self.ttl {
             metadata["ttl"] = json!(ttl);
+        }
+        if !self.ports.is_empty() {
+            metadata["ports"] = json!(self.ports);
         }
         if let Some(seconds) = self.standby_after_seconds {
             metadata["standby_after"] = json!(format!("{seconds}s"));
