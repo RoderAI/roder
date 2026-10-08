@@ -3788,6 +3788,10 @@ impl Runtime {
                 .await?;
             compacted_this_turn |=
                 self.compaction_generation(&req.thread_id) != compaction_generation_before;
+            if round_index == 0 {
+                self.complete_context_assembly(&req, &turn_id, &transcript)
+                    .await;
+            }
 
             let speed_policy_decision =
                 speed_policy.decision(runtime_profile, &model, &cfg.speed_policy);

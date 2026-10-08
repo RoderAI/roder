@@ -259,8 +259,8 @@ async fn routing_avoids_failing_native_compaction_on_default_provider() {
     registry.inference_engine(engine.clone());
     registry.inference_engine(Arc::new(crate::fake_provider::FakeInferenceEngine));
     registry.inference_router(Arc::new(RouteToMock));
-    let root =
-        std::env::temp_dir().join(format!("roder-compaction-route-{}", uuid::Uuid::new_v4()));
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().to_path_buf();
     registry.thread_store_factory(Arc::new(
         roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory {
             base_path: root.clone(),
@@ -323,6 +323,8 @@ async fn routing_avoids_failing_native_compaction_on_default_provider() {
         })
         .await
         .unwrap();
+    let mut compacted_estimate = None;
+    let mut assembled_estimate = None;
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.unwrap();
@@ -330,6 +332,13 @@ async fn routing_avoids_failing_native_compaction_on_default_provider() {
                 continue;
             }
             match envelope.event {
+                RoderEvent::ContextCompactionRecorded(event) => {
+                    compacted_estimate = Some(event.compacted_estimated_tokens);
+                }
+                RoderEvent::ContextAssemblyCompleted(event) => {
+                    assert!(compacted_estimate.is_some());
+                    assembled_estimate = Some(event.prompt_estimated_tokens);
+                }
                 RoderEvent::TurnCompleted(_) => break,
                 RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),
                 _ => {}
@@ -337,7 +346,8 @@ async fn routing_avoids_failing_native_compaction_on_default_provider() {
         }
     })
     .await
-    .unwrap();
+    .expect("routed turn did not complete");
     assert!(engine.requests.lock().unwrap().is_empty());
-    std::fs::remove_dir_all(root).unwrap();
+    assert!(assembled_estimate.is_some());
+    assert_eq!(assembled_estimate, compacted_estimate);
 }
