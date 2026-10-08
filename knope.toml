@@ -9,6 +9,7 @@ versioned_files = [
     "crates/roder-api/Cargo.toml",
     "Cargo.lock",
     { path = "Cargo.toml", dependency = "roder-api" },
+    { path = "crates/roder-ext-runner-blaxel/Cargo.toml", dependency = "roder-api" },
 ]
 changelog = "crates/roder-api/CHANGELOG.md"
 
