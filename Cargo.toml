@@ -134,7 +134,7 @@ roder-ext-perplexity-search = { path = "crates/roder-ext-perplexity-search", ver
 roder-ext-poolside = { path = "crates/roder-ext-poolside", version = "0.2.0" }
 roder-ext-roder-cloud = { path = "crates/roder-ext-roder-cloud", version = "0.2.0" }
 roder-ext-plan-mode = { path = "crates/roder-ext-plan-mode", version = "0.2.0" }
-roder-ext-runner-blaxel = { path = "crates/roder-ext-runner-blaxel", version = "0.2.0" }
+roder-ext-runner-blaxel = { path = "crates/roder-ext-runner-blaxel", version = "0.2.1" }
 roder-ext-runner-cloudflare = { path = "crates/roder-ext-runner-cloudflare", version = "0.2.0" }
 roder-ext-runner-daytona = { path = "crates/roder-ext-runner-daytona", version = "0.2.0" }
 roder-ext-runner-docker = { path = "crates/roder-ext-runner-docker", version = "0.2.0" }

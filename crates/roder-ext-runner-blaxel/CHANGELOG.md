@@ -1,3 +1,9 @@
+## 0.2.1 (2026-10-08)
+
+### Features
+
+- Declare additional sandbox runtime ports in the initial creation request and retain them in session state. Validate port protocols, targets and names before allocation, avoiding runtime redeployment to add a port after a runner has started.
+
 ## 0.2.0 (2026-09-26)
 
 ### Breaking Changes
