@@ -12,7 +12,9 @@ readme = "README.md"
 anyhow.workspace = true
 async-trait.workspace = true
 reqwest = { workspace = true, features = ["json"] }
-roder-api.workspace = true
+# Port configuration uses the published 0.2.2 runner contract. Do not force
+# consumers to upgrade their independently pinned hosted ownership stack.
+roder-api = { path = "../roder-api", version = "0.2.2" }
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
