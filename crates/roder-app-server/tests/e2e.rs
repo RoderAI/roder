@@ -11724,3 +11724,6 @@ mod host_system_instructions;
 
 #[path = "e2e/goals.rs"]
 mod goal_tests;
+
+#[path = "e2e/native_compaction.rs"]
+mod native_compaction;
