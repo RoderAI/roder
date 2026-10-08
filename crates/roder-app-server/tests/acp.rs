@@ -343,3 +343,7 @@ mod native_computer {
 
 #[path = "acp/full_access.rs"]
 mod full_access;
+
+mod cua {
+    include!("acp_cua.rs");
+}

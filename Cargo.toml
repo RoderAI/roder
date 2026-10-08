@@ -19,6 +19,7 @@ agent-client-protocol-schema = "0.13.8"
 async-trait = "0.1.89"
 async-stream = "0.3.6"
 base64 = "0.22.1"
+png = "0.17.16"
 boa_engine = { version = "0.21.1", default-features = false }
 bytes = "1.11.1"
 chrono = "0.4.42"
@@ -92,6 +93,7 @@ roder-edit-core = { path = "crates/roder-edit-core", version = "0.2.0" }
 roder-roadmap = { path = "crates/roder-roadmap", version = "0.2.0" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth", version = "0.1.0" }
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic", version = "0.2.0" }
+roder-ext-cua = { path = "crates/roder-ext-cua", version = "0.1.0" }
 roder-ext-chrome = { path = "crates/roder-ext-chrome", version = "0.2.2" }
 roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.4.1" }
 roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.3.0" }

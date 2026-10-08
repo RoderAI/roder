@@ -127,6 +127,7 @@ tokio-tungstenite.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+roder-ext-cua.workspace = true
 roder-ext-mysql-session.workspace = true
 roder-ext-chrome.workspace = true
 roder-ext-openai-responses.workspace = true

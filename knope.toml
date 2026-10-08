@@ -178,6 +178,14 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-codex-backend/CHANGELOG.md"
 
+[packages."roder-ext-cua"]
+versioned_files = [
+    "crates/roder-ext-cua/Cargo.toml",
+    "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-cua" },
+]
+changelog = "crates/roder-ext-cua/CHANGELOG.md"
+
 [packages."roder-ext-cursor"]
 versioned_files = [
     "crates/roder-ext-cursor/Cargo.toml",

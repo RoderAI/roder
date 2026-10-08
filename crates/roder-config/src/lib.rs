@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub mod agent_node;
 pub mod analytics;
+pub mod cua;
 pub mod dynamic_workflows;
 pub mod hosted;
 pub mod marketplaces;
@@ -51,6 +52,8 @@ pub struct Config {
     pub zerolang: Option<ZerolangConfig>,
     /// browser-use browser provider (`[browser_use]`), off unless enabled.
     pub browser_use: Option<BrowserUseConfig>,
+    /// Remote desktop computer use (`[cua]`), opt in.
+    pub cua: Option<cua::CuaConfig>,
     pub media: Option<MediaConfig>,
     pub memories: Option<MemoriesConfig>,
     /// Project knowledge base (`[knowledge]`); markdown engine by default.
@@ -2219,6 +2222,7 @@ mod tests {
             remote_runners: None,
             zerolang: None,
             browser_use: None,
+            cua: None,
             media: None,
             memories: None,
             knowledge: None,

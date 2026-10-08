@@ -5984,6 +5984,46 @@ Emitted while an `apply_patch` call is generated and once its valid patch text i
 
 Custom-channel input can produce throttled incremental previews (`complete: false`). Function-channel JSON arguments produce a preview after the complete patch is parsed. A malformed patch produces no final preview and fails through normal tool execution. Generation can be interrupted after any preview, so `complete: true` does not promise that execution follows. ACP projects this notification into a standard `tool_call_update` containing `rawInput.patch`, without claiming execution completion.
 
+### Native Linux desktop tools
+
+Enable the optional Cua contributor and bind the thread to a provisioned
+graphical runner through `thread/start.runner` as described in
+[Cua computer use](../cua-computer-use.md). `extensions/list` then includes
+`roder-ext-cua`. Tool arguments identify native windows and capture/element
+handles; runner credentials and destination selection remain host-owned.
+
+Completed desktop tool executions carry the bounded inline PNG under
+`input.__view_image.image_url` in the canonical transcript. Model providers
+receive the same screenshot as image content. ACP projects it into
+`tool_call_update.content` as a `content` entry containing an `image` block
+with `mimeType: "image/png"` and base64 `data`. Clients must preserve the
+tool's failed status even when its after-action screenshot is available.
+Read tools have ACP kind `read`; input has kind `execute` and uses the normal
+permission bridge. Plan mode rejects input before dispatch. This adds tool
+output images without advertising support for image prompts.
+
+Example ACP notification after refused input with a fresh partial-state PNG:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "session-id",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "desktop-call",
+      "kind": "execute",
+      "status": "failed",
+      "content": [{
+        "type": "content",
+        "content": {"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGOYCQYMEAoAMkIHLdmWYfwAAAAASUVORK5CYII="}
+      }]
+    }
+  }
+}
+~~~
+
 ### Responses request and recovery behavior
 
 Responses retries preserve typed provider errors and honor valid `Retry-After` deadlines. Quota, authentication, invalid-request, tool-search exhaustion, and request-budget errors fail without a transient retry. Steering preempts unfinished sampling and retry waits. Completed output items remain in replay history; unfinished deltas do not. Read-only tools that explicitly opt in may execute while sampling continues when the model permits parallel tools and the advertised toolset has no exclusive swarm batch.

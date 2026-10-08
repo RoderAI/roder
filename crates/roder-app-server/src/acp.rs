@@ -486,6 +486,7 @@ fn tool_call_completed(item: &Item) -> Option<acp::SessionUpdate> {
         status,
         output,
         error,
+        input,
         ..
     } = item
     else {
@@ -501,6 +502,9 @@ fn tool_call_completed(item: &Item) -> Option<acp::SessionUpdate> {
     }
     if let Some(error) = error {
         content.push(acp::ToolCallContent::from(error.clone()));
+    }
+    if let Some(image) = crate::acp_media::tool_image(input.as_ref()) {
+        content.push(image);
     }
     if !content.is_empty() {
         fields = fields.content(content);
@@ -523,6 +527,9 @@ fn tool_status(status: ThreadItemStatus) -> acp::ToolCallStatus {
 }
 
 fn tool_kind_for_name(name: &str) -> acp::ToolKind {
+    if let Some(kind) = crate::acp_media::desktop_kind(name) {
+        return kind;
+    }
     let lower = name.to_ascii_lowercase();
     if lower.contains("read") || lower.contains("list") || lower.contains("cat") {
         acp::ToolKind::Read

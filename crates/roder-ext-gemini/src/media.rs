@@ -73,3 +73,45 @@ mod tests {
         assert!(err.to_string().contains("base64 data URL image"), "{err}");
     }
 }
+
+/// Pair the function response with a normal user image part, supported by
+/// both the Gemini 2.5 and Gemini 3 image-capable request formats.
+pub(crate) fn gemini_tool_result(
+    result: &roder_api::transcript::ToolResultRecord,
+) -> anyhow::Result<Value> {
+    let mut parts = vec![
+        json!({"functionResponse": {"id":result.id, "name":result.name.clone().unwrap_or_default(), "response":{"result":result.result,"is_error":result.is_error}}}),
+    ];
+    if let Some((mime, data)) =
+        roder_api::transcript::tool_result_image(result.display_payload.as_ref())
+    {
+        parts.push(gemini_image_part(&InputImage {
+            image_url: format!("data:{mime};base64,{data}"),
+        })?);
+    }
+    Ok(json!({"role":"user","parts":parts}))
+}
+
+#[cfg(test)]
+mod tool_image_tests {
+    use super::*;
+    #[test]
+    fn failed_tool_keeps_image_and_function_call_id() {
+        let result = roder_api::transcript::ToolResultRecord {
+            id: "call".into(),
+            name: Some("cua_click".into()),
+            result: "refused".into(),
+            is_error: true,
+            display_payload: Some(
+                json!({"__view_image":{"image_url":"data:image/png;base64,YWJj"}}),
+            ),
+        };
+        let output = gemini_tool_result(&result).unwrap();
+        assert_eq!(output["parts"][0]["functionResponse"]["id"], "call");
+        assert_eq!(
+            output["parts"][0]["functionResponse"]["response"]["is_error"],
+            true
+        );
+        assert_eq!(output["parts"][1]["inline_data"]["data"], "YWJj");
+    }
+}

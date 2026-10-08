@@ -22,6 +22,7 @@ use crate::tool_preview::file_change_preview;
 use crate::tool_validation::{
     emit_tool_validation_recorded, validate_tool_call_arguments, validation_error_tool_result,
 };
+use crate::workspace_tools::native_tool_uses_remote_workspace;
 use roder_api::artifacts::CreateArtifactRequest;
 
 const RUNNER_WORKSPACE_LEASE_ACQUIRE_TIMEOUT_MS: u64 = 60_000;
@@ -1294,25 +1295,6 @@ impl Runtime {
             is_error: false,
         })
     }
-}
-
-fn native_tool_uses_remote_workspace(name: &str) -> bool {
-    matches!(
-        name,
-        "read_file"
-            | "list_files"
-            | "write_file"
-            | "grep"
-            | "glob"
-            | "edit"
-            | "multi_edit"
-            | "apply_patch"
-            | "shell"
-            | "exec_command"
-            | "write_stdin"
-            | "unified_exec"
-            | "view_image"
-    ) || name.starts_with("design_")
 }
 
 fn runner_workspace_execution_lease_request(

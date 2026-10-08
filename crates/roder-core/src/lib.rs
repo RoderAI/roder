@@ -9,8 +9,8 @@ mod deadline_policy;
 pub mod dynamic_workflows;
 mod event_sink_dispatch;
 pub mod execution_lease;
-pub mod fake_provider;
 pub mod external_tools;
+pub mod fake_provider;
 pub mod forks;
 mod goals;
 pub mod hooks;
@@ -41,6 +41,7 @@ mod tool_validation;
 mod transcript;
 mod verification_gate;
 mod workspace_changes;
+mod workspace_tools;
 
 pub use bus::*;
 pub use compaction_runtime::ForceCompactOutcome;
