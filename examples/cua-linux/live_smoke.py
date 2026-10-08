@@ -13,6 +13,7 @@ import tempfile
 import time
 from fixture import BlaxelTransport, grade
 from smoke_support import Rpc, model_proxy
+from calculator_trace import calculation_buttons_passed, calculation_clicks
 
 TOOLS = ['cua_list_windows','cua_get_window_state','cua_get_desktop_state','cua_click',
          'cua_press_key','cua_type_text','cua_set_value','cua_drag','cua_scroll','cua_move_cursor',
@@ -52,7 +53,7 @@ mode = "explicit"
                 'runner':{'providerId':'blaxel','workspace':'/home/cua/roder',
                     'config':{'sandbox_name':args.sandbox,'workspace':args.workspace,'image':'blaxel/cua-xfce:latest','cleanup':'detach-on-close'}}})['thread']['id']
             turn = rpc.request('turn/start',{'threadId':thread,'policyMode':'bypass',
-                'prompt':"Use only the cua tools to find the native Galculator window, clear it, compute 6 multiplied by 7, and visually verify the result is 42. Use at least one pixel click with capture_id, one element_token click, and one keypress. Observe fresh state before each input. This is an owned disposable desktop: if background input explicitly refuses, foreground delivery is permitted. Do not use shell, programmatic calculator state changes, or retry uncertain input. Finish once you have verified 42."})['turnId']
+                'prompt':"Use only the cua tools to find the native Galculator window. Clear it using the Escape keypress, then compute 6 multiplied by 7 by clicking each of the four buttons in this exact order: 6, *, 7, =. Do not type the operands or use keys for those four calculation steps. Use at least one pixel click with capture_id and one element_token click among those buttons. Observe fresh state before each input and visually verify the result is 42. This is an owned disposable desktop: if background input explicitly refuses, foreground delivery is permitted. Do not use shell, programmatic calculator state changes, or retry uncertain input. Finish once you have verified 42."})['turnId']
             report.update(thread_id=thread,turn_id=turn)
             deadline = time.monotonic()+300
             final = None
@@ -83,9 +84,11 @@ mode = "explicit"
             report['successful_pixel_click'] = any(t['tool']=='cua_click' and isinstance(t['arguments'].get('x'), (int,float)) for t in successful)
             report['successful_element_click'] = any(t['tool']=='cua_click' and t['arguments'].get('element_token') for t in successful)
             report['successful_keypress'] = any(t['tool']=='cua_press_key' for t in successful)
+            report['calculation_clicks'] = calculation_clicks(trace)
+            report['calculation_buttons_passed'] = calculation_buttons_passed(trace)
             report['passed'] = (report['successful_pixel_click'] and report['successful_element_click'] and report['successful_keypress']
                 and any(t['image_returned'] for t in successful) and report['extension_registered'] and report['live_model_exercised']
-                and report['model_received_images'] and report['independent_grader']['passed'])
+                and report['model_received_images'] and report['independent_grader']['passed'] and report['calculation_buttons_passed'])
             if not report['passed']:
                 raise RuntimeError('Native model/calculator acceptance failed')
     except Exception as error:

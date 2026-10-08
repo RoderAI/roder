@@ -35,8 +35,10 @@ python3 examples/cua-linux/live_smoke.py \
 Use only a sandbox created for this evaluation. It checks asynchronous deletion
 until the metadata reports TERMINATED and records that status separately.
 
-The model must clear the native calculator, compute 6 * 7, use pixel and
-element clicks plus a keypress, and inspect the displayed 42. Roder permits
+The model must clear the native calculator with an Escape keypress, click
+6, *, 7 and = in order using both pixel and element routes, and inspect the
+displayed 42. The harness independently checks that exact button sequence
+against fresh window observations; keypress operands do not satisfy it. Roder permits
 foreground input in this owned evaluation after an explicit background refusal.
 The harness saves the actual PNGs, tool trace, model image-count evidence,
 independent AT-SPI result and cleanup status. No shell tool is advertised to
