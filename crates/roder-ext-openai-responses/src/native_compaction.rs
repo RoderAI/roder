@@ -8,7 +8,7 @@ pub(super) async fn compact(
 ) -> anyhow::Result<Option<InferenceEventStream>> {
     // The endpoint decides model support, including newly released models and
     // custom aliases absent from Roder's catalog. Never substitute a summary.
-    if engine.profile != ResponsesProviderProfile::OpenAi {
+    if !engine.requires_native_compaction() {
         return Ok(None);
     }
     let key = engine.api_key.as_deref().ok_or_else(|| {
@@ -146,6 +146,29 @@ fn compaction_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn custom_responses_provider_keeps_local_compaction_fallback() {
+        let engine = OpenAiResponsesEngine::new_custom_provider(
+            None,
+            "custom",
+            "Custom",
+            "https://custom.example/v1",
+        );
+        assert!(!engine.requires_native_compaction());
+        let stream = engine
+            .compact_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                super::super::tests::request(),
+            )
+            .await
+            .unwrap();
+        assert!(stream.is_none());
+    }
+
     #[test]
     fn compacted_window_replays_all_retained_items_without_pruning_before_boundary() {
         use roder_api::transcript::{TranscriptItem, UserMessage};

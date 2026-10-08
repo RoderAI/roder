@@ -24,7 +24,8 @@ falling back to Roder's LLM or deterministic text summaries. Model support is
 decided by OpenAI, including models absent from Roder's catalog.
 
 The runtime triggers explicit compaction at the configured watermark before
-the context window fills. Normal Responses requests also support OpenAI's
+the context window fills, after routing selects the provider. Normal API-key
+Responses requests also support OpenAI's
 server-side `context_management` compaction. These rules apply equally to
 app-server and ACP sessions; their event and capability contracts are unchanged.
 

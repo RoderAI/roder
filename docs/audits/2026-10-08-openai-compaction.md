@@ -1,9 +1,9 @@
 # OpenAI compaction audit, 2026-10-08
 
-Reference: local `/Users/pz/w/codex`, commit
+Reference: local Codex checkout, commit
 `87be737b664508d48402f08f57d09aba48e5f17a`. No upstream fetch was performed;
 this report compares the requested local reference, not the latest remote Codex.
-Roder was inspected in `/Users/pz/.codex/worktrees/cabf/roder`, including the
+Roder was inspected in the task checkout, including the
 native-only fixes made during this audit. No live OpenAI requests were run.
 
 ## Conclusion

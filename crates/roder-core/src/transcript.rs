@@ -12,8 +12,6 @@ impl Runtime {
         &self,
         req: &StartTurnRequest,
         turn_id: &TurnId,
-        provider: &str,
-        model: &str,
     ) -> anyhow::Result<Vec<TranscriptItem>> {
         let context_plan = self.start_context_assembly(req, turn_id).await?;
         let mut transcript = Vec::new();
@@ -39,16 +37,7 @@ impl Runtime {
             text: req.message.clone(),
             images: req.images.clone(),
         }));
-        let transcript = self
-            .compact_transcript_if_needed(
-                &req.thread_id,
-                turn_id,
-                provider,
-                model,
-                transcript,
-                self.compaction_options_for_turn(&req.thread_id, true),
-            )
-            .await?;
+        // Provider-specific compaction runs after routing selects the engine.
         self.complete_context_assembly(req, turn_id, &transcript)
             .await;
         Ok(transcript)
@@ -261,8 +250,6 @@ mod tests {
             .transcript_for_turn(
                 &turn_request("thread-skills", "please use ${vcs-snapshot}"),
                 &"turn-skills".to_string(),
-                PROVIDER_MOCK,
-                "mock",
             )
             .await
             .unwrap();
@@ -324,8 +311,6 @@ mod tests {
             .transcript_for_turn(
                 &turn_request("thread-disabled", "please use ${vcs-snapshot}"),
                 &"turn-disabled".to_string(),
-                PROVIDER_MOCK,
-                "mock",
             )
             .await
             .unwrap();
