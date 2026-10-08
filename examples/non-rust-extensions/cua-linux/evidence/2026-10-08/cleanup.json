@@ -1,0 +1,9 @@
+{
+  "sandbox": "roder-cua-calc-6a084832",
+  "workspace": "vexscm",
+  "delete_accepted": true,
+  "timestamp": "2026-10-08T21:05:36.464583+00:00",
+  "terminal_status": "TERMINATED",
+  "metadata_absent": false,
+  "verification": "Authenticated GET returned terminal TERMINATED state after DELETE; metadata remains"
+}

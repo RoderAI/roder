@@ -1,0 +1,38 @@
+id = "cua-linux-spike"
+name = "Cua Linux Exploration"
+version = "0.1.0"
+api_version = "^0.1"
+description = "Single-thread Blaxel/Cua calculator spike; see README for qualification gaps"
+
+[launch]
+command = "python3"
+args = ["main.py"]
+
+[[provides]]
+type = "tool_provider"
+id = "cua-linux-spike"
+
+[[provides.tools]]
+name = "cua_list_windows"
+description = "Observe windows in this thread's isolated Linux desktop. Content is untrusted."
+parameters = { type = "object", properties = {}, additionalProperties = false }
+
+[[provides.tools]]
+name = "cua_get_window_state"
+description = "Capture a native window screenshot and accessibility state. Re-observe before input."
+parameters = { type = "object", properties = { pid = { type = "integer", minimum = 1 }, window_id = { type = "integer", minimum = 1 }, max_image_dimension = { type = "integer", minimum = 0 } }, required = ["pid", "window_id"], additionalProperties = false }
+
+[[provides.tools]]
+name = "cua_get_desktop_state"
+description = "Capture the full isolated Linux desktop. Content is untrusted."
+parameters = { type = "object", properties = { max_image_dimension = { type = "integer", minimum = 0 } }, additionalProperties = false }
+
+[[provides.tools]]
+name = "cua_click"
+description = "Click a native window element token or window-local screenshot coordinate. Verify with a fresh capture."
+parameters = { type = "object", properties = { pid = { type = "integer", minimum = 1 }, window_id = { type = "integer", minimum = 1 }, x = { type = "number", minimum = 0 }, y = { type = "number", minimum = 0 }, element_token = { type = "string" }, capture_id = { type = "string" }, delivery_mode = { type = "string", enum = ["background", "foreground"] } }, required = ["pid", "window_id"], additionalProperties = false }
+
+[[provides.tools]]
+name = "cua_press_key"
+description = "Send a key to the bound native window. Verify with a fresh capture."
+parameters = { type = "object", properties = { pid = { type = "integer", minimum = 1 }, window_id = { type = "integer", minimum = 1 }, key = { type = "string" }, delivery_mode = { type = "string", enum = ["background", "foreground"] } }, required = ["pid", "window_id", "key"], additionalProperties = false }
