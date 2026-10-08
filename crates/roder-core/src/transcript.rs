@@ -38,8 +38,6 @@ impl Runtime {
             images: req.images.clone(),
         }));
         // Provider-specific compaction runs after routing selects the engine.
-        self.complete_context_assembly(req, turn_id, &transcript)
-            .await;
         Ok(transcript)
     }
 
@@ -125,7 +123,7 @@ impl Runtime {
         Ok(plan)
     }
 
-    async fn complete_context_assembly(
+    pub(crate) async fn complete_context_assembly(
         &self,
         req: &StartTurnRequest,
         turn_id: &TurnId,
@@ -278,14 +276,6 @@ mod tests {
                 event,
                 RoderEvent::SkillInvoked(invoked)
                     if invoked.descriptor.name == "vcs-snapshot"
-            )
-        }));
-        assert!(emitted.iter().any(|event| {
-            matches!(
-                event,
-                RoderEvent::ContextAssemblyCompleted(completed)
-                    if completed.prompt_estimated_tokens > 0
-                        && completed.prompt_estimated_tokens == completed.estimated_tokens
             )
         }));
     }
