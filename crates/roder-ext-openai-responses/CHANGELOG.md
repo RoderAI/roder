@@ -1,3 +1,22 @@
+## 0.2.2 (2026-10-08)
+
+### Fixes
+
+#### Preserve native compaction across OAuth and routed turns
+
+Codex OAuth sessions require provider-owned compaction. Defer automatic
+compaction until routing selects the provider, and keep local fallback available
+for custom Responses providers that do not implement OpenAI native compaction.
+
+#### Keep OpenAI Responses compaction provider-owned
+
+Use OpenAI native compaction for automatic, manual, and context-limit recovery,
+including models absent from the local catalog. API-key and Codex subscription
+requests both use the streamed `compaction_trigger` strategy on Responses.
+Preserve the full input window and encrypted boundary with retained messages;
+clear parent-turn output constraints during compaction. Propagate native failures
+instead of replacing conversation state with Roder text summaries.
+
 ## 0.2.1 (2026-10-01)
 
 ### Features
