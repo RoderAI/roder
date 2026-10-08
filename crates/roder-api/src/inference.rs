@@ -816,6 +816,12 @@ pub trait InferenceEngine: Send + Sync + 'static {
         ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>>;
 
+    /// Whether compaction must remain provider-owned, without local pruning or
+    /// text-summary fallback. Native failures propagate to the caller.
+    fn requires_native_compaction(&self) -> bool {
+        false
+    }
+
     /// Native, opaque provider compaction. Unsupported engines return None.
     /// The stream must publish a completed boundary and one terminal completion.
     async fn compact_turn(
