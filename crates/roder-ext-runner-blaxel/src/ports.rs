@@ -23,6 +23,9 @@ pub(crate) fn parse_ports(config: &Value) -> anyhow::Result<Vec<SandboxPort>> {
     let Some(value) = config.get("ports") else {
         return Ok(Vec::new());
     };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
     let ports: Vec<SandboxPort> =
         serde_json::from_value(value.clone()).context("parse blaxel runner `ports`")?;
     anyhow::ensure!(
@@ -66,7 +69,6 @@ mod tests {
     #[test]
     fn ports_reject_invalid_or_ambiguous_runtime_routes() {
         for value in [
-            json!(null),
             json!([{ "target": 0, "protocol": "HTTP" }]),
             json!([{ "target": 8080, "protocol": "HTTP" }]),
             json!([{ "target": 65536, "protocol": "HTTP" }]),
@@ -81,5 +83,19 @@ mod tests {
                 "accepted {value}"
             );
         }
+    }
+
+    #[test]
+    fn optional_ports_allow_absence_null_and_an_empty_list() {
+        for config in [json!({}), json!({ "ports": null }), json!({ "ports": [] })] {
+            assert!(parse_ports(&config).unwrap().is_empty());
+        }
+        let too_many = vec![json!({ "target": 4319, "protocol": "HTTP" }); 17];
+        assert!(
+            parse_ports(&json!({ "ports": too_many }))
+                .unwrap_err()
+                .to_string()
+                .contains("16 ports")
+        );
     }
 }

@@ -25,7 +25,7 @@ checkouts and uncommitted work instead of creating a new sandbox generation.
 
 Declare additional runtime ports in destination config at creation, for example
 `ports = [{ name = "verify-control", target = 4319, protocol = "HTTP" }]`.
-Protocols are `HTTP` or `TCP`; targets and names must be unique. Blaxel reserves
+Declare at most 16 ports. Protocols are `HTTP` or `TCP`; targets and names must be unique. Blaxel reserves
 80, 443 and 8080. Ports are retained in session state for rejoin; requesting ports
 does not change an existing sandbox's immutable runtime configuration.
 
