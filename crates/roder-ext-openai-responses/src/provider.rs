@@ -735,7 +735,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
     }
 
     fn requires_native_compaction(&self) -> bool {
-        self.profile == ResponsesProviderProfile::OpenAi
+        self.provider_id == PROVIDER_OPENAI || self.provider_id == PROVIDER_CODEX
     }
 
     async fn compact_turn(
