@@ -50,7 +50,7 @@ async fn decisions_live_browser_corpus() {
     let path = write_rows(&format!("decisions-live-{stamp}"), &rows).unwrap();
     eprintln!("{}rows: {}", table(&tasks, &rows), path.display());
     assert!(
-        rows.iter().all(|row| row.pass && row.model_calls > 0),
+        rows.iter().all(|row| row.passed() && row.model_calls > 0),
         "Decisions live outcomes failed; inspect {}",
         path.display()
     );

@@ -56,6 +56,32 @@ fn request_body_matches_upstream_byte_for_byte() {
     assert_eq!(body, fixture["body"]);
 }
 
+/// What covered a step's target is for the caller and the fallback, not the
+/// chooser: history that records it yields the recorded request, byte for
+/// byte. A model-facing change to `recent_actions` needs its own A/B.
+#[test]
+fn what_covered_a_step_is_not_in_the_chooser_request() {
+    let fixture = fixture("choose");
+    let page: Value = serde_json::from_str(include_str!("../../tests/fixtures/fingerprint.json"))
+        .map(|value: Value| value["page"].clone())
+        .unwrap();
+    let mut history = fixture["history"].as_array().unwrap().clone();
+    for step in &mut history {
+        step["covered"] = json!(true);
+        step["covered_by"] = json!("Spring sale popup");
+    }
+    let (body, _, _) = request_body(
+        &page,
+        fixture["goal"].as_str().unwrap(),
+        &history,
+        "jev-latest",
+        fixture_day(),
+    );
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert_eq!(serialized, fixture["serialized"].as_str().unwrap());
+    assert!(!serialized.contains("Spring sale popup"));
+}
+
 #[test]
 fn validation_verdicts_match_upstream() {
     let fixture = fixture("validate");

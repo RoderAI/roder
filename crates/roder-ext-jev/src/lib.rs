@@ -22,6 +22,7 @@ mod engine;
 mod fallback;
 #[cfg(test)]
 mod fixture_harness;
+mod handoff;
 mod http;
 mod irreversible;
 mod jev_prompt;
@@ -52,8 +53,9 @@ pub use decisions::{ComputerCandidate, ComputerDecision, OpenAiDecisionsClient};
 pub use engine::{
     Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
     JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
-    JevEngineConfig, JevFrameText, JevPageFacts, JevRunResult, JevStatus, JevStop, JevStopCause,
-    JevTextValue, JevTextValueResolver, StaleObservation,
+    JevEngineConfig, JevFrameText, JevOmitted, JevPageFacts, JevRunResult, JevStatus, JevStop,
+    JevStopCause, JevSuppressedClick, JevSuppressedKind, JevTextValue, JevTextValueResolver,
+    StaleObservation,
 };
 pub use scope::JevOriginScope;
 pub use tools::{JevToolContributor, jev_tool_spec};

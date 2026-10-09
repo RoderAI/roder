@@ -165,11 +165,13 @@ impl Page {
 
     /// Let the last input's effects land before the next read. A no-op when
     /// nothing is pending, so timing it separately from `observe` is exact.
-    pub(crate) async fn settle(&mut self) {
-        if let Some(action) = self.after_input.take() {
-            self.settle_page(Some(&action)).await;
-            self.follow_popup().await;
-        }
+    /// Returns the page's `{reason, waited_ms}` (null when it gave none) when
+    /// there was something to wait for.
+    pub(crate) async fn settle(&mut self) -> Option<Value> {
+        let action = self.after_input.take()?;
+        let settled = self.settle_page(Some(&action)).await;
+        self.follow_popup().await;
+        Some(settled)
     }
 
     /// Read the page: settle any pending input, snapshot, then fingerprint.

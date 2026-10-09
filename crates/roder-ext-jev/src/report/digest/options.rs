@@ -82,8 +82,8 @@ pub(super) fn options(data: &Value, chars: usize, lines: usize) -> Vec<String> {
     out
 }
 
-/// One option as the list shows it: its label, and a field's or choice's
-/// value.
+/// One option as the list shows it: its label, a field's or choice's value,
+/// and whether a checkbox, radio or switch is checked.
 fn option(control: &Value) -> String {
     let label = cut(&one_line(text(&control["label"])), 60);
     let value = control["value"]
@@ -94,7 +94,10 @@ fn option(control: &Value) -> String {
         ("fill", None) => format!("{label} [field]"),
         ("select", Some(value)) => format!("{label} [choice: {value}]"),
         ("select", None) => format!("{label} [choice]"),
-        (_, Some(value)) if value == "checked" => format!("{label} [checked]"),
-        _ => label,
+        _ => match control["checked"].as_bool() {
+            Some(true) => format!("{label} [checked]"),
+            Some(false) => format!("{label} [unchecked]"),
+            None => label,
+        },
     }
 }

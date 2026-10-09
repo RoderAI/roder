@@ -107,6 +107,8 @@ pub struct ScriptedBrowser {
     last: Value,
     fresh: VecDeque<bool>,
     covered: VecDeque<bool>,
+    /// What every covered act says covers its target.
+    cover: Option<String>,
     refusals: VecDeque<Option<String>>,
     banners: VecDeque<Option<String>>,
     act_delay: Option<Duration>,
@@ -125,6 +127,7 @@ impl ScriptedBrowser {
             last,
             fresh: VecDeque::new(),
             covered: VecDeque::new(),
+            cover: None,
             refusals: VecDeque::new(),
             banners: VecDeque::new(),
             act_delay: None,
@@ -143,6 +146,12 @@ impl ScriptedBrowser {
     /// [`Covered`] without acting); `false` once they run out.
     pub fn with_covered(mut self, answers: &[bool]) -> Self {
         self.covered = answers.iter().copied().collect();
+        self
+    }
+
+    /// What a covered act says covers its target, as the page names it.
+    pub fn with_cover(mut self, name: &str) -> Self {
+        self.cover = Some(name.to_string());
         self
     }
 
@@ -216,7 +225,12 @@ impl JevBrowser for ScriptedBrowser {
             text: text.map(str::to_string),
         });
         if self.covered.pop_front().unwrap_or(false) {
-            return Err(Covered::new("covered in the script").into());
+            let covered = Covered::new("covered in the script");
+            return Err(match &self.cover {
+                Some(name) => covered.with_cover(name.as_str()),
+                None => covered,
+            }
+            .into());
         }
         if let Some(delay) = self.act_delay {
             tokio::time::sleep(delay).await;

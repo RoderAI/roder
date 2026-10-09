@@ -174,13 +174,14 @@ async fn decisions_vs_jev() {
                     "original"
                 });
                 row.telemetry["provider"] = json!(provider);
-                row.telemetry["repeat"] = json!(repeat + 1);
+                row.repeat = repeat + 1;
                 eprintln!(
-                    "repeat={} provider={} task={} pass={} ms={} calls={} failures={:?}",
+                    "repeat={} provider={} task={} pass={} false_green={} ms={} calls={} failures={:?}",
                     repeat + 1,
                     provider,
                     row.task,
-                    row.pass,
+                    row.passed(),
+                    row.marks.false_green,
                     row.wall_ms,
                     row.model_calls,
                     row.failures
@@ -233,7 +234,7 @@ async fn decisions_holdout_fixture_contracts() {
         )
         .await
         .unwrap();
-        let failures = task.expect.grade(&outcome);
+        let failures = task.expect.grade(&outcome).failures();
         assert!(failures.is_empty(), "{}: {failures:?}", task.id);
     }
 }

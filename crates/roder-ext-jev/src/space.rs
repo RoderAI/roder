@@ -56,6 +56,10 @@ pub(crate) struct ActionSpace {
     pub(crate) targets: Vec<(String, Vec<(String, Value)>)>,
     /// Non-operation controls such as `SCROLL_DOWN` and `WAIT`, upper-cased.
     pub(crate) controls: Vec<(String, Value)>,
+    /// Observed targets left out because their operation already offered
+    /// [`MAX_TARGETS`]: in practice a long select's last options, or the
+    /// whole of a second long select.
+    pub(crate) skipped: usize,
 }
 
 impl ActionSpace {
@@ -99,7 +103,10 @@ fn operation_for(action: &Value) -> Option<&'static str> {
 }
 
 /// TypeSafe rejects a choice with more options than this, so no operation
-/// may offer more targets. The snapshot's 250-action cap stays below it today.
+/// may offer more targets. The snapshot's cap of 250 controls keeps clicks
+/// and fields below it, but a select's options count once there, so a long
+/// select's can pass it: the ones that do are counted in
+/// [`ActionSpace::skipped`] and reported with the result.
 pub(crate) const MAX_TARGETS: usize = 255;
 
 /// Build the action space from an observation's `actions`.
@@ -118,6 +125,7 @@ pub(crate) fn action_space(actions: &[Value]) -> ActionSpace {
             .targets_for(operation)
             .is_some_and(|group| group.len() >= MAX_TARGETS);
         if full {
+            space.skipped += 1;
             continue;
         }
         let node = action["node"].clone();
@@ -331,6 +339,68 @@ mod tests {
         assert_eq!(space.targets_for("CLICK").unwrap().len(), MAX_TARGETS);
         assert_eq!(space.elements.len(), MAX_TARGETS);
         assert_eq!(space.elements.last().unwrap()["label"], json!("Cell 255"));
+    }
+
+    /// A native select's actions: one per option, all on `node`.
+    fn select(node: u64, options: usize) -> Vec<Value> {
+        (1..=options)
+            .map(|n| {
+                json!({"id": format!("s{node}-{n}"), "node": node, "role": "combobox",
+                       "kind": "select", "value": format!("o{n}"), "current_value": "",
+                       "label": format!("Field {node} → Option {n}")})
+            })
+            .collect()
+    }
+
+    #[test]
+    fn options_past_the_target_limit_are_counted_not_dropped_silently() {
+        // One select of 300 options: 255 are offered and 45 are counted.
+        let space = action_space(&select(1, 300));
+        assert_eq!(space.targets_for("SELECT").unwrap().len(), MAX_TARGETS);
+        assert_eq!(space.elements[0]["options"].as_array().unwrap().len(), 255);
+        assert_eq!(space.skipped, 45);
+
+        // A second long select shares the limit: 250 + 5 offered, 15 counted.
+        let mut actions = select(1, 250);
+        actions.extend(select(2, 20));
+        let space = action_space(&actions);
+        assert_eq!(space.elements.len(), 2);
+        assert_eq!(space.elements[1]["options"].as_array().unwrap().len(), 5);
+        assert_eq!(space.skipped, 15);
+
+        // One that finds the limit already reached is not offered at all,
+        // and every one of its options is counted.
+        let mut actions = select(1, 255);
+        actions.extend(select(2, 20));
+        let space = action_space(&actions);
+        assert_eq!(space.elements.len(), 1);
+        assert_eq!(space.skipped, 20);
+    }
+
+    #[test]
+    fn nothing_is_counted_while_every_operation_has_room() {
+        assert_eq!(action_space(&select(1, MAX_TARGETS)).skipped, 0);
+        assert_eq!(action_space(&[]).skipped, 0);
+        let space = action_space(fixture()["input_actions"].as_array().unwrap());
+        assert_eq!(space.skipped, 0);
+        // The limit is per operation: 255 options and 255 clicks both fit.
+        let mut actions = select(1, MAX_TARGETS);
+        actions.extend((2..=256).map(|n| {
+            json!({"id": format!("e{n}"), "node": n, "role": "button", "kind": "click",
+                   "value": "", "label": format!("Cell {n}")})
+        }));
+        assert_eq!(action_space(&actions).skipped, 0);
+    }
+
+    #[test]
+    fn clicks_past_the_limit_are_counted_with_the_options() {
+        let actions = (1..=300)
+            .map(|n| {
+                json!({"id": format!("e{n}"), "node": n, "role": "button", "kind": "click",
+                       "value": "", "label": format!("Cell {n}")})
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(action_space(&actions).skipped, 45);
     }
 
     #[test]

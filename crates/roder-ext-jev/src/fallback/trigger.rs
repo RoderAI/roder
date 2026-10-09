@@ -1,7 +1,9 @@
 //! When a run falls back: Jev could not progress, and a different driver
 //! might. It ended `blocked` because the model answered BLOCKED, three steps
-//! changed nothing, its targets stayed covered, or it answered DONE after a
-//! covered attempt; the page offered nothing Jev can act on; or its budget
+//! changed nothing, its targets stayed covered, it answered DONE after a
+//! covered attempt, it went round in circles (the same control a fourth time
+//! on the same page, or six waits that changed nothing), or the page never
+//! held still for it; the page offered nothing Jev can act on; or its budget
 //! ran out short of the goal.
 //!
 //! Never when a different driver does not fix the cause, and never as a way
@@ -10,7 +12,10 @@
 //! `access_denied` (a bot wall, a CAPTCHA, a refusal), a page that did not
 //! load, a page outside the allowed origins, a confirm or prompt Jev
 //! declined, a provider that could not be reached, an error, or a timeout
-//! that has spent the call's time.
+//! that has spent the call's time. An error includes a decision service
+//! whose replies stayed unusable after being asked again
+//! ([`JevStopCause::DecisionUnusable`]): whether that should fall back is a
+//! product decision that has not been made, so it does not.
 
 use serde::Serialize;
 use serde_json::json;
@@ -30,6 +35,13 @@ pub(crate) enum Trigger {
     /// Its targets stayed covered (three covered attempts, or DONE after
     /// one).
     Covered,
+    /// It went round in circles: the same control chosen a fourth time on a
+    /// page that looked the same, or six waits in a row that changed
+    /// nothing.
+    Looped,
+    /// The page kept changing under its decisions: three went stale in a
+    /// row with nothing new on the page.
+    Unsettled,
     /// The page offered nothing Jev can act on.
     NothingToActOn,
     /// The action or model-call budget ran out.
@@ -48,6 +60,12 @@ impl Trigger {
             }
             Self::Stalled => "three of Jev's actions in a row changed nothing on the page",
             Self::Covered => "the controls Jev tried were covered by another element",
+            Self::Looped => {
+                "Jev went round in circles, repeating itself on a page that did not change"
+            }
+            Self::Unsettled => {
+                "the page kept changing under Jev's decisions, so each one went stale"
+            }
             Self::NothingToActOn => {
                 "the page offered nothing Jev can act on (it cannot use canvas drawings, drags, \
                  hover-only menus or coordinates)"
@@ -69,6 +87,8 @@ pub(crate) fn trigger(result: &JevRunResult) -> Option<Trigger> {
                 JevStopCause::ModelBlocked => Trigger::ModelBlocked,
                 JevStopCause::Stalled => Trigger::Stalled,
                 JevStopCause::Covered | JevStopCause::DoneAfterCovered => Trigger::Covered,
+                JevStopCause::Looped => Trigger::Looped,
+                JevStopCause::Unsettled => Trigger::Unsettled,
                 _ => return None,
             };
             Some(match result.observed_elements {
@@ -79,6 +99,9 @@ pub(crate) fn trigger(result: &JevRunResult) -> Option<Trigger> {
         JevStatus::BudgetExceeded if result.stop_cause == Some(JevStopCause::Budget) => {
             Some(Trigger::Budget)
         }
+        // Replies the decision service kept getting wrong end the run `error`
+        // and, for now, there: an error never falls back.
+        JevStatus::Error if result.stop_cause == Some(JevStopCause::DecisionUnusable) => None,
         _ => None,
     }
 }
@@ -125,8 +148,14 @@ mod tests {
         assert_eq!(blocked(C::Stalled), Some(Trigger::Stalled));
         assert_eq!(blocked(C::Covered), Some(Trigger::Covered));
         assert_eq!(blocked(C::DoneAfterCovered), Some(Trigger::Covered));
+        assert_eq!(blocked(C::Looped), Some(Trigger::Looped));
+        assert_eq!(blocked(C::Unsettled), Some(Trigger::Unsettled));
         assert_eq!(
             trigger(&run(JevStatus::Blocked, Some(C::ModelBlocked), 0)),
+            Some(Trigger::NothingToActOn)
+        );
+        assert_eq!(
+            trigger(&run(JevStatus::Blocked, Some(C::Looped), 0)),
             Some(Trigger::NothingToActOn)
         );
         assert_eq!(
@@ -154,13 +183,25 @@ mod tests {
             );
             assert_eq!(trigger(&run(status, None, 5)), None, "{status:?}");
         }
-        for cause in [C::OutsideScope, C::NotLoaded, C::Stopped, C::Budget] {
+        for cause in [
+            C::OutsideScope,
+            C::NotLoaded,
+            C::Stopped,
+            C::Budget,
+            C::DecisionUnusable,
+        ] {
             assert_eq!(
                 trigger(&run(JevStatus::Blocked, Some(cause), 5)),
                 None,
                 "{cause:?}"
             );
         }
+        // Unusable replies from the decision service end the run `error`,
+        // and nothing falls back after an error.
+        assert_eq!(
+            trigger(&run(JevStatus::Error, Some(C::DecisionUnusable), 40)),
+            None
+        );
         // A budget status an embedder or harness chose is not Jev's budget.
         assert_eq!(
             trigger(&run(JevStatus::BudgetExceeded, Some(C::Stopped), 5)),
@@ -195,5 +236,37 @@ mod tests {
         }];
         result.actions.push(record);
         assert_eq!(trigger(&result), None);
+        // Going round in circles after a declined confirm is the same question.
+        result.stop_cause = Some(JevStopCause::Looped);
+        assert_eq!(trigger(&result), None);
+        result.stop_cause = Some(JevStopCause::Unsettled);
+        assert_eq!(trigger(&result), None);
+    }
+
+    #[test]
+    fn the_loop_caps_are_blocked_causes_and_nothing_else_falls_back_on_them() {
+        use JevStopCause as C;
+        for cause in [C::Looped, C::Unsettled] {
+            // Only a blocked run falls back on them; a timeout that happened
+            // to follow a loop, an error or a budget status does not.
+            for status in [
+                JevStatus::Done,
+                JevStatus::TimedOut,
+                JevStatus::Error,
+                JevStatus::BudgetExceeded,
+                JevStatus::NeedsInput,
+            ] {
+                assert_eq!(trigger(&run(status, Some(cause), 5)), None, "{status:?}");
+            }
+        }
+        assert_ne!(Trigger::Looped.describe(), Trigger::Unsettled.describe());
+        assert_eq!(
+            recorded(Trigger::Looped)["kind"],
+            serde_json::json!("looped")
+        );
+        assert_eq!(
+            recorded(Trigger::Unsettled)["kind"],
+            serde_json::json!("unsettled")
+        );
     }
 }

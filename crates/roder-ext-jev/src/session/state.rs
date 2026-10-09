@@ -9,6 +9,7 @@ use serde::Serialize;
 use super::SessionTabs;
 use crate::chrome::ChromeEndpoint;
 use crate::engine::{JevDecisionClient, JevRunResult, JevStatus, JevTextValueResolver};
+use crate::handoff::{self, Handoff};
 use crate::secret::Secrets;
 use crate::text_helper::TextHelper;
 
@@ -64,6 +65,9 @@ pub(crate) struct SessionState {
     pub(crate) tabs: SessionTabs,
     pub(crate) trail: VecDeque<CallRecord>,
     pub(crate) totals: Totals,
+    /// What the last call's handoff said, when that call ended in one; the
+    /// next call's, if identical, is the caller not acting on it.
+    pub(crate) last_handoff: Option<Handoff>,
     /// Every secret typed in this session, scrubbed from later page reads.
     pub(crate) secrets: Secrets,
     pub(crate) models: Option<SessionModels>,
@@ -83,12 +87,20 @@ impl SessionState {
             tabs: SessionTabs::new(max_tabs),
             trail: VecDeque::new(),
             totals: Totals::default(),
+            last_handoff: None,
             secrets: Secrets::default(),
             models: None,
             last_used: Instant::now(),
             closed: false,
             began_on: crate::report::date(),
         }
+    }
+
+    /// Mark `data`, the result of the call that just finished, as a handoff
+    /// (`outcome_class`) or as the last call's handoff again, and remember
+    /// it for the next call (see [`handoff`]).
+    pub(crate) fn classify(&mut self, data: &mut serde_json::Value) {
+        handoff::classify(&mut self.last_handoff, data);
     }
 
     /// Count a finished call and remember it for the next ones.

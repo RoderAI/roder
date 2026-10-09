@@ -1,4 +1,5 @@
-//! The real [`Page`], with DOM probes read just before the engine closes it.
+//! The real [`Page`], with DOM probes read just before the engine closes it,
+//! and every call the loop makes on it timed (see [`super::watch`]).
 //!
 //! The engine owns its browser, so a grader cannot reach the page after a
 //! run. Reading the probes inside `close` sees the final document without
@@ -6,11 +7,12 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
 
+use super::watch::Watch;
 use crate::engine::{JevActOutcome, JevBrowser};
 use crate::page::Page;
 
@@ -33,30 +35,51 @@ pub(crate) struct ProbedPage {
     page: Page,
     probes: Vec<String>,
     out: Arc<Mutex<Probed>>,
+    watch: Watch,
+    /// How the last settle ended and how long it took, until the next look
+    /// at the page takes it.
+    settled: Option<(Value, Duration)>,
 }
 
 impl ProbedPage {
-    pub(crate) fn new(page: Page, probes: Vec<String>) -> (Self, ProbeHandle) {
+    pub(crate) fn new(page: Page, probes: Vec<String>, watch: Watch) -> (Self, ProbeHandle) {
         let out = Arc::new(Mutex::new(Probed::default()));
         (
             Self {
                 page,
                 probes,
                 out: out.clone(),
+                watch,
+                settled: None,
             },
             ProbeHandle(out),
         )
+    }
+
+    /// Settle whatever input is pending here, so the wait is timed as the
+    /// wait it is and not as part of the call that would have done it (the
+    /// cookie-banner check and the read both settle first). A no-op when
+    /// nothing is pending.
+    async fn settle(&mut self) {
+        let started = Instant::now();
+        if let Some(reply) = self.page.settle().await {
+            let took = started.elapsed();
+            self.watch.add("settle", took);
+            self.settled = Some((reply, took));
+        }
     }
 }
 
 #[async_trait]
 impl JevBrowser for ProbedPage {
     async fn screenshot(&mut self) -> anyhow::Result<Option<String>> {
-        self.page.screenshot().await
+        self.watch.time("screenshot", self.page.screenshot()).await
     }
 
     async fn observe(&mut self) -> anyhow::Result<Value> {
-        let observation = self.page.observe().await?;
+        self.settle().await;
+        let observation = self.watch.time("snapshot", self.page.observe()).await?;
+        self.watch.look(&observation, self.settled.take());
         // For diagnosing a task: every observation's actions and text.
         if std::env::var("JEV_EVAL_DUMP").as_deref() == Ok("1") {
             let actions = observation["actions"]
@@ -84,11 +107,13 @@ impl JevBrowser for ProbedPage {
     }
 
     async fn fresh(&mut self, observation: &Value, action: Option<&Value>) -> anyhow::Result<bool> {
-        self.page.fresh(observation, action).await
+        self.watch
+            .time("fresh", self.page.fresh(observation, action))
+            .await
     }
 
     async fn describe(&mut self) -> anyhow::Result<Option<crate::engine::JevPageFacts>> {
-        self.page.describe().await
+        self.watch.time("describe", self.page.describe()).await
     }
 
     async fn act(
@@ -98,11 +123,16 @@ impl JevBrowser for ProbedPage {
         text: Option<&str>,
         wait: Duration,
     ) -> anyhow::Result<JevActOutcome> {
-        self.page.act(action, observation, text, wait).await
+        self.watch
+            .time("act", self.page.act(action, observation, text, wait))
+            .await
     }
 
     async fn refuse_cookie_banner(&mut self) -> anyhow::Result<Option<String>> {
-        self.page.refuse_cookie_banner().await
+        self.settle().await;
+        self.watch
+            .time("banner", self.page.refuse_cookie_banner())
+            .await
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {

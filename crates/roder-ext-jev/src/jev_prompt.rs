@@ -189,6 +189,27 @@ mod joint;
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// What covered a step's target is not part of any profile's evidence.
+    #[test]
+    fn what_covered_a_step_is_in_no_profiles_request() {
+        let original = json!({"state":{},"questions":{"operation":{"criteria":{"CLICK":"click","DONE":"done"},"instructions":{"goal":"Save the draft"}},"click_target":{"criteria":{"1":{"element":"Save"}},"instructions":{}},"gate":{"type":"noul","instructions":"Is this irreversible?"}}});
+        let history = [
+            json!({"action":"Save","kind":"click","covered":true,"page_changed":false,"covered_by":"Spring sale popup"}),
+        ];
+        for profile in [Profile::Literal, Profile::Effects, Profile::Criteria] {
+            let mut body = original.clone();
+            rewrite(&mut body, profile, &history, &Value::Null);
+            if profile != Profile::Literal {
+                // The history did reach the request, without the name.
+                assert_eq!(body["state"]["recent_actions"][0]["action"], "Save");
+            }
+            assert!(
+                !body.to_string().contains("Spring sale popup"),
+                "{profile:?}: {body}"
+            );
+        }
+    }
+
     #[test]
     fn tuning_preserves_choices_and_safety_questions() {
         let original = json!({"state":{},"questions":{"operation":{"criteria":{"CLICK":"click","DONE":"done"},"instructions":{"goal":"Save the draft"}},"click_target":{"criteria":{"1":{"element":"Save"}},"instructions":{}},"gate":{"type":"noul","instructions":"Is this irreversible?"}}});

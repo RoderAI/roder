@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Account menu</title></head>
+<body>
+  <h1>Account</h1>
+  <!-- The button changes the page both ways: opening the menu does, and so
+       does closing it. No step is a no-op, so the stall rule never fires, and
+       a run that keeps pressing it goes closed, open, closed, open until a
+       budget ends it. -->
+  <button type="button" id="toggle" aria-expanded="false">Open menu</button>
+  <ul id="menu" hidden>
+    <li>Profile</li>
+    <li>Billing</li>
+    <li>Sign out</li>
+  </ul>
+  <script>
+    window.toggles = 0;
+    const toggle = document.getElementById('toggle');
+    const menu = document.getElementById('menu');
+    toggle.addEventListener('click', () => {
+      const opening = menu.hidden;
+      menu.hidden = !opening;
+      toggle.textContent = opening ? 'Close menu' : 'Open menu';
+      toggle.setAttribute('aria-expanded', String(opening));
+      window.toggles += 1;
+    });
+  </script>
+</body>
+</html>

@@ -16,9 +16,10 @@
 //!   they sit in.
 //!
 //! Each section has its own budget, and the sections are given what is left
-//! of the whole in priority order (frames, steps, session, headings, options,
-//! then text), each cut marked with how much was left out. Page text that
-//! imitates a marker line is defused.
+//! of the whole in priority order (frames, steps, the click a `done` run
+//! declined to repeat, session, headings, options, then text), each cut
+//! marked with how much was left out. Page text that imitates a marker line
+//! is defused.
 
 mod fallback;
 mod header;
@@ -30,7 +31,7 @@ use serde_json::Value;
 use crate::session::cut;
 use header::{header, session};
 use options::options;
-use page::{frames, headings, page_text, reason, steps};
+use page::{frames, headings, not_clicked, page_text, reason, steps};
 
 /// The whole text.
 pub(crate) const MAX_CHARS: usize = 8_000;
@@ -38,6 +39,7 @@ pub(crate) const MAX_LINES: usize = 120;
 
 const STEP_LINES: usize = 12;
 const STEP_CHARS: usize = 180;
+const NOT_CLICKED_CHARS: usize = 440;
 const SESSION_CHARS: usize = 900;
 const EARLIER_CALLS: usize = 4;
 const FRAME_CHARS: usize = 700;
@@ -91,6 +93,7 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
         STEP_LINES * (STEP_CHARS + 1) + 20,
         STEP_LINES + 1,
     );
+    let not_clicked = budget.take(not_clicked(data), NOT_CLICKED_CHARS + 20, 1);
     let fallback_steps = budget.take(
         fallback::steps(data),
         STEP_LINES * (STEP_CHARS + 1) + 340,
@@ -120,6 +123,7 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
     let page = [
         reason,
         steps,
+        not_clicked,
         fallback_steps,
         frames,
         headings,

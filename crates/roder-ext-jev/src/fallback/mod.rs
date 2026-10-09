@@ -24,6 +24,7 @@
 pub(crate) mod guard;
 pub(crate) mod handover;
 pub(crate) mod model;
+mod offered;
 mod prompt;
 pub(crate) mod run;
 pub(crate) mod settings;
@@ -36,7 +37,7 @@ use std::sync::Arc;
 use roder_ext_chrome::direct::{DirectSession, DirectTab};
 use serde_json::{Value, json};
 
-use crate::engine::{JevRunResult, JevStatus};
+use crate::engine::{JevOmitted, JevRunResult, JevStatus};
 use crate::scope::JevOriginScope;
 use crate::secret::Secrets;
 use guard::JevGuard;
@@ -140,9 +141,14 @@ pub(crate) struct FinalPage {
     pub(crate) url: String,
     pub(crate) title: String,
     pub(crate) visible_text: String,
+    /// The values form fields held that `visible_text` shows as lines, in
+    /// order. Not page content: a completion check leaves them out.
+    pub(crate) typed_values: Vec<String>,
     pub(crate) controls: Value,
     pub(crate) page: Value,
     pub(crate) observed_elements: usize,
+    /// What it held that Jev was not offered.
+    pub(crate) omitted: JevOmitted,
 }
 
 /// Put the fallback into a call's result data. With a fallback that ran,
@@ -221,6 +227,7 @@ pub(crate) fn report(
                     data["controls"] = page.controls;
                     data["page"] = page.page;
                     data["observed_elements"] = json!(page.observed_elements);
+                    set_omitted(data, page.omitted);
                 }
                 None => {
                     if let Some(page) = &outcome.last_page {
@@ -229,9 +236,24 @@ pub(crate) fn report(
                         data["visible_text"] = page["text"].clone();
                         data["controls"] = json!([]);
                         data["page"] = json!(null);
+                        // Jev's count described the page Jev left.
+                        set_omitted(data, JevOmitted::default());
                     }
                 }
             }
         }
+    }
+}
+
+/// The result's `omitted`, as the serialized result carries it: absent when
+/// nothing was left out.
+fn set_omitted(data: &mut Value, omitted: JevOmitted) {
+    match omitted.is_empty() {
+        true => {
+            if let Some(fields) = data.as_object_mut() {
+                fields.remove("omitted");
+            }
+        }
+        false => data["omitted"] = json!(omitted),
     }
 }

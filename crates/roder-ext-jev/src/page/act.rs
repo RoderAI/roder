@@ -303,9 +303,15 @@ fn control_state(guard: &Value) -> Value {
 }
 
 /// The point act.js found, or why there is none: covered, or a stale page.
+/// A target that is covered carries the name act.js read off what covers it.
 fn target_point(hit: &Value) -> anyhow::Result<Point> {
     if hit["covered"] == json!(true) {
-        return Err(Covered::new("Another element covers the target; nothing was clicked.").into());
+        let covered = Covered::new("Another element covers the target; nothing was clicked.");
+        return Err(match hit["by"].as_str() {
+            Some(cover) => covered.with_cover(cover),
+            None => covered,
+        }
+        .into());
     }
     Point::of(hit).ok_or_else(|| StaleObservation::new("Target changed. Observe again.").into())
 }
@@ -337,8 +343,34 @@ mod tests {
         assert_eq!((point.x, point.y), (10.5, 20.0));
         let covered = target_point(&json!({"covered": true})).unwrap_err();
         assert!(covered.is::<Covered>(), "{covered:#}");
+        // Nothing hit, or nothing named: a covered target without a name.
+        assert_eq!(covered.downcast_ref::<Covered>().unwrap().cover(), None);
         let stale = target_point(&Value::Null).unwrap_err();
         assert!(stale.is::<StaleObservation>(), "{stale:#}");
+    }
+
+    #[test]
+    fn a_covered_hit_carries_the_name_of_what_covers_the_target() {
+        let named = target_point(&json!({"covered": true, "by": "Spring sale popup"}));
+        let error = named.unwrap_err();
+        let covered = error.downcast_ref::<Covered>().expect("covered");
+        assert_eq!(covered.cover(), Some("Spring sale popup"));
+        // The message stays fixed text: the name is page text and has its
+        // own accessor, scrubbed by the loop before it is recorded.
+        assert_eq!(
+            covered.to_string(),
+            "Another element covers the target; nothing was clicked."
+        );
+        for by in [json!(null), json!(""), json!("  "), json!(7)] {
+            let error = target_point(&json!({"covered": true, "by": by})).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<Covered>().unwrap().cover(),
+                None,
+                "{by}"
+            );
+        }
+        // A hit that is a point has no cover, whatever else it carries.
+        assert!(target_point(&json!({"x": 1, "y": 2, "by": "x"})).is_ok());
     }
 
     #[test]

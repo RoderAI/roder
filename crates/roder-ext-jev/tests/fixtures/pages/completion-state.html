@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Order status</title></head>
+<body>
+  <h1>Order</h1>
+  <label>Note <input id="note" type="text" name="note"></label>
+  <!-- Typographic text on purpose: the progress line holds a no-break space
+       and the result holds two of them, a zero-width space and capitals, so a
+       caller who writes the plain lower-case phrase still has to match. -->
+  <p id="saving">Saving&nbsp;order&hellip;</p>
+  <button type="button" id="finish">Finish order</button>
+  <p id="result"></p>
+  <script>
+    document.getElementById('finish').addEventListener('click', () => {
+      document.getElementById('saving').remove();
+      document.getElementById('result').innerHTML = 'ORDER&nbsp;&nbsp;Con&#8203;firmed';
+    });
+  </script>
+</body>
+</html>

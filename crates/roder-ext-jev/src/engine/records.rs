@@ -24,6 +24,11 @@ pub struct JevActionRecord {
     /// Another element covered the target, so nothing was clicked or typed.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub covered: bool,
+    /// What covered it, as the page names it: a label, its text or its tag.
+    /// Page text, as untrusted as the rest, scrubbed of typed secrets, on
+    /// one line and cut to 100 characters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub covered_by: Option<String>,
     /// Why the page did not keep what the action asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
@@ -84,6 +89,7 @@ impl JevActionRecord {
             url: String::new(),
             page_changed: Some(false),
             covered: false,
+            covered_by: None,
             refused: None,
             uncovered: None,
             dialogs: Vec::new(),
@@ -120,6 +126,37 @@ pub struct JevDecisionRecord {
     pub irreversible: Option<f64>,
 }
 
+/// Why the loop did not make a click it was about to make.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum JevSuppressedKind {
+    /// The control just clicked, chosen again.
+    SameControl,
+    /// Another control with the same label as the click just made, whose
+    /// label names a commitment (delete, buy, send...): the next mail's
+    /// "Delete" after the first one's.
+    TwinControl,
+}
+
+/// A click the loop ended the run `done` instead of making: an unsure repeat
+/// of a click that had just changed the page. Page text, as untrusted as the
+/// rest, scrubbed of typed secrets and cut short.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct JevSuppressedClick {
+    pub kind: JevSuppressedKind,
+    /// The label of the control that was not clicked.
+    pub label: String,
+    /// The card, row or section it sat in, when the page named one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    /// Where the click before it landed, which a twin differs from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_context: Option<String>,
+    /// The call confidence it was chosen with, below the repeat threshold.
+    pub confidence: f64,
+}
+
 /// Typed outcome from one bounded JEV run.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct JevRunResult {
@@ -130,6 +167,10 @@ pub struct JevRunResult {
     pub actions: Vec<JevActionRecord>,
     pub elapsed_ms: u64,
     pub observed_elements: usize,
+    /// What the final page held that Jev was not offered; absent when
+    /// nothing, which is the usual page.
+    #[serde(skip_serializing_if = "JevOmitted::is_empty")]
+    pub omitted: JevOmitted,
     pub model_calls: usize,
     pub text_calls: usize,
     /// Summed decision and text-helper tokens, `"unknown"` where a provider
@@ -141,6 +182,9 @@ pub struct JevRunResult {
     /// What ended a run that stopped short of its goal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_cause: Option<JevStopCause>,
+    /// The click a `done` run ended on instead of making, when it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suppressed_click: Option<JevSuppressedClick>,
     pub untrusted: bool,
     /// The controls the final page offered Jev, in the order it observed
     /// them (on screen first). Page text, as untrusted as the rest.
@@ -173,17 +217,41 @@ impl JevRunResult {
             actions: Vec::new(),
             elapsed_ms: elapsed.as_millis() as u64,
             observed_elements: 0,
+            omitted: JevOmitted::default(),
             model_calls: 0,
             text_calls: 0,
             usage: JevUsage::none(),
             decisions: Vec::new(),
             stopped_because: Some(reason.into()),
             stop_cause: (status == JevStatus::Blocked).then_some(JevStopCause::NotLoaded),
+            suppressed_click: None,
             untrusted: true,
             controls: Vec::new(),
             page: None,
             typed_secrets: Secrets::default(),
         }
+    }
+}
+
+/// What a page held that Jev was not offered, counted on the page Jev
+/// ended on. Both counts are numbers the caller reads as a warning that the
+/// page is bigger than what Jev could act on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct JevOmitted {
+    /// Controls the page reading left out: past its caps (100 below the
+    /// fold, 250 in all), out of reach of any scroll, or cut off by an
+    /// ancestor. One per control, however many actions it would have had.
+    pub controls: usize,
+    /// Targets no choice could take, because a choice takes at most 255 per
+    /// operation: the last options of a select with more, or all of the
+    /// options of a second long select.
+    pub options: usize,
+}
+
+impl JevOmitted {
+    /// Whether nothing was left out.
+    pub fn is_empty(&self) -> bool {
+        self.controls == 0 && self.options == 0
     }
 }
 
@@ -203,10 +271,15 @@ pub struct JevControl {
     /// The nearest heading before it on the page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
-    /// A field's text, a select's chosen option, or a toggle's state, cut to
-    /// 60 characters.
+    /// A field's text or a select's chosen option, cut to 60 characters. A
+    /// checkbox, radio or switch has none: its state is `checked`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Whether a checkbox, radio or switch is checked, when the page says
+    /// (`checked`, or `aria-checked` true or false). Its HTML `value`, "on"
+    /// unless the page sets one, is not reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
     /// A select's options, at most 12.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
@@ -249,11 +322,13 @@ mod control_roundtrip_tests {
             context: None,
             section: None,
             value: None,
+            checked: None,
             options: vec![],
             offscreen: false,
         };
         let value = serde_json::to_value(&control).unwrap();
         assert!(value.get("options").is_none() && value.get("offscreen").is_none());
+        assert!(value.get("checked").is_none());
         assert_eq!(
             serde_json::from_value::<JevControl>(value).unwrap(),
             control

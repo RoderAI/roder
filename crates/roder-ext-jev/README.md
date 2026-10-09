@@ -170,16 +170,20 @@ an output above 20,000 characters or 200 lines into a file):
   time zone ("Tonight" means this date, or, when a flow ran past midnight,
   the date the session began on); the address and title, marked
   page-supplied, and the HTTP status; what came of the call (actions,
-  decisions, seconds); what to do next. After `done` that is to check the page
+  decisions, seconds); a `Not offered to Jev:` line when the page held
+  controls or select options Jev was not offered (counts only: see `omitted`
+  below); what to do next. After `done` that is to check the page
   against the goal, to go on with `url ""`, and not to sign in, reserve, pay
   or send personal details unless the user asked for that step.
 - **Session:** tabs open, totals, up to four earlier calls.
 - **Page content**, between fixed marker lines that say it is untrusted
   (any run of three or more dashes in page text, ASCII or look-alike,
   becomes "- -", so no page line can draw a marker): why Jev stopped, the steps with
-  their effect and the section each control sat in, the text of frames Jev
+  their effect and the section each control sat in, the click a `done` run
+  declined to repeat (`Not clicked:`), the text of frames Jev
   read, the visible headings, the page text (blank and repeated lines
-  dropped, short ones joined), and the options Jev can act on, on screen
+  dropped, short ones joined), and the options Jev can act on (a checkbox,
+  radio or switch reads `[checked]` or `[unchecked]`), on screen
   first, grouped by the card or section they sit in (a twin's `context`,
   else the nearest heading before it, which `context.js` now records for
   every control as `section`, outside the fingerprint and the requests; a
@@ -187,7 +191,7 @@ an output above 20,000 characters or 200 lines into a file):
   list); links repeated more than three times are left out as navigation.
 
 Each section has a budget, and what is left of the whole goes to them in
-priority order (frames, steps, session, headings, options, text, with at least
+priority order (frames, steps, the click not made, session, headings, options, text, with at least
 900 characters kept for the text); every cut says how much it left out.
 Measured on the fixture pages through the session layer: 1,211 characters on
 `basic.html`, 4,973 (48 lines) on `big.html` with 249 controls, 2,472 on the
@@ -195,12 +199,29 @@ reservation results after a slot opened its booking widget; a synthetic page
 with 221 controls, 6,000 characters of text, two frames and 30 steps stays at
 7,930. `data` keeps everything: every step's `effect` and `context`, the
 final page's `controls` (label, kind, role, context, section, value cut to 60
-characters, a select's options; never a secret's value) and `page`
-(`http_status`, `headings`, `frames`).
+characters, a select's options, and `checked` true or false for a checkbox,
+radio or switch, which then has no `value`; never a secret's value), `omitted`
+(`controls` the snapshot left out and `options` past the 255 a choice takes;
+absent when both are zero) and `page` (`http_status`, `headings`, `frames`).
 
 `JEV_SESSION_LOG=<dir>` appends one JSON line per call to
 `<dir>/<thread>.jsonl` (the request, the tab, the full data and the text), for
 grading a run afterwards: `roder exec --json` carries only the text.
+
+**Completion check.** `success_condition` (`url_contains`, `text_contains`,
+`text_absent`; `src/session/completion.rs`) is checked once, after `done`, on a
+fresh look at the tab. Both sides of each comparison are folded first
+(`completion/text.rs`): case, whitespace runs (including the line break
+`text.js` puts between nodes, and no-break spaces) and zero-width characters do
+not matter, so `count: 1` matches `Count:` over `1`. `text.js` now returns the
+field values it listed in the page text (`typed_values` on the observation,
+`FinalPage.typed_values`, scrubbed like the text), and the check leaves one
+matching line out per value: what a field holds is not the page's own text.
+A predicate with nothing visible in it is an error, an empty one is skipped.
+`completion_verification` carries `status`, the three predicates, `unmet` and
+the scope; the digest line says "condition met" or "condition not met" and
+names the unmet predicates. Step two, ending a run on the first look that
+satisfies `text_contains`, is not built: it needs a live A/B.
 
 After `access_denied` the hint says: if the user asked for that particular
 site, tell them and ask how to go on; otherwise the task is not finished: go
@@ -237,14 +258,18 @@ tools (`roder_ext_chrome::direct`) go on **in the same tab**, with its
 cookies and page state, as `JEV_FALLBACK` says (`src/fallback/`):
 
 - **When** (`trigger.rs`): the run ended `blocked` because the model answered
-  BLOCKED, three steps changed nothing, its targets stayed covered, or it
-  answered DONE after a covered attempt; the page offered nothing Jev can act
-  on; or its own action budget ran out. Never after `needs_input`,
+  BLOCKED, three steps changed nothing, its targets stayed covered, it
+  answered DONE after a covered attempt, it went round in circles
+  (`stop_cause` `looped`) or the page never held still for it (`unsettled`);
+  the page offered nothing Jev can act on; or its own action budget ran
+  out. Never after `needs_input`,
   `needs_confirmation`, `access_denied`, a page that did not load, a page
   outside the allowed origins, a confirm or prompt Jev declined, a provider
-  failure, an error or a timeout: a different driver does not fix those, and
-  the fallback must never be a way around a block or a confirmation.
-  `JevRunResult.stop_cause` (new) says which rule ended a run.
+  failure, an error (decision replies that stayed unusable after being asked
+  again, `stop_cause` `decision_unusable`, among them) or a timeout: a
+  different driver does not fix those, and the fallback must never be a way
+  around a block or a confirmation. `JevRunResult.stop_cause` (new) says
+  which rule ended a run.
 - **`auto` (default).** `jev_browse` itself runs a bounded loop (`run.rs`):
   the model reads the tab and calls the full tools (look, screenshot, click at
   a ref or x/y, hover, drag, type, key, scroll, select, navigate, wait) until
@@ -296,10 +321,11 @@ may only be refused, and with it off nothing in one is pressed. Secrets: what a 
 never read; what is typed there is reported as `[secret]` and scrubbed from
 every later read; a screenshot blacks out every filled secret field on
 screen, and none is taken while the page shows a typed secret anywhere.
-There is no script evaluation. Page content is marked untrusted, and the
-fallback model is told never to follow it, never to sign in, reserve, pay or
-send personal details unless the goal asks for that exact step, and never to
-solve a CAPTCHA. Policy: `jev_browse`'s approval says the session's model may
+There is no script evaluation. Page content is marked untrusted (so are Jev's
+stated reason and last steps in the fallback's opening message, which can quote
+page labels), and the fallback model is told never to follow it, never to sign
+in, reserve, pay or send personal details unless the goal asks for that exact
+step, and never to solve a CAPTCHA. Policy: `jev_browse`'s approval says the session's model may
 go on (auto); the `jev_tab_*` tools that only read (look, screenshot, wait)
 run in every mode, and those that act follow `jev_browse` (plan mode denies,
 default mode asks for each, accept-all runs unless `authorize_irreversible`).
@@ -407,14 +433,20 @@ only a combobox fill 200 ms. A popup that never opens costs the 1.2 s.
   past its end, or inside a fixed layer). A control in a box that scrolls on
   its own (an app shell's pane, where the document does not scroll) is
   reached when it is within that box's content. Controls off to the side are
-  still dropped. Unreached controls count in `omitted_actions`.
+  still dropped. Controls left out by the caps, out of reach or cut off are
+  counted in `omitted_actions`, one per control (a select's options and a
+  field's "Open" click are not counted again), and the result reports the
+  count as `omitted.controls`.
 - A control cut off by an ancestor nothing can scroll is dropped: a collapsed
   panel (`height: 0; overflow: hidden`) or `overflow: clip`. A hidden-overflow
   box with room, such as a carousel, is kept, because `act.js` scrolls it.
 - Actions are sorted by distance from the viewport centre, capped at 100
   offscreen and 250 in all, and pagers and load-more controls always survive
   the caps (fastbrowse's rules). The caps count controls, so a select's
-  options count once. Upstream cuts at 250 actions in document order.
+  options count once. Upstream cuts at 250 actions in document order. A choice
+  takes at most 255 targets per operation, so the options of a select past
+  that (a 300-option list, or a second long select) are not offered; they are
+  counted and reported as `omitted.options`.
 - The freshness marker uses on-screen actions only, and guards are computed
   only for the actions kept.
 - `context.js` adds an optional `context` naming the card, row, section or
@@ -514,6 +546,16 @@ summed decision and text-helper `usage`, `"unknown"` where a provider did not
 report a count; a billed call whose answer could not be used counts too.
 Upstream has none of these.
 
+**Unusable decision replies (`agent/unusable.rs`).** A reply the decision
+service gave that fails validation (an action the page never offered,
+probabilities that do not add up, a missing answer, a refusal) is billed and
+counted, and the same decision is asked again on the same page, at most twice;
+a usable reply starts the count again. The third unusable reply in a row ends
+the run `error` with `stop_cause` `decision_unusable`, and `stopped_because`
+gives the count and the first reason. It does not fall back. A call that
+failed instead of answering (a bad key, an unreachable provider, a body that
+is not JSON after the HTTP layer's own retry) is not asked again.
+
 **Launch (`chrome.rs`).** After the 9222 probe, a Chrome on Jev's profile is
 found through its `DevToolsActivePort`. A launch uses
 `--remote-debugging-port=0`, polls the child every 100 ms, sends stderr to
@@ -533,6 +575,16 @@ refused automated access.
 `blocked` also covers a start page that did not load. The tool result adds a
 fixed `next_step` sentence for every status but `done`. Statuses serialize in
 snake case.
+
+**Handoffs.** `needs_input`, `needs_confirmation` and `access_denied` hand a
+decision to the caller, so they are not failed tool calls: the tool result's
+`is_error` is false and its data has `outcome_class: "handoff"`, which keeps a
+caller working through them from tripping Roder's five-errors-in-a-row stop.
+The same handoff again (same status, final url and `stopped_because` as the
+session's previous call) is the caller not acting on it, and is an error with
+`outcome_class: "repeated_handoff"`. The text is the same either way. Every
+other status is as before: only `done` and `closed` are not errors, and none
+of the others has an `outcome_class`. See `src/handoff.rs`.
 
 **Setup.** `timeout_seconds` covers the whole task (starting Chrome,
 connecting, loading, the first observation), cut to the host's remaining
@@ -577,7 +629,50 @@ adding a model call:
   splits between that click and DONE once the page confirms the first one
   (0.43 to 0.66 across runs), while a click meant to repeat stayed above 0.75.
   The threshold was set on 13 tasks and held on the 18-task corpus in four
-  live runs; re-check it when the corpus grows.
+  live runs; re-check it when the corpus grows. It applies to the same
+  control again and, since `icon_by_picture` deleted Bob's budget mail at
+  0.99 and then his lunch mail at 0.60, to a twin: a different control with
+  the same label, when that label names a commitment (`delete`, `buy`,
+  `send`...; the irreversible gate's word list). The click not made is in the
+  result as `suppressed_click` (kind, label, row, the previous click's row,
+  confidence) and as a `Not clicked:` line in the text, so a goal that needs
+  the twin too can make it. The 0.7 threshold is untested on twin rows.
+
+**Runs that go round in circles (`agent/loops.rs`).** Upstream's stall rule
+needs three executed actions in a row that changed nothing. It misses a menu
+that opens and closes (every step changes the page), no-ops with a wait
+between them, and a page that never holds still (each decision goes stale and
+nothing is recorded), which used to run to the 60-action or 120-call budget or
+the timeout; a timeout never falls back. Three caps end such a run `blocked`,
+and the fallback takes it over as it does after a stall:
+- The fourth time Jev would choose the same control on a page with the same
+  fingerprint (waits excepted), it stops before acting: `stop_cause` `looped`,
+  and `stopped_because` names the control and how often it was chosen. Three in
+  a row that change nothing are the stall rule's, which fires first. The
+  fingerprint is compared as the page reports it, digits included: a counter
+  that rises with every click is progress (the `step_budget` task), so a page
+  with a clock on it never repeats a pair this way. Masking the digits ended
+  `step_budget` at the third click on the corpus, which is why it does not.
+- Three stale decisions in a row, each followed by a look at the page that
+  shows nothing new, stop the run: `stop_cause` `unsettled`, with the last
+  stale message in `stopped_because`. "Nothing new" is the same address,
+  scroll, visible controls, text and labels once every run of digits is
+  masked; a clock or countdown changes only those. A stale decision that leaves
+  a different page, and any step recorded in between, start the count again.
+  An on-screen ticker inside the form being filled (the click guard compares
+  the text around the button) goes stale at every look; it ran to the budget.
+- Six waits in a row after which the page was the same stop the run as `looped`.
+  Such a wait is also skipped by the stall rule (it neither counts as a no-op
+  nor breaks a run of them), so `click, wait, click, wait, click` with nothing
+  changing is a stall; a wait that changed the page is progress and breaks it.
+
+A false stop costs one fallback (a median of 15 to 16 s on MiniWoB++), not a
+failed task. The limits (4, 3, 6) are untested against a live trace: no
+recorded run shows an A-B-A-B loop, so they rest on the fixtures
+`toggle-menu.html` and `ticker-form.html`. A slowly hydrating SPA whose
+decisions go stale three times with only its numbers moving could be cut
+short. The keyless corpus test fails if any task ends on one of these two
+causes.
 
 **Irreversible-action gate (`irreversible.rs`), opt-in.** Off unless
 `JEV_CONFIRM_IRREVERSIBLE=1` or `JevEngineConfig::with_irreversible_gate`.
@@ -661,7 +756,12 @@ to uncover it (see [Uncovering a target](#uncovering-a-target)) returns the
 public `Covered` error; the loop records it as a step with `page_changed: false`,
 `text: null` and `covered: true` (serialized only when true), so three in a
 row end the run `blocked`. Upstream checks only the centre, and treats a
-covered target as a stale page. A scroll box is scrolled by script, by four
+covered target as a stale page. act.js also names what took the click (its
+label, text or tag; a field's value is never read), `Covered::with_cover` keeps
+that apart from the fixed message, and the loop records it, scrubbed of typed
+secrets, on one line and cut to 100 characters, as `covered_by` on the step. The
+digest and the fallback's brief show it as page text; the decision request does
+not carry it. A scroll box is scrolled by script, by four
 fifths of its height and at least 320 px, and a box that did not move is a
 refused step. Enter focuses its field (without selecting it) and sends a
 key press with `\r`; Escape goes to whatever has focus. Upstream had
@@ -769,7 +869,8 @@ action.
 **Public API.** New `JevOriginScope`, `JevUsage`, `JevCallUsage`,
 `JevTokenCount` and `JevBilled`; `JevEngineConfig::with_max_actions`, `with_max_duration` and
 `with_scope`; `JevRunResult.usage`; `JevActionRecord.opened_tab` and
-`effect`. New `Covered` error; `JevActionRecord.covered`,
+`effect`. New `Covered` error (`with_cover`, `cover`); `JevActionRecord.covered`,
+`covered_by`,
 `target_confidence`, `refused` and `dialogs`; `JevDecision.target_confidence`,
 `model` and `call_confidence()`; `JevDecisionRecord.target_confidence` and
 `model`. `JevBrowser::act` returns the new `JevActOutcome`, and an
@@ -779,7 +880,12 @@ runner shows its tab when it creates it, and a hosted browser shows its own.
 `JevStatus` is `#[non_exhaustive]`, serializes in snake case and gains
 `BudgetExceeded`, `TimedOut`, `NeedsInput`, `Unavailable`, `Error` and
 `NeedsConfirmation`; the new `JevStop` error lets a hosted client, transport
-or resolver end a run with one of them. For the gate and banner refusal:
+or resolver end a run with one of them. `JevStopCause::DecisionUnusable` is
+the cause of a run that ended on unusable decision replies, `JevStopCause::Looped`
+and `JevStopCause::Unsettled` are the causes of a `blocked` run that went round in
+circles or never saw the page settle, and
+`JevBilled::unusable(usage, error)` marks a billed reply a hosted client found
+invalid so the loop asks again. For the gate and banner refusal:
 `JevEngineConfig::with_irreversible_gate`, `with_irreversible_authorized`
 and `with_cookie_banner_refusal(bool)` (on unless given `false`); `JevDecisionClient::choose_gated` and
 `JevBrowser::refuse_cookie_banner`, both provided methods (a client that
@@ -881,8 +987,8 @@ today's date as a booking page shows it ("Mon, Sep 28, 2026").
 | `table_row_by_context` | one of four identical links, chosen by its row |
 | `delayed_spa` | an app that renders each view late, behind a spinner |
 | `mid_step_navigation` | the page navigates mid-decision; the stale act is refused |
-| `stall_detection` | three clicks that change nothing end as `blocked` |
-| `step_budget` | a run that keeps progressing stops at 60 actions |
+| `stall_detection` | three clicks that change nothing end as `blocked` (the stall rule fires before the loop caps) |
+| `step_budget` | a run that keeps progressing stops at 60 actions; a counter that rises with every click is not a loop |
 | `missing_value` | a value the goal lacks stops the run before any POST |
 | `confirm_dialog` | a delete's confirm is dismissed; the run ends `blocked`, saying why |
 | `menu_button` | a menu that arrives 500 ms after its button is clicked, then an item |
@@ -890,6 +996,7 @@ today's date as a booking page shows it ("Mon, Sep 28, 2026").
 | `date_field` | a native date input set to its ISO value, then submitted |
 | `focus_handoff` | typed text follows focus to an editor opened over the field |
 | `icon_by_picture` | a div-and-span mail list: an unnamed trash icon in the right row |
+| `icon_by_picture_twin` | the same list: an unsure second delete on Bob's other mail, right after the first, is not clicked |
 | `unlabelled_fields` | a form whose fields are named only by the text around them |
 | `scroll_region` | terms that unlock "I agree" once their own box is scrolled to the end |
 | `enter_to_search` | a search form with no button, submitted by Enter in its field |
@@ -994,21 +1101,59 @@ TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
   Jev could not finish, on `JEV_FALLBACK_MODEL` (default `gpt-6-sol`) at
   `JEV_FALLBACK_REASONING` (default low) through the Codex sign-in (or
   `OPENAI_API_KEY`), with `JEV_EVAL_FALLBACK_STEPS` tool calls (default
-  20). Each row is graded twice, Jev alone (`pass`) and the call after the
-  fallback (`fallback.pass`, with its steps, model calls, tokens and time),
-  and the table prints both totals. MiniWoB++ honours it too: `success` is
-  the episode's reward at its end, `jev_success` when Jev stopped, and the
+  20). Each row is graded twice, Jev alone (the row's `verdict_ok`,
+  `truth_ok` and `false_green`) and the call after the fallback (the same
+  three under `fallback`, with its steps, model calls, tokens and time), and
+  the table prints both totals. MiniWoB++ honours it too: `success` is the
+  episode's reward at its end, `jev_success` when Jev stopped, and the
   summary gives both scores and what the fallback cost.
-- `JEV_EVAL_TASKS` narrows the run, `JEV_EVAL_CONCURRENCY` (default 2) sets
-  how many tasks run at once, and `JEV_EVAL_STRICT=1` fails the test when a
-  task fails instead of only reporting it.
+- `JEV_EVAL_TASKS` narrows the run and `JEV_EVAL_CONCURRENCY` (default 2)
+  sets how many runs go at once.
+- `JEV_EVAL_N=3` runs each task that many times (default 1, at most 20; all
+  tasks once before any twice) and prints a tally per task. The paired
+  Decisions/Jev eval keeps its own `JEV_EVAL_REPEATS`.
+- `JEV_EVAL_STRICT=1` fails the test on a mid-run edit of the tree, on any
+  false green, and then on any failed run; with a baseline it fails on any
+  task whose pass, `verdict_ok`, `truth_ok` or false-green rate got worse
+  than the baseline's instead, so tasks known to fail do not hold a run up.
+- The baseline is `tests/fixtures/evals/live-baseline.json`, or the file
+  `JEV_EVAL_BASELINE` names. `JEV_EVAL_SAVE_BASELINE=1` writes this run's
+  tally there with the commit, a hash of the crate's sources and fixtures,
+  a hash of the corpus, the model and the run's switches. It refuses a run
+  with fewer than 3 runs per task, a run narrowed by `JEV_EVAL_TASKS`, and a
+  run whose tree changed under it (the pin is read at the start and again
+  at the end).
 
-Both tiers print a pass/fail table and write one JSONL line per task to
-`target/jev-evals/` (`keyless.jsonl`, or `live-<unix seconds>.jsonl`) with the
-status, steps, model calls, wall time, pass/fail and failures; live rows add
-per-step confidence, the answering model, request size, input tokens and the
-shadow answers. To add a task, add a page if none fits and an entry to
+Both tiers print a result table (`pass`, `FAIL` or `FALSE-GREEN` per run) and
+write one JSONL line per run of a task to `target/jev-evals/` (`keyless.jsonl`,
+or `live-<unix seconds>.jsonl`). A row has:
+
+- `verdict_ok`: the agent's claim is the one the task asked for (the final
+  status, and whether it gave a reason for stopping);
+- `truth_ok`: the page, the recorded POSTs, the DOM probes and the executed
+  trace match the task;
+- `false_green`: `verdict_ok` and not `truth_ok`, a claim the page does not
+  back. A row passes when it is `verdict_ok` and `truth_ok`; there is no
+  `pass` field. The keyless corpus asserts `false_green` is 0;
+- `repeat` (the run's number, from 1), `failures`, the status, steps, model
+  calls, wall time and `input_tokens` when every call reported them;
+- `watch`: `looks`, one per reading of the page, with the `offered` count,
+  `omitted_actions` (what the snapshot left out) and the `settle` before it
+  (`reason` and `waited_ms`, as the page reported them); `laps`, calls and
+  milliseconds in `settle`, `snapshot`, `fresh`, `act`, `banner`,
+  `describe`, `screenshot`, `decide` and `text`; and `run_ms` against
+  `attributed_ms`, the laps summed. Nothing in it reaches the decision
+  request, and it holds counts and timings, never page text.
+
+Live rows add per-step confidence, the answering model, request size, input
+tokens and the shadow answers. A live run also writes
+`live-<unix seconds>.summary.json` beside its rows: the pin at the start and
+at the end, anything that changed between them, the tally and the comparison
+with the baseline. To add a task, add a page if none fits and an entry to
 `tasks.json`; a unit test checks every entry parses and names a real page.
+`search-decoy.html` is not in the corpus: it is the page the false-green test
+runs on, a search that looks finished and posts nothing, which `tasks.json`
+must not hold since its scripted plan ends `done` over a failed grader.
 
 ### Public benchmark: MiniWoB++
 

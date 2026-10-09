@@ -90,9 +90,9 @@ async fn typed_secrets_appear_nowhere_a_run_leaves_behind() {
         let outcome = run_task(&harness, task, decision, text, probes, None)
             .await
             .unwrap();
-        let failures = task.expect.grade(&outcome);
-        let row = Row::new(task, "keyless", Vec::new(), &outcome, failures);
-        assert!(row.pass, "{}: {:?}", task.id, row.failures);
+        let graded = task.expect.grade(&outcome);
+        let row = Row::new(task, "keyless", Vec::new(), &outcome, graded);
+        assert!(row.passed(), "{}: {:?}", task.id, row.failures);
         // The secret did reach the page: the grader read it in the POST.
         assert_eq!(outcome.posts.len(), 1, "{}", task.id);
 

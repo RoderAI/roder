@@ -4,9 +4,9 @@ use serde_json::{Value, json};
 
 use super::Agent;
 use crate::engine::{
-    JevActionRecord, JevControl, JevFrameText, JevPageFacts, JevRunResult, JevStatus,
+    JevActionRecord, JevControl, JevFrameText, JevOmitted, JevPageFacts, JevRunResult, JevStatus,
 };
-use crate::space::action_space;
+use crate::space::{ActionSpace, action_space};
 use crate::usage::{JevCallUsage, JevUsage};
 
 impl Agent {
@@ -26,6 +26,7 @@ impl Agent {
                 url: entry["url"].as_str().unwrap_or_default().to_string(),
                 page_changed: entry["page_changed"].as_bool(),
                 covered: entry["covered"].as_bool().unwrap_or_default(),
+                covered_by: entry["covered_by"].as_str().map(str::to_string),
                 refused: entry["refused"].as_str().map(str::to_string),
                 uncovered: entry["uncovered"].as_str().map(str::to_string),
                 dialogs: serde_json::from_value(entry["dialogs"].clone()).unwrap_or_default(),
@@ -64,6 +65,7 @@ impl Agent {
             actions,
             elapsed_ms: self.elapsed_ms,
             observed_elements: observed.elements.len(),
+            omitted: omitted(&self.observation, &observed),
             model_calls: self.decisions,
             text_calls: self.text_calls.len(),
             usage: JevUsage {
@@ -81,6 +83,7 @@ impl Agent {
             stop_cause: (self.status != JevStatus::Done)
                 .then_some(self.cause)
                 .flatten(),
+            suppressed_click: self.suppressed_click.clone(),
             untrusted: true,
             controls: controls(&self.observation),
             page: self.page_facts(),
@@ -97,6 +100,16 @@ impl Agent {
         let mut facts = self.facts.clone().unwrap_or_default();
         facts.frames = frames;
         (facts != JevPageFacts::default()).then_some(facts)
+    }
+}
+
+/// What `observation` held that Jev was not offered: the controls its
+/// snapshot left out (`omitted_actions`, counted per control) and the
+/// targets `space` had no room for, which a choice cannot take.
+pub(crate) fn omitted(observation: &Value, space: &ActionSpace) -> JevOmitted {
+    JevOmitted {
+        controls: observation["omitted_actions"].as_u64().unwrap_or_default() as usize,
+        options: space.skipped,
     }
 }
 
@@ -127,19 +140,20 @@ pub(crate) fn controls(observation: &Value) -> Vec<JevControl> {
             continue;
         }
         let secret = crate::secret::is_secret(action);
+        // A checkbox, radio or switch reports its state, not its HTML value
+        // ("on" unless the page sets one).
+        let checked = match (kind, action["checked"].as_str()) {
+            ("click", Some("true")) => Some(true),
+            ("click", Some("false")) => Some(false),
+            _ => None,
+        };
         let value = match kind {
             "select" => action["current_value"].as_str(),
-            _ if secret => None,
+            _ if secret || checked.is_some() => None,
             _ => action["value"].as_str(),
         }
         .filter(|value| !value.trim().is_empty())
-        .map(|value| cut(value, VALUE_CHARS))
-        .or_else(|| {
-            action["checked"]
-                .as_str()
-                .filter(|checked| *checked == "true")
-                .map(|_| "checked".to_string())
-        });
+        .map(|value| cut(value, VALUE_CHARS));
         let (label, options) = match (kind, label.split_once(" → ")) {
             ("select", Some((field, option))) => (field, vec![option.to_string()]),
             _ => (label, Vec::new()),
@@ -153,6 +167,7 @@ pub(crate) fn controls(observation: &Value) -> Vec<JevControl> {
                 context: action["context"].as_str().map(str::to_string),
                 section: action["section"].as_str().map(str::to_string),
                 value,
+                checked,
                 options,
                 offscreen: action["offscreen"] == json!(true),
             },

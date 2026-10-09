@@ -222,7 +222,7 @@ impl JevDecisionTransport for Adapter {
             }
             normalized
         }).map_err(|error| {
-            JevBilled::new(
+            JevBilled::unusable(
                 response.get("usage").cloned().unwrap_or_else(|| json!({})),
                 error,
             )

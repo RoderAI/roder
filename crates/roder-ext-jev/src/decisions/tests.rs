@@ -107,6 +107,8 @@ async fn malformed_responses_fail_closed_and_keep_billed_usage() {
             .await;
         let error = result.expect_err("invalid answer must not execute");
         assert_eq!(JevBilled::usage_of(&error).unwrap()["input_tokens"], 42);
+        // A reply the loop may ask again about, whichever step found it wrong.
+        assert!(crate::usage::UnusableAnswer::is_behind(&error));
     }
 }
 

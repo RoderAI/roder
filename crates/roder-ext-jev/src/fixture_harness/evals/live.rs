@@ -21,12 +21,22 @@
 //!   not set it with cookie-banner refusal off, to measure what the default
 //!   costs; tasks that set either in `tasks.json` always run as they say.
 //! - `JEV_EVAL_TASKS=id,id` narrows the run; `JEV_EVAL_CONCURRENCY` (default
-//!   2) sets how many tasks run at once; `JEV_EVAL_STRICT=1` fails the test
-//!   on any failed task instead of only reporting it.
+//!   2) sets how many runs go at once.
+//! - `JEV_EVAL_N=3` runs each task that many times (default 1, at most 20),
+//!   all tasks once before any twice, and prints a tally per task.
+//! - `JEV_EVAL_STRICT=1` fails the test on a mid-run edit of the tree (see
+//!   [`super::pin`]), on any false green, and then on any failed run, or,
+//!   when a baseline exists, on any task whose rates got worse than its.
+//! - The baseline is `tests/fixtures/evals/live-baseline.json`, or the file
+//!   `JEV_EVAL_BASELINE` names. `JEV_EVAL_SAVE_BASELINE=1` writes this run's
+//!   tally and pin there, if the run was `JEV_EVAL_N=3` or more over the whole
+//!   corpus and the tree did not change under it (see [`super::tally`]).
 //!
 //! Each run writes `target/jev-evals/live-<unix seconds>.jsonl`, one line per
-//! task, graded on outcomes only (the plan-specific `script` checks do not
-//! apply to a model), plus per-step telemetry.
+//! run of a task, graded on outcomes only (the plan-specific `script` checks
+//! do not apply to a model), plus per-step telemetry, and beside it
+//! `live-<unix seconds>.summary.json`: the pin at the start and at the end,
+//! the tally and the comparison with the baseline.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -34,10 +44,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use futures::StreamExt;
 use serde_json::{Value, json};
 
+use super::pin::Pin;
+use super::tally::{self, Baseline, Run, Settings};
 use super::text_sources::{Recorded, Supervised};
 use super::variants::{StepTelemetry, VariantTransport, Variants};
 use super::{
-    FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_rows,
+    FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_json,
+    write_rows,
 };
 use crate::decide::{ENDPOINT, JevTypeSafeDecisionClient, TypeSafeHttpTransport};
 use crate::engine::{JevDecisionTransport, JevTextValueResolver};
@@ -73,6 +86,23 @@ struct LiveSetup {
 }
 
 impl LiveSetup {
+    /// The switches that change what the run measures, for its pin and its
+    /// header.
+    fn label(&self) -> String {
+        format!(
+            "text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}",
+            self.text_model
+                .as_ref()
+                .map_or("task values".to_string(), TextModel::label),
+            self.fallback
+                .as_ref()
+                .map_or("off".to_string(), |model| model.label()),
+            self.variants.names(),
+            self.confirm_irreversible,
+            !self.no_cookie_banner_refusal,
+        )
+    }
+
     /// The task as this run plays it, and the names of the switches it
     /// forced on, for the row.
     fn task(&self, task: &Task) -> (Task, Vec<String>) {
@@ -90,7 +120,7 @@ impl LiveSetup {
     }
 }
 
-async fn run_one(setup: &LiveSetup, task: &Task) -> Option<Row> {
+async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Option<Row> {
     let harness = Harness::start().await?;
     let (task, names) = setup.task(task);
     let task = &task;
@@ -122,37 +152,37 @@ async fn run_one(setup: &LiveSetup, task: &Task) -> Option<Row> {
     };
     let resolver: Arc<dyn JevTextValueResolver> = text.clone();
     let probes = task.expect.probes().cloned().collect();
-    Some(
-        match run_task(
-            &harness,
-            task,
-            decision,
-            resolver,
-            probes,
-            setup.fallback.clone(),
-        )
-        .await
-        {
-            Ok(outcome) => {
-                let failures = task.expect.grade(&outcome);
-                let mut row = Row::new(task, "live", names, &outcome, failures);
-                if setup.fallback.is_some() {
-                    row.fallback = Some(FallbackRow::grade(task, &outcome, row.pass));
-                }
-                row.telemetry = telemetry(&outcome, &transport.steps());
-                // The model that wrote values, which is not the one
-                // resolved when an unusable Codex sign-in fell back.
-                row.telemetry["text_model"] = json!(
-                    helper
-                        .as_ref()
-                        .map_or("task-values".to_string(), |helper| helper.current().label())
-                );
-                row.telemetry["text"] = text.report();
-                row
-            }
-            Err(error) => Row::errored(task, "live", &error),
-        },
+    let mut row = match run_task(
+        &harness,
+        task,
+        decision,
+        resolver,
+        probes,
+        setup.fallback.clone(),
     )
+    .await
+    {
+        Ok(outcome) => {
+            let graded = task.expect.grade(&outcome);
+            let mut row = Row::new(task, "live", names, &outcome, graded);
+            if setup.fallback.is_some() {
+                row.fallback = Some(FallbackRow::grade(task, &outcome, row.marks));
+            }
+            row.telemetry = telemetry(&outcome, &transport.steps());
+            // The model that wrote values, which is not the one
+            // resolved when an unusable Codex sign-in fell back.
+            row.telemetry["text_model"] = json!(
+                helper
+                    .as_ref()
+                    .map_or("task-values".to_string(), |helper| helper.current().label())
+            );
+            row.telemetry["text"] = text.report();
+            row
+        }
+        Err(error) => Row::errored(task, "live", &error),
+    };
+    row.repeat = repeat;
+    Some(row)
 }
 
 /// Per-head confidence and the call confidence (the least certain head),
@@ -244,35 +274,54 @@ async fn live_corpus() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(2)
         .max(1);
+    let repeats = tally::repeats(env("JEV_EVAL_N").as_deref()).unwrap();
+    let settings = Settings {
+        n: repeats,
+        subset: env("JEV_EVAL_TASKS").is_some(),
+        save: crate::runner::switch(
+            "JEV_EVAL_SAVE_BASELINE",
+            env("JEV_EVAL_SAVE_BASELINE").as_deref(),
+            false,
+        )
+        .unwrap(),
+    };
+    let baseline_path = tally::baseline_path(env("JEV_EVAL_BASELINE").as_deref());
+    let saved = Baseline::load(&baseline_path).unwrap();
+    let start = Pin::capture(&setup.model, &setup.label()).unwrap();
     let setup = &setup;
-    let rows = futures::stream::iter(&tasks)
-        .map(|task| run_one(setup, task))
+    let rows = futures::stream::iter(tally::plan(&tasks, repeats))
+        .map(|(task, repeat)| run_one(setup, task, repeat))
         .buffer_unordered(concurrency)
         .filter_map(|row| async move { row })
         .collect::<Vec<_>>()
         .await;
+    let end = Pin::capture(&setup.model, &setup.label()).unwrap();
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     let path = write_rows(&format!("live-{stamp}"), &rows).unwrap();
+    let runs = rows.iter().map(Run::from).collect::<Vec<_>>();
+    let conclusion = tally::conclude(&runs, start, end, &settings, saved.as_ref());
+    let summary = write_json(&format!("live-{stamp}.summary"), &conclusion).unwrap();
+    if let Some(baseline) = &conclusion.save {
+        baseline.save(&baseline_path).unwrap();
+        eprintln!("baseline saved: {}", baseline_path.display());
+    }
     eprintln!(
-        "model {}, text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}\n{}rows: {}",
+        "model {}, {}\n{}{}rows: {}\nsummary: {}",
         setup.model,
-        setup
-            .text_model
-            .as_ref()
-            .map_or("task values".to_string(), TextModel::label),
-        setup
-            .fallback
-            .as_ref()
-            .map_or("off".to_string(), |model| model.label()),
-        setup.variants.names(),
-        setup.confirm_irreversible,
-        !setup.no_cookie_banner_refusal,
+        setup.label(),
         table(&tasks, &rows),
-        path.display()
+        conclusion.report(),
+        path.display(),
+        summary.display()
     );
     if env("JEV_EVAL_STRICT").as_deref() == Some("1") {
-        assert!(rows.iter().all(|row| row.pass), "some live tasks failed");
+        let failures = conclusion.strict_failures();
+        assert!(
+            failures.is_empty(),
+            "the live run did not hold:\n{}",
+            failures.join("\n")
+        );
     }
 }

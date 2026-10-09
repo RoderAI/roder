@@ -18,15 +18,14 @@ use roder_api::transcript::{
     AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
     VIEW_IMAGE_DISPLAY_KEY, tool_display_payload,
 };
-use roder_ext_chrome::direct::{
-    DirectSession, DirectStep, OpenedTab, StopKind, direct_tool_specs, tool_result,
-};
+use roder_ext_chrome::direct::{DirectSession, DirectStep, OpenedTab, StopKind, tool_result};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::guard::JevGuard;
 use super::model::{FallbackModel, Turn};
-use super::prompt::{INSTRUCTIONS, Verdict, opening, page_url, verdict};
+use super::offered::offered_tools;
+use super::prompt::{Verdict, instructions, opening, page_url, verdict};
 use super::trigger::Trigger;
 use crate::engine::{JevRunResult, JevStatus};
 use crate::session::cut;
@@ -125,6 +124,10 @@ struct Loop<'a> {
     session: &'a mut DirectSession,
     guard: &'a JevGuard,
     model: &'a dyn FallbackModel,
+    /// The model is shown the pictures a tool returns, so it has the
+    /// screenshot tool and hears of it.
+    pictures: bool,
+    instructions: String,
     tools: Vec<ToolSpec>,
     transcript: Vec<TranscriptItem>,
     outcome: FallbackOutcome,
@@ -141,20 +144,8 @@ pub(crate) async fn run(
     limits: Limits,
     end: Option<&dyn EndCheck>,
 ) -> FallbackOutcome {
-    let authorizes = session.may_authorize();
-    let tools = direct_tool_specs(PREFIX, "the tab Jev was working in")
-        .into_iter()
-        .filter(|spec| model.sees_images() || spec.name != format!("{PREFIX}_screenshot"))
-        .map(|mut spec| {
-            // Only a call the user authorized offers the model the switch;
-            // otherwise it is not there to set (the live corpus saw a model
-            // set it on its own).
-            if !authorizes && let Some(properties) = spec.parameters["properties"].as_object_mut() {
-                properties.remove("authorize_irreversible");
-            }
-            spec
-        })
-        .collect();
+    let pictures = model.sees_tool_result_images();
+    let tools = offered_tools(pictures, session.may_authorize());
     static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let conversation = format!(
         "jev-fallback-{}-{}-{}",
@@ -169,6 +160,8 @@ pub(crate) async fn run(
         session,
         guard,
         model,
+        pictures,
+        instructions: instructions(pictures),
         tools,
         transcript: Vec::new(),
         outcome: FallbackOutcome {
@@ -222,6 +215,7 @@ impl Loop<'_> {
                 &look.text,
                 limits.max_steps,
                 seconds,
+                self.pictures,
             ))));
         loop {
             if end.is_some() && end.unwrap().ended().await {
@@ -248,7 +242,7 @@ impl Loop<'_> {
             compact(&mut self.transcript);
             let turn = Turn {
                 conversation: &self.conversation,
-                instructions: INSTRUCTIONS,
+                instructions: &self.instructions,
                 transcript: &self.transcript,
                 tools: &self.tools,
                 last_page: self.outcome.last_page.as_ref(),

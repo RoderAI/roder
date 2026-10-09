@@ -263,3 +263,47 @@ async fn jevs_next_call_goes_on_where_the_fallback_left_the_tab() {
     assert_eq!(targets(&sessions, "on"), tab);
     assert_eq!(second["session"]["totals"]["fallback_actions"], 2);
 }
+
+/// The screenshot tool returns its picture as a tool result, so a model the
+/// picture would not reach (its engine does not forward tool-result images)
+/// gets neither the tool nor advice to use it; one it reaches gets both.
+#[tokio::test]
+async fn the_screenshot_tool_is_offered_only_to_a_model_shown_tool_result_images() {
+    let harness = harness_or_skip!();
+    let sessions = test_sessions();
+    for sees_images in [true, false] {
+        let plan = json!([
+            {"tool": "click", "args": {"ref_of": "Products"}},
+            {"say": "DONE: looked"}
+        ]);
+        let scripted = ScriptedFallback::from_json(plan);
+        let model = Arc::new(match sees_images {
+            true => scripted,
+            false => scripted.without_images(),
+        });
+        let result = call_falling_back(
+            &harness,
+            &sessions,
+            &format!("pictures-{sees_images}"),
+            json!({"goal": "open laptops", "url": harness.site.url("hover-menu.html")}),
+            jev(json!([{"blocked": true}])),
+            model.clone(),
+            &ceilings(FallbackMode::Auto),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["fallback"]["ran"], true, "{result:#}");
+        let offered = model.offered_tools();
+        assert_eq!(
+            offered.contains(&"jev_tab_screenshot".to_string()),
+            sees_images,
+            "{offered:?}"
+        );
+        // Everything else is offered either way.
+        for tool in ["look", "click", "type", "key", "scroll", "select", "wait"] {
+            assert!(offered.contains(&format!("jev_tab_{tool}")), "{offered:?}");
+        }
+        let said = format!("{}\n{}", model.instructions(), model.opening());
+        assert_eq!(said.contains("screenshot"), sees_images, "{said}");
+    }
+}

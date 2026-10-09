@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Renew session</title></head>
+<body>
+  <h1>Renew your session</h1>
+  <!-- A ticker inside the form. The click guard compares the text of the
+       form around a button (its scope) with what the decision was made on,
+       so a ticker in it makes the button stale at every look and only its
+       digits ever differ. The form reports a new count at every read, as a
+       ticker faster than any look does, so the outcome never depends on
+       timing. -->
+  <form id="renew-form" onsubmit="return false">
+    <p>This session has been open for a while.</p>
+    <button type="button" id="renew">Renew</button>
+  </form>
+  <script>
+    window.renewed = 0;
+    document.getElementById('renew').addEventListener('click', () => { window.renewed += 1; });
+    let reads = 0;
+    Object.defineProperty(document.getElementById('renew-form'), 'innerText', {
+      get() { return `This session has been open for ${++reads} ticks.\nRenew`; },
+    });
+  </script>
+</body>
+</html>

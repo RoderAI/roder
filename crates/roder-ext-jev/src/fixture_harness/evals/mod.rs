@@ -22,14 +22,23 @@
 mod effect_variant;
 pub(crate) mod fallback_live;
 mod grade;
+mod pin;
 mod probe;
 mod rows;
 mod scripted;
 #[cfg(test)]
 mod secret_tests;
 mod sessions;
+#[cfg(test)]
+mod split_tests;
+mod tally;
+#[cfg(test)]
+mod tally_tests;
 mod text_sources;
 mod variants;
+mod watch;
+#[cfg(test)]
+mod watch_tests;
 
 mod complex_contracts;
 mod decisions_comparison;
@@ -53,8 +62,9 @@ use crate::fallback::model::FallbackModel;
 use crate::fallback::{FallbackOutcome, Limits, Rules};
 pub(crate) use grade::Expect;
 use probe::{Probed, ProbedPage};
-pub(crate) use rows::{FallbackRow, Row, table, write_rows};
+pub(crate) use rows::{FallbackRow, Row, table, write_json, write_rows};
 pub(crate) use scripted::{FirstDecisionDelay, Step, StepDecider, TaskValues};
+use watch::{Watch, Watched};
 
 /// One eval task, as written in `tasks.json`.
 #[derive(Debug, Clone, Deserialize)]
@@ -167,6 +177,8 @@ pub(crate) struct Outcome {
     pub(crate) probed: Probed,
     pub(crate) posts: Vec<super::site::Post>,
     pub(crate) wall_ms: u64,
+    /// What Jev's run spent per phase and how the page read to it.
+    pub(crate) watch: Watched,
     /// The end state after a fallback ran, and how it went.
     pub(crate) after: Option<Box<(Outcome, FallbackOutcome)>>,
 }
@@ -214,7 +226,8 @@ pub(crate) async fn run_task(
         false => harness.open(&task.page).await?,
     };
     let target_id = page.target_id().to_string();
-    let (browser, probed) = ProbedPage::new(page, probes);
+    let watch = Watch::default();
+    let (browser, probed) = ProbedPage::new(page, probes, watch.clone());
     let decision: Arc<dyn JevDecisionClient> = if task.delay_first_decision_ms > 0 {
         Arc::new(FirstDecisionDelay::new(
             decision,
@@ -223,6 +236,8 @@ pub(crate) async fn run_task(
     } else {
         decision
     };
+    let decision = watch.decisions(decision);
+    let text = watch.text(text);
     let mut config = JevEngineConfig::new(task.goal.clone(), decision)
         .with_text_resolver(text)
         .with_wait(Duration::from_millis(100));
@@ -263,11 +278,13 @@ pub(crate) async fn run_task(
             .site
             .wait_for_posts(expected_posts, Duration::from_secs(2))
             .await;
+        let watch = watch.snapshot(result.elapsed_ms);
         return Ok(Outcome {
             result,
             probed: probed.take(),
             posts,
             wall_ms,
+            watch,
             after: None,
         });
     };
@@ -325,11 +342,15 @@ pub(crate) async fn run_task(
         .site
         .wait_for_posts(expected, Duration::from_secs(2))
         .await;
+    // The fallback drives the tab on a connection of its own, so the laps
+    // are Jev's alone, in the call's outcome as in Jev's.
+    let watch = watch.snapshot(result.elapsed_ms);
     let combined = Outcome {
         result: after_fallback(&result, &outcome),
         probed: probed.take(),
         posts: all_posts,
         wall_ms: started.elapsed().as_millis() as u64,
+        watch: watch.clone(),
         after: None,
     };
     Ok(Outcome {
@@ -337,6 +358,7 @@ pub(crate) async fn run_task(
         probed: before,
         posts,
         wall_ms,
+        watch,
         after: Some(Box::new((combined, outcome))),
     })
 }

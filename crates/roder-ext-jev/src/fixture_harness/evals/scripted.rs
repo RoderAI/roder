@@ -51,6 +51,9 @@ pub(crate) struct Step {
     /// about this step's target; absent is no valid answer, which the gate
     /// treats as irreversible.
     irreversible: Option<f64>,
+    /// The call confidence the model reports for this step; absent is 1.0.
+    /// Below 0.7, a repeat of the click just made ends the run `done`.
+    confidence: Option<f64>,
 }
 
 fn once() -> usize {
@@ -87,6 +90,12 @@ impl Step {
         if self.repeat == 0 {
             bail!("repeat must be at least 1");
         }
+        if self
+            .confidence
+            .is_some_and(|confidence| !(0.0..=1.0).contains(&confidence))
+        {
+            bail!("confidence must be a probability");
+        }
         if self.blocked || self.done {
             if !self.named().is_empty() || !self.any.is_empty() || (self.blocked && self.done) {
                 bail!(
@@ -111,6 +120,7 @@ impl Step {
             if !alternative.any.is_empty()
                 || alternative.repeat != 1
                 || alternative.irreversible.is_some()
+                || alternative.confidence.is_some()
             {
                 bail!("`any` alternatives are single targets");
             }
@@ -170,7 +180,8 @@ impl JevDecisionClient for StepDecider {
         history: &[Value],
     ) -> anyhow::Result<JevDecision> {
         let played = chosen(history);
-        let (choice, operation) = match self.plan.get(played) {
+        let step = self.plan.get(played);
+        let (choice, operation) = match step {
             Some(step) if step.done => ("DONE".to_string(), "DONE".to_string()),
             Some(step) if step.blocked => ("BLOCKED".to_string(), "BLOCKED".to_string()),
             Some(step) => {
@@ -201,7 +212,7 @@ impl JevDecisionClient for StepDecider {
             choice,
             operation,
             target: None,
-            confidence: 1.0,
+            confidence: step.and_then(|step| step.confidence).unwrap_or(1.0),
             target_confidence: None,
             probabilities,
             latency_ms: 0,
@@ -368,6 +379,35 @@ mod tests {
         );
         assert!(step(json!({"any": [{"click": "B"}]})).check().is_ok());
         assert!(serde_json::from_value::<Step>(json!({"tap": "A"})).is_err());
+        assert!(
+            step(json!({"click": "A", "confidence": 1.2}))
+                .check()
+                .is_err()
+        );
+        assert!(
+            step(json!({"any": [{"click": "B", "confidence": 0.5}]}))
+                .check()
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_step_reports_its_own_confidence() {
+        let decider = StepDecider::new(&[
+            step(json!({"click": "Add to cart"})),
+            step(json!({"click": "Add to cart", "confidence": 0.6})),
+        ]);
+        let page = observation();
+        let first = decider.choose(&page, "", &[]).await.unwrap();
+        let second = decider.choose(&page, "", &[json!({})]).await.unwrap();
+        let done = decider
+            .choose(&page, "", &[json!({}), json!({})])
+            .await
+            .unwrap();
+        assert_eq!(
+            (first.confidence, second.confidence, done.confidence),
+            (1.0, 0.6, 1.0)
+        );
     }
 
     #[tokio::test]

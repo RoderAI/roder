@@ -7,6 +7,9 @@
 // holds is page text too, where the field is (a textarea's passage to copy,
 // a filled-in form), never a secret's (see `safe`). Text a box has scrolled
 // out of its own view is not shown, so scrolling the box shows something new.
+// The function returns {text, held}: `held` lists the field values `text`
+// holds whole, in order, so a caller can tell the page's own words from what
+// a field holds (a completion check must not count a value typed in).
 (({tree, visible, safe, placed, roots, regions, rectOf, cut}) => {
   // The scroll box, of those observed, that holds an element, and its rect.
   const holder=new Map(), rects=new Map(regions.map(e=>[e,rectOf(e)]));
@@ -26,8 +29,11 @@
   const shown=(r,clip)=>r.width>0 && r.height>0 && r.bottom>0 && r.top<innerHeight && r.right>0 &&
     r.left<innerWidth && (!clip || (r.bottom>clip.top && r.top<clip.bottom && r.right>clip.left &&
       r.left<clip.right));
-  const words=[]; let length=0;
-  const add=value=>{ words.push(value); length+=value.length; };
+  const words=[], fieldAt=new Set(); let length=0;
+  const add=(value,field)=>{
+    if (field) fieldAt.add(words.length);
+    words.push(value); length+=value.length;
+  };
   // Everything under `start` (a document, a shadow root, or an element a
   // slot shows), the element itself first.
   const read=start=>{
@@ -71,13 +77,21 @@
         const framed=tree.frameDoc(node);
         if (framed && roots.includes(framed)) read(framed);
         const value=typed(node) ? node.value.trim() : '';
-        if (value && visible(node) && shown(at(node.getBoundingClientRect()),where.clip)) add(value);
+        if (value && visible(node) && shown(at(node.getBoundingClientRect()),where.clip)) add(value,true);
       }
       node=inside ? walker.nextNode() : past();
     }
   };
   return ()=>{
     read(document);
-    return cut(words.join('\n'),6000).toWellFormed();
+    const text=cut(words.join('\n'),6000).toWellFormed();
+    // Words are joined by one line break each; a field value cut by the
+    // limit is not reported.
+    const held=[]; let end=-1;
+    words.forEach((word,i)=>{
+      end+=word.length+1;
+      if (fieldAt.has(i) && end<=text.length) held.push(word.toWellFormed());
+    });
+    return {text,held};
   };
 })

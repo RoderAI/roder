@@ -8,7 +8,11 @@ use anyhow::Context;
 use serde::Serialize;
 use serde_json::Value;
 
+use super::grade::{Graded, Marks};
+use super::watch::Watched;
 use super::{Expect, Outcome, Task};
+use crate::engine::JevStopCause;
+use crate::usage::{JevTokenCount, JevUsage};
 
 /// One JSONL line per task.
 #[derive(Debug, Clone, Serialize)]
@@ -17,20 +21,37 @@ pub(crate) struct Row {
     pub(crate) covers: String,
     pub(crate) tier: &'static str,
     pub(crate) variants: Vec<String>,
-    pub(crate) pass: bool,
+    /// Which run of the task this is, from 1: a tier that repeats tasks
+    /// (`JEV_EVAL_N`) writes one row per run.
+    pub(crate) repeat: usize,
+    /// What the agent claimed against what the page proves: `verdict_ok`,
+    /// `truth_ok` and `false_green`. A row passes when both are ok.
+    #[serde(flatten)]
+    pub(crate) marks: Marks,
     pub(crate) failures: Vec<String>,
     pub(crate) status: Value,
     pub(crate) stopped_because: Option<String>,
+    /// What ended Jev's own run, when it stopped short of its goal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stop_cause: Option<JevStopCause>,
     pub(crate) steps: usize,
     pub(crate) model_calls: usize,
     pub(crate) text_calls: usize,
     pub(crate) wall_ms: u64,
+    /// Input tokens of every model call the run made, when each reported
+    /// them (see [`JevUsage`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) input_tokens: Option<u64>,
     pub(crate) url: String,
+    /// Per-phase laps, each reading of the page (what it offered and left
+    /// out, how its settle ended). Absent for a task that could not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) watch: Option<Watched>,
     /// Tier-specific telemetry, such as per-head confidence on live runs.
     #[serde(skip_serializing_if = "Value::is_null")]
     pub(crate) telemetry: Value,
     /// With a fallback model: whether the call passes after it, and what the
-    /// fallback cost. `pass` above is Jev alone.
+    /// fallback cost. The marks above are Jev alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) fallback: Option<FallbackRow>,
 }
@@ -38,11 +59,15 @@ pub(crate) struct Row {
 /// The call graded after the fallback, and the fallback's own cost.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct FallbackRow {
-    /// Jev and the fallback together pass (Jev alone's pass when it did
-    /// not run).
-    pub(crate) pass: bool,
+    /// Jev and the fallback together (Jev alone's marks when it did not
+    /// run).
+    #[serde(flatten)]
+    pub(crate) marks: Marks,
     pub(crate) ran: bool,
     pub(crate) failures: Vec<String>,
+    /// The same misses, split into the fallback's verdict and the truth.
+    #[serde(skip)]
+    pub(crate) graded: Graded,
     pub(crate) status: Value,
     pub(crate) model: String,
     pub(crate) actions: usize,
@@ -58,13 +83,14 @@ pub(crate) struct FallbackRow {
 
 impl FallbackRow {
     /// Grade `outcome` after its fallback against `expect` (the task's
-    /// fallback expectation, else its own), or carry Jev alone's pass.
-    pub(crate) fn grade(task: &Task, outcome: &Outcome, jev_pass: bool) -> Self {
+    /// fallback expectation, else its own), or carry Jev alone's marks.
+    pub(crate) fn grade(task: &Task, outcome: &Outcome, jev: Marks) -> Self {
         let Some((after, fallback)) = outcome.after.as_deref() else {
             return Self {
-                pass: jev_pass,
+                marks: jev,
                 ran: false,
                 failures: Vec::new(),
+                graded: Graded::default(),
                 status: Value::Null,
                 model: String::new(),
                 actions: 0,
@@ -87,11 +113,12 @@ impl FallbackRow {
                 ..task.expect.clone()
             },
         };
-        let failures = expect.grade(after);
+        let graded = expect.grade(after);
         Self {
-            pass: failures.is_empty(),
+            marks: graded.marks(),
             ran: true,
-            failures,
+            failures: graded.failures(),
+            graded,
             status: serde_json::to_value(fallback.status).unwrap_or(Value::Null),
             model: fallback.model.clone(),
             actions: fallback.actions.len(),
@@ -117,13 +144,37 @@ impl FallbackRow {
     }
 }
 
+impl FallbackRow {
+    /// This row's misses as they count against the call's row: a fallback
+    /// that never ran is a miss of the truth, the rest are named as the
+    /// fallback's.
+    pub(crate) fn missed(&self) -> Graded {
+        if !self.ran {
+            return Graded {
+                verdict: Vec::new(),
+                truth: vec!["the fallback did not run".into()],
+            };
+        }
+        let after = |failures: &[String]| {
+            failures
+                .iter()
+                .map(|failure| format!("after fallback: {failure}"))
+                .collect()
+        };
+        Graded {
+            verdict: after(&self.graded.verdict),
+            truth: after(&self.graded.truth),
+        }
+    }
+}
+
 impl Row {
     pub(crate) fn new(
         task: &Task,
         tier: &'static str,
         variants: Vec<String>,
         outcome: &Outcome,
-        failures: Vec<String>,
+        graded: Graded,
     ) -> Self {
         let result = &outcome.result;
         Self {
@@ -131,18 +182,27 @@ impl Row {
             covers: task.covers.clone(),
             tier,
             variants,
-            pass: failures.is_empty(),
-            failures,
+            repeat: 1,
+            marks: graded.marks(),
+            failures: graded.failures(),
             status: serde_json::to_value(result.status).unwrap_or(Value::Null),
             stopped_because: result.stopped_because.clone(),
+            stop_cause: result.stop_cause,
             steps: result.actions.len(),
             model_calls: result.model_calls,
             text_calls: result.text_calls,
             wall_ms: outcome.wall_ms,
+            input_tokens: input_tokens(&result.usage),
             url: result.url.clone(),
+            watch: Some(outcome.watch.clone()),
             telemetry: Value::Null,
             fallback: None,
         }
+    }
+
+    /// The run did what the task asked, as it said and as the page shows.
+    pub(crate) fn passed(&self) -> bool {
+        self.marks.passed()
     }
 
     /// A row for a task that could not run at all.
@@ -152,19 +212,34 @@ impl Row {
             covers: task.covers.clone(),
             tier,
             variants: Vec::new(),
-            pass: false,
+            repeat: 1,
+            marks: Marks::nothing(),
             failures: vec![format!("run failed: {error:#}")],
             status: Value::Null,
             stopped_because: None,
+            stop_cause: None,
             steps: 0,
             model_calls: 0,
             text_calls: 0,
             wall_ms: 0,
+            input_tokens: None,
             url: String::new(),
+            watch: None,
             telemetry: Value::Null,
             fallback: None,
         }
     }
+}
+
+/// Write `value` to `target/jev-evals/<name>.json` and return the path.
+pub(crate) fn write_json<T: Serialize>(name: &str, value: &T) -> anyhow::Result<PathBuf> {
+    let dir = crate::fixture_harness::target_dir().join("jev-evals");
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let path = dir.join(format!("{name}.json"));
+    let mut text = serde_json::to_string_pretty(value)?;
+    text.push('\n');
+    std::fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
+    Ok(path)
 }
 
 /// Write rows to `target/jev-evals/<name>.jsonl` and return the path.
@@ -181,29 +256,57 @@ pub(crate) fn write_rows(name: &str, rows: &[Row]) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-/// The pass/fail table, in corpus order, for the test's stderr.
+/// Decision and text input tokens together, or `None` when any call left
+/// its count out.
+fn input_tokens(usage: &JevUsage) -> Option<u64> {
+    match (usage.decision.input_tokens, usage.text.input_tokens) {
+        (JevTokenCount::Known(decision), JevTokenCount::Known(text)) => Some(decision + text),
+        _ => None,
+    }
+}
+
+/// How a row reads in the table: a false green is told from a plain miss.
+fn mark(marks: Marks) -> &'static str {
+    match (marks.passed(), marks.false_green) {
+        (true, _) => "pass",
+        (false, true) => "FALSE-GREEN",
+        (false, false) => "FAIL",
+    }
+}
+
+/// The pass/fail table, in corpus order (a task's runs together), for the
+/// test's stderr.
 pub(crate) fn table(tasks: &[Task], rows: &[Row]) -> String {
     let mut out = format!(
-        "{:<26} {:<5} {:<18} {:>5} {:>6} {:>8}  {}\n",
-        "task", "pass", "status", "steps", "calls", "wall_ms", "failures"
+        "{:<26} {:>3} {:<11} {:<18} {:>5} {:>6} {:>8}  {}\n",
+        "task", "run", "result", "status", "steps", "calls", "wall_ms", "failures"
     );
     for task in tasks {
-        let Some(row) = rows.iter().find(|row| row.task == task.id) else {
-            continue;
-        };
-        out.push_str(&format!(
-            "{:<26} {:<5} {:<18} {:>5} {:>6} {:>8}  {}\n",
-            row.task,
-            if row.pass { "pass" } else { "FAIL" },
-            row.status.as_str().unwrap_or("-"),
-            row.steps,
-            row.model_calls,
-            row.wall_ms,
-            row.failures.join("; ")
-        ));
+        let mut runs = rows
+            .iter()
+            .filter(|row| row.task == task.id)
+            .collect::<Vec<_>>();
+        runs.sort_by_key(|row| row.repeat);
+        for row in runs {
+            out.push_str(&format!(
+                "{:<26} {:>3} {:<11} {:<18} {:>5} {:>6} {:>8}  {}\n",
+                row.task,
+                row.repeat,
+                mark(row.marks),
+                row.status.as_str().unwrap_or("-"),
+                row.steps,
+                row.model_calls,
+                row.wall_ms,
+                row.failures.join("; ")
+            ));
+        }
     }
-    let passed = rows.iter().filter(|row| row.pass).count();
-    out.push_str(&format!("{passed}/{} passed\n", rows.len()));
+    let passed = rows.iter().filter(|row| row.passed()).count();
+    let false_green = rows.iter().filter(|row| row.marks.false_green).count();
+    out.push_str(&format!(
+        "{passed}/{} passed, {false_green} false green\n",
+        rows.len()
+    ));
     let with = rows
         .iter()
         .filter_map(|row| row.fallback.as_ref())
@@ -214,9 +317,9 @@ pub(crate) fn table(tasks: &[Task], rows: &[Row]) -> String {
             "Jev alone {passed}/{n}; Jev + fallback {}/{n}. The fallback ran on {} tasks \
              ({} passed after it): {} tool calls, {} model calls, {:.1} s, {} input and {} \
              output tokens in all.\n",
-            with.iter().filter(|row| row.pass).count(),
+            with.iter().filter(|row| row.marks.passed()).count(),
             ran.len(),
-            ran.iter().filter(|row| row.pass).count(),
+            ran.iter().filter(|row| row.marks.passed()).count(),
             ran.iter().map(|row| row.actions).sum::<usize>(),
             ran.iter().map(|row| row.model_calls).sum::<usize>(),
             ran.iter().map(|row| row.elapsed_ms).sum::<u64>() as f64 / 1000.0,
@@ -230,10 +333,10 @@ pub(crate) fn table(tasks: &[Task], rows: &[Row]) -> String {
         {
             let fallback = row.fallback.as_ref().unwrap();
             out.push_str(&format!(
-                "  fallback {:<26} jev {:<5} after {:<5} {:<18} {:>2} calls {:>6} ms  {}\n",
+                "  fallback {:<26} jev {:<11} after {:<11} {:<18} {:>2} calls {:>6} ms  {}\n",
                 row.task,
-                if row.pass { "pass" } else { "FAIL" },
-                if fallback.pass { "pass" } else { "FAIL" },
+                mark(row.marks),
+                mark(fallback.marks),
                 fallback.status.as_str().unwrap_or("-"),
                 fallback.actions,
                 fallback.elapsed_ms,
