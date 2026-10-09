@@ -19,6 +19,8 @@ mod instructions;
 pub mod media_artifacts;
 pub mod media_generation;
 pub mod model_profiles;
+#[cfg(test)]
+mod native_compaction_policy_tests;
 mod plan_review;
 pub mod policy_gate;
 mod prompt_accounting;
@@ -39,6 +41,7 @@ mod tool_preview;
 pub mod tool_search;
 mod tool_validation;
 mod transcript;
+mod transcript_compaction;
 mod verification_gate;
 mod workspace_changes;
 mod workspace_tools;

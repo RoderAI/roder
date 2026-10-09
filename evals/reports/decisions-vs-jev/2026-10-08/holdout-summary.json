@@ -1,0 +1,300 @@
+{
+  "original": {
+    "passed": 12,
+    "attempts": 12,
+    "median_wall_ms": 1358.0,
+    "wire_calls": 27,
+    "browser_decisions": 27,
+    "input_tokens": 26622,
+    "unknown_usage_rows": 0,
+    "refused_questions": {},
+    "inferred_done": 2,
+    "false_done": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 10,
+        "correct": 10,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 8,
+        "correct": 8,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.7": {
+        "accepted": 7,
+        "correct": 7,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 7,
+        "correct": 7,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.95": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.99": {
+        "accepted": 1,
+        "correct": 1,
+        "false_done": 0,
+        "correct_rejected": 9
+      }
+    }
+  },
+  "effects": {
+    "passed": 10,
+    "attempts": 12,
+    "median_wall_ms": 1340.0,
+    "wire_calls": 29,
+    "browser_decisions": 29,
+    "input_tokens": 21014,
+    "unknown_usage_rows": 0,
+    "refused_questions": {},
+    "inferred_done": 3,
+    "false_done": 2,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 1,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.7": {
+        "accepted": 4,
+        "correct": 4,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.8": {
+        "accepted": 4,
+        "correct": 4,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.9": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.95": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.99": {
+        "accepted": 1,
+        "correct": 1,
+        "false_done": 0,
+        "correct_rejected": 8
+      }
+    }
+  },
+  "vision": {
+    "passed": 12,
+    "attempts": 12,
+    "median_wall_ms": 1481.0,
+    "wire_calls": 27,
+    "browser_decisions": 27,
+    "input_tokens": 45567,
+    "unknown_usage_rows": 0,
+    "refused_questions": {
+      "click_target": 1
+    },
+    "inferred_done": 0,
+    "false_done": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.95": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.99": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 9
+      }
+    }
+  },
+  "jev": {
+    "passed": 12,
+    "attempts": 12,
+    "median_wall_ms": 1201.5,
+    "wire_calls": null,
+    "browser_decisions": 27,
+    "input_tokens": 43344,
+    "unknown_usage_rows": 0,
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.99": {
+        "accepted": 4,
+        "correct": 4,
+        "false_done": 0,
+        "correct_rejected": 8
+      }
+    }
+  }
+}

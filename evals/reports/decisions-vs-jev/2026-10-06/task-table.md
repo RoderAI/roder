@@ -1,0 +1,26 @@
+| Scenario | Decisions | Jev |
+|---|---:|---:|
+| contact_form | 1/3 | 3/3 |
+| search_autocomplete | 3/3 | 3/3 |
+| select_dropdown | 3/3 | 3/3 |
+| pagination | 2/3 | 3/3 |
+| below_the_fold | 3/3 | 3/3 |
+| twin_by_context | 0/3 | 3/3 |
+| table_row_by_context | 1/3 | 3/3 |
+| delayed_spa | 3/3 | 3/3 |
+| missing_value | 3/3 | 3/3 |
+| confirm_dialog | 3/3 | 3/3 |
+| menu_button | 1/3 | 3/3 |
+| styled_checkbox | 2/3 | 3/3 |
+| date_field | 3/3 | 3/3 |
+| icon_by_picture | 0/3 | 0/3 |
+| unlabelled_fields | 2/3 | 3/3 |
+| scroll_region | 2/3 | 0/3 |
+| enter_to_search | 0/3 | 0/3 |
+| shadow_component | 0/3 | 3/3 |
+| frame_form | 0/3 | 3/3 |
+| new_tab | 3/3 | 3/3 |
+| gate_pay_now | 3/3 | 3/3 |
+| gate_delete_account | 3/3 | 3/3 |
+| gate_authorized_delete | 3/3 | 3/3 |
+| gate_add_to_cart | 3/3 | 3/3 |

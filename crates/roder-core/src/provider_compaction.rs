@@ -179,17 +179,23 @@ impl Runtime {
                     }
                 }
                 Ok(Some(window)) => return Ok(NativeCompactionOutcome::Compacted(window)),
+                Ok(None) if engine.requires_native_compaction() => {
+                    anyhow::bail!(
+                        "provider {provider} requires native compaction but returned unsupported"
+                    );
+                }
                 Ok(None) => return Ok(NativeCompactionOutcome::Unsupported),
                 Err(error)
-                    if error
-                        .downcast_ref::<ProviderFailure>()
-                        .is_some_and(|failure| {
-                            matches!(
-                                failure.kind,
-                                ProviderFailureKind::ContextWindowExceeded
-                                    | ProviderFailureKind::RequestTooLarge
-                            )
-                        }) =>
+                    if !engine.requires_native_compaction()
+                        && error
+                            .downcast_ref::<ProviderFailure>()
+                            .is_some_and(|failure| {
+                                matches!(
+                                    failure.kind,
+                                    ProviderFailureKind::ContextWindowExceeded
+                                        | ProviderFailureKind::RequestTooLarge
+                                )
+                            }) =>
                 {
                     self.persist_turn_item(
                         thread_id,

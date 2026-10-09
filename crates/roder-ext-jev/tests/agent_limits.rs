@@ -232,7 +232,7 @@ async fn billed_calls_with_unusable_answers_count_in_the_usage() {
     assert_eq!(result.status, JevStatus::Error);
     assert_eq!(
         result.stopped_because.as_deref(),
-        Some("Invalid TypeSafe response; no action executed.")
+        Some("Invalid browser decision response; no action executed.")
     );
     assert_eq!(result.model_calls, 1);
     assert_eq!(

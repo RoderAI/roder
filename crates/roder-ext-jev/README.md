@@ -73,7 +73,11 @@ notice is `third-party/duckduckgo-autoconsent/`.
   model (`JEV_FALLBACK=auto`, the default), or handed to the caller as the
   `jev_tab_*` tools.
 
-Requires `JEV_API_KEY`. In Roder's default policy mode each goal needs approval
+Requires `JEV_API_KEY`, or `JEV_DECISION_PROVIDER=openai` with an OpenAI API key
+(see [OpenAI Decisions](../../docs/openai-decisions-browser.md)). Decisions uses
+native questions, action-effect history and fresh screenshots when available;
+`JEV_DECISIONS_TEXT_ONLY=1` disables screenshots. Recognized secret fields and
+previously typed secrets suppress capture. In Roder's default policy mode each goal needs approval
 before the browser starts; plan mode denies it. The goal is sent to the hosted
 decision service and to the text model and is stored in the transcript, so a
 password or one-time code placed in the goal goes there too. An embedding host
@@ -385,6 +389,12 @@ waits for it to expand or for the element it controls to show. Upstream gave
 only a combobox fill 200 ms. A popup that never opens costs the 1.2 s.
 
 **Observation (`snapshot.js`, `context.js`).**
+- DOM-backed actions carry observed `form` ownership (`id`, field labels and
+  submit-button labels), or `null` when unassociated. Native `form` attributes
+  take precedence over ancestry. Form metadata copies labels, not field values.
+  The observation also includes up to 20 `disabled_controls` as label/role pairs;
+  those controls remain unavailable for execution. Form reassociation invalidates
+  a previously selected action, and the new metadata participates in freshness.
 - A checkbox or radio drawn by its label (the input transparent, not
   rendered, or under 2 px) is offered once, through the label, with the
   input's `checked`; an anchor with no `href` but an `onclick` is offered as a
@@ -1052,3 +1062,20 @@ status, steps, model calls, text calls, wall time, stop reason, the executed
 trace and the first observation's actions). The printed summary gives the
 overall score, the score over supported tasks, per-task success rates and the
 failure causes.
+
+
+## Measured Jev browser guidance
+
+The default TypeSafe client supplies concise action history with row/section
+context, observable form ownership and disabled controls. Its questions distinguish
+current form steps from later fields and require completing the requested workflow
+after validation or availability changes. Form associations participate in stale
+action checks. Jev still receives text; screenshot input belongs to the optional
+OpenAI Decisions backend.
+
+See the [Jev hill-climb report](../../evals/reports/jev-hillclimb/2026-10-08/README.md)
+for controlled prompt variants, repeated paired runs, complex development tasks,
+a sealed holdout and failure traces. The new fixtures grade exact saved state,
+mutation counts and forbidden side effects, including duplicate actions and
+stopping at a review screen. These evals supply field values from fixtures and
+disable fallback; they measure browser decisions, not text generation.

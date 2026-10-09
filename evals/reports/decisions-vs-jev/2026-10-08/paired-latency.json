@@ -1,0 +1,29 @@
+{
+  "vision_vs_original": {
+    "both_pass": 49,
+    "vision_only_pass": 19,
+    "control_only_pass": 2,
+    "neither_pass": 2,
+    "vision_median_ms": 2186,
+    "control_median_ms": 2031,
+    "median_paired_delta_ms": 172
+  },
+  "vision_vs_effects": {
+    "both_pass": 60,
+    "vision_only_pass": 8,
+    "control_only_pass": 2,
+    "neither_pass": 2,
+    "vision_median_ms": 2406.5,
+    "control_median_ms": 1988.5,
+    "median_paired_delta_ms": 172.0
+  },
+  "vision_vs_jev": {
+    "both_pass": 58,
+    "vision_only_pass": 10,
+    "control_only_pass": 4,
+    "neither_pass": 0,
+    "vision_median_ms": 2149.0,
+    "control_median_ms": 1448.0,
+    "median_paired_delta_ms": 614.5
+  }
+}

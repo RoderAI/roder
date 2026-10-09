@@ -1,3 +1,13 @@
+## 0.5.1 (2026-10-08)
+
+### Fixes
+
+#### Preserve native compaction across OAuth and routed turns
+
+Codex OAuth sessions require provider-owned compaction. Defer automatic
+compaction until routing selects the provider, and keep local fallback available
+for custom Responses providers that do not implement OpenAI native compaction.
+
 ## 0.5.0 (2026-10-05)
 
 ### Breaking Changes

@@ -4,6 +4,10 @@ pub(super) struct CodexOAuthInferenceEngine;
 
 #[async_trait::async_trait]
 impl InferenceEngine for CodexOAuthInferenceEngine {
+    fn requires_native_compaction(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> roder_api::extension::InferenceEngineId {
         PROVIDER_CODEX.to_string()
     }
@@ -81,4 +85,14 @@ async fn codex_responses_engine() -> anyhow::Result<OpenAiResponsesEngine> {
         "https://chatgpt.com/backend-api/codex",
         headers,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth_requires_native_compaction_without_loading_credentials() {
+        assert!(CodexOAuthInferenceEngine.requires_native_compaction());
+    }
 }

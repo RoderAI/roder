@@ -16,6 +16,7 @@ mod block;
 mod cdp;
 mod chrome;
 mod decide;
+mod decisions;
 mod effects;
 mod engine;
 mod fallback;
@@ -23,6 +24,7 @@ mod fallback;
 mod fixture_harness;
 mod http;
 mod irreversible;
+mod jev_prompt;
 mod page;
 mod policy;
 mod prompts;
@@ -40,13 +42,13 @@ mod usage;
 
 use std::sync::Arc;
 
-use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
 use semver::Version;
 
 pub use decide::JevTypeSafeDecisionClient;
+pub use decisions::{ComputerCandidate, ComputerDecision, OpenAiDecisionsClient};
 pub use engine::{
     Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
     JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
@@ -94,10 +96,9 @@ impl RoderExtension for JevExtension {
                 ProvidedService::ToolProvider("jev".into()),
                 ProvidedService::PolicyContributor("jev".into()),
             ],
-            required_capabilities: vec![
-                CapabilityRequest::new("network.web"),
-                CapabilityRequest::new("secret.read.JEV_API_KEY"),
-            ],
+            required_capabilities: runner::decision_backend::capabilities(
+                &runner::decision_backend::selected(),
+            ),
         }
     }
 

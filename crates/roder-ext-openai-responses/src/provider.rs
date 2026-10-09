@@ -734,6 +734,10 @@ impl InferenceEngine for OpenAiResponsesEngine {
         Ok(models_for_provider(&self.provider_id, false))
     }
 
+    fn requires_native_compaction(&self) -> bool {
+        self.provider_id == PROVIDER_OPENAI || self.provider_id == PROVIDER_CODEX
+    }
+
     async fn compact_turn(
         &self,
         ctx: InferenceTurnContext<'_>,

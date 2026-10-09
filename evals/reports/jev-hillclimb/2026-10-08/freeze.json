@@ -1,0 +1,14 @@
+{
+  "frozen_at": "2026-10-09T00:56:04.323868+00:00",
+  "candidate": "jev_workflow",
+  "files": {
+    "src/jev_prompt.rs": "4d16b48e6fb342518f8326bb708148413f7dbbb40b7570bd2a10b21eaf1b2536",
+    "src/assets/snapshot.js": "a3444fa6310147cdd67a001150334aaa47772e94077730b693e1dd69e7d63caa",
+    "src/decide.rs": "709652d7e80c20494bdb9fbeff88262ce6c53afed7fdc5b063e683b6c4334536",
+    "src/decisions.rs": "9e67191d9f7a79e83c7b6e30750eb031e408e420bc8204085295307b086dd00b",
+    "tests/fixtures/evals/complex-browser-holdout.json": "d70bc7a1a3acfc96636a54a5314ab87ed29cee170979b11e24be40bf328fd4ab",
+    "tests/fixtures/pages/complex-browser-holdout.html": "4b0d87d801eb3ca9cef54d73011f39c45d2b0fc0560fbbf4fe6309f484672cdf",
+    "tests/fixtures/pages/complex-casework.html": "67db070dc0df8b867ca5a3b581baa6499ab2f64bcaf01ade4229ecc48b87c2e7",
+    "tests/fixtures/pages/complex-publication.html": "b6a2347378a5fdd731e52e77eb478bd71db77d2ea625a4f97bda4adf1c1bc128"
+  }
+}

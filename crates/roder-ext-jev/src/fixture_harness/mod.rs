@@ -326,3 +326,7 @@ mod uncover_tests;
 
 #[cfg(test)]
 mod completion_tests;
+
+mod decisions_computer_tests;
+
+mod jev_evidence_tests;

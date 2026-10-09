@@ -1,0 +1,145 @@
+{
+  "jev": {
+    "pairs": 96,
+    "candidate_only_pass": 13,
+    "reference_only_pass": 0,
+    "both_pass": 81,
+    "both_fail": 2,
+    "candidate_median_ms_on_both_pass": 1247,
+    "reference_median_ms_on_both_pass": 1238,
+    "median_paired_ms_saved": 6
+  },
+  "vision": {
+    "pairs": 96,
+    "candidate_only_pass": 4,
+    "reference_only_pass": 0,
+    "both_pass": 90,
+    "both_fail": 2,
+    "candidate_median_ms_on_both_pass": 1496.0,
+    "reference_median_ms_on_both_pass": 1845.0,
+    "median_paired_ms_saved": 372.0
+  },
+  "side_effects": {
+    "jev": {
+      "attempts_with_audit": 24,
+      "attempts_with_forbidden_mutations": 0,
+      "false_done_tasks": [
+        {
+          "task": "enter_to_search",
+          "repeat": 1,
+          "failures": [
+            "url http://127.0.0.1:53110/pages/keys.html does not end with /submit/search",
+            "0 posts, expected 1: []"
+          ]
+        },
+        {
+          "task": "complex_allocation",
+          "repeat": 1,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        },
+        {
+          "task": "enter_to_search",
+          "repeat": 2,
+          "failures": [
+            "url http://127.0.0.1:55064/pages/keys.html does not end with /submit/search",
+            "0 posts, expected 1: []"
+          ]
+        },
+        {
+          "task": "complex_allocation",
+          "repeat": 2,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        },
+        {
+          "task": "enter_to_search",
+          "repeat": 3,
+          "failures": [
+            "url http://127.0.0.1:56814/pages/keys.html does not end with /submit/search",
+            "0 posts, expected 1: []"
+          ]
+        },
+        {
+          "task": "complex_allocation",
+          "repeat": 3,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        }
+      ]
+    },
+    "jev_workflow": {
+      "attempts_with_audit": 24,
+      "attempts_with_forbidden_mutations": 0,
+      "false_done_tasks": [
+        {
+          "task": "complex_allocation",
+          "repeat": 2,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        },
+        {
+          "task": "complex_allocation",
+          "repeat": 3,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        }
+      ]
+    },
+    "vision": {
+      "attempts_with_audit": 24,
+      "attempts_with_forbidden_mutations": 0,
+      "false_done_tasks": [
+        {
+          "task": "complex_allocation",
+          "repeat": 1,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        },
+        {
+          "task": "twin_by_context",
+          "repeat": 2,
+          "failures": [
+            "dom `window.cart ?? []` = [\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\"], expected [\"Desk Lamp\"]"
+          ]
+        },
+        {
+          "task": "complex_allocation",
+          "repeat": 2,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        },
+        {
+          "task": "complex_allocation",
+          "repeat": 3,
+          "failures": [
+            "visible text lacks \"Equipment reservation confirmed.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+          ]
+        }
+      ]
+    }
+  }
+}

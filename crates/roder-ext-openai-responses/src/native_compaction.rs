@@ -4,12 +4,11 @@ use futures::StreamExt;
 pub(super) async fn compact(
     engine: &OpenAiResponsesEngine,
     ctx: InferenceTurnContext<'_>,
-    request: AgentInferenceRequest,
+    mut request: AgentInferenceRequest,
 ) -> anyhow::Result<Option<InferenceEventStream>> {
-    if engine.profile != ResponsesProviderProfile::OpenAi
-        || !lookup_model_for_provider(&request.model.provider, &request.model.model)
-            .is_some_and(|model| model.supports_compaction)
-    {
+    // The endpoint decides model support, including newly released models and
+    // custom aliases absent from Roder's catalog. Never substitute a summary.
+    if !engine.requires_native_compaction() {
         return Ok(None);
     }
     let key = engine.api_key.as_deref().ok_or_else(|| {
@@ -18,6 +17,10 @@ pub(super) async fn compact(
             "Responses compaction requires authentication",
         )
     })?;
+    // Compaction is its own sampling step, not the parent turn's structured
+    // answer or forced tool selection. Match Codex's schema-free prompt.
+    request.output = Default::default();
+    request.tool_choice = roder_api::tools::ToolChoice::Auto;
     let (mut body, names) = OpenAiResponsesEngine::map_request_with_options(
         &request,
         RequestMappingOptions {
@@ -26,123 +29,49 @@ pub(super) async fn compact(
         },
     );
     body.as_object_mut().unwrap().remove("context_management");
-    if engine.provider_id == PROVIDER_CODEX {
-        // Current Codex remote V2 keeps model-visible tools/instructions and
-        // requests an opaque boundary through the normal Responses stream.
-        let retained = retained_client_messages(&body);
-        body["input"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"type":"compaction_trigger"}));
-        let stream = if websocket_requested(&engine.base_url) {
-            try_websocket_stream(
+    // Codex remote V2 keeps current tools and instructions for both API keys
+    // and subscriptions, requesting an opaque boundary on the Responses stream.
+    let retained = retained_client_messages(&body);
+    body["input"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"compaction_trigger"}));
+    let stream = if websocket_requested(&engine.base_url) {
+        try_websocket_stream(
+            &engine.base_url,
+            key,
+            &engine.headers,
+            ctx.thread_id,
+            &body,
+            names.api_name_to_tool_name.clone(),
+            None,
+        )
+        .await?
+    } else {
+        None
+    };
+    let stream = match stream {
+        Some(stream) => stream,
+        None => {
+            let response = send_responses_request(
                 &engine.base_url,
                 key,
                 &engine.headers,
-                ctx.thread_id,
+                None,
                 &body,
-                names.api_name_to_tool_name.clone(),
+                request.runtime.reliability.as_ref(),
+            )
+            .await?;
+            stream_responses_sse_with_client_tool_search(
+                response.response,
+                names.api_name_to_tool_name,
+                response.retry_events,
+                response.idle_timeout,
                 None,
             )
-            .await?
-        } else {
-            None
-        };
-        let stream = match stream {
-            Some(stream) => stream,
-            None => {
-                let response = send_responses_request(
-                    &engine.base_url,
-                    key,
-                    &engine.headers,
-                    None,
-                    &body,
-                    request.runtime.reliability.as_ref(),
-                )
-                .await?;
-                stream_responses_sse_with_client_tool_search(
-                    response.response,
-                    names.api_name_to_tool_name,
-                    response.retry_events,
-                    response.idle_timeout,
-                    None,
-                )
-            }
-        };
-        return Ok(Some(compaction_stream(stream, retained)));
-    }
-    // Standalone API compaction returns the complete next window. Keep its
-    // retained items verbatim, including messages before the encrypted item.
-    let mut compact_body = json!({"model":body["model"],"input":body["input"]});
-    if let Some(instructions) = body.get("instructions") {
-        compact_body["instructions"] = instructions.clone();
-    }
-    let response = send_responses_endpoint(
-        &engine.base_url,
-        key,
-        &engine.headers,
-        None,
-        &compact_body,
-        request.runtime.reliability.as_ref(),
-        ResponseEndpoint {
-            idle_timeout: responses_stream_idle_timeout(),
-            path: "responses/compact",
-        },
-    )
-    .await?;
-    let retry_events = response.retry_events;
-    let mut chunks = response.response.bytes_stream();
-    let mut bytes = Vec::new();
-    while let Some(chunk) = chunks.next().await {
-        let chunk = chunk.map_err(|error| {
-            ProviderFailure::new(ProviderFailureKind::StreamInterrupted, error.to_string())
-        })?;
-        if bytes.len().saturating_add(chunk.len()) > 16 * 1024 * 1024 {
-            return Err(ProviderFailure::new(
-                ProviderFailureKind::Protocol,
-                "compaction response exceeds 16 MiB",
-            )
-            .into());
         }
-        bytes.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&bytes).map_err(|error| {
-        ProviderFailure::new(
-            ProviderFailureKind::Protocol,
-            format!("invalid compaction response: {error}"),
-        )
-    })?;
-    let output = value
-        .get("output")
-        .and_then(Value::as_array)
-        .filter(|output| {
-            output
-                .iter()
-                .filter(|item| is_compaction_item(item))
-                .count()
-                == 1
-        })
-        .ok_or_else(|| {
-            ProviderFailure::new(
-                ProviderFailureKind::Protocol,
-                "compaction response must contain exactly one opaque boundary",
-            )
-        })?
-        .clone();
-    let metadata = json!({"output":output,"compacted_input":output});
-    let mut events: Vec<anyhow::Result<InferenceEvent>> = retry_events
-        .into_iter()
-        .map(|metadata| Ok(InferenceEvent::ProviderMetadata(metadata)))
-        .collect();
-    if let Some(usage) = extract_usage(&value) {
-        events.push(Ok(InferenceEvent::Usage(usage)));
-    }
-    events.push(Ok(InferenceEvent::ProviderMetadata(metadata)));
-    events.push(Ok(InferenceEvent::Completed(CompletionMetadata {
-        stop_reason: Some("completed".into()),
-        provider_response_id: value.get("id").and_then(Value::as_str).map(String::from),
-    })));
-    Ok(Some(Box::pin(futures::stream::iter(events))))
+    };
+    Ok(Some(compaction_stream(stream, retained)))
 }
 
 fn retained_client_messages(body: &Value) -> Vec<Value> {
@@ -217,6 +146,29 @@ fn compaction_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn custom_responses_provider_keeps_local_compaction_fallback() {
+        let engine = OpenAiResponsesEngine::new_custom_provider(
+            None,
+            "custom",
+            "Custom",
+            "https://custom.example/v1",
+        );
+        assert!(!engine.requires_native_compaction());
+        let stream = engine
+            .compact_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                super::super::tests::request(),
+            )
+            .await
+            .unwrap();
+        assert!(stream.is_none());
+    }
+
     #[test]
     fn compacted_window_replays_all_retained_items_without_pruning_before_boundary() {
         use roder_api::transcript::{TranscriptItem, UserMessage};
@@ -325,13 +277,22 @@ mod tests {
 mod http_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     #[tokio::test]
-    async fn standalone_api_compaction_sends_full_window_and_preserves_response_verbatim() {
+    async fn api_key_and_codex_compaction_use_streamed_trigger_and_replay_opaque_state() {
+        for provider in [PROVIDER_OPENAI, PROVIDER_CODEX] {
+            for model in ["gpt-5.5", "uncatalogued-openai-model"] {
+                check_streamed_compaction(provider, model).await;
+            }
+        }
+    }
+
+    async fn check_streamed_compaction(provider: &str, model: &str) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let window = json!([{ "type":"message","role":"user","content":"retain me" },
-            {"id":"compaction1","type":"compaction","encrypted_content":"opaque"}]);
-        let server_window = window.clone();
+        let boundary = json!({"id":"compaction1","type":"compaction","encrypted_content":"opaque"});
+        let server_boundary = boundary.clone();
+        let expected_model = model.to_string();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut bytes = Vec::new();
@@ -345,7 +306,12 @@ mod http_tests {
                 }
             };
             let header = String::from_utf8_lossy(&bytes[..header_end]);
-            assert!(header.starts_with("POST /responses/compact"));
+            assert!(header.starts_with("POST /responses HTTP/1.1"), "{header}");
+            assert!(
+                header
+                    .to_lowercase()
+                    .contains("authorization: bearer fixture-key")
+            );
             let length: usize = header
                 .lines()
                 .find_map(|line| {
@@ -360,21 +326,37 @@ mod http_tests {
                 bytes.extend_from_slice(&buf[..n]);
             }
             let body: Value = serde_json::from_slice(&bytes[header_end..]).unwrap();
-            assert_eq!(body["model"], "gpt-5.5");
+            assert_eq!(body["model"], expected_model);
             assert_eq!(body["instructions"], "be helpful");
-            assert!(body["input"].as_array().unwrap().len() >= 2);
-            assert!(body.get("stream").is_none());
-            assert!(body.get("tools").is_none());
-            let body = json!({"id":"compact-response","output":server_window,"usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}).to_string();
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            assert_eq!(body["stream"], true);
+            assert_eq!(body["store"], false);
+            assert_eq!(body["tools"][0]["name"], "echo");
+            assert_eq!(body["tool_choice"], "auto");
+            assert!(body.get("context_management").is_none());
+            assert!(body.get("max_output_tokens").is_none());
+            assert!(body["text"].get("format").is_none());
+            let input = body["input"].as_array().unwrap();
+            assert_eq!(input.len(), 3);
+            assert_eq!(input[0]["content"][0]["text"], "Hello");
+            assert_eq!(input[1]["content"][0]["text"], "Hi");
+            assert_eq!(input.last().unwrap(), &json!({"type":"compaction_trigger"}));
+            let done = json!({"type":"response.output_item.done","item":server_boundary});
+            let completed = json!({"type":"response.completed","response":{"id":"compact-response","output":[server_boundary],"usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}});
+            let sse = format!("data: {done}\n\ndata: {completed}\n\n");
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{sse}",sse.len()).as_bytes()).await.unwrap();
         });
         let engine = OpenAiResponsesEngine::new_with_config(
             Some("fixture-key".into()),
-            "openai",
+            provider,
             base,
             vec![],
         );
-        let request = crate::provider::tests::request();
+        assert!(engine.requires_native_compaction());
+        let mut request = crate::provider::tests::request();
+        request.model.provider = provider.into();
+        request.model.model = model.into();
+        // Parent output/tool constraints must not constrain the compaction step.
+        request.tool_choice = roder_api::tools::ToolChoice::Specific("echo".into());
         let mut stream = engine
             .compact_turn(
                 InferenceTurnContext {
@@ -382,19 +364,24 @@ mod http_tests {
                     turn_id: "real-turn",
                     tool_executor: None,
                 },
-                request,
+                request.clone(),
             )
             .await
             .unwrap()
             .unwrap();
         let mut completed = 0;
         let mut usage = 0;
+        let mut metadata = None;
         while let Some(event) = stream.next().await {
             match event.unwrap() {
-                InferenceEvent::ProviderMetadata(metadata)
-                    if metadata.get("compacted_input").is_some() =>
+                InferenceEvent::ProviderMetadata(value)
+                    if value.get("compacted_input").is_some() =>
                 {
-                    assert_eq!(metadata["compacted_input"], window)
+                    let window = value["compacted_input"].as_array().unwrap();
+                    assert_eq!(window.len(), 2);
+                    assert_eq!(window[0]["content"][0]["text"], "Hello");
+                    assert_eq!(window[1], boundary);
+                    metadata = Some(value);
                 }
                 InferenceEvent::Completed(_) => completed += 1,
                 InferenceEvent::Usage(tokens) => usage += tokens.total_tokens,
@@ -403,6 +390,21 @@ mod http_tests {
         }
         assert_eq!(completed, 1);
         assert_eq!(usage, 120);
+        request
+            .transcript
+            .push(roder_api::transcript::TranscriptItem::ProviderMetadata(
+                metadata.unwrap(),
+            ));
+        request
+            .transcript
+            .push(roder_api::transcript::TranscriptItem::UserMessage(
+                roder_api::transcript::UserMessage::text("continue"),
+            ));
+        let next = OpenAiResponsesEngine::map_request(&request);
+        assert_eq!(next["input"].as_array().unwrap().len(), 3);
+        assert_eq!(next["input"][0]["content"][0]["text"], "Hello");
+        assert_eq!(next["input"][1], boundary);
+        assert_eq!(next["input"][2]["content"][0]["text"], "continue");
         server.await.unwrap();
     }
 }
