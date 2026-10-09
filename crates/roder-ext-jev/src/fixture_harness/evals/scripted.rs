@@ -89,7 +89,9 @@ impl Step {
         }
         if self.blocked || self.done {
             if !self.named().is_empty() || !self.any.is_empty() || (self.blocked && self.done) {
-                bail!("a blocked step names no target");
+                bail!(
+                    "a terminal step must name no target and choose exactly one of blocked or done"
+                );
             }
             return Ok(());
         }

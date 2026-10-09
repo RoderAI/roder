@@ -21,8 +21,8 @@ impl Agent {
         // Images cannot be scrubbed like text. Do not capture a recognized
         // secret field or a page that may echo a secret entered earlier.
         if self.config.decision.uses_images()
-            && may_capture(&observed, self.secrets.len(), &self.history)
-            && let Some(image) = self.browser.screenshot().await?
+            && may_capture(&observed, self.secrets.has_input(), &self.history)
+            && let Some(image) = self.browser.screenshot().await.ok().flatten()
         {
             observed["_screenshot"] = json!(image);
         }
@@ -60,8 +60,8 @@ impl Agent {
         Ok(decision)
     }
 }
-fn may_capture(observation: &Value, secrets: usize, history: &[Value]) -> bool {
-    secrets == 0
+fn may_capture(observation: &Value, secret_input: bool, history: &[Value]) -> bool {
+    !secret_input
         && !history.iter().any(|h| h["text"] == SECRET)
         && !observation["actions"]
             .as_array()
@@ -75,13 +75,13 @@ mod tests {
     #[test]
     fn screenshots_are_suppressed_for_secret_fields_and_past_secret_input() {
         let public = json!({"actions":[{"kind":"fill","input_type":"email"}]});
-        assert!(may_capture(&public, 0, &[]));
-        assert!(!may_capture(&public, 1, &[]));
-        assert!(!may_capture(&public, 0, &[json!({"text":SECRET})]));
+        assert!(may_capture(&public, false, &[]));
+        assert!(!may_capture(&public, true, &[]));
+        assert!(!may_capture(&public, false, &[json!({"text":SECRET})]));
         for kind in ["password", "one-time-code"] {
             assert!(!may_capture(
                 &json!({"actions":[{"input_type":kind}]}),
-                0,
+                false,
                 &[]
             ));
         }

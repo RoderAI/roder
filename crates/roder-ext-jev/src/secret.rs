@@ -32,7 +32,7 @@ pub(crate) fn is_secret(action: &Value) -> bool {
 /// what the page shows. A session hands them to its next call, so a value
 /// typed in one call is still scrubbed from the pages later calls read.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) struct Secrets(Vec<String>);
+pub(crate) struct Secrets(Vec<String>, bool);
 
 /// Never the values: a result is debug-printed in logs and test failures.
 impl std::fmt::Debug for Secrets {
@@ -42,6 +42,11 @@ impl std::fmt::Debug for Secrets {
 }
 
 impl Secrets {
+    /// Any secret input, including short values not retained for text scrubbing.
+    pub(crate) fn has_input(&self) -> bool {
+        self.1
+    }
+
     /// How many are remembered.
     pub(crate) fn len(&self) -> usize {
         self.0.len()
@@ -49,12 +54,14 @@ impl Secrets {
 
     /// Remember every secret `other` holds too.
     pub(crate) fn extend(&mut self, other: &Secrets) {
+        self.1 |= other.1;
         for secret in &other.0 {
             self.remember(secret);
         }
     }
 
     pub(crate) fn remember(&mut self, value: &str) {
+        self.1 = true;
         let value = value.trim();
         if value.chars().count() >= SCRUB_MIN_CHARS && !self.0.iter().any(|known| known == value) {
             self.0.push(value.to_string());
@@ -76,6 +83,14 @@ impl Secrets {
         }
     }
 
+    fn scrub_evidence(&self, value: &mut Value) {
+        match value {
+            Value::Array(values) => values.iter_mut().for_each(|v| self.scrub_evidence(v)),
+            Value::Object(values) => values.values_mut().for_each(|v| self.scrub_evidence(v)),
+            _ => self.scrub_in_place(value),
+        }
+    }
+
     /// Scrub the parts of an observation that leave the loop: its address,
     /// title and text, each action's label, value, current value, context
     /// and section, the dialogs' messages, and the frames' origins and
@@ -91,7 +106,13 @@ impl Secrets {
                 self.scrub_in_place(value);
             }
         }
+        if let Some(disabled) = observation.get_mut("disabled_controls") {
+            self.scrub_evidence(disabled);
+        }
         for action in observation["actions"].as_array_mut().into_iter().flatten() {
+            if let Some(form) = action.get_mut("form") {
+                self.scrub_evidence(form);
+            }
             let select = action["kind"] == "select";
             for key in ["label", "value", "current_value", "context", "section"] {
                 if key == "value" && select {
@@ -122,6 +143,22 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn short_secret_input_survives_session_transfer_without_storing_the_value() {
+        let mut first = Secrets::default();
+        first.remember("12");
+        assert_eq!(first.len(), 0);
+        assert!(first.has_input());
+        let mut next = Secrets::default();
+        next.extend(&first);
+        assert!(next.clone().has_input());
+        assert_eq!(next.len(), 0);
+        let mut page = json!({"actions":[{"form":{"fields":["echo-long-secret"],"submit_buttons":["echo-long-secret"]}}],"disabled_controls":[{"label":"echo-long-secret"}]});
+        next.remember("echo-long-secret");
+        next.scrub_observation(&mut page);
+        assert!(!page.to_string().contains("echo-long-secret"));
+    }
 
     #[test]
     fn only_passwords_and_one_time_codes_are_secret() {

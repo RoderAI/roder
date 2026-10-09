@@ -55,6 +55,60 @@ The integration is covered by local HTTP contract tests, including action
 selection, predicate mapping, malformed answers and authentication failures.
 See the [live validation report](validation/decisions-2026-10-06.md) for authenticated browser and native computer results and their limits.
 
+## Configuration reference
+
+These settings are read by the process hosting Roder's built-in `jev_browse`
+client. A developer's `.zshrc` does not configure a service, container or remote
+Verifier runner. Inject credentials through that service's secret management.
+
+| Setting | Value and behavior |
+|---|---|
+| `JEV_DECISION_PROVIDER` | `openai` selects Decisions; unset or `jev` selects TypeSafe. Any other value fails. |
+| `OPENAI_API_KEY` | OpenAI API credential for Decisions. Takes precedence over `[providers.openai] api_key`. Codex/ChatGPT login is insufficient. |
+| `JEV_DECISIONS_TEXT_ONLY` | Unset or `0`: request fresh viewport images when supported and safe. `1`: text only. Other values fail for the OpenAI backend. |
+| `JEV_MODEL` | TypeSafe model only; does not change Decisions' fixed `gpt-6-luna` model. |
+| `JEV_API_KEY` | Needed only when the built-in TypeSafe backend is selected; switching to Decisions does not require this key. |
+| `JEV_CDP_URL` / `JEV_CDP_PORT` | Existing Chrome connection settings; changing the decision provider does not provision a browser. |
+| `JEV_TEXT_MODEL_API_KEY` / `OPENROUTER_API_KEY` | Existing text-helper credentials when generated field values are needed. Decisions itself does not generate fill text. A host-supplied resolver can provide values instead. |
+| `JEV_FALLBACK` and `JEV_FALLBACK_MODEL` | Existing browser fallback configuration, independent of decision-provider selection. Disable fallback when measuring Decisions outcomes so another model cannot hide failures. |
+
+Example for an already configured Chrome/text-helper environment:
+
+```sh
+# OPENAI_API_KEY is supplied by the service secret manager; do not commit it.
+export JEV_DECISION_PROVIDER=openai
+export JEV_DECISIONS_TEXT_ONLY=0
+roder
+```
+
+To roll back the built-in client, set `JEV_DECISION_PROVIDER=jev`, ensure its
+TypeSafe key is available, and restart the host process. For long-lived embedded
+clients, reconstruct the client when configuration changes. Configured OpenAI key
+rotation refreshes Roder's cached built-in clients; a custom transport must handle
+its own credential lifecycle.
+
+Static distribution metadata lists the union of provider capabilities for
+conservative profile preflight. Runtime capability requests are selected-provider
+specific: Decisions requests `network.web`, `network.api.openai.com` and
+`secret.read.OPENAI_API_KEY`; TypeSafe requests `network.web` and
+`secret.read.JEV_API_KEY`. The static list does not require both credentials.
+
+### Embedded clients and Composal Verifier
+
+An embedding host that constructs `JevTypeSafeDecisionClient` explicitly does
+**not** use this environment selector. Use `OpenAiDecisionsClient::new(key)` for
+direct requests or `OpenAiDecisionsClient::with_transport(transport)` for a
+server-owned relay speaking the native Decisions request/response format.
+Its `text_only()` method selects text-only operation. Wrapping clients must
+forward `uses_images()` and `choose_gated()`, and the browser adapter must implement
+`screenshot()` for visual operation. Without screenshot support, it uses text.
+Optional screenshot capture errors also fall back to text. Secret-input state,
+including short values, suppresses screenshots across built-in session calls.
+
+For Composal Verifier, follow the [migration handoff](verifier-decisions-migration.md).
+The current Vex integration explicitly constructs TypeSafe and relays through a
+TypeSafe-specific Rails endpoint; environment variables alone cannot migrate it.
+
 ## Native computer choices
 
 Embedding hosts can call `OpenAiDecisionsClient::choose_computer` with a fresh

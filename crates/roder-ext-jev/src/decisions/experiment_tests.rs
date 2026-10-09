@@ -9,8 +9,17 @@ async fn refusal_on_unused_branch_does_not_abort_valid_action() {
         .as_array_mut()
         .unwrap()
         .push(json!({"type":"refusal","name":"type_text_target"}));
+    response["answers"][0]["probabilities"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"value":"TYPE_TEXT","probability":0.0}));
+    let mut observed = page();
+    observed["actions"].as_array_mut().unwrap().extend([
+        json!({"id":"e2","kind":"fill","label":"Email","node":2}),
+        json!({"id":"e3","kind":"fill","label":"Name","node":3}),
+    ]);
     let decision = OpenAiDecisionsClient::with_transport(Arc::new(Fixed(response)))
-        .choose(&page(), "Buy item", &[])
+        .choose(&observed, "Buy item", &[])
         .await
         .unwrap();
     assert_eq!(decision.operation, "CLICK");

@@ -162,3 +162,66 @@ async fn decisions_browser_captures_visual_evidence_but_suppresses_secret_pages(
         );
     }
 }
+
+struct CaptureFailure {
+    page: crate::page::Page,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+#[async_trait]
+impl crate::JevBrowser for CaptureFailure {
+    async fn screenshot(&mut self) -> anyhow::Result<Option<String>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        anyhow::bail!("transient capture failure")
+    }
+    async fn observe(&mut self) -> anyhow::Result<Value> {
+        self.page.observe().await
+    }
+    async fn fresh(&mut self, observation: &Value, action: Option<&Value>) -> anyhow::Result<bool> {
+        self.page.fresh(observation, action).await
+    }
+    async fn act(
+        &mut self,
+        action: &Value,
+        observation: &Value,
+        text: Option<&str>,
+        wait: std::time::Duration,
+    ) -> anyhow::Result<crate::JevActOutcome> {
+        self.page.act(action, observation, text, wait).await
+    }
+    async fn close(&mut self) -> anyhow::Result<()> {
+        self.page.close().await
+    }
+}
+#[tokio::test]
+async fn decisions_capture_failure_is_optional_and_prior_short_secret_prevents_capture() {
+    let harness = harness_or_skip!();
+    for short_secret in [false, true] {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let browser = CaptureFailure {
+            page: harness.open("products.html").await.unwrap(),
+            calls: calls.clone(),
+        };
+        let client = OpenAiDecisionsClient::with_transport(Arc::new(BrowserEvidence {
+            expect_image: false,
+        }));
+        let mut secrets = crate::secret::Secrets::default();
+        if short_secret {
+            let mut previous = crate::secret::Secrets::default();
+            previous.remember("12");
+            secrets.extend(&previous);
+        }
+        let config = crate::JevEngineConfig::new("Inspect", Arc::new(client))
+            .with_cookie_banner_refusal(false)
+            .with_secrets(secrets);
+        let mut engine = crate::JevEngine::start(Box::new(browser), config)
+            .await
+            .unwrap();
+        let result = engine.run(std::time::Duration::from_secs(10)).await;
+        engine.close().await.unwrap();
+        assert_eq!(result.status, crate::JevStatus::Done);
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(!short_secret)
+        );
+    }
+}

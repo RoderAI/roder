@@ -178,7 +178,9 @@ pub trait JevDecisionClient: Send + Sync {
     }
 }
 
-/// Sends a fully-formed TypeSafe request and returns its JSON response.
+/// Sends a provider-native decision request and returns its JSON response.
+/// The constructing client determines whether the wire format is TypeSafe or
+/// OpenAI Decisions; relays must preserve that provider contract.
 ///
 /// Hosted runners can use this seam to route decisions through an authenticated
 /// control plane without moving provider credentials into the runner.

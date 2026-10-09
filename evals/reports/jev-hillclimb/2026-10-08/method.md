@@ -80,3 +80,10 @@ changed after candidate freeze.
 Wire call counts count calls to the transport wrapper; HTTP retries within the
 poster are not separate records. Recorded response usage is provider-reported,
 and no price or calibrated workflow-success probability is inferred from it.
+
+Release review follow-up: the measured freeze is preserved at commit
+`944537477d339d33f9575cabb858a07711a7a1f9`. Subsequent release hardening preserves
+short-secret screenshot suppression across calls, tolerates optional capture
+errors, scrubs secret echoes from new metadata, and fixes an experimental Grounded
+guard and harness diagnostics. These paths have separate regression tests; the
+886-attempt study was not rerun or relabeled as a measurement of those fixes.

@@ -24,9 +24,9 @@ for control in ['original', 'effects', 'jev']:
         'vision_only_pass': sum(a[k]['pass'] and not b[k]['pass'] for k in a),
         'control_only_pass': sum(b[k]['pass'] and not a[k]['pass'] for k in a),
         'neither_pass': sum(not a[k]['pass'] and not b[k]['pass'] for k in a),
-        'vision_median_ms': statistics.median(a[k]['wall_ms'] for k in pairs),
-        'control_median_ms': statistics.median(b[k]['wall_ms'] for k in pairs),
+        'vision_median_ms': statistics.median(a[k]['wall_ms'] for k in pairs) if pairs else None,
+        'control_median_ms': statistics.median(b[k]['wall_ms'] for k in pairs) if pairs else None,
         'median_paired_delta_ms': statistics.median(
-            a[k]['wall_ms'] - b[k]['wall_ms'] for k in pairs),
+            a[k]['wall_ms'] - b[k]['wall_ms'] for k in pairs) if pairs else None,
     }
 print(json.dumps(out, indent=2))

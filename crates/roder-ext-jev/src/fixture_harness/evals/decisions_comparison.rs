@@ -70,7 +70,7 @@ async fn decisions_vs_jev() {
         ("grounded", Strategy::Grounded),
     ];
     let wanted = env("DECISIONS_EVAL_VARIANTS").unwrap_or_else(|| "vision,jev".into());
-    for name in wanted.split(',') {
+    for name in wanted.split(',').map(str::trim) {
         assert!(
             jev_variants.iter().any(|(n, _)| *n == name)
                 || variants.iter().any(|(n, _)| *n == name),
@@ -79,7 +79,7 @@ async fn decisions_vs_jev() {
     }
     let mut providers: Vec<(&str, Arc<dyn JevDecisionClient>)> = variants
         .into_iter()
-        .filter(|(name, _)| wanted.split(',').any(|w| w == *name))
+        .filter(|(name, _)| wanted.split(',').map(str::trim).any(|w| w == *name))
         .map(|(name, strategy)| {
             (
                 name,
@@ -89,7 +89,7 @@ async fn decisions_vs_jev() {
         })
         .collect();
     for (name, profile) in jev_variants {
-        if wanted.split(',').any(|w| w == name) {
+        if wanted.split(',').map(str::trim).any(|w| w == name) {
             providers.push((
                 name,
                 Arc::new(

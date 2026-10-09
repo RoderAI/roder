@@ -1,5 +1,6 @@
 ---
 roder-ext-jev: minor
+roder: patch
 ---
 
 # Use OpenAI Decisions as an alternative browser decision backend
@@ -30,3 +31,5 @@ Improve Jev's text evidence with native form ownership, disabled controls and
 concise contextual history. Add staged-workflow guidance and a reproducible
 Jev prompt hill-climb with compound development fixtures, sealed holdout tasks,
 side-effect grading, negative browser traces and candidate-order stress probes.
+
+Keep screenshot suppression across calls after short secret input and continue with text evidence if optional capture fails. Scrub secret echoes from form and disabled-control metadata.

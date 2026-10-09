@@ -104,7 +104,10 @@ impl OpenAiDecisionsClient {
                 .into_iter()
                 .flatten()
                 .find(|a| a["id"] == decision.choice);
-            let last = history.last();
+            let last = history
+                .iter()
+                .rev()
+                .find(|entry| entry["kind"] != "cookie_banner");
             if let (Some(action), Some(last)) = (action, last)
                 && action["kind"] == "click"
                 && last["kind"] == "click"
