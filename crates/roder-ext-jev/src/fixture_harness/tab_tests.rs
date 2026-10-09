@@ -109,6 +109,7 @@ async fn a_tab_whose_setup_fails_is_not_adopted() {
     let harness = harness_or_skip!();
     let mut page = harness.open("worker.html").await.unwrap();
     let mut connection = harness.connect().await.unwrap();
+    // The worker of this test's own page: the Chrome is shared.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let worker = loop {
         let targets = connection
@@ -119,7 +120,12 @@ async fn a_tab_whose_setup_fails_is_not_adopted() {
             .as_array()
             .into_iter()
             .flatten()
-            .find(|target| target["type"] == "shared_worker")
+            .find(|target| {
+                target["type"] == "shared_worker"
+                    && target["url"]
+                        .as_str()
+                        .is_some_and(|url| url.contains(harness.site.origin()))
+            })
             .and_then(|target| target["targetId"].as_str())
             .map(str::to_string);
         if let Some(found) = found {

@@ -6,11 +6,17 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::process::Child;
 
-use super::browser::{binaries, stop};
+use super::browser::binaries;
+use super::chrome_process::stop;
 use super::site::FixtureSite;
 use crate::cdp::Connection;
 use crate::chrome;
 use crate::page::Page;
+
+/// These tests start Chromes through Jev's own launcher, on profiles of
+/// their own, so they cannot use the one the other fixture tests share. They
+/// take turns, so that a run has at most one of them, besides the shared one.
+static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn profile(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("roder-jev-launch-{name}-{}", std::process::id()));
@@ -77,6 +83,7 @@ async fn a_launched_chrome_is_found_by_its_profile_and_used_at_once() {
     let Some(binaries) = binaries().expect("a usable Chrome") else {
         return;
     };
+    let _turn = ONE_AT_A_TIME.lock().await;
     let dir = profile("ready");
     let launched = chrome::launch_with(&binaries, &dir, &headless())
         .await
@@ -116,6 +123,7 @@ async fn a_launch_on_a_running_profile_reuses_that_chrome_and_keeps_its_port_fil
     let Some(binaries) = binaries().expect("a usable Chrome") else {
         return;
     };
+    let _turn = ONE_AT_A_TIME.lock().await;
     let dir = profile("handoff");
     let first = chrome::launch_with(&binaries, &dir, &headless())
         .await
@@ -139,6 +147,7 @@ async fn tasks_starting_at_once_start_one_chrome() {
     let Some(binaries) = binaries().expect("a usable Chrome") else {
         return;
     };
+    let _turn = ONE_AT_A_TIME.lock().await;
     let dir = profile("race");
     let extra = headless();
     let (a, b) = tokio::join!(

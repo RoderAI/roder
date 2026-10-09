@@ -1,9 +1,9 @@
 //! The keyless tier: every task's scripted plan, on real headless Chrome.
 //!
-//! Tasks run one at a time in one Chrome, each with its own fixture site so
-//! its recorded POSTs are its own. Running them side by side in several
-//! Chromes was faster but loaded the machine enough to push the crate's
-//! timing-sensitive tests past their margins. `JEV_EVAL_TASKS=id,id` narrows
+//! Tasks run one at a time, each with its own fixture site so its recorded
+//! POSTs are its own. Running them side by side was faster but loaded the
+//! machine enough to push the crate's timing-sensitive tests past their
+//! margins. `JEV_EVAL_TASKS=id,id` narrows
 //! the run. The table goes to stderr (`-- --nocapture` shows it) and the rows
 //! to `target/jev-evals/keyless.jsonl`.
 

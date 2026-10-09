@@ -1077,25 +1077,59 @@ actions or contexts to leave out.
 
 `src/fixture_harness/` is an in-crate `#[cfg(test)]` harness that runs the
 real `Page`, and the real agent loop, against a real headless Chrome with no
-key. Each test serves `tests/fixtures/pages/*.html` from `127.0.0.1:0`,
-records every POST, and starts its own throwaway Chrome (`--headless=new` on a
-fresh temporary profile, DevTools on a port Chrome picks). It never attaches to
-a running Chrome or touches the `jev-chrome` profile, and it kills that
-Chrome when the test ends, including on a panic. When no Chrome binary is
-found they pass without running, and the run says so once on the terminal
+key. Each test serves `tests/fixtures/pages/*.html` from `127.0.0.1:0` and
+records every POST. All the tests in a run share one throwaway Chrome
+(`--headless=new` on a fresh temporary profile, DevTools on a port Chrome
+picks), started by whichever test needs one first; it never attaches to a
+running Chrome or touches the `jev-chrome` profile. A Chrome per test, as
+there used to be, meant one per test thread, and a full run could start a
+dozen of them at once and use up a developer's memory.
+
+A test is kept apart from the others on it. It is handed a small relay on a
+loopback port as its Chrome's address, which adds a browser context of the
+test's own to each tab the test creates. So the test has a window of its own
+(Jev raises the tab it works in, and with one window for every test, tests
+that press keys failed intermittently when many ran at once), cookies and
+storage of its own (cookies are scoped by host, not port, so ports alone would
+not separate them), and tabs of its own: `Harness::page_targets` and
+`owned_pages` count and list only those, and the tabs a test leaves open are
+closed when it ends. A test that must close, crash or reconfigure the
+browser needs one of its own. Today the only private launcher opens a real
+window (`TestChrome::launch_headed`, used by the `#[ignore]`d windowed
+tests); a headless one is to be added by the first test that needs it, and a
+test that did `Browser.close` on the shared Chrome would break every other
+test in the process. `launch_tests.rs` starts Chromes through Jev's own
+launcher on profiles of their own, one at a time, and one test in
+`chrome_process.rs` starts a short-lived one to check that a Chrome of a
+test's own is closed with its handle.
+
+The Chrome is started by a small shell that checks every second that the
+test process and the Chrome are both still there, and stops the Chrome
+(`TERM`, then `KILL`) and removes its profile (`roder-jev-test-<pid>-<n>`)
+and the `com.google.Chrome.*` directory a signalled Chrome leaves its
+singleton socket in, when either is gone. A static is never dropped, so
+nothing in the test process could do this, and a test process killed with
+SIGKILL runs no code at all;
+the Chromes of such runs used to stay up for hours. The Chrome lingers for a
+second or two after the last test, and a run's first launch still removes
+what an older run left. A Chrome that stops answering is replaced by the next
+test that starts, and one that cannot be started fails every test with the
+same error.
+
+When no Chrome binary is found the Chrome-backed tests pass without running,
+and the run says so once on the terminal
 (past the test harness's output capture); with `JEV_REQUIRE_CHROME=1`, or
 `CI` set as CI services set it, they fail instead, and a `JEV_CHROME_BINARY`
 that is not an executable file fails them always. CI should set
 `JEV_REQUIRE_CHROME=1` with Chrome installed, or the Chrome-backed tests
-report passes that never ran. Each test Chrome is closed with
-`Browser.close` before it is killed, so it removes the temporary directory
-it keeps its singleton socket in (one `com.google.Chrome.*` per launch was
-left behind on macOS, where Chrome ignores `TMPDIR`), its `TMPDIR` is its
-profile, and its profile (`roder-jev-test-<pid>-<n>`) is removed with it; a
-profile left by a test process that died is removed, and its Chrome
-stopped, by the next run's first launch.
+report passes that never ran.
 
-They pin current behaviour: the observed ids and what snapshot skips; a
+Measured on the `fixture_harness` tests: at 3 test threads the shared Chrome
+peaked at 2.6 GB in 158 s, against three Chromes at once, 3.9 GB and 225 s
+with a Chrome per test; at 14 threads it peaked at about 6 GB and the run took
+about two minutes.
+
+The fixture tests pin current behaviour: the observed ids and what snapshot skips; a
 covered button is refused as `Covered`, with no click; a select fires `change`; scripted field values reach the form POST
 through the text-resolver path; and a page that navigates between a decision
 and its act is reported stale. Decisions come from a scripted plan that names
@@ -1286,9 +1320,9 @@ Both write one JSONL line per run of a task under `target/jev-evals/`. The
 crate README has the commands and every environment variable.
 
 The keyless tier runs its tasks one at a time in one Chrome, each with a
-fresh fixture site. Four tasks at once, each in its own Chrome, finished
-sooner, but the extra load made the timing-sensitive settle and navigation
-tests above flaky. Over three runs on an Apple-silicon Mac, every task passed.
+fresh fixture site. Measured when every task still had a Chrome of its own,
+four tasks at once finished sooner, but the extra load made the
+timing-sensitive settle and navigation tests above flaky. Over three runs on an Apple-silicon Mac, every task passed.
 Most tasks took 0.25 to 1.6 s. `delayed_spa` took about 2.2 s, since its data
 arrives after 0.9 s and the message after another 0.6 s. `mid_step_navigation`
 took about 2 s: its page leaves 300 ms after Jev's first snapshot (a clock
@@ -1719,7 +1753,7 @@ piling up in Jev's Chrome.
   emulation, the Page domain, the quiet clock and, for later documents,
   autoconsent), since the DevTools session held them. Under 300 ms on the
   fixture page; `resume_is_fast` prints the time and asserts only a 2 s
-  ceiling, since the suite runs a headless Chrome per test in parallel.
+  ceiling, since the suite's tests run in parallel on one shared Chrome.
 - **Tabs the user opened between calls.** Tabs stay open and shown for up to
   the idle limit, so the user may click a `target="_blank"` link in Jev's
   tab, or the page may open one on a timer, while no connection watches.

@@ -1,170 +1,168 @@
-//! A throwaway headless Chrome for fixture tests.
+//! The throwaway headless Chrome the fixture tests share.
 //!
-//! Each harness starts its own Chrome (headless, except for the one ignored
-//! test that measures a real window) on a fresh temporary profile and lets
-//! Chrome pick a free DevTools port (`--remote-debugging-port=0`, read back
-//! from `DevToolsActivePort`). It never probes 9222 and never touches the
-//! persistent `jev-chrome` profile.
+//! One Chrome serves the whole test process, started on the first use by
+//! whichever test comes first and kept for all the rest ([`TestChrome::launch`]).
+//! A Chrome per test, as there used to be, meant one per test thread: a
+//! full run of the crate started up to a dozen at once, each with the
+//! renderer, GPU and network processes of a browser, and exhausted the memory
+//! of a developer's Mac.
 //!
-//! When dropped, including when a test panics, the Chrome is asked to close
-//! (`Browser.close`), then killed if it has not exited, and its profile is
-//! removed. A kill alone leaves the temporary directory Chrome keeps its
-//! profile's singleton socket in (one `com.google.Chrome.*` per launch on
-//! macOS, where Chrome ignores `TMPDIR`; the child's `TMPDIR` is its profile,
-//! for the platforms that honour it). A profile left by a test process that
-//! died is removed, and its Chrome stopped, by the next run's first launch.
+//! What keeps tests apart on it:
+//!
+//! - each test is handed a [`TabRelay`] as its Chrome's DevTools address, and
+//!   with it a browser context of its own: a window of its own, so that
+//!   bringing a tab to the front or moving focus does not take either from
+//!   another test's page; storage of its own, so that no cookie or
+//!   localStorage crosses tests; and a set of tabs of its own, which
+//!   [`TestChrome::owned_pages`] lists, so that a test counts and checks only
+//!   its tabs. The context is disposed of when the test ends, closing the
+//!   tabs it left open;
+//! - each test serves its fixtures from its own `127.0.0.1:0` port, so even
+//!   an origin is the test's own;
+//! - a test must not do what ends or changes the browser for every other:
+//!   `Browser.close`, crashing it, or browser-wide settings. One that has to
+//!   needs a Chrome of its own. Today the only private launcher is the
+//!   windowed [`TestChrome::launch_headed`]; the first test that needs a
+//!   headless one adds it. Jev's own launch tests start Chromes through
+//!   `chrome::launch_with` on profiles of their own.
+//!
+//! The Chrome starts under a watcher that ends it when the test process
+//! does, however that happens (see [`chrome_process`](super::chrome_process)).
+//! A Chrome that has stopped answering is replaced by the next test to
+//! start, and a Chrome that cannot be started is reported to every test, not
+//! only the first.
 //!
 //! Whether a missing Chrome skips or fails is decided here too (see
 //! [`binaries`]).
 
 use std::io::Write as _;
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::Once;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Once, PoisonError};
+use std::time::Duration;
 
-use anyhow::{Context, bail};
-use tokio_tungstenite::tungstenite::{self, Message};
+use anyhow::Context;
+use serde_json::Value;
 
-use crate::chrome::{chrome_candidates, read_active_port};
+use super::chrome_process::ChromeProcess;
+use super::tab_relay::TabRelay;
+use crate::chrome::chrome_candidates;
 
-/// Generous: with every fixture test starting its own Chrome at once on a
-/// loaded machine, one took over 20 s to report its port.
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
-/// How long a Chrome asked to close may take before it is killed.
-const CLOSE_WAIT: Duration = Duration::from_secs(5);
-/// Every profile a test Chrome runs on starts with this, then the test
-/// process's id and a counter.
-const PROFILE_PREFIX: &str = "roder-jev-test-";
-
+/// A test's handle on a Chrome: the Chrome, and the test's own DevTools
+/// address on it. Dropping it closes the tabs the test left open, and a
+/// Chrome nobody shares.
 pub(crate) struct TestChrome {
-    child: Child,
-    profile: PathBuf,
+    // In drop order: the tabs are closed while the Chrome is still there.
+    relay: TabRelay,
+    _process: Arc<ChromeProcess>,
     pub(crate) endpoint: String,
 }
 
 impl TestChrome {
+    /// A handle on the process-wide Chrome, started if no test has yet.
     /// `Ok(None)` when no Chrome binary exists on this machine and none is
     /// required, so callers can skip; see [`binaries`]. A Chrome that starts
-    /// but never answers is an error.
+    /// but never answers is an error, for this test and every later one.
     pub(crate) async fn launch() -> anyhow::Result<Option<Self>> {
-        Self::launch_with(true).await
+        let process = tokio::task::spawn_blocking(shared_chrome)
+            .await
+            .context("start the shared test Chrome")??;
+        match process {
+            Some(process) => Self::attach(process, true).await.map(Some),
+            None => Ok(None),
+        }
     }
 
-    /// A Chrome with a real window, for measuring what a background tab of a
-    /// visible browser does; headless Chrome treats every tab as shown.
+    /// A Chrome of its own with a real window, for measuring what a
+    /// background tab of a visible browser does; headless Chrome treats
+    /// every tab as shown. Closed when the handle is dropped.
     pub(crate) async fn launch_headed() -> anyhow::Result<Option<Self>> {
-        Self::launch_with(false).await
-    }
-
-    async fn launch_with(headless: bool) -> anyhow::Result<Option<Self>> {
-        let Some(binaries) = binaries()? else {
-            return Ok(None);
-        };
-        reap_orphans();
-        let mut failures = Vec::new();
-        for binary in binaries {
-            let profile = temp_profile();
-            let child = match spawn(&binary, &profile, headless) {
-                Ok(child) => child,
-                Err(error) => {
-                    let _ = std::fs::remove_dir_all(&profile);
-                    failures.push(format!("{binary}: {error}"));
-                    continue;
-                }
-            };
-            // Owned from here on: an early return below still stops Chrome.
-            let mut chrome = Self {
-                child,
-                profile,
-                endpoint: String::new(),
-            };
-            std::fs::write(
-                chrome.profile.join("chrome.pid"),
-                chrome.child.id().to_string(),
-            )
-            .context("record the test Chrome's pid")?;
-            let port = chrome.wait_for_port().await?;
-            chrome.endpoint = format!("http://127.0.0.1:{port}");
-            return Ok(Some(chrome));
+        let process = tokio::task::spawn_blocking(|| {
+            binaries()?
+                .map(|binaries| ChromeProcess::start(&binaries, false).map(Arc::new))
+                .transpose()
+        })
+        .await
+        .context("start a windowed test Chrome")??;
+        match process {
+            Some(process) => Self::attach(process, false).await.map(Some),
+            None => Ok(None),
         }
-        bail!(
-            "no Chrome binary could be started ({})",
-            failures.join("; ")
-        )
     }
 
-    async fn wait_for_port(&mut self) -> anyhow::Result<u16> {
-        let file = self.profile.join("DevToolsActivePort");
-        let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT;
-        while tokio::time::Instant::now() < deadline {
-            if let Some(status) = self.child.try_wait()? {
-                bail!("test Chrome exited during startup: {status}");
+    async fn attach(process: Arc<ChromeProcess>, shared: bool) -> anyhow::Result<Self> {
+        let relay = TabRelay::start(process.clone(), shared).await?;
+        Ok(Self {
+            endpoint: relay.url().to_string(),
+            relay,
+            _process: process,
+        })
+    }
+
+    /// The page tabs this test owns that Chrome lists now: those in its
+    /// browser context.
+    pub(crate) async fn owned_pages(&self) -> anyhow::Result<Vec<Value>> {
+        self.relay.owned_pages().await
+    }
+}
+
+/// The Chrome of this test process, started on the first call. Blocking:
+/// run it on a blocking thread, as nothing about the Chrome may belong to
+/// the runtime of the test that happens to start it.
+fn shared_chrome() -> anyhow::Result<Option<Arc<ChromeProcess>>> {
+    static SHARED: Slot<ChromeProcess> = Slot::new();
+    let Some(binaries) = binaries()? else {
+        return Ok(None);
+    };
+    SHARED
+        .get(ChromeProcess::answers, || {
+            static STARTED: AtomicBool = AtomicBool::new(false);
+            if STARTED.swap(true, Ordering::SeqCst) {
+                // Written past the test harness's capture, like the note in
+                // `binaries`: the tests that were using the old one fail.
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "roder-ext-jev: the shared test Chrome stopped answering (crashed, or \
+                     killed from outside); starting another. Tests that were running on it \
+                     fail"
+                );
             }
-            if let Some(port) = read_active_port(&file) {
-                return Ok(port);
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            ChromeProcess::start(&binaries, true)
+        })
+        .map(Some)
+}
+
+/// A value started once, shared by everyone who asks, and started again only
+/// when it has gone. A failure to start is kept and given to every caller
+/// after it, instead of every test waiting out its own failed start.
+struct Slot<T> {
+    value: Mutex<Option<Result<Arc<T>, String>>>,
+}
+
+impl<T> Slot<T> {
+    const fn new() -> Self {
+        Self {
+            value: Mutex::new(None),
         }
-        bail!("test Chrome did not report a DevTools port within {STARTUP_TIMEOUT:?}")
     }
-}
 
-impl Drop for TestChrome {
-    fn drop(&mut self) {
-        stop(&self.profile, || {
-            matches!(self.child.try_wait(), Ok(Some(_)) | Err(_))
-        });
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.profile);
+    /// The value, started by `start` when there is none or `live` says the
+    /// one there is has gone. Callers wait while one starts it.
+    fn get(
+        &self,
+        live: impl Fn(&T) -> bool,
+        start: impl FnOnce() -> anyhow::Result<T>,
+    ) -> anyhow::Result<Arc<T>> {
+        let mut value = self.value.lock().unwrap_or_else(PoisonError::into_inner);
+        match value.as_ref() {
+            Some(Ok(started)) if live(started) => return Ok(started.clone()),
+            Some(Err(failure)) => anyhow::bail!("{failure}"),
+            _ => {}
+        }
+        let started = start().map(Arc::new).map_err(|error| format!("{error:#}"));
+        *value = Some(started.clone());
+        started.map_err(|failure| anyhow::anyhow!(failure))
     }
-}
-
-/// Ask the Chrome on `profile` to close and wait up to [`CLOSE_WAIT`] for
-/// `exited` to say it did. Blocking, for use in `Drop`; the caller kills a
-/// Chrome that is still running.
-pub(crate) fn stop(profile: &Path, mut exited: impl FnMut() -> bool) {
-    if exited() || !request_close(profile) {
-        return;
-    }
-    let deadline = Instant::now() + CLOSE_WAIT;
-    while !exited() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// Send `Browser.close` to the Chrome on `profile`, over a blocking
-/// websocket to the browser endpoint its `DevToolsActivePort` names.
-fn request_close(profile: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(profile.join("DevToolsActivePort")) else {
-        return false;
-    };
-    let mut lines = text.lines();
-    let (Some(port), Some(path)) = (lines.next(), lines.next()) else {
-        return false;
-    };
-    let Ok(port) = port.trim().parse::<u16>() else {
-        return false;
-    };
-    let timeout = Duration::from_secs(2);
-    let Ok(stream) = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), timeout) else {
-        return false;
-    };
-    let _ = stream.set_read_timeout(Some(timeout));
-    let _ = stream.set_write_timeout(Some(timeout));
-    let url = format!("ws://127.0.0.1:{port}{}", path.trim());
-    let Ok((mut socket, _)) = tungstenite::client::client(url.as_str(), stream) else {
-        return false;
-    };
-    let sent = socket
-        .send(Message::Text(r#"{"id":1,"method":"Browser.close"}"#.into()))
-        .is_ok();
-    // The reply, or the socket closing as Chrome exits.
-    let _ = socket.read();
-    sent
 }
 
 /// Whether a missing Chrome fails the run: `JEV_REQUIRE_CHROME=1`, or `CI`
@@ -259,121 +257,69 @@ fn executable(path: &Path) -> bool {
     }
 }
 
-fn spawn(binary: &str, profile: &Path, headless: bool) -> std::io::Result<Child> {
-    let scratch = profile.join("tmp");
-    std::fs::create_dir_all(&scratch)?;
-    let mut command = Command::new(binary);
-    if headless {
-        command.arg("--headless=new");
-    }
-    command
-        .arg("--remote-debugging-port=0")
-        .arg("--remote-debugging-address=127.0.0.1")
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .args([
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-extensions",
-            "--disable-sync",
-            "--disable-background-networking",
-            "--disable-component-update",
-            // Component downloads go nowhere: one interrupted by the close
-            // leaves a com.google.Chrome.chrome_chrome_url_fetcher_* dir.
-            "--component-updater=url-source=http://127.0.0.1:9/",
-            "--password-store=basic",
-            "--use-mock-keychain",
-            "about:blank",
-        ]);
-    if cfg!(target_os = "linux") {
-        // CI containers often run as root, where the sandbox refuses to start.
-        command.arg("--no-sandbox");
-    }
-    command
-        .env("TMPDIR", &scratch)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-}
-
-fn temp_profile() -> PathBuf {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    std::env::temp_dir().join(format!(
-        "{PROFILE_PREFIX}{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ))
-}
-
-/// Once per test process: remove the profiles of test processes that died
-/// without dropping their Chrome, stopping that Chrome when it still runs on
-/// the profile. Only this harness's own profiles are touched: the prefix, a
-/// dead process's id, and a Chrome whose command line names the profile.
-fn reap_orphans() {
-    static REAPED: Once = Once::new();
-    REAPED.call_once(|| {
-        // `kill` and `ps` below are Unix tools.
-        if !cfg!(unix) {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(owner) = name
-                .to_str()
-                .and_then(|name| name.strip_prefix(PROFILE_PREFIX))
-                .and_then(|rest| rest.split_once('-'))
-                .and_then(|(pid, counter)| {
-                    counter.parse::<u64>().ok()?;
-                    pid.parse::<u32>().ok()
-                })
-            else {
-                continue;
-            };
-            if owner == std::process::id() || alive(owner) {
-                continue;
-            }
-            let profile = entry.path();
-            if let Some(chrome) = std::fs::read_to_string(profile.join("chrome.pid"))
-                .ok()
-                .and_then(|pid| pid.trim().parse::<u32>().ok())
-                && runs_on(chrome, &profile)
-            {
-                let _ = Command::new("kill")
-                    .args(["-9", &chrome.to_string()])
-                    .status();
-            }
-            let _ = std::fs::remove_dir_all(&profile);
-        }
-    });
-}
-
-/// Whether a process with this id exists and is ours (`kill -0`). One of
-/// another user holds an id a dead test process no longer does.
-fn alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-/// Whether process `pid` is a Chrome started on `profile`.
-fn runs_on(pid: u32, profile: &Path) -> bool {
-    Command::new("ps")
-        .args(["-o", "command=", "-p", &pid.to_string()])
-        .output()
-        .is_ok_and(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .contains(&format!("--user-data-dir={}", profile.display()))
-        })
-}
-
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+
+    #[test]
+    fn a_failed_start_is_given_to_every_caller_and_not_tried_again() {
+        let slot = Slot::<u32>::new();
+        let starts = Cell::new(0);
+        let start = || {
+            starts.set(starts.get() + 1);
+            Err(anyhow::anyhow!("Chrome did not report a port"))
+        };
+        for _ in 0..3 {
+            let error = slot.get(|_| true, start).unwrap_err().to_string();
+            assert!(error.contains("did not report a port"), "{error}");
+        }
+        assert_eq!(starts.get(), 1);
+    }
+
+    #[test]
+    fn one_start_serves_everyone_until_the_value_has_gone() {
+        let slot = Slot::new();
+        let first = slot.get(|_| true, || Ok(1u32)).unwrap();
+        let again = slot.get(|_| true, || Ok(2)).unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+        assert_eq!(*again, 1);
+
+        // Gone: the next caller starts a new one, and the rest share it.
+        let replaced = slot.get(|value| *value != 1, || Ok(3)).unwrap();
+        assert_eq!(*replaced, 3);
+        assert_eq!(*slot.get(|_| true, || Ok(4)).unwrap(), 3);
+    }
+
+    #[test]
+    fn callers_that_arrive_together_wait_for_the_one_start() {
+        let slot = Arc::new(Slot::new());
+        let starts = Arc::new(AtomicUsize::new(0));
+        let callers = (0..8)
+            .map(|_| {
+                let (slot, starts) = (slot.clone(), starts.clone());
+                std::thread::spawn(move || {
+                    slot.get(
+                        |_| true,
+                        || {
+                            starts.fetch_add(1, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_millis(100));
+                            Ok(7u32)
+                        },
+                    )
+                    .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        let values = callers
+            .into_iter()
+            .map(|caller| caller.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert!(values.iter().all(|value| Arc::ptr_eq(value, &values[0])));
+    }
 
     #[test]
     fn a_missing_chrome_skips_only_when_none_is_required() {

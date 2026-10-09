@@ -58,12 +58,8 @@ pub(super) async fn fall_back(
     .unwrap();
     let after = harness.settled_page_targets(before + 1).await;
     if after != before + 1 {
-        let mut connection = harness.connect().await.unwrap();
-        let listed = connection
-            .call("Target.getTargets", json!({}), None)
-            .await
-            .unwrap();
-        panic!("{before} -> {after} tabs: {listed:#}\n{result:#}");
+        let listed = harness.owned_pages().await;
+        panic!("{before} -> {after} tabs: {listed:#?}\n{result:#}");
     }
     assert_eq!(targets(&sessions, "fallback").len(), 1, "{result:#}");
     result

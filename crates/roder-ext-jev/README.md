@@ -118,7 +118,7 @@ process-wide registry keyed by thread id; a subagent's thread has its own.
   emulation, the Page domain, the quiet clock, autoconsent for later
   documents), since those end with the DevTools session. Measured under
   300 ms on the fixture page (the suite's test asserts only a 2 s ceiling,
-  since it runs many Chromes in parallel). Every page already open at that
+  since its tests run in parallel on one shared Chrome). Every page already open at that
   point is recorded as seen: a tab the user opened from Jev's tab between
   calls (a `target="_blank"` click, a page's timer) is theirs, never adopted
   as the run's tab or closed as a stray; only tabs this call's own inputs
@@ -966,9 +966,9 @@ title, visible text, the recorded form POSTs, and DOM values read from the
 final document), and a `script`: the plan a keyless decider plays, plus the
 trace that plan must produce (actions, model calls, covered and page-changed
 flags). A fixture server on `127.0.0.1:0` serves the pages and records every
-POST; Chrome is a throwaway headless instance on a temporary profile. The
-keyless tier runs tasks one at a time in one Chrome, while the live tier gives
-each task its own Chrome.
+POST; Chrome is a throwaway headless instance on a temporary profile, shared
+by the whole test process, where each task has a browser context of its own.
+The keyless tier runs tasks one at a time, while the live tier may run several.
 
 `tests/fixtures/evals/sessions.json` holds session tasks: several calls on one
 thread through the same `JevSessions::call` the tool makes, each graded on its
@@ -1213,7 +1213,7 @@ model, since they change with the seed; the model is recorded on every row.
 - `JEV_MINIWOB_MAX_STEPS` (default 25) caps decisions per episode and
   `JEV_MINIWOB_TIMEOUT_S` (default 90) caps each episode's loop.
 - `JEV_MINIWOB_CONCURRENCY` (default 4) sets how many episodes run at once;
-  each worker has its own Chrome.
+  each worker has its own browser context on the one shared Chrome.
 - `JEV_MINIWOB_DUMP=1` prints every observation's actions and text.
 
 Rows stream to `target/jev-evals/miniwob-<unix seconds>.jsonl`, one per

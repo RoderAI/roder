@@ -22,8 +22,8 @@
 //! - `JEV_MINIWOB_TASKS=a,b` narrows the run.
 //! - `JEV_MINIWOB_MAX_STEPS` (default 25) caps decisions per episode;
 //!   `JEV_MINIWOB_TIMEOUT_S` (default 90) caps each episode's loop.
-//! - `JEV_MINIWOB_CONCURRENCY` (default 4): episodes at once, each worker on
-//!   its own Chrome.
+//! - `JEV_MINIWOB_CONCURRENCY` (default 4): episodes at once, each worker in
+//!   its own browser context on the one shared Chrome.
 //!
 //! Rows stream to `target/jev-evals/miniwob-<unix seconds>.jsonl`, one per
 //! episode, and a summary is printed at the end.
@@ -171,8 +171,9 @@ impl Setup {
     }
 }
 
-/// One worker: its own Chrome, episodes off the shared queue until none
-/// remain. A setup failure gets one retry on a fresh Chrome, in case the
+/// One worker: its own browser context on the shared Chrome, episodes off
+/// the shared queue until none remain. A setup failure gets one retry in a
+/// fresh context (on a new Chrome, if the old one went), in case the
 /// browser, not the task, went wrong.
 async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec<Row> {
     let mut rows = Vec::new();
@@ -220,7 +221,7 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
                 Ok(episode) => break Row::ran(&task, seed, &label(), episode),
                 Err(error) if attempt < 2 => {
                     eprintln!(
-                        "{} seed {seed}: {error:#}; retrying on a new Chrome",
+                        "{} seed {seed}: {error:#}; retrying in a fresh browser context",
                         task.id
                     );
                     harness = None;
