@@ -296,6 +296,7 @@ mod completion_match_tests;
 mod composed_tests;
 mod consent_tests;
 mod cover_tests;
+mod decision_fallback_tests;
 mod dialog_tests;
 mod digest_tests;
 mod evals;

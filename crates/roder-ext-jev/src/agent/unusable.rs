@@ -1,17 +1,22 @@
 //! Asking the decision again when the service's reply cannot be used.
 //!
-//! The service answered, and was billed, but what it sent fails validation:
-//! an action the page never offered, probabilities that do not add up, a
-//! refusal. Live runs that ended on one passed on a rerun, so the loop asks
-//! the same decision again, at most [`ASKS_AGAIN`] times, before it gives up.
-//! A usable reply starts the count again, so replies that go wrong now and
-//! then never add up to a stop. Every unusable reply still counts in the
-//! run's usage and model calls (see `predict`), and the model-call budget
-//! still ends a run that keeps asking.
+//! The service answered, and was probably billed, but what it sent cannot be
+//! used: an action the page never offered, probabilities that do not add up,
+//! a refusal, or a body that cannot be decoded at all (after the transport's
+//! one resend). Live runs that ended on one passed on a rerun, so the loop
+//! asks the same decision again, at most [`ASKS_AGAIN`] times, before it
+//! gives up. A usable reply starts the count again, so replies that go wrong
+//! now and then never add up to a stop. Every unusable reply still counts in
+//! the run's usage and model calls (see `predict`), and the model-call
+//! budget still ends a run that keeps asking. A reply that failed validation
+//! carries the usage the service reported; one that could not be decoded
+//! carries none, so the run's token sums read `unknown` rather than a number
+//! that was never reported.
 //!
 //! Giving up ends the run `error` with [`JevStopCause::DecisionUnusable`]
-//! and says how many replies there were and why the first was unusable. It
-//! is not a reason to fall back: that policy is `fallback::trigger`'s.
+//! and says how many replies there were and why the first was unusable. This
+//! is the one `error` that falls back (see `fallback::trigger`): a frontier
+//! model with the full browser tools goes on from there.
 
 use super::*;
 use crate::session::cut;

@@ -120,13 +120,60 @@ async fn a_call_that_failed_is_not_a_reply_to_ask_again_about() {
         assert!(!UnusableAnswer::is_behind(&error), "{status:?}");
         assert_eq!(JevBilled::usage_of(&error), None);
     }
-    // A body that is not JSON is the transport's failure, retried there once.
-    let garbled = MockServer::start(vec![Reply::ok("not json")]).await;
-    let hosted = TypeSafeHttpTransport::new(&garbled.url, "sk-typesafe", fast_policy());
+    // A refused key, billing, a forbidden or rate-limited call and a server
+    // error are the provider's, not a reply to ask about again.
+    for status in [401, 402, 403, 429, 500, 503] {
+        let server = MockServer::start(vec![Reply::status(status)]).await;
+        let hosted = TypeSafeHttpTransport::new(&server.url, "sk-typesafe", fast_policy());
+        let error = choose_with(&hosted).await;
+        assert!(!UnusableAnswer::is_behind(&error), "HTTP {status}");
+        assert_eq!(JevBilled::usage_of(&error), None, "HTTP {status}");
+    }
+    // A service that cannot be reached is no reply at all.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let closed = format!("http://{}/", listener.local_addr().unwrap());
+    drop(listener);
+    let hosted = TypeSafeHttpTransport::new(&closed, "sk-typesafe", fast_policy());
     let error = choose_with(&hosted).await;
-    assert_eq!(
-        error.to_string(),
-        "Invalid TypeSafe response; no action executed."
-    );
+    assert_eq!(JevStop::status_of(&error), JevStatus::Unavailable);
     assert!(!UnusableAnswer::is_behind(&error));
+    assert_eq!(JevBilled::usage_of(&error), None);
+    // Nor is an attempt that timed out.
+    let stalled = MockServer::start(vec![Reply::Hang]).await;
+    let hosted = TypeSafeHttpTransport::new(&stalled.url, "sk-typesafe", fast_policy());
+    let error = choose_with(&hosted).await;
+    assert!(!UnusableAnswer::is_behind(&error));
+    assert_eq!(JevBilled::usage_of(&error), None);
+}
+
+/// The service answered, but its body cannot be decoded: the transport
+/// resends once (a body garbled in transit can clear), and what is left is a
+/// reply the loop may ask about again, like one that fails validation. What
+/// it was billed is not known, so its usage is empty, never invented.
+#[tokio::test]
+async fn a_body_that_cannot_be_decoded_is_an_unusable_reply_of_unknown_usage() {
+    for body in ["not json", "<html>bad gateway</html>", ""] {
+        let garbled = MockServer::start(vec![Reply::ok(body)]).await;
+        let hosted = TypeSafeHttpTransport::new(&garbled.url, "sk-typesafe", fast_policy());
+        let error = choose_with(&hosted).await;
+        assert!(UnusableAnswer::is_behind(&error), "{body:?}");
+        // Unknown, not zero: an empty usage reads as "unknown" in the sums.
+        assert_eq!(JevBilled::usage_of(&error), Some(&json!({})), "{body:?}");
+        // Marked, not changed: the same message, the same status, and the
+        // transport's one resend kept.
+        assert_eq!(
+            error.to_string(),
+            "Invalid TypeSafe response; no action executed."
+        );
+        assert_eq!(JevStop::status_of(&error), JevStatus::Error);
+        assert_eq!(garbled.hits(), 2, "{body:?}");
+    }
+    // A garbled body that clears on the resend is not an error at all.
+    let clears =
+        MockServer::start(vec![Reply::ok("not json"), Reply::ok(r#"{"answers":{}}"#)]).await;
+    let hosted = TypeSafeHttpTransport::new(&clears.url, "sk-typesafe", fast_policy());
+    assert_eq!(
+        hosted.decide(&json!({})).await.unwrap(),
+        json!({"answers": {}})
+    );
 }

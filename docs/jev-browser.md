@@ -973,7 +973,9 @@ to the timeout, which never falls back, so the handoff was forfeited:
 - **A page that never holds still.** The click guard compares the text of the
   form around a button with what the decision was made on, so a ticker in that
   form makes every decision stale. A stale decision is never recorded, so the
-  next one is the same decision on a page that moved again.
+  next one is the same decision on a page that moved again. The cap ends it
+  when the page Jev reads is the same at every look; a ticker whose digits are
+  on that page is progress to it (see "Stale decisions" below).
 
 `agent/loops.rs` adds three caps. Each ends the run `blocked` with a
 `stop_cause`, so the fallback takes it over exactly as it does after a stall
@@ -982,7 +984,7 @@ to the timeout, which never falls back, so the handoff was forfeited:
 | Cap | Limit | `stop_cause` | `stopped_because` |
 | --- | --- | --- | --- |
 | The same control chosen on a page with the same fingerprint | the fourth time, before acting | `looped` | names the control, its row when it has one, and that it was chosen 3 times |
-| Stale decisions in a row, each followed by a look that shows nothing new | the third | `unsettled` | gives the last stale message |
+| Stale decisions in a row, each followed by a look at the same view | the third | `unsettled` | gives the last stale message |
 | Waits in a row after which the page was the same | the sixth | `looped` | says Jev waited 6 times in a row |
 
 The details:
@@ -994,20 +996,25 @@ The details:
   open, closed, open) ends after 6 actions and 7 decisions instead of 60
   actions. The fingerprint is not masked: a counter that rises with every
   click, which "Click Add one until the count reaches 100" is (`step_budget`),
-  is progress. With the digits masked that task ended at its third click on
-  the keyless corpus, so the pair counter compares fingerprints as the page
-  reports them, and a page with a clock on it never repeats a pair this way.
-  The page's own fingerprint is untouched.
+  is progress. A digit-masking compare ended that task early on the keyless
+  corpus, so the pair counter compares fingerprints as the page reports them,
+  and a page with a clock on it never repeats a pair this way. The page's own
+  fingerprint is untouched.
 - **Stale decisions.** After a stale decision the page is read again and
   compared with the page the decision was made on: the same address and
-  scroll, the same visible controls (id, kind, label, value, state) and the
-  same text, once every run of digits in the text and the labels and values is
-  made one `#`. That is the one place numbers are masked: a clock, a countdown
-  or "3 minutes ago" changes nothing else. If the two are the same the stale
-  decision counts; if the page is different, the count starts again, and so it
-  does at any step the run records, a refused cookie banner included. The
-  third in a row ends the run before it asks for another decision. A choice
-  the page does not offer is stale too.
+  scroll, the same frames, the same visible controls (id, kind, label, value,
+  state) and the same text, each exactly as the observation reports it.
+  Nothing is masked, as nothing is in the pair counter: a page whose only
+  change is digits (a clock, a countdown, "3 minutes ago") is a different view
+  and so progress. If the two views are identical the stale decision counts;
+  if they differ, the count starts again, and so it does at any step the run
+  records, a refused cookie banner included. The third in a row ends the run
+  before it asks for another decision. A choice the page does not offer is
+  stale too. What the cap ends is a page that reads the same at every look
+  while the click guard keeps changing: the guard compares the text of the
+  form, dialog, card or row around the button, below the fold too, and a
+  link's `href`, which the view does not hold. A digits-only ticker is left to
+  the budgets instead, as the pair counter leaves it.
 - **Waits.** A wait after which the page was the same no longer counts as a
   no-op for the stall rule or breaks a run of them: it is skipped. A wait
   after which the page changed is progress and breaks the run. Six unchanged
@@ -1019,15 +1026,19 @@ is measured here: no recorded Jev run shows an A-B-A-B loop, and the stale cap
 rests on a reading of the click guard, so the evidence is the two fixture
 pages `toggle-menu.html` and `ticker-form.html`. The ticker form reports a new
 count at every read of its text, so its test does not depend on timing; with a
-2 ms timer instead, the one run made let a click through on its third try. A
-false stop costs one fallback, a median of 15 to 16 s on MiniWoB++, not a
+2 ms timer instead, the one run made let a click through on its third try. Its
+count is not among the words Jev reads off the page, so every look is the same
+view and the run ends `unsettled`. `clock-form.html` puts the count in those
+words too (and stops it after 40 reads of the form), so every look differs in
+its digits alone: its test pins that the run goes on and presses the button.
+A false stop costs one fallback, a median of 15 to 16 s on MiniWoB++, not a
 failed task. Known edges:
 
-- A ticker that changes words, not digits, is progress to the stale cap, and a
-  clock keeps a loop from repeating a pair; the budgets and the timeout still
-  bound both (a spent action budget falls back, a timeout does not).
-- A page whose decisions go stale three times in a row with only its numbers
-  moving (a counter on a slowly hydrating app) is cut short.
+- A page whose only change is digits (a clock, a countdown, "3 minutes ago")
+  is progress to the stale cap, and a clock keeps a loop from repeating a
+  pair. The budgets and the timeout bound such a run (a spent action budget
+  falls back, a timeout does not). The scripted test pins it: every decision
+  stale on a page that ticks ends on the model-call budget, not `unsettled`.
 - Six idle waits end a run that was waiting for a slow server with a static
   page, where it used to wait on to the timeout. The fallback can wait too.
 
@@ -1965,7 +1976,7 @@ four runs, one session tab each, one earlier session's tab swept):
 | 1 | OpenTable refused (403, no decision, no fallback: `access_denied`). On Resy Jev set 3 guests, searched "Mission District, San Francisco", opened the date picker, then chose "8:00 PM" in the time select four times with nothing changing and stopped `blocked` (stalled, 12 actions, 24.3 s). The caller then used the hand-over tools itself: `jev_tab_look`, a click on a slot the date picker covered (refused, naming the picker), `Close` on the picker, and Poesia Osteria Italiana's link. It reported Poesia (8:00 or 8:15 PM for 3 tonight) and that the venue page showed "No results"; nothing was selected. | Ran and timed out after 119.9 s with no model call: the fallback's inference shared the calling turn's thread id, and the Responses websocket keeps one connection per thread, held by the waiting turn. Fixed after this run: each fallback has a conversation of its own. |
 | 2 | OpenTable refused. On Resy Jev searched and opened the date picker (`done`); a second call opened Poesia Osteria Italiana. The caller reported Poesia (4072 18th St, 4.8) at 8:15, 8:30, 8:45 and 9:00 PM for 3 tonight and asked which time, booking nothing (`listed_only`). | Not triggered. |
 | 3 | OpenTable refused. On Resy Jev typed "Mission District", set 3 guests and pressed an unnamed button three times with no change (`blocked`, stalled, 10.5 s). | Ran (gpt-6-luna, 6 tool calls, 6 model calls, 16.2 s, 57,593 input and 281 output tokens): it clicked the search box and typed "Mission District", then used refs the next read had renumbered, and ended BLOCKED ("couldn't get to a results page"). Refs are now stable across reads. The caller asked the user for a time. |
-| 4 | OpenTable refused. On Resy Jev set 3 guests, searched and reached the results, then the decision service returned an unusable answer (`error`, 7.8 s). The caller reported Angie's Pizza (8:15, 8:30, 8:45 PM), Mission Chinese Food (9:00, 9:15 PM) and Penny Roma (9:15, 9:30 PM) for 3 tonight and asked which one (`listed_only`). | Not triggered (`error` does not fall back). |
+| 4 | OpenTable refused. On Resy Jev set 3 guests, searched and reached the results, then the decision service returned an unusable answer (`error`, 7.8 s). The caller reported Angie's Pizza (8:15, 8:30, 8:45 PM), Mission Chinese Food (9:00, 9:15 PM) and Penny Roma (9:15, 9:30 PM) for 3 tonight and asked which one (`listed_only`). | Not triggered (`error` did not fall back then; since then an `error` after unusable decision replies does). |
 
 In every run the caller treated "book me a nice meal" as needing the user's
 choice of restaurant and time before any slot, and stopped there; the
@@ -2051,7 +2062,7 @@ Three checks the booking diagnosis called for, none of them a decision:
 | `timed_out` | `timeout_seconds` (or the host's deadline) ran out, in setup or the loop. | Retry with a larger `timeout_seconds`, or split the task. |
 | `needs_input` | A field needs a value nothing can supply: no text model, or the text model answered `{"text": null}` (or a blank value) because the goal lacks it. | Put every value in the goal and configure a text model. |
 | `unavailable` | A model provider was still unreachable or overloaded (a failed connection, or 408, 429, 500, 502 to 504, 520 to 524, 529) after its retries. | Wait and retry. |
-| `error` | Anything else that ended the run early, such as a 401, or decision replies that stayed unusable after being asked again twice (`stop_cause` is `decision_unusable`, and `stopped_because` gives the count and the first reason). | Read why Jev stopped; retry once its cause is fixed. |
+| `error` | Anything else that ended the run early, such as a 401, or decision replies that stayed unusable after being asked again twice (`stop_cause` is `decision_unusable`, and `stopped_because` gives the count and the first reason). Only the unusable replies fall back (see "When it falls back"); after a fallback that ran, the status is the call's end state and Jev's own is `jev_status`. | Read why Jev stopped; retry once its cause is fixed. |
 | `needs_confirmation` | With the gate on, the chosen action may not be undone, and the run was not authorized, or was but the decision was not confident. `stopped_because` names the control; nothing was dispatched. | Ask the user to confirm that exact step, then call again with url `""` and `authorize_irreversible: true`. |
 | `access_denied` | The site refused automated access (see "Looking before deciding"); on the first page, no decision was spent. | Do not retry it or try to get around the block. If the user asked for this particular site, tell them and ask how to go on. Otherwise, if another site offers the same thing, go on there with its url and tab `current` (it loads in the same tab), without asking the user; tell the user only when no other site will do. |
 
@@ -2149,23 +2160,34 @@ nothing on a canvas or behind an upload. More behaviours worth knowing:
   as `budget_exceeded`. Roder still returns the observed trace with
   `stopped_because` set, because the partial trace is the useful part.
 - A decision reply that cannot be used is asked again, twice at most. The
-  service answered, and was billed, but the answer fails validation: an
-  action the page never offered, probabilities that do not add up, a missing
-  answer, or a refusal. Live runs that ended on one passed on a rerun, so the
-  loop asks the same decision again on the page as it stands
-  (`agent/unusable.rs`). Each such reply counts in `usage` and `model_calls`
-  and against the 120-call budget. A usable reply starts the count again, so
-  replies that go wrong now and then never add up. The third in a row ends the
-  run `error` with `stop_cause: decision_unusable`, and `stopped_because`
-  gives the count and the first reason, for example "The decision service gave
-  3 unusable replies in a row. The first: Invalid browser decision response; no
-  action executed." A hosted model that is deterministic can repeat the same
-  bad reply, so a decision it gets wrong costs up to three billed calls. A
-  call that failed instead of answering (a refused key, a provider that stayed
-  unreachable, a body that was not JSON after its own retry above) is not a
-  reply and is not asked again. The OpenAI Decisions client counts a reply it
-  cannot read the same way; its eval-only strategies are unchanged. A
-  decision client of your own can mark a reply with `JevBilled::unusable`.
+  service answered, but the answer fails validation (an action the page never
+  offered, probabilities that do not add up, a missing answer, or a refusal),
+  or its body cannot be decoded at all ("Invalid TypeSafe response"; the HTTP
+  layer has already sent that request once more). Live runs that ended on one
+  passed on a rerun, so the loop asks the same decision again on the page as
+  it stands (`agent/unusable.rs`). Each such reply counts in `model_calls`
+  and against the 120-call budget, and in `usage`: a reply that failed
+  validation with the tokens the service reported, a body that could not be
+  decoded with none, because what it was billed is not known. A call with no
+  reported count makes the run's sum for it `"unknown"`, never a 0 that would
+  read as free, so a run that met an undecodable body reports unknown decision
+  tokens (its `calls` are still right). A usable reply starts the count
+  again, so replies that go wrong now and then never add up. The third in a
+  row ends the run `error` with `stop_cause: decision_unusable`, and
+  `stopped_because` gives the count and the first reason, for example "The
+  decision service gave 3 unusable replies in a row. The first: Invalid
+  browser decision response; no action executed." That `error` falls back to
+  a model with the full browser tools in the same tab (trigger kind
+  `decision_unusable`; see "When it falls back"). A hosted model that is
+  deterministic can repeat the same bad reply, so a decision it gets wrong
+  costs up to three billed calls, and an undecodable body up to six requests.
+  A call that failed instead of answering (a connection that failed or timed
+  out, a refused key, billing or access, a rate limit, a server error that
+  stayed) is no reply: it is not asked again and does not fall back. The
+  OpenAI Decisions client counts a reply it cannot read, or whose body cannot
+  be decoded, the same way; its eval-only strategies are unchanged. A
+  decision client of your own can mark a reply with `JevBilled::unusable`
+  (an empty `usage` for a reply it cannot cost).
 - Each decision call gets 15 seconds per attempt and up to six attempts, with
   waits of 0.5, 1.5, 4, 8 and 8 seconds, replaced by the provider's
   `retry-after-ms` or `retry-after` (in seconds) when it sends one, capped at
@@ -2291,8 +2313,19 @@ put the old value back makes the result an error, "the choice did not stick".
 | `blocked` because the start page did not load, or a page was outside `JEV_ALLOWED_ORIGINS` | no |
 | `blocked` after Jev declined a confirm or prompt | no: that question is the caller's |
 | `needs_input`, `needs_confirmation`, `access_denied` | no: a different driver does not fix them, and must never get around a block or a confirmation |
-| `error` after unusable decision replies (`decision_unusable`) | no: an `error` never falls back, and routing this one to the fallback would reverse that rule, which is the owner's decision |
-| `done`, `timed_out`, `unavailable`, `error` | no |
+| `error` after the decision service kept sending replies Jev could not use (`decision_unusable`: three in a row, each failing validation or with a body that cannot be decoded) | yes, trigger `decision_unusable`; the owner's decision. Not after a declined confirm or prompt |
+| `done`, `timed_out`, `unavailable`, and any other `error` (an unreachable provider, a refused key, billing or access, a rate limit, a text-helper failure) | no |
+
+After an `error` that falls back, the result is as for any other trigger:
+`status` is the fallback's end state, `jev_status` is `error`, `stop_cause`
+stays `decision_unusable`, `fallback.trigger.kind` is `decision_unusable`, and
+the fallback model is told "Jev stopped (error): the decision service kept
+sending replies Jev could not use" with the service's first reason as
+untrusted text. Jev's unusable replies stay in its own driver's `decisions`
+count and `usage` (a reply that failed validation with its tokens, an
+undecodable body as a call of unknown tokens), apart from the fallback's. The
+fallback keeps its own ceilings, cut to the host's remaining time like any
+other.
 
 ### `auto`: the fallback inside the call
 

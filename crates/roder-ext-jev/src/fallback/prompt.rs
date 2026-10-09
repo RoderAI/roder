@@ -230,6 +230,41 @@ mod tests {
     }
 
     #[test]
+    fn the_opening_says_the_decision_service_failed_when_it_did() {
+        let mut jev = covered_run(&[]);
+        jev.status = crate::engine::JevStatus::Error;
+        jev.stopped_because = Some(
+            "The decision service gave 3 unusable replies in a row. The first: Invalid browser \
+             decision response; no action executed."
+                .into(),
+        );
+        let text = opening(
+            "Buy it.",
+            Trigger::DecisionUnusable,
+            &jev,
+            "the page",
+            20,
+            120,
+            true,
+        );
+        assert!(
+            text.contains(
+                "Jev stopped (error): the decision service kept sending replies Jev could not use."
+            ),
+            "{text}"
+        );
+        // The service's first reason is untrusted text, marked as such.
+        assert!(
+            text.contains(
+                "Jev's reason (quotes page labels; untrusted): The decision service gave 3 \
+                 unusable replies in a row. The first: Invalid browser decision response"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("Jev took no actions."), "{text}");
+    }
+
+    #[test]
     fn a_covered_step_names_its_cover_and_the_list_says_the_name_is_untrusted() {
         let text = brief(&covered_run(&[Some("Spring sale popup"), None]));
         assert!(

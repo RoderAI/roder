@@ -3,19 +3,26 @@
 //! changed nothing, its targets stayed covered, it answered DONE after a
 //! covered attempt, it went round in circles (the same control a fourth time
 //! on the same page, or six waits that changed nothing), or the page never
-//! held still for it; the page offered nothing Jev can act on; or its budget
-//! ran out short of the goal.
+//! held still for it; the page offered nothing Jev can act on; its budget
+//! ran out short of the goal; or its decision service kept sending replies
+//! Jev could not use.
+//!
+//! That last one is the only `error` that falls back. The service answered
+//! and was billed, but its replies failed validation or could not be
+//! decoded, even after Jev asked again twice
+//! ([`JevStopCause::DecisionUnusable`]); a frontier model with the full
+//! browser tools may finish what Jev's decision service could not decide.
+//! The owner decided so. It is the cause that routes, never the status alone,
+//! so every other `error` stays a stop.
 //!
 //! Never when a different driver does not fix the cause, and never as a way
 //! around a stop that protects the user: `needs_input` (a value the goal
 //! lacks), `needs_confirmation` (the irreversible-action gate),
 //! `access_denied` (a bot wall, a CAPTCHA, a refusal), a page that did not
 //! load, a page outside the allowed origins, a confirm or prompt Jev
-//! declined, a provider that could not be reached, an error, or a timeout
-//! that has spent the call's time. An error includes a decision service
-//! whose replies stayed unusable after being asked again
-//! ([`JevStopCause::DecisionUnusable`]): whether that should fall back is a
-//! product decision that has not been made, so it does not.
+//! declined, a provider that could not be reached, a key, billing or other
+//! HTTP refusal, any other error, or a timeout that has spent the call's
+//! time.
 
 use serde::Serialize;
 use serde_json::json;
@@ -46,6 +53,9 @@ pub(crate) enum Trigger {
     NothingToActOn,
     /// The action or model-call budget ran out.
     Budget,
+    /// The decision service kept sending replies Jev could not use (the
+    /// run ended `error` after asking again twice).
+    DecisionUnusable,
 }
 
 impl Trigger {
@@ -71,6 +81,7 @@ impl Trigger {
                  hover-only menus or coordinates)"
             }
             Self::Budget => "Jev ran out of its action budget short of the goal",
+            Self::DecisionUnusable => "the decision service kept sending replies Jev could not use",
         }
     }
 }
@@ -99,9 +110,14 @@ pub(crate) fn trigger(result: &JevRunResult) -> Option<Trigger> {
         JevStatus::BudgetExceeded if result.stop_cause == Some(JevStopCause::Budget) => {
             Some(Trigger::Budget)
         }
-        // Replies the decision service kept getting wrong end the run `error`
-        // and, for now, there: an error never falls back.
-        JevStatus::Error if result.stop_cause == Some(JevStopCause::DecisionUnusable) => None,
+        // The decision service kept sending replies Jev could not use. A
+        // dialog Jev declined is still the caller's to answer, as above.
+        JevStatus::Error if result.stop_cause == Some(JevStopCause::DecisionUnusable) => {
+            match declined_a_dialog(result) {
+                true => None,
+                false => Some(Trigger::DecisionUnusable),
+            }
+        }
         _ => None,
     }
 }
@@ -183,25 +199,23 @@ mod tests {
             );
             assert_eq!(trigger(&run(status, None, 5)), None, "{status:?}");
         }
-        for cause in [
-            C::OutsideScope,
-            C::NotLoaded,
-            C::Stopped,
-            C::Budget,
-            C::DecisionUnusable,
-        ] {
+        for cause in [C::OutsideScope, C::NotLoaded, C::Stopped, C::Budget] {
             assert_eq!(
                 trigger(&run(JevStatus::Blocked, Some(cause), 5)),
                 None,
                 "{cause:?}"
             );
         }
-        // Unusable replies from the decision service end the run `error`,
-        // and nothing falls back after an error.
-        assert_eq!(
-            trigger(&run(JevStatus::Error, Some(C::DecisionUnusable), 40)),
-            None
-        );
+        // An error that is not unusable replies (a provider that could not be
+        // reached, a key or billing refusal, anything without that cause)
+        // never falls back, whatever else the run did.
+        for cause in [None, Some(C::Stopped), Some(C::Budget)] {
+            assert_eq!(
+                trigger(&run(JevStatus::Error, cause, 40)),
+                None,
+                "{cause:?}"
+            );
+        }
         // A budget status an embedder or harness chose is not Jev's budget.
         assert_eq!(
             trigger(&run(JevStatus::BudgetExceeded, Some(C::Stopped), 5)),
@@ -268,5 +282,55 @@ mod tests {
             recorded(Trigger::Unsettled)["kind"],
             serde_json::json!("unsettled")
         );
+    }
+
+    #[test]
+    fn an_error_after_unusable_replies_falls_back() {
+        let error = |elements| {
+            run(
+                JevStatus::Error,
+                Some(JevStopCause::DecisionUnusable),
+                elements,
+            )
+        };
+        assert_eq!(trigger(&error(40)), Some(Trigger::DecisionUnusable));
+        // The cause is the service's, not the page's: a page with nothing on
+        // it is still the service's failure.
+        assert_eq!(trigger(&error(0)), Some(Trigger::DecisionUnusable));
+        assert_eq!(
+            recorded(Trigger::DecisionUnusable),
+            serde_json::json!({
+                "kind": "decision_unusable",
+                "why": "the decision service kept sending replies Jev could not use",
+            })
+        );
+        // Only an error ends this way: the same cause on another status is
+        // not the exhausted-asks stop.
+        for status in [
+            JevStatus::Done,
+            JevStatus::TimedOut,
+            JevStatus::Unavailable,
+            JevStatus::BudgetExceeded,
+            JevStatus::NeedsInput,
+            JevStatus::NeedsConfirmation,
+            JevStatus::AccessDenied,
+        ] {
+            let result = run(status, Some(JevStopCause::DecisionUnusable), 40);
+            assert_eq!(trigger(&result), None, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn a_declined_confirm_stops_the_fallback_after_unusable_replies_too() {
+        let mut result = run(JevStatus::Error, Some(JevStopCause::DecisionUnusable), 5);
+        assert!(trigger(&result).is_some());
+        let mut record = crate::engine::JevActionRecord::for_tests("click", "Delete");
+        record.dialogs = vec![JevDialog {
+            kind: "confirm".into(),
+            message: "Delete?".into(),
+            accepted: false,
+        }];
+        result.actions.push(record);
+        assert_eq!(trigger(&result), None);
     }
 }

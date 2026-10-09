@@ -3,12 +3,14 @@
 <head><meta charset="utf-8"><title>Renew session</title></head>
 <body>
   <h1>Renew your session</h1>
-  <!-- A ticker inside the form. The click guard compares the text of the
-       form around a button (its scope) with what the decision was made on,
-       so a ticker in it makes the button stale at every look and only its
-       digits ever differ. The form reports a new count at every read, as a
-       ticker faster than any look does, so the outcome never depends on
-       timing. -->
+  <!-- A ticker inside the form that the page's words do not show. The click
+       guard compares the text of the form around a button (its scope) with
+       what the decision was made on, so a ticker in it makes the button
+       stale at every look; the words Jev reads off the page, and the
+       controls, are the same at every look. The form reports a new count at
+       every read, as a ticker faster than any look does, so the outcome
+       never depends on timing. (clock-form.html has the count in the words
+       too.) -->
   <form id="renew-form" onsubmit="return false">
     <p>This session has been open for a while.</p>
     <button type="button" id="renew">Renew</button>

@@ -15,19 +15,25 @@
 //!   in a row with nothing changing are the stall rule's, which fires first.
 //!   The fingerprint is compared as the page reports it, digits and all: a
 //!   counter that rises with every click is progress (the corpus's
-//!   `step_budget` is that), and masking the numbers would end it at the
-//!   fourth click. So a page with a clock on it never repeats a pair, and is
-//!   left to the budgets.
+//!   `step_budget` is that). So a page with a clock on it never repeats a
+//!   pair, and is left to the budgets.
 //! - **Three stale decisions in a row** ([`STALE_LIMIT`]). A decision goes
 //!   stale when the page moved under it, and nothing is recorded, so the next
-//!   decision is the same one on a page that moved again: an on-screen ticker
-//!   in the form being filled does it at every look. When the page read
+//!   decision is the same one on a page that moved again. When the page read
 //!   after the third shows nothing new, the run ends
-//!   [`JevStopCause::Unsettled`]. Nothing new means the page is the same but
-//!   for its digits ([`settled_view`]), the one place numbers are masked:
-//!   they are all a ticker changes. A stale decision that leaves a different
-//!   page is progress and starts the count again, and so does any step
-//!   recorded in between.
+//!   [`JevStopCause::Unsettled`]. Nothing new means the same view, compared
+//!   exactly as the observation reports it ([`settled_view`]): its address,
+//!   scroll, text, frames and the visible controls' states, labels and
+//!   values. No number is masked, as none is in the pair counter. A stale
+//!   decision that leaves a different view is progress and starts the count
+//!   again, and so does any step recorded in between. The cap therefore ends
+//!   a run whose decisions go stale on a page that reads the same each time,
+//!   such as a control whose guard changes (the text of its form below the
+//!   fold, or a link's `href`) while nothing in the view does. A page whose
+//!   only change is digits in what the view holds, a clock or a countdown or
+//!   "3 minutes ago", counts as progress here: such a run is left to the
+//!   60-action and 120-call budgets and the timeout, which does not fall
+//!   back, exactly as the pair counter leaves it.
 //! - **Six waits in a row that changed nothing** ([`WAIT_LIMIT`]). Such a
 //!   wait is also invisible to the stall rule: it neither counts as a no-op
 //!   nor breaks a run of them, so `click, wait, click, wait, click` with
@@ -158,7 +164,7 @@ impl Agent {
     /// After a decision went stale and the page was read again: the stop to
     /// end the run with, when it is the [`STALE_LIMIT`]th in a row that left
     /// nothing new on the page. `no_progress` is whether the page read again
-    /// is the one the decision was made on, but for its digits.
+    /// is the view the decision was made on, exactly.
     pub(super) fn after_stale(
         &mut self,
         stale: &anyhow::Error,
@@ -197,19 +203,19 @@ impl Agent {
     }
 }
 
-/// The page as the stale-decision cap reads it: its address and scroll as
-/// they are, and its text and the visible controls' labels and values with
-/// every run of digits made one `#`. A clock, a countdown or a "3 minutes
-/// ago" changes only digits, so two looks that differ in nothing else are the
-/// same page. Offscreen controls and the `context` and `section` naming each
-/// one are left out, as the fingerprint leaves them.
+/// The page as the stale-decision cap reads it: its address and scroll, its
+/// text, and each visible control's id, kind, state, label and value, all
+/// exactly as the observation reports them. Nothing is masked: a clock, a
+/// countdown or a "3 minutes ago" changes the view like any other word.
+/// Offscreen controls and the `context` and `section` naming each one are
+/// left out, as the fingerprint leaves them.
 pub(super) fn settled_view(observation: &Value) -> String {
     let mut view = String::new();
     for key in ["url", "scroll"] {
         view.push_str(&observation[key].to_string());
         view.push('\n');
     }
-    mask_digits(observation["text"].as_str().unwrap_or_default(), &mut view);
+    view.push_str(observation["text"].as_str().unwrap_or_default());
     let actions = observation["actions"].as_array().into_iter().flatten();
     for action in actions.filter(|action| action["offscreen"] != json!(true)) {
         view.push('\n');
@@ -218,7 +224,7 @@ pub(super) fn settled_view(observation: &Value) -> String {
             view.push('|');
         }
         for key in ["label", "value", "current_value"] {
-            mask_digits(action[key].as_str().unwrap_or_default(), &mut view);
+            view.push_str(action[key].as_str().unwrap_or_default());
             view.push('|');
         }
     }
@@ -227,24 +233,6 @@ pub(super) fn settled_view(observation: &Value) -> String {
         view.push_str(frame["origin"].as_str().unwrap_or_default());
     }
     view
-}
-
-/// `text` onto `out`, each run of digits as a single `#`.
-fn mask_digits(text: &str, out: &mut String) {
-    let mut digits = false;
-    for c in text.chars() {
-        match (c.is_numeric(), digits) {
-            (true, true) => {}
-            (true, false) => {
-                out.push('#');
-                digits = true;
-            }
-            (false, _) => {
-                out.push(c);
-                digits = false;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -259,24 +247,58 @@ mod tests {
     }
 
     #[test]
-    fn digits_are_masked_in_text_and_labels_and_nowhere_else() {
+    fn looks_that_differ_only_in_digits_are_different_views() {
         let ticking = |n: u32| page(&format!("Session ends in {n}s"), &format!("Renew ({n}s)"));
-        assert_eq!(settled_view(&ticking(59)), settled_view(&ticking(1203)));
-        // A word is progress, and so is a different address or scroll.
+        // The same look twice is one view; the same words with other numbers
+        // are another, however long the number or short the change.
+        assert_eq!(settled_view(&ticking(59)), settled_view(&ticking(59)));
+        assert_ne!(settled_view(&ticking(59)), settled_view(&ticking(58)));
+        assert_ne!(settled_view(&ticking(59)), settled_view(&ticking(1203)));
+        // Digits in the text alone, in a label alone, and in a field's value
+        // or the option a select shows alone.
+        let still = ticking(59);
+        let mut text = ticking(59);
+        text["text"] = json!("Session ends in 58s");
+        assert_ne!(settled_view(&text), settled_view(&still));
+        let mut label = ticking(59);
+        label["actions"][0]["label"] = json!("Renew (58s)");
+        assert_ne!(settled_view(&label), settled_view(&still));
+        let mut value = ticking(59);
+        value["actions"][0]["value"] = json!("code 41");
+        assert_ne!(settled_view(&value), settled_view(&still));
+        let mut shown = ticking(59);
+        shown["actions"][0]["current_value"] = json!("Page 2 of 9");
+        assert_ne!(settled_view(&shown), settled_view(&still));
+        // Digits of other scripts count as the characters they are, too.
+        let mut arabic = ticking(59);
+        arabic["text"] = json!("Session ends in \u{661}\u{662}s");
+        assert_ne!(settled_view(&arabic), settled_view(&still));
+    }
+
+    #[test]
+    fn a_different_word_address_scroll_or_control_is_a_different_view() {
+        let still = page("Session ended", "Renew");
         assert_ne!(
-            settled_view(&page("Session ended", "Renew")),
-            settled_view(&ticking(59))
+            settled_view(&page("Session over", "Renew")),
+            settled_view(&still)
         );
-        let mut moved = ticking(59);
+        assert_ne!(
+            settled_view(&page("Session ended", "Extend")),
+            settled_view(&still)
+        );
+        let mut moved = page("Session ended", "Renew");
         moved["url"] = json!("https://a.test/2");
-        assert_ne!(settled_view(&moved), settled_view(&ticking(59)));
-        let mut scrolled = ticking(59);
+        assert_ne!(settled_view(&moved), settled_view(&still));
+        let mut scrolled = page("Session ended", "Renew");
         scrolled["scroll"] = json!({"y": 560});
-        assert_ne!(settled_view(&scrolled), settled_view(&ticking(59)));
-        // Controls count by id and kind as they are.
-        let mut renamed = ticking(59);
+        assert_ne!(settled_view(&scrolled), settled_view(&still));
+        // Controls count by id, kind and state as they are.
+        let mut renamed = page("Session ended", "Renew");
         renamed["actions"][0]["id"] = json!("e2");
-        assert_ne!(settled_view(&renamed), settled_view(&ticking(59)));
+        assert_ne!(settled_view(&renamed), settled_view(&still));
+        let mut ticked = page("Session ended", "Renew");
+        ticked["actions"][0]["checked"] = json!(true);
+        assert_ne!(settled_view(&ticked), settled_view(&still));
     }
 
     #[test]

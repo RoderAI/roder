@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Renew session, with a clock</title></head>
+<body>
+  <h1>Renew your session</h1>
+  <!-- A clock inside the form, whose digits are all that ever change. Like
+       ticker-form.html it reports a new count whenever the click guard reads
+       the form's text, so the button is stale at every look; unlike it, the
+       count is also in the words on the page, so every look differs from the
+       one before in its digits. The count stops after 40 guard reads (a
+       clock that is fast, then holds), so a run that is not ended early
+       goes on to press the button. -->
+  <form id="renew-form" onsubmit="return false">
+    <p id="clock">Session ends in 0s</p>
+    <button type="button" id="renew">Renew</button>
+  </form>
+  <script>
+    window.renewed = 0;
+    document.getElementById('renew').addEventListener('click', () => { window.renewed += 1; });
+    let reads = 0;
+    const form = document.getElementById('renew-form');
+    Object.defineProperty(form, 'innerText', {
+      get() { reads = Math.min(reads + 1, 40); return `Session ends in ${reads}s\nRenew`; },
+    });
+    Object.defineProperty(document.getElementById('clock').firstChild, 'textContent', {
+      get() { return `Session ends in ${reads}s`; },
+    });
+  </script>
+</body>
+</html>

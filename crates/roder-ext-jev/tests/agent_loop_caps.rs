@@ -9,8 +9,8 @@
 //! stall does:
 //!
 //! - the fourth identical (page, control) pair is `looped`;
-//! - three stale decisions in a row, each leaving nothing new on the page, are
-//!   `unsettled`; and
+//! - three stale decisions in a row, each leaving nothing new on the page
+//!   (the same view, compared exactly), are `unsettled`; and
 //! - six waits in a row that changed nothing are `looped`, and an unchanged
 //!   wait no longer hides a stall.
 
@@ -51,9 +51,15 @@ fn menu_choices(len: usize) -> Vec<&'static str> {
         .collect()
 }
 
-/// A page whose only change is a digit, as a clock or a countdown changes it.
+/// A page whose only change is a digit in its text, as a clock or a
+/// countdown changes it.
 fn ticking(n: usize) -> Value {
     page(&format!("tick-{n}"), &[("go", "click")])
+}
+
+/// A page whose only change is a digit in a control's label.
+fn counting_label(n: usize) -> Value {
+    labelled_page("counting", &[("go", "click", &format!("Renew ({n}s)"))])
 }
 
 /// `fresh()` answers for a page that goes stale at every decision: the
@@ -228,13 +234,14 @@ async fn an_unchanged_wait_does_not_hide_a_stall() {
 }
 
 #[tokio::test]
-async fn a_page_that_never_holds_still_ends_unsettled_within_three_decisions() {
-    // An on-screen ticker inside the form being filled: every look at the page
-    // differs by a digit, the click's guard no longer matches, and the
-    // decision goes stale. Nothing is recorded, so it used to go on until the
-    // 120-call budget (or the timeout, which does not fall back).
-    let pages = (0..200).map(ticking).collect();
-    let browser = ScriptedBrowser::new(pages).with_fresh(&always_stale());
+async fn a_page_whose_view_never_changes_ends_unsettled_within_three_decisions() {
+    // The click's guard no longer matches at any look (a ticker inside the
+    // form around the button, say), the decision goes stale each time, and
+    // the page read again is the page it was made on. Nothing is recorded,
+    // so it used to go on until the 120-call budget (or the timeout, which
+    // does not fall back).
+    let browser =
+        ScriptedBrowser::new(vec![page("same", &[("go", "click")])]).with_fresh(&always_stale());
     let browser_log = browser.log();
 
     let result = run(browser, ScriptedDecider::new(&["DONE"])).await;
@@ -260,20 +267,63 @@ async fn a_page_that_never_holds_still_ends_unsettled_within_three_decisions() {
     );
 }
 
+/// The model-call budget of a run limited to five actions.
+const TEN_CALLS: usize = 10;
+
+/// Run `browser` with the model-call budget at [`TEN_CALLS`]. Pages are
+/// compared exactly, so one that differs only in digits is a page that moved
+/// and a run on it is left to the budgets, as the pair counter leaves it (see
+/// `pages_that_only_change_in_their_numbers_are_progress_to_the_pair_counter`).
+async fn run_to_the_budget(browser: ScriptedBrowser) -> (JevRunResult, usize) {
+    let browser_log = browser.log();
+    let config = JevEngineConfig::new("Scripted goal", Arc::new(ScriptedDecider::new(&["DONE"])))
+        .with_wait(Duration::ZERO)
+        .with_max_actions(TEN_CALLS / 2);
+    let mut engine = JevEngine::start(Box::new(browser), config).await.unwrap();
+    let result = engine.run(RUN_TIMEOUT).await;
+    let acts = browser_log.lock().unwrap().acts.len();
+    (result, acts)
+}
+
+#[tokio::test]
+async fn a_page_that_changes_only_in_its_digits_is_left_to_the_budgets() {
+    // An on-screen ticker: every look differs by a digit in the page's text,
+    // and each decision goes stale. That is a page that moved, not one that
+    // showed nothing new, so no cap on stale decisions ends the run; the
+    // model-call budget does.
+    let browser = ScriptedBrowser::new((0..200).map(ticking).collect()).with_fresh(&always_stale());
+
+    let (result, acts) = run_to_the_budget(browser).await;
+
+    assert_eq!(result.status, JevStatus::BudgetExceeded, "{result:#?}");
+    assert_eq!(result.stop_cause, Some(JevStopCause::Budget));
+    assert_eq!(result.model_calls, TEN_CALLS);
+    assert!(result.actions.is_empty());
+    assert_eq!(acts, 0);
+    let reason = result.stopped_because.as_deref().unwrap_or_default();
+    assert!(!reason.contains("went stale"), "{reason}");
+}
+
+#[tokio::test]
+async fn a_label_that_changes_only_in_its_digits_is_left_to_the_budgets() {
+    let browser =
+        ScriptedBrowser::new((0..200).map(counting_label).collect()).with_fresh(&always_stale());
+
+    let (result, _) = run_to_the_budget(browser).await;
+
+    assert_eq!(result.status, JevStatus::BudgetExceeded, "{result:#?}");
+    assert_eq!(result.stop_cause, Some(JevStopCause::Budget));
+    assert_eq!(result.model_calls, TEN_CALLS);
+}
+
 #[tokio::test]
 async fn a_stale_decision_that_leaves_a_new_page_is_not_counted() {
-    // Two stale decisions on a ticking page, one on a page that really
-    // changed (the words differ), two more on a ticking page, then a fresh
-    // DONE: no three in a row without progress.
-    let pages = vec![
-        ticking(0),
-        ticking(1),
-        ticking(2),
-        // The words differ here: the page really changed.
-        page("loaded-0", &[("go", "click")]),
-        page("loaded-1", &[("go", "click")]),
-        page("loaded-2", &[("go", "click")]),
-    ];
+    // Two stale decisions on a page that holds still, one on a page that
+    // really changed (the words differ), two more on a page that holds still,
+    // then a fresh DONE: no three in a row without progress.
+    let quiet = page("quiet-before", &[("go", "click")]);
+    let loaded = page("loaded", &[("go", "click")]);
+    let pages = [vec![quiet; 3], vec![loaded; 3]].concat();
     let browser = ScriptedBrowser::new(pages)
         // Decisions 1 to 5 go stale at DONE; the sixth is fresh.
         .with_fresh(&[
@@ -291,15 +341,9 @@ async fn a_stale_decision_that_leaves_a_new_page_is_not_counted() {
 async fn a_recorded_step_starts_the_stale_count_again() {
     // Two stale decisions, a click that is carried out, two more stale
     // decisions, then DONE: never three in a row.
-    let pages = vec![
-        ticking(0),
-        ticking(1),
-        ticking(2),
-        // After the click.
-        page("after-0", &[("go", "click")]),
-        page("after-1", &[("go", "click")]),
-        page("after-2", &[("go", "click")]),
-    ];
+    let quiet = page("quiet", &[("go", "click")]);
+    let after = page("after", &[("go", "click")]);
+    let pages = [vec![quiet; 3], vec![after; 3]].concat();
     let browser = ScriptedBrowser::new(pages).with_fresh(&[
         true, false, // decision 1: DONE is stale
         true, false, // decision 2: DONE is stale

@@ -92,11 +92,13 @@ impl JevBilled {
         Self { usage, error }
     }
 
-    /// A decision service reply that was billed but cannot be acted on: it
-    /// failed validation, named an action the page never offered, or was
-    /// a refusal. The loop asks the decision again, up to twice, before it
-    /// ends the run (see [`crate::JevStopCause::DecisionUnusable`]); any
-    /// other billed failure ends it at once. A hosted decision client can
+    /// A decision service reply that cannot be acted on: it failed
+    /// validation, named an action the page never offered, was a refusal, or
+    /// its body could not be decoded (an empty `usage`, which the run's sums
+    /// report as unknown). The loop asks the decision again, up to twice,
+    /// before it ends the run, which then falls back to a model with the
+    /// full browser tools (see [`crate::JevStopCause::DecisionUnusable`]);
+    /// any other billed failure ends it at once. A hosted decision client can
     /// return this for its own invalid replies.
     pub fn unusable(usage: Value, error: anyhow::Error) -> Self {
         Self::new(usage, UnusableAnswer(error).into())

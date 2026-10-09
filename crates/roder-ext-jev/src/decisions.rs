@@ -190,9 +190,14 @@ impl JevDecisionTransport for DecisionsHttp {
                     crate::http::PostFailure::Status(status, _) => {
                         format!("OpenAI Decisions returned HTTP {status}; no action executed.")
                     }
+                    crate::http::PostFailure::InvalidBody => {
+                        "OpenAI Decisions returned a reply that could not be read; no action \
+                         executed."
+                            .into()
+                    }
                     _ => "OpenAI Decisions request failed; no action executed.".into(),
                 };
-                failure.stop(message)
+                failure.stop_decision(message)
             })
     }
 }

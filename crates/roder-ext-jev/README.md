@@ -261,15 +261,16 @@ cookies and page state, as `JEV_FALLBACK` says (`src/fallback/`):
   BLOCKED, three steps changed nothing, its targets stayed covered, it
   answered DONE after a covered attempt, it went round in circles
   (`stop_cause` `looped`) or the page never held still for it (`unsettled`);
-  the page offered nothing Jev can act on; or its own action budget ran
-  out. Never after `needs_input`,
-  `needs_confirmation`, `access_denied`, a page that did not load, a page
-  outside the allowed origins, a confirm or prompt Jev declined, a provider
-  failure, an error (decision replies that stayed unusable after being asked
-  again, `stop_cause` `decision_unusable`, among them) or a timeout: a
-  different driver does not fix those, and the fallback must never be a way
-  around a block or a confirmation. `JevRunResult.stop_cause` (new) says
-  which rule ended a run.
+  the page offered nothing Jev can act on; its own action budget ran
+  out; or the run ended `error` because the decision service kept sending
+  replies Jev could not use (`stop_cause` `decision_unusable`, trigger kind
+  `decision_unusable`). That is the only `error` that falls back. Never after
+  `needs_input`, `needs_confirmation`, `access_denied`, a page that did not
+  load, a page outside the allowed origins, a confirm or prompt Jev declined,
+  a provider failure (unreachable, a refused key, billing or access, a rate
+  limit), any other error or a timeout: a different driver does not fix
+  those, and the fallback must never be a way around a block or a
+  confirmation. `JevRunResult.stop_cause` (new) says which rule ended a run.
 - **`auto` (default).** `jev_browse` itself runs a bounded loop (`run.rs`):
   the model reads the tab and calls the full tools (look, screenshot, click at
   a ref or x/y, hover, drag, type, key, scroll, select, navigate, wait) until
@@ -547,14 +548,21 @@ report a count; a billed call whose answer could not be used counts too.
 Upstream has none of these.
 
 **Unusable decision replies (`agent/unusable.rs`).** A reply the decision
-service gave that fails validation (an action the page never offered,
-probabilities that do not add up, a missing answer, a refusal) is billed and
-counted, and the same decision is asked again on the same page, at most twice;
-a usable reply starts the count again. The third unusable reply in a row ends
-the run `error` with `stop_cause` `decision_unusable`, and `stopped_because`
-gives the count and the first reason. It does not fall back. A call that
-failed instead of answering (a bad key, an unreachable provider, a body that
-is not JSON after the HTTP layer's own retry) is not asked again.
+service gave that cannot be used is counted, and the same decision is asked
+again on the same page, at most twice; a usable reply starts the count again.
+That covers a reply that fails validation (an action the page never offered,
+probabilities that do not add up, a missing answer, a refusal), which is
+billed with the usage the service reported, and a body that cannot be decoded
+("Invalid TypeSafe response"), after the HTTP layer's one resend. What an
+undecodable body was billed is not known, so it counts as a model call with
+no usage, and the run's token sums read `unknown` once one has happened,
+never a 0 that would read as free. The third unusable reply in a row ends the
+run `error` with `stop_cause` `decision_unusable`, and `stopped_because`
+gives the count and the first reason. This is the one `error` that falls back
+(trigger kind `decision_unusable`), to a model with the full browser tools in
+the same tab. A call that failed instead of answering (no connection, a
+timeout, a refused key, billing or access, a rate limit) is no reply: it is
+not asked again, and it does not fall back.
 
 **Launch (`chrome.rs`).** After the 9222 probe, a Chrome on Jev's profile is
 found through its `DevToolsActivePort`. A launch uses
@@ -650,17 +658,22 @@ and the fallback takes it over as it does after a stall:
   and `stopped_because` names the control and how often it was chosen. Three in
   a row that change nothing are the stall rule's, which fires first. The
   fingerprint is compared as the page reports it, digits included: a counter
-  that rises with every click is progress (the `step_budget` task), so a page
-  with a clock on it never repeats a pair this way. Masking the digits ended
-  `step_budget` at the third click on the corpus, which is why it does not.
+  that rises with every click is progress (the `step_budget` task, which a
+  digit-masking compare ended early on the corpus), so a page with a clock on
+  it never repeats a pair this way.
 - Three stale decisions in a row, each followed by a look at the page that
   shows nothing new, stop the run: `stop_cause` `unsettled`, with the last
-  stale message in `stopped_because`. "Nothing new" is the same address,
-  scroll, visible controls, text and labels once every run of digits is
-  masked; a clock or countdown changes only those. A stale decision that leaves
-  a different page, and any step recorded in between, start the count again.
-  An on-screen ticker inside the form being filled (the click guard compares
-  the text around the button) goes stale at every look; it ran to the budget.
+  stale message in `stopped_because`. "Nothing new" is the same view compared
+  exactly, nothing masked: address, scroll, text, frames, and each visible
+  control's id, kind, state, label and value, as the observation reports them.
+  A stale decision that leaves a different view, and any step recorded in
+  between, start the count again. A page whose only change is digits (a clock,
+  a countdown, "3 minutes ago") is therefore progress to this cap, as it is to
+  the pair counter: such a run is left to the action and model-call budgets
+  and the timeout, and a timeout does not fall back. What the cap ends is a
+  page that reads the same at every look while the click guard keeps changing
+  (it compares the text of the form, dialog, card or row around the button,
+  below the fold too, and a link's `href`).
 - Six waits in a row after which the page was the same stop the run as `looped`.
   Such a wait is also skipped by the stall rule (it neither counts as a no-op
   nor breaks a run of them), so `click, wait, click, wait, click` with nothing
@@ -669,10 +682,9 @@ and the fallback takes it over as it does after a stall:
 A false stop costs one fallback (a median of 15 to 16 s on MiniWoB++), not a
 failed task. The limits (4, 3, 6) are untested against a live trace: no
 recorded run shows an A-B-A-B loop, so they rest on the fixtures
-`toggle-menu.html` and `ticker-form.html`. A slowly hydrating SPA whose
-decisions go stale three times with only its numbers moving could be cut
-short. The keyless corpus test fails if any task ends on one of these two
-causes.
+`toggle-menu.html` and `ticker-form.html` (`clock-form.html` pins the other
+side: a clock whose digits are on the page does not end a run). The keyless
+corpus test fails if any task ends on one of these two causes.
 
 **Irreversible-action gate (`irreversible.rs`), opt-in.** Off unless
 `JEV_CONFIRM_IRREVERSIBLE=1` or `JevEngineConfig::with_irreversible_gate`.
@@ -847,7 +859,8 @@ billed, so it is sent again at most once. No retry starts that would outlast the
 provider's failure is reported rather than the run's timeout. The text helper
 uses the same rules with three attempts. Upstream made three attempts on 429,
 503 and 529 with a 25 s timeout, and one text-helper attempt. An undecodable
-reply now fails as "Invalid TypeSafe response; no action executed.", and a
+reply, after that one resend, is an unusable reply ("Invalid TypeSafe
+response; no action executed.") that the loop asks about again, and a
 rejection (any 4xx but 401) carries its trimmed body. A reply sent as
 server-sent events is read to its end and reduced to its final `response`.
 
@@ -881,11 +894,13 @@ runner shows its tab when it creates it, and a hosted browser shows its own.
 `BudgetExceeded`, `TimedOut`, `NeedsInput`, `Unavailable`, `Error` and
 `NeedsConfirmation`; the new `JevStop` error lets a hosted client, transport
 or resolver end a run with one of them. `JevStopCause::DecisionUnusable` is
-the cause of a run that ended on unusable decision replies, `JevStopCause::Looped`
+the cause of a run that ended on unusable decision replies (the one `error` that
+falls back), `JevStopCause::Looped`
 and `JevStopCause::Unsettled` are the causes of a `blocked` run that went round in
 circles or never saw the page settle, and
-`JevBilled::unusable(usage, error)` marks a billed reply a hosted client found
-invalid so the loop asks again. For the gate and banner refusal:
+`JevBilled::unusable(usage, error)` marks a reply a hosted client found
+invalid, or could not decode (an empty `usage` reads as unknown), so the loop
+asks again. For the gate and banner refusal:
 `JevEngineConfig::with_irreversible_gate`, `with_irreversible_authorized`
 and `with_cookie_banner_refusal(bool)` (on unless given `false`); `JevDecisionClient::choose_gated` and
 `JevBrowser::refuse_cookie_banner`, both provided methods (a client that

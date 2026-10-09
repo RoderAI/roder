@@ -32,6 +32,7 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::engine::{JevStatus, JevStop};
+use crate::usage::JevBilled;
 
 /// Statuses that say the request was not served, so repeating it is free:
 /// timed out waiting for it, rate limited, a gateway or Cloudflare's edge
@@ -133,6 +134,21 @@ impl PostFailure {
             false => JevStatus::Error,
         };
         JevStop::new(status, message).into()
+    }
+
+    /// [`Self::stop`] for a decision call. A body that cannot be decoded is a
+    /// reply the service gave (after the one resend), so it is marked
+    /// unusable and the loop asks again, as for a reply that fails
+    /// validation. What it was billed is not known, so its usage is empty,
+    /// which the run's sums report as `unknown`, never as 0. Every other
+    /// failure (no connection, a timeout, a refused key, billing or access)
+    /// is no reply and ends the run as it was.
+    pub(crate) fn stop_decision(&self, message: String) -> anyhow::Error {
+        let stop = self.stop(message);
+        match self {
+            Self::InvalidBody => JevBilled::unusable(serde_json::json!({}), stop).into(),
+            _ => stop,
+        }
     }
 }
 

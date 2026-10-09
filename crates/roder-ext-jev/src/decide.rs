@@ -154,7 +154,7 @@ impl JevDecisionTransport for TypeSafeHttpTransport {
                         format!("Model provider failed ({detail}); no action executed.")
                     }
                 };
-                failure.stop(message)
+                failure.stop_decision(message)
             })
     }
 }
@@ -472,6 +472,8 @@ fn read_answer(
     })
 }
 
+#[cfg(test)]
+mod body_loop_tests;
 #[cfg(test)]
 mod gate_tests;
 #[cfg(test)]

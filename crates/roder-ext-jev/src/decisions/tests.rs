@@ -143,6 +143,54 @@ async fn authorization_error_is_redacted_and_not_retried() {
     assert_eq!(server.hits(), 1);
 }
 
+/// The service answered, but its body cannot be decoded (the transport has
+/// already resent it once): a reply the loop may ask about again, of unknown
+/// usage. A call that never got a reply, or was refused, is not.
+#[tokio::test]
+async fn an_undecodable_body_is_an_unusable_reply_but_a_refused_call_is_not() {
+    use crate::engine::{JevStatus, JevStop};
+    use crate::usage::UnusableAnswer;
+    let server = MockServer::start(vec![Reply::ok("<html>bad gateway</html>")]).await;
+    let error = client(&server)
+        .choose(&page(), "Buy item", &[])
+        .await
+        .err()
+        .unwrap();
+    assert!(UnusableAnswer::is_behind(&error));
+    assert_eq!(JevBilled::usage_of(&error), Some(&json!({})));
+    assert_eq!(
+        error.to_string(),
+        "OpenAI Decisions returned a reply that could not be read; no action executed."
+    );
+    assert_eq!(JevStop::status_of(&error), JevStatus::Error);
+    assert_eq!(server.hits(), 2);
+    for status in [401, 402, 403, 429] {
+        let server = MockServer::start(vec![Reply::status(status)]).await;
+        let error = client(&server)
+            .choose(&page(), "Buy item", &[])
+            .await
+            .err()
+            .unwrap();
+        assert!(!UnusableAnswer::is_behind(&error), "HTTP {status}");
+        assert_eq!(JevBilled::usage_of(&error), None, "HTTP {status}");
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let closed = format!("http://{}/v1/decisions", listener.local_addr().unwrap());
+    drop(listener);
+    let unreachable = OpenAiDecisionsClient::with_transport(Arc::new(DecisionsHttp {
+        key: "test-openai-key".into(),
+        url: closed,
+        http: JsonPoster::new(fast_policy()),
+    }));
+    let error = unreachable
+        .choose(&page(), "Buy item", &[])
+        .await
+        .err()
+        .unwrap();
+    assert!(!UnusableAnswer::is_behind(&error));
+    assert_eq!(JevStop::status_of(&error), JevStatus::Unavailable);
+}
+
 #[tokio::test]
 async fn computer_choices_can_block_and_reject_unoffered_actions() {
     use crate::ComputerCandidate;
