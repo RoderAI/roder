@@ -13,8 +13,11 @@ use roder_ext_mcp::redact_secrets;
 use serde_json::{Value, json};
 
 use crate::catalog::{BrowserUseToolDef, tool_defs};
+use crate::observation::{AGENT_REPORT_LABEL, observes};
 use crate::policy::BrowserUseActionClass;
+use crate::select_guard::refusal;
 use crate::server::BrowserUseServer;
+use crate::state_view::{GET_STATE_REMOTE, compact_result, take_offset};
 
 pub const TOOL_PROVIDER_ID: &str = "browser-use";
 
@@ -110,19 +113,41 @@ impl ToolExecutor for BrowserUseTool {
             };
             arguments["max_steps"] = json!(steps);
         }
+        // `offset` pages the compact state view here; the server never sees it.
+        let offset = if self.def.remote == GET_STATE_REMOTE {
+            match take_offset(&mut arguments) {
+                Ok(offset) => offset,
+                Err(message) => return Ok(error_result(&call, message)),
+            }
+        } else {
+            0
+        };
         let server = self.server.for_thread(&call.thread_id).await;
-        let observe = matches!(
-            self.def.class,
-            BrowserUseActionClass::Navigate
-                | BrowserUseActionClass::Act
-                | BrowserUseActionClass::Agent
-        );
+        // A click or typing aimed at a select the model was shown cannot work;
+        // say so before anything reaches the server.
+        if let Some(message) = refusal(
+            server.shown_selects(),
+            self.def.remote,
+            &arguments,
+            self.has_llm_key,
+        ) {
+            return Ok(error_result(&call, message));
+        }
         match server
-            .call_observed(self.def.remote, arguments, self.def.timeout, observe)
+            .call_observed(
+                self.def.remote,
+                arguments,
+                self.def.timeout,
+                observes(self.def.class),
+            )
             .await
         {
-            Ok(result) => {
+            Ok(mut result) => {
                 let secrets = server.redactions().await;
+                if self.def.remote == GET_STATE_REMOTE {
+                    let selects = compact_result(&mut result, offset, &secrets);
+                    server.shown_selects().replace(selects);
+                }
                 Ok(render_result(self.def, &call, &result, &secrets))
             }
             Err(error) => {
@@ -139,6 +164,10 @@ impl ToolExecutor for BrowserUseTool {
 /// Converts an MCP `CallToolResult` into the text the model reads and the
 /// data the UI keeps. Page-derived text is labeled untrusted; the first
 /// image is attached for providers that can show images to the model.
+///
+/// Secrets are redacted before the size cut, the cut takes the tail of the
+/// text (an observed result lists the action report first), and the notes
+/// about attached images are added after the cut so they always survive.
 pub(crate) fn render_result(
     def: &BrowserUseToolDef,
     call: &ToolCall,
@@ -150,6 +179,7 @@ pub(crate) fn render_result(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let mut texts = Vec::new();
+    let mut image_notes = Vec::new();
     let mut image = None;
     for item in result
         .get("content")
@@ -171,20 +201,28 @@ pub(crate) fn render_result(
                     .unwrap_or("image/png");
                 if image.is_none() && !data.is_empty() && data.len() <= MAX_IMAGE_BASE64 {
                     image = Some(format!("data:{mime};base64,{data}"));
-                    texts.push(format!(
+                    image_notes.push(format!(
                         "[{mime} screenshot attached, {} base64 characters]",
                         data.len()
                     ));
                 } else {
-                    texts.push(format!("[{mime} image omitted]"));
+                    image_notes.push(format!("[{mime} image omitted]"));
                 }
             }
             Some(other) => texts.push(format!("[unsupported MCP content type: {other}]")),
             None => {}
         }
     }
-    let body = redact_secrets(&texts.join("\n"), secrets);
-    let body = truncate(&body);
+    let mut body = truncate(&redact_secrets(&texts.join("\n"), secrets));
+    for note in image_notes {
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(&redact_secrets(&note, secrets));
+    }
+    if def.class == BrowserUseActionClass::Agent {
+        body = format!("{AGENT_REPORT_LABEL}\n{body}");
+    }
     let untrusted = def.untrusted
         || matches!(
             def.class,
@@ -228,9 +266,11 @@ fn truncate(body: &str) -> String {
         end -= 1;
     }
     format!(
-        "{}\n… truncated. Narrow the request: pass a CSS selector to browser_use_get_html, or \
-         use browser_use_get_state.",
-        &body[..end]
+        "{}\n… truncated {} of {} bytes. Narrow the request: pass a CSS selector to \
+         browser_use_get_html, or use browser_use_get_state.",
+        &body[..end],
+        body.len() - end,
+        body.len()
     )
 }
 
@@ -343,6 +383,106 @@ mod tests {
         let rendered = render_result(def, &call(def.name), &result, &[]);
         assert!(rendered.is_error);
         assert!(rendered.text.contains("Element 9 not found"));
+    }
+
+    fn observed(report: &str, state: &str) -> Value {
+        let mut result = json!({ "content": [{ "type": "text", "text": report }] });
+        let state = json!({ "content": [
+            { "type": "text", "text": state },
+            { "type": "image", "data": "iVBORw0KGgo", "mimeType": "image/png" }
+        ]});
+        crate::observation::attach(&mut result, state).unwrap();
+        result
+    }
+
+    #[test]
+    fn the_report_comes_first_and_survives_a_state_that_is_cut() {
+        let def = tool_def("browser_use_click").unwrap();
+        let result = observed("Clicked element 4", &"s".repeat(60_000));
+        let rendered = render_result(def, &call(def.name), &result, &[]);
+        let report = rendered.text.find("Clicked element 4").expect("report");
+        let claim = rendered.text.find("claim").expect("claim label");
+        let state = rendered
+            .text
+            .find("Observed page after the action")
+            .unwrap();
+        assert!(
+            claim < report && report < state,
+            "{}",
+            &rendered.text[..400]
+        );
+        assert!(rendered.text.starts_with(UNTRUSTED_NOTE));
+        assert!(rendered.text.contains("… truncated"), "the cut is named");
+        assert!(rendered.text.len() < 30_000);
+        assert!(
+            rendered
+                .text
+                .ends_with("[image/png screenshot attached, 11 base64 characters]"),
+            "the screenshot note is added after the cut"
+        );
+        assert_eq!(
+            rendered.data[VIEW_IMAGE_DISPLAY_KEY]["image_url"],
+            "data:image/png;base64,iVBORw0KGgo"
+        );
+    }
+
+    #[test]
+    fn the_cut_says_how_much_it_dropped() {
+        let def = tool_def("browser_use_get_html").unwrap();
+        let result = json!({ "content": [{ "type": "text", "text": "x".repeat(25_000) }] });
+        let rendered = render_result(def, &call(def.name), &result, &[]);
+        assert!(
+            rendered.text.contains("truncated 1000 of 25000 bytes"),
+            "{}",
+            &rendered.text[rendered.text.len() - 200..]
+        );
+    }
+
+    #[test]
+    fn a_secret_across_the_cut_is_redacted_before_cutting() {
+        let def = tool_def("browser_use_get_html").unwrap();
+        let text = format!(
+            "{}sk-live-123456{}",
+            "a".repeat(MAX_RESULT_TEXT - 3),
+            "b".repeat(100)
+        );
+        let result = json!({ "content": [{ "type": "text", "text": text }] });
+        let rendered = render_result(def, &call(def.name), &result, &["sk-live-123456".into()]);
+        assert!(
+            !rendered.text.contains("sk-"),
+            "a fragment of the secret leaked"
+        );
+        assert!(!rendered.data.to_string().contains("sk-l"));
+        // The cut falls inside the redaction marker, never inside the secret.
+        assert!(
+            rendered.text.contains("a[re\n… truncated"),
+            "{}",
+            &rendered.text[rendered.text.len() - 200..]
+        );
+    }
+
+    #[test]
+    fn an_observed_result_stays_untrusted_and_keeps_its_error_flag() {
+        let def = tool_def("browser_use_click").unwrap();
+        let mut result = observed("Element with index 7 not found", "{}");
+        crate::failed_action::mark_failed(def.remote, &mut result);
+        let rendered = render_result(def, &call(def.name), &result, &[]);
+        assert!(rendered.is_error);
+        assert!(rendered.text.starts_with(UNTRUSTED_NOTE));
+        assert_eq!(rendered.data["untrusted"], json!(true));
+    }
+
+    #[test]
+    fn agent_reports_are_labeled_as_claims_with_no_page_state_to_check() {
+        let def = tool_def("browser_use_agent").unwrap();
+        let result = json!({ "content": [{ "type": "text", "text": "Task completed in 3 steps\nSuccess: True" }] });
+        let rendered = render_result(def, &call(def.name), &result, &[]);
+        assert!(rendered.text.starts_with(UNTRUSTED_NOTE));
+        assert!(rendered.text.contains(AGENT_REPORT_LABEL));
+        assert!(rendered.text.contains("own claim"));
+        assert!(rendered.text.contains("Task completed in 3 steps"));
+        assert!(!rendered.text.contains("Observed page after the action"));
+        assert!(!rendered.is_error);
     }
 
     #[test]

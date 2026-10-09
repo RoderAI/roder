@@ -12,11 +12,18 @@
 //! The provider is opt-in: install [`BrowserUseExtension`] only when the user
 //! enabled it (`[browser_use] enabled = true` or `roder --browser-use`).
 
+mod browser_loss;
 mod catalog;
+mod failed_action;
 mod launch;
+mod observation;
 mod policy;
 mod profile;
+mod select_guard;
 mod server;
+mod state_view;
+#[cfg(test)]
+mod state_view_tests;
 mod tools;
 
 use std::sync::Arc;

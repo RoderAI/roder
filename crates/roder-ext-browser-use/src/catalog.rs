@@ -14,6 +14,7 @@ use roder_ext_mcp::McpToolDescriptor;
 use serde_json::{Value, json};
 
 use crate::policy::BrowserUseActionClass;
+use crate::state_view::GET_STATE_REMOTE;
 
 /// The autonomous-agent tool's model-facing name.
 pub const AGENT_TOOL: &str = "browser_use_agent";
@@ -80,6 +81,16 @@ impl BrowserUseToolDef {
             schema["properties"]["max_steps"]["maximum"] = json!(100);
             schema["properties"]["max_steps"]["default"] = json!(50);
         }
+        if self.remote == GET_STATE_REMOTE {
+            // Handled by Roder, not by the server: it pages the compact view.
+            schema["properties"]["offset"] = json!({
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Number of interactive elements to skip. Pass the offset the \
+                    previous result ended with to read the elements it left out."
+            });
+        }
         schema
     }
 }
@@ -110,14 +121,20 @@ pub fn tool_defs() -> &'static [BrowserUseToolDef] {
                 "browser_get_state",
                 Read,
                 true,
-                "Element indexes it returns are what browser_use_click and browser_use_type take.",
+                "(listed one per line, in page order, as \
+                 `[index] tag \"text\" ph=\"placeholder\" -> href`). The index is what \
+                 browser_use_click and browser_use_type take. A long page is cut to fit, and \
+                 the result then ends with the exact offset that continues from there; offset \
+                 counts the elements to skip, not index values.",
             ),
             def(
                 "browser_use_click",
                 "browser_click",
                 Act,
                 false,
-                "Asks for approval in default mode; denied in plan mode.",
+                "Asks for approval in default mode; denied in plan mode. Cannot operate a native \
+                 <select> dropdown (browser-use ignores the click yet reports success), so \
+                 Roder refuses it and names the tools that can pick an option.",
             ),
             def(
                 "browser_use_type",
@@ -125,7 +142,8 @@ pub fn tool_defs() -> &'static [BrowserUseToolDef] {
                 Act,
                 false,
                 "Asks for approval in default mode; denied in plan mode. Do not type passwords, \
-                 card numbers or other secrets.",
+                 card numbers or other secrets. Cannot operate a native <select> dropdown: \
+                 Roder refuses it and names the tools that can pick an option.",
             ),
             BrowserUseToolDef {
                 llm_backed: true,
@@ -180,8 +198,11 @@ pub fn tool_defs() -> &'static [BrowserUseToolDef] {
                     "Hands the whole task to browser-use's autonomous agent (an LLM inside the \
                      server; needs an OpenAI key). Always asks for approval unless \
                      the user bypasses approvals; denied in plan mode. Pass allowed_domains to \
-                     keep it on the sites the task needs. Its report is a claim: check the page \
-                     afterwards.",
+                     keep it on the sites the task needs. It works in its own temporary browser, \
+                     which is closed when it finishes: no page state comes back with its report, \
+                     and browser_use_get_state shows a different browser. Its report is a \
+                     claim: verify the outcome yourself, for example by navigating to the page \
+                     it names.",
                 )
             },
             def(
@@ -273,6 +294,60 @@ mod tests {
                 tool_def(name).unwrap().description().contains("UNTRUSTED"),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn the_agent_description_says_its_browser_is_not_the_one_the_other_tools_drive() {
+        let text = tool_def(AGENT_TOOL).unwrap().description();
+        assert!(text.contains("own temporary browser"), "{text}");
+        assert!(text.contains("no page state comes back"), "{text}");
+        assert!(text.contains("claim"), "{text}");
+        assert!(!text.contains("check the page afterwards"), "{text}");
+    }
+
+    #[test]
+    fn get_state_takes_an_offset_that_only_roder_reads() {
+        let def = tool_def("browser_use_get_state").unwrap();
+        let schema = def.parameters();
+        assert_eq!(schema["properties"]["offset"]["type"], "integer");
+        assert_eq!(schema["properties"]["offset"]["minimum"], 0);
+        assert_eq!(schema["properties"]["offset"]["default"], 0);
+        assert!(schema["properties"]["include_screenshot"].is_object());
+        let text = def.description();
+        for expected in [
+            "[index] tag",
+            "exact offset",
+            "not index values",
+            "UNTRUSTED",
+        ] {
+            assert!(text.contains(expected), "{expected}: {text}");
+        }
+        // The pinned schema is the server's own and the live test compares
+        // it with the running server, so `offset` must not be in it.
+        let pinned = pinned_descriptor(def.remote).unwrap().input_schema.clone();
+        assert!(pinned.unwrap()["properties"].get("offset").is_none());
+        for other in tool_defs().iter().filter(|other| other.name != def.name) {
+            assert!(
+                other.parameters()["properties"].get("offset").is_none(),
+                "{}",
+                other.name
+            );
+        }
+    }
+
+    #[test]
+    fn click_and_type_say_a_native_select_is_not_theirs_to_operate() {
+        for name in ["browser_use_click", "browser_use_type"] {
+            let text = tool_def(name).unwrap().description();
+            assert!(text.contains("native <select>"), "{name}: {text}");
+            assert!(text.contains("refuses it"), "{name}: {text}");
+        }
+        for def in tool_defs()
+            .iter()
+            .filter(|def| !matches!(def.name, "browser_use_click" | "browser_use_type"))
+        {
+            assert!(!def.description().contains("<select>"), "{}", def.name);
         }
     }
 

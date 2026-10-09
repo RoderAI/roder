@@ -265,6 +265,27 @@ fn parse_sse_message(body: &str) -> anyhow::Result<serde_json::Value> {
     last_response.ok_or_else(|| anyhow::anyhow!("no JSON-RPC response found in SSE stream"))
 }
 
+/// A JSON-RPC error reply: the server received the request and answered it
+/// with an error, so it is alive and speaking the protocol. Every other way a
+/// request can fail (the server exited, a write failed, no answer in time, an
+/// answer that is not a response) is a different error, so a caller that must
+/// tell "the server said no" from "the server is gone or silent" downcasts the
+/// `anyhow::Error` of a request to this type. Context added by callers does
+/// not hide it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpRpcError {
+    pub code: i64,
+    pub message: String,
+}
+
+impl std::fmt::Display for McpRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MCP error {}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for McpRpcError {}
+
 pub(crate) fn rpc_result(message: serde_json::Value) -> anyhow::Result<serde_json::Value> {
     if let Some(error) = message.get("error") {
         let code = error
@@ -275,7 +296,11 @@ pub(crate) fn rpc_result(message: serde_json::Value) -> anyhow::Result<serde_jso
             .get("message")
             .and_then(|text| text.as_str())
             .unwrap_or("unknown error");
-        anyhow::bail!("MCP error {code}: {text}");
+        return Err(McpRpcError {
+            code,
+            message: text.to_string(),
+        }
+        .into());
     }
     message
         .get("result")
@@ -349,5 +374,38 @@ mod tests {
         });
         let error = rpc_result(message).unwrap_err();
         assert!(error.to_string().contains("-32601"));
+    }
+
+    #[test]
+    fn rpc_error_is_typed_and_keeps_its_text_under_added_context() {
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": { "code": -32602, "message": "Invalid params" }
+        });
+        let error = rpc_result(message)
+            .context("tools/call browser_click")
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<McpRpcError>(),
+            Some(&McpRpcError {
+                code: -32602,
+                message: "Invalid params".into()
+            })
+        );
+        assert_eq!(
+            format!("{error:#}"),
+            "tools/call browser_click: MCP error -32602: Invalid params"
+        );
+    }
+
+    #[test]
+    fn a_result_and_other_failures_are_not_rpc_errors() {
+        let ok = rpc_result(serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {}}));
+        assert!(ok.is_ok());
+        let missing = rpc_result(serde_json::json!({"jsonrpc": "2.0", "id": 1})).unwrap_err();
+        assert!(missing.downcast_ref::<McpRpcError>().is_none());
+        let other = anyhow::anyhow!("MCP error -32601: looks like one, but is only text");
+        assert!(other.downcast_ref::<McpRpcError>().is_none());
     }
 }
