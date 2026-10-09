@@ -38,5 +38,5 @@ The current timeline goal is closer to Grok/OpenCode than the old requested/comp
 
 - Run `cargo test -p roder-tui` for TUI changes.
 - Run `cargo clippy -p roder-tui --all-targets -- -D warnings` before claiming visual or interaction work is done.
-- For public app-server or protocol-visible behavior, also use the `maintain-acp-compliance` skill and run the relevant app-server/protocol tests.
+- For public app-server or protocol-visible behavior, run the relevant app-server/protocol tests.
 - For visual proof, use the `roder-tmux` skill to capture screenshots of the running TUI. Compare against the Grok/OpenCode-style target: compact transcript, visible phase commentary, no side panel, no extra left gutter, scrollable timeline, and expandable tool rows.

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Maintain ACP Compliance"
-  short_description: "Keep Roder ACP behavior aligned as Rust features change."
-  default_prompt: "Use this skill to audit a Roder Rust feature change and update or implement the ACP/protocol surface, tests, and docs so the advertised client contract remains accurate."
