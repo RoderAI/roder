@@ -5,6 +5,12 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[derive(Clone, Copy)]
+pub enum CuaTarget<'a> {
+    Runner(&'a RemoteWorkspace),
+    LocalMacos(&'a Arc<crate::local::LocalDesktopLease>),
+}
+
 pub struct DriverReply {
     pub observation: Value,
     pub is_error: bool,
@@ -14,7 +20,7 @@ pub struct DriverReply {
 pub trait CuaTransport: Send + Sync + 'static {
     async fn call(
         &self,
-        workspace: &RemoteWorkspace,
+        target: CuaTarget<'_>,
         tool: &str,
         arguments: Value,
         timeout_ms: u64,
@@ -27,7 +33,7 @@ pub struct RunnerCuaTransport {
 impl RunnerCuaTransport {
     pub fn new(config: &CuaConfig) -> Self {
         Self {
-            program: config.program.clone(),
+            program: config.program().to_owned(),
         }
     }
 }
@@ -58,11 +64,14 @@ impl Drop for CommandGuard {
 impl CuaTransport for RunnerCuaTransport {
     async fn call(
         &self,
-        workspace: &RemoteWorkspace,
+        target: CuaTarget<'_>,
         tool: &str,
         arguments: Value,
         timeout_ms: u64,
     ) -> anyhow::Result<DriverReply> {
+        let CuaTarget::Runner(workspace) = target else {
+            anyhow::bail!("runner Cua transport cannot operate the local desktop");
+        };
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let id = format!("cua-{nonce}");
         let path = format!("/tmp/roder-cua-results/{nonce}.json");

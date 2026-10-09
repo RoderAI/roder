@@ -79,3 +79,10 @@ Offline launcher boundaries: "python3 -m unittest discover -s
 examples/cua-linux -p 'test_*.py'". Rust boundaries and public ACP behavior:
 "mise exec -- cargo test -p roder-ext-cua" and
 "mise exec -- cargo test -p roder-app-server --features e2e-tests --test acp".
+
+Shared public app-server/model and calculator trace helpers are in
+[examples/cua-desktop](../cua-desktop/); their offline checks use
+`python3 -m unittest discover -s examples/cua-desktop -v`.
+The native `cua_set_value` tool performs a semantic replacement without a
+`delivery_mode` argument. Linux Unicode/sibling-window generic typing limits
+remain; macOS native typing is separately qualified.

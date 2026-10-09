@@ -1,4 +1,4 @@
-# Cua Linux integration validation
+# Cua desktop integration validation
 
 The native Rust Roder contributor is qualified on Linux x86_64 in Blaxel,
 with XFCE/X11, AT-SPI and checksum-pinned Cua Driver 0.34.0. Enable [cua]
@@ -51,7 +51,7 @@ are serialization-tested, not live-model qualified here. Gemini's provider
 schema converts nullable unions and removes null enum members, matching its
 [documented Schema format](https://ai.google.dev/api/generate-content#Schema).
 
-Native Wayland and local macOS remain unqualified. The public desktop base tag
+Native Wayland remains unqualified. macOS qualification is recorded below. The public desktop base tag
 is mutable: durable deployments should publish a provisioned image and pin its
 immutable digest. Generic type_text is limited to ASCII and single-window apps
 because of the pinned driver; cua_set_value supports exact Unicode replacement
@@ -82,6 +82,78 @@ calculator acceptance without changing the qualified desktop implementation.
 | Named roadmap verification commands | Feasibility harness help, Cua tests, Responses image tests, Blaxel runner suite, public ACP/JSON-RPC suites, fixture checks, roadmap validator and diff checks all passed; the remaining-workspace log includes Responses and Blaxel suites |
 
 The reviewed deliverable is draft PR #119. Merging or releasing is outside this
-implementation goal. Optional native Wayland and local macOS qualification
-remain explicitly separate. Existing unrelated Jev/global-check failures are
+implementation goal. Optional native Wayland qualification remains separate; the macOS extension
+is qualified below. Existing unrelated Jev/global-check failures are
 recorded above and do not establish a pass for those checks.
+
+
+## Native macOS qualification
+
+The explicit `local-macos` backend was exercised on Apple Silicon macOS
+26.6.2 with signed CuaDriver.app 0.34.0. The official arm64 archive SHA256 is
+`329bcc140c4840a5877e2cfc9f756351eb4a70c2c2d6acf4954751918122c60a`.
+Deep/strict codesign verification and Gatekeeper assessment passed. The
+app-owned daemon reported Accessibility and Screen Recording granted; its
+permission flow verified direct capture. The daemon launches through
+LaunchServices and preserves its own TCC identity, including across restart.
+
+| Check | Result |
+| --- | --- |
+| Live model through public built Roder app-server | Native Calculator exact 6, multiply, 7, equals clicks; pixel and element routes; Escape; actual provider image blocks; final display 42 checked independently with Apple Vision OCR |
+| Owned native AppKit oracle | All 17 checks passed: discovery, double/right click, scaled drag/scroll, Unicode typing, exact sibling value, dialog/submission, closed-window capture failure, chord, resize, desktop capture/scaled cursor, cancellation/no held button, cross-thread invalidation, runtime restart and daemon restart |
+| Cancelled input and timeout | Worker retains the local desktop fence; after-action observation waits; abandoned version-probe caller does not dispatch input; lost reply blocks further calls |
+| Restart | PID-bound stop of the evaluation-owned daemon followed by signed app launch; old pixel handle rejected and fresh window capture recovered |
+| Routing/policy | Explicit local backend refuses remote workspace contexts before transport; runner backend refuses unbound local context; Plan refuses input; Default requests approval |
+| Public ACP | Six Cua wire checks passed, covering both backends' approvals, images, Plan refusal and partial state on refusal |
+| Setup | Pinned installer preserves a matching installation and refuses replacing another version; no TCC database changes or global Roder/CLI replacement |
+
+Evidence is under
+[examples/cua-macos/evidence/2026-10-08](../examples/cua-macos/evidence/2026-10-08/).
+Only Calculator and owned fixture window PNGs/subtrees are retained. Full
+desktop capture and inventory were tested without publishing unrelated
+windows, menu rows or desktop pixels. The AppKit oracle is scripted;
+Calculator uses a real decision model through the public runtime. The OCR
+grader only reads the resulting PNG and never writes Calculator state.
+
+The live test exposed large macOS AX trees spilling capture handles into core
+context artifacts. Cua now keeps bounded valid inline JSON with current
+handles, while preserving complete structured data and screenshots. Literal
+query filtering is documented. macOS `set_value` is an always-background
+semantic operation; its canonical cross-platform tool has no delivery-mode
+argument. Text-field focus uses pixels when AXPress is unavailable. The
+fixture activates its owned window before pointer input so AppKit consumes
+foreground events before temporary activation restoration.
+
+A successful dialog submission can close its addressed window. Roder keeps
+the resulting after-action capture error and invalidates grounding; the
+fixture independently confirms submission, then observes a remaining window
+without retrying input. Native window resize is independently checked within
+the driver's documented two-point readback tolerance. Retina and capped
+full-desktop cursor coordinates are verified against the OS pointer position;
+Cua applies the screenshot transform once.
+
+Use one local Roder process for physical desktop automation. Its process-wide
+fence protects its sessions; separate processes and human activity share the
+same desktop. macOS background keyboard/drag restrictions are explicit
+refusals, not silently escalated inputs. Native Wayland, Intel macOS and other
+macOS versions remain separately unqualified.
+
+
+Final macOS change validation: 18 Cua unit/boundary/local-routing tests passed;
+102 config tests passed with 1 ignored; 3,295 remaining-workspace tests passed
+serially with 68 ignored and the previously failing unmodified Jev package
+excluded. Public JSON-RPC e2e passed 132 tests with 1 ignored when all ambient
+API-key/token variables were removed from the child test process. The initial
+credential cleanup missed `RODER_CURSOR_API_KEY` and other provider variables,
+causing authentication/tool-discovery fixture assertions; the clean rerun
+passed. A process-host dispatch timeout and the three existing native Chrome
+ACP tests passed isolated retries after initial timing failures. The final full
+ACP run passed 15 of 16 tests, including all six Cua checks; the unmodified
+`native_computer_partial_failure_returns_screen_and_stops_remaining_actions`
+fixture intermittently missed its `filters` event at
+`tests/acp_native_computer.rs:294`. The full ACP suite is not a clean pass.
+Changed-file formatting, strict Cua Clippy (`--all-targets --no-deps`),
+shared/Linux offline fixtures, release metadata, and a real
+built CLI `roder acp` initialize smoke passed. The final Calculator app-server
+and owned AppKit fixture are stopped; the preexisting Calculator is preserved.
+The verified signed Cua app and its granted daemon remain available locally.

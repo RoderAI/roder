@@ -1,10 +1,11 @@
-# Native Linux computer use with Cua
+# Native desktop computer use with Cua
 
 Enable the native desktop extension in Roder's config:
 
 ~~~toml
 [cua]
 enabled = true
+backend = "runner"
 program = "/opt/roder-cua/bin/cua-call"
 timeout_ms = 45000
 max_image_dimension = 1280
@@ -73,7 +74,7 @@ GUI acceptance task.
 | cua_click | Element or pixel click; count 1–3; left/right/middle button |
 | cua_drag, cua_scroll | Atomic drag; line/page scrolling |
 | cua_press_key | Keys and chords to an exact window |
-| cua_type_text | ASCII insertion into a single-window application |
+| cua_type_text | Linux ASCII/single-window insertion; macOS native targeted Unicode typing |
 | cua_set_value | Exact editable replacement, including Unicode and dialogs |
 | cua_move_cursor | Grounded full-desktop cursor movement |
 | cua_bring_to_front, cua_set_window_frame | Explicit activation, movement and resizing |
@@ -86,8 +87,9 @@ session and exact target. Stale handles, out-of-image coordinates and handles
 from another thread fail before input. A fresh observation replaces previous
 grounding. Rejoin or runtime restart requires another observation.
 
-Use cua_set_value with an element_token to replace an editable's complete value.
-The pinned Cua 0.34 driver can truncate multibyte insertion and misaddress a
+Use cua_set_value with an element_token to replace an editable's complete value;
+this semantic tool has no delivery_mode argument.
+On Linux, the pinned Cua 0.34 driver can truncate multibyte insertion and misaddress a
 sibling window through its type_text route. Roder therefore rejects Unicode
 type_text and typing into multi-window applications before input; exact value
 replacement preserves the addressed window and supports full Unicode. Key
@@ -139,5 +141,58 @@ The calculator acceptance targets X11, satisfying the Linux windowing
 requirement. Native Wayland requires separate compositor, capture, input and
 AT-SPI qualification; an XFCE pass does not qualify it.
 [Upstream platform support](https://cua.ai/docs/cua-driver/concepts/platform-support)
-describes Sway, GNOME and experimental compositor routes. Local macOS is an
-optional future launcher, requiring its own Cua permissions.
+describes Sway, GNOME and experimental compositor routes.
+
+## Local macOS
+
+Select the local physical desktop explicitly; the default remains `runner`:
+
+~~~toml
+[cua]
+enabled = true
+backend = "local-macos"
+timeout_ms = 45000
+max_image_dimension = 1280
+~~~
+
+Use [the macOS fixture](../examples/cua-macos/README.md) to install the
+checksum-verified signed **CuaDriver.app 0.34.0**, grant its Accessibility,
+Screen Recording and direct capture access, and launch its daemon through
+LaunchServices. Roder starts only finite `call` clients; it never starts a
+terminal-owned daemon or grants permissions automatically. `program` defaults
+to `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`; `socket_path`
+defaults to `$HOME/Library/Caches/cua-driver/cua-driver.sock` and must be an
+absolute Unix socket path shorter than 104 bytes. `socket_path` is invalid
+for `runner`. The client inherits only HOME/PATH/TMPDIR/LANG and disables
+client telemetry; it does not inherit provider or runner credentials.
+
+Create local threads without a runner binding. A local macOS contributor
+refuses remote runner contexts, and the runner contributor refuses unbound
+local contexts. Neither backend falls back to another desktop. The signed
+app owns the permissions; Roder preserves its driver policy and tool refusals.
+
+The same tools, approval checks and image payload work on both backends.
+macOS native typing supports the qualified foreground Unicode/multiple-window
+route. Background keys can refuse ambiguous windows; drag requires foreground.
+Use pixel focus for text fields that do not expose AXPress. `cua_set_value`
+is a background semantic value replacement, without a delivery-mode argument.
+Modifier `super` means Command on macOS. Screenshots use actual PNG coordinates,
+including Retina scaling and capped full-desktop cursor picks.
+
+All local calls share a process-wide fence; input invalidates other local
+threads' cached grounding, including across contributor instances. Cancellation
+keeps the worker and fence alive for dispatched atomic input, and an
+after-action observation waits for that worker. A lost/invalid response or
+worker deadline blocks further calls until the operator restarts both the
+app-owned daemon and Roder. A socket generation change rejects pre-restart
+input and requires fresh observation. No mutation is automatically replayed.
+Use one Roder process for local desktop automation: separate processes and
+human input share the desktop and cannot be isolated like remote sandboxes.
+
+Large accessibility trees retain capture/element handles in bounded valid
+inline JSON. Full structured observations stay in the UI payload; omitted text
+rows can be obtained with a narrower literal `query`. Images continue through
+the existing provider and ACP paths. The macOS qualification records native
+Calculator `42` via a live model and independent PNG OCR, plus an app-owned
+primitive event/value grader. Apple Silicon macOS 26.6.2 is qualified here;
+other macOS versions and Intel builds require their own validation.

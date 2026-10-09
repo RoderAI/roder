@@ -147,7 +147,9 @@ fn input(target: &Value, extra: Value) -> Value {
     args.as_object_mut()
         .unwrap()
         .extend(extra.as_object().unwrap().clone());
-    args["delivery_mode"] = json!("foreground");
+    if args.get("value").is_none() {
+        args["delivery_mode"] = json!("foreground");
+    }
     args
 }
 async fn connect(

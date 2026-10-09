@@ -4,7 +4,7 @@ use roder_api::inference::{CompletionMetadata, InferenceEvent, ToolCallCompleted
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::*;
 use roder_api::transcript::TranscriptItem;
-use roder_ext_cua::{CuaConfig, CuaExtension};
+use roder_ext_cua::{CuaBackend, CuaConfig, CuaExtension, CuaTarget, CuaTransport, DriverReply};
 use serde_json::{Value, json};
 
 struct DecisionEngine;
@@ -219,7 +219,40 @@ impl RemoteRunnerSession for Desktop {
         Ok(())
     }
 }
-async fn exercise(mode: PolicyMode, refuse_click: bool) {
+struct LocalDesktop(Arc<Desktop>);
+#[async_trait]
+impl CuaTransport for LocalDesktop {
+    async fn call(
+        &self,
+        target: CuaTarget<'_>,
+        tool: &str,
+        args: Value,
+        _: u64,
+    ) -> anyhow::Result<DriverReply> {
+        assert!(matches!(target, CuaTarget::LocalMacos(_)));
+        let mut commands = self.0.commands.lock().await;
+        commands.push(RunnerCommandRequest {
+            command_id: "local".into(),
+            program: "fixture".into(),
+            args: vec![tool.into(), args.to_string()],
+            cwd: None,
+            env: Default::default(),
+            timeout_ms: None,
+        });
+        let observation = if tool == "get_window_state" {
+            json!({"capture_id":format!("capture-{}",commands.len()),"snapshot_id":format!("s{:08x}",commands.len()),
+                "screenshot_width":2,"screenshot_height":2,
+                "screenshot_png_b64":include_str!("../../roder-ext-cua/tests/capture.b64")})
+        } else {
+            json!({"delivered":true})
+        };
+        Ok(DriverReply {
+            observation,
+            is_error: self.0.refuse_click && tool == "click",
+        })
+    }
+}
+async fn exercise(mode: PolicyMode, refuse_click: bool, backend: CuaBackend) {
     let temp = tempfile::tempdir().unwrap();
     let desktop = Arc::new(Desktop {
         refuse_click,
@@ -233,12 +266,17 @@ async fn exercise(mode: PolicyMode, refuse_click: bool) {
         },
     ));
     builder.remote_runner_provider(Arc::new(SharedDesktop(desktop.clone())));
-    builder
-        .install(CuaExtension::new(CuaConfig {
-            enabled: true,
-            ..Default::default()
-        }))
-        .unwrap();
+    let config = CuaConfig {
+        enabled: true,
+        backend,
+        ..Default::default()
+    };
+    let extension = if backend == CuaBackend::LocalMacos {
+        CuaExtension::with_transport(config, Arc::new(LocalDesktop(desktop.clone())))
+    } else {
+        CuaExtension::new(config)
+    };
+    builder.install(extension).unwrap();
     let runtime = Arc::new(
         Runtime::new(
             builder.build().unwrap(),
@@ -250,11 +288,13 @@ async fn exercise(mode: PolicyMode, refuse_click: bool) {
                     "cua_click".into(),
                     "cua_press_key".into(),
                 ],
-                remote_runner_destination: Some(RunnerDestination {
-                    id: "desktop".into(),
-                    provider_id: "desktop-fixture".into(),
-                    config: json!({}),
-                    default_manifest: Default::default(),
+                remote_runner_destination: (backend == CuaBackend::Runner).then(|| {
+                    RunnerDestination {
+                        id: "desktop".into(),
+                        provider_id: "desktop-fixture".into(),
+                        config: json!({}),
+                        default_manifest: Default::default(),
+                    }
                 }),
                 ..Default::default()
             },
@@ -378,14 +418,27 @@ async fn exercise(mode: PolicyMode, refuse_click: bool) {
 }
 #[tokio::test]
 async fn cua_approval_images_and_runner_binding_through_public_acp() {
-    exercise(PolicyMode::Default, false).await;
+    exercise(PolicyMode::Default, false, CuaBackend::Runner).await;
 }
 #[tokio::test]
 async fn cua_plan_observes_but_refuses_input_through_public_acp() {
-    exercise(PolicyMode::Plan, false).await;
+    exercise(PolicyMode::Plan, false, CuaBackend::Runner).await;
 }
 
 #[tokio::test]
 async fn cua_refusal_keeps_failed_status_and_partial_state_image_through_acp() {
-    exercise(PolicyMode::Default, true).await;
+    exercise(PolicyMode::Default, true, CuaBackend::Runner).await;
+}
+
+#[tokio::test]
+async fn cua_local_approval_and_images_through_public_acp() {
+    exercise(PolicyMode::Default, false, CuaBackend::LocalMacos).await;
+}
+#[tokio::test]
+async fn cua_local_plan_refuses_input_through_public_acp() {
+    exercise(PolicyMode::Plan, false, CuaBackend::LocalMacos).await;
+}
+#[tokio::test]
+async fn cua_local_refusal_preserves_partial_state_through_public_acp() {
+    exercise(PolicyMode::Default, true, CuaBackend::LocalMacos).await;
 }

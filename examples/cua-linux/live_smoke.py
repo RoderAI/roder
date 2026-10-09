@@ -9,9 +9,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 from fixture import BlaxelTransport, grade
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "cua-desktop"))
 from smoke_support import Rpc, model_proxy
 from calculator_trace import calculation_buttons_passed, calculation_clicks
 

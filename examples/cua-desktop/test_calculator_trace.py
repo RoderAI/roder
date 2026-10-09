@@ -28,6 +28,15 @@ class CalculatorTraceTests(unittest.TestCase):
         self.assertEqual(calculation_clicks(sequence()), ['6', '*', '7', '='])
         self.assertTrue(calculation_buttons_passed(sequence()))
 
+    def test_macos_ax_labels_and_null_after_action_preserve_sequence(self):
+        trace = sequence()
+        for index, label in enumerate(['6', 'Multiply', '7', 'Equals']):
+            state = observation(index, label)
+            state['elements'][0]['actions'] = ['AXPress']
+            trace[index * 2]['output'] = json.dumps({'observation':state, 'after_action':None})
+        self.assertEqual(calculation_clicks(trace), ['6', '*', '7', '='])
+        self.assertTrue(calculation_buttons_passed(trace))
+
     def test_keypress_operand_does_not_prove_button_click(self):
         trace = sequence()
         trace[5]['tool'] = 'cua_press_key'

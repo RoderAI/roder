@@ -542,8 +542,9 @@ calls are bridged to ACP `session/request_permission` client requests with
 `allow_once` and `reject_once` options, then resolved back through Roder's
 canonical approval path.
 
-With [Cua Linux computer use](docs/cua-computer-use.md) enabled and the session
-bound to a graphical runner, desktop observations and input results include
+With [Cua desktop computer use](docs/cua-computer-use.md) enabled for a graphical
+runner or an explicitly selected local macOS desktop, observations and input
+results include
 inline PNG image content in ACP tool updates. Observation tools use kind
 `read`; desktop input uses `execute` and the normal permission flow. Plan mode
 denies input. Tool screenshots do not change the advertised prompt image capability.

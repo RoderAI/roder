@@ -1,16 +1,18 @@
 # Roder Cua desktop extension
 
 A native Rust extension for computer use on a Linux desktop inside the thread's
-remote runner. The qualified launcher uses Cua Driver **0.34.0**, XFCE/X11 and
+remote runner or an explicitly selected local macOS desktop. The qualified launcher uses Cua Driver **0.34.0**, XFCE/X11 and
 Blaxel. The model uses ordinary cua_* function tools and receives real PNGs.
 Roder owns inference, approvals, thread isolation and the sandbox lifecycle.
 
 See [setup and contract](../../docs/cua-computer-use.md) and
-[the calculator fixture](../../examples/cua-linux/README.md).
+[the Linux fixture](../../examples/cua-linux/README.md) and
+[the macOS fixture](../../examples/cua-macos/README.md).
 
-The extension is opt in. It has no local desktop fallback, sandbox-selection
-tool argument, desktop HTTP port, or separate Blaxel credential store. Calls
-use the execution context's remote workspace, fence and cancellation.
+The extension is opt in; backend `runner` is the default. `local-macos` selects
+the signed app-owned daemon explicitly and rejects remote runner contexts.
+Calls use the runner workspace/fence or the shared local desktop fence. The
+model cannot select backends, sockets, programs or sessions.
 
 Only atomic input operations are exposed. Stale/foreign capture handles,
 unknown arguments, mismatched contexts and ungrounded input fail before native

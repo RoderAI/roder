@@ -1,6 +1,9 @@
 use crate::capture::{Capture, take_capture};
 use crate::specs::{INPUT_TOOLS, READ_TOOLS, is_input, spec};
-use crate::{CuaConfig, CuaTransport, DriverReply, RunnerCuaTransport};
+use crate::{
+    CuaBackend, CuaConfig, CuaTarget, CuaTransport, DriverReply, LocalDesktopLease,
+    LocalMacosTransport, RunnerCuaTransport,
+};
 use async_trait::async_trait;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::tools::{
@@ -16,6 +19,7 @@ use tokio::sync::Mutex;
 struct Grounding {
     target: Value,
     capture: Capture,
+    desktop_generation: Option<u64>,
 }
 #[derive(Default)]
 struct Session {
@@ -25,13 +29,18 @@ struct Shared {
     config: CuaConfig,
     transport: Arc<dyn CuaTransport>,
     sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
+    local_identity: String,
 }
 pub struct CuaToolContributor {
     shared: Arc<Shared>,
 }
 impl CuaToolContributor {
     pub fn new(config: CuaConfig) -> Self {
-        Self::with_transport(config.clone(), Arc::new(RunnerCuaTransport::new(&config)))
+        let transport: Arc<dyn CuaTransport> = match config.backend {
+            CuaBackend::Runner => Arc::new(RunnerCuaTransport::new(&config)),
+            CuaBackend::LocalMacos => Arc::new(LocalMacosTransport::new(config.clone())),
+        };
+        Self::with_transport(config, transport)
     }
     pub fn with_transport(config: CuaConfig, transport: Arc<dyn CuaTransport>) -> Self {
         Self {
@@ -39,6 +48,7 @@ impl CuaToolContributor {
                 config,
                 transport,
                 sessions: Mutex::new(HashMap::new()),
+                local_identity: uuid::Uuid::new_v4().to_string(),
             }),
         }
     }
@@ -98,9 +108,48 @@ impl CuaTool {
             !(is_input(self.name) && ctx.effective_mode == PolicyMode::Plan),
             "desktop input is disabled in Plan mode"
         );
-        let remote = ctx.handles.remote_workspace.as_ref().ok_or_else(|| anyhow::anyhow!("Cua requires a thread bound to a graphical remote runner. Local desktop fallback is disabled."))?;
-        let state = remote.session.state();
-        let label = session_label(&ctx.thread_id, &state.provider_id, &state.session_id);
+        if self.name == "type_text" && self.shared.config.backend == CuaBackend::Runner {
+            anyhow::ensure!(
+                arguments["text"].as_str().unwrap().is_ascii(),
+                "Cua 0.34 Linux typing cannot reliably insert Unicode; use cua_set_value for a grounded editable"
+            );
+        }
+        let timeout = self.shared.config.timeout_ms.min(
+            ctx.deadline_remaining_seconds
+                .map(|s| s.saturating_mul(1000))
+                .unwrap_or(u64::MAX),
+        );
+        anyhow::ensure!(timeout >= 1000, "insufficient turn time for desktop action");
+        let lease = if self.shared.config.backend == CuaBackend::LocalMacos {
+            anyhow::ensure!(
+                ctx.handles.remote_workspace.is_none(),
+                "local-macos cannot target the host desktop from a remote runner thread; select backend = runner"
+            );
+            Some(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(timeout),
+                    LocalDesktopLease::acquire(),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("local desktop remains busy; no action dispatched"))?,
+            )
+        } else {
+            None
+        };
+        let (destination, label) = match self.shared.config.backend {
+            CuaBackend::Runner => {
+                let remote = ctx.handles.remote_workspace.as_ref().ok_or_else(|| anyhow::anyhow!("Cua requires a thread bound to a graphical remote runner. Local desktop fallback is disabled."))?;
+                let state = remote.session.state();
+                (
+                    CuaTarget::Runner(remote),
+                    session_label(&ctx.thread_id, &state.provider_id, &state.session_id),
+                )
+            }
+            CuaBackend::LocalMacos => (
+                CuaTarget::LocalMacos(lease.as_ref().unwrap()),
+                session_label(&ctx.thread_id, "local-macos", &self.shared.local_identity),
+            ),
+        };
         let session = {
             let mut sessions = self.shared.sessions.lock().await;
             if sessions.len() >= 256 && !sessions.contains_key(&label) {
@@ -117,22 +166,24 @@ impl CuaTool {
             sessions.entry(label.clone()).or_default().clone()
         };
         let mut session = session.lock().await;
-        let timeout = self.shared.config.timeout_ms.min(
-            ctx.deadline_remaining_seconds
-                .map(|s| s.saturating_mul(1000))
-                .unwrap_or(u64::MAX),
-        );
-        anyhow::ensure!(timeout >= 1000, "insufficient turn time for desktop action");
         let target = if self.name == "move_cursor" || self.name == "get_desktop_state" {
             json!({"desktop":true})
         } else {
             json!({"pid":arguments["pid"],"window_id":arguments["window_id"]})
         };
         if is_input(self.name) {
-            check_grounding(&session, &arguments, &target)?;
+            check_grounding(
+                &session,
+                &arguments,
+                &target,
+                lease.as_ref().map(|lease| lease.generation()),
+            )?;
             // Discard before dispatch: cancellation, timeout or a failed capture must
             // never leave an old image authorized for another action.
             session.grounding = None;
+            if let Some(lease) = &lease {
+                lease.begin_input();
+            }
         }
         if matches!(self.name, "get_window_state" | "get_desktop_state") {
             session.grounding = None;
@@ -162,13 +213,18 @@ impl CuaTool {
         let mut data = json!({"untrusted":true,"driver_version":crate::DRIVER_VERSION});
         let mut failed = false;
         let mut messages = vec![];
-        if self.name == "type_text" {
+        if self.name == "type_text" && self.shared.config.backend == CuaBackend::Runner {
             // The pinned driver's generic AT-SPI typing can choose a sibling
             // editable. Its set_value route preserves exact window identity.
             let windows = self
                 .shared
                 .transport
-                .call(remote, "list_windows", json!({"session":label}), timeout)
+                .call(
+                    destination,
+                    "list_windows",
+                    json!({"session":label}),
+                    timeout,
+                )
                 .await?;
             let windows = windows.observation["windows"]
                 .as_array()
@@ -187,7 +243,7 @@ impl CuaTool {
         match self
             .shared
             .transport
-            .call(remote, self.name, arguments, timeout)
+            .call(destination, self.name, arguments, timeout)
             .await
         {
             Ok(mut reply) => {
@@ -201,6 +257,7 @@ impl CuaTool {
                     session.grounding = Some(Grounding {
                         target: target.clone(),
                         capture,
+                        desktop_generation: lease.as_ref().map(|lease| lease.generation()),
                     });
                 }
                 data["observation"] = reply.observation;
@@ -226,7 +283,7 @@ impl CuaTool {
             match self
                 .shared
                 .transport
-                .call(remote, tool, capture_args, timeout)
+                .call(destination, tool, capture_args, timeout)
                 .await
             {
                 Ok(DriverReply {
@@ -235,7 +292,11 @@ impl CuaTool {
                 }) => match take_capture(&mut observation, &label) {
                     Ok(mut capture) => {
                         data[roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY] = capture.image.take();
-                        session.grounding = Some(Grounding { target, capture });
+                        session.grounding = Some(Grounding {
+                            target,
+                            capture,
+                            desktop_generation: lease.as_ref().map(|lease| lease.generation()),
+                        });
                         data["after_action"] = observation;
                     }
                     Err(error) => {
@@ -254,15 +315,10 @@ impl CuaTool {
         if !messages.is_empty() {
             data["errors"] = json!(messages);
         }
-        let mut text_data = data.clone();
-        text_data
-            .as_object_mut()
-            .unwrap()
-            .remove(roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY);
         Ok(ToolResult {
             id: call.id.clone(),
             name: call.name.clone(),
-            text: text_data.to_string(),
+            text: crate::render::result_text(&data),
             data,
             is_error: failed,
         })
@@ -277,10 +333,19 @@ fn session_label(thread: &str, provider: &str, runner: &str) -> String {
             .collect::<String>()
     )
 }
-fn check_grounding(session: &Session, args: &Value, target: &Value) -> anyhow::Result<()> {
+fn check_grounding(
+    session: &Session,
+    args: &Value,
+    target: &Value,
+    generation: Option<u64>,
+) -> anyhow::Result<()> {
     let ground = session.grounding.as_ref().ok_or_else(|| {
         anyhow::anyhow!("observe this target before using pixel or element input")
     })?;
+    anyhow::ensure!(
+        ground.desktop_generation == generation,
+        "another local thread changed the desktop; observe again before input"
+    );
     anyhow::ensure!(
         &ground.target == target,
         "grounding belongs to another window or desktop"

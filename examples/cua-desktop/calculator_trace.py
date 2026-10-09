@@ -15,7 +15,7 @@ def calculation_clicks(trace):
             token = args.get('element_token')
             x, y = args.get('x'), args.get('y')
             for element in previous.get('elements', []):
-                if 'click' not in element.get('actions', []):
+                if not {'click', 'AXPress'}.intersection(element.get('actions', [])):
                     continue
                 frame = element.get('screenshot_frame', {})
                 semantic = bool(token) and token == element.get('element_token')
@@ -27,13 +27,13 @@ def calculation_clicks(trace):
                     and frame['y'] <= y < frame['y'] + frame['h']
                 )
                 if semantic or pixel:
-                    labels.append(element.get('label'))
+                    labels.append({'Multiply':'*','Equals':'='}.get(element.get('label'),element.get('label')))
                     break
         try:
             output = json.loads(call.get('output') or '{}')
         except (ValueError, TypeError):
             continue
-        observation = output.get('after_action', output.get('observation', {}))
+        observation = output.get('after_action') or output.get('observation') or {}
         if observation.get('capture_id') and observation.get('pid') and observation.get('window_id'):
             windows[(observation['pid'], observation['window_id'])] = observation
     return labels

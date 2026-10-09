@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": 1,
+    "agentCapabilities": {
+      "loadSession": false,
+      "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": false
+      },
+      "mcpCapabilities": {
+        "http": false,
+        "sse": false
+      },
+      "sessionCapabilities": {},
+      "auth": {}
+    },
+    "authMethods": [],
+    "agentInfo": {
+      "name": "roder",
+      "title": "Roder",
+      "version": "0.6.1"
+    }
+  }
+}

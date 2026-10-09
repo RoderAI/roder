@@ -3,7 +3,7 @@ mod support;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::RemoteWorkspace;
 use roder_api::tools::{ToolCall, ToolExecutionContext};
-use roder_ext_cua::{CuaConfig, CuaTransport, RunnerCuaTransport};
+use roder_ext_cua::{CuaConfig, CuaTarget, CuaTransport, RunnerCuaTransport};
 use serde_json::{Value, json};
 use std::sync::{Arc, atomic::Ordering};
 use support::*;
@@ -143,7 +143,7 @@ async fn runner_transport_reuses_context_and_cancels_a_dropped_command() {
     };
     transport
         .call(
-            &workspace,
+            CuaTarget::Runner(&workspace),
             "press_key",
             json!({"key":"$HOME; $(echo nope)","session":"roder-safe"}),
             1000,
@@ -151,7 +151,7 @@ async fn runner_transport_reuses_context_and_cancels_a_dropped_command() {
         .await
         .unwrap();
     let requests = runner.requests.lock().await;
-    assert_eq!(requests[0].program, config.program);
+    assert_eq!(requests[0].program, config.program());
     assert!(requests[0].env.is_empty());
     assert_eq!(requests[0].timeout_ms, Some(1000));
     assert_eq!(
@@ -167,8 +167,11 @@ async fn runner_transport_reuses_context_and_cancels_a_dropped_command() {
         root: "/workspace".into(),
         read_roots: vec![],
     };
-    let task =
-        tokio::spawn(async move { transport.call(&ws, "press_key", json!({}), 10_000).await });
+    let task = tokio::spawn(async move {
+        transport
+            .call(CuaTarget::Runner(&ws), "press_key", json!({}), 10_000)
+            .await
+    });
     while pending.requests.lock().await.is_empty() {
         tokio::task::yield_now().await;
     }

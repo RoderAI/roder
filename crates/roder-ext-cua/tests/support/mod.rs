@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::*;
 use roder_api::tools::*;
-use roder_ext_cua::{CuaConfig, CuaToolContributor, CuaTransport, DriverReply};
+use roder_ext_cua::{CuaConfig, CuaTarget, CuaToolContributor, CuaTransport, DriverReply};
 use serde_json::{Value, json};
 use std::sync::{
     Arc,
@@ -18,12 +18,13 @@ pub(super) struct Driver {
     pub(super) fail_capture: AtomicBool,
     pub(super) pending_input: AtomicBool,
     pub(super) multiple_windows: AtomicBool,
+    pub(super) scaled_desktop: AtomicBool,
 }
 #[async_trait]
 impl CuaTransport for Driver {
     async fn call(
         &self,
-        _: &RemoteWorkspace,
+        _: CuaTarget<'_>,
         tool: &str,
         args: Value,
         _: u64,
@@ -34,9 +35,14 @@ impl CuaTransport for Driver {
             let label = args["session"].as_str().unwrap();
             let capture_id = format!("{label}-capture-{}", calls.len());
             let snapshot_id = format!("s{:08x}", calls.len());
+            let mut observation = json!({"capture_id":capture_id,"snapshot_id":snapshot_id,
+                "screenshot_width":2,"screenshot_height":2,"screenshot_png_b64":if self.fail_capture.load(Ordering::SeqCst) { "bad" } else { PNG }});
+            if tool == "get_desktop_state" && self.scaled_desktop.load(Ordering::SeqCst) {
+                observation["screenshot_original_width"] = json!(20);
+                observation["screenshot_original_height"] = json!(10);
+            }
             Ok(DriverReply {
-                observation: json!({"capture_id":capture_id,"snapshot_id":snapshot_id,
-                "screenshot_width":2,"screenshot_height":2,"screenshot_png_b64":if self.fail_capture.load(Ordering::SeqCst) { "bad" } else { PNG }}),
+                observation,
                 is_error: false,
             })
         } else if tool == "list_windows" {

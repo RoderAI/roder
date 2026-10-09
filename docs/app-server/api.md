@@ -5986,8 +5986,10 @@ Custom-channel input can produce throttled incremental previews (`complete: fals
 
 ### Native Linux desktop tools
 
-Enable the optional Cua contributor and bind the thread to a provisioned
-graphical runner through `thread/start.runner` as described in
+Enable the optional Cua contributor with backend `runner` and bind the thread
+to a provisioned graphical runner through `thread/start.runner`, or select
+`local-macos` for a local thread without a runner binding. Local macOS rejects
+remote contexts before desktop dispatch. Setup is described in
 [Cua computer use](../cua-computer-use.md). `extensions/list` then includes
 `roder-ext-cua`. Tool arguments identify native windows and capture/element
 handles; runner credentials and destination selection remain host-owned.
