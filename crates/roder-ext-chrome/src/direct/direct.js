@@ -7,7 +7,7 @@
 // password, a one-time code, or a field masked as one) is never read: only
 // whether it holds anything.
 (() => {
-  if (window.__roderDirect?.v === 2) return;
+  if (window.__roderDirect?.v === 4) return;
   const ROLES = ['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'menuitemcheckbox','option','combobox','textbox','searchbox','slider','spinbutton','gridcell',
     'treeitem'];
@@ -19,7 +19,7 @@
     '[role="menuitem"],[role="tab"],[role="checkbox"],[role="radio"]';
   const FIELD = 'input,textarea,select,[contenteditable=""],[contenteditable="true"]';
   const GRAPHIC = 'canvas,svg,video,iframe';
-  const S = { v: 2, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
+  const S = { v: 4, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
     masks: [] };
   const refOf = el => {
     let ref = S.ids.get(el);
@@ -177,14 +177,17 @@
     found.sort((a, b) => (onscreen(b) - onscreen(a)) || (a[1].top - b[1].top) || (a[1].left - b[1].left));
     const items = found.slice(0, max).map(([el, r]) => describe(el, r, refOf(el)));
     const f = focused();
+    const full = (document.body?.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+    const keep = opts?.text || 3000;
     return {
       url: location.href, title: document.title, http_status: status(),
       viewport: { w: innerWidth, h: innerHeight, scroll_y: Math.round(scrollY),
         page_h: Math.round(document.documentElement.scrollHeight) },
       focused: f ? cut(label(f) || f.tagName.toLowerCase(), 60) : null,
       elements: items, omitted: Math.max(0, found.length - max),
-      text: (document.body?.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n')
-        .trim().slice(0, opts?.text || 3000),
+      // The text is cut at `keep` UTF-16 units; `text_cut` says it was, and
+      // `text_total` how many characters the whole page text has.
+      text: full.slice(0, keep), text_cut: full.length > keep, text_total: [...full].length,
     };
   };
   // Where a ref is on screen now, scrolled into view when it is not; at a
@@ -287,19 +290,56 @@
   };
   S.focusedSecret = () => { const f = focused(); return !!f && secret(f); };
   S.markSecret = () => { const f = focused(); if (f) S.secrets.add(f); };
+  // Choose an option of a native select: the enabled option whose value is
+  // `option`, else whose text is (ignoring case and spacing), else whose
+  // value is (ignoring case), else the one whose text contains it. A step
+  // that finds options of different values is ambiguous: nothing is chosen.
+  const enabled = o => !o.disabled &&
+    !(o.parentElement?.tagName === 'OPTGROUP' && o.parentElement.disabled);
+  const described = o => ({ label: cut(o.text, 40), value: cut(o.value, 40), disabled: !enabled(o) });
+  const listing = el => ({ total: el.options.length, options: [...el.options].slice(0, 20).map(described) });
   S.select = (ref, option) => {
     const el = S.nodes.get(ref);
     if (!el?.isConnected) return { gone: true };
-    if (el.tagName !== 'SELECT') return { not_select: true };
-    const want = String(option).trim().toLowerCase();
-    const match = [...el.options].find(o => o.text.trim().toLowerCase() === want) ||
-      [...el.options].find(o => o.value.toLowerCase() === want) ||
-      [...el.options].find(o => o.text.trim().toLowerCase().includes(want));
-    if (!match) return { missing: true, options: [...el.options].slice(0, 20).map(o => cut(o.text, 40)) };
-    el.value = match.value;
+    if (el.tagName !== 'SELECT') {
+      return { not_select: true, tag: el.tagName.toLowerCase(), label: cut(label(el), 60) };
+    }
+    if (el.disabled) return { disabled_select: true };
+    const want = String(option), low = cut(want, 1e6).toLowerCase();
+    const text = o => cut(o.text, 1e6).toLowerCase();
+    const steps = [
+      o => o.value === want,
+      o => text(o) === low,
+      o => o.value.toLowerCase() === want.toLowerCase(),
+      o => low !== '' && text(o).includes(low),
+    ];
+    const find = (pool, count) => {
+      for (const step of steps.slice(0, count)) {
+        const found = pool.filter(step);
+        if (found.length) return found;
+      }
+      return [];
+    };
+    const all = [...el.options];
+    const found = find(all.filter(enabled), steps.length);
+    if (!found.length) {
+      const off = find(all.filter(o => !enabled(o)), 3);
+      if (off.length) return { disabled_option: cut(off[0].text, 40), ...listing(el) };
+      return { missing: true, ...listing(el) };
+    }
+    if (new Set(found.map(o => o.value)).size > 1) {
+      return { ambiguous: true, count: found.length, options: found.slice(0, 8).map(described) };
+    }
+    el.selectedIndex = found[0].index;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    return { kept: el.value === match.value, shown: cut(el.selectedOptions?.[0]?.text, 60) };
+    return { value: found[0].value, label: cut(found[0].text, 60) };
+  };
+  // What a select shows now, for checking that a choice stuck.
+  S.picked = ref => {
+    const el = S.nodes.get(ref);
+    if (!el?.isConnected) return { gone: true };
+    return { value: el.value, label: cut(el.selectedOptions?.[0]?.text, 60) };
   };
   // Black boxes over every filled secret field on screen, for a screenshot.
   S.mask = on => {

@@ -10,6 +10,9 @@ advertises the native tool, executes ordered action batches, and returns matchin
 `computer_call_output` screenshots. The new ACP/real-Chrome protocol eval covers
 all nine action types. Its decision endpoint is scripted; a separate live
 OpenAI model run passed the basic fixture and final browser-state check.
+Correction 2026-10-09: that live run was graded by a grader that accepted any
+correct submit. Its saved events hold four trusted submits, three of them wrong,
+so it does not pass the now-strict "exactly one trusted correct submit" rule.
 See [native computer use](native-computer-use.md)
 for implementation locations, configuration and reproducible evidence.
 
@@ -114,7 +117,7 @@ above implement the browser/native actions.
 | Genuine UI input | Desktop fallback previously used DOM `.click()`, value assignments and synthetic keyboard events. It now uses shared CDP primitives. Browser fixtures observe `isTrusted=true` for click, text input and key events, including Tab moving focus. | Repaired, browser evaluated |
 | Fresh state and reliable targeting | Desktop actions and navigation return actual page text/refs. Missing and ambiguous targets fail. Ref identity survives DOM insertions; refs from a previous document fail. Typing rejects a non-editable target before clicking or inserting text. | Repaired, browser evaluated |
 | Browser-use session ownership | One process previously served every thread. Threads now own distinct lazy servers and private profile/download/file directories. Separate processes alone were insufficient: the pinned upstream server defaults to a shared profile. Real pinned-runtime tests now prove thread cookie isolation and persistence within each thread. | Repaired, real runtime evaluated |
-| Browser-use action/observation ordering | Calls within a thread are serialized; actions are followed by `browser_get_state` with screenshot. Fresh state precedes the action report so report text cannot crowd it out first. Real pinned-runtime click outcomes are independently checked through the page HTML. | Repaired, real runtime evaluated |
+| Browser-use action/observation ordering | Calls within a thread are serialized; actions are followed by `browser_get_state` with screenshot. The action report comes first, labelled as browser-use's own claim for the model to check against the observed state that follows it, so a size cut falls on the state and not on the report. Real pinned-runtime click outcomes are independently checked through the page HTML. | Repaired, real runtime evaluated |
 | Cancellation | In-flight browser-use cancellation stops the owned process tree; the next call starts fresh. Direct tools track held input and screenshot masks before sending commands, recover through a separate connection with a five-second cap, and await recovery before reusing a retained session. Real-browser tests cancel a drag and a key with a delayed acknowledgement, cancel a masked screenshot, and inject an error during a drag. Key cancellation retains the original session and immediately resumes it. Recovery is best effort if Chrome is unreachable or the runtime exits. | Repaired, browser evaluated |
 | Untrusted observations | Existing markers remain on reads. Desktop eval results and tab titles/URLs are labeled; action observations from browser-use are labeled even when an error is present. Direct helper state and permission probes now execute in a named CDP isolated world. A fixture poisons the page's `window.__roderDirect`; genuine state and input still work. | Improved and browser evaluated; paired extension evaluated |
 | Outcome verification | Jev fixture graders check actual page/DOM outcomes and recorded fixture POSTs; successful final model text alone does not determine a pass. The corpus passed 52/52, including 5 fallback tasks. | Deterministic harness evaluated |
@@ -134,6 +137,11 @@ Expected blocked/budget/confirmation outcomes are included in the corpus.
 - `scroll_region`: did not successfully scroll/unlock and submit the terms form.
 - `enter_to_search`: reported `done` although no search POST occurred. This is
   direct evidence that a final success claim is insufficient.
+
+These saved rows predate the split of `pass` into `verdict_ok`, `truth_ok` and
+`false_green`. Rows written now carry all three, and the `enter_to_search` row
+reads `verdict_ok` true, `truth_ok` false, `false_green` true. See
+"End-to-end eval corpus" in [Jev browser](jev-browser.md).
 
 A separate seven-task run with **Codex `gpt-6-sol`, low reasoning** enabled as
 fallback passed 4/7 combined graders. The fallback ran on five tasks, with four

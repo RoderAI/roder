@@ -4,40 +4,66 @@ use roder_api::computer::{ComputerAction, ComputerActions, ComputerPoint};
 use serde_json::json;
 use std::time::Duration;
 
-use super::{DirectSession, DirectStep, guard::GateAction, keys::Chord, target::Point};
+use super::{
+    DirectSession, DirectStep,
+    computer_header::{self, Failure},
+    computer_notes::{self, BatchFacts, is_input},
+    guard::GateAction,
+    keys::Chord,
+    target::Point,
+};
 
 impl DirectSession {
     /// Execute in order, stop at the first failed action, and always observe the
     /// resulting screen. A failed action must never be reported as completion.
+    ///
+    /// The result is a screenshot, always: when none can be taken it is the
+    /// placeholder. The notable events of the batch (a page that failed to
+    /// load, a tab that opened, a dialog, a remapped chord, actions not run)
+    /// travel as `computer_notes` in the data and as a block in the text.
+    /// A navigation or a new tab ends the batch, since the actions after it
+    /// were planned for a page that is gone.
     pub async fn run_computer(&mut self, batch: &ComputerActions) -> DirectStep {
         if let Err(error) = self.client.wait_cleanup().await {
-            return DirectStep::error(format!(
+            return DirectStep::screenshot_lost(format!(
                 "Browser cleanup prevented computer actions: {error:#}"
             ));
         }
         let cleanup = self.client.cleanup();
+        let mut facts = BatchFacts::default();
         let mut completed = 0;
         let mut failure = None;
         if batch.actions.is_empty() || batch.actions.len() > 100 {
-            failure = Some("computer requires 1..100 actions".to_string());
+            failure = Some(Failure::Refused(
+                "computer requires 1..100 actions".to_string(),
+            ));
         } else {
-            for action in &batch.actions {
-                match self.computer_action(action).await {
+            for (index, action) in batch.actions.iter().enumerate() {
+                facts.begin(index + 1);
+                match self.computer_action(action, &mut facts).await {
                     Ok(step) if !step.is_error => {
                         if let Some(secret) = &step.typed_secret {
                             self.guard.remember_secret(secret);
                         }
                         completed += 1;
+                        let cause = facts.observe(self.guard.as_ref(), action, &step);
+                        let rest = &batch.actions[index + 1..];
+                        if let Some(cause) = cause
+                            && rest.iter().any(is_input)
+                        {
+                            facts.stop(self.guard.as_ref(), cause, rest);
+                            break;
+                        }
                     }
                     Ok(step) => {
                         if let Some(secret) = &step.typed_secret {
                             self.guard.remember_secret(secret);
                         }
-                        failure = Some(step.text);
+                        failure = Some(Failure::Action(step.text));
                         break;
                     }
                     Err(error) => {
-                        failure = Some(format!("{error:#}"));
+                        failure = Some(Failure::Action(format!("{error:#}")));
                         break;
                     }
                 }
@@ -45,29 +71,73 @@ impl DirectSession {
         }
         // Release input after a failure before taking the observation. Drop
         // still owns cleanup if this future is cancelled anywhere in the batch.
-        if let Err(error) = cleanup.finish().await {
-            failure = Some(format!("Browser cleanup failed: {error:#}"));
+        let cleanup_error = cleanup
+            .finish()
+            .await
+            .err()
+            .map(|error| format!("{error:#}"));
+        let mut observed = self.screen().await;
+        if observed.data["screenshot_unavailable"] == json!(true) {
+            let reason = observed.data["screenshot_error"]
+                .as_str()
+                .unwrap_or_default();
+            facts.closing(
+                self.guard.as_ref(),
+                &super::unavailable::unavailable_note(reason),
+            );
+            // The notes say it; the text must not say it twice.
+            observed.text.clear();
         }
-        let mut observed = self.run("screenshot", &json!({})).await;
         observed.data["completed_actions"] = json!(completed);
         observed.data["requested_actions"] = json!(batch.actions.len());
         observed.data["untrusted"] = json!(true);
-        if let Some(failure) = failure {
-            observed.is_error = true;
-            observed.data["error"] = json!(failure);
-            observed.text = format!(
-                "Computer action {completed} failed: {failure}\n{}",
-                observed.text
-            );
+        if let Some((cause, unrun)) = facts.stopped {
+            observed.data["stopped_after"] = json!(cause.key());
+            observed.data["unrun_actions"] = json!(unrun);
         }
-        observed.text = format!("UNTRUSTED browser observation.\n{}", observed.text);
+        let mut header = computer_header::header(
+            failure.as_ref(),
+            cleanup_error.as_deref(),
+            completed,
+            batch.actions.len(),
+        );
+        let error = failure
+            .as_ref()
+            .map(|failure| failure.message().to_string())
+            .or_else(|| {
+                let cleanup = cleanup_error.as_ref()?;
+                Some(format!("Browser cleanup failed: {cleanup}"))
+            });
+        if let Some(error) = error {
+            observed.is_error = true;
+            observed.data["error"] = json!(error);
+        }
+        if let Some(cleanup) = &cleanup_error {
+            observed.data["cleanup_error"] = json!(cleanup);
+        }
+        let notes = facts.finish();
+        if !notes.is_empty() {
+            header.push_str(&computer_notes::render(&notes));
+            observed.data["computer_notes"] = json!(notes);
+        }
+        observed.text = format!("UNTRUSTED browser observation.\n{header}{}", observed.text);
         observed
     }
 
-    async fn computer_action(&mut self, action: &ComputerAction) -> anyhow::Result<DirectStep> {
+    async fn computer_action(
+        &mut self,
+        action: &ComputerAction,
+        facts: &mut BatchFacts,
+    ) -> anyhow::Result<DirectStep> {
         let url = self.client.evaluate_isolated("location.href").await?;
         if let Some(reason) = url.as_str().and_then(|url| self.guard.outside(url)) {
             bail!("{reason}");
+        }
+        // The page this action leaves, to tell what it changed. Read after
+        // the origin check, and only once the batch sends input.
+        facts.url_before = url.as_str().map(str::to_string);
+        if facts.needs_baseline() && is_input(action) {
+            facts.set_baseline(self.page_seen().await);
         }
         let keys = match action {
             ComputerAction::Click { keys, .. }
@@ -139,8 +209,11 @@ impl DirectSession {
                 }
                 self.computer_mouse("mouseReleased", last.x, last.y, "left", 0, 1, modifiers)
                     .await?;
-                self.after("Dragged along requested path.".into(), json!({}))
-                    .await
+                self.after(
+                    "Dragged along requested path.".into(),
+                    json!({"target": probe}),
+                )
+                .await
             }
             ComputerAction::Scroll {
                 x,
@@ -171,11 +244,16 @@ impl DirectSession {
                     !keys.is_empty() && keys.len() <= 8,
                     "keypress requires 1..8 keys"
                 );
-                let chord = keys
+                let mut chord = keys
                     .iter()
                     .map(|key| normalize_key(key))
                     .collect::<Vec<_>>()
                     .join("+");
+                // A Mac page ignores Control+a; say what was sent instead.
+                if let Some((twin, said)) = self.mac_chord(&chord).await? {
+                    facts.said(self.guard.as_ref(), &said);
+                    chord = twin;
+                }
                 self.key(&json!({"key":chord})).await
             }
             ComputerAction::Type { text } => self.type_text(&json!({"text":text})).await,
@@ -239,8 +317,11 @@ impl DirectSession {
             self.computer_mouse("mouseReleased", x, y, button, 0, count, modifiers)
                 .await?;
         }
-        self.after("Clicked requested point.".into(), json!({}))
-            .await
+        self.after(
+            "Clicked requested point.".into(),
+            json!({"target": probe, "x": x, "y": y}),
+        )
+        .await
     }
 
     async fn computer_mouse(
@@ -264,7 +345,7 @@ impl DirectSession {
     }
 }
 
-fn normalize_key(key: &str) -> &str {
+pub(super) fn normalize_key(key: &str) -> &str {
     match key.to_ascii_uppercase().as_str() {
         "CTRL" | "CONTROL" => "Control",
         "ALT" | "OPTION" => "Alt",

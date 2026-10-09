@@ -2,8 +2,9 @@
 //!
 //! A ref from the last look is resolved to the centre of its box (scrolled
 //! into view first) and hit-tested: a ref another element covers is not
-//! pressed, and the result names what covers it, so the caller can close it
-//! or press at coordinates deliberately. Coordinates are pressed as given.
+//! pressed, and the result names what covers it, so the caller can close it,
+//! scroll it clear or, where the tool takes coordinates, press at them
+//! deliberately. Coordinates are pressed as given.
 //! Before a click on a control, or Enter, the owner's guard is asked whether
 //! the control needs the user's confirmation first.
 
@@ -15,7 +16,7 @@ use super::guard::{GateAction, GateQuery};
 use super::keys::Chord;
 use super::look::helper;
 use super::session::{DirectSession, DirectStep};
-use super::target::Point;
+use super::target::{Point, Reach, covered_focus_error};
 
 /// Why the guard held a press back.
 pub(super) enum Held {
@@ -44,7 +45,7 @@ impl DirectSession {
     }
 
     async fn click(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
-        let point = match self.point(args, "").await? {
+        let point = match self.point(args, "", self.reach).await? {
             Ok(point) => point,
             Err(why) => return Ok(DirectStep::error(why)),
         };
@@ -81,7 +82,7 @@ impl DirectSession {
     }
 
     async fn hover(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
-        let point = match self.point(args, "").await? {
+        let point = match self.point(args, "", self.reach).await? {
             Ok(point) => point,
             Err(why) => return Ok(DirectStep::error(why)),
         };
@@ -104,12 +105,12 @@ impl DirectSession {
     }
 
     async fn drag(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
-        let from = match self.point(args, "from_").await? {
+        let from = match self.point(args, "from_", self.reach).await? {
             Ok(point) => point,
             Err(why) => return Ok(DirectStep::error(why)),
         };
         let from_probe = self.probe(args, "from_", from).await?;
-        let to = match self.point(args, "to_").await? {
+        let to = match self.point(args, "to_", self.reach).await? {
             Ok(point) => point,
             Err(why) => return Ok(DirectStep::error(why)),
         };
@@ -160,7 +161,8 @@ impl DirectSession {
         // A ref's content is replaced unless the call appends to it.
         let clear = target.is_some() && args["append"] != json!(true);
         if let Some(reference) = target {
-            let point = match self.point(args, "").await? {
+            // `type` takes a ref and no coordinates, whatever the surface.
+            let point = match self.point(args, "", Reach::RefOnly).await? {
                 Ok(point) => point,
                 Err(why) => return Ok(DirectStep::error(why)),
             };
@@ -197,7 +199,7 @@ impl DirectSession {
         } else {
             format!("\"{}\"", cut(text, 80))
         };
-        let into = helper(&mut self.client, "probeFocused()").await?;
+        let into = self.probe_focused().await?;
         let mut done = format!("Typed {shown} into {}.", named(&into));
         if args["submit"] == json!(true) {
             if let Some(mut refused) = self.covered_focus(&into).await? {
@@ -234,7 +236,7 @@ impl DirectSession {
             Err(error) => return Ok(DirectStep::error(error.to_string())),
         };
         let repeat = args["repeat"].as_u64().unwrap_or(1).clamp(1, MAX_REPEAT);
-        let focused = helper(&mut self.client, "probeFocused()").await?;
+        let focused = self.probe_focused().await?;
         // Enter and Space press what has focus, so they answer to the same
         // rules as a click on it, and never press a control something
         // covers: that would get around the cover (a modal, a banner).
@@ -279,7 +281,7 @@ impl DirectSession {
             || args["x"].is_number()
             || args["y"].is_number();
         let point = match located {
-            true => match self.point(args, "").await? {
+            true => match self.point(args, "", self.reach).await? {
                 Ok(point) => point,
                 Err(why) => return Ok(DirectStep::error(why)),
             },
@@ -306,44 +308,6 @@ impl DirectSession {
                 point.x, point.y
             ),
             json!({"dx": dx, "dy": dy, "x": point.x, "y": point.y}),
-        )
-        .await
-    }
-
-    async fn select(&mut self, args: &Value) -> anyhow::Result<DirectStep> {
-        let (Some(reference), Some(option)) = (args["ref"].as_str(), args["option"].as_str())
-        else {
-            return Ok(DirectStep::error("select needs a ref and an option"));
-        };
-        let chosen = helper(
-            &mut self.client,
-            &format!("select({}, {})", json!(reference), json!(option)),
-        )
-        .await?;
-        if chosen["gone"] == json!(true) {
-            return Ok(DirectStep::error(format!(
-                "{reference} is gone from the page; look again"
-            )));
-        }
-        if chosen["not_select"] == json!(true) {
-            return Ok(DirectStep::error(format!(
-                "{reference} is not a native select; click it and then the option instead"
-            )));
-        }
-        if chosen["missing"] == json!(true) {
-            return Ok(DirectStep::error(format!(
-                "{reference} has no option {option:?}; its options: {}",
-                chosen["options"]
-            )));
-        }
-        let shown = chosen["shown"].as_str().unwrap_or_default().to_string();
-        let done = match chosen["kept"] == json!(true) {
-            true => format!("Chose \"{shown}\" in {reference}."),
-            false => format!("Chose {option:?} in {reference}, but the page shows \"{shown}\"."),
-        };
-        self.after(
-            done,
-            json!({"ref": reference, "option": option, "shown": shown}),
         )
         .await
     }
@@ -387,14 +351,9 @@ impl DirectSession {
     /// covers it; `None` when nothing does.
     async fn covered_focus(&mut self, focused: &Value) -> anyhow::Result<Option<DirectStep>> {
         let covered = helper(&mut self.client, "focusCovered()").await?;
-        Ok(covered.as_str().map(|by| {
-            DirectStep::error(format!(
-                "{} is covered by \"{by}\"; pressing it by keyboard would get around what covers \
-                 it, so nothing was pressed. Close what covers it first (Escape, or its close \
-                 control), or scroll it clear.",
-                named(focused)
-            ))
-        }))
+        Ok(covered
+            .as_str()
+            .map(|by| DirectStep::error(covered_focus_error(focused, by, self.guard.as_ref()))))
     }
 
     /// The step a held press comes to, after `done` (what already ran).
@@ -406,12 +365,7 @@ impl DirectSession {
     }
 
     async fn press(&mut self, chord: &Chord) -> anyhow::Result<()> {
-        let mac = self
-            .client
-            .evaluate_isolated("navigator.platform")
-            .await?
-            .as_str()
-            .is_some_and(|platform| platform.contains("Mac"));
+        let mac = self.mac_page().await?;
         for mut event in chord.press_events() {
             if event["type"] != "keyUp" && event["key"] == chord.events()[0]["key"] {
                 if let Some(command) = chord.editing_command(mac) {

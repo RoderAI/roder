@@ -38,14 +38,30 @@ impl ToolExecutor for ComputerTool {
     fn spec(&self) -> ToolSpec {
         computer_tool_spec()
     }
+    /// A native call's result is a screenshot, whatever went wrong: a result
+    /// without one cannot be replayed to the model, and the thread stops. So
+    /// a call that cannot even reach its browser is a failed result carrying
+    /// the placeholder picture, not an executor error.
     async fn execute(
         &self,
         ctx: ToolExecutionContext,
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
+        match self.run(ctx, &call).await {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(tool_result(
+                &call.id,
+                &call.name,
+                &DirectStep::screenshot_lost(format!("{error:#}")),
+            )),
+        }
+    }
+}
+impl ComputerTool {
+    async fn run(&self, ctx: ToolExecutionContext, call: &ToolCall) -> anyhow::Result<ToolResult> {
         let lease = self
             .binding
-            .lease(&ctx, &call)
+            .lease(&ctx, call)
             .await
             .map_err(anyhow::Error::msg)?;
         let slot = {
@@ -73,7 +89,7 @@ impl ToolExecutor for ComputerTool {
         let step = match serde_json::from_value::<ComputerActions>(call.arguments.clone()) {
             Ok(batch) => session.run_computer(&batch).await,
             Err(error) => {
-                let mut observed = session.run("screenshot", &json!({})).await;
+                let mut observed = session.screen().await;
                 observed.is_error = true;
                 observed.text = format!(
                     "Invalid native computer actions; no input sent: {error}\n{}",

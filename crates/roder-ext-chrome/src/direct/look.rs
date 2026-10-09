@@ -4,8 +4,16 @@ use serde_json::{Value, json};
 
 use super::client::{TabClient, cut};
 use super::guard::{DirectGuard, PageFacts};
+use super::session::DirectSession;
+use crate::observed_render::Budget;
 
 pub(crate) const DIRECT_JS: &str = include_str!("direct.js");
+
+/// The most lines a look is rendered in. A look is at most 120 elements, one
+/// line each, and up to 3,000 characters of text, which can be a line per few
+/// words: the text is cut by lines so the result stays inside the page-result
+/// line budget, with a few lines to spare for what an action says before it.
+const LOOK_LINES: usize = Budget::RESULT.lines - 10;
 
 /// How much one read lists.
 #[derive(Debug, Clone, Copy)]
@@ -41,6 +49,25 @@ pub(crate) async fn read(
     let mut look = client.evaluate_isolated(&expression).await?;
     scrub_strings(&mut look, guard);
     Ok(look)
+}
+
+impl DirectSession {
+    /// The page as it is now, briefly, for a caller to compare a later look
+    /// with. `None` when the page is outside the owner's scope (nothing is
+    /// read from it) or cannot be read.
+    pub(crate) async fn brief_look(&mut self) -> Option<Value> {
+        let url = self.client.evaluate_isolated("location.href").await.ok()?;
+        if url
+            .as_str()
+            .and_then(|url| self.guard.outside(url))
+            .is_some()
+        {
+            return None;
+        }
+        read(&mut self.client, self.guard.as_ref(), Detail::BRIEF)
+            .await
+            .ok()
+    }
 }
 
 /// Call one helper of the page script, installing it first.
@@ -116,9 +143,26 @@ pub(crate) fn render(look: &Value) -> String {
         lines.push(format!("… {omitted} more elements not listed"));
     }
     let text = look["text"].as_str().unwrap_or_default().trim();
+    // The text gets the lines that are left, less its header and the line
+    // that says it was cut.
+    let room = LOOK_LINES.saturating_sub(lines.len() + 2);
+    let shown = text.lines().take(room).collect::<Vec<_>>().join("\n");
     if !text.is_empty() {
         lines.push("Text:".into());
-        lines.push(text.to_string());
+        if !shown.is_empty() {
+            lines.push(shown.clone());
+        }
+    }
+    // The page script keeps only so much of the text, and the line budget
+    // keeps less of it still; say when either cut some.
+    if look["text_cut"] == json!(true) || shown.len() < text.len() {
+        lines.push(format!(
+            "… text cut at {} chars (the page text is {} chars)",
+            shown.chars().count(),
+            look["text_total"]
+                .as_u64()
+                .unwrap_or(text.chars().count() as u64)
+        ));
     }
     lines.join("\n")
 }
@@ -226,6 +270,74 @@ mod tests {
         let facts = facts(&look);
         assert_eq!(facts.controls, 3);
         assert_eq!(facts.http_status, Some(200));
+    }
+
+    #[test]
+    fn text_the_page_script_cut_says_so() {
+        let cut = json!({
+            "url": "https://a.test/", "title": "A", "elements": [],
+            "text": "abc", "text_cut": true, "text_total": 5000
+        });
+        assert!(
+            render(&cut)
+                .ends_with("Text:\nabc\n… text cut at 3 chars (the page text is 5000 chars)"),
+            "{}",
+            render(&cut)
+        );
+        let whole = json!({
+            "url": "https://a.test/", "title": "A", "elements": [],
+            "text": "abc", "text_cut": false, "text_total": 3
+        });
+        assert!(!render(&whole).contains("text cut"), "{}", render(&whole));
+    }
+
+    #[test]
+    fn text_in_many_short_lines_is_cut_by_lines_and_says_so() {
+        let words: Vec<String> = (1..=400).map(|n| format!("w{n}")).collect();
+        let elements: Vec<Value> = (1..=120)
+            .map(|n| {
+                json!({"ref": format!("e{n}"), "tag": "a", "label": format!("Link {n}"),
+                "x": 0, "y": n, "w": 50, "h": 10})
+            })
+            .collect();
+        let look = json!({
+            "url": "https://a.test/", "title": "A", "elements": elements,
+            "text": words.join("\n"), "text_cut": false
+        });
+
+        let text = render(&look);
+
+        assert!(
+            text.lines().count() <= LOOK_LINES,
+            "{} lines",
+            text.lines().count()
+        );
+        assert!(
+            text.contains("e120 a \"Link 120\""),
+            "all the elements are listed first"
+        );
+        let marker = text.lines().last().unwrap();
+        assert!(
+            marker.starts_with("… text cut at ") && marker.ends_with(" chars)"),
+            "{marker}"
+        );
+        let kept = text.split_once("Text:\n").unwrap().1.lines().count() - 1;
+        assert!(
+            (5..30).contains(&kept),
+            "the text keeps the lines the elements left: {kept}"
+        );
+        let total = words.join("\n").chars().count();
+        assert!(
+            marker.contains(&format!("(the page text is {total} chars)")),
+            "{marker}"
+        );
+
+        // Text that fits the lines is shown whole and says nothing.
+        let short = json!({
+            "url": "https://a.test/", "title": "A", "elements": [],
+            "text": words[..20].join("\n"), "text_cut": false
+        });
+        assert!(!render(&short).contains("text cut"), "{}", render(&short));
     }
 
     #[test]

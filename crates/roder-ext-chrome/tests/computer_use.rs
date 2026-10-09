@@ -20,7 +20,11 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 include!("support/cancellation.rs");
+include!("support/covered.rs");
 include!("support/scope.rs");
+include!("support/select.rs");
+include!("support/scripted.rs");
+include!("support/outcome.rs");
 
 struct Browser {
     child: Child,
@@ -163,7 +167,17 @@ async fn fixture() -> (String, tokio::task::JoinHandle<()>) {
                     let _ = stream.write_all(response.as_bytes()).await;
                     return;
                 }
-                let body = include_str!("fixtures/primitives.html");
+                let body = if String::from_utf8_lossy(&request[..length])
+                    .starts_with("GET /select ")
+                {
+                    include_str!("fixtures/select.html")
+                } else if String::from_utf8_lossy(&request[..length]).starts_with("GET /outcome") {
+                    include_str!("fixtures/outcome.html")
+                } else if String::from_utf8_lossy(&request[..length]).starts_with("GET /covered") {
+                    include_str!("fixtures/covered.html")
+                } else {
+                    include_str!("fixtures/primitives.html")
+                };
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -219,7 +233,7 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
         loaded.text.contains("Primitive fixture"),
         "Navigation must return observed page state"
     );
-    eval(&registry, "window.__roderDirect = {v:2, look:()=>({title:'FAKE STATE'}), point:()=>({x:0,y:0}), editable:()=>true}; true").await;
+    eval(&registry, "window.__roderDirect = {v:4, look:()=>({title:'FAKE STATE'}), point:()=>({x:0,y:0}), editable:()=>true}; true").await;
     let looked = call(&registry, "chrome_page_snapshot", json!({})).await;
     assert!(looked.text.contains("Count: 0"));
     assert!(!looked.text.contains("fixture-secret"));
@@ -369,8 +383,11 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
     }
     cancellation_faults(&tab, &registry).await;
     desktop_scope_and_tab_identity(&browser, &registry, &url).await;
+    desktop_select(&registry, &url).await;
+    desktop_and_extension_say_the_same(&registry, &url).await;
+    covered_targets_get_advice_their_tool_can_follow(&registry, &browser, &url).await;
     eprintln!(
-        "PASS: navigation/state, stable refs, trusted click/type/key, missing/ambiguous targets, secret masking, DPR2 screenshot mapping, origin/out-of-bounds coordinates, right-button mask, screenshot attachment"
+        "PASS: navigation/state, stable refs, trusted click/type/key, missing/ambiguous targets, secret masking, DPR2 screenshot mapping, origin/out-of-bounds coordinates, right-button mask, screenshot attachment, Desktop chrome_select, Desktop and extension outcome parity, covered-target advice per tool surface"
     );
     site.abort();
 }

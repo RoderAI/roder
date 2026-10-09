@@ -26,8 +26,12 @@ use super::cleanup::{Cleanup, Pending};
 use super::devtools::{accepts_dialog, browser_websocket, decode_message};
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
-/// A dialog message longer than this is cut; it is page text.
+/// A dialog message longer than this is cut when it is read; it is page text.
 const DIALOG_MESSAGE_CHARS: usize = 500;
+/// What is kept of a message until it is read, so that the owner's secrets
+/// are scrubbed from it before the cut: a secret across the cut would
+/// otherwise show its first characters.
+const DIALOG_KEPT_CHARS: usize = 4000;
 
 /// The tab a [`super::DirectSession`] drives.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,8 +157,10 @@ impl TabClient {
         &self.target_id
     }
 
-    pub(crate) fn take_dialogs(&mut self) -> Vec<DirectDialog> {
-        std::mem::take(&mut self.dialogs)
+    /// The dialogs answered since the last call, with `scrub` applied to each
+    /// message before it is cut to [`DIALOG_MESSAGE_CHARS`].
+    pub(crate) fn take_dialogs(&mut self, scrub: impl Fn(&str) -> String) -> Vec<DirectDialog> {
+        released(std::mem::take(&mut self.dialogs), scrub)
     }
 
     /// A command to the tab.
@@ -280,7 +286,7 @@ impl TabClient {
             kind,
             message: cut(
                 params["message"].as_str().unwrap_or_default(),
-                DIALOG_MESSAGE_CHARS,
+                DIALOG_KEPT_CHARS,
             ),
             accepted: accept,
         });
@@ -339,5 +345,38 @@ pub(crate) fn cut(text: &str, chars: usize) -> String {
     match text.char_indices().nth(chars) {
         Some((at, _)) => format!("{}…", &text[..at]),
         None => text.to_string(),
+    }
+}
+
+/// Dialogs as a reader may see them: scrubbed, then cut.
+fn released(dialogs: Vec<DirectDialog>, scrub: impl Fn(&str) -> String) -> Vec<DirectDialog> {
+    dialogs
+        .into_iter()
+        .map(|dialog| DirectDialog {
+            message: cut(&scrub(&dialog.message), DIALOG_MESSAGE_CHARS),
+            ..dialog
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dialog_message_is_scrubbed_before_it_is_cut() {
+        // The secret straddles the 500-character cut: cut first, its first
+        // characters would survive the scrub.
+        let message = format!("{}hunter22 and more", "x".repeat(DIALOG_MESSAGE_CHARS - 4));
+        assert!(message.contains("hunt"));
+        let dialogs = vec![DirectDialog {
+            kind: "alert".into(),
+            message,
+            accepted: true,
+        }];
+        let read = released(dialogs, |text| text.replace("hunter22", "[REDACTED]"));
+        assert!(!read[0].message.contains("hunt"), "{}", read[0].message);
+        assert!(read[0].message.contains("[RED"), "{}", read[0].message);
+        assert!(read[0].message.chars().count() <= DIALOG_MESSAGE_CHARS + 1);
     }
 }

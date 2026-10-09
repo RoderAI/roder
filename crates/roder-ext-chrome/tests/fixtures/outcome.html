@@ -1,0 +1,15 @@
+<!doctype html><title>Outcome fixture</title>
+<h1>Outcome fixture</h1>
+<button id="dead">Dead</button>
+<button id="add">Add item</button>
+<ul id="list"></ul>
+<label><input type="checkbox" id="agree"> Agree</label>
+<a id="next" href="#next">Next</a>
+<script>
+let items = 0;
+document.querySelector('#add').onclick = () => {
+  const item = document.createElement('li');
+  item.textContent = 'Item ' + ++items;
+  document.querySelector('#list').append(item);
+};
+</script>

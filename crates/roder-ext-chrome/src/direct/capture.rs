@@ -22,10 +22,12 @@ impl DirectSession {
         let shown = helper(&mut self.client, "shown()").await?;
         let shown = shown.as_str().unwrap_or_default();
         if self.guard.scrub(shown) != shown {
-            return Ok(DirectStep::error(
+            let mut withheld = DirectStep::error(
                 "Screenshot withheld: a value typed into a password or one-time-code field is \
                  shown on the page. Read the page with look instead.",
-            ));
+            );
+            withheld.data["screenshot_withheld"] = json!(true);
+            return Ok(withheld);
         }
         let view = self
             .client

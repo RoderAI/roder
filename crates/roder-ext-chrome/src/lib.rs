@@ -15,12 +15,18 @@
 //! shared browser-bridge contract lives in [`roder_api::chrome`].
 
 mod artifacts;
+mod chrome_select;
 mod computer;
 mod desktop_cdp;
+mod desktop_outcome;
 mod desktop_scope;
 mod desktop_tabs;
 pub mod direct;
 mod extension;
+mod extension_result;
+mod observed;
+mod observed_read;
+mod observed_render;
 mod policy;
 mod session;
 mod tools;

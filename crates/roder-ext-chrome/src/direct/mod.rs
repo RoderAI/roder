@@ -23,13 +23,18 @@ mod capture;
 mod cleanup;
 mod client;
 mod computer;
+mod computer_header;
+mod computer_notes;
 pub mod devtools;
 mod guard;
 mod keys;
 mod look;
+mod mac;
+mod select;
 mod session;
 mod target;
 mod tools;
+mod unavailable;
 
 pub use client::{DirectDialog, DirectTab};
 pub use guard::{DirectGuard, GateAction, GateQuery, OpenGuard, PageFacts, StopKind};
