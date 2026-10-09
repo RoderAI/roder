@@ -1,3 +1,41 @@
+## 0.3.5 (2026-10-09)
+
+### Added
+
+Run native desktop applications and control browsers through Cua Driver on the
+thread's configured computer. Enable `[cua] enabled = true` to expose 19 tools
+for screenshots, application/window discovery, pointer and keyboard input,
+Unicode value replacement, window management and browser interaction.
+
+The Linux backend reuses the thread's Blaxel runner. The qualified XFCE/X11
+workflow launches apps, navigates folders, drags files, creates and reopens
+LibreOffice documents, and drives Chrome through native and semantic browser
+controls. A loopback, read-only live viewer lets you watch the desktop while
+Roder works. The explicit `local-macos` backend uses the signed CuaDriver app;
+macOS desktop control is qualified on Apple Silicon.
+
+Browser tools bind to an exact native window and tab, return semantic refs and
+real screenshots, navigate pages, click, type Unicode, and end the attachment.
+Existing-profile attachment is disabled by default and requires both explicit
+Roder configuration and an independent Cua daemon grant. The qualified Chrome
+example uses a synthetic login created inside its disposable Linux sandbox.
+
+Roder retains normal approvals, Plan-mode observation, thread/runner isolation
+and image replay. Fresh observations are required after actions; stale refs
+are rejected and uncertain input is never replayed.
+
+### Notes
+
+Provision a graphical session with the pinned Cua Driver 0.34.0 before enabling
+the extension. Durable Linux deployments should pin their provisioned image.
+Wayland, personal browser accounts and macOS browser attachment remain
+unqualified. The X11 Chrome test includes native UI recovery after a setup
+refusal; it does not establish unattended one-call browser setup.
+
+[Setup and tool reference](../../docs/cua-computer-use.md) ·
+[Reproducible Linux fixture and live viewer](../../examples/cua-linux/README.md) ·
+[Validation evidence and limitations](../../docs/cua-validation.md).
+
 ## 0.3.4 (2026-10-09)
 
 ### Fixes
