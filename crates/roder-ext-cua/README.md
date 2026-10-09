@@ -1,5 +1,7 @@
 # Roder Cua desktop extension
 
+Part of [Roder](https://roder.sh), the extensible coding and computer-use agent.
+
 A native Rust extension for computer use on a Linux desktop inside the thread's
 remote runner or an explicitly selected local macOS desktop. The qualified launcher uses Cua Driver **0.34.0**, XFCE/X11 and
 Blaxel. The model uses ordinary cua_* function tools and receives real PNGs.
