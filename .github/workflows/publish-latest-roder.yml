@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git python3 binutils clang cmake lld pkg-config
+          apt-get install -y ca-certificates curl git python3 binutils clang cmake lld pkg-config zip
 
       - name: Checkout repository
         uses: actions/checkout@v4
