@@ -241,6 +241,13 @@ helper for cutting a local source release; it is not part of the automated flow.
 
 ## macOS signing
 
+Linux x86_64 and aarch64 archives are built on Ubuntu 22.04 and require GLIBC
+2.35 or newer starting with CLI 0.3.6. Both versioned and rolling builds run
+`scripts/verify-linux-release.py` before packaging: it rejects newer GLIBC
+requirements and checks ACP startup plus disabled/enabled Cua tool registration.
+The 0.3.5 Linux archives require GLIBC 2.39; use 0.3.6 for the Ubuntu 22.04
+Blaxel desktop. macOS 0.3.5 remains valid.
+
 Roder publishes signed, notarized macOS binaries for Apple Silicon only. The
 `publish-latest-roder.yml` workflow signs the latest `aarch64-apple-darwin`
 binary before uploading it to the `latest` GitHub release; the release workflow
