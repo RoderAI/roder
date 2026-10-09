@@ -59,6 +59,64 @@ and dialog fields with readback. Refused and uncertain input is never retried.
 
 ## Roadmap 113 acceptance audit
 
+The full XFCE desktop workflow and live viewer are documented in the
+[Linux example](../examples/cua-linux/README.md). The viewer reads the screen
+through GDK without invalidating Cua capture handles. It binds only to local
+loopback, displays frame age/connectivity and has no desktop-input endpoint.
+
+## Full XFCE/X11 desktop qualification
+
+Two owned desktops completed the full GUI workflow through built public
+Roder and a live `gpt-5.4` model with only the 13 Cua tools advertised. The
+agent launched Thunar and LibreOffice Writer through Application Finder,
+navigated the test folders, selected and Shift-dragged a note into Archive,
+created a report, saved it as ODT and reopened it through File Manager.
+The independent grader confirmed the source was gone, the destination's
+SHA-256 matched the seed, and each real ODT contained its own unique marker
+and the report heading. Both traces show actual close/open/reobserve order.
+
+Evidence: [first workflow](../examples/cua-linux/evidence/2026-10-08/full-model-a/audit.json),
+[repeat workflow](../examples/cua-linux/evidence/2026-10-08/full-model-b/audit.json),
+and [native input/recovery](../examples/cua-linux/evidence/2026-10-08/full-input/report.json).
+The original reports and real milestone/final PNGs are retained alongside
+the current audits. The first workflow made 64 model requests, 63 with images;
+the second also received live image blocks. No coding or shell tool was
+available to the model, and the read-only graders never created documents.
+
+The repeat initially failed a harness check that required a different native
+window identity. LibreOffice had actually closed the document to Start Center
+and reopened it in the same window. The corrected checker requires ordered
+close, File Manager open and fresh Writer observation. Its offline regression
+covers reuse and rejects repeated observations without a real reopen sequence.
+The retained original failure is unchanged; the current read-only audit passes
+without replaying any GUI input.
+
+The full app profile also passed all 16 native GTK input, window, isolation,
+pause/resume, rejoin, driver restart and cancellation checks. Both recovery
+desktops reached `TERMINATED`. The first workflow's desktop was retained with
+a configured 3-hour TTL for the user's requested live viewing; its report
+explicitly records retention rather than claiming terminal cleanup.
+
+Reliability changes from the exploratory attempts: use a 1920×1080 desktop
+so Writer's Save dialog fits; select a file before Shift-dragging; preserve
+plain-text driver refusals with their error status; observe current windows
+after launch/save/close invalidates an addressed window. A completed input
+can still report an after-action capture failure when its target closes.
+Inputs are never automatically replayed. The early mini-model/offscreen-dialog
+attempt and an unselected Shift-drag attempt did not pass and are not counted.
+
+Qualified app versions: XFCE session 4.16.0, XFWM 4.16.1, Thunar 4.16.10,
+Application Finder 4.16.1 and LibreOffice Writer 7.3.7 on Ubuntu 22.04,
+with pinned Cua Driver 0.34.0. This proves these measured foreground X11
+routes; other toolkits and native Wayland remain separate qualifications.
+The mutable base image and apt repository are recorded in the profiles;
+durable deployments should publish and pin the provisioned image.
+
+Focused follow-up validation: 18 Rust Cua checks, 16 Linux offline checks,
+four shared calculator-trace checks, Python compilation and diff checks passed.
+
+## Original calculator acceptance audit
+
 The completion audit used the committed native feature, current PR state,
 actual fixture traces/PNGs, test logs and independent app-owned graders.
 The live calculator harness now verifies the exact four-button sequence;

@@ -86,3 +86,75 @@ Shared public app-server/model and calculator trace helpers are in
 The native `cua_set_value` tool performs a semantic replacement without a
 `delivery_mode` argument. Linux Unicode/sibling-window generic typing limits
 remain; macOS native typing is separately qualified.
+
+## Watch the desktop live
+
+Run the local viewer against an explicitly owned, provisioned desktop:
+
+~~~sh
+python3 examples/cua-linux/desktop_preview.py \
+  --sandbox YOUR_SANDBOX --workspace YOUR_WORKSPACE
+~~~
+
+Open the printed `http://127.0.0.1:PORT/` URL in Codex or your browser. The
+viewer shows the entire X11 screen, normally refreshing every 2–5 seconds.
+It includes a pause button and the age of the latest real frame. If capture
+fails or the sandbox stops, the last frame remains visible and the status
+shows the loss of live connectivity.
+
+The server binds only to loopback. Blaxel authentication stays in the local
+CLI; neither credentials nor a remote desktop-control endpoint enter the
+page. Watching uses read-only GDK screen capture, independently of Cua, so
+it never changes the agent's capture IDs or sends desktop input. This is
+a viewing aid; acceptance evidence continues to use actual Cua observations.
+Stop the viewer with Ctrl+C. It does not delete the sandbox.
+Live capture stops after one hour by default (`--duration` sets seconds).
+The page then serves its last frame with a "Preview ended" status and sends
+no further cloud requests. Restart the viewer to begin another viewing period.
+
+## Full XFCE desktop workflow
+
+Provision a fresh owned sandbox with Thunar and LibreOffice Writer:
+
+~~~sh
+python3 examples/cua-linux/desktop_fixture.py \
+  --sandbox YOUR_SANDBOX --workspace YOUR_WORKSPACE
+python3 examples/cua-linux/desktop_smoke.py \
+  --roder /absolute/path/to/roder \
+  --sandbox YOUR_SANDBOX --workspace YOUR_WORKSPACE \
+  --output /absolute/path/to/evidence
+~~~
+
+The profile uses 1920×1080 so Writer's Save dialog fits. Provisioning creates
+only a source note and empty Archive/Documents directories. The live model
+uses the public Roder app-server with only `cua_*` tools to launch apps through
+Application Finder, navigate Thunar, drag the note into Archive, create an ODT
+report, save it, close Writer and reopen the document through File Manager.
+A separate read-only grader checks that the source disappeared, the moved
+file's bytes were preserved, and the real ODT contains the unique run marker.
+The trace must show the saved document closing, a subsequent File Manager
+open action in Documents, and a fresh Writer observation of that report.
+LibreOffice may reuse the same native window when returning from Start Center.
+
+Retained reports can be audited with the current ordered trace checks without
+replaying any input:
+
+~~~sh
+python3 examples/cua-linux/audit_desktop.py /absolute/path/to/report.json
+~~~
+
+The audit preserves the original acceptance result and identifies its checks
+separately; it cannot repair a failed GUI action or a failed independent grader.
+
+The harness checkpoints its trace and PNGs while running. It deletes the
+supplied owned sandbox on completion or failure by default. `--retain-sandbox`
+keeps it for explicit additional evaluation or live viewing; its caller must
+clean it up. Never rerun the acceptance workflow on an already moved file or
+existing report. A failed UI operation is recorded separately from a passing
+independent grader; a screenshot alone cannot pass this workflow.
+
+For native input/recovery qualification on this full profile, provision two
+fresh desktops with `desktop_fixture.py --input-fixture`, then use the same
+`input_smoke.py` command above. These checks operate the app-owned GTK oracle
+through Roder and delete both supplied sandboxes. The live document workflow
+and primitive/recovery workflow have separate reports and graders.

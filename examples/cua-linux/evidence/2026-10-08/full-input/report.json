@@ -1,0 +1,139 @@
+{
+  "passed": true,
+  "checks": {
+    "double_click": true,
+    "right_click": true,
+    "drag": true,
+    "scroll": true,
+    "unicode": true,
+    "modifier": true,
+    "dialog": true,
+    "cursor": true,
+    "focus": true,
+    "resize": true,
+    "no_held_button": true,
+    "isolation": true,
+    "pause_resume": true,
+    "rejoin": true,
+    "driver_restart": true,
+    "cancellation": true
+  },
+  "app_oracle": {
+    "text": "Roder caf\u00e9 \u03bb \u65e5\u672c\u8a9e",
+    "buttons": [
+      1,
+      1,
+      1,
+      3,
+      1,
+      1
+    ],
+    "double_clicks": 1,
+    "right_clicks": 1,
+    "drags": 2,
+    "scrolls": 3,
+    "motions": 45,
+    "chords": 1,
+    "dialog_open": true,
+    "dialog_text": "Dialog verified",
+    "focus": true,
+    "focus_seen": true,
+    "held_button": false,
+    "geometry": {
+      "x": 85,
+      "y": 61,
+      "width": 620,
+      "height": 480
+    },
+    "targets": {
+      "pointer": {
+        "x": 12,
+        "y": 52,
+        "width": 596,
+        "height": 150
+      },
+      "scroll": {
+        "x": 12,
+        "y": 212,
+        "width": 596,
+        "height": 218
+      },
+      "entry": {
+        "x": 12,
+        "y": 12,
+        "width": 596,
+        "height": 30
+      },
+      "dialog_button": {
+        "x": 12,
+        "y": 440,
+        "width": 596,
+        "height": 28
+      }
+    }
+  },
+  "other_app_oracle": {
+    "text": "",
+    "buttons": [],
+    "double_clicks": 0,
+    "right_clicks": 0,
+    "drags": 0,
+    "scrolls": 0,
+    "motions": 0,
+    "chords": 0,
+    "dialog_open": false,
+    "dialog_text": "",
+    "focus": true,
+    "focus_seen": true,
+    "held_button": false,
+    "geometry": {
+      "x": 675,
+      "y": 321,
+      "width": 560,
+      "height": 430
+    },
+    "targets": {
+      "pointer": {
+        "x": 12,
+        "y": 52,
+        "width": 536,
+        "height": 150
+      },
+      "scroll": {
+        "x": 12,
+        "y": 212,
+        "width": 536,
+        "height": 168
+      },
+      "entry": {
+        "x": 12,
+        "y": 12,
+        "width": 536,
+        "height": 30
+      },
+      "dialog_button": {
+        "x": 12,
+        "y": 390,
+        "width": 536,
+        "height": 28
+      }
+    }
+  },
+  "sandboxes": [
+    "roder-cua-desktop-65a1732e",
+    "roder-cua-desktop-3b2d2d62"
+  ],
+  "backend": "XFCE/X11",
+  "driver_version": "0.34.0",
+  "live_model": false,
+  "cleanup": {
+    "roder-cua-desktop-65a1732e": {
+      "delete_accepted": true,
+      "status": "TERMINATED"
+    },
+    "roder-cua-desktop-3b2d2d62": {
+      "delete_accepted": true,
+      "status": "TERMINATED"
+    }
+  }
+}

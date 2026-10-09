@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "checks": {
+    "gui_launcher_observed": true,
+    "file_manager_observed": true,
+    "archive_navigated": true,
+    "writer_observed": true,
+    "file_drag_dispatched": true,
+    "document_saved_and_reopened": true,
+    "desktop_observed": true,
+    "window_images_returned": true,
+    "public_turn_completed": true,
+    "extension_registered": true,
+    "model_received_images": true,
+    "independent_files_passed": true,
+    "app_server_stopped": true,
+    "cleanup_or_explicit_retention": true
+  },
+  "sandbox": "roder-cua-desktop-503e1d11",
+  "model": "gpt-5.4",
+  "original_acceptance": true,
+  "original_trace_checks": {
+    "gui_launcher_observed": true,
+    "file_manager_observed": true,
+    "archive_navigated": true,
+    "writer_observed": true,
+    "file_drag_dispatched": true,
+    "document_saved_and_reopened": true,
+    "desktop_observed": true,
+    "window_images_returned": true
+  },
+  "method": "Read-only audit of the original public tool trace and independent file grader",
+  "reopen_rule": "Saved report closes; File Manager opens from Documents; fresh Writer observation follows. Native XID may be reused.",
+  "gui_input_replayed": false
+}

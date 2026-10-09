@@ -66,6 +66,14 @@ operate it with desktop tools. The calculator fixture launches the app during
 provisioning and advertises only desktop tools to the decision model for its
 GUI acceptance task.
 
+For a complete desktop workflow, the [full XFCE example](../examples/cua-linux/README.md#full-xfce-desktop-workflow)
+installs Thunar and LibreOffice Writer and uses only desktop tools to launch
+apps, navigate folders, drag a file and save/reopen an ODT document. Its
+read-only grader verifies the resulting file bytes and document contents.
+Use the [local live viewer](../examples/cua-linux/README.md#watch-the-desktop-live)
+to watch the full screen while Roder works. The viewer sends no desktop input
+and does not replace the agent's Cua grounding captures.
+
 | Tools | Operation |
 | --- | --- |
 | cua_list_apps, cua_list_windows | Discover applications and exact native windows |
@@ -105,6 +113,15 @@ native input coordinates. Element handles preserve snapshot identity.
 Background input is the default. Foreground delivery explicitly permits
 activation. The extension never silently escalates or repeats refused or
 uncertain input.
+
+For a file move in Thunar, select the source icon before dragging and pass
+`modifier: ["shift"]` to request a move explicitly. Ctrl requests a copy.
+An input result with `effect: "unverifiable"` requires fresh app observation;
+an immediate screenshot may precede an asynchronous file operation. After a
+transport timeout or disconnection, observe rather than repeating the input.
+The pinned driver may return a plain-text stale-window refusal. The Linux
+launcher retains its message and error status so the agent can discover the
+new window instead of losing the reason in a JSON decoding failure.
 
 Plan mode permits observation and denies all desktop input, including scroll,
 cursor movement and activation. Default mode requests Roder approval for each

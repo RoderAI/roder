@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import socket
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -9,6 +10,34 @@ import cua_call
 
 
 class LauncherTests(unittest.TestCase):
+    def test_text_only_tool_reply_retains_the_drivers_refusal(self):
+        self.assertEqual(cua_call.observation_reply('element_not_editable: no input dispatched\n'),
+                         {'summary': 'element_not_editable: no input dispatched', 'effect': 'unverifiable'})
+        self.assertEqual(cua_call.observation_reply('{"code":"refused"}'), {'code': 'refused'})
+
+    def test_missing_malformed_or_unbounded_reply_is_not_a_success(self):
+        for raw in ['', '  ', '{"code":', '[{}]', 'null', 'x' * 8193]:
+            with self.subTest(raw=raw[:50]), self.assertRaises(ValueError):
+                cua_call.observation_reply(raw)
+
+    def test_text_refusal_from_worker_remains_an_error_without_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'session.json').write_text('[]')
+            destination = root / 'result.json'
+            replies = [subprocess.CompletedProcess([], 0, 'cua-driver 0.34.0\n', ''),
+                       subprocess.CompletedProcess([], 1, 'Window target is stale; refresh list_windows.\n', '')]
+            with patch.object(cua_call, 'ROOT', root), \
+                    patch.object(cua_call, 'validate', return_value=({'session': 'roder-test'}, destination)), \
+                    patch.object(cua_call.os, 'getppid', return_value=12345), \
+                    patch.object(cua_call, 'daemon_ready', return_value=True), \
+                    patch.object(cua_call.subprocess, 'run', side_effect=replies) as command:
+                cua_call.worker('get_window_state', '{}', 'ignored', 12345)
+            wire = json.loads(destination.read_text())
+            self.assertTrue(wire['is_error'])
+            self.assertIn('Window target is stale', wire['observation']['summary'])
+            self.assertEqual(command.call_count, 2)  # Version probe and one dispatch.
+
     def test_stale_socket_is_recovered_without_replaying_an_action(self):
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory)/'driver.sock')

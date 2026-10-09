@@ -53,6 +53,20 @@ def environment():
     return env
 
 
+def observation_reply(raw):
+    """The pinned CLI emits text when a tool has no structuredContent."""
+    try:
+        observation = json.loads(raw)
+    except ValueError:
+        text = raw.strip()
+        if not text or len(text) > 8192 or text.startswith(('{', '[')):
+            raise ValueError('driver returned no valid observation') from None
+        observation = {'summary': text, 'effect': 'unverifiable'}
+    if not isinstance(observation, dict):
+        raise ValueError('invalid driver observation')
+    return observation
+
+
 def worker(tool, raw_arguments, raw_path, parent):
     arguments, result_path = validate(tool, raw_arguments, raw_path)
     result_path.parent.mkdir(mode=0o700, exist_ok=True)
@@ -95,9 +109,7 @@ def worker(tool, raw_arguments, raw_path, parent):
         result = subprocess.run(prefix + [binary, 'call', tool, json.dumps(arguments),
                                          '--socket', SOCKET], capture_output=True, text=True,
                                 timeout=40)
-        observation = json.loads(result.stdout)
-        if not isinstance(observation, dict):
-            raise RuntimeError('invalid driver observation')
+        observation = observation_reply(result.stdout)
         wire = json.dumps({'driver_version': VERSION, 'is_error': result.returncode != 0,
                            'observation': observation})
         if len(wire) > 12 * 1024 * 1024:

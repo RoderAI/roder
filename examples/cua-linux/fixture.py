@@ -7,7 +7,7 @@ EXAMPLE = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXAMPLE.parent / 'non-rust-extensions' / 'cua-linux'))
 from transport import BlaxelTransport
 
-def provision(transport):
+def provision(transport, launch_calculator=True):
     installer = (EXAMPLE / 'install.py').read_text()
     launcher = (EXAMPLE / 'cua_call.py').read_text()
     script = f'''import pathlib,subprocess,json
@@ -19,7 +19,8 @@ subprocess.run(['apt-get','install','-y','-qq','galculator','libxi6','at-spi2-co
 subprocess.run(['python3',str(path/'install.py')],check=True)
 prefix=json.loads(pathlib.Path('/opt/roder-cua/session.json').read_text())
 log=open('/tmp/roder-calculator.log','w')
-subprocess.Popen(prefix+['galculator'],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
+if {launch_calculator!r}:
+ subprocess.Popen(prefix+['galculator'],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
 '''
     result = transport.run_script(script, timeout=300)
     if result.get('exitCode') != 0:
@@ -56,6 +57,11 @@ print(json.dumps({'display_values':values,'passed':'42' in values}))
 
 def provision_input(transport):
     provision(transport)
+    launch_input_fixture(transport)
+
+
+def launch_input_fixture(transport):
+    """Start the native oracle in an already provisioned desktop session."""
     source = (EXAMPLE / 'input_fixture.py').read_text()
     script = f"""import pathlib,subprocess,json,time
 subprocess.run(['apt-get','install','-y','-qq','gir1.2-gtk-3.0'],check=True,stdout=subprocess.DEVNULL)

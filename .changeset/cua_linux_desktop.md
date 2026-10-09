@@ -27,3 +27,8 @@ large accessibility trees usable inline. Qualify native macOS Calculator via
 the public Roder runtime plus an owned AppKit input fixture. Local macOS never
 falls back from a remote runner thread. Exact semantic value replacement has
 no delivery-mode argument on the shared canonical tool surface.
+
+Include a full XFCE/X11 desktop workflow with native GUI app launching, file
+drag, ODT creation/save/reopen and independent file grading. Add a local
+read-only live screen viewer and preserve plain-text Linux driver refusals
+without discarding their error status or replaying input.
