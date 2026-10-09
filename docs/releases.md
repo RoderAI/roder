@@ -239,14 +239,21 @@ brew test RoderAI/tap/roder
 `scripts/release-brew.sh` (`make release-brew`) remains a separate, fully manual
 helper for cutting a local source release; it is not part of the automated flow.
 
-## macOS signing
+## Linux binary compatibility
 
-Linux x86_64 and aarch64 archives are built on Ubuntu 22.04 and require GLIBC
-2.35 or newer starting with CLI 0.3.6. Both versioned and rolling builds run
+Linux x86_64 and aarch64 archives are built in a pinned Ubuntu 22.04 container
+on Ubuntu 24.04 hosts. The supported runtime baseline is GLIBC 2.35 starting
+with CLI 0.3.6. Both versioned and rolling builds run
 `scripts/verify-linux-release.py` before packaging: it rejects newer GLIBC
 requirements and checks ACP startup plus disabled/enabled Cua tool registration.
-The 0.3.5 Linux archives require GLIBC 2.39; use 0.3.6 for the Ubuntu 22.04
+The 0.3.5 Linux archives require newer GLIBC symbols (up to 2.39); use 0.3.6 for the Ubuntu 22.04
 Blaxel desktop. macOS 0.3.5 remains valid.
+
+The build container's multi-architecture digest is pinned in both workflows;
+update them together. It preserves the older userspace while avoiding the
+[retirement of GitHub's Ubuntu 22.04 hosts](https://github.com/actions/runner-images/issues/14254).
+
+## macOS signing
 
 Roder publishes signed, notarized macOS binaries for Apple Silicon only. The
 `publish-latest-roder.yml` workflow signs the latest `aarch64-apple-darwin`

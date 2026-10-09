@@ -11,6 +11,11 @@ import tempfile
 import threading
 
 
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
 def request(child, messages, identifier, method, params):
     child.stdin.write(json.dumps({"jsonrpc": "2.0", "id": identifier,
                                  "method": method, "params": params}) + "\n")
@@ -52,16 +57,18 @@ def smoke(binary, mode, config, data, expected_version):
             params.update(protocolVersion=1, clientCapabilities={})
         reply = request(child, messages, 1, "initialize", params)
         if mode == "acp":
-            assert reply["agentInfo"]["version"] == expected_version
+            require(reply["agentInfo"]["version"] == expected_version,
+                    "ACP version does not match the release manifest")
             return {"mode": mode, "agentInfo": reply["agentInfo"]}
         tools = request(child, messages, 2, "tools/list", {})["tools"]
         names = sorted(t["name"] for t in tools if t["name"].startswith("cua_"))
         enabled = "enabled = true" in (config / "config.toml").read_text()
         if enabled:
-            assert len(names) >= 19 and {"cua_get_desktop_state", "cua_browser_type",
-                                       "cua_end_browser_session"}.issubset(names), names
+            require(len(names) >= 19 and {"cua_get_desktop_state", "cua_browser_type",
+                                         "cua_end_browser_session"}.issubset(names),
+                    f"Cua tools missing from enabled release: {names}")
         else:
-            assert not names, names
+            require(not names, f"Cua tools exposed without opt-in: {names}")
         return {"mode": mode, "cua_enabled": enabled, "cua_tools": names}
     except (BrokenPipeError, queue.Empty) as error:
         raise RuntimeError("Release binary did not answer initialize: " +
@@ -75,18 +82,25 @@ def smoke(binary, mode, config, data, expected_version):
             child.wait(timeout=10)
         except subprocess.TimeoutExpired:
             child.terminate()
-            child.wait(timeout=10)
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=10)
 
 
 def main():
     binary = Path(sys.argv[1]).resolve()
     target = sys.argv[2]
-    assert target in {"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}
+    require(target in {"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"},
+            f"Unsupported Linux release target: {target}")
     symbols = subprocess.check_output(["readelf", "--version-info", str(binary)], text=True)
     versions = {tuple(map(int, v.split("."))) for v in re.findall(r"GLIBC_(\d+\.\d+(?:\.\d+)?)", symbols)}
-    assert versions, "No GLIBC version requirements found"
+    require(versions, "No GLIBC version requirements found")
     highest = max(versions)
-    assert highest <= (2, 35), f"{target} requires GLIBC {highest}; Ubuntu 22.04 supplies 2.35"
+    require(highest <= (2, 35),
+            f"{target} requires GLIBC {highest}; Ubuntu 22.04 supplies 2.35")
+    require("GLIBC_ABI_DT_RELR" not in symbols, "DT_RELR requires a newer GLIBC loader")
     manifest = (Path(__file__).resolve().parent.parent / "crates/roder-app-server/Cargo.toml").read_text()
     expected = re.search(r'^version\s*=\s*"([^"]+)"', manifest, re.MULTILINE).group(1)
     checks = []

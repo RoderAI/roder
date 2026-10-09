@@ -22,17 +22,28 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-22.04-arm
+            container: "ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401"
+          - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            container: "ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401"
           - runner: macos-14
             target: aarch64-apple-darwin
+            container: ""
     steps:
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl git python3 binutils clang cmake lld pkg-config
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -41,16 +52,14 @@ jobs:
       - name: Install Rust
         shell: bash
         run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${RUST_VERSION}"
+            export PATH="${HOME}/.cargo/bin:${PATH}"
+            echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
+          fi
           rustup toolchain install "${RUST_VERSION}" --profile minimal
           rustup default "${RUST_VERSION}"
           rustup target add "${{ matrix.target }}"
-
-      - name: Install Linux build tools
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake lld pkg-config
 
       - name: Build Roder CLI
         shell: bash
