@@ -210,6 +210,12 @@ downstream workflow, so the tap update has to run inline.
 
 ### Manual run / recovery
 
+If the automatic release workflow fails before creating jobs, fix the workflow
+and run **Release** with `release_sha` set to the exact merged release commit
+and `base_sha` set to its pre-version-bump commit. All release jobs use that
+immutable source commit, even when the recovery workflow is newer.
+
+
 Run the same automation locally (dry-run writes the formula under `dist/`
 without pushing):
 

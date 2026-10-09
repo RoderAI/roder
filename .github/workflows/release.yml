@@ -1,6 +1,16 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact release merge commit to publish
+        required: true
+        type: string
+      base_sha:
+        description: Commit before the release version bumps
+        required: true
+        type: string
   pull_request:
     types: [closed]
     branches:
@@ -12,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.repository_owner == 'RoderAI' &&
-      github.head_ref == 'knope/release' &&
-      github.event.pull_request.merged == true
+      (github.event_name == 'workflow_dispatch' ||
+       (github.head_ref == 'knope/release' && github.event.pull_request.merged == true))
     outputs:
       cli_changed: ${{ steps.packages.outputs.cli_changed }}
     permissions:
@@ -22,15 +32,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       - name: Detect CLI version change
         id: packages
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           before="$(git show "$BASE_SHA:crates/roder-cli/Cargo.toml" | sed -nE 's/^version = "([^"]+)"/\1/p')"
@@ -59,8 +68,8 @@ jobs:
     if: >-
       needs.release.outputs.cli_changed == 'true' &&
       github.repository_owner == 'RoderAI' &&
-      github.head_ref == 'knope/release' &&
-      github.event.pull_request.merged == true
+      (github.event_name == 'workflow_dispatch' ||
+       (github.head_ref == 'knope/release' && github.event.pull_request.merged == true))
     permissions:
       contents: read
     strategy:
@@ -77,7 +86,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           persist-credentials: false
 
       - name: Install Rust
@@ -169,15 +178,15 @@ jobs:
     needs: release-binaries
     if: >-
       github.repository_owner == 'RoderAI' &&
-      github.head_ref == 'knope/release' &&
-      github.event.pull_request.merged == true
+      (github.event_name == 'workflow_dispatch' ||
+       (github.head_ref == 'knope/release' && github.event.pull_request.merged == true))
     permissions:
       contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           persist-credentials: false
 
       - name: Download build artifacts
@@ -211,15 +220,15 @@ jobs:
     # the latest released `roder` CLI version so `brew install` stays current.
     if: >-
       github.repository_owner == 'RoderAI' &&
-      github.head_ref == 'knope/release' &&
-      github.event.pull_request.merged == true
+      (github.event_name == 'workflow_dispatch' ||
+       (github.head_ref == 'knope/release' && github.event.pull_request.merged == true))
     permissions:
       contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           persist-credentials: false
 
