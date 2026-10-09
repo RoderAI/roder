@@ -1,29 +1,40 @@
 ## 0.3.5 (2026-10-09)
 
-### Features
+### Added
 
-#### Native Linux and macOS desktop computer use through Cua Driver
+Run native desktop applications and control browsers through Cua Driver on the
+thread's configured computer. Enable `[cua] enabled = true` to expose 19 tools
+for screenshots, application/window discovery, pointer and keyboard input,
+Unicode value replacement, window management and browser interaction.
 
-Enable runner-bound Cua desktop tools with observation, grounded pointer and
-keyboard input, Unicode value replacement, window controls, permission gating and fresh
-screenshots after actions. Reuse the thread's remote runner and credentials.
-Keep screenshots intact through Responses, Anthropic, Gemini and ACP replay.
-Read large driver results through the runner filesystem rather than truncated
-Blaxel process stdout. Include pinned driver provisioning and a live native
-calculator acceptance harness.
+The Linux backend reuses the thread's Blaxel runner. The qualified XFCE/X11
+workflow launches apps, navigates folders, drags files, creates and reopens
+LibreOffice documents, and drives Chrome through native and semantic browser
+controls. A loopback, read-only live viewer lets you watch the desktop while
+Roder works. The explicit `local-macos` backend uses the signed CuaDriver app;
+macOS desktop control is qualified on Apple Silicon.
 
-Add an explicitly selected local macOS backend using the signed CuaDriver app's
-daemon. Preserve approvals and image replay, fence cancelled native input,
-invalidate grounding across local sessions and daemon generations, and keep
-large accessibility trees usable inline. Qualify native macOS Calculator via
-the public Roder runtime plus an owned AppKit input fixture. Local macOS never
-falls back from a remote runner thread. Exact semantic value replacement has
-no delivery-mode argument on the shared canonical tool surface.
+Browser tools bind to an exact native window and tab, return semantic refs and
+real screenshots, navigate pages, click, type Unicode, and end the attachment.
+Existing-profile attachment is disabled by default and requires both explicit
+Roder configuration and an independent Cua daemon grant. The qualified Chrome
+example uses a synthetic login created inside its disposable Linux sandbox.
 
-Include a full XFCE/X11 desktop workflow with native GUI app launching, file
-drag, ODT creation/save/reopen and independent file grading. Add a local
-read-only live screen viewer and preserve plain-text Linux driver refusals
-without discarding their error status or replaying input.
+Roder retains normal approvals, Plan-mode observation, thread/runner isolation
+and image replay. Fresh observations are required after actions; stale refs
+are rejected and uncertain input is never replayed.
+
+### Notes
+
+Provision a graphical session with the pinned Cua Driver 0.34.0 before enabling
+the extension. Durable Linux deployments should pin their provisioned image.
+Wayland, personal browser accounts and macOS browser attachment remain
+unqualified. The X11 Chrome test includes native UI recovery after a setup
+refusal; it does not establish unattended one-call browser setup.
+
+[Setup and tool reference](../../docs/cua-computer-use.md) ·
+[Reproducible Linux fixture and live viewer](../../examples/cua-linux/README.md) ·
+[Validation evidence and limitations](../../docs/cua-validation.md).
 
 ## 0.3.4 (2026-10-09)
 
