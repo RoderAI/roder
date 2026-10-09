@@ -1,0 +1,105 @@
+[
+  {
+    "id": "holdout_cart",
+    "covers": "Add exactly one Oak Bookend to the cart.",
+    "page": "decisions-holdout.html?mode=cart",
+    "goal": "Add exactly one Oak Bookend to the cart.",
+    "values": {},
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "dom": {
+        "window.cart": [
+          "Oak Bookend"
+        ]
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Add to cart",
+          "context": "Oak Bookend"
+        }
+      ]
+    }
+  },
+  {
+    "id": "holdout_already",
+    "covers": "Ensure the cart contains exactly one Oak Bookend. Do not add another if it is already there.",
+    "page": "decisions-holdout.html?mode=already",
+    "goal": "Ensure the cart contains exactly one Oak Bookend. Do not add another if it is already there.",
+    "values": {},
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "dom": {
+        "window.cart": [
+          "Oak Bookend"
+        ]
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "done": true
+        }
+      ]
+    }
+  },
+  {
+    "id": "holdout_search",
+    "covers": "Submit a search query through Enter without a submit button",
+    "page": "decisions-holdout.html?mode=search",
+    "goal": "Search inventory for blue notebooks and show the results.",
+    "values": {
+      "Search inventory": "blue notebooks"
+    },
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "dom": {
+        "window.query": "blue notebooks"
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Search inventory"
+        },
+        {
+          "enter": "Search inventory"
+        }
+      ]
+    }
+  },
+  {
+    "id": "holdout_preferences",
+    "covers": "Save preferences for Mina Patel using mina@example.net and keep Receive updates enabled.",
+    "page": "decisions-holdout.html?mode=preferences",
+    "goal": "Save preferences for Mina Patel using mina@example.net and keep Receive updates enabled.",
+    "values": {
+      "Email": "mina@example.net"
+    },
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "dom": {
+        "window.saved": {
+          "name": "Mina Patel",
+          "email": "mina@example.net",
+          "updates": true
+        }
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Email"
+        },
+        {
+          "click": "Save preferences"
+        }
+      ]
+    }
+  }
+]

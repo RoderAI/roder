@@ -78,6 +78,11 @@ impl OpenAiDecisionsClient {
         let parsed = (|| {
             let normalized = normalize_response(&response)?;
             let answer = &normalized["answers"]["computer_action"];
+            if answer["type"] == "refusal" {
+                anyhow::bail!(
+                    "OpenAI Decisions refused required question computer_action; no action executed."
+                );
+            }
             crate::decide::validate_choice(answer, &ids)?;
             let choice = answer["choice"]
                 .as_str()

@@ -351,6 +351,12 @@ pub(crate) async fn choose(
         .map_err(|error| anyhow::Error::from(JevBilled::new(usage.clone(), error)))?;
     // A missing or invalid answer is `None`, which the loop treats as
     // irreversible: the gate fails closed without failing the decision.
+    if let Some(required) = asked.iter().find(|q| {
+        q.operation == answer.operation && Some(q.target.as_str()) == answer.target.as_deref()
+    }) {
+        reject_refusal(&result["answers"][&required.key], &required.key)
+            .map_err(|error| anyhow::Error::from(JevBilled::new(usage.clone(), error)))?;
+    }
     let irreversible = irreversible::chosen_probability(
         &result["answers"],
         &asked,
@@ -391,6 +397,7 @@ fn read_answer(
 ) -> anyhow::Result<Answer> {
     let answers = &result["answers"];
     let operation_answer = &answers["operation"];
+    reject_refusal(operation_answer, "operation")?;
     validate_choice(operation_answer, operation_ids)?;
     let operation = operation_answer["choice"]
         .as_str()
@@ -408,6 +415,10 @@ fn read_answer(
             .collect::<Vec<_>>();
         // Only the head the operation selected can cause an action.
         let target_answer = &answers[format!("{}_target", operation.to_lowercase())];
+        reject_refusal(
+            target_answer,
+            &format!("{}_target", operation.to_lowercase()),
+        )?;
         validate_choice(target_answer, &target_ids)?;
         let selected = target_answer["choice"]
             .as_str()
@@ -447,3 +458,10 @@ fn read_answer(
 mod gate_tests;
 #[cfg(test)]
 mod tests;
+
+fn reject_refusal(answer: &Value, name: &str) -> anyhow::Result<()> {
+    if answer["type"] == "refusal" {
+        bail!("OpenAI Decisions refused required question {name}; no action executed.");
+    }
+    Ok(())
+}

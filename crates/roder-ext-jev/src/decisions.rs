@@ -4,7 +4,11 @@
 //! identical across providers. Only this boundary knows the Decisions schema.
 
 mod computer;
+#[cfg(test)]
+mod experiment_tests;
+pub(crate) mod planning;
 pub use computer::{ComputerCandidate, ComputerDecision};
+use planning::Strategy;
 
 use std::sync::Arc;
 
@@ -17,6 +21,33 @@ use crate::engine::{JevDecision, JevDecisionClient, JevDecisionTransport};
 use crate::http::{JsonPoster, RetryPolicy};
 use crate::usage::JevBilled;
 
+tokio::task_local! { static EVIDENCE: Value; }
+fn evidence(page: &Value, history: &[Value]) -> Value {
+    let history = history
+        .iter()
+        .skip(history.len().saturating_sub(10))
+        .map(|entry| {
+            let mut kept = Map::new();
+            for key in [
+                "action",
+                "kind",
+                "text",
+                "context",
+                "covered",
+                "page_changed",
+                "effect",
+                "text_added",
+            ] {
+                if let Some(value) = entry.get(key) {
+                    kept.insert(key.into(), value.clone());
+                }
+            }
+            Value::Object(kept)
+        })
+        .collect::<Vec<_>>();
+    json!({"history":history,"screenshot":page["_screenshot"],"rectangles":page["actions"].as_array().into_iter().flatten().filter_map(|a|a.get("rect").map(|r|json!({"label":a["label"],"context":a["context"],"rect":r}))).collect::<Vec<_>>()})
+}
+
 const ENDPOINT: &str = "https://api.openai.com/v1/decisions";
 pub(crate) const MODEL: &str = "gpt-6-luna";
 
@@ -24,6 +55,7 @@ pub(crate) const MODEL: &str = "gpt-6-luna";
 /// Text generation continues to use the browser's configured text helper.
 pub struct OpenAiDecisionsClient {
     inner: JevTypeSafeDecisionClient,
+    strategy: Strategy,
     transport: Arc<dyn JevDecisionTransport>,
 }
 
@@ -36,29 +68,85 @@ impl OpenAiDecisionsClient {
         }))
     }
 
+    /// Use text observations and action effects without requesting screenshots.
+    pub fn text_only(self) -> Self {
+        Self::configured(self.transport, Strategy::Effects)
+    }
+
     /// Inject a transport speaking the native OpenAI Decisions wire format.
     pub fn with_transport(transport: Arc<dyn JevDecisionTransport>) -> Self {
+        Self::configured(transport, Strategy::Vision)
+    }
+
+    pub(crate) fn configured(transport: Arc<dyn JevDecisionTransport>, strategy: Strategy) -> Self {
         Self {
+            strategy,
             inner: JevTypeSafeDecisionClient::with_transport(
                 MODEL,
                 Arc::new(Adapter {
                     transport: transport.clone(),
+                    strategy,
                 }),
             ),
             transport,
         }
     }
+    fn finish(
+        &self,
+        decision: JevDecision,
+        page: &Value,
+        history: &[Value],
+    ) -> anyhow::Result<JevDecision> {
+        if self.strategy == Strategy::Grounded {
+            let action = page["actions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|a| a["id"] == decision.choice);
+            let last = history.last();
+            if let (Some(action), Some(last)) = (action, last)
+                && action["kind"] == "click"
+                && last["kind"] == "click"
+                && last["choice"] == decision.choice
+                && last["action"] == action["label"]
+                && last["page_changed"] == true
+                && decision.confidence < 0.75
+            {
+                return Err(JevBilled::new(
+                    decision.usage,
+                    anyhow::anyhow!(
+                        "Uncertain repeated action without verified completion; no action executed."
+                    ),
+                )
+                .into());
+            }
+        }
+        Ok(decision)
+    }
 }
 
 #[async_trait]
 impl JevDecisionClient for OpenAiDecisionsClient {
+    fn uses_images(&self) -> bool {
+        self.strategy == Strategy::Vision
+    }
+
     async fn choose(
         &self,
         page: &Value,
         goal: &str,
         history: &[Value],
     ) -> anyhow::Result<JevDecision> {
-        self.inner.choose(page, goal, history).await
+        self.finish(
+            EVIDENCE
+                .scope(
+                    evidence(page, history),
+                    self.inner.choose(page, goal, history),
+                )
+                .await?,
+            page,
+            history,
+        )
     }
 
     async fn choose_gated(
@@ -67,14 +155,23 @@ impl JevDecisionClient for OpenAiDecisionsClient {
         goal: &str,
         history: &[Value],
     ) -> anyhow::Result<JevDecision> {
-        self.inner.choose_gated(page, goal, history).await
+        self.finish(
+            EVIDENCE
+                .scope(
+                    evidence(page, history),
+                    self.inner.choose_gated(page, goal, history),
+                )
+                .await?,
+            page,
+            history,
+        )
     }
 }
 
-struct DecisionsHttp {
-    key: String,
-    url: String,
-    http: JsonPoster,
+pub(crate) struct DecisionsHttp {
+    pub(crate) key: String,
+    pub(crate) url: String,
+    pub(crate) http: JsonPoster,
 }
 
 #[async_trait]
@@ -98,13 +195,13 @@ impl JevDecisionTransport for DecisionsHttp {
 
 struct Adapter {
     transport: Arc<dyn JevDecisionTransport>,
+    strategy: Strategy,
 }
 
 #[async_trait]
 impl JevDecisionTransport for Adapter {
     async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
-        let body = request_body(request)?;
-        let response = self.transport.decide(&body).await?;
+        let response = planning::evaluate(self.transport.as_ref(), request, self.strategy).await?;
         normalize_response(&response).map(|mut normalized| {
             // Decisions requires at least two choices. A single observed target
             // is deterministic once the operation has been chosen by the model.
@@ -206,7 +303,11 @@ fn normalize_response(response: &Value) -> anyhow::Result<Value> {
                 json!({"choice": answer["choice"], "confidence": answer["confidence"], "probabilities": probabilities})
             }
             Some("predicate") => json!({"type": "noul", "noul": answer["probability"]}),
-            _ => bail!("Invalid OpenAI Decisions answer type: {:?}", answer["type"].as_str()),
+            Some("refusal") => json!({"type":"refusal", "name":name}),
+            _ => bail!(
+                "Invalid OpenAI Decisions answer type: {:?}",
+                answer["type"].as_str()
+            ),
         };
         if answers.insert(name.into(), converted).is_some() {
             bail!("Duplicate OpenAI Decisions answer name");

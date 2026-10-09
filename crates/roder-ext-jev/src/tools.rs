@@ -52,7 +52,7 @@ pub fn jev_tool_spec() -> ToolSpec {
              the result says so, through the jev_tab_* tools, which act only in this thread's \
              Jev tab. \
              A done status is the driver model's claim. Verify the returned UI state before reporting success. Supply success_condition with URL/text predicates to reject false DONE claims and allow fallback to continue. A passed check covers only those predicates. \
-             Requires JEV_API_KEY, or OPENAI_API_KEY with JEV_DECISION_PROVIDER=openai. Roder asks for approval in default policy mode.",
+             Requires a Jev API key, or an OpenAI API key with JEV_DECISION_PROVIDER=openai (environment or Roder provider configuration). Roder asks for approval in default policy mode.",
             today = report::today(),
         ),
         parameters: json!({

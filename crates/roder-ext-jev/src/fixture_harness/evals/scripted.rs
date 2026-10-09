@@ -37,6 +37,8 @@ pub(crate) struct Step {
     /// the goal.
     #[serde(default)]
     blocked: bool,
+    #[serde(default)]
+    done: bool,
     /// The start of the target's observed context.
     context: Option<String>,
     /// Alternatives, in preference order, instead of one target.
@@ -85,8 +87,8 @@ impl Step {
         if self.repeat == 0 {
             bail!("repeat must be at least 1");
         }
-        if self.blocked {
-            if !self.named().is_empty() || !self.any.is_empty() {
+        if self.blocked || self.done {
+            if !self.named().is_empty() || !self.any.is_empty() || (self.blocked && self.done) {
                 bail!("a blocked step names no target");
             }
             return Ok(());
@@ -167,6 +169,7 @@ impl JevDecisionClient for StepDecider {
     ) -> anyhow::Result<JevDecision> {
         let played = chosen(history);
         let (choice, operation) = match self.plan.get(played) {
+            Some(step) if step.done => ("DONE".to_string(), "DONE".to_string()),
             Some(step) if step.blocked => ("BLOCKED".to_string(), "BLOCKED".to_string()),
             Some(step) => {
                 let (kind, action) = step.resolve(observation).with_context(|| {
@@ -250,6 +253,9 @@ impl FirstDecisionDelay {
 
 #[async_trait]
 impl JevDecisionClient for FirstDecisionDelay {
+    fn uses_images(&self) -> bool {
+        self.inner.uses_images()
+    }
     async fn choose(
         &self,
         observation: &Value,

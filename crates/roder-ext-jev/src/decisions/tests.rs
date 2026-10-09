@@ -1,12 +1,12 @@
 use super::*;
 use crate::http::tests::{MockServer, Reply, fast_policy};
 
-fn page() -> Value {
+pub(super) fn page() -> Value {
     json!({"url":"https://example.test", "title":"Checkout", "text":"Buy item",
         "actions":[{"id":"e1", "kind":"click", "label":"Buy item", "node":1}]})
 }
 
-const ANSWER: &str = r#"{"answers":[
+pub(super) const ANSWER: &str = r#"{"answers":[
     {"type":"choice","name":"operation","choice":"CLICK","confidence":0.98,
      "probabilities":[{"value":"CLICK","probability":0.98},{"value":"DONE","probability":0.01},{"value":"BLOCKED","probability":0.01}]},
     {"type":"choice","name":"click_target","choice":"1","confidence":0.97,
@@ -46,12 +46,7 @@ async fn native_http_contract_resolves_observed_action_and_gate() {
     let questions = body["questions"].as_array().unwrap();
     let operation = questions.iter().find(|q| q["name"] == "operation").unwrap();
     assert_eq!(operation["type"], "choice");
-    assert!(
-        operation["instructions"]
-            .as_str()
-            .unwrap()
-            .contains("Buy item")
-    );
+    assert_eq!(input["user_goal"], "Buy item");
     assert!(
         operation["choices"]
             .as_array()
@@ -67,7 +62,7 @@ async fn native_http_contract_resolves_observed_action_and_gate() {
     assert!(gate["instructions"].as_str().unwrap().contains("untrusted"));
 }
 
-struct Fixed(Value);
+pub(super) struct Fixed(pub(super) Value);
 #[async_trait]
 impl JevDecisionTransport for Fixed {
     async fn decide(&self, _: &Value) -> anyhow::Result<Value> {
@@ -104,7 +99,7 @@ async fn malformed_responses_fail_closed_and_keep_billed_usage() {
         let result = OpenAiDecisionsClient::with_transport(Arc::new(Fixed(response)))
             .choose(&page(), "Buy item", &[])
             .await;
-        let error = result.err().expect("invalid answer must not execute");
+        let error = result.expect_err("invalid answer must not execute");
         assert_eq!(JevBilled::usage_of(&error).unwrap()["input_tokens"], 42);
     }
 }

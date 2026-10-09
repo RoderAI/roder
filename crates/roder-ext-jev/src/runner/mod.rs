@@ -8,7 +8,7 @@
 //! step (see [`drive`]).
 
 mod ceilings;
-mod decision_backend;
+pub(crate) mod decision_backend;
 mod drive;
 mod look;
 mod request;
@@ -83,8 +83,10 @@ struct RoderDeps<'a> {
 impl SessionDeps for RoderDeps<'_> {
     fn model_key(&self) -> String {
         format!(
-            "{}:{}:{}",
+            "{}:{}:{:016x}:{}:{}",
             decision_backend::selected(),
+            env_value("JEV_DECISIONS_TEXT_ONLY").unwrap_or_default(),
+            decision_backend::credential_revision(),
             env_value("JEV_MODEL").unwrap_or_default(),
             self.turn_model
                 .map(|model| format!("{}/{}", model.provider, model.model))

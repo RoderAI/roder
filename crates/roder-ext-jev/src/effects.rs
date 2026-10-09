@@ -237,6 +237,26 @@ fn short(text: &str) -> String {
     cut
 }
 
+/// Bounded newly visible lines from already secret-scrubbed observations.
+/// Unlike the control summary, this captures receipts and cart confirmations.
+pub(crate) fn text_added(before: &Value, after: &Value) -> Vec<String> {
+    let old = before["text"]
+        .as_str()
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .collect::<std::collections::HashSet<_>>();
+    after["text"]
+        .as_str()
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !old.contains(line))
+        .take(8)
+        .map(|line| line.chars().take(160).collect())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

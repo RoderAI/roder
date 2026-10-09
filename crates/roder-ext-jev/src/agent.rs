@@ -26,7 +26,6 @@ use crate::engine::{
     JevStop, JevStopCause, JevTextValue, StaleObservation,
 };
 use crate::secret::{self, SECRET, Secrets};
-use crate::usage::JevBilled;
 
 pub(crate) struct Agent {
     browser: Box<dyn JevBrowser>,
@@ -241,52 +240,6 @@ impl Agent {
         self.act(decision).await
     }
 
-    async fn predict(&mut self) -> anyhow::Result<JevDecision> {
-        if !self.browser.fresh(&self.observation, None).await? {
-            self.observe().await?;
-            self.check_scope()?;
-        }
-        if self.decisions >= self.config.max_actions.saturating_mul(2) {
-            return Err(JevStop::new(
-                JevStatus::BudgetExceeded,
-                "Reached the demo's model-call budget",
-            )
-            .into());
-        }
-        let decision = self.config.decision.as_ref();
-        let (observation, goal, history) = (&self.observation, &self.config.goal, &self.history);
-        let chosen = if self.config.irreversible_gate {
-            decision.choose_gated(observation, goal, history).await
-        } else {
-            decision.choose(observation, goal, history).await
-        };
-        let decision = match chosen {
-            Ok(decision) => decision,
-            Err(error) => {
-                // An answer that failed validation was still billed.
-                if let Some(usage) = JevBilled::usage_of(&error) {
-                    self.decisions += 1;
-                    self.unusable_decisions.push(usage.clone());
-                }
-                return Err(error);
-            }
-        };
-        self.decisions += 1;
-        self.decision_calls.push(JevDecisionRecord {
-            choice: decision.choice.clone(),
-            operation: decision.operation.clone(),
-            target: decision.target.clone(),
-            confidence: decision.confidence,
-            target_confidence: decision.target_confidence,
-            probabilities: decision.probabilities.clone(),
-            latency_ms: decision.latency_ms,
-            usage: decision.usage.clone(),
-            model: decision.model.clone(),
-            irreversible: decision.irreversible,
-        });
-        Ok(decision)
-    }
-
     /// An unsure repeat of the click that just took effect. Live runs show
     /// the model split between that click and DONE once the page confirms
     /// the first one (confidence 0.43 to 0.66), while a click that is meant
@@ -436,6 +389,7 @@ impl Agent {
             entry["page_changed"] =
                 json!(!covered && self.observation["fingerprint"] != previous["fingerprint"]);
             entry["effect"] = json!(effects::effect(&previous, &self.observation));
+            entry["text_added"] = json!(effects::text_added(&previous, &self.observation));
             entry["url"] = self.observation["url"].clone();
             entry["elapsed_ms"] = json!(elapsed);
         }
@@ -482,6 +436,7 @@ fn stalled(history: &[Value]) -> Option<JevStopCause> {
 
 mod look;
 mod opt_in;
+mod predict;
 mod result;
 pub(crate) use result::controls;
 #[cfg(test)]

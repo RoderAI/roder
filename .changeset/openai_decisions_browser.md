@@ -19,3 +19,9 @@ native computer execution against the live endpoint.
 
 Add a reproducible paired live Decisions/Jev browser benchmark with alternating
 provider order, repeated outcome grading, latency, and provider-reported usage.
+
+Use Decisions-specific browser questions, action-effect context and fresh viewport
+images, with a text-only option and screenshot suppression around recognized
+secrets. Preserve per-question refusals, stopping only when a required selection
+is refused and keeping safety checks closed. Add controlled optimization variants,
+wire-level diagnostics and held-out browser fixtures.

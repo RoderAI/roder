@@ -5,7 +5,7 @@ use crate::{
 };
 use serde_json::json;
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -20,17 +20,61 @@ async fn decisions_vs_jev() {
         .or_else(|| env("TYPESAFE_API_KEY"))
         .or_else(|| roder_config::provider_api_key("jev"))
         .expect("Jev key required");
-    let providers: [(&str, Arc<dyn JevDecisionClient>); 2] = [
-        ("decisions", Arc::new(OpenAiDecisionsClient::new(openai))),
-        (
+    use crate::decisions::{DecisionsHttp, planning::Strategy};
+    let wire = Arc::new(Recorded {
+        inner: DecisionsHttp {
+            key: openai,
+            url: "https://api.openai.com/v1/decisions".into(),
+            http: crate::http::JsonPoster::new(crate::http::RetryPolicy::default()),
+        },
+        records: Mutex::new(Vec::new()),
+    });
+    let variants = [
+        ("original", Strategy::Original),
+        ("refusals", Strategy::Refusals),
+        ("native", Strategy::Native),
+        ("joint", Strategy::Joint),
+        ("sequential", Strategy::Sequential),
+        ("verified", Strategy::Verified),
+        ("effects", Strategy::Effects),
+        ("vision", Strategy::Vision),
+        ("grounded", Strategy::Grounded),
+    ];
+    let wanted = env("DECISIONS_EVAL_VARIANTS").unwrap_or_else(|| "vision,jev".into());
+    for name in wanted.split(',') {
+        assert!(
+            name == "jev" || variants.iter().any(|(n, _)| *n == name),
+            "Unknown variant {name}"
+        );
+    }
+    let mut providers: Vec<(&str, Arc<dyn JevDecisionClient>)> = variants
+        .into_iter()
+        .filter(|(name, _)| wanted.split(',').any(|w| w == *name))
+        .map(|(name, strategy)| {
+            (
+                name,
+                Arc::new(OpenAiDecisionsClient::configured(wire.clone(), strategy))
+                    as Arc<dyn JevDecisionClient>,
+            )
+        })
+        .collect();
+    if wanted.split(',').any(|w| w == "jev") {
+        providers.push((
             "jev",
             Arc::new(JevTypeSafeDecisionClient::new(
                 jev,
                 env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
             )),
-        ),
-    ];
-    let tasks = load_tasks().unwrap();
+        ));
+    }
+    let tasks = if env("DECISIONS_EVAL_HOLDOUT").as_deref() == Some("1") {
+        serde_json::from_str::<Vec<super::Task>>(include_str!(
+            "../../../tests/fixtures/evals/decisions-holdout.json"
+        ))
+        .unwrap()
+    } else {
+        load_tasks().unwrap()
+    };
     validate(&tasks).unwrap();
     assert!(!tasks.is_empty());
     let repeats = env("JEV_EVAL_REPEATS")
@@ -41,15 +85,16 @@ async fn decisions_vs_jev() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs();
-    let name = format!("decisions-vs-jev-{stamp}");
+        .as_nanos();
+    let name = format!("decisions-vs-jev-{stamp}-{}", std::process::id());
     let mut rows = Vec::new();
     for repeat in 0..repeats {
         for (index, original) in tasks.iter().enumerate() {
             let mut task = original.clone();
             task.timeout_s = task.timeout_s.min(60);
-            for slot in 0..2 {
-                let (provider, client) = &providers[(repeat + index + slot) % 2];
+            for slot in 0..providers.len() {
+                let (provider, client) = &providers[(repeat + index + slot) % providers.len()];
+                wire.records.lock().unwrap().clear();
                 let harness = base.with_new_site().await;
                 let outcome = run_task(
                     &harness,
@@ -70,12 +115,13 @@ async fn decisions_vs_jev() {
                             task.expect.grade(&outcome),
                         );
                         row.telemetry = json!({"model":outcome.result.decisions.iter().rev().find_map(|d| d.model.clone()),
-                            "usage":outcome.result.usage,
+                            "usage":outcome.result.usage, "decisions":outcome.result.decisions.iter().map(|d|json!({"operation":d.operation,"target":d.target,"confidence":d.confidence,"target_confidence":d.target_confidence,"probabilities":d.probabilities})).collect::<Vec<_>>(), "actions":outcome.result.actions,
                             "decision_latency_ms":outcome.result.decisions.iter().map(|d| d.latency_ms).collect::<Vec<_>>()});
                         row
                     }
                     Err(error) => Row::errored(&task, "paired-live", &error),
                 };
+                row.telemetry["wire"] = json!(*wire.records.lock().unwrap());
                 row.telemetry["provider"] = json!(provider);
                 row.telemetry["repeat"] = json!(repeat + 1);
                 eprintln!(
@@ -94,5 +140,44 @@ async fn decisions_vs_jev() {
         }
     }
     eprintln!("rows: {}", write_rows(&name, &rows).unwrap().display());
-    assert_eq!(rows.len(), tasks.len() * repeats * 2);
+    assert_eq!(rows.len(), tasks.len() * repeats * providers.len());
+}
+
+struct Recorded {
+    inner: crate::decisions::DecisionsHttp,
+    records: Mutex<Vec<serde_json::Value>>,
+}
+#[async_trait::async_trait]
+impl crate::JevDecisionTransport for Recorded {
+    async fn decide(&self, request: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
+        let result = crate::JevDecisionTransport::decide(&self.inner, request).await;
+        self.records.lock().unwrap().push(json!({"request":request,"response":result.as_ref().ok(),"latency_ms":started.elapsed().as_millis(),"error":result.as_ref().err().map(ToString::to_string)}));
+        result
+    }
+}
+
+#[tokio::test]
+async fn decisions_holdout_fixture_contracts() {
+    let tasks: Vec<super::Task> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/evals/decisions-holdout.json"
+    ))
+    .unwrap();
+    validate(&tasks).unwrap();
+    let base = harness_or_skip!();
+    for task in tasks {
+        let harness = base.with_new_site().await;
+        let outcome = run_task(
+            &harness,
+            &task,
+            Arc::new(super::scripted::StepDecider::new(&task.script.plan)),
+            Arc::new(TaskValues::new(&task.values)),
+            task.expect.probes().cloned().collect(),
+            None,
+        )
+        .await
+        .unwrap();
+        let failures = task.expect.grade(&outcome);
+        assert!(failures.is_empty(), "{}: {failures:?}", task.id);
+    }
 }

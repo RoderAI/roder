@@ -51,6 +51,10 @@ impl ProbedPage {
 
 #[async_trait]
 impl JevBrowser for ProbedPage {
+    async fn screenshot(&mut self) -> anyhow::Result<Option<String>> {
+        self.page.screenshot().await
+    }
+
     async fn observe(&mut self) -> anyhow::Result<Value> {
         let observation = self.page.observe().await?;
         // For diagnosing a task: every observation's actions and text.

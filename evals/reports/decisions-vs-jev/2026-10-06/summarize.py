@@ -1,5 +1,10 @@
 import json,statistics,pathlib,sys,collections
 p=pathlib.Path(sys.argv[1]);rows=[json.loads(s) for s in p.read_text().splitlines()]
+keys=[(r['task'],r['telemetry']['repeat'],r['telemetry']['provider']) for r in rows]
+tasks={r['task'] for r in rows}
+assert len(tasks)==24 and len(rows)==144, 'Expected 24 tasks and 144 attempts'
+assert len(set(keys))==144, 'Duplicate attempt'
+assert set(keys)=={(t,n,p) for t in tasks for n in range(1,4) for p in ['decisions','jev']}, 'Incomplete paired dataset'
 summary={}
 for provider in ['decisions','jev']:
  r=[x for x in rows if x['telemetry']['provider']==provider]

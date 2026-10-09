@@ -29,10 +29,7 @@ impl JevDecisionTransport for Scripted {
     }
 }
 
-async fn canvas(client: OpenAiDecisionsClient) {
-    let harness = Harness::start()
-        .await
-        .expect("computer validation requires Chrome");
+async fn canvas(client: OpenAiDecisionsClient, harness: Harness) {
     let mut page = harness.open("canvas-pad.html").await.unwrap();
     let rect = page.evaluate("(() => {const r=document.querySelector('canvas').getBoundingClientRect(); return {x:r.left,y:r.top}})()").await.unwrap();
     let mut session = DirectSession::attach(
@@ -97,7 +94,11 @@ async fn canvas(client: OpenAiDecisionsClient) {
 
 #[tokio::test]
 async fn decisions_computer_choice_executes_through_real_cdp() {
-    canvas(OpenAiDecisionsClient::with_transport(Arc::new(Scripted))).await;
+    canvas(
+        OpenAiDecisionsClient::with_transport(Arc::new(Scripted)),
+        harness_or_skip!(),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -106,5 +107,58 @@ async fn decisions_live_computer_canvas() {
     let key = crate::runner::env_value("OPENAI_API_KEY")
         .or_else(|| roder_config::provider_api_key("openai"))
         .expect("live Decisions validation requires an OpenAI API key");
-    canvas(OpenAiDecisionsClient::new(key)).await;
+    canvas(
+        OpenAiDecisionsClient::new(key),
+        Harness::start()
+            .await
+            .expect("live computer validation requires Chrome"),
+    )
+    .await;
+}
+
+struct BrowserEvidence {
+    expect_image: bool,
+}
+#[async_trait]
+impl JevDecisionTransport for BrowserEvidence {
+    async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
+        assert_eq!(request["input"].is_array(), self.expect_image);
+        if self.expect_image {
+            assert!(
+                request["input"][0]["content"][1]["image_url"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("data:image/jpeg;base64,")
+            );
+        }
+        let answers=request["questions"].as_array().unwrap().iter().map(|q| {
+            let choices=q["choices"].as_array().unwrap();
+            let selected=choices.iter().find(|c|c["value"]=="DONE").unwrap_or(&choices[0])["value"].clone();
+            json!({"type":"choice","name":q["name"],"choice":selected,"confidence":1.0,"probabilities":choices.iter().map(|c|json!({"value":c["value"],"probability":if c["value"]==selected {1.0} else {0.0}})).collect::<Vec<_>>()})
+        }).collect::<Vec<_>>();
+        Ok(json!({"answers":answers,"usage":{"input_tokens":10,"output_tokens":0}}))
+    }
+}
+
+#[tokio::test]
+async fn decisions_browser_captures_visual_evidence_but_suppresses_secret_pages() {
+    let harness = harness_or_skip!();
+    for (fixture, expect_image) in [("products.html", true), ("secrets.html", false)] {
+        let page = harness.open(fixture).await.unwrap();
+        let client =
+            OpenAiDecisionsClient::with_transport(Arc::new(BrowserEvidence { expect_image }));
+        let config = crate::JevEngineConfig::new("Inspect this page", Arc::new(client))
+            .with_cookie_banner_refusal(false);
+        let mut engine = crate::JevEngine::start(Box::new(page), config)
+            .await
+            .unwrap();
+        let result = engine.run(std::time::Duration::from_secs(10)).await;
+        engine.close().await.unwrap();
+        assert_eq!(result.status, crate::JevStatus::Done);
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("data:image")
+        );
+    }
 }
