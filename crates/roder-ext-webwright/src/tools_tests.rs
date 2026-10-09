@@ -18,7 +18,7 @@ use crate::tools::{
     WEBWRIGHT_SUMMARIZE_VERIFICATION_TOOL, WEBWRIGHT_VERIFY_RUN_TOOL, WebwrightToolContributor,
 };
 
-fn tempdir(name: &str) -> PathBuf {
+pub(crate) fn tempdir(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "roder-webwright-tools-{name}-{}-{}",
         std::process::id(),
@@ -28,7 +28,7 @@ fn tempdir(name: &str) -> PathBuf {
     path
 }
 
-fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
+pub(crate) fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
         id: format!("call-{name}"),
         name: name.to_string(),
@@ -39,7 +39,7 @@ fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
     }
 }
 
-fn webwright_context(root: PathBuf) -> ToolExecutionContext {
+pub(crate) fn webwright_context(root: PathBuf) -> ToolExecutionContext {
     ToolExecutionContext::new("thread", "turn", PolicyMode::Default)
         .with_workspace_handle(Arc::new(LocalWorkspaceHandle::new(root)))
         .with_process_runner(Arc::new(LocalProcessRunnerHandle))

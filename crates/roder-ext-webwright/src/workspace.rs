@@ -129,10 +129,15 @@ impl WebwrightWorkspace {
         &self.root
     }
 
+    /// Creates the workspace directories and, if there is none yet, its manifest. An existing manifest is kept
+    /// as it is: it carries the run state (`latest_run`, `verification_state`), which preparing a workspace a
+    /// second time must not reset.
     pub fn create(&self, manifest: &WebwrightManifest) -> anyhow::Result<()> {
         fs::create_dir_all(self.final_runs_dir())
             .with_context(|| format!("create Webwright workspace {}", self.root.display()))?;
-        self.write_manifest(manifest)?;
+        if !self.root.join(MANIFEST_FILE).exists() {
+            self.write_manifest(manifest)?;
+        }
         Ok(())
     }
 

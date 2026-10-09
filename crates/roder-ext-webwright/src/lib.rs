@@ -7,6 +7,11 @@ mod playwright;
 mod playwright_tests;
 mod redaction;
 mod run;
+mod run_outcome;
+#[cfg(test)]
+mod run_outcome_tests;
+#[cfg(test)]
+mod run_script_tests;
 mod showcase;
 mod task;
 mod tools;

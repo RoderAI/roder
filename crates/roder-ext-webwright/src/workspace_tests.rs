@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::workspace::{WebwrightWorkspace, scoped_path};
+use crate::workspace::{WebwrightManifest, WebwrightMode, WebwrightWorkspace, scoped_path};
 
 fn fixture(path: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -75,4 +75,40 @@ fn scoped_path_rejects_parent_component_escapes() {
     assert!(scoped_path(&root, ".roder/webwright/task", "outputDir").is_ok());
     assert!(scoped_path(&root, "../secret", "outputDir").is_err());
     assert!(scoped_path(&root, root.join("../secret"), "outputDir").is_err());
+}
+
+#[test]
+fn create_keeps_an_existing_manifest() {
+    let root =
+        std::env::temp_dir().join(format!("roder-webwright-create-{}", uuid::Uuid::new_v4()));
+    let workspace = WebwrightWorkspace::new(&root);
+    let first = WebwrightManifest::new(
+        "task",
+        "Original task",
+        WebwrightMode::Run,
+        None,
+        None,
+        true,
+    );
+    workspace.create(&first).unwrap();
+    assert_eq!(workspace.read_manifest().unwrap(), Some(first.clone()));
+
+    let mut with_run_state = first;
+    with_run_state.latest_run = Some(2);
+    with_run_state.verification_state = "failed".to_string();
+    workspace.write_manifest(&with_run_state).unwrap();
+
+    workspace
+        .create(&WebwrightManifest::new(
+            "task",
+            "Another task",
+            WebwrightMode::Craft,
+            None,
+            Some("chromium".to_string()),
+            false,
+        ))
+        .unwrap();
+
+    assert_eq!(workspace.read_manifest().unwrap(), Some(with_run_state));
+    assert!(workspace.final_runs_dir().is_dir());
 }
