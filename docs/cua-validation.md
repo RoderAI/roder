@@ -94,7 +94,9 @@ without replaying any GUI input.
 The full app profile also passed all 16 native GTK input, window, isolation,
 pause/resume, rejoin, driver restart and cancellation checks. Both recovery
 desktops reached `TERMINATED`. The first workflow's desktop was retained with
-a configured 3-hour TTL for the user's requested live viewing; its report
+a configured 3-hour TTL for the user's requested live viewing; it was later
+retired when the browser desktop replaced it (verified TERMINATED in the browser
+evidence). Its original report
 explicitly records retention rather than claiming terminal cleanup.
 
 Reliability changes from the exploratory attempts: use a 1920×1080 desktop
@@ -215,3 +217,52 @@ shared/Linux offline fixtures, release metadata, and a real
 built CLI `roder acp` initialize smoke passed. The final Calculator app-server
 and owned AppKit fixture are stopped; the preexisting Calculator is preserved.
 The verified signed Cua app and its granted daemon remain available locally.
+
+## Browser on the full X11 desktop
+
+The [public browser report](../examples/cua-linux/evidence/2026-10-08/browser-model-final/report.json)
+passed with Chrome **155.0.8059.39**, Cua **0.34.0**, XFCE/X11 and a live
+`gpt-5.4` decision model using only Cua tools through the built Roder app-server.
+The run made **33 model requests, 32 with actual image blocks**, and recorded
+36 public tool executions. The [current ordered audit](../examples/cua-linux/evidence/2026-10-08/browser-model-final/audit.json)
+passes without replaying GUI input.
+
+Native input signed into a loopback-only fixture website. Roder then attached
+the exact running Chrome profile, observed semantic snapshots with actual tab
+PNGs, navigated, typed `café λ 日本語` plus the unique run marker, and submitted
+a form with trusted foreground browser input. Native Ctrl+L, ASCII URL typing
+and Enter subsequently revisited the saved receipt. The independent website
+oracle verifies authentication, exact submitted text and later receipt reads;
+the original trace proves native address-bar input followed by fresh page proof.
+Attachment reports no profile copy, new profile, launch or restart. Explicit
+session cleanup completed and revoked the attachment.
+
+The first exploratory attempt failed because Chrome did not register its
+native ATK bridge. Provisioning now sets `ACCESSIBILITY_ENABLED=1` as well as
+`--force-renderer-accessibility`, verifies Chrome's native registration, and
+uses the actual desktop session. On the accepted run, automatic driver setup
+still hit a setup-page timing refusal. The live model observed that state,
+selected Chrome's setup tab and exact checkbox through native Cua input, then
+prepared/bound successfully. This qualifies the observable recovery path; it
+does not claim single-call automatic setup is reliable on this VNC image.
+
+Chrome uses `--no-sandbox` only in this disposable test container; the production
+contributor does not launch it with that flag. The test uses a synthetic local
+signed-in session. Real personal account attachment, isolated driver-launched
+profiles in this container, other browser products and the local macOS browser
+route are not live-qualified by this run. macOS desktop/calculator results above
+remain separate. Existing-profile access requires both explicit Roder config
+and an independent driver grant; neither is enabled by default.
+
+Current focused checks: **26 Cua tests**, **102 config tests passed / 1 ignored**,
+**six existing Cua ACP wire checks**, **18 Linux offline checks**, strict Cua
+Clippy, Python compilation, changed-file formatting, changeset/release config
+and diff gates. New browser boundary checks cover foreign thread/runner handles,
+stale refs after snapshots/native input, Plan refusal, approval classification,
+profile grants, cancellation, corrupt captures, refusal with fresh media,
+explicit session revocation and bounded inline handles on large pages.
+
+The failed exploratory sandbox and superseded desktop viewer sandbox are
+verified TERMINATED. The accepted browser desktop is retained for viewing with
+its creation-bounded 3-hour TTL; see the separate retention receipt. The local
+preview collector stops cloud reads after one hour and preserves its last frame.

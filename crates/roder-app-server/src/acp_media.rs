@@ -13,7 +13,11 @@ pub(crate) fn desktop_kind(name: &str) -> Option<acp::ToolKind> {
     Some(
         if matches!(
             name,
-            "get_window_state" | "get_desktop_state" | "list_windows" | "list_apps"
+            "get_window_state"
+                | "get_desktop_state"
+                | "get_browser_state"
+                | "list_windows"
+                | "list_apps"
         ) {
             acp::ToolKind::Read
         } else {

@@ -5994,6 +5994,15 @@ remote contexts before desktop dispatch. Setup is described in
 `roder-ext-cua`. Tool arguments identify native windows and capture/element
 handles; runner credentials and destination selection remain host-owned.
 
+The same contributor exposes `cua_get_browser_state`, `cua_browser_prepare`,
+`cua_browser_navigate`, `cua_browser_click`, `cua_browser_type` and
+`cua_end_browser_session`. Browser targets/tabs/refs are scoped to the thread's
+configured desktop. Existing-profile preparation additionally requires
+`cua.allow_existing_browser_profile=true` and the driver's independent launch
+grant. Browser snapshots/actions carry real tab PNGs through the same image
+pipeline; lifecycle preparation/cleanup returns structured side effects. Native
+input revokes browser refs. See the linked guide for exact arguments/refusals.
+
 Completed desktop tool executions carry the bounded inline PNG under
 `input.__view_image.image_url` in the canonical transcript. Model providers
 receive the same screenshot as image content. ACP projects it into

@@ -158,3 +158,40 @@ fresh desktops with `desktop_fixture.py --input-fixture`, then use the same
 `input_smoke.py` command above. These checks operate the app-owned GTK oracle
 through Roder and delete both supplied sandboxes. The live document workflow
 and primitive/recovery workflow have separate reports and graders.
+
+## Browser on the full X11 desktop
+
+Provision a fresh full desktop with `desktop_fixture.py`, then add Chrome and a
+loopback-only test website. Browser setup installs Google's official stable
+Debian package, records its version/hash, forces the native accessibility
+bridge and renderer accessibility, and verifies native registration. The
+browser uses a disposable sandbox-local default profile. No real account or
+user profile is imported. The Chrome package is discovered at provision time;
+pin the qualified version/hash in a durable image.
+
+~~~sh
+python3 examples/cua-linux/desktop_fixture.py --sandbox OWNED --workspace WORKSPACE
+python3 examples/cua-linux/browser_fixture.py --sandbox OWNED --workspace WORKSPACE
+python3 examples/cua-linux/browser_smoke.py \
+  --roder /absolute/path/to/built/roder --sandbox OWNED --workspace WORKSPACE \
+  --output /tmp/roder-browser-evidence
+~~~
+
+The live test enables `allow_existing_browser_profile` in isolated Roder config
+and installs the independent existing-profile grant in this owned fixture's
+daemon deployment. It signs in with a native GUI click, attaches the same
+running profile, navigates and fills a Unicode form using Cua browser controls,
+then uses the native address bar to revisit the receipt. A separate read-only
+website event/form-state grader verifies authentication and the exact submitted
+values. All page state changes must come through advertised Cua tools.
+
+The smoke rejects a previously signed-in/submitted fixture, records screenshots
+and public-runtime calls, ends the Cua browser session, and deletes only the
+explicit supplied owned sandbox by default. `--retain-sandbox` keeps it for live
+viewing/further evaluation with caller-owned cleanup and a bounded TTL. Use
+`desktop_preview.py` to watch the same desktop while the model runs.
+
+Chrome runs with `--no-sandbox` inside this explicitly disposable Blaxel test
+container because its process sandbox is unavailable there. This is a fixture
+constraint; the production Roder contributor neither launches Chrome itself nor
+adds that flag. Only the local fixture website is used for acceptance.

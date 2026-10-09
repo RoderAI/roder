@@ -20,6 +20,8 @@ pub struct CuaConfig {
     pub socket_path: Option<String>,
     pub timeout_ms: u64,
     pub max_image_dimension: u32,
+    /// Permit requests to attach an existing profile. The driver also needs its own launch-time grant.
+    pub allow_existing_browser_profile: bool,
 }
 
 impl Default for CuaConfig {
@@ -31,6 +33,7 @@ impl Default for CuaConfig {
             socket_path: None,
             timeout_ms: 45_000,
             max_image_dimension: 1280,
+            allow_existing_browser_profile: false,
         }
     }
 }
@@ -95,6 +98,10 @@ mod tests {
         assert!(cua.enabled);
         cua.validate().unwrap();
         assert!(!CuaConfig::default().enabled);
+        assert!(!cua.allow_existing_browser_profile);
+        let granted: crate::Config =
+            toml::from_str("[cua]\nallow_existing_browser_profile=true\n").unwrap();
+        assert!(granted.cua.unwrap().allow_existing_browser_profile);
         assert!(toml::from_str::<crate::Config>("[cua]\nsandbox = 'other'\n").is_err());
     }
     #[test]

@@ -34,23 +34,30 @@ pub(crate) fn result_text(data: &Value) -> String {
     cap_strings(&mut text);
     // The core spills outputs over 20k characters into an artifact. Keep the
     // capture and element handles in valid JSON the model can immediately use.
-    let mut omitted = 0;
     while text.to_string().chars().count() > 18_000 {
-        let rows = if text["after_action"]["elements"].is_array() {
-            "after_action"
-        } else {
-            "observation"
-        };
-        let Some(elements) = text[rows]["elements"].as_array_mut() else {
-            break;
-        };
-        if elements.is_empty() {
-            break;
+        let mut largest = None;
+        for rows in ["observation", "after_action"] {
+            for field in ["elements", "refs", "content_refs", "tabs"] {
+                if let Some(values) = text[rows][field]
+                    .as_array()
+                    .filter(|values| !values.is_empty())
+                {
+                    let size = serde_json::to_string(values).unwrap().len();
+                    if largest.is_none_or(|(_, _, previous)| size > previous) {
+                        largest = Some((rows, field, size));
+                    }
+                }
+            }
         }
-        let remove = (elements.len() / 4).max(1);
-        elements.truncate(elements.len() - remove);
-        omitted += remove;
-        text[rows]["elements_omitted_from_text"] = json!(omitted);
+        let Some((rows, field, _)) = largest else {
+            break;
+        };
+        let values = text[rows][field].as_array_mut().unwrap();
+        let remove = (values.len() / 4).max(1);
+        values.truncate(values.len() - remove);
+        let omitted = format!("{field}_omitted_from_text");
+        let previous = text[rows][&omitted].as_u64().unwrap_or(0);
+        text[rows][&omitted] = json!(previous + remove as u64);
     }
     text.to_string()
 }
@@ -96,5 +103,29 @@ mod tests {
         assert_eq!(data, before);
         data["observation"] = json!({"code":"refused","summary":"No input was sent"});
         assert!(result_text(&data).contains("No input was sent"));
+    }
+    #[test]
+    fn large_browser_refs_keep_binding_inline_without_spilling_handles() {
+        let rows: Vec<_> = (0..1000)
+            .map(|i| json!({"ref":format!("p1:{i}"),"name":"x".repeat(300),"actions":["click"]}))
+            .collect();
+        let data = json!({"untrusted":true,"after_action":{"target_id":"owned-target","tab_id":"owned-tab","snapshot":{"id":"p1"},"refs":rows,"content_refs":rows}});
+        let text = result_text(&data);
+        assert!(text.chars().count() <= 18_000);
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["after_action"]["target_id"], "owned-target");
+        assert_eq!(value["after_action"]["tab_id"], "owned-tab");
+        assert!(
+            value["after_action"]["refs_omitted_from_text"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert!(
+            value["after_action"]["content_refs_omitted_from_text"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
     }
 }

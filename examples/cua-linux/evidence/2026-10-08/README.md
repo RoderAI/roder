@@ -24,9 +24,9 @@ grounded Enter after double-clicking did not visibly open the file.
 Each model report embeds its full original tool trace; there is no duplicate
 trace file in these two evidence folders.
 
-The first workflow's owned desktop is retained with a configured 3-hour TTL
-for the requested live preview. This is recorded separately from terminal
-cleanup; it is not claimed as deleted. The repeat desktop was subsequently
+The first workflow's owned desktop was initially retained with a 3-hour TTL
+for live viewing. It was subsequently retired when the browser desktop replaced
+it; the verified TERMINATED receipt is in browser-model-final/retired-sandboxes.json. The repeat desktop was subsequently
 used by the full-input fixture and its TERMINATED receipt is in that report.
 Milestone and final images are actual Cua PNGs from these owned desktops.
 
@@ -35,3 +35,10 @@ mini-model run copied the note and could not finish an oversized Save dialog;
 the first unselected Shift-drag on the larger desktop had no observed move.
 The qualified workflow uses 1920×1080, selection before Shift-drag, current
 window discovery after closed targets, and preserved plain-text refusals.
+
+The [browser follow-up](browser-model-final/README.md) passed through public
+Roder and a live model with Chrome, a synthetic signed-in local profile,
+semantic browser snapshots, Unicode form input, trusted click and native
+address-bar navigation. Its independently graded report and ordered audit are
+preserved; that desktop replaces the previous viewer and is explicitly retained
+with its own bounded TTL.

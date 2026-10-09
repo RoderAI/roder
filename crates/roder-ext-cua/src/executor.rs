@@ -22,8 +22,9 @@ struct Grounding {
     desktop_generation: Option<u64>,
 }
 #[derive(Default)]
-struct Session {
+pub(crate) struct Session {
     grounding: Option<Grounding>,
+    pub(crate) browser: crate::browser::BrowserSession,
 }
 struct Shared {
     config: CuaConfig,
@@ -59,7 +60,11 @@ impl ToolContributor for CuaToolContributor {
     }
     fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
         self.shared.config.validate()?;
-        for name in READ_TOOLS.iter().chain(INPUT_TOOLS) {
+        for name in READ_TOOLS
+            .iter()
+            .chain(INPUT_TOOLS)
+            .chain(crate::browser_specs::TOOLS)
+        {
             registry.register(Arc::new(CuaTool {
                 name,
                 shared: self.shared.clone(),
@@ -166,6 +171,32 @@ impl CuaTool {
             sessions.entry(label.clone()).or_default().clone()
         };
         let mut session = session.lock().await;
+        if crate::browser_specs::TOOLS.contains(&self.name) {
+            if self.name == "browser_prepare" {
+                check_grounding(
+                    &session,
+                    &arguments,
+                    &json!({"pid":arguments["pid"],"window_id":arguments["window_id"]}),
+                    lease.as_ref().map(|lease| lease.generation()),
+                )?;
+            }
+            if is_input(self.name) {
+                session.grounding = None;
+            }
+            return crate::browser::run(
+                self.name,
+                arguments,
+                call,
+                &mut session.browser,
+                &self.shared.config,
+                self.shared.transport.as_ref(),
+                destination,
+                &label,
+                timeout,
+                lease.as_deref(),
+            )
+            .await;
+        }
         let target = if self.name == "move_cursor" || self.name == "get_desktop_state" {
             json!({"desktop":true})
         } else {
@@ -181,6 +212,7 @@ impl CuaTool {
             // Discard before dispatch: cancellation, timeout or a failed capture must
             // never leave an old image authorized for another action.
             session.grounding = None;
+            session.browser.invalidate();
             if let Some(lease) = &lease {
                 lease.begin_input();
             }

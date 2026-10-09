@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "original_acceptance": true,
+  "trace_checks": {
+    "exact_browser_bound": true,
+    "existing_profile_attached": true,
+    "semantic_snapshots": true,
+    "browser_navigation": true,
+    "browser_click": true,
+    "browser_unicode_type": true,
+    "native_browser_address_bar": true,
+    "browser_images": true,
+    "session_ended": true,
+    "desktop_image": true,
+    "receipt_observed": true
+  },
+  "sandbox": "roder-cua-browser-19d6c833",
+  "gui_input_replayed": false,
+  "grader": "Current ordered trace checks against preserved original report"
+}

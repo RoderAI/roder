@@ -19,18 +19,22 @@ pub(crate) const INPUT_TOOLS: &[&str] = &[
     "set_window_frame",
 ];
 pub(crate) fn is_input(name: &str) -> bool {
-    INPUT_TOOLS.contains(&name)
+    INPUT_TOOLS.contains(&name) || crate::browser_specs::is_input(name)
 }
 
 pub fn cua_tool_specs() -> Vec<ToolSpec> {
     READ_TOOLS
         .iter()
         .chain(INPUT_TOOLS)
+        .chain(crate::browser_specs::TOOLS)
         .map(|name| spec(name))
         .collect()
 }
 
 pub(crate) fn spec(name: &str) -> ToolSpec {
+    if crate::browser_specs::TOOLS.contains(&name) {
+        return crate::browser_specs::spec(name);
+    }
     let mut properties = json!({});
     let mut required = vec![];
     let target = !matches!(

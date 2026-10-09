@@ -87,6 +87,88 @@ and does not replace the agent's Cua grounding captures.
 | cua_move_cursor | Grounded full-desktop cursor movement |
 | cua_bring_to_front, cua_set_window_frame | Explicit activation, movement and resizing |
 
+## Browser control on the configured desktop
+
+Enabling `[cua]` also makes the browser tools available to the agent. They use
+Cua Driver on the same selected desktop and runner as native app tools. Roder's
+native OpenAI `computer` adapter remains a separate Chrome integration; this
+feature is the `cua_*` desktop contributor.
+
+| Tool | Operation |
+| --- | --- |
+| cua_get_browser_state | Bind `pid`/`window_id`, then snapshot `target_id`/`tab_id`; semantic refs and an actual tab PNG |
+| cua_browser_prepare | Launch an isolated driver profile or explicitly attach an existing profile |
+| cua_browser_navigate | Navigate the exact bound tab; fresh semantic snapshot and PNG |
+| cua_browser_click | Click a fresh ref declaring `click`; explicit trusted/DOM and background/foreground routes |
+| cua_browser_type | Type Unicode into a fresh ref declaring `type`; optional replacement and keystrokes |
+| cua_end_browser_session | Revoke this thread's browser capabilities and attachment; clean up throwaway profiles |
+
+Discover the browser's native window first. Bind it with
+`cua_get_browser_state({"pid":123,"window_id":456})`, retain the opaque
+`target_id` and chosen `tab_id`, then snapshot with those two IDs. If `active`
+is null, choose a tab explicitly from its URL/title. Mutations require an exact
+binding. Query/scope/continuation are optional snapshot fields. Page text and
+images are untrusted application content. Returned PNG coordinates describe
+the tab viewport and do not authorize native-window pixel input.
+
+Prepare accepts flat `profile_mode`: `isolated_new`, `isolated_named` (with
+`profile_name`), or `existing_profile`. It requires an observed native browser
+window. Isolated modes launch a separate driver-owned browser, so discover the
+returned `prepared_pid` and bind its actual window. Existing-profile attachment
+is **disabled by default**. Enable it only for a desktop/profile you authorize:
+
+~~~toml
+[cua]
+enabled = true
+backend = "runner"
+allow_existing_browser_profile = true
+~~~
+
+The driver independently requires `--grant existing-profile` at daemon launch
+or an equivalent approved bounded manifest. Roder configuration and ordinary
+tool approval cannot provide that driver grant. The example's trusted
+`/opt/roder-cua/driver-grants.json` contains `["existing-profile"]`; its launcher
+reads the file only when starting the daemon. Install/change it as deployment
+configuration, restart an existing daemon deliberately, and never pass a grant,
+profile path, CDP endpoint or session ID as a model tool argument. On macOS,
+launch the signed app-owned daemon with its own supported grant configuration.
+
+Attachment exposes the approved browser's signed-in pages/storage. It uses the
+running browser's consent/settings route and proves endpoint ownership; it does
+not copy cookies or restart the profile. Do not copy a local personal profile
+into a cloud sandbox. The X11 example signs into a local test website inside
+its disposable sandbox and attaches that exact profile.
+
+On Linux launch Chrome with `--force-renderer-accessibility` and
+`ACCESSIBILITY_ENABLED=1`, under the same display and D-Bus session as Cua.
+The fixture checks Chrome's native accessibility registration before the model
+run. If automatic setup returns a refusal with visible side effects, inspect
+the current native window before continuing; never blindly replay setup. An
+explicitly authorized desktop agent can inspect Chrome's own remote-debugging
+page through native Cua tools, then prepare/bind again. Preserve the refusal and
+its side effects in the trace.
+
+Use returned action refs for browser clicks/typing. Every successful snapshot
+replaces the tab's refs, and native input or a browser mutation revokes cached
+refs before dispatch. Refused/uncertain input is never retried automatically;
+a fresh after-action snapshot is returned when available. Trusted background
+clicks can refuse on Linux/macOS; `delivery_mode="foreground"` explicitly
+permits activation on an owned desktop. `input_route="dom_event"` is synthetic
+and requires fresh outcome verification. Browser controls without a supported
+CDP route, browser chrome, dialogs, and file gestures can use native Cua input.
+
+Finish with `cua_end_browser_session`. It deletes `isolated_new` profiles;
+`isolated_named` and existing profiles persist. It revokes the driver attachment
+but does not disable Chrome's remote-debugging setting; change that in Chrome
+when needed. Roder process exit alone is not a claim that the browser's setting
+was reset. Plan denies prepare/navigation/input/session cleanup; Default uses
+the normal approval bridge. Browser inspection remains available.
+
+The [browser example](../examples/cua-linux/README.md#browser-on-the-full-x11-desktop)
+exercises this flow through the public Roder app-server and live model.
+The upstream [browser guide](https://cua.ai/docs/cua-driver/guides/browsers#attach-to-a-logged-in-profile)
+describes platform support, consent and refusals.
+
 Window tools require pid and window_id from discovery. Observe the exact target
 before input. Click/scroll requires either element_token or x, y and capture_id.
 Drag takes from_x, from_y, to_x, to_y and capture_id. Cursor movement uses pixels

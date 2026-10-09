@@ -19,3 +19,10 @@ unknown arguments, mismatched contexts and ungrounded input fail before native
 dispatch. Plan mode observes and denies input; default mode requests approval;
 Accept All and Bypass retain Roder's standard approval semantics. Every input
 is followed by a fresh window/desktop capture. Uncertain input is never retried.
+
+Browser controls use the same desktop session and policy: exact-window bind,
+semantic page snapshots/PNGs, profile preparation, navigation, click, Unicode
+typing and explicit session cleanup. Existing-profile attachment requires
+`allow_existing_browser_profile=true` plus an independent Cua daemon launch
+grant. Native input invalidates browser refs. The full X11 browser fixture uses
+Chrome and a sandbox-local test login; personal profiles are never imported.

@@ -15,7 +15,8 @@ SOCKET = '/tmp/roder-cua.sock'
 VERSION = '0.34.0'
 TOOLS = {'list_apps', 'list_windows', 'get_window_state', 'get_desktop_state',
          'click', 'drag', 'scroll', 'press_key', 'type_text', 'set_value', 'move_cursor',
-         'bring_to_front', 'set_window_frame'}
+         'bring_to_front', 'set_window_frame', 'start_session', 'end_session',
+         'get_browser_state', 'browser_prepare', 'browser_navigate', 'browser_click', 'browser_type'}
 
 
 def daemon_ready():
@@ -95,7 +96,12 @@ def worker(tool, raw_arguments, raw_path, parent):
             raise RuntimeError('unsupported driver version')
         if not daemon_ready():
             with (ROOT / 'driver.log').open('a') as log:
-                subprocess.Popen(prefix + [binary, 'serve', '--socket', SOCKET, '--no-overlay'],
+                grant_path = ROOT / 'driver-grants.json'
+                grants = json.loads(grant_path.read_text()) if grant_path.exists() else []
+                if grants not in ([], ['existing-profile']):
+                    raise RuntimeError('unsupported driver launch grant')
+                grant_args = ['--grant', 'existing-profile'] if grants else []
+                subprocess.Popen(prefix + [binary, 'serve', '--socket', SOCKET, '--no-overlay'] + grant_args,
                                  stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                  start_new_session=True, env=environment())
             for _ in range(80):

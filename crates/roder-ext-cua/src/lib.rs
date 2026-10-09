@@ -1,4 +1,6 @@
 //! Explicit runner or local macOS Cua desktop tools. No implicit fallback.
+mod browser;
+mod browser_specs;
 mod capture;
 mod executor;
 mod local;

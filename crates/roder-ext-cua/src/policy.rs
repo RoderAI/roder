@@ -26,3 +26,39 @@ impl PolicyContributor for CuaPolicy {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::tools::{ToolCall, ToolExecutionContext};
+    use serde_json::json;
+    #[tokio::test]
+    async fn browser_mutations_require_approval_and_plan_denies_them() {
+        for tool in crate::browser_specs::TOOLS {
+            for mode in [PolicyMode::Default, PolicyMode::Plan, PolicyMode::Bypass] {
+                let result = CuaPolicy
+                    .review_tool(PolicyReview {
+                        mode,
+                        context: ToolExecutionContext::new("t", "u", mode),
+                        call: ToolCall {
+                            id: "c".into(),
+                            name: format!("cua_{tool}"),
+                            arguments: json!({}),
+                            raw_arguments: String::new(),
+                            thread_id: "t".into(),
+                            turn_id: "u".into(),
+                        },
+                    })
+                    .await
+                    .unwrap();
+                if *tool == "get_browser_state" || mode == PolicyMode::Bypass {
+                    assert_eq!(result, PolicyContribution::Abstain);
+                } else if mode == PolicyMode::Plan {
+                    assert!(matches!(result, PolicyContribution::Deny { .. }));
+                } else {
+                    assert!(matches!(result, PolicyContribution::RequireApproval { .. }));
+                }
+            }
+        }
+    }
+}
