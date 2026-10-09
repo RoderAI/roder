@@ -1,0 +1,297 @@
+[
+  {
+    "id": "complex_holdout_1",
+    "covers": "Transfer asset CAM-73 to Studio B and notify its owner. Do not retire it.",
+    "page": "complex-browser-holdout.html?mode=transfer",
+    "goal": "Transfer asset CAM-73 to Studio B and notify its owner. Do not retire it.",
+    "values": {
+      "Asset tag": "CAM-73"
+    },
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Equipment transfer completed."
+      ],
+      "dom": {
+        "window.result": {
+          "tag": "CAM-73",
+          "destination": "Studio B",
+          "notify": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Asset tag"
+        },
+        {
+          "select": "Destination \u2192 Studio B"
+        },
+        {
+          "click": "Prepare transfer"
+        },
+        {
+          "click": "Complete transfer"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_holdout_2",
+    "covers": "Submit a supply request containing exactly one Graphite marker and nothing else. It may already be in the request.",
+    "page": "complex-browser-holdout.html?mode=stock",
+    "goal": "Submit a supply request containing exactly one Graphite marker and nothing else. It may already be in the request.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Supply request submitted:"
+      ],
+      "dom": {
+        "window.result": [
+          "Graphite marker"
+        ],
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Submit request"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_holdout_3",
+    "covers": "Reschedule the West workshop visit on 18 May to 14:00. Leave every other visit unchanged.",
+    "page": "complex-browser-holdout.html?mode=appointment",
+    "goal": "Reschedule the West workshop visit on 18 May to 14:00. Leave every other visit unchanged.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Visit rescheduled."
+      ],
+      "dom": {
+        "window.result": {
+          "index": 1,
+          "time": "14:00"
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Reschedule",
+          "context": "West workshop"
+        },
+        {
+          "select": "Visit time \u2192 14:00"
+        },
+        {
+          "click": "Apply new time"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_holdout_4",
+    "covers": "Prepare and save the inventory archive. Retain all original inventory records.",
+    "page": "complex-browser-holdout.html?mode=export",
+    "goal": "Prepare and save the inventory archive. Retain all original inventory records.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Archive saved with 64 inventory records."
+      ],
+      "dom": {
+        "window.result": {
+          "saved": true,
+          "records": 64
+        },
+        "window.audit.writes": 2,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Prepare archive"
+        },
+        {
+          "click": "Save archive"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_holdout_5",
+    "covers": "Find Aster Bakery account AB-16 and submit an urgent service case titled \"Oven temperature unstable\" assigned to the Equipment team. Send the customer response \"A technician will contact you today\" with customer notification enabled. Keep the account open.",
+    "page": "complex-casework.html",
+    "goal": "Find Aster Bakery account AB-16 and submit an urgent service case titled \"Oven temperature unstable\" assigned to the Equipment team. Send the customer response \"A technician will contact you today\" with customer notification enabled. Keep the account open.",
+    "values": {
+      "Customer search": "Aster",
+      "Issue title": "Oven temperature unstable",
+      "Customer response": "A technician will contact you today"
+    },
+    "timeout_s": 60,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Service case submitted."
+      ],
+      "dom": {
+        "window.result": {
+          "customer": "Aster Bakery \u00b7 account AB-16",
+          "title": "Oven temperature unstable",
+          "priority": "Urgent",
+          "assignment": "Equipment team",
+          "response": "A technician will contact you today",
+          "notify": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Customer search"
+        },
+        {
+          "enter": "Customer search"
+        },
+        {
+          "click": "Open customer",
+          "context": "Aster Bakery"
+        },
+        {
+          "click": "Create service case"
+        },
+        {
+          "fill": "Issue title"
+        },
+        {
+          "select": "Priority \u2192 Urgent"
+        },
+        {
+          "select": "Assignment \u2192 Equipment team"
+        },
+        {
+          "click": "Continue to response"
+        },
+        {
+          "fill": "Customer response"
+        },
+        {
+          "click": "Review case"
+        },
+        {
+          "click": "Submit service case"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_holdout_6",
+    "covers": "Schedule a bulletin titled \"Depot maintenance\" with the message \"The west entrance closes at noon\" for the Operations team only, by email and in-app, on 2026-11-20 at 09:15. Do not publish immediately or include Sales or the public website.",
+    "page": "complex-publication.html",
+    "goal": "Schedule a bulletin titled \"Depot maintenance\" with the message \"The west entrance closes at noon\" for the Operations team only, by email and in-app, on 2026-11-20 at 09:15. Do not publish immediately or include Sales or the public website.",
+    "values": {
+      "Bulletin title": "Depot maintenance",
+      "Message": "The west entrance closes at noon",
+      "Scheduled date": "2026-11-20",
+      "Scheduled time": "09:15"
+    },
+    "timeout_s": 60,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Bulletin scheduled."
+      ],
+      "dom": {
+        "window.result": {
+          "title": "Depot maintenance",
+          "message": "The west entrance closes at noon",
+          "audience": {
+            "operations": true,
+            "sales": false,
+            "public": false
+          },
+          "method": "Email and in-app",
+          "date": "2026-11-20",
+          "time": "09:15"
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "New bulletin"
+        },
+        {
+          "fill": "Bulletin title"
+        },
+        {
+          "fill": "Message"
+        },
+        {
+          "click": "Choose audience"
+        },
+        {
+          "click": "Operations team"
+        },
+        {
+          "click": "Choose delivery"
+        },
+        {
+          "select": "Delivery method \u2192 Email and in-app"
+        },
+        {
+          "fill": "Scheduled date"
+        },
+        {
+          "fill": "Scheduled time"
+        },
+        {
+          "click": "Preview bulletin"
+        },
+        {
+          "click": "Schedule bulletin"
+        }
+      ]
+    }
+  }
+]

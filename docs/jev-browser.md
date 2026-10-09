@@ -1,5 +1,7 @@
 # Jev browser tool
 
+For an alternative decision service, see [OpenAI Decisions](openai-decisions-browser.md).
+
 `jev_browse` is a Roder tool provider that runs a bounded browser goal against
 Chrome over CDP. It returns the executed action trace and observed final page
 through Roder's normal tool result, whose text shows the caller the page (see

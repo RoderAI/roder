@@ -31,6 +31,9 @@ mod sessions;
 mod text_sources;
 mod variants;
 
+mod complex_contracts;
+mod decisions_comparison;
+mod decisions_live;
 mod keyless;
 mod live;
 mod miniwob;

@@ -1,0 +1,250 @@
+{
+  "vision": {
+    "passed": 18,
+    "attempts": 18,
+    "median_wall_ms": 2239.0,
+    "wire_calls": 114,
+    "browser_decisions": 114,
+    "input_tokens": 241676,
+    "unknown_usage_rows": 0,
+    "refused_questions": {
+      "type_text_target": 4
+    },
+    "inferred_done": 0,
+    "false_done": 0,
+    "per_task": {
+      "complex_holdout_1": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_2": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_3": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_4": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_5": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_6": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 13,
+        "correct": 13,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.7": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 12
+      },
+      "0.8": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 16
+      },
+      "0.9": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 18
+      },
+      "0.95": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 18
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 18
+      }
+    }
+  },
+  "jev": {
+    "passed": 15,
+    "attempts": 18,
+    "median_wall_ms": 1788.5,
+    "wire_calls": 108,
+    "browser_decisions": 108,
+    "input_tokens": 242304,
+    "unknown_usage_rows": 0,
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 3,
+    "per_task": {
+      "complex_holdout_1": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_2": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_3": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_4": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_5": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_6": {
+        "passed": 0,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 15,
+        "false_done": 3,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 15,
+        "correct": 15,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 15,
+        "correct": 15,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 15,
+        "correct": 15,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.95": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 9
+      },
+      "0.99": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 9
+      }
+    }
+  },
+  "jev_workflow": {
+    "passed": 18,
+    "attempts": 18,
+    "median_wall_ms": 1723.5,
+    "wire_calls": 114,
+    "browser_decisions": 114,
+    "input_tokens": 321882,
+    "unknown_usage_rows": 0,
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "per_task": {
+      "complex_holdout_1": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_2": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_3": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_4": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_5": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_6": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 16,
+        "correct": 16,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.9": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 9
+      },
+      "0.99": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 15
+      }
+    }
+  }
+}

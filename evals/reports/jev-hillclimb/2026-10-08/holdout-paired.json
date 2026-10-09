@@ -1,0 +1,67 @@
+{
+  "jev": {
+    "pairs": 18,
+    "candidate_only_pass": 3,
+    "reference_only_pass": 0,
+    "both_pass": 15,
+    "both_fail": 0,
+    "candidate_median_ms_on_both_pass": 1460,
+    "reference_median_ms_on_both_pass": 1542,
+    "median_paired_ms_saved": 4
+  },
+  "vision": {
+    "pairs": 18,
+    "candidate_only_pass": 0,
+    "reference_only_pass": 0,
+    "both_pass": 18,
+    "both_fail": 0,
+    "candidate_median_ms_on_both_pass": 1723.5,
+    "reference_median_ms_on_both_pass": 2239.0,
+    "median_paired_ms_saved": 547.0
+  },
+  "side_effects": {
+    "jev": {
+      "attempts_with_audit": 18,
+      "attempts_with_forbidden_mutations": 0,
+      "false_done_tasks": [
+        {
+          "task": "complex_holdout_6",
+          "repeat": 1,
+          "failures": [
+            "visible text lacks \"Bulletin scheduled.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected {\"title\":\"Depot maintenance\",\"message\":\"The west entrance closes at noon\",\"audience\":{\"operations\":true,\"sales\":false,\"public\":false},\"method\":\"Email and in-app\",\"date\":\"2026-11-20\",\"time\":\"09:15\"}"
+          ]
+        },
+        {
+          "task": "complex_holdout_6",
+          "repeat": 2,
+          "failures": [
+            "visible text lacks \"Bulletin scheduled.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected {\"title\":\"Depot maintenance\",\"message\":\"The west entrance closes at noon\",\"audience\":{\"operations\":true,\"sales\":false,\"public\":false},\"method\":\"Email and in-app\",\"date\":\"2026-11-20\",\"time\":\"09:15\"}"
+          ]
+        },
+        {
+          "task": "complex_holdout_6",
+          "repeat": 3,
+          "failures": [
+            "visible text lacks \"Bulletin scheduled.\"",
+            "dom `window.audit.writes` = 0, expected 1",
+            "dom `window.result` = null, expected {\"title\":\"Depot maintenance\",\"message\":\"The west entrance closes at noon\",\"audience\":{\"operations\":true,\"sales\":false,\"public\":false},\"method\":\"Email and in-app\",\"date\":\"2026-11-20\",\"time\":\"09:15\"}"
+          ]
+        }
+      ]
+    },
+    "jev_workflow": {
+      "attempts_with_audit": 18,
+      "attempts_with_forbidden_mutations": 0,
+      "false_done_tasks": []
+    },
+    "vision": {
+      "attempts_with_audit": 18,
+      "attempts_with_forbidden_mutations": 0,
+      "false_done_tasks": []
+    }
+  }
+}

@@ -1,0 +1,18 @@
+(eval):1: can't change option: zle
+(eval):1: can't change option: zle
+    Finished `test` profile [unoptimized] target(s) in 0.51s
+     Running unittests src/lib.rs (<cargo-target>/debug/deps/roder_ext_jev-78eed2645508b8f1)
+
+running 2 tests
+test fixture_harness::decisions_computer_tests::decisions_live_computer_canvas ... Decisions computer outcome: canvas OK pressed; choice=right, confidence=1, usage={"input_tokens":1128,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":1128}
+ok
+test fixture_harness::evals::decisions_live::decisions_live_browser_corpus ... task                       pass  status             steps  calls  wall_ms  failures
+contact_form               pass  done                   4      5    10381
+select_dropdown            pass  done                   2      3     1254
+below_the_fold             pass  done                   1      2      997
+gate_pay_now               pass  needs_confirmation     0      1      760
+4/4 passed
+rows: <cargo-target>/jev-evals/decisions-live-1791324237.jsonl
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 472 filtered out; finished in 22.38s

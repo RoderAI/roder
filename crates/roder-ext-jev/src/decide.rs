@@ -1,8 +1,9 @@
 //! Asking TypeSafe which operation to run and on which target.
 //!
 //! A port of upstream Jev's `model.choose` and `model.validate_choice`. The
-//! request body and the validation rules are the contract with the service, so
-//! both are reproduced exactly and pinned by fixtures recorded from upstream.
+//! base request body and validation rules are pinned by upstream fixtures. The
+//! hosted Jev client adds measured browser evidence and workflow guidance through
+//! `jev_prompt`; other backends can explicitly retain the base request.
 //! Jev's state also carries today's date (see [`crate::text_helper::today`]):
 //! "next month" and "the next Monday" mean nothing without it.
 
@@ -26,13 +27,19 @@ pub(crate) const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 /// The same TypeSafe decision service used by the built-in `jev_browse` tool.
 pub struct JevTypeSafeDecisionClient {
     model: String,
+    profile: crate::jev_prompt::Profile,
     transport: Arc<dyn JevDecisionTransport>,
 }
 
 impl JevTypeSafeDecisionClient {
+    pub(crate) fn with_profile(mut self, profile: crate::jev_prompt::Profile) -> Self {
+        self.profile = profile;
+        self
+    }
     pub fn new(key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
+            profile: crate::jev_prompt::Profile::Workflow,
             transport: Arc::new(TypeSafeHttpTransport::new(
                 ENDPOINT,
                 key,
@@ -47,6 +54,7 @@ impl JevTypeSafeDecisionClient {
     ) -> Self {
         Self {
             model: model.into(),
+            profile: crate::jev_prompt::Profile::Workflow,
             transport,
         }
     }
@@ -65,7 +73,12 @@ impl JevDecisionClient for JevTypeSafeDecisionClient {
             goal,
             history,
             &self.model,
-            self.transport.as_ref(),
+            &crate::jev_prompt::Transport {
+                inner: self.transport.as_ref(),
+                profile: self.profile,
+                history,
+                observation,
+            },
             chrono::Local::now().date_naive(),
             false,
         )
@@ -86,7 +99,12 @@ impl JevDecisionClient for JevTypeSafeDecisionClient {
             goal,
             history,
             &self.model,
-            self.transport.as_ref(),
+            &crate::jev_prompt::Transport {
+                inner: self.transport.as_ref(),
+                profile: self.profile,
+                history,
+                observation,
+            },
             chrono::Local::now().date_naive(),
             true,
         )
@@ -283,13 +301,13 @@ pub(crate) fn request_body(
 /// contradict its own argmax.
 pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<()> {
     let Some(probabilities) = answer.get("probabilities").and_then(Value::as_object) else {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     };
     let Some(choice) = answer.get("choice").and_then(Value::as_str) else {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     };
     let Some(confidence) = answer.get("confidence").and_then(Value::as_f64) else {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     };
     let known = ids.iter().any(|id| id == choice)
         && probabilities.len() == ids.len()
@@ -298,7 +316,7 @@ pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<
     for value in probabilities.values() {
         match value.as_f64() {
             Some(number) => numbers.push(number),
-            None => bail!("Invalid TypeSafe response; no action executed."),
+            None => bail!("Invalid browser decision response; no action executed."),
         }
     }
     numbers.push(confidence);
@@ -318,7 +336,7 @@ pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<
         .and_then(Value::as_f64)
         .unwrap_or(f64::NEG_INFINITY);
     if !(known && bounded && (total - 1.0).abs() < 0.02 && chosen >= highest - 1e-6) {
-        bail!("Invalid TypeSafe response; no action executed.");
+        bail!("Invalid browser decision response; no action executed.");
     }
     Ok(())
 }
@@ -351,6 +369,12 @@ pub(crate) async fn choose(
         .map_err(|error| anyhow::Error::from(JevBilled::new(usage.clone(), error)))?;
     // A missing or invalid answer is `None`, which the loop treats as
     // irreversible: the gate fails closed without failing the decision.
+    if let Some(required) = asked.iter().find(|q| {
+        q.operation == answer.operation && Some(q.target.as_str()) == answer.target.as_deref()
+    }) {
+        reject_refusal(&result["answers"][&required.key], &required.key)
+            .map_err(|error| anyhow::Error::from(JevBilled::new(usage.clone(), error)))?;
+    }
     let irreversible = irreversible::chosen_probability(
         &result["answers"],
         &asked,
@@ -391,6 +415,7 @@ fn read_answer(
 ) -> anyhow::Result<Answer> {
     let answers = &result["answers"];
     let operation_answer = &answers["operation"];
+    reject_refusal(operation_answer, "operation")?;
     validate_choice(operation_answer, operation_ids)?;
     let operation = operation_answer["choice"]
         .as_str()
@@ -408,6 +433,10 @@ fn read_answer(
             .collect::<Vec<_>>();
         // Only the head the operation selected can cause an action.
         let target_answer = &answers[format!("{}_target", operation.to_lowercase())];
+        reject_refusal(
+            target_answer,
+            &format!("{}_target", operation.to_lowercase()),
+        )?;
         validate_choice(target_answer, &target_ids)?;
         let selected = target_answer["choice"]
             .as_str()
@@ -415,7 +444,7 @@ fn read_answer(
             .to_string();
         let action = space
             .target_action(&operation, &selected)
-            .context("TypeSafe chose an unoffered target")?;
+            .context("Decision service chose an unoffered target")?;
         choice = action["id"].as_str().unwrap_or_default().to_string();
         for (index, candidate) in candidates {
             let id = candidate["id"].as_str().unwrap_or_default().to_string();
@@ -447,3 +476,10 @@ fn read_answer(
 mod gate_tests;
 #[cfg(test)]
 mod tests;
+
+fn reject_refusal(answer: &Value, name: &str) -> anyhow::Result<()> {
+    if answer["type"] == "refusal" {
+        bail!("OpenAI Decisions refused required question {name}; no action executed.");
+    }
+    Ok(())
+}

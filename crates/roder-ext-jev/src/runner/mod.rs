@@ -8,6 +8,7 @@
 //! step (see [`drive`]).
 
 mod ceilings;
+pub(crate) mod decision_backend;
 mod drive;
 mod look;
 mod request;
@@ -16,13 +17,11 @@ mod secret_tests;
 
 use std::sync::Arc;
 
-use anyhow::Context;
 use async_trait::async_trait;
 use roder_api::inference::{InferenceEngine, ModelSelection};
 use serde_json::{Map, Value, json};
 
 use crate::chrome::{self, ChromeEndpoint};
-use crate::decide::JevTypeSafeDecisionClient;
 use crate::engine::JevTextValueResolver;
 use crate::fallback::FallbackSettings;
 use crate::fallback::model::{self as fallback_model, FallbackModel};
@@ -83,18 +82,21 @@ struct RoderDeps<'a> {
 #[async_trait]
 impl SessionDeps for RoderDeps<'_> {
     fn model_key(&self) -> String {
-        self.turn_model
-            .map(|model| format!("{}/{}", model.provider, model.model))
-            .unwrap_or_default()
+        format!(
+            "{}:{}:{:016x}:{}:{}",
+            decision_backend::selected(),
+            env_value("JEV_DECISIONS_TEXT_ONLY").unwrap_or_default(),
+            decision_backend::credential_revision(),
+            env_value("JEV_MODEL").unwrap_or_default(),
+            self.turn_model
+                .map(|model| format!("{}/{}", model.provider, model.model))
+                .unwrap_or_default()
+        )
     }
 
     async fn models(&self) -> anyhow::Result<SessionModels> {
-        let key = key_from_env_or_config().context("JEV_API_KEY is required for jev_browse")?;
+        let decision = decision_backend::resolve()?;
         let text = resolve_text_model(self.turn_model).await?;
-        let decision = Arc::new(JevTypeSafeDecisionClient::new(
-            key,
-            env_value("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
-        ));
         let helper = text.map(|text| Arc::new(TextHelper::new(text)));
         Ok(SessionModels {
             key: self.model_key(),

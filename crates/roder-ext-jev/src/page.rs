@@ -249,6 +249,19 @@ impl Page {
 
 #[async_trait]
 impl JevBrowser for Page {
+    async fn screenshot(&mut self) -> anyhow::Result<Option<String>> {
+        let capture = self
+            .call(
+                "Page.captureScreenshot",
+                json!({"format":"jpeg","quality":70}),
+            )
+            .await?;
+        let data = capture["data"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Chrome returned no screenshot"))?;
+        Ok(Some(format!("data:image/jpeg;base64,{data}")))
+    }
+
     async fn observe(&mut self) -> anyhow::Result<Value> {
         Page::observe(self).await
     }

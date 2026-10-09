@@ -1,0 +1,35 @@
+---
+roder-ext-jev: minor
+roder: patch
+---
+
+# Use OpenAI Decisions as an alternative browser decision backend
+
+Set JEV_DECISION_PROVIDER=openai to select browser actions with the Decisions
+API using an OpenAI API key. Keep the shared Chrome session, text helper,
+action validation, approval policy, and optional irreversible-action gate.
+
+Expose screenshot-based selection among host-supplied native computer action
+batches, with a blocked outcome and normal host-owned permissions. Add strict
+live browser and computer evals and register the backend's environment settings
+in distribution metadata.
+
+Resolve single-target choices locally because the live Decisions API requires
+at least two choices. Validate authenticated browser tasks and screenshot-based
+native computer execution against the live endpoint.
+
+Add a reproducible paired live Decisions/Jev browser benchmark with alternating
+provider order, repeated outcome grading, latency, and provider-reported usage.
+
+Use Decisions-specific browser questions, action-effect context and fresh viewport
+images, with a text-only option and screenshot suppression around recognized
+secrets. Preserve per-question refusals, stopping only when a required selection
+is refused and keeping safety checks closed. Add controlled optimization variants,
+wire-level diagnostics and held-out browser fixtures.
+
+Improve Jev's text evidence with native form ownership, disabled controls and
+concise contextual history. Add staged-workflow guidance and a reproducible
+Jev prompt hill-climb with compound development fixtures, sealed holdout tasks,
+side-effect grading, negative browser traces and candidate-order stress probes.
+
+Keep screenshot suppression across calls after short secret input and continue with text evidence if optional capture fails. Scrub secret echoes from form and disabled-control metadata.

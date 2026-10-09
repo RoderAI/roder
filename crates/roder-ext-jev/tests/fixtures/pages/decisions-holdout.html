@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Harbor Supply</title>
+<style>body{font:16px sans-serif;margin:24px}article{display:inline-block;border:1px solid #999;padding:20px;margin:8px}label{display:block;margin:12px}</style></head><body>
+<h1>Harbor Supply</h1><main id="main"></main><p role="status" id="status"></p>
+<script>
+const mode=new URLSearchParams(location.search).get('mode');
+const main=document.getElementById('main'), status=document.getElementById('status');
+if(mode==='cart'||mode==='already'){
+ window.cart=mode==='already'?['Oak Bookend']:[];
+ const render=()=>status.textContent='Cart contents: '+(window.cart.join(', ')||'empty');
+ for(const name of ['Ceramic Mug','Oak Bookend','Linen Napkin']){
+  const card=document.createElement('article');card.innerHTML='<h2>'+name+'</h2><p>Ready to ship</p><button>Add to cart</button>';
+  card.querySelector('button').onclick=()=>{window.cart.push(name);render()};main.append(card);
+ }render();
+}else if(mode==='search'){
+ main.innerHTML='<form><label>Search inventory <input name="q" type="search"></label></form>';
+ main.querySelector('form').onsubmit=e=>{e.preventDefault();window.query=e.target.q.value;status.textContent='Search results for '+window.query;main.innerHTML='<h2>Blue notebooks</h2><p>Three matching products</p>'};
+}else{
+ main.innerHTML='<form><label>Name <input name="name" value="Mina Patel"></label><label>Email <input name="email" type="email"></label><label><input name="updates" type="checkbox" checked>Receive updates</label><button>Save preferences</button></form>';
+ main.querySelector('form').onsubmit=e=>{e.preventDefault();window.saved={name:e.target.elements.namedItem("name").value,email:e.target.email.value,updates:e.target.updates.checked};status.textContent='Preferences saved for '+window.saved.name+' ('+window.saved.email+'). Updates '+(window.saved.updates?'enabled':'disabled');main.innerHTML=''};
+}
+</script></body></html>
