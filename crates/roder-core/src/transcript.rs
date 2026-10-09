@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 
 use crate::compaction::{estimate_prompt_tokens, trim_to_last_compaction_boundary};
 use crate::runtime::{Runtime, StartTurnRequest};
+use crate::tool_result_images::ToolImages;
 
 impl Runtime {
     pub(crate) async fn transcript_for_turn(
@@ -128,6 +129,7 @@ impl Runtime {
         req: &StartTurnRequest,
         turn_id: &TurnId,
         transcript: &[TranscriptItem],
+        tool_images: ToolImages,
     ) {
         let block_count = transcript.len() as u64;
         let total_byte_count = transcript
@@ -135,7 +137,7 @@ impl Runtime {
             .map(item_text_len)
             .map(|len| len as u64)
             .sum::<u64>();
-        let prompt_estimated_tokens = estimate_tokens(transcript);
+        let prompt_estimated_tokens = estimate_prompt_tokens(transcript, tool_images);
         self.emit(RoderEvent::ContextAssemblyCompleted(
             ContextAssemblyCompleted {
                 thread_id: req.thread_id.clone(),
@@ -171,10 +173,6 @@ impl Runtime {
         }
         Ok(trim_to_last_compaction_boundary(out))
     }
-}
-
-fn estimate_tokens(items: &[TranscriptItem]) -> u32 {
-    estimate_prompt_tokens(items)
 }
 
 fn estimate_text_tokens(text: &str) -> u32 {

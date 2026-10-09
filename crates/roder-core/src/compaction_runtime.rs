@@ -87,7 +87,8 @@ impl Runtime {
                 estimated_tokens_after: 0,
             });
         }
-        let estimated_before = estimate_prompt_tokens(&transcript);
+        let images = self.tool_images(&provider, &model);
+        let estimated_before = estimate_prompt_tokens(&transcript, images);
         // Manual compaction runs only on an idle task. A second sampling
         // request against a snapshot taken during tool execution can omit
         // effects that complete before the boundary is committed.
@@ -115,7 +116,7 @@ impl Runtime {
                 },
             )
             .await?;
-        let estimated_after = estimate_prompt_tokens(&compacted);
+        let estimated_after = estimate_prompt_tokens(&compacted, images);
         Ok(ForceCompactOutcome {
             compacted: estimated_after < estimated_before
                 || compacted
@@ -193,7 +194,8 @@ impl Runtime {
         let Some(draft) = draft else {
             return Ok(None);
         };
-        if !accept_llm_compaction_summary(head, &draft) {
+        let images = self.tool_images(provider, model);
+        if !accept_llm_compaction_summary(head, &draft, images) {
             return Ok(None);
         }
         let verified = match self
@@ -209,9 +211,9 @@ impl Runtime {
             Ok(Some(text)) => text,
             Ok(None) | Err(_) => draft.clone(),
         };
-        if accept_llm_compaction_summary(head, &verified) {
+        if accept_llm_compaction_summary(head, &verified, images) {
             Ok(Some(verified))
-        } else if accept_llm_compaction_summary(head, &draft) {
+        } else if accept_llm_compaction_summary(head, &draft, images) {
             Ok(Some(draft))
         } else {
             Ok(None)

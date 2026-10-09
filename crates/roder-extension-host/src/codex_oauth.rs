@@ -8,6 +8,11 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
         true
     }
 
+    /// The Responses engine this one delegates to decides.
+    fn tool_result_image_input(&self, model: &str) -> bool {
+        roder_ext_openai_responses::forwards_tool_result_images(PROVIDER_CODEX, model)
+    }
+
     fn id(&self) -> roder_api::extension::InferenceEngineId {
         PROVIDER_CODEX.to_string()
     }
@@ -94,5 +99,10 @@ mod tests {
     #[test]
     fn oauth_requires_native_compaction_without_loading_credentials() {
         assert!(CodexOAuthInferenceEngine.requires_native_compaction());
+    }
+
+    #[test]
+    fn oauth_forwards_tool_result_images_like_the_responses_engine_it_delegates_to() {
+        assert!(CodexOAuthInferenceEngine.tool_result_image_input("gpt-5.5"));
     }
 }

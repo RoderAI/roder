@@ -15,6 +15,7 @@ impl Runtime {
         thread_allowlist: &[String],
         external_tools: &[roder_api::tools::ToolSpec],
     ) -> Vec<roder_api::tools::ToolSpec> {
+        let images = self.tool_images(provider, model);
         let mut specs = self
             .tool_registry
             .specs_for_edit_tool_with_schema_policy(
@@ -23,7 +24,7 @@ impl Runtime {
             )
             .into_iter()
             .filter(|spec| {
-                native_tool_supported(&spec.name, provider)
+                native_tool_supported(&spec.name, provider, images)
                     && allowlist_permits(&cfg.tool_allowlist, &spec.name)
                     && allowlist_permits(thread_allowlist, &spec.name)
                     && !external_tools.iter().any(|tool| tool.name == spec.name)
@@ -39,8 +40,8 @@ impl Runtime {
     }
 }
 
-fn native_tool_supported(name: &str, provider: &str) -> bool {
-    name != roder_api::computer::COMPUTER_TOOL_NAME || provider == "openai"
+fn native_tool_supported(name: &str, provider: &str, images: ToolImages) -> bool {
+    (name != roder_api::computer::COMPUTER_TOOL_NAME || provider == "openai") && images.offers(name)
 }
 
 #[cfg(test)]
@@ -57,11 +58,30 @@ mod tests {
     }
     #[test]
     fn computer_is_native_openai_only() {
-        assert!(native_tool_supported("computer", "openai"));
+        let images = ToolImages::Forwarded;
+        assert!(native_tool_supported("computer", "openai", images));
         for provider in ["codex", "anthropic", "openrouter", "xai", "mock"] {
-            assert!(!native_tool_supported("computer", provider));
-            assert!(native_tool_supported("chrome_click", provider));
+            assert!(!native_tool_supported("computer", provider, images));
+            assert!(native_tool_supported("chrome_click", provider, images));
         }
+    }
+    #[test]
+    fn screenshot_only_tools_are_offered_only_to_engines_that_receive_images() {
+        assert!(native_tool_supported(
+            "chrome_screenshot",
+            "openai",
+            ToolImages::Forwarded
+        ));
+        assert!(!native_tool_supported(
+            "chrome_screenshot",
+            "mock",
+            ToolImages::Withheld
+        ));
+        assert!(native_tool_supported(
+            "chrome_click",
+            "mock",
+            ToolImages::Withheld
+        ));
     }
 }
 

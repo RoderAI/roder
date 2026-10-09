@@ -236,6 +236,12 @@ impl InferenceEngine for AnthropicEngine {
         }
     }
 
+    /// `media::tool_result_content` sends a tool result's image as an image
+    /// block. `image_input` above is about user attachments and stays false.
+    fn tool_result_image_input(&self, _model: &str) -> bool {
+        true
+    }
+
     fn metadata(&self) -> InferenceProviderMetadata {
         InferenceProviderMetadata {
             name: "Anthropic".to_string(),
@@ -502,6 +508,11 @@ mod tests {
     use roder_api::transcript::{
         AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
     };
+
+    #[test]
+    fn tool_result_images_are_sent_as_image_blocks() {
+        assert!(AnthropicEngine::new(None).tool_result_image_input("claude-sonnet-4-5"));
+    }
 
     struct KeySourceGuard {
         _lock: std::sync::MutexGuard<'static, ()>,

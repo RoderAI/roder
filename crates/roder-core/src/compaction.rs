@@ -1,6 +1,8 @@
 use roder_api::catalog::{ModelCatalogEntry, lookup_model, lookup_model_for_provider};
 use roder_api::transcript::{ContextCompactionRecord, ToolResultRecord, TranscriptItem};
 
+use crate::tool_result_images::ToolImages;
+
 pub(crate) const TOOL_OUTPUT_PROTECT_TOKENS: u32 = 40_000;
 pub(crate) const TOOL_OUTPUT_PRUNE_MIN_SAVINGS_TOKENS: u32 = 20_000;
 pub(crate) const COMPACTION_HYSTERESIS_TOKENS: u32 = 5_000;
@@ -55,13 +57,14 @@ pub(crate) struct CompactionSplit {
     pub tail: Vec<TranscriptItem>,
 }
 
-pub(crate) fn estimate_prompt_tokens(items: &[TranscriptItem]) -> u32 {
+pub(crate) fn estimate_prompt_tokens(items: &[TranscriptItem], images: ToolImages) -> u32 {
     let chars: usize = items
         .iter()
         .filter(|item| !matches!(item, TranscriptItem::ProviderMetadata(_)))
         .map(item_text_len)
         .sum();
-    chars_to_tokens(chars).saturating_add(crate::prompt_accounting::extra_prompt_tokens(items))
+    chars_to_tokens(chars)
+        .saturating_add(crate::prompt_accounting::extra_prompt_tokens(items, images))
 }
 
 pub(crate) fn trim_to_last_compaction_boundary(items: Vec<TranscriptItem>) -> Vec<TranscriptItem> {
@@ -141,6 +144,7 @@ pub(crate) fn compaction_skip_reason(
     model_entry: Option<&ModelCatalogEntry>,
     threshold_override: Option<u32>,
     options: &CompactionOptions,
+    images: ToolImages,
 ) -> Option<CompactionSkipReason> {
     if options.force || transcript_contains_context_limit_failure(items) {
         return None;
@@ -148,7 +152,7 @@ pub(crate) fn compaction_skip_reason(
     if !options.allow_repeat && transcript_already_compacted(items) {
         return Some(CompactionSkipReason::AlreadyCompactedThisTurn);
     }
-    let estimated_tokens = estimate_prompt_tokens(items);
+    let estimated_tokens = estimate_prompt_tokens(items, images);
     if !meets_compaction_threshold(estimated_tokens, model_entry, threshold_override) {
         return Some(CompactionSkipReason::BelowThreshold);
     }
@@ -167,7 +171,14 @@ pub(crate) fn should_compact_transcript(
     threshold_override: Option<u32>,
     options: &CompactionOptions,
 ) -> bool {
-    compaction_skip_reason(items, model_entry, threshold_override, options).is_none()
+    compaction_skip_reason(
+        items,
+        model_entry,
+        threshold_override,
+        options,
+        ToolImages::Forwarded,
+    )
+    .is_none()
 }
 
 pub(crate) fn prune_tool_outputs_in_transcript(items: &[TranscriptItem]) -> ToolOutputPruneResult {
@@ -218,10 +229,11 @@ pub(crate) fn prune_avoids_full_compaction(
     prune_result: &ToolOutputPruneResult,
     model_entry: Option<&ModelCatalogEntry>,
     threshold_override: Option<u32>,
+    images: ToolImages,
 ) -> bool {
     prune_result.tokens_saved >= TOOL_OUTPUT_PRUNE_MIN_SAVINGS_TOKENS
         && !meets_compaction_threshold(
-            estimate_prompt_tokens(&prune_result.items),
+            estimate_prompt_tokens(&prune_result.items, images),
             model_entry,
             threshold_override,
         )
@@ -241,11 +253,14 @@ pub(crate) fn split_transcript_for_summarization(items: &[TranscriptItem]) -> Co
     CompactionSplit { head, tail: suffix }
 }
 
-pub(crate) fn head_items_for_summary_prompt(head: &[TranscriptItem]) -> Vec<TranscriptItem> {
+pub(crate) fn head_items_for_summary_prompt(
+    head: &[TranscriptItem],
+    images: ToolImages,
+) -> Vec<TranscriptItem> {
     if head.is_empty() {
         return Vec::new();
     }
-    let total_head_tokens = estimate_prompt_tokens(head);
+    let total_head_tokens = estimate_prompt_tokens(head, images);
     let summary_target_tokens =
         ((total_head_tokens as f32 * COMPACTION_HEAD_RATIO).round() as u32).max(1);
     let mut summarized_tokens = 0_u32;
@@ -334,8 +349,12 @@ pub(crate) fn build_compaction_verify_prompt(summary: &str) -> String {
     )
 }
 
-pub(crate) fn accept_llm_compaction_summary(head: &[TranscriptItem], summary: &str) -> bool {
-    let head_tokens = estimate_prompt_tokens(head);
+pub(crate) fn accept_llm_compaction_summary(
+    head: &[TranscriptItem],
+    summary: &str,
+    images: ToolImages,
+) -> bool {
+    let head_tokens = estimate_prompt_tokens(head, images);
     let summary_tokens = estimate_text_tokens(summary);
     !summary.trim().is_empty() && summary_tokens < head_tokens
 }
@@ -597,7 +616,7 @@ mod tests {
             })),
         ];
         assert_eq!(
-            estimate_prompt_tokens(&items),
+            estimate_prompt_tokens(&items, ToolImages::Forwarded),
             chars_to_tokens("hello".len())
         );
     }
@@ -823,14 +842,20 @@ mod tests {
             build_compaction_record("summary".to_string()),
             TranscriptItem::UserMessage(UserMessage::text("x".repeat(10_000))),
         ];
-        let estimated = estimate_prompt_tokens(&items);
+        let estimated = estimate_prompt_tokens(&items, ToolImages::Forwarded);
         let options = CompactionOptions {
             allow_repeat: true,
             hysteresis_baseline: Some(estimated),
             ..CompactionOptions::default()
         };
         assert_eq!(
-            compaction_skip_reason(&items, None, Some(estimated.saturating_sub(1)), &options),
+            compaction_skip_reason(
+                &items,
+                None,
+                Some(estimated.saturating_sub(1)),
+                &options,
+                ToolImages::Forwarded
+            ),
             Some(CompactionSkipReason::Hysteresis)
         );
     }
@@ -869,10 +894,16 @@ mod tests {
         let head = vec![TranscriptItem::UserMessage(UserMessage::text(
             "x".repeat(10_000),
         ))];
+        let images = ToolImages::Forwarded;
         assert!(!accept_llm_compaction_summary(
             &head,
-            &"short".repeat(10_000)
+            &"short".repeat(10_000),
+            images
         ));
-        assert!(accept_llm_compaction_summary(&head, "short snapshot"));
+        assert!(accept_llm_compaction_summary(
+            &head,
+            "short snapshot",
+            images
+        ));
     }
 }

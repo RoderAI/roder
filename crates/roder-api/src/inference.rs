@@ -816,6 +816,20 @@ pub trait InferenceEngine: Send + Sync + 'static {
         ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>>;
 
+    /// Whether this engine puts the image a tool result carries under
+    /// [`crate::transcript::VIEW_IMAGE_DISPLAY_KEY`] in front of `model`.
+    ///
+    /// This is separate from [`InferenceCapabilities::image_input`], which is
+    /// about images the user attaches. An engine returns true only when its
+    /// request mapping forwards tool-result images. Everywhere else the
+    /// runtime sends the request without the image, appends a one-line notice
+    /// to that tool result, hides screenshot-only tools and does not charge
+    /// image tokens for it. The stored transcript is never changed, so
+    /// switching to an engine that returns true shows it the same images.
+    fn tool_result_image_input(&self, _model: &str) -> bool {
+        false
+    }
+
     /// Whether compaction must remain provider-owned, without local pruning or
     /// text-summary fallback. Native failures propagate to the caller.
     fn requires_native_compaction(&self) -> bool {
@@ -1041,5 +1055,85 @@ mod tests {
         let error = strict.resolve_effective_mode(false).unwrap_err();
         assert_eq!(error, ToolSearchModeError::ProviderNativeUnsupported);
         assert!(error.to_string().contains("fallback_to_explicit_tools"));
+    }
+
+    struct BareEngine {
+        forwards_images_for: Option<&'static str>,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for BareEngine {
+        fn id(&self) -> InferenceEngineId {
+            "bare".to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities::coding_agent_default()
+        }
+
+        fn tool_result_image_input(&self, model: &str) -> bool {
+            self.forwards_images_for == Some(model)
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<ModelDescriptor>> {
+            Ok(Vec::new())
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            _request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            anyhow::bail!("not used")
+        }
+    }
+
+    /// An engine that does not opt in is text only for tool results, even when
+    /// it accepts images from the user.
+    struct DefaultEngine;
+
+    #[async_trait::async_trait]
+    impl InferenceEngine for DefaultEngine {
+        fn id(&self) -> InferenceEngineId {
+            "default".to_string()
+        }
+
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities {
+                image_input: true,
+                ..InferenceCapabilities::coding_agent_default()
+            }
+        }
+
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<ModelDescriptor>> {
+            Ok(Vec::new())
+        }
+
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            _request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            anyhow::bail!("not used")
+        }
+    }
+
+    #[test]
+    fn tool_result_images_are_off_unless_the_engine_opts_in_per_model() {
+        let default = DefaultEngine;
+        assert!(default.capabilities().image_input);
+        assert!(!default.tool_result_image_input("any-model"));
+
+        let engine: std::sync::Arc<dyn InferenceEngine> = std::sync::Arc::new(BareEngine {
+            forwards_images_for: Some("vision-model"),
+        });
+        assert!(engine.tool_result_image_input("vision-model"));
+        assert!(!engine.tool_result_image_input("text-model"));
     }
 }

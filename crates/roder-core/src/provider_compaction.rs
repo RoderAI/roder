@@ -52,7 +52,10 @@ impl Runtime {
             provider: provider.into(),
             model: model.into(),
         };
-        request.transcript = transcript.to_vec();
+        request.transcript = crate::tool_result_images::request_transcript(
+            transcript,
+            crate::tool_result_images::ToolImages::for_engine(engine.as_ref(), model),
+        );
         request.runtime.auto_compact_token_limit = None;
         request.runtime.prompt_cache_key = Some(thread_id.clone());
         request.runtime.parallel_tool_calls = Some(true);
@@ -334,7 +337,14 @@ mod tests {
             TranscriptItem::UserMessage(UserMessage::text("new context".repeat(10_000))),
         ];
         assert!(
-            crate::compaction::compaction_skip_reason(&grown, None, Some(1), &options).is_none(),
+            crate::compaction::compaction_skip_reason(
+                &grown,
+                None,
+                Some(1),
+                &options,
+                crate::tool_result_images::ToolImages::Forwarded
+            )
+            .is_none(),
             "a prior turn boundary must permit compaction after context grows"
         );
         assert_eq!(

@@ -1,10 +1,12 @@
+use crate::tool_result_images::{ToolImages, carries_image};
 use roder_api::transcript::TranscriptItem;
 use serde_json::Value;
 use std::collections::HashSet;
 
 /// Estimates opaque provider state and image input separately from canonical
 /// text. These are conservative estimates, never billing or payload-byte claims.
-pub(crate) fn extra_prompt_tokens(items: &[TranscriptItem]) -> u32 {
+/// A tool-result image is charged only when the engine receives it.
+pub(crate) fn extra_prompt_tokens(items: &[TranscriptItem], images: ToolImages) -> u32 {
     let mut seen = HashSet::new();
     let mut tokens = 0u32;
     for item in items {
@@ -13,11 +15,7 @@ pub(crate) fn extra_prompt_tokens(items: &[TranscriptItem]) -> u32 {
                 tokens = tokens.saturating_add((message.images.len() as u32).saturating_mul(1_600));
             }
             TranscriptItem::ToolResult(result)
-                if result
-                    .display_payload
-                    .as_ref()
-                    .and_then(|payload| payload.get(roder_api::transcript::VIEW_IMAGE_DISPLAY_KEY))
-                    .is_some() =>
+                if images == ToolImages::Forwarded && carries_image(result) =>
             {
                 tokens = tokens.saturating_add(1_600);
             }
@@ -82,13 +80,46 @@ mod tests {
     fn counts_encrypted_state_once_and_excludes_transport_telemetry() {
         let raw = json!({"id":"reason1","type":"reasoning","encrypted_content":"x".repeat(4_000)});
         assert_eq!(
-            extra_prompt_tokens(&[
-                TranscriptItem::ProviderMetadata(json!({"output":[raw]})),
-                TranscriptItem::ProviderMetadata(json!({"output":[raw]})),
-                TranscriptItem::ProviderMetadata(json!({"diagnostics":"x".repeat(8_000)}))
-            ]),
+            extra_prompt_tokens(
+                &[
+                    TranscriptItem::ProviderMetadata(json!({"output":[raw]})),
+                    TranscriptItem::ProviderMetadata(json!({"output":[raw]})),
+                    TranscriptItem::ProviderMetadata(json!({"diagnostics":"x".repeat(8_000)}))
+                ],
+                ToolImages::Forwarded
+            ),
             1_000
         );
+    }
+    fn tool_result(id: &str, payload: Option<Value>, is_error: bool) -> TranscriptItem {
+        TranscriptItem::ToolResult(roder_api::transcript::ToolResultRecord {
+            id: id.into(),
+            name: Some("browser_use_click".into()),
+            result: "clicked. Screenshot attached.".into(),
+            display_payload: payload,
+            is_error,
+        })
+    }
+    #[test]
+    fn tool_result_images_are_charged_only_for_engines_that_receive_them() {
+        let shot = || Some(json!({"__view_image": {"image_url": "data:image/png;base64,YWJj"}}));
+        let items = vec![
+            tool_result("ok", shot(), false),
+            tool_result("failed", shot(), true),
+            tool_result("no-image", Some(json!({"path": "a"})), false),
+            TranscriptItem::UserMessage(roder_api::transcript::UserMessage::with_images(
+                "look",
+                vec![roder_api::transcript::InputImage {
+                    image_url: "data:image/png;base64,YWJj".into(),
+                }],
+            )),
+        ];
+        assert_eq!(
+            extra_prompt_tokens(&items, ToolImages::Forwarded),
+            3 * 1_600
+        );
+        // The user's own image is still sent; only the tool-result images go.
+        assert_eq!(extra_prompt_tokens(&items, ToolImages::Withheld), 1_600);
     }
     #[test]
     fn images_count_as_image_estimates_not_base64_text_tokens() {
