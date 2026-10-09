@@ -169,7 +169,7 @@
       // missing aria-disabled to "false" does not make a decision stale.
       e.getAttribute('aria-disabled')==='true',
       e.getAttribute('aria-expanded'),e.getAttribute('aria-checked'),e.getAttribute('aria-selected'),
-      e.getAttribute('href'),cut(scope?.innerText||'',6000).toWellFormed()];
+      e.getAttribute('href'),e.form ? identity(e.form) : null,cut(scope?.innerText||'',6000).toWellFormed()];
   };
   // Pagers and load-more controls end the list they continue, past any cap
   // that counts from the viewport, so they are always kept. The narrow rules
@@ -329,6 +329,22 @@
       build(entry);
     else skipped++;
   }
+  // Form ownership is observable structure, not an inferred action meaning.
+  // Keep values out: secret fields contribute only their labels.
+  const formEvidence=new Map();
+  for (const a of actions) {
+    const node=cache.nodes.get(a.node);
+    if (!node) continue;
+    const e=source(node), form='form' in e ? e.form : e.closest('form');
+    if (form && !formEvidence.has(form)) {
+      const controls=[...form.elements];
+      formEvidence.set(form,{id:identity(form),fields:controls.filter(x=>field(x) && visible(x)).map(x=>asText(name(x))).slice(0,12),
+        submit_buttons:controls.filter(x=>['submit','image'].includes(x.type) && offerable(x)).map(x=>asText(name(x))).slice(0,8)});
+    }
+    a.form=form ? formEvidence.get(form) : null;
+  }
+  const disabled_controls=every(':disabled,[aria-disabled="true"]').filter(visible)
+    .map(e=>({label:asText(name(e)),role:role(e)})).filter(e=>e.label).slice(0,20);
   const readText=parts.text({tree,visible,safe,placed,roots,regions,rectOf,cut});
   const pageText=readText(), height=document.documentElement.scrollHeight;
   const page_key=cache.pageKey(), guards={};
@@ -336,7 +352,7 @@
   // Only what is on screen counts: a list growing below the fold must not make a decision stale.
   const semantics=actions.filter(a=>!a.offscreen).map(({rect,...action})=>action);
   const marker=[performance.timeOrigin,location.href,scrollX,scrollY,innerWidth,innerHeight,
-    document.title,pageText,semantics,page_key[6]];
+    document.title,pageText,disabled_controls,semantics,page_key[6]];
   // Nearest first, in document order on screen (the sort is stable), then cap
   // offscreen controls on their own and everything together, keeping pagers.
   // The caps count controls: a select's options are one, so a long list of
@@ -387,5 +403,5 @@
     label:'Press Escape to close the open popup, menu, suggestion list or dialog'});
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
   return {url:location.href,title:document.title.toWellFormed(),w:innerWidth,h:innerHeight,text:pageText,
-    scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
+    disabled_controls,scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
 })

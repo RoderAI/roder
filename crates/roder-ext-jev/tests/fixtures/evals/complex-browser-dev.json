@@ -1,0 +1,366 @@
+[
+  {
+    "id": "complex_dispatch",
+    "covers": "Reserve an afternoon dispatch from North depot for Ada Morris. Use the standard courier.",
+    "page": "complex-browser-dev.html?mode=dispatch",
+    "goal": "Reserve an afternoon dispatch from North depot for Ada Morris. Use the standard courier.",
+    "values": {
+      "Recipient": "Ada Morris"
+    },
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Dispatch reserved."
+      ],
+      "dom": {
+        "window.result": {
+          "recipient": "Ada Morris",
+          "warehouse": "North depot",
+          "slot": "Afternoon"
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Recipient"
+        },
+        {
+          "select": "Warehouse \u2192 North depot"
+        },
+        {
+          "click": "Check availability"
+        },
+        {
+          "select": "Window \u2192 Afternoon"
+        },
+        {
+          "click": "Reserve dispatch"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_invoice",
+    "covers": "Send exactly one reminder for invoice INV-482 for Orchid Works. Leave the other invoices untouched.",
+    "page": "complex-browser-dev.html?mode=invoice",
+    "goal": "Send exactly one reminder for invoice INV-482 for Orchid Works. Leave the other invoices untouched.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Reminder sent for INV-482."
+      ],
+      "dom": {
+        "window.result": "INV-482",
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Send reminder",
+          "context": "INV-482"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_report",
+    "covers": "Generate the April attendance report and publish it to the team. Preserve the source records.",
+    "page": "complex-browser-dev.html?mode=report",
+    "goal": "Generate the April attendance report and publish it to the team. Preserve the source records.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "April attendance published"
+      ],
+      "dom": {
+        "window.result": {
+          "report": "April attendance",
+          "published": true
+        },
+        "window.audit.writes": 2,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Generate report"
+        },
+        {
+          "click": "Publish to team"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_review",
+    "covers": "Read the inspection protocol to the end and acknowledge it. Keep inspection history enabled.",
+    "page": "complex-browser-dev.html?mode=review",
+    "goal": "Read the inspection protocol to the end and acknowledge it. Keep inspection history enabled.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Inspection protocol acknowledged."
+      ],
+      "dom": {
+        "window.result": {
+          "acknowledged": true,
+          "history": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "scroll": "Inspection protocol",
+          "repeat": 3
+        },
+        {
+          "click": "Acknowledge protocol"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_profile",
+    "covers": "Save Leah Chen\u2019s team profile with contact email leah@example.net. Keep Safety alerts enabled.",
+    "page": "complex-browser-dev.html?mode=profile",
+    "goal": "Save Leah Chen\u2019s team profile with contact email leah@example.net. Keep Safety alerts enabled.",
+    "values": {
+      "Contact email": "leah@example.net"
+    },
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Team profile saved."
+      ],
+      "dom": {
+        "window.result": {
+          "name": "Leah Chen",
+          "email": "leah@example.net",
+          "alerts": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Contact email"
+        },
+        {
+          "click": "Review changes"
+        },
+        {
+          "click": "Save profile"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_cancel",
+    "covers": "Cancel the Monday first aid reservation and confirm its cancellation. Keep Tuesday first aid reserved.",
+    "page": "complex-browser-dev.html?mode=cancel",
+    "goal": "Cancel the Monday first aid reservation and confirm its cancellation. Keep Tuesday first aid reserved.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Monday first aid cancelled."
+      ],
+      "dom": {
+        "window.result": {
+          "cancelled": "Monday first aid",
+          "remaining": "Tuesday first aid"
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Cancel reservation",
+          "context": "Monday first aid"
+        },
+        {
+          "click": "Confirm cancellation"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_booking",
+    "covers": "Reserve Willow for Engineering organizer Niko Reed on 2026-11-12 at 14:30 for 6 attendees. Add the additional instructions \"Please provide a whiteboard\" before confirming the reservation.",
+    "page": "complex-booking.html",
+    "goal": "Reserve Willow for Engineering organizer Niko Reed on 2026-11-12 at 14:30 for 6 attendees. Add the additional instructions \"Please provide a whiteboard\" before confirming the reservation.",
+    "values": {
+      "Organizer name": "Niko Reed",
+      "Meeting date": "2026-11-12",
+      "Attendees": "6",
+      "Additional instructions": "Please provide a whiteboard"
+    },
+    "timeout_s": 60,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Room reservation confirmed."
+      ],
+      "dom": {
+        "window.result": {
+          "organizer": "Niko Reed",
+          "department": "Engineering",
+          "room": "Willow",
+          "date": "2026-11-12",
+          "time": "14:30",
+          "attendees": "6",
+          "notes": "Please provide a whiteboard"
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Organizer name"
+        },
+        {
+          "select": "Department \u2192 Engineering"
+        },
+        {
+          "click": "Choose room and time"
+        },
+        {
+          "select": "Room \u2192 Willow"
+        },
+        {
+          "fill": "Meeting date"
+        },
+        {
+          "select": "Start time \u2192 14:30"
+        },
+        {
+          "fill": "Attendees"
+        },
+        {
+          "click": "Review reservation"
+        },
+        {
+          "click": "Edit additional instructions"
+        },
+        {
+          "fill": "Additional instructions"
+        },
+        {
+          "click": "Apply instructions"
+        },
+        {
+          "click": "Confirm reservation"
+        }
+      ]
+    }
+  },
+  {
+    "id": "complex_allocation",
+    "covers": "Search for workshop equipment and reserve one Workshop projector and one Workshop speaker. If the Workshop speaker is unavailable when reserving, replace it with one Workshop portable speaker. Do not reserve any other equipment.",
+    "page": "complex-allocation.html",
+    "goal": "Search for workshop equipment and reserve one Workshop projector and one Workshop speaker. If the Workshop speaker is unavailable when reserving, replace it with one Workshop portable speaker. Do not reserve any other equipment.",
+    "values": {
+      "Search equipment": "workshop"
+    },
+    "timeout_s": 60,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Equipment reservation confirmed."
+      ],
+      "dom": {
+        "window.result": [
+          "Workshop projector",
+          "Workshop portable speaker"
+        ],
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Search equipment"
+        },
+        {
+          "enter": "Search equipment"
+        },
+        {
+          "click": "Select equipment",
+          "context": "Workshop projector"
+        },
+        {
+          "click": "Select equipment",
+          "context": "Workshop speaker"
+        },
+        {
+          "click": "Review allocation"
+        },
+        {
+          "click": "Reserve equipment"
+        },
+        {
+          "click": "Remove unavailable speaker"
+        },
+        {
+          "click": "Select equipment",
+          "context": "Workshop portable speaker"
+        },
+        {
+          "click": "Review allocation"
+        },
+        {
+          "click": "Reserve equipment"
+        }
+      ]
+    }
+  }
+]

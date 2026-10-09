@@ -13,6 +13,11 @@ use std::{
 #[ignore = "paired live Decisions/Jev evaluation; requires both API keys and Chrome"]
 async fn decisions_vs_jev() {
     let env = crate::runner::env_value;
+    let reverse = match env("JEV_EVAL_CHOICE_ORDER").as_deref() {
+        None | Some("original") => false,
+        Some("reversed") => true,
+        _ => panic!("JEV_EVAL_CHOICE_ORDER must be original or reversed"),
+    };
     let openai = env("OPENAI_API_KEY")
         .or_else(|| roder_config::provider_api_key("openai"))
         .expect("OpenAI key required");
@@ -22,13 +27,37 @@ async fn decisions_vs_jev() {
         .expect("Jev key required");
     use crate::decisions::{DecisionsHttp, planning::Strategy};
     let wire = Arc::new(Recorded {
-        inner: DecisionsHttp {
+        inner: Arc::new(DecisionsHttp {
             key: openai,
             url: "https://api.openai.com/v1/decisions".into(),
             http: crate::http::JsonPoster::new(crate::http::RetryPolicy::default()),
-        },
-        records: Mutex::new(Vec::new()),
+        }),
+        records: Arc::new(Mutex::new(Vec::new())),
+        reverse,
     });
+    let jev_wire = Arc::new(Recorded {
+        inner: Arc::new(crate::decide::TypeSafeHttpTransport::new(
+            crate::decide::ENDPOINT,
+            jev,
+            crate::http::RetryPolicy::default(),
+        )),
+        records: wire.records.clone(),
+        reverse,
+    });
+    use crate::jev_prompt::Profile;
+    let jev_variants = [
+        ("jev", Profile::Baseline),
+        ("jev_literal", Profile::Literal),
+        ("jev_effects", Profile::Effects),
+        ("jev_criteria", Profile::Criteria),
+        ("jev_available", Profile::Available),
+        ("jev_joint", Profile::Joint),
+        ("jev_evidence", Profile::Evidence),
+        ("jev_scoped", Profile::Scoped),
+        ("jev_form", Profile::Form),
+        ("jev_focused", Profile::Focused),
+        ("jev_workflow", Profile::Workflow),
+    ];
     let variants = [
         ("original", Strategy::Original),
         ("refusals", Strategy::Refusals),
@@ -43,7 +72,8 @@ async fn decisions_vs_jev() {
     let wanted = env("DECISIONS_EVAL_VARIANTS").unwrap_or_else(|| "vision,jev".into());
     for name in wanted.split(',') {
         assert!(
-            name == "jev" || variants.iter().any(|(n, _)| *n == name),
+            jev_variants.iter().any(|(n, _)| *n == name)
+                || variants.iter().any(|(n, _)| *n == name),
             "Unknown variant {name}"
         );
     }
@@ -58,16 +88,32 @@ async fn decisions_vs_jev() {
             )
         })
         .collect();
-    if wanted.split(',').any(|w| w == "jev") {
-        providers.push((
-            "jev",
-            Arc::new(JevTypeSafeDecisionClient::new(
-                jev,
-                env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
-            )),
-        ));
+    for (name, profile) in jev_variants {
+        if wanted.split(',').any(|w| w == name) {
+            providers.push((
+                name,
+                Arc::new(
+                    JevTypeSafeDecisionClient::with_transport(
+                        env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
+                        jev_wire.clone(),
+                    )
+                    .with_profile(profile),
+                ),
+            ));
+        }
     }
-    let tasks = if env("DECISIONS_EVAL_HOLDOUT").as_deref() == Some("1") {
+    let tasks = if let Some(suite) = env("BROWSER_EVAL_SUITE") {
+        match suite.as_str() {
+            "development" => {
+                let mut tasks = load_tasks().unwrap();
+                tasks.extend(super::complex_contracts::load(false));
+                tasks
+            }
+            "complex_dev" => super::complex_contracts::load(false),
+            "complex_holdout" => super::complex_contracts::load(true),
+            _ => panic!("Unknown BROWSER_EVAL_SUITE"),
+        }
+    } else if env("DECISIONS_EVAL_HOLDOUT").as_deref() == Some("1") {
         serde_json::from_str::<Vec<super::Task>>(include_str!(
             "../../../tests/fixtures/evals/decisions-holdout.json"
         ))
@@ -115,13 +161,18 @@ async fn decisions_vs_jev() {
                             task.expect.grade(&outcome),
                         );
                         row.telemetry = json!({"model":outcome.result.decisions.iter().rev().find_map(|d| d.model.clone()),
-                            "usage":outcome.result.usage, "decisions":outcome.result.decisions.iter().map(|d|json!({"operation":d.operation,"target":d.target,"confidence":d.confidence,"target_confidence":d.target_confidence,"probabilities":d.probabilities})).collect::<Vec<_>>(), "actions":outcome.result.actions,
+                            "usage":outcome.result.usage, "dom_probes":outcome.probed.dom, "decisions":outcome.result.decisions.iter().map(|d|json!({"operation":d.operation,"target":d.target,"confidence":d.confidence,"target_confidence":d.target_confidence,"probabilities":d.probabilities})).collect::<Vec<_>>(), "actions":outcome.result.actions,
                             "decision_latency_ms":outcome.result.decisions.iter().map(|d| d.latency_ms).collect::<Vec<_>>()});
                         row
                     }
                     Err(error) => Row::errored(&task, "paired-live", &error),
                 };
                 row.telemetry["wire"] = json!(*wire.records.lock().unwrap());
+                row.telemetry["choice_order"] = json!(if reverse && provider.starts_with("jev") {
+                    "reversed"
+                } else {
+                    "original"
+                });
                 row.telemetry["provider"] = json!(provider);
                 row.telemetry["repeat"] = json!(repeat + 1);
                 eprintln!(
@@ -144,14 +195,19 @@ async fn decisions_vs_jev() {
 }
 
 struct Recorded {
-    inner: crate::decisions::DecisionsHttp,
-    records: Mutex<Vec<serde_json::Value>>,
+    inner: Arc<dyn crate::JevDecisionTransport>,
+    records: Arc<Mutex<Vec<serde_json::Value>>>,
+    reverse: bool,
 }
 #[async_trait::async_trait]
 impl crate::JevDecisionTransport for Recorded {
     async fn decide(&self, request: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let started = std::time::Instant::now();
-        let result = crate::JevDecisionTransport::decide(&self.inner, request).await;
+        let mut request = request.clone();
+        if self.reverse {
+            reverse_choices(&mut request);
+        }
+        let result = self.inner.decide(&request).await;
         self.records.lock().unwrap().push(json!({"request":request,"response":result.as_ref().ok(),"latency_ms":started.elapsed().as_millis(),"error":result.as_ref().err().map(ToString::to_string)}));
         result
     }
@@ -180,4 +236,35 @@ async fn decisions_holdout_fixture_contracts() {
         let failures = task.expect.grade(&outcome);
         assert!(failures.is_empty(), "{}: {failures:?}", task.id);
     }
+}
+
+/// TypeSafe only: reverse candidate order without changing ids or meanings.
+fn reverse_choices(request: &mut serde_json::Value) {
+    if let Some(questions) = request["questions"].as_object_mut() {
+        for question in questions.values_mut().filter(|q| q["type"] == "choice") {
+            if let Some(criteria) = question["criteria"].as_object_mut() {
+                *criteria = std::mem::take(criteria).into_iter().rev().collect();
+            }
+        }
+    }
+}
+#[test]
+fn reversed_order_preserves_candidate_meaning_and_safety_questions() {
+    let mut request = json!({"questions":{"operation":{"type":"choice","criteria":{"CLICK":"click","DONE":"finished","BLOCKED":"blocked"}},"gate":{"type":"noul","instructions":"Is this irreversible?"}}});
+    let gate = request["questions"]["gate"].clone();
+    reverse_choices(&mut request);
+    assert_eq!(
+        request["questions"]["operation"]["criteria"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["BLOCKED", "DONE", "CLICK"]
+    );
+    assert_eq!(
+        request["questions"]["operation"]["criteria"]["DONE"],
+        "finished"
+    );
+    assert_eq!(request["questions"]["gate"], gate);
 }

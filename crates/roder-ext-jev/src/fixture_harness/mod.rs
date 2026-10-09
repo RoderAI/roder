@@ -328,3 +328,5 @@ mod uncover_tests;
 mod completion_tests;
 
 mod decisions_computer_tests;
+
+mod jev_evidence_tests;

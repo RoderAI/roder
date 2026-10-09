@@ -48,6 +48,12 @@ async fn native_http_contract_resolves_observed_action_and_gate() {
     assert_eq!(operation["type"], "choice");
     assert_eq!(input["user_goal"], "Buy item");
     assert!(
+        input.get("disabled_controls").is_none(),
+        "Decisions must retain its own evidence profile"
+    );
+    assert!(!body.to_string().contains("form_scope"));
+    assert!(!body.to_string().contains("Work through multi-step pages"));
+    assert!(
         operation["choices"]
             .as_array()
             .unwrap()

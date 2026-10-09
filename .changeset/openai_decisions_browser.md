@@ -25,3 +25,8 @@ images, with a text-only option and screenshot suppression around recognized
 secrets. Preserve per-question refusals, stopping only when a required selection
 is refused and keeping safety checks closed. Add controlled optimization variants,
 wire-level diagnostics and held-out browser fixtures.
+
+Improve Jev's text evidence with native form ownership, disabled controls and
+concise contextual history. Add staged-workflow guidance and a reproducible
+Jev prompt hill-climb with compound development fixtures, sealed holdout tasks,
+side-effect grading, negative browser traces and candidate-order stress probes.

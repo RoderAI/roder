@@ -77,7 +77,7 @@ fn validation_verdicts_match_upstream() {
 }
 
 #[tokio::test]
-async fn injected_transport_keeps_request_and_response_parsing_upstream() {
+async fn injected_transport_uses_workflow_evidence_and_upstream_response_parsing() {
     let page: Value = serde_json::from_str(include_str!("../../tests/fixtures/fingerprint.json"))
         .map(|value: Value| value["page"].clone())
         .unwrap();
@@ -106,6 +106,17 @@ async fn injected_transport_keeps_request_and_response_parsing_upstream() {
 
     let decision = client.choose(&page, "Wait once", &[]).await.unwrap();
 
+    {
+        let request = transport.request.lock().unwrap();
+        let request = request.as_ref().unwrap();
+        assert!(
+            request["questions"]["operation"]["instructions"]["workflow"]
+                .as_str()
+                .unwrap()
+                .contains("multi-step")
+        );
+        assert!(request["questions"]["operation"]["instructions"]["form_scope"].is_string());
+    }
     assert_eq!(decision.choice, "wait");
     assert_eq!(decision.operation, "WAIT");
     assert_eq!(decision.usage["input_tokens"], json!(10));

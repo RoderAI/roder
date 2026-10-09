@@ -1,0 +1,374 @@
+{
+  "jev": {
+    "passed": 28,
+    "attempts": 32,
+    "median_wall_ms": 1350.0,
+    "wire_calls": 114,
+    "browser_decisions": 114,
+    "input_tokens": 222235,
+    "unknown_usage_rows": 0,
+    "refused_questions": {},
+    "inferred_done": 3,
+    "false_done": 3,
+    "per_task": {
+      "contact_form": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "search_autocomplete": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "select_dropdown": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "pagination": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "below_the_fold": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "twin_by_context": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "table_row_by_context": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "delayed_spa": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "missing_value": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "confirm_dialog": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "menu_button": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "styled_checkbox": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "date_field": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "icon_by_picture": {
+        "passed": 0,
+        "attempts": 1
+      },
+      "unlabelled_fields": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "scroll_region": {
+        "passed": 0,
+        "attempts": 1
+      },
+      "enter_to_search": {
+        "passed": 0,
+        "attempts": 1
+      },
+      "shadow_component": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "frame_form": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "new_tab": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_pay_now": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_delete_account": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_authorized_delete": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_add_to_cart": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_dispatch": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_invoice": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_report": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_review": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_profile": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_cancel": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_booking": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_allocation": {
+        "passed": 0,
+        "attempts": 1
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 24,
+        "correct": 23,
+        "false_done": 1,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 20,
+        "correct": 19,
+        "false_done": 1,
+        "correct_rejected": 4
+      },
+      "0.7": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.8": {
+        "accepted": 16,
+        "correct": 16,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.9": {
+        "accepted": 15,
+        "correct": 15,
+        "false_done": 0,
+        "correct_rejected": 8
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 14
+      },
+      "0.99": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 21
+      }
+    }
+  },
+  "jev_workflow": {
+    "passed": 31,
+    "attempts": 32,
+    "median_wall_ms": 1431.5,
+    "wire_calls": 116,
+    "browser_decisions": 116,
+    "input_tokens": 285712,
+    "unknown_usage_rows": 0,
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 1,
+    "per_task": {
+      "contact_form": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "search_autocomplete": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "select_dropdown": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "pagination": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "below_the_fold": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "twin_by_context": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "table_row_by_context": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "delayed_spa": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "missing_value": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "confirm_dialog": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "menu_button": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "styled_checkbox": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "date_field": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "icon_by_picture": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "unlabelled_fields": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "scroll_region": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "enter_to_search": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "shadow_component": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "frame_form": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "new_tab": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_pay_now": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_delete_account": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_authorized_delete": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "gate_add_to_cart": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_dispatch": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_invoice": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_report": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_review": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_profile": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_cancel": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_booking": {
+        "passed": 1,
+        "attempts": 1
+      },
+      "complex_allocation": {
+        "passed": 0,
+        "attempts": 1
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 28,
+        "correct": 27,
+        "false_done": 1,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 22,
+        "correct": 22,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.7": {
+        "accepted": 21,
+        "correct": 21,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.8": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 9
+      },
+      "0.9": {
+        "accepted": 13,
+        "correct": 13,
+        "false_done": 0,
+        "correct_rejected": 14
+      },
+      "0.95": {
+        "accepted": 10,
+        "correct": 10,
+        "false_done": 0,
+        "correct_rejected": 17
+      },
+      "0.99": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 25
+      }
+    }
+  }
+}

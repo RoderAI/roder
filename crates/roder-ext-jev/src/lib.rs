@@ -24,6 +24,7 @@ mod fallback;
 mod fixture_harness;
 mod http;
 mod irreversible;
+mod jev_prompt;
 mod page;
 mod policy;
 mod prompts;

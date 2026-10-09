@@ -1,8 +1,9 @@
 //! Asking TypeSafe which operation to run and on which target.
 //!
 //! A port of upstream Jev's `model.choose` and `model.validate_choice`. The
-//! request body and the validation rules are the contract with the service, so
-//! both are reproduced exactly and pinned by fixtures recorded from upstream.
+//! base request body and validation rules are pinned by upstream fixtures. The
+//! hosted Jev client adds measured browser evidence and workflow guidance through
+//! `jev_prompt`; other backends can explicitly retain the base request.
 //! Jev's state also carries today's date (see [`crate::text_helper::today`]):
 //! "next month" and "the next Monday" mean nothing without it.
 
@@ -26,13 +27,19 @@ pub(crate) const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 /// The same TypeSafe decision service used by the built-in `jev_browse` tool.
 pub struct JevTypeSafeDecisionClient {
     model: String,
+    profile: crate::jev_prompt::Profile,
     transport: Arc<dyn JevDecisionTransport>,
 }
 
 impl JevTypeSafeDecisionClient {
+    pub(crate) fn with_profile(mut self, profile: crate::jev_prompt::Profile) -> Self {
+        self.profile = profile;
+        self
+    }
     pub fn new(key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
+            profile: crate::jev_prompt::Profile::Workflow,
             transport: Arc::new(TypeSafeHttpTransport::new(
                 ENDPOINT,
                 key,
@@ -47,6 +54,7 @@ impl JevTypeSafeDecisionClient {
     ) -> Self {
         Self {
             model: model.into(),
+            profile: crate::jev_prompt::Profile::Workflow,
             transport,
         }
     }
@@ -65,7 +73,12 @@ impl JevDecisionClient for JevTypeSafeDecisionClient {
             goal,
             history,
             &self.model,
-            self.transport.as_ref(),
+            &crate::jev_prompt::Transport {
+                inner: self.transport.as_ref(),
+                profile: self.profile,
+                history,
+                observation,
+            },
             chrono::Local::now().date_naive(),
             false,
         )
@@ -86,7 +99,12 @@ impl JevDecisionClient for JevTypeSafeDecisionClient {
             goal,
             history,
             &self.model,
-            self.transport.as_ref(),
+            &crate::jev_prompt::Transport {
+                inner: self.transport.as_ref(),
+                profile: self.profile,
+                history,
+                observation,
+            },
             chrono::Local::now().date_naive(),
             true,
         )

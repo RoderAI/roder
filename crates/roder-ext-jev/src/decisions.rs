@@ -87,7 +87,8 @@ impl OpenAiDecisionsClient {
                     transport: transport.clone(),
                     strategy,
                 }),
-            ),
+            )
+            .with_profile(crate::jev_prompt::Profile::Baseline),
             transport,
         }
     }

@@ -101,3 +101,9 @@ The browser host can implement `JevBrowser::screenshot()` to return an inline
 viewport image; `None` means it has no image capability. Decision wrappers should
 forward `JevDecisionClient::uses_images()`. Existing ACP tool names, approval
 requests and tool-call updates are unchanged; no new protocol capability is advertised.
+
+The [follow-up Jev hill-climb](../evals/reports/jev-hillclimb/2026-10-08/README.md)
+measures improvements to the default TypeSafe client against its original profile
+and this visual Decisions integration on a larger, more demanding corpus. Jev's
+form and workflow guidance is isolated from the Decisions prompt profile. Both
+continue through the same ACP tool and permission flow.
