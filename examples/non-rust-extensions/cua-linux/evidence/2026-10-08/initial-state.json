@@ -1,0 +1,806 @@
+{
+  "_note": "Prefer `elements` \u2014 `tree_markdown` will continue to work but new fields will only be added to the structured side. Use `max_elements` / `max_depth` to bound the AT-SPI walk on apps with very large trees.",
+  "app_name": "Galculator",
+  "bounds_complete": true,
+  "capture_id": "capture_d88ae9aabb9e49a18f8accadb9a5e9e3_0000000000000000",
+  "coordinate_frame": "window",
+  "element_count": 34,
+  "elements": [
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 4,
+      "description": "closed menu with 1 items; not expanded: click it to open",
+      "element_index": 0,
+      "element_token": "s00000001:0",
+      "enabled": true,
+      "frame": {
+        "h": 25,
+        "w": 41,
+        "x": 379,
+        "y": 256
+      },
+      "label": "File",
+      "role": "menu",
+      "screenshot_frame": {
+        "h": 25,
+        "w": 41,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 4,
+      "description": "closed menu with 5 items; not expanded: click it to open",
+      "element_index": 1,
+      "element_token": "s00000001:1",
+      "enabled": true,
+      "frame": {
+        "h": 25,
+        "w": 43,
+        "x": 420,
+        "y": 256
+      },
+      "label": "Edit",
+      "role": "menu",
+      "screenshot_frame": {
+        "h": 25,
+        "w": 43,
+        "x": 41,
+        "y": 0
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 4,
+      "description": "closed menu with 7 items; not expanded: click it to open",
+      "element_index": 2,
+      "element_token": "s00000001:2",
+      "enabled": true,
+      "frame": {
+        "h": 25,
+        "w": 50,
+        "x": 463,
+        "y": 256
+      },
+      "label": "View",
+      "role": "menu",
+      "screenshot_frame": {
+        "h": 25,
+        "w": 50,
+        "x": 84,
+        "y": 0
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 4,
+      "description": "closed menu with 3 items; not expanded: click it to open",
+      "element_index": 3,
+      "element_token": "s00000001:3",
+      "enabled": true,
+      "frame": {
+        "h": 25,
+        "w": 84,
+        "x": 513,
+        "y": 256
+      },
+      "label": "Calculator",
+      "role": "menu",
+      "screenshot_frame": {
+        "h": 25,
+        "w": 84,
+        "x": 134,
+        "y": 0
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 4,
+      "description": "closed menu with 1 items; not expanded: click it to open",
+      "element_index": 4,
+      "element_token": "s00000001:4",
+      "enabled": true,
+      "frame": {
+        "h": 25,
+        "w": 48,
+        "x": 597,
+        "y": 256
+      },
+      "label": "Help",
+      "role": "menu",
+      "screenshot_frame": {
+        "h": 25,
+        "w": 48,
+        "x": 218,
+        "y": 0
+      }
+    },
+    {
+      "depth": 7,
+      "element_index": 5,
+      "element_token": "s00000001:5",
+      "enabled": true,
+      "frame": {
+        "h": 52,
+        "w": 252,
+        "x": 386,
+        "y": 288
+      },
+      "label": "0",
+      "role": "text",
+      "screenshot_frame": {
+        "h": 52,
+        "w": 252,
+        "x": 7,
+        "y": 32
+      },
+      "value": "0"
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Backspace    BackSpace",
+      "element_index": 8,
+      "element_token": "s00000001:8",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 40,
+        "x": 599,
+        "y": 353
+      },
+      "label": "<-",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 40,
+        "x": 220,
+        "y": 97
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Clear display    Alt+C",
+      "element_index": 9,
+      "element_token": "s00000001:9",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 40,
+        "x": 507,
+        "y": 353
+      },
+      "label": "C",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 40,
+        "x": 128,
+        "y": 97
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Reset calculator (clear all)    Escape",
+      "element_index": 10,
+      "element_token": "s00000001:10",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 40,
+        "x": 553,
+        "y": 353
+      },
+      "label": "AC",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 40,
+        "x": 174,
+        "y": 97
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Percent",
+      "element_index": 12,
+      "element_token": "s00000001:12",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 593,
+        "y": 461
+      },
+      "label": "%",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 214,
+        "y": 205
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Square root    R",
+      "element_index": 13,
+      "element_token": "s00000001:13",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 593,
+        "y": 427
+      },
+      "label": "sqrt",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 214,
+        "y": 171
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Enter",
+      "element_index": 14,
+      "element_token": "s00000001:14",
+      "enabled": true,
+      "frame": {
+        "h": 62,
+        "w": 46,
+        "x": 593,
+        "y": 495
+      },
+      "label": "=",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 62,
+        "w": 46,
+        "x": 214,
+        "y": 239
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Two    2",
+      "element_index": 15,
+      "element_token": "s00000001:15",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 437,
+        "y": 495
+      },
+      "label": "2",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 58,
+        "y": 239
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "One    1",
+      "element_index": 16,
+      "element_token": "s00000001:16",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 385,
+        "y": 495
+      },
+      "label": "1",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 6,
+        "y": 239
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Decimal point    .",
+      "element_index": 17,
+      "element_token": "s00000001:17",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 437,
+        "y": 529
+      },
+      "label": ".",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 58,
+        "y": 273
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Zero    0",
+      "element_index": 18,
+      "element_token": "s00000001:18",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 385,
+        "y": 529
+      },
+      "label": "0",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 6,
+        "y": 273
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Open Bracket",
+      "element_index": 19,
+      "element_token": "s00000001:19",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 385,
+        "y": 393
+      },
+      "label": "(",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 6,
+        "y": 137
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Close Bracket",
+      "element_index": 20,
+      "element_token": "s00000001:20",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 437,
+        "y": 393
+      },
+      "label": ")",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 58,
+        "y": 137
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Save to memory",
+      "element_index": 21,
+      "element_token": "s00000001:21",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 489,
+        "y": 393
+      },
+      "label": "MS",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 110,
+        "y": 137
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Multiply    *",
+      "element_index": 22,
+      "element_token": "s00000001:22",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 541,
+        "y": 461
+      },
+      "label": "*",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 162,
+        "y": 205
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Change sign",
+      "element_index": 23,
+      "element_token": "s00000001:23",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 489,
+        "y": 529
+      },
+      "label": "+/-",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 110,
+        "y": 273
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Sum    +",
+      "element_index": 24,
+      "element_token": "s00000001:24",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 541,
+        "y": 529
+      },
+      "label": "+",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 162,
+        "y": 273
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Subtract    -",
+      "element_index": 25,
+      "element_token": "s00000001:25",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 541,
+        "y": 495
+      },
+      "label": "-",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 162,
+        "y": 239
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Three    3",
+      "element_index": 26,
+      "element_token": "s00000001:26",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 489,
+        "y": 495
+      },
+      "label": "3",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 110,
+        "y": 239
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Six    6",
+      "element_index": 27,
+      "element_token": "s00000001:27",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 489,
+        "y": 461
+      },
+      "label": "6",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 110,
+        "y": 205
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Five    5",
+      "element_index": 28,
+      "element_token": "s00000001:28",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 437,
+        "y": 461
+      },
+      "label": "5",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 58,
+        "y": 205
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Four    4",
+      "element_index": 29,
+      "element_token": "s00000001:29",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 385,
+        "y": 461
+      },
+      "label": "4",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 6,
+        "y": 205
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Divide    /",
+      "element_index": 30,
+      "element_token": "s00000001:30",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 541,
+        "y": 427
+      },
+      "label": "/",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 162,
+        "y": 171
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Nine    9",
+      "element_index": 31,
+      "element_token": "s00000001:31",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 489,
+        "y": 427
+      },
+      "label": "9",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 110,
+        "y": 171
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Eight    8",
+      "element_index": 32,
+      "element_token": "s00000001:32",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 437,
+        "y": 427
+      },
+      "label": "8",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 58,
+        "y": 171
+      }
+    },
+    {
+      "actions": [
+        "click"
+      ],
+      "depth": 6,
+      "description": "Seven    7",
+      "element_index": 33,
+      "element_token": "s00000001:33",
+      "enabled": true,
+      "frame": {
+        "h": 28,
+        "w": 46,
+        "x": 385,
+        "y": 427
+      },
+      "label": "7",
+      "role": "toggle button",
+      "screenshot_frame": {
+        "h": 28,
+        "w": 46,
+        "x": 6,
+        "y": 171
+      }
+    },
+    {
+      "depth": 7,
+      "description": "unlabelled scroll bar; 1st of 2 scroll bars in this window; off-screen: scroll it into view before a pixel action; element actions still reach it",
+      "element_index": 6,
+      "element_token": "s00000001:6",
+      "enabled": true,
+      "role": "scroll bar",
+      "unlabelled": true,
+      "value": "0.0"
+    },
+    {
+      "depth": 7,
+      "description": "unlabelled scroll bar; 2nd of 2 scroll bars in this window; off-screen: scroll it into view before a pixel action; element actions still reach it",
+      "element_index": 7,
+      "element_token": "s00000001:7",
+      "enabled": true,
+      "role": "scroll bar",
+      "unlabelled": true,
+      "value": "0.0"
+    },
+    {
+      "actions": [
+        "activate"
+      ],
+      "depth": 5,
+      "description": "Formula entry text field - enter string expression to compute here.; off-screen: scroll it into view before a pixel action; element actions still reach it",
+      "element_index": 11,
+      "element_token": "s00000001:11",
+      "enabled": true,
+      "label": "Formula entry text field - enter string expression to compute here.",
+      "role": "text"
+    }
+  ],
+  "elements_complete": true,
+  "frame_note": "x/y for click / double_click / right_click / drag / scroll on this window are pixels of THIS screenshot (window-local, 0..screenshot_width x 0..screenshot_height), as are the element frames; the screenshot is kept at or below 1.15 megapixels so the image you read is the image these pixels index (frame_scale < 1 says the window was downsized to it). window_bounds is where it sits on the screen. Pass scope:\"desktop\" only for get_desktop_state pixels.",
+  "nodes_pending": 0,
+  "nodes_visited": 34,
+  "pid": 700,
+  "returned_element_count": 34,
+  "screenshot_frame_valid": true,
+  "screenshot_height": 307,
+  "screenshot_width": 266,
+  "snapshot_id": "s00000001",
+  "timeout_ms": 2000,
+  "total_element_count": 34,
+  "tree_markdown": "- frame = \"galculator\"\n        - [0] menu \"File\" [actions=[click]] (closed menu, 1 items; click it to open)\n        - [1] menu \"Edit\" [actions=[click]] (closed menu, 5 items; click it to open)\n        - [2] menu \"View\" [actions=[click]] (closed menu, 7 items; click it to open)\n        - [3] menu \"Calculator\" [actions=[click]] (closed menu, 3 items; click it to open)\n        - [4] menu \"Help\" [actions=[click]] (closed menu, 1 items; click it to open)\n              - [5] text \"0\" value=\"0\" [actions=[]]\n              - [6] scroll bar \"\" value=\"0.0\" [actions=[]] (unlabelled scroll bar; 1st of 2 scroll bars in this window)\n              - [7] scroll bar \"\" value=\"0.0\" [actions=[]] (unlabelled scroll bar; 2nd of 2 scroll bars in this window)\n            - label = \" \"\n            - [8] toggle button \"<-\" (description \"Backspace    BackSpace\") [actions=[click]]\n            - [9] toggle button \"C\" (description \"Clear display    Alt+C\") [actions=[click]]\n            - [10] toggle button \"AC\" (description \"Reset calculator (clear all)    Escape\") [actions=[click]]\n          - [11] text \"Formula entry text field - enter string expression to compute here.\" [actions=[activate]]\n            - [12] toggle button \"%\" (description \"Percent\") [actions=[click]]\n            - [13] toggle button \"sqrt\" (description \"Square root    R\") [actions=[click]]\n            - [14] toggle button \"=\" (description \"Enter\") [actions=[click]]\n            - [15] toggle button \"2\" (description \"Two    2\") [actions=[click]]\n            - [16] toggle button \"1\" (description \"One    1\") [actions=[click]]\n            - [17] toggle button \".\" (description \"Decimal point    .\") [actions=[click]]\n            - [18] toggle button \"0\" (description \"Zero    0\") [actions=[click]]\n            - [19] toggle button \"(\" (description \"Open Bracket\") [actions=[click]]\n            - [20] toggle button \")\" (description \"Close Bracket\") [actions=[click]]\n            - [21] toggle button \"MS\" (description \"Save to memory\") [actions=[click]]\n            - toggle button = \"MR\" (disabled)\n            - toggle button = \"M+\" (disabled)\n            - [22] toggle button \"*\" (description \"Multiply    *\") [actions=[click]]\n            - [23] toggle button \"+/-\" (description \"Change sign\") [actions=[click]]\n            - [24] toggle button \"+\" (description \"Sum    +\") [actions=[click]]\n            - [25] toggle button \"-\" (description \"Subtract    -\") [actions=[click]]\n            - [26] toggle button \"3\" (description \"Three    3\") [actions=[click]]\n            - [27] toggle button \"6\" (description \"Six    6\") [actions=[click]]\n            - [28] toggle button \"5\" (description \"Five    5\") [actions=[click]]\n            - [29] toggle button \"4\" (description \"Four    4\") [actions=[click]]\n            - [30] toggle button \"/\" (description \"Divide    /\") [actions=[click]]\n            - [31] toggle button \"9\" (description \"Nine    9\") [actions=[click]]\n            - [32] toggle button \"8\" (description \"Eight    8\") [actions=[click]]\n            - [33] toggle button \"7\" (description \"Seven    7\") [actions=[click]]\n",
+  "truncated": false,
+  "walk_elapsed_ms": 46,
+  "window_bounds": {
+    "height": 307,
+    "width": 266,
+    "x": 379,
+    "y": 256
+  },
+  "window_id": 44040195,
+  "window_title": "galculator"
+}

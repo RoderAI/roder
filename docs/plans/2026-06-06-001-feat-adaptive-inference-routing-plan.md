@@ -365,7 +365,7 @@ crates/roder-ext-inference-router/
 
 **Approach:** Treat app-server and ACP-facing behavior as public contracts. Add method specs and schemas for router status/metrics only after handlers exist. Ensure `initialize`, provider/model selection, `model/list`, `providers/list`, and turn notifications remain understandable when routing changes the actual model used for a turn. If ACP cannot expose router-specific status yet, document that routing is runtime behavior and avoid advertising unsupported ACP capabilities.
 
-**Patterns to follow:** Method specs in `crates/roder-protocol/src/methods.rs`, API examples in `docs/app-server/api.md`, and the `maintain-acp-compliance` checklist.
+**Patterns to follow:** Method specs in `crates/roder-protocol/src/methods.rs` and API examples in `docs/app-server/api.md`.
 
 **Test scenarios:**
 
@@ -451,5 +451,4 @@ crates/roder-ext-inference-router/
 - Current app-server provider/model and usage surfaces: `crates/roder-app-server/src/server.rs`, `docs/app-server/api.md`
 - Extension architecture doctrine: `roadmap/foundations/roder_extensibility_foundations_extensions.md`
 - Related provider-subsystem plan: `docs/plans/2026-06-01-001-feat-vcs-provider-extension-plan.md`
-- ACP compatibility checklist: `.agents/skills/maintain-acp-compliance/SKILL.md`
 - Prior-art context from discussion: GitHub Copilot auto model selection, Claude Code phase/model tiering, OpenCode small-model configuration, Pi StarRouter local profiler and explainability posture, OpenRouter fallback routing.

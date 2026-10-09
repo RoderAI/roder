@@ -422,16 +422,7 @@ fn gemini_contents(request: &AgentInferenceRequest) -> anyhow::Result<Vec<Value>
                 }));
             }
             roder_api::transcript::TranscriptItem::ToolResult(result) => {
-                contents.push(json!({
-                    "role": "user",
-                    "parts": [{
-                        "functionResponse": {
-                            "id": result.id,
-                            "name": result.name.clone().unwrap_or_default(),
-                            "response": { "result": result.result, "is_error": result.is_error }
-                        }
-                    }]
-                }));
+                contents.push(crate::media::gemini_tool_result(result)?);
             }
             roder_api::transcript::TranscriptItem::ProviderMetadata(metadata) => {
                 append_provider_function_call_content(metadata, &mut contents, &mut replay);

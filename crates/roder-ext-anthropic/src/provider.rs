@@ -321,7 +321,7 @@ fn anthropic_messages(request: &AgentInferenceRequest) -> Vec<Value> {
                 "content": [{
                     "type": "tool_result",
                     "tool_use_id": result.id,
-                    "content": result.result,
+                    "content": crate::media::tool_result_content(result),
                     "is_error": result.is_error
                 }]
             })),

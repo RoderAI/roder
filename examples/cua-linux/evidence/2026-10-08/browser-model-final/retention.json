@@ -1,0 +1,13 @@
+{
+  "sandbox": "roder-cua-browser-19d6c833",
+  "workspace": "vexscm",
+  "status": "DEPLOYED",
+  "created_at": "2026-10-09T01:24:01.752309523Z",
+  "configured_ttl": "3h",
+  "purpose": "User live viewing of the qualified browser desktop",
+  "public_desktop_control_port": false,
+  "preview_url": "http://127.0.0.1:63129/",
+  "preview_capture_duration_seconds": 3600,
+  "browser_session_ended": true,
+  "cleanup": "Retained explicitly; sandbox TTL remains bounded from creation"
+}

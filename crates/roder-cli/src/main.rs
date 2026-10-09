@@ -1352,6 +1352,7 @@ pub(crate) async fn build_runtime_from_config(
         subagents,
         zerolang,
         browser_use,
+        cua: cfg.cua.clone(),
         policy_mode,
         notifications,
         remote_runner_destination: remote_runner_destination.clone(),

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roder · Linux desktop live</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111317; color: #eef0f4; }
+  body { margin: 0; }
+  header { display: flex; align-items: center; gap: 14px; padding: 18px 24px; border-bottom: 1px solid #30343d; }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  #state { font-size: 12px; color: #aeb5c2; }
+  #state.live { color: #88e3ae; }
+  button { margin-left: auto; font: inherit; font-size: 12px; color: #eef0f4; border: 1px solid #49515f; border-radius: 6px; padding: 7px 12px; background: #252932; cursor: pointer; }
+  main { padding: 20px; }
+  .screen { background: #08090b; border: 1px solid #30343d; border-radius: 8px; overflow: hidden; min-height: 200px; display: grid; place-items: center; }
+  .image { position: relative; width: 100%; }
+  #cursor { position: absolute; pointer-events: none; width: 12px; height: 12px; border: 2px solid #fff; background: #efbb3b; border-radius: 50%; box-shadow: 0 0 0 1px #111; transform: translate(-50%, -50%); }
+  img { display: block; width: 100%; max-height: calc(100vh - 160px); object-fit: contain; }
+  img[hidden] { display: none; }
+  footer { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 12px; color: #aeb5c2; font-size: 12px; }
+  #waiting { color: #aeb5c2; font-size: 14px; padding: 40px; }
+</style>
+<header><h1>Linux desktop</h1><span id="state" aria-live="polite">Connecting…</span><button id="pause">Pause view</button></header>
+<main>
+  <div class="screen"><span id="waiting">Waiting for the first live screen…</span><div class="image"><img id="frame" hidden alt="Live view of the owned XFCE desktop"><span id="cursor" hidden aria-hidden="true"></span></div></div>
+  <footer><span id="desktop">XFCE / X11</span><span id="age"></span><span>Read-only preview · screen refreshes about every 2–5 seconds</span></footer>
+</main>
+<script>
+  let paused = false, sequence = -1, cursorPosition = null;
+  const frame = document.getElementById('frame'), state = document.getElementById('state');
+  document.getElementById('pause').onclick = () => {
+    paused = !paused;
+    document.getElementById('pause').textContent = paused ? 'Resume view' : 'Pause view';
+    update();
+  };
+  function positionCursor() {
+    const cursor = document.getElementById('cursor');
+    cursor.hidden = !cursorPosition || frame.hidden;
+    if (cursor.hidden) return;
+    const ratio = frame.naturalWidth / frame.naturalHeight;
+    const width = Math.min(frame.clientWidth, frame.clientHeight * ratio), height = width / ratio;
+    cursor.style.left = ((frame.clientWidth - width) / 2 + cursorPosition.x * width) + 'px';
+    cursor.style.top = ((frame.clientHeight - height) / 2 + cursorPosition.y * height) + 'px';
+  }
+  frame.onload = () => { frame.hidden = false; document.getElementById('waiting').hidden = true; positionCursor(); };
+  window.addEventListener('resize', positionCursor);
+  async function update() {
+    try {
+      const response = await fetch('/status', {cache: 'no-store'});
+      if (!response.ok) throw new Error('status unavailable');
+      const status = await response.json();
+      const age = status.updated_at ? Math.max(0, Math.floor(Date.now() / 1000 - status.updated_at)) : null;
+      const live = status.state === 'live' && age !== null && age < 15;
+      state.textContent = paused ? 'Paused' : status.state === 'preview ended' ? 'Preview ended' : live ? '● Live' : 'Reconnecting';
+      state.className = live && !paused ? 'live' : '';
+      document.getElementById('desktop').textContent = status.backend + ' · ' + status.sandbox;
+      document.getElementById('age').textContent = age === null ? '' : 'Last screen ' + age + 's ago';
+      if (!paused && status.sequence !== sequence && status.updated_at) {
+        sequence = status.sequence;
+        cursorPosition = Number.isFinite(status.cursor_x) && Number.isFinite(status.cursor_y)
+          ? {x: status.cursor_x / status.width, y: status.cursor_y / status.height} : null;
+        frame.src = '/frame?v=' + sequence;
+      }
+    } catch (_) {
+      state.textContent = 'Preview disconnected'; state.className = '';
+    }
+  }
+  update(); setInterval(update, 2000);
+</script>
+</html>

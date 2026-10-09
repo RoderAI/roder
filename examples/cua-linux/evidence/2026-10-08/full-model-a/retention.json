@@ -1,0 +1,9 @@
+{
+  "sandbox": "roder-cua-desktop-503e1d11",
+  "status": "DEPLOYED",
+  "created_at": "2026-10-09T00:33:26.010285298Z",
+  "expires_in": null,
+  "ttl": "3h",
+  "reason": "User requested live desktop viewing",
+  "terminal_cleanup_claimed": false
+}

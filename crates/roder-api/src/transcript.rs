@@ -59,19 +59,47 @@ pub struct ToolResultRecord {
 }
 
 /// Reserved `display_payload` key carrying an image content block produced by
-/// the `view_image` tool. The Responses provider reads this to forward the
-/// image to the model as `input_image` inside the tool output; nothing else
-/// writes it. Kept out of the scalar allow-list because it is a large data URL,
-/// not a display field.
+/// `view_image` and desktop observation tools. Providers forward the inline
+/// image to the model and ACP clients receive an image content block. Kept out
+/// of the scalar allow-list because it is a large data URL, not a display field.
 pub const VIEW_IMAGE_DISPLAY_KEY: &str = "__view_image";
 
+/// A bounded inline image carried by a tool result. Never fetch external URLs
+/// while replaying a tool result or forwarding it to an ACP client.
+pub fn tool_result_image(payload: Option<&Value>) -> Option<(&str, &str)> {
+    use base64::Engine;
+    let url = payload?
+        .get(VIEW_IMAGE_DISPLAY_KEY)?
+        .get("image_url")?
+        .as_str()?;
+    let (mime, data) = url.strip_prefix("data:")?.split_once(";base64,")?;
+    if !matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+    ) || data.is_empty()
+        || data.len() > 12 * 1024 * 1024
+    {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    Some((mime, data))
+}
+
 pub fn tool_display_payload(
-    _tool_name: Option<&str>,
+    tool_name: Option<&str>,
     arguments: Option<&Value>,
     data: Option<&Value>,
 ) -> Option<Value> {
     let mut payload = Map::new();
     merge_display_fields(&mut payload, arguments);
+    if tool_name.is_some_and(|name| name.starts_with("cua_"))
+        && let Some(Value::Object(arguments)) = arguments
+        && serde_json::to_vec(arguments).is_ok_and(|bytes| bytes.len() <= 32 * 1024)
+    {
+        payload.extend(arguments.clone());
+    }
     merge_display_fields(&mut payload, data);
     if let Some(Value::Object(source)) = data
         && let Some(image) = source.get(VIEW_IMAGE_DISPLAY_KEY)

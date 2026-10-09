@@ -1,4 +1,5 @@
 mod codex_oauth;
+mod cua;
 #[cfg(test)]
 mod test_config;
 use codex_oauth::CodexOAuthInferenceEngine;
@@ -177,6 +178,7 @@ pub struct DefaultRegistryConfig {
     /// `[browser_use]` settings; the provider is installed only when enabled.
     /// Its LLM keys come from `openai_api_key` / `anthropic_api_key`.
     pub browser_use: Option<roder_config::BrowserUseConfig>,
+    pub cua: Option<roder_config::cua::CuaConfig>,
     pub policy_mode: PolicyMode,
     pub notifications: DefaultNotificationsConfig,
     pub remote_runner_destination: Option<RunnerDestination>,
@@ -304,6 +306,7 @@ impl Default for DefaultRegistryConfig {
             subagents: None,
             zerolang: None,
             browser_use: None,
+            cua: None,
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,
@@ -551,6 +554,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
     builder.install(WebwrightExtension)?;
     builder.install(ChromeExtension::new())?;
+    cua::install(&mut builder, config.cua.as_ref())?;
     // After every inference engine: Jev's automatic fallback drives the
     // session's model through them.
     let engines = builder.inference_engines.clone();
@@ -623,7 +627,9 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         }
         SessionStoreConfig::MysqlOwned { config, owner } => {
             let store = roder_ext_mysql_session::MysqlSessionStore::connect_blocking(&config)?;
-            builder.install(MysqlSessionExtension::from_store(store.with_runtime_owner(&owner)?))?;
+            builder.install(MysqlSessionExtension::from_store(
+                store.with_runtime_owner(&owner)?,
+            ))?;
         }
     }
     match selected_memory_backend().as_deref() {
@@ -1791,6 +1797,7 @@ mod tests {
             subagents: None,
             zerolang: None,
             browser_use: None,
+            cua: None,
             policy_mode: PolicyMode::Default,
             notifications: DefaultNotificationsConfig::default(),
             remote_runner_destination: None,

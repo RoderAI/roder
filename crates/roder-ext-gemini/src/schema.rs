@@ -38,6 +38,17 @@ fn strip_unsupported_schema_fields(value: &mut Value) {
                     object.insert("nullable".to_string(), Value::Bool(true));
                 }
             }
+            // OpenAPI represents nullability separately. Gemini's enum proto
+            // accepts strings, so JSON Schema's explicit null member cannot
+            // be forwarded alongside the converted nullable flag.
+            if object.get("nullable") == Some(&Value::Bool(true))
+                && let Some(Value::Array(options)) = object.get_mut("enum")
+            {
+                options.retain(|option| !option.is_null());
+                if options.is_empty() {
+                    object.remove("enum");
+                }
+            }
             for child in object.values_mut() {
                 strip_unsupported_schema_fields(child);
             }
@@ -55,6 +66,17 @@ fn strip_unsupported_schema_fields(value: &mut Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn nullable_desktop_enum_uses_openapi_nullability() {
+        let schema = gemini_schema(
+            json!({"type":["string","null"],"enum":["background","foreground",null]}),
+        );
+        assert_eq!(
+            schema,
+            json!({"type":"string","nullable":true,"enum":["background","foreground"]})
+        );
+    }
 
     #[test]
     fn removes_additional_properties_recursively() {

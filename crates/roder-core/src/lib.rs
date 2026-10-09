@@ -44,6 +44,7 @@ mod transcript;
 mod transcript_compaction;
 mod verification_gate;
 mod workspace_changes;
+mod workspace_tools;
 
 pub use bus::*;
 pub use compaction_runtime::ForceCompactOutcome;

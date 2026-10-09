@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "extension": {
+    "id": "cua-linux-spike",
+    "name": "Cua Linux Exploration",
+    "version": "0.1.0",
+    "api_version": "^0.1",
+    "description": "Single-thread Blaxel/Cua calculator spike; see README for qualification gaps",
+    "provides": [
+      {
+        "ToolProvider": "cua-linux-spike"
+      }
+    ],
+    "required_capabilities": []
+  },
+  "scope": "Installed Roder app-server manifest loading and extension initialization only; no model turn"
+}

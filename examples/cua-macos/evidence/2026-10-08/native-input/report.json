@@ -1,0 +1,142 @@
+{
+  "passed": true,
+  "checks": {
+    "discovery": true,
+    "desktop_capture_and_scaled_cursor": true,
+    "double_click": true,
+    "right_click": true,
+    "drag": true,
+    "scroll": true,
+    "unicode_typing": true,
+    "exact_sibling_value": true,
+    "dialog": true,
+    "closed_window_capture_error": true,
+    "no_held_button": true,
+    "chord": true,
+    "resize": true,
+    "cancellation": true,
+    "cross_thread_generation": true,
+    "runtime_restart_requires_observation": true,
+    "daemon_restart": true
+  },
+  "app_oracle": {
+    "accepted": "Dialog 日本語 verified",
+    "clicks": 5,
+    "cursor_x": 750,
+    "cursor_y": 455,
+    "dialog_open": false,
+    "dialog_value": "Dialog 日本語 verified",
+    "doubles": 1,
+    "drags": 40,
+    "fields": [
+      "café 日本語",
+      "sibling λ"
+    ],
+    "held": false,
+    "key_window": "Roder Cua Input A",
+    "keys": [
+      {
+        "characters": "c",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": "a",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": "f",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": "é",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": " ",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": "日",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": "本",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": "語",
+        "command": false,
+        "control": false,
+        "option": false,
+        "shift": false,
+        "window": "Roder Cua Input A"
+      },
+      {
+        "characters": "K",
+        "command": false,
+        "control": true,
+        "option": false,
+        "shift": true,
+        "window": "Roder Cua Input A"
+      }
+    ],
+    "mouse_ups": 5,
+    "pid": 92911,
+    "rights": 1,
+    "scrolls": 3,
+    "windows": [
+      {
+        "height": 420,
+        "number": 159578,
+        "title": "Roder Cua Input A",
+        "width": 599,
+        "x": 480,
+        "y": 1290
+      },
+      {
+        "height": 372,
+        "number": 159580,
+        "title": "Roder Cua Input B",
+        "width": 540,
+        "x": 1100,
+        "y": 450
+      }
+    ]
+  },
+  "backend": "local-macos",
+  "driver_version": "0.34.0",
+  "live_model": false,
+  "daemon_restart_exercised": true,
+  "fixture_stopped": true,
+  "owned_fixture_pids_stopped": [
+    92911
+  ]
+}

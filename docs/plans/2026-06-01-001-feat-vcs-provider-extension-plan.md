@@ -492,4 +492,4 @@ The root `Cargo.toml` must register `crates/roder-ext-git` as a workspace member
 
 - Current SDK codegen path: `sdk/codegen/README.md`, `sdk/codegen/generate-typescript.mjs`, `sdk/codegen/generate-python.mjs`
 
-- Project constraints: `AGENTS.md`, `roadmap/foundations/roder_extensibility_foundations_extensions.md`, `.agents/skills/maintain-acp-compliance/SKILL.md`
+- Project constraints: `AGENTS.md`, `roadmap/foundations/roder_extensibility_foundations_extensions.md`
