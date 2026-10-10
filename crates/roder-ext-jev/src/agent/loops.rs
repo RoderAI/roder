@@ -23,11 +23,12 @@
 //!   after the third shows nothing new, the run ends
 //!   [`JevStopCause::Unsettled`]. Nothing new means the same view, compared
 //!   exactly as the observation reports it ([`settled_view`]): its address,
-//!   scroll, text, frames and the visible controls' states, labels and
+//!   title, scroll, text, frames and the visible controls' states, labels and
 //!   values. No number is masked, as none is in the pair counter. A stale
 //!   decision that leaves a different view is progress and starts the count
-//!   again, and so does any step recorded in between. The cap therefore ends
-//!   a run whose decisions go stale on a page that reads the same each time,
+//!   again, and so does any action the model chose in between (a refused
+//!   cookie banner is recorded, but is not one). The cap therefore ends a
+//!   run whose decisions go stale on a page that reads the same each time,
 //!   such as a control whose guard changes (the text of its form below the
 //!   fold, or a link's `href`) while nothing in the view does. A page whose
 //!   only change is digits in what the view holds, a clock or a countdown or
@@ -78,8 +79,9 @@ pub(super) struct LoopWatch {
 #[derive(Default)]
 struct StaleRun {
     count: usize,
-    /// How many steps the history held at the last of them: a longer history
-    /// means a step was recorded since, and the count starts again.
+    /// How many actions the model had chosen at the last of them: more means
+    /// one was carried out since, and the count starts again. A refused
+    /// cookie banner is in the history but is not one.
     steps: usize,
 }
 
@@ -170,7 +172,7 @@ impl Agent {
         stale: &anyhow::Error,
         no_progress: bool,
     ) -> Option<anyhow::Error> {
-        let steps = self.history.len();
+        let steps = self.history.iter().filter(chosen).count();
         let run = &mut self.watch.stale;
         if !no_progress {
             *run = StaleRun::default();
@@ -203,15 +205,16 @@ impl Agent {
     }
 }
 
-/// The page as the stale-decision cap reads it: its address and scroll, its
-/// text, and each visible control's id, kind, state, label and value, all
-/// exactly as the observation reports them. Nothing is masked: a clock, a
-/// countdown or a "3 minutes ago" changes the view like any other word.
-/// Offscreen controls and the `context` and `section` naming each one are
-/// left out, as the fingerprint leaves them.
+/// The page as the stale-decision cap reads it: its address, title and
+/// scroll, its text, and each visible control's id, kind, state, label and
+/// value, all exactly as the observation reports them. Nothing is masked: a
+/// clock, a countdown or a "3 minutes ago" changes the view like any other
+/// word, in the title as much as in the text. Offscreen controls and the
+/// `context` and `section` naming each one are left out, as the fingerprint
+/// leaves them.
 pub(super) fn settled_view(observation: &Value) -> String {
     let mut view = String::new();
-    for key in ["url", "scroll"] {
+    for key in ["url", "title", "scroll"] {
         view.push_str(&observation[key].to_string());
         view.push('\n');
     }
@@ -224,7 +227,9 @@ pub(super) fn settled_view(observation: &Value) -> String {
             view.push('|');
         }
         for key in ["label", "value", "current_value"] {
-            view.push_str(action[key].as_str().unwrap_or_default());
+            // JSON-quoted, so a page's own `|` cannot move between two fields
+            // and make two different views compare equal.
+            view.push_str(&Value::from(action[key].as_str().unwrap_or_default()).to_string());
             view.push('|');
         }
     }
@@ -289,6 +294,11 @@ mod tests {
         let mut moved = page("Session ended", "Renew");
         moved["url"] = json!("https://a.test/2");
         assert_ne!(settled_view(&moved), settled_view(&still));
+        // The title is model-visible page text and part of the page's own
+        // fingerprint, so a page that only retitles itself has something new.
+        let mut retitled = page("Session ended", "Renew");
+        retitled["title"] = json!("Done");
+        assert_ne!(settled_view(&retitled), settled_view(&still));
         let mut scrolled = page("Session ended", "Renew");
         scrolled["scroll"] = json!({"y": 560});
         assert_ne!(settled_view(&scrolled), settled_view(&still));
@@ -299,6 +309,49 @@ mod tests {
         let mut ticked = page("Session ended", "Renew");
         ticked["actions"][0]["checked"] = json!(true);
         assert_ne!(settled_view(&ticked), settled_view(&still));
+    }
+
+    #[test]
+    fn titles_that_differ_only_in_digits_are_different_views() {
+        // Nothing is masked in the title either: a tab that counts its
+        // progress ("Loading 1/3") moves under every look.
+        let titled = |title: &str| {
+            let mut view = page("Please wait", "Retry");
+            view["title"] = json!(title);
+            view
+        };
+        assert_eq!(
+            settled_view(&titled("Loading 1/3")),
+            settled_view(&titled("Loading 1/3"))
+        );
+        assert_ne!(
+            settled_view(&titled("Loading 1/3")),
+            settled_view(&titled("Loading 2/3"))
+        );
+    }
+
+    #[test]
+    fn a_separator_in_a_label_cannot_make_two_views_equal() {
+        let with = |label: &str, value: &str, current: &str| {
+            json!({
+                "url": "https://a.test/", "text": "t", "scroll": {"y": 0},
+                "actions": [{"id": "e1", "kind": "fill", "label": label, "value": value, "current_value": current}],
+            })
+        };
+        // The same characters, split differently between two fields.
+        assert_ne!(
+            settled_view(&with("a|", "b", "")),
+            settled_view(&with("a", "|b", ""))
+        );
+        assert_ne!(
+            settled_view(&with("l", "x", "|y")),
+            settled_view(&with("l", "x|", "y"))
+        );
+        // Missing and empty stay equal, and identical views stay equal.
+        assert_eq!(
+            settled_view(&with("l", "", "")),
+            settled_view(&with("l", "", ""))
+        );
     }
 
     #[test]

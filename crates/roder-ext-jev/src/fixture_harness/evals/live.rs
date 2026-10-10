@@ -31,6 +31,9 @@
 //!   `JEV_EVAL_BASELINE` names. `JEV_EVAL_SAVE_BASELINE=1` writes this run's
 //!   tally and pin there, if the run was `JEV_EVAL_N=3` or more over the whole
 //!   corpus and the tree did not change under it (see [`super::tally`]).
+//!   With `JEV_EVAL_STRICT=1` as well, a run the strict gate rejects is not
+//!   saved: record a baseline that holds known failures (the first one, or a
+//!   regression accepted on purpose) without `JEV_EVAL_STRICT`.
 //!
 //! Each run writes `target/jev-evals/live-<unix seconds>.jsonl`, one line per
 //! run of a task, graded on outcomes only (the plan-specific `script` checks
@@ -83,6 +86,10 @@ struct LiveSetup {
     /// `JEV_EVAL_FALLBACK=model`: the fallback after every task Jev could
     /// not finish, each row graded on Jev alone and on Jev with it.
     fallback: Option<Arc<dyn FallbackModel>>,
+    /// `JEV_EVAL_CONCURRENCY`: how many runs go at once. It sets the request
+    /// load on the hosted service and the load on the machine's Chrome, so
+    /// runs at different values are not the same measurement.
+    concurrency: usize,
 }
 
 impl LiveSetup {
@@ -90,7 +97,7 @@ impl LiveSetup {
     /// header.
     fn label(&self) -> String {
         format!(
-            "text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}",
+            "text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}, concurrency {}",
             self.text_model
                 .as_ref()
                 .map_or("task values".to_string(), TextModel::label),
@@ -100,6 +107,7 @@ impl LiveSetup {
             self.variants.names(),
             self.confirm_irreversible,
             !self.no_cookie_banner_refusal,
+            self.concurrency,
         )
     }
 
@@ -120,8 +128,19 @@ impl LiveSetup {
     }
 }
 
-async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Option<Row> {
-    let harness = Harness::start().await?;
+/// The row of a run that could not start a browser: a failed run in the
+/// tally, not a run that is missing from it.
+fn no_chrome(task: &Task, repeat: usize) -> Row {
+    let error = anyhow::anyhow!("no Chrome binary was found (set JEV_CHROME_BINARY)");
+    let mut row = Row::errored(task, "live", &error);
+    row.repeat = repeat;
+    row
+}
+
+async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
+    let Some(harness) = Harness::start().await else {
+        return no_chrome(task, repeat);
+    };
     let (task, names) = setup.task(task);
     let task = &task;
     let http: Arc<dyn JevDecisionTransport> = Arc::new(TypeSafeHttpTransport::new(
@@ -182,7 +201,7 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Option<Row> {
         Err(error) => Row::errored(task, "live", &error),
     };
     row.repeat = repeat;
-    Some(row)
+    row
 }
 
 /// Per-head confidence and the call confidence (the least certain head),
@@ -239,6 +258,10 @@ async fn live_corpus() {
         eprintln!("skipping: set TYPESAFE_API_KEY (or JEV_API_KEY) to run the live tier");
         return;
     };
+    let concurrency = env("JEV_EVAL_CONCURRENCY")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2)
+        .max(1);
     let setup = LiveSetup {
         key,
         model: env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
@@ -265,15 +288,12 @@ async fn live_corpus() {
         )
         .unwrap(),
         fallback: super::fallback_live::live_fallback().await,
+        concurrency,
     };
     if Harness::start().await.is_none() {
         eprintln!("skipping: no Chrome binary found (set JEV_CHROME_BINARY)");
         return;
     }
-    let concurrency = env("JEV_EVAL_CONCURRENCY")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(2)
-        .max(1);
     let repeats = tally::repeats(env("JEV_EVAL_N").as_deref()).unwrap();
     let settings = Settings {
         n: repeats,
@@ -284,6 +304,7 @@ async fn live_corpus() {
             false,
         )
         .unwrap(),
+        strict: env("JEV_EVAL_STRICT").as_deref() == Some("1"),
     };
     let baseline_path = tally::baseline_path(env("JEV_EVAL_BASELINE").as_deref());
     let saved = Baseline::load(&baseline_path).unwrap();
@@ -291,8 +312,7 @@ async fn live_corpus() {
     let setup = &setup;
     let rows = futures::stream::iter(tally::plan(&tasks, repeats))
         .map(|(task, repeat)| run_one(setup, task, repeat))
-        .buffer_unordered(concurrency)
-        .filter_map(|row| async move { row })
+        .buffer_unordered(setup.concurrency)
         .collect::<Vec<_>>()
         .await;
     let end = Pin::capture(&setup.model, &setup.label()).unwrap();
@@ -316,12 +336,73 @@ async fn live_corpus() {
         path.display(),
         summary.display()
     );
-    if env("JEV_EVAL_STRICT").as_deref() == Some("1") {
+    if settings.strict {
         let failures = conclusion.strict_failures();
         assert!(
             failures.is_empty(),
             "the live run did not hold:\n{}",
             failures.join("\n")
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixture_harness::evals::pin::Pin;
+    use crate::fixture_harness::evals::tally::conclude;
+
+    fn setup(concurrency: usize) -> LiveSetup {
+        LiveSetup {
+            key: "test-key".into(),
+            model: "jev-latest".into(),
+            variants: Variants::parse("").unwrap(),
+            text_model: None,
+            confirm_irreversible: false,
+            no_cookie_banner_refusal: false,
+            fallback: None,
+            concurrency,
+        }
+    }
+
+    #[test]
+    fn the_pinned_setup_names_how_many_runs_go_at_once() {
+        // Runs at another concurrency are noted by the baseline comparison
+        // as a different setup, not compared as if nothing differed.
+        assert_ne!(setup(2).label(), setup(8).label());
+        assert!(setup(8).label().ends_with("concurrency 8"));
+    }
+
+    #[test]
+    fn a_run_that_could_not_start_a_browser_is_a_failed_run_in_the_tally() {
+        let task: Task = serde_json::from_value(json!({
+            "id": "any_task",
+            "covers": "a task",
+            "page": "basic.html",
+            "goal": "Do it.",
+            "expect": {},
+            "script": {"plan": [{"done": true}]}
+        }))
+        .unwrap();
+        let row = no_chrome(&task, 3);
+        assert_eq!(row.repeat, 3);
+        assert!(!row.passed() && !row.marks.false_green, "{row:?}");
+        assert!(row.failures[0].contains("no Chrome"), "{:?}", row.failures);
+        let pin = || Pin {
+            commit: "c0ffee".into(),
+            worktree: "aaaa".into(),
+            corpus: "bbbb".into(),
+            model: "jev-latest".into(),
+            setup: setup(2).label(),
+        };
+        let settings = Settings {
+            n: 1,
+            subset: false,
+            save: false,
+            strict: true,
+        };
+        let conclusion = conclude(&[Run::from(&row)], pin(), pin(), &settings, None);
+        assert_eq!(conclusion.tasks["any_task"].runs, 1);
+        assert_eq!(conclusion.strict_failures(), ["1 failed runs"]);
     }
 }

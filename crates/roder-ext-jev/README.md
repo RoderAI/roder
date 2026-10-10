@@ -211,12 +211,24 @@ grading a run afterwards: `roder exec --json` carries only the text.
 **Completion check.** `success_condition` (`url_contains`, `text_contains`,
 `text_absent`; `src/session/completion.rs`) is checked once, after `done`, on a
 fresh look at the tab. Both sides of each comparison are folded first
-(`completion/text.rs`): case, whitespace runs (including the line break
-`text.js` puts between nodes, and no-break spaces) and zero-width characters do
-not matter, so `count: 1` matches `Count:` over `1`. `text.js` now returns the
-field values it listed in the page text (`typed_values` on the observation,
+(`completion/text.rs`): whitespace runs (including the line break `text.js`
+puts between nodes, and no-break spaces) and zero-width characters do not
+matter. In the two text predicates case does not matter either, and a Greek
+word-final sigma `ς` is the ordinary `σ`, so `count: 1` matches `Count:` over
+`1` and `ΚΟΣΜΟΣ` matches `κοσμος`. `url_contains` is the exception: a URL's
+path, query and fragment keep their case, because a case-sensitive server can
+serve another page at `/Orders/ABC` than at `/orders/abc`, and a run must not
+be certified on the wrong one (`text::fold_url`). Only the scheme and host of
+a full URL (a string that starts `scheme://`, on either side) are lower-cased,
+since they are case-insensitive; a name and password before an `@` keep their
+case, and a string that is not a full URL (`/orders/abc`, `shop.test/orders`)
+is compared as written. `text.js` now returns
+the field values it listed in the page text (`typed_values` on the observation,
 `FinalPage.typed_values`, scrubbed like the text), and the check leaves one
-matching line out per value: what a field holds is not the page's own text.
+matching line out per value: what a field holds is not the page's own text. A
+value the 6,000-character limit cut is reported as the part the text kept (its
+last line), so a long value that begins with the success phrase is not read as
+the page saying it.
 A predicate with nothing visible in it is an error, an empty one is skipped.
 `completion_verification` carries `status`, the three predicates, `unmet` and
 the scope; the digest line says "condition met" or "condition not met" and
@@ -336,7 +348,10 @@ default mode asks for each, accept-all runs unless `authorize_irreversible`).
 deadline) and `JEV_FALLBACK_MAX_TOKENS` (input and output, default
 400,000). One that is reached ends the fallback `budget_exceeded` or
 `timed_out`, naming it. Older page reads are cut to one line before each
-model call and only the newest screenshot is still shown.
+model call and only the newest screenshot is still shown. A model that is
+not shown tool-result pictures has no screenshot tool, and its page reads
+(the opening one and each tool result) say "use x/y coordinates" where the
+look would say to use a screenshot on a page with no elements.
 
 ## Uncovering a target
 
@@ -437,7 +452,9 @@ only a combobox fill 200 ms. A popup that never opens costs the 1.2 s.
   still dropped. Controls left out by the caps, out of reach or cut off are
   counted in `omitted_actions`, one per control (a select's options and a
   field's "Open" click are not counted again), and the result reports the
-  count as `omitted.controls`.
+  count as `omitted.controls`. Controls off to the side, cut off by a frame's
+  box, disabled, hidden or without a role are dropped before the count and
+  are not in it.
 - A control cut off by an ancestor nothing can scroll is dropped: a collapsed
   panel (`height: 0; overflow: hidden`) or `overflow: clip`. A hidden-overflow
   box with room, such as a carousel, is kept, because `act.js` scrolls it.
@@ -560,9 +577,10 @@ never a 0 that would read as free. The third unusable reply in a row ends the
 run `error` with `stop_cause` `decision_unusable`, and `stopped_because`
 gives the count and the first reason. This is the one `error` that falls back
 (trigger kind `decision_unusable`), to a model with the full browser tools in
-the same tab. A call that failed instead of answering (no connection, a
-timeout, a refused key, billing or access, a rate limit) is no reply: it is
-not asked again, and it does not fall back.
+the same tab, unless Jev declined a confirm or prompt earlier in the run,
+which is the caller's to answer. A call that failed instead of answering (no
+connection, a timeout, a refused key, billing or access, a rate limit) is no
+reply: it is not asked again, and it does not fall back.
 
 **Launch (`chrome.rs`).** After the 9222 probe, a Chrome on Jev's profile is
 found through its `DevToolsActivePort`. A launch uses
@@ -664,16 +682,18 @@ and the fallback takes it over as it does after a stall:
 - Three stale decisions in a row, each followed by a look at the page that
   shows nothing new, stop the run: `stop_cause` `unsettled`, with the last
   stale message in `stopped_because`. "Nothing new" is the same view compared
-  exactly, nothing masked: address, scroll, text, frames, and each visible
-  control's id, kind, state, label and value, as the observation reports them.
-  A stale decision that leaves a different view, and any step recorded in
-  between, start the count again. A page whose only change is digits (a clock,
-  a countdown, "3 minutes ago") is therefore progress to this cap, as it is to
-  the pair counter: such a run is left to the action and model-call budgets
-  and the timeout, and a timeout does not fall back. What the cap ends is a
-  page that reads the same at every look while the click guard keeps changing
-  (it compares the text of the form, dialog, card or row around the button,
-  below the fold too, and a link's `href`).
+  exactly, nothing masked: address, title, scroll, text, frames, and each
+  visible control's id, kind, state, label and value, as the observation
+  reports them. A stale decision that leaves a different view, and any action
+  the model chose in between (a refused cookie banner is recorded but is not
+  one), start the count again. A page whose only change is digits (a clock, a
+  countdown, "3 minutes ago", a counter in the tab's title) is therefore
+  progress to this cap, as it is to the pair counter: such a run is left to
+  the action and model-call budgets and the timeout, and a timeout does not
+  fall back. What the cap ends is a page that reads the same at every look
+  while the click guard keeps changing (it compares the text of the form,
+  dialog, card or row around the button, below the fold too, and a link's
+  `href`).
 - Six waits in a row after which the page was the same stop the run as `looped`.
   Such a wait is also skipped by the stall rule (it neither counts as a no-op
   nor breaks a run of them), so `click, wait, click, wait, click` with nothing
@@ -1123,7 +1143,9 @@ TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
   episode's reward at its end, `jev_success` when Jev stopped, and the
   summary gives both scores and what the fallback cost.
 - `JEV_EVAL_TASKS` narrows the run and `JEV_EVAL_CONCURRENCY` (default 2)
-  sets how many runs go at once.
+  sets how many runs go at once. The concurrency is part of the run's
+  setup, so a baseline taken at another value is noted as one that may not
+  compare.
 - `JEV_EVAL_N=3` runs each task that many times (default 1, at most 20; all
   tasks once before any twice) and prints a tally per task. The paired
   Decisions/Jev eval keeps its own `JEV_EVAL_REPEATS`.
@@ -1135,9 +1157,12 @@ TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
   `JEV_EVAL_BASELINE` names. `JEV_EVAL_SAVE_BASELINE=1` writes this run's
   tally there with the commit, a hash of the crate's sources and fixtures,
   a hash of the corpus, the model and the run's switches. It refuses a run
-  with fewer than 3 runs per task, a run narrowed by `JEV_EVAL_TASKS`, and a
-  run whose tree changed under it (the pin is read at the start and again
-  at the end).
+  with fewer than 3 runs per task, a run narrowed by `JEV_EVAL_TASKS`, a run
+  whose tree changed under it (the pin is read at the start and again at the
+  end), and, with `JEV_EVAL_STRICT=1` too, a run the strict gate rejects, so
+  a regression is never written down as the numbers to beat. Record a
+  baseline that holds known failures (the first one, or a regression
+  accepted on purpose) without `JEV_EVAL_STRICT`.
 
 Both tiers print a result table (`pass`, `FAIL` or `FALSE-GREEN` per run) and
 write one JSONL line per run of a task to `target/jev-evals/` (`keyless.jsonl`,
@@ -1149,7 +1174,11 @@ or `live-<unix seconds>.jsonl`). A row has:
   trace match the task;
 - `false_green`: `verdict_ok` and not `truth_ok`, a claim the page does not
   back. A row passes when it is `verdict_ok` and `truth_ok`; there is no
-  `pass` field. The keyless corpus asserts `false_green` is 0;
+  `pass` field. The keyless corpus asserts `false_green` is 0. The three
+  fields are Jev's alone; a task that scripts a fallback has the same three
+  for the call after it under `fallback`, and the keyless corpus fails a row
+  whose scripted fallback missed what the task expects of it or never ran
+  (`after fallback: …` in the failure);
 - `repeat` (the run's number, from 1), `failures`, the status, steps, model
   calls, wall time and `input_tokens` when every call reported them;
 - `watch`: `looks`, one per reading of the page, with the `offered` count,

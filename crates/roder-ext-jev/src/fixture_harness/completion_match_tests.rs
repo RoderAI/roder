@@ -1,7 +1,8 @@
 //! How a `success_condition` is matched against the page a call ended on:
 //! case, whitespace (line breaks between nodes, no-break spaces) and
-//! zero-width characters are ignored on both sides, `text_absent` needs the
-//! text gone, and what a field holds is not page text.
+//! zero-width characters are ignored on both sides of a text predicate, a
+//! `url_contains` keeps the case of the path and the query, `text_absent`
+//! needs the text gone, and what a field holds is not page text.
 use super::act_on;
 use super::scripted::{FieldValues, PlanDecider, pick};
 use super::sessions::{call, call_with, test_sessions};
@@ -90,7 +91,7 @@ async fn no_break_and_zero_width_characters_do_not_hide_a_match() {
         &sessions,
         "fold-nbsp",
         json!({"goal":"Finish the order", "url":harness.site.url("completion-state.html"),
-        "success_condition":{"url_contains":"COMPLETION-state.HTML",
+        "success_condition":{"url_contains":"/pages/completion-state.html",
             "text_contains":"order confirmed"}}),
         Arc::new(PlanDecider::new(vec![pick("click", "Finish order")])),
     )
@@ -105,6 +106,43 @@ async fn no_break_and_zero_width_characters_do_not_hide_a_match() {
         json!({"goal":"Finish the order", "url":harness.site.url("completion-state.html"),
         "success_condition":{"text_contains":"order\u{a0}\u{a0} con\u{200b}firmed\n"}}),
         Arc::new(PlanDecider::new(vec![pick("click", "Finish order")])),
+    )
+    .await
+    .unwrap();
+    assert!(passed(&result), "{result:#}");
+}
+
+#[tokio::test]
+async fn url_contains_needs_the_pages_own_case_in_its_path() {
+    let harness = harness_or_skip!();
+    let sessions = test_sessions();
+    let url = harness.site.url("completion-state.html");
+    // The page text says what is wanted: only the address differs, in case.
+    let result = call(
+        &harness,
+        &sessions,
+        "url-case",
+        json!({"goal":"Finish the order", "url":url,
+        "success_condition":{"url_contains":"/pages/COMPLETION-state.HTML",
+            "text_contains":"order confirmed"}}),
+        Arc::new(PlanDecider::new(vec![pick("click", "Finish order")])),
+    )
+    .await
+    .unwrap();
+    assert!(rejected(&result), "{result:#}");
+    assert_eq!(
+        result["completion_verification"]["unmet"],
+        json!(["url_contains"])
+    );
+    // The scheme of a full address is free, its path is not.
+    let scheme = format!("HTTP{}", &url["http".len()..]);
+    let result = call(
+        &harness,
+        &sessions,
+        "url-scheme-case",
+        json!({"goal":"Finish the order", "url":url,
+        "success_condition":{"url_contains":scheme}}),
+        Arc::new(PlanDecider::new(vec![])),
     )
     .await
     .unwrap();
@@ -316,6 +354,56 @@ async fn the_observation_lists_the_field_values_its_text_holds() {
     assert!(holds(
         json!({"text_contains":"Waiting for your guess"}),
         &many
+    ));
+}
+
+#[tokio::test]
+async fn a_field_value_the_text_limit_cuts_is_still_not_page_text() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("completion-state.html").await.unwrap();
+    // 5,501 characters of the page's own words come first, so the 6,000 the
+    // page text keeps end inside the note field's 2,000-character value.
+    page.evaluate(
+        "(() => {
+            const filler = document.createElement('p');
+            filler.style.cssText = 'font-size:6px;line-height:6px;margin:0';
+            filler.textContent = 'filler '.repeat(786).trim();
+            document.body.insertBefore(filler, document.body.firstChild);
+            document.getElementById('note').value = 'order confirmed ' + 'x'.repeat(1984);
+        })()",
+    )
+    .await
+    .unwrap();
+    let observation = page.observe().await.unwrap();
+    let text = observation["text"].as_str().unwrap();
+    // The limit fell inside the value: the line it left is a prefix of it.
+    let kept = text.rsplit('\n').next().unwrap();
+    assert!(
+        text.encode_utf16().count() > 5990 && kept.starts_with("order confirmed x"),
+        "{} units, last line {:?}",
+        text.encode_utf16().count(),
+        kept.chars().take(40).collect::<String>()
+    );
+    assert!(kept.len() < 2000, "{}", kept.len());
+    // The prefix is reported as the field's, so the check does not read it
+    // as the page saying the phrase.
+    assert_eq!(
+        observation["typed_values"],
+        json!([kept]),
+        "{observation:#}"
+    );
+    assert!(!holds(
+        json!({"text_contains":"order confirmed"}),
+        &observation
+    ));
+    assert!(holds(
+        json!({"text_absent":"order confirmed"}),
+        &observation
+    ));
+    // The page's own words before it still count.
+    assert!(holds(
+        json!({"text_contains":"filler filler"}),
+        &observation
     ));
 }
 

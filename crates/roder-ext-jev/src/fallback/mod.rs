@@ -25,6 +25,7 @@ pub(crate) mod guard;
 pub(crate) mod handover;
 pub(crate) mod model;
 mod offered;
+mod page_read;
 mod prompt;
 pub(crate) mod run;
 pub(crate) mod settings;
@@ -142,7 +143,8 @@ pub(crate) struct FinalPage {
     pub(crate) title: String,
     pub(crate) visible_text: String,
     /// The values form fields held that `visible_text` shows as lines, in
-    /// order. Not page content: a completion check leaves them out.
+    /// order; the last may be only what the text limit left of its value.
+    /// Not page content: a completion check leaves them out.
     pub(crate) typed_values: Vec<String>,
     pub(crate) controls: Value,
     pub(crate) page: Value,

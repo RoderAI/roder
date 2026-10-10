@@ -232,17 +232,75 @@ fn the_text_the_caller_reads_is_the_same_with_or_without_the_class() {
 }
 
 #[test]
-fn a_reason_longer_than_the_cap_still_repeats() {
+fn a_long_reason_that_comes_back_unchanged_still_repeats() {
     let long = |tail: &str| format!("{}{tail}", "same start ".repeat(40));
     let mut last = None;
     finish(
         &mut last,
         data("needs_input", "https://a.test/", &long("A")),
     );
-    // Cut for memory, identical on both sides: the same long reason repeats.
+    // Compared whole, not cut: the same long reason repeats.
     let (error, _) = finish(
         &mut last,
         data("needs_input", "https://a.test/", &long("A")),
     );
     assert!(error);
+}
+
+#[test]
+fn reasons_that_differ_only_far_into_the_text_are_not_a_repeat() {
+    // The same status, page and first 300 characters, then different words:
+    // two handoffs, not the caller ignoring one. The second is a first.
+    let long = |tail: &str| format!("{}{tail}", "x".repeat(300));
+    let mut last = None;
+    finish(
+        &mut last,
+        data("needs_confirmation", "https://a.test/", &long("A")),
+    );
+    let (error, class) = finish(
+        &mut last,
+        data("needs_confirmation", "https://a.test/", &long("B")),
+    );
+    assert!(!error);
+    assert_eq!(class.as_deref(), Some("handoff"));
+    // And the second one, repeated unchanged, is a repeat.
+    let (error, class) = finish(
+        &mut last,
+        data("needs_confirmation", "https://a.test/", &long("B")),
+    );
+    assert!(error);
+    assert_eq!(class.as_deref(), Some("repeated_handoff"));
+}
+
+#[test]
+fn addresses_that_differ_only_far_into_the_text_are_not_a_repeat() {
+    let long = |tail: &str| format!("https://a.test/?q={}{tail}", "x".repeat(2048));
+    let mut last = None;
+    finish(&mut last, data("needs_input", &long("1"), "no value"));
+    let (error, class) = finish(&mut last, data("needs_input", &long("2"), "no value"));
+    assert!(!error);
+    assert_eq!(class.as_deref(), Some("handoff"));
+    let (error, class) = finish(&mut last, data("needs_input", &long("2"), "no value"));
+    assert!(error);
+    assert_eq!(class.as_deref(), Some("repeated_handoff"));
+}
+
+#[test]
+fn whitespace_far_into_a_long_reason_does_not_make_a_handoff_new() {
+    let words = "same start ".repeat(80);
+    let mut last = None;
+    finish(
+        &mut last,
+        data("access_denied", "https://a.test/", &format!("{words}end")),
+    );
+    let (error, class) = finish(
+        &mut last,
+        data(
+            "access_denied",
+            "https://a.test/",
+            &format!(" {}\n end ", words.replace(' ', "  ")),
+        ),
+    );
+    assert!(error);
+    assert_eq!(class.as_deref(), Some("repeated_handoff"));
 }

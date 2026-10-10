@@ -272,6 +272,9 @@ pub(crate) struct Settings {
     pub(crate) subset: bool,
     /// `JEV_EVAL_SAVE_BASELINE=1`.
     pub(crate) save: bool,
+    /// `JEV_EVAL_STRICT=1`: with `save`, a run the strict gate would reject is
+    /// not saved.
+    pub(crate) strict: bool,
 }
 
 /// A live run once its rows are in.
@@ -332,12 +335,7 @@ pub(crate) fn conclude(
             );
         }
     }
-    let save = (settings.save && refused.is_empty()).then(|| Baseline {
-        pin: start.clone(),
-        n: settings.n,
-        tasks: tasks.clone(),
-    });
-    Conclusion {
+    let mut conclusion = Conclusion {
         n: settings.n,
         start,
         end,
@@ -345,10 +343,29 @@ pub(crate) fn conclude(
         tasks,
         comparison,
         refused,
-        save,
+        save: None,
         failed_runs: runs.iter().filter(|run| !run.marks.passed()).count(),
         false_green_runs: runs.iter().filter(|run| run.marks.false_green).count(),
+    };
+    // A run the strict gate rejects is not the next baseline: the gate would
+    // fail the test after the file was written, and every later run would
+    // compare itself with the numbers that were rejected.
+    if settings.save && settings.strict && conclusion.refused.is_empty() {
+        let failures = conclusion.strict_failures();
+        if !failures.is_empty() {
+            conclusion.refused.push(format!(
+                "the run fails JEV_EVAL_STRICT=1 ({}), and a baseline is not saved from a run the \
+                 gate rejects; run without JEV_EVAL_STRICT to accept it",
+                failures.join("; ")
+            ));
+        }
     }
+    conclusion.save = (settings.save && conclusion.refused.is_empty()).then(|| Baseline {
+        pin: conclusion.start.clone(),
+        n: settings.n,
+        tasks: conclusion.tasks.clone(),
+    });
+    conclusion
 }
 
 impl Conclusion {

@@ -235,12 +235,16 @@ impl JevRunResult {
 
 /// What a page held that Jev was not offered, counted on the page Jev
 /// ended on. Both counts are numbers the caller reads as a warning that the
-/// page is bigger than what Jev could act on.
+/// page is bigger than what Jev could act on. They count only what the page
+/// reading could have offered: controls off to the side, cut off by a
+/// frame's box, disabled, hidden or without a role are dropped before the
+/// count and are in neither.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct JevOmitted {
-    /// Controls the page reading left out: past its caps (100 below the
-    /// fold, 250 in all), out of reach of any scroll, or cut off by an
-    /// ancestor. One per control, however many actions it would have had.
+    /// Controls the page reading left out among those it could have offered:
+    /// past its caps (100 below the fold, 250 in all), out of reach of any
+    /// scroll, or cut off by an ancestor. One per control, however many
+    /// actions it would have had.
     pub controls: usize,
     /// Targets no choice could take, because a choice takes at most 255 per
     /// operation: the last options of a select with more, or all of the

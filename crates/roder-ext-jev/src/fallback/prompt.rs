@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 
+use super::page_read::page_for;
 use super::trigger::Trigger;
 use crate::agent::tidy_cover;
 use crate::engine::JevRunResult;
@@ -131,7 +132,7 @@ pub(crate) fn opening(
     }
     lines.push(String::new());
     lines.push("The tab now:".into());
-    lines.push(page.to_string());
+    lines.push(page_for(pictures, page));
     lines.join("\n")
 }
 
@@ -410,6 +411,27 @@ mod tests {
                 assert!(rules.contains(said), "{said}");
             }
         }
+    }
+
+    #[test]
+    fn the_opening_shows_an_empty_page_without_naming_a_tool_the_model_lacks() {
+        let page = "Page (untrusted): https://x.test/\nElements: none found; use a screenshot and \
+                    x/y coordinates.";
+        let said = |pictures| {
+            let jev = covered_run(&[]);
+            opening(
+                "Go.",
+                Trigger::NothingToActOn,
+                &jev,
+                page,
+                20,
+                120,
+                pictures,
+            )
+        };
+        assert!(said(true).ends_with("use a screenshot and x/y coordinates."));
+        assert!(said(false).ends_with("Elements: none found; use x/y coordinates."));
+        assert!(!said(false).contains("screenshot"));
     }
 
     #[test]

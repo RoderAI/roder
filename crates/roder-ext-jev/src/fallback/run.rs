@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 use super::guard::JevGuard;
 use super::model::{FallbackModel, Turn};
 use super::offered::offered_tools;
+use super::page_read::page_for;
 use super::prompt::{Verdict, instructions, opening, page_url, verdict};
 use super::trigger::Trigger;
 use crate::engine::{JevRunResult, JevStatus};
@@ -333,10 +334,13 @@ impl Loop<'_> {
             .unwrap_or(&call.name)
             .to_string();
         let started = Instant::now();
-        let step = match self.tools.iter().any(|tool| tool.name == call.name) {
+        let mut step = match self.tools.iter().any(|tool| tool.name == call.name) {
             true => self.session.run(&short, &args).await,
             false => DirectStep::error(format!("there is no tool {}", call.name)),
         };
+        // What the model reads (and the log's first line) never names a tool
+        // it was not offered.
+        step.text = page_for(self.pictures, &step.text);
         if let Some(secret) = &step.typed_secret {
             self.guard.remember(secret);
         }

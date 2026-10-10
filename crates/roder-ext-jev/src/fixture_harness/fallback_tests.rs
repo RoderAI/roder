@@ -303,3 +303,49 @@ async fn the_screenshot_tool_is_offered_only_to_a_model_shown_tool_result_images
         assert_eq!(said.contains("screenshot"), sees_images, "{said}");
     }
 }
+
+/// A look that finds no element says what to use instead. That is the
+/// screenshot tool, which a model that is not shown tool-result pictures is
+/// not offered, so its reads (the opening one and each result) must say
+/// coordinates alone; a model that is shown them still hears of the tool.
+#[tokio::test]
+async fn an_empty_page_read_does_not_send_a_model_without_pictures_to_a_screenshot() {
+    let harness = harness_or_skip!();
+    let sessions = test_sessions();
+    for sees_images in [true, false] {
+        let scripted =
+            ScriptedFallback::from_json(json!([{"tool": "look"}, {"say": "DONE: looked"}]));
+        let model = Arc::new(match sees_images {
+            true => scripted,
+            false => scripted.without_images(),
+        });
+        let result = call_falling_back(
+            &harness,
+            &sessions,
+            &format!("empty-{sees_images}"),
+            json!({"goal": "reveal the code", "url": harness.site.url("keyboard-only.html")}),
+            jev(json!([{"blocked": true}])),
+            model.clone(),
+            &ceilings(FallbackMode::Auto),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["fallback"]["trigger"]["kind"], "nothing_to_act_on");
+        let hint = match sees_images {
+            true => "Elements: none found; use a screenshot and x/y coordinates.",
+            false => "Elements: none found; use x/y coordinates.",
+        };
+        // The tab as the opening message shows it, and the look the model
+        // asked for: the page really has no elements in either.
+        let opening = model.opening();
+        let results = model.tool_results();
+        assert_eq!(results.len(), 1, "{results:?}");
+        for read in [&opening, &results[0]] {
+            assert!(read.lines().any(|line| line == hint), "{hint}\n{read}");
+        }
+        if !sees_images {
+            let said = format!("{}\n{opening}\n{}", model.instructions(), results[0]);
+            assert!(!said.contains("screenshot"), "{said}");
+        }
+    }
+}

@@ -15,8 +15,10 @@
 //!
 //! Giving up ends the run `error` with [`JevStopCause::DecisionUnusable`]
 //! and says how many replies there were and why the first was unusable. This
-//! is the one `error` that falls back (see `fallback::trigger`): a frontier
-//! model with the full browser tools goes on from there.
+//! is the one `error` that is eligible for fallback (see `fallback::trigger`):
+//! a frontier model with the full browser tools goes on from there, unless
+//! Jev declined a confirm or prompt earlier in the run, which is the
+//! caller's to answer.
 
 use super::*;
 use crate::session::cut;

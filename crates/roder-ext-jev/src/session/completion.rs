@@ -1,8 +1,12 @@
 //! Caller-defined UI postconditions, independent of the decision model's DONE.
 //!
-//! Each predicate is matched on the comparable form of both sides (see
-//! [`text::fold`]): case, runs of whitespace (a line break between page
-//! nodes, a no-break space) and zero-width characters do not matter. The
+//! Each predicate is matched on the comparable form of both sides: runs of
+//! whitespace (a line break between page nodes, a no-break space) and
+//! zero-width characters never matter. The two text predicates also ignore
+//! case (see [`text::fold`]). `url_contains` does not: the path, the query
+//! and the fragment of a URL keep their case, since a server can serve
+//! another page at the same path in another case, and only the scheme and
+//! host of a full URL are compared without it (see [`text::fold_url`]). The
 //! page's text leaves out what form fields hold, so a value the run typed in
 //! cannot satisfy `text_contains` or hide from `text_absent`.
 mod text;
@@ -12,15 +16,16 @@ use crate::fallback::FinalPage;
 use anyhow::{Context, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use text::{fold, without_echoes};
+use text::{fold, fold_url, without_echoes};
 
 /// The longest a predicate may be.
 const MAX_BYTES: usize = 4096;
 
 /// What a check says it covers.
-const SCOPE: &str = "Only the caller-specified URL/text predicates, compared ignoring case, \
-    spacing and zero-width characters, against the page text on screen (6000 characters at most; \
-    what form fields hold is left out). Not a proof of the entire natural-language goal.";
+const SCOPE: &str = "Only the caller-specified URL/text predicates, compared ignoring spacing and \
+    zero-width characters. Text is also compared ignoring case, against the page text on screen \
+    (6000 characters at most; what form fields hold is left out); a URL keeps the case of its path \
+    and query. Not a proof of the entire natural-language goal.";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,10 +81,10 @@ impl Completion {
     }
     /// The predicates `page` does not satisfy.
     fn unmet(&self, page: &FinalPage) -> Vec<&'static str> {
-        let url = fold(&page.url);
+        let url = fold_url(&page.url);
         let text = fold(&without_echoes(&page.visible_text, &page.typed_values));
         let mut unmet = Vec::new();
-        if !self.url_contains.is_empty() && !url.contains(&fold(&self.url_contains)) {
+        if !self.url_contains.is_empty() && !url.contains(&fold_url(&self.url_contains)) {
             unmet.push("url_contains");
         }
         if !self.text_contains.is_empty() && !text.contains(&fold(&self.text_contains)) {
@@ -250,10 +255,73 @@ mod tests {
     }
 
     #[test]
-    fn url_contains_ignores_case() {
+    fn a_greek_final_sigma_matches_whatever_the_case() {
+        // Page and predicate differ in case on a word-final sigma.
+        let wanted = condition(json!({"text_contains":"ΚΟΣΜΟΣ"}));
+        assert!(wanted.matches(&page("", "Hello κοσμος", &[])));
+        let lower = condition(json!({"text_contains":"κοσμος"}));
+        assert!(lower.matches(&page("", "Hello ΚΟΣΜΟΣ", &[])));
+        // An absence is not shown by the other spelling of the same word.
+        let absent = condition(json!({"text_absent":"κοσμος"}));
+        assert!(!absent.matches(&page("", "ΚΟΣΜΟΣ", &[])));
+        assert!(absent.matches(&page("", "κόσμοι", &[])));
+    }
+
+    #[test]
+    fn url_contains_is_case_sensitive_in_the_path_and_the_query() {
         let wanted = condition(json!({"url_contains":"/Search?Q=Boots"}));
-        assert!(wanted.matches(&page("https://shop.test/search?q=boots&p=2", "", &[])));
+        assert!(wanted.matches(&page("https://shop.test/Search?Q=Boots&p=2", "", &[])));
+        // The same letters in another case are another address.
+        assert!(!wanted.matches(&page("https://shop.test/search?q=boots&p=2", "", &[])));
+        assert!(!wanted.matches(&page("https://shop.test/Search?q=Boots", "", &[])));
         assert!(!wanted.matches(&page("https://shop.test/search?q=shoes", "", &[])));
+        let lower = condition(json!({"url_contains":"/search?q=boots"}));
+        assert!(!lower.matches(&page("https://shop.test/Search?Q=Boots", "", &[])));
+    }
+
+    #[test]
+    fn a_path_in_another_case_is_not_the_page_that_was_asked_for() {
+        // A case-sensitive server serves a different page at each of these.
+        let wanted = condition(json!({"url_contains":"/Orders/ABC"}));
+        let other = page("https://shop.test/orders/abc", "", &[]);
+        assert!(!wanted.matches(&other));
+        let report = wanted.report(Some(&other));
+        assert_eq!(report["status"], "failed");
+        assert_eq!(report["unmet"], json!(["url_contains"]));
+        assert!(wanted.matches(&page("https://shop.test/Orders/ABC?x=1", "", &[])));
+        // A fragment is case-sensitive too.
+        let anchor = condition(json!({"url_contains":"/guide#Setup"}));
+        assert!(anchor.matches(&page("https://docs.test/guide#Setup", "", &[])));
+        assert!(!anchor.matches(&page("https://docs.test/guide#setup", "", &[])));
+    }
+
+    #[test]
+    fn the_scheme_and_host_of_a_full_url_are_compared_without_case() {
+        let wanted = condition(json!({"url_contains":"HTTPS://Shop.Test/Orders/ABC"}));
+        assert!(wanted.matches(&page("https://shop.test/Orders/ABC", "", &[])));
+        // Only the origin is free: the path after it keeps its case.
+        assert!(!wanted.matches(&page("https://shop.test/orders/abc", "", &[])));
+        // A page address that was not written in lower case folds the same way.
+        let lower = condition(json!({"url_contains":"https://shop.test:8443/Orders"}));
+        assert!(lower.matches(&page("HTTPS://Shop.Test:8443/Orders/ABC", "", &[])));
+        // What stands before the `@` is a name and a password, not a host.
+        let signed_in = condition(json!({"url_contains":"https://Ann:Secret@Shop.Test/"}));
+        assert!(signed_in.matches(&page("https://Ann:Secret@shop.test/", "", &[])));
+        assert!(!signed_in.matches(&page("https://ann:secret@shop.test/", "", &[])));
+        // A string that is not a full URL is compared as written.
+        let path = condition(json!({"url_contains":"/Orders/ABC"}));
+        assert!(path.matches(&page("https://Shop.Test/Orders/ABC", "", &[])));
+        assert!(!path.matches(&page("https://shop.test/orders/abc", "", &[])));
+        let part = condition(json!({"url_contains":"Orders/ABC"}));
+        assert!(part.matches(&page("https://shop.test/Orders/ABC", "", &[])));
+        assert!(!part.matches(&page("https://shop.test/orders/abc", "", &[])));
+    }
+
+    #[test]
+    fn url_contains_still_folds_whitespace_and_zero_width_characters() {
+        let wanted = condition(json!({"url_contains":" /Search?\u{200b}Q=Boots\n"}));
+        assert!(wanted.matches(&page("https://shop.test/Search?Q=Boots", "", &[])));
+        assert!(!wanted.matches(&page("https://shop.test/search?q=boots", "", &[])));
     }
 
     #[test]

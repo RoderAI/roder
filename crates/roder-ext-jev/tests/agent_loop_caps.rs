@@ -62,6 +62,14 @@ fn counting_label(n: usize) -> Value {
     labelled_page("counting", &[("go", "click", &format!("Renew ({n}s)"))])
 }
 
+/// A page whose only change is its title, as a tab that counts its progress
+/// changes it: the words, the controls and the fingerprint stay as they are.
+fn retitled(n: usize) -> Value {
+    let mut view = page("same", &[("go", "click")]);
+    view["title"] = json!(format!("Loading {n}/200"));
+    view
+}
+
 /// `fresh()` answers for a page that goes stale at every decision: the
 /// check before the decision passes, the one before DONE fails.
 fn always_stale() -> Vec<bool> {
@@ -314,6 +322,43 @@ async fn a_label_that_changes_only_in_its_digits_is_left_to_the_budgets() {
     assert_eq!(result.status, JevStatus::BudgetExceeded, "{result:#?}");
     assert_eq!(result.stop_cause, Some(JevStopCause::Budget));
     assert_eq!(result.model_calls, TEN_CALLS);
+}
+
+#[tokio::test]
+async fn a_page_that_changes_only_in_its_title_is_left_to_the_budgets() {
+    // The title is page text the model is shown, so a decision made on one
+    // title and read again under another has something new to look at. Each
+    // decision goes stale, the view counts as moved each time, and the
+    // model-call budget ends the run, not the cap on stale decisions.
+    let browser =
+        ScriptedBrowser::new((0..200).map(retitled).collect()).with_fresh(&always_stale());
+
+    let (result, acts) = run_to_the_budget(browser).await;
+
+    assert_eq!(result.status, JevStatus::BudgetExceeded, "{result:#?}");
+    assert_eq!(result.stop_cause, Some(JevStopCause::Budget));
+    assert_eq!(result.model_calls, TEN_CALLS);
+    assert_eq!(acts, 0);
+}
+
+#[tokio::test]
+async fn a_refused_cookie_banner_between_stale_decisions_does_not_restart_the_count() {
+    // The banner refusal is recorded as an entry of its own, but it is not a
+    // step the model chose. The page still reads the same at every look, so
+    // the third stale decision in a row ends the run, banner or not.
+    let browser = ScriptedBrowser::new(vec![page("same", &[("go", "click")])])
+        .with_fresh(&always_stale())
+        // The first read, the look after decision 1, then after decision 2.
+        .with_banners(&[None, None, Some("Reject all")]);
+
+    let result = run(browser, ScriptedDecider::new(&["DONE"])).await;
+
+    assert_eq!(result.status, JevStatus::Blocked, "{result:#?}");
+    assert_eq!(result.stop_cause, Some(JevStopCause::Unsettled));
+    assert_eq!(result.model_calls, 3);
+    // The banner is in the record, and is the only entry.
+    assert_eq!(result.actions.len(), 1);
+    assert_eq!(result.actions[0].kind, "cookie_banner");
 }
 
 #[tokio::test]

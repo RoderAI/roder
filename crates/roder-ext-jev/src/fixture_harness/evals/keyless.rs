@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use super::{
-    FallbackRow, Row, StepDecider, Task, TaskValues, load_tasks, run_task, table, validate,
-    write_rows,
+    FallbackRow, Outcome, Row, StepDecider, Task, TaskValues, load_tasks, run_task, table,
+    validate, write_rows,
 };
 use crate::engine::JevStopCause;
 use crate::fallback::model::FallbackModel;
@@ -33,24 +33,54 @@ async fn run_one(base: &Harness, task: &Task) -> Row {
         Arc::new(ScriptedFallback::new(fallback.plan.clone())) as Arc<dyn FallbackModel>
     });
     match run_task(&harness, task, decision, text, probes, fallback).await {
-        Ok(outcome) => {
-            let mut graded = task
-                .expect
-                .grade(&outcome)
-                .and(task.script.expect.grade(&outcome));
-            let after = task
-                .fallback
-                .as_ref()
-                .map(|_| FallbackRow::grade(task, &outcome, graded.marks()));
-            if let Some(after) = &after {
-                graded = graded.and(after.missed());
-            }
-            let mut row = Row::new(task, "keyless", Vec::new(), &outcome, graded);
-            row.fallback = after;
-            row
-        }
+        Ok(outcome) => graded_row(task, &outcome),
         Err(error) => Row::errored(task, "keyless", &error),
     }
+}
+
+/// The row of a finished keyless run. Its marks are Jev's alone, as the
+/// row documents; a task that scripts a fallback also carries what the
+/// call came to after it, in `row.fallback`.
+pub(super) fn graded_row(task: &Task, outcome: &Outcome) -> Row {
+    let graded = task
+        .expect
+        .grade(outcome)
+        .and(task.script.expect.grade(outcome));
+    let mut row = Row::new(task, "keyless", Vec::new(), outcome, graded);
+    if task.fallback.is_some() {
+        row.fallback = Some(FallbackRow::grade(task, outcome, row.marks));
+    }
+    row
+}
+
+/// Every miss that fails a keyless row: Jev's own, then what a scripted
+/// fallback left undone (or the fact that it never ran).
+pub(super) fn end_to_end_failures(row: &Row) -> Vec<String> {
+    let mut failures = row.failures.clone();
+    if let Some(after) = &row.fallback {
+        failures.extend(after.missed().failures());
+    }
+    failures
+}
+
+/// Whether the keyless gate lets a row through: Jev did what its task asks,
+/// and a scripted fallback then finished what the task scripts for it.
+pub(super) fn ends_well(row: &Row) -> bool {
+    row.passed()
+        && row
+            .fallback
+            .as_ref()
+            .is_none_or(|after| after.missed().passed())
+}
+
+/// A DONE the page does not back, from Jev or from the scripted fallback
+/// after it (its own marks, only when it ran).
+pub(super) fn false_green(row: &Row) -> bool {
+    row.marks.false_green
+        || row
+            .fallback
+            .as_ref()
+            .is_some_and(|after| after.ran && after.marks.false_green)
 }
 
 #[tokio::test]
@@ -103,8 +133,8 @@ async fn keyless_corpus_passes() {
     // catch before a model does: the scripted corpus has none.
     let false_green = rows
         .iter()
-        .filter(|row| row.marks.false_green)
-        .map(|row| format!("{}: {}", row.task, row.failures.join("; ")))
+        .filter(|row| false_green(row))
+        .map(|row| format!("{}: {}", row.task, end_to_end_failures(row).join("; ")))
         .collect::<Vec<_>>();
     assert!(
         false_green.is_empty(),
@@ -113,8 +143,8 @@ async fn keyless_corpus_passes() {
     );
     let failed = rows
         .iter()
-        .filter(|row| !row.passed())
-        .map(|row| format!("{}: {}", row.task, row.failures.join("; ")))
+        .filter(|row| !ends_well(row))
+        .map(|row| format!("{}: {}", row.task, end_to_end_failures(row).join("; ")))
         .collect::<Vec<_>>();
     assert!(failed.is_empty(), "failed tasks:\n{}", failed.join("\n"));
 }

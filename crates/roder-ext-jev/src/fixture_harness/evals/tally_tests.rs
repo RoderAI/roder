@@ -39,6 +39,7 @@ fn settings(n: usize) -> Settings {
         n,
         subset: false,
         save: true,
+        strict: false,
     }
 }
 
@@ -238,6 +239,65 @@ fn too_few_runs_and_a_narrowed_corpus_are_not_baselines() {
     };
     let conclusion = conclude(&runs("a", 1, 1), pin(), pin(), &quiet, None);
     assert!(conclusion.save.is_none() && conclusion.refused.is_empty());
+}
+
+#[test]
+fn strict_and_save_together_do_not_ratify_a_regression() {
+    // The baseline has `a` passing 3 of 3; this run, under both switches,
+    // gets 0 of 3. The strict gate fails the run, so it is not the next
+    // baseline: a later run would otherwise compare against 0 of 3 and
+    // report no regression.
+    let known = baseline("a", 3, 3);
+    let both = Settings {
+        strict: true,
+        ..settings(3)
+    };
+    let now = runs("a", 3, 0);
+    let conclusion = conclude(&now, pin(), pin(), &both, Some(&known));
+    assert_eq!(conclusion.comparison.as_ref().unwrap().regressions.len(), 1);
+    assert!(!conclusion.strict_failures().is_empty());
+    assert!(
+        conclusion.save.is_none(),
+        "a rejected run became a baseline"
+    );
+    assert_eq!(conclusion.refused.len(), 1, "{:?}", conclusion.refused);
+    assert!(
+        conclusion.refused[0].contains("JEV_EVAL_STRICT"),
+        "{:?}",
+        conclusion.refused
+    );
+    let report = conclusion.report();
+    assert!(report.contains("baseline not saved"), "{report}");
+
+    // The same run without the strict switch is a baseline the owner asked
+    // for (a regression accepted on purpose), as before.
+    let lax = conclude(&now, pin(), pin(), &settings(3), Some(&known));
+    assert!(lax.save.is_some() && lax.refused.is_empty());
+}
+
+#[test]
+fn a_run_that_holds_under_strict_is_still_saved() {
+    let both = Settings {
+        strict: true,
+        ..settings(3)
+    };
+    let known = baseline("a", 3, 2);
+    let better = conclude(&runs("a", 3, 3), pin(), pin(), &both, Some(&known));
+    assert!(better.strict_failures().is_empty());
+    assert!(better.refused.is_empty(), "{:?}", better.refused);
+    assert!(better.save.is_some());
+
+    // With no baseline, strict wants every run to pass, so the first one
+    // is saved from a clean run and from no other.
+    let clean = conclude(&runs("a", 3, 3), pin(), pin(), &both, None);
+    assert!(clean.save.is_some() && clean.refused.is_empty());
+    let one_failed = conclude(&runs("a", 3, 2), pin(), pin(), &both, None);
+    assert!(one_failed.save.is_none());
+    assert!(
+        one_failed.refused[0].contains("1 failed runs"),
+        "{:?}",
+        one_failed.refused
+    );
 }
 
 #[test]

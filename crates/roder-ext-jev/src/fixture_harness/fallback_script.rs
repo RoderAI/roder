@@ -55,6 +55,8 @@ pub(crate) struct ScriptedFallback {
     /// The first message the fallback was given: the goal, what Jev did and
     /// the page.
     opening: Mutex<String>,
+    /// The tool results the newest request carried, as the model read them.
+    results: Mutex<Vec<String>>,
 }
 
 impl ScriptedFallback {
@@ -67,6 +69,7 @@ impl ScriptedFallback {
             offered: Mutex::new(Vec::new()),
             instructions: Mutex::new(String::new()),
             opening: Mutex::new(String::new()),
+            results: Mutex::new(Vec::new()),
         }
     }
 
@@ -88,6 +91,11 @@ impl ScriptedFallback {
     /// The first message it was given, as the fallback model read it.
     pub(crate) fn opening(&self) -> String {
         self.opening.lock().unwrap().clone()
+    }
+
+    /// The tool results the last request carried, as the model read them.
+    pub(crate) fn tool_results(&self) -> Vec<String> {
+        self.results.lock().unwrap().clone()
     }
 
     /// The names of the tools the first request offered.
@@ -122,6 +130,14 @@ impl FallbackModel for ScriptedFallback {
         {
             *self.opening.lock().unwrap() = first.text.clone();
         }
+        *self.results.lock().unwrap() = turn
+            .transcript
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItem::ToolResult(result) => Some(result.result.clone()),
+                _ => None,
+            })
+            .collect();
         if index == 0 {
             *self.offered.lock().unwrap() =
                 turn.tools.iter().map(|tool| tool.name.clone()).collect();

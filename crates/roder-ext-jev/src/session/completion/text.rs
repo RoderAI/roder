@@ -1,6 +1,8 @@
 //! The text a completion check compares: what a caller writes and what the
 //! page shows are both reduced to one comparable form first, and what a form
-//! field holds is not counted as the page's own text.
+//! field holds is not counted as the page's own text. Page text is folded
+//! to lower case; a URL keeps the case of everything but its scheme and host,
+//! because a server can serve another page at a path in another case.
 
 /// Characters that take no room on screen, so a page can carry them anywhere
 /// in a word and a caller cannot see them: the soft hyphen, the combining
@@ -23,11 +25,64 @@ fn invisible(c: char) -> bool {
     )
 }
 
+/// The Greek small letter final sigma and the small sigma it stands for.
+const FINAL_SIGMA: char = '\u{3c2}';
+const SIGMA: char = '\u{3c3}';
+
 /// The comparable form of `text`: invisible characters dropped, every run of
 /// whitespace (line breaks between nodes, tabs, no-break and other
-/// typographic spaces) one space, nothing at either end, and lower case.
-/// Applied to the page and to the caller's predicate alike.
+/// typographic spaces) one space, nothing at either end, and lower case,
+/// with the Greek final sigma written as the ordinary one (lower-casing a
+/// character alone turns a capital sigma into the ordinary one only, so a
+/// word in capitals would not match the same word in lower case). Applied
+/// to the page and to the caller's predicate alike.
 pub(crate) fn fold(text: &str) -> String {
+    squash(text, true)
+}
+
+/// The comparable form of a URL, or of a string meant to be found in one:
+/// like [`fold`] but with the case kept, since the path, the query and the
+/// fragment are case-sensitive (`/Orders/ABC` and `/orders/abc` can be two
+/// pages), and for a full URL (`scheme://...`) the scheme and the host in
+/// lower case, which are not. A string that does not start with a scheme and
+/// `://`, such as `/orders/abc` or `shop.test/orders`, is compared as it is
+/// written. Applied to the page's URL and to the caller's predicate alike.
+pub(crate) fn fold_url(url: &str) -> String {
+    let squashed = squash(url, false);
+    let Some(scheme_end) = squashed
+        .find("://")
+        .filter(|&end| is_scheme(&squashed[..end]))
+    else {
+        return squashed;
+    };
+    let authority = scheme_end + "://".len();
+    let authority_end = squashed[authority..]
+        .find(['/', '?', '#'])
+        .map_or(squashed.len(), |end| authority + end);
+    // What stands before an `@` is a name and a password, which keep their case.
+    let host = squashed[authority..authority_end]
+        .rfind('@')
+        .map_or(authority, |at| authority + at + 1);
+    format!(
+        "{}://{}{}{}",
+        squashed[..scheme_end].to_ascii_lowercase(),
+        &squashed[authority..host],
+        squashed[host..authority_end].to_lowercase(),
+        &squashed[authority_end..]
+    )
+}
+
+/// Whether `text` is a URL scheme: a letter, then letters, digits, `+`, `-`
+/// and `.`.
+fn is_scheme(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// `text` with invisible characters dropped and every run of whitespace one
+/// space, nothing at either end; in lower case when `lower` is set.
+fn squash(text: &str, lower: bool) -> String {
     let mut folded = String::with_capacity(text.len());
     let mut gap = false;
     for c in text.chars().filter(|&c| !invisible(c)) {
@@ -40,7 +95,14 @@ pub(crate) fn fold(text: &str) -> String {
             folded.push(' ');
             gap = false;
         }
-        folded.extend(c.to_lowercase());
+        if lower {
+            folded.extend(
+                c.to_lowercase()
+                    .map(|lower| if lower == FINAL_SIGMA { SIGMA } else { lower }),
+            );
+        } else {
+            folded.push(c);
+        }
     }
     folded
 }
@@ -106,6 +168,20 @@ mod tests {
     }
 
     #[test]
+    fn fold_makes_a_final_sigma_the_ordinary_one() {
+        // Lower-casing a character alone turns capital sigma into the
+        // ordinary one, never the final one, so a page's word-final sigma
+        // would stay apart from the same word in capitals.
+        assert_eq!(fold("ΟΣ"), fold("ος"));
+        assert_eq!(fold("ΚΟΣΜΟΣ"), "κοσμοσ");
+        assert_eq!(fold("κοσμος"), "κοσμοσ");
+        assert_eq!(fold("Κοσμος σοφος"), fold("ΚΟΣΜΟΣ ΣΟΦΟΣ"));
+        // Nothing else about the word changes.
+        assert_eq!(fold("ΣΊΣΥΦΟΣ"), "σίσυφοσ");
+        assert_eq!(fold("ς"), "σ");
+    }
+
+    #[test]
     fn fold_drops_zero_width_and_invisible_characters_without_making_a_gap() {
         assert_eq!(fold("Con\u{200b}firmed"), "confirmed");
         assert_eq!(
@@ -128,6 +204,63 @@ mod tests {
         assert_eq!(fold("a-b_c/d?e=1&f"), "a-b_c/d?e=1&f");
         assert_eq!(fold("日本語 テキスト"), "日本語 テキスト");
         assert_eq!(fold("🙂\u{200d}🙂"), "🙂🙂");
+    }
+
+    #[test]
+    fn fold_url_keeps_the_case_of_everything_after_the_host() {
+        assert_eq!(
+            fold_url("https://shop.test/Orders/ABC?Q=Boots&p=2#Top"),
+            "https://shop.test/Orders/ABC?Q=Boots&p=2#Top"
+        );
+        assert_eq!(
+            fold_url("HTTPS://Shop.Test:8443/Orders/ABC?Q=Boots#Top"),
+            "https://shop.test:8443/Orders/ABC?Q=Boots#Top"
+        );
+        // The host ends at the query or the fragment as well as the path.
+        assert_eq!(fold_url("http://Shop.Test?Q=1"), "http://shop.test?Q=1");
+        assert_eq!(fold_url("http://Shop.Test#Top"), "http://shop.test#Top");
+        assert_eq!(fold_url("HTTP://Shop.Test"), "http://shop.test");
+        // A name and a password are not part of the host.
+        assert_eq!(
+            fold_url("https://Ann:Secret@Shop.Test/Orders"),
+            "https://Ann:Secret@shop.test/Orders"
+        );
+        assert_eq!(fold_url("ftp://U@@Host/P"), "ftp://U@@host/P");
+        assert_eq!(
+            fold_url("chrome-extension://ABC/Page.HTML"),
+            "chrome-extension://abc/Page.HTML"
+        );
+    }
+
+    #[test]
+    fn fold_url_compares_a_string_that_is_not_a_full_url_as_written() {
+        for as_written in [
+            "/Orders/ABC",
+            "Shop.Test/Orders/ABC",
+            "?Q=Boots",
+            "#Top",
+            "//Shop.Test/Orders",
+            "Orders/ABC",
+            "",
+            // A URL inside a query is the query's text, not the address.
+            "/Redirect?To=HTTPS://Shop.Test/Orders",
+            "not a scheme://Host/Path",
+            "1http://Host/Path",
+            "://Host/Path",
+            "日本語/Ñandú",
+        ] {
+            assert_eq!(fold_url(as_written), as_written);
+        }
+    }
+
+    #[test]
+    fn fold_url_drops_zero_width_characters_and_folds_whitespace() {
+        assert_eq!(
+            fold_url(" HTTPS://Shop.\u{200b}Test/Or\u{feff}ders/ABC\n"),
+            "https://shop.test/Orders/ABC"
+        );
+        assert_eq!(fold_url("/A \t\u{a0}b"), "/A b");
+        assert_eq!(fold_url("\u{200b}  "), "");
     }
 
     #[test]
@@ -177,6 +310,22 @@ mod tests {
         // Half of it is not the whole value.
         assert_eq!(
             without_echoes(text, &typed(&["line two\nSave\nmore"])),
+            text
+        );
+    }
+
+    #[test]
+    fn what_the_text_limit_left_of_a_value_is_taken_out_as_its_last_lines() {
+        // The page text ends inside a field's three-line value; `text.js`
+        // reports the part it kept, which is those last lines exactly.
+        let text = "Notes\nline one\nline two\nline th";
+        assert_eq!(
+            without_echoes(text, &typed(&["line one\nline two\nline th"])),
+            "Notes"
+        );
+        // The whole value is not what the page shows: nothing matches.
+        assert_eq!(
+            without_echoes(text, &typed(&["line one\nline two\nline three"])),
             text
         );
     }

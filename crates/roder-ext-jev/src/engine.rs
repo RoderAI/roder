@@ -272,8 +272,10 @@ pub enum JevStopCause {
     /// (the first answer and two asks again): it failed validation, was a
     /// refusal, or its body could not be decoded. The status is `error` and
     /// `stopped_because` gives the count and the first reason. This is the
-    /// one `error` Roder falls back after, to a model with the full browser
-    /// tools.
+    /// only `error` cause eligible for Roder's fallback: to a model with the
+    /// full browser tools in `JEV_FALLBACK=auto` (a hand-over in `handover`,
+    /// nothing in `off`), and not after a dialog Jev declined, which is the
+    /// caller's to answer.
     DecisionUnusable,
     /// The run was going round in circles: Jev was about to choose the same
     /// control a fourth time on a page that looked the same each time, or

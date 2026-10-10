@@ -8,8 +8,8 @@
 //! Jev could not use.
 //!
 //! That last one is the only `error` that falls back. The service answered
-//! and was billed, but its replies failed validation or could not be
-//! decoded, even after Jev asked again twice
+//! and was billed, but its replies failed validation, were refusals, or
+//! could not be decoded, even after Jev asked again twice
 //! ([`JevStopCause::DecisionUnusable`]); a frontier model with the full
 //! browser tools may finish what Jev's decision service could not decide.
 //! The owner decided so. It is the cause that routes, never the status alone,

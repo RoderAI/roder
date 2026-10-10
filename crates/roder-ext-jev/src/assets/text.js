@@ -8,8 +8,10 @@
 // a filled-in form), never a secret's (see `safe`). Text a box has scrolled
 // out of its own view is not shown, so scrolling the box shows something new.
 // The function returns {text, held}: `held` lists the field values `text`
-// holds whole, in order, so a caller can tell the page's own words from what
-// a field holds (a completion check must not count a value typed in).
+// holds, in order, each whole or, for the one the limit cut, as much as
+// `text` kept of it (its last line), so a caller can tell the page's own
+// words from what a field holds (a completion check must not count a value
+// typed in, nor the start of one too long to fit).
 (({tree, visible, safe, placed, roots, regions, rectOf, cut}) => {
   // The scroll box, of those observed, that holds an element, and its rect.
   const holder=new Map(), rects=new Map(regions.map(e=>[e,rectOf(e)]));
@@ -85,12 +87,15 @@
   return ()=>{
     read(document);
     const text=cut(words.join('\n'),6000).toWellFormed();
-    // Words are joined by one line break each; a field value cut by the
-    // limit is not reported.
+    // Words are joined by one line break each, so a word stands at
+    // [start,end) of the joined text. What `text` holds of a field's word is
+    // reported as `text` holds it, so it is exactly the line (or lines) the
+    // check finds there; a word the limit left none of is not reported.
     const held=[]; let end=-1;
     words.forEach((word,i)=>{
+      const start=end+1;
       end+=word.length+1;
-      if (fieldAt.has(i) && end<=text.length) held.push(word.toWellFormed());
+      if (fieldAt.has(i) && start<text.length) held.push(text.slice(start,end));
     });
     return {text,held};
   };

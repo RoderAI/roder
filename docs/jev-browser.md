@@ -14,7 +14,8 @@ result is an agent claim that should be checked against the observed page.
 predicates. Each nonempty one is checked against a fresh browser observation
 after the driver reports completion, and all that are given must hold:
 
-- `url_contains`: the final URL contains the string.
+- `url_contains`: the final URL contains the string. Case matters in the path,
+  the query and the fragment (see below).
 - `text_contains`: the page text contains the string.
 - `text_absent`: the page text does not contain the string (a spinner, an
   error message or a draft banner that must be gone).
@@ -35,15 +36,27 @@ anything; leave a predicate empty to skip it.
 }
 ```
 
-Both sides of every comparison are reduced to one form first: case is
-ignored, every run of whitespace (a line break between page nodes, a tab, a
-no-break space) is one space, and zero-width characters (zero-width space,
-joiner and non-joiner, word joiner, byte-order mark, soft hyphen, the
-invisible directional marks) are dropped. So `text_contains: "count: 1"`
+Both sides of every comparison are reduced to one form first: every run of
+whitespace (a line break between page nodes, a tab, a no-break space) is one
+space, and zero-width characters (zero-width space, joiner and non-joiner, word
+joiner, byte-order mark, soft hyphen, the invisible directional marks) are
+dropped. In `text_contains` and `text_absent` case is ignored too, and a Greek
+word-final sigma (`ς`) is the ordinary one (`σ`), which lower-casing a capital
+never produces, so `ΚΟΣΜΟΣ` matches `κοσμος`. So `text_contains: "count: 1"`
 matches a counter whose page text is `Count:` and `1` on separate lines, and
 `"order confirmed"` matches `ORDER&nbsp;&nbsp;Con&#8203;firmed`. This is all the
 folding there is: other differences (curly against straight quotes, accents,
 different spellings) still matter.
+
+`url_contains` keeps case. A server can serve a different page at `/Orders/ABC`
+than at `/orders/abc`, so `"/Orders/ABC"` does not match
+`https://shop.test/orders/abc`, and `"/Search?Q=Boots"` does not match
+`?q=boots`: the path, the query and the fragment are compared exactly, and
+write them as the page's address does. Only the scheme and host of a full URL
+(`HTTPS://Shop.Test/Orders/ABC` against `https://shop.test/Orders/ABC`) are
+compared without case, since those are case-insensitive; a name and password
+written before an `@` keep their case. A string that is not a full URL, such as
+`/orders/abc` or `shop.test/orders`, is compared as written.
 
 The text compared is the page text Jev reads: what is on screen, 6,000
 characters at most, in reading order (with the text of the frames Jev reads and
@@ -53,7 +66,8 @@ passage, is listed in the result's page text as before, but a line that only
 echoes a field's value is left out when matching, so typing the success phrase
 into a search box cannot satisfy `text_contains`, and `text_absent` is judged
 on the page's own words. (The same words shown by the page itself still count;
-one line is taken out for each field value.) And only what is on screen is seen,
+one line is taken out for each field value, and a value the 6,000-character cut
+ends inside is taken out as the part the text kept.) And only what is on screen is seen,
 so `text_absent` passes for text that is scrolled out of view or past the cut;
 pick short, explicit outcome markers that show where the run stops.
 
@@ -365,7 +379,9 @@ out of reach, or cut off), one per control: a select's 40 options or a text
 field's fill and "Open" click are one control, not 40 or 2. It used to count
 actions, so a select dropped by the cap read as one omission per option. The
 key keeps its upstream name. The run's result reports it as `omitted.controls`
-(see "The result text").
+(see "The result text"). It counts only controls the reading could have
+offered: those off to the side, cut off by a frame's box, disabled, hidden or
+without a role are dropped before the count and are not in it.
 
 The caps count controls, not actions: a select's options are one control, so
 a country list of 300 options no longer fills the 250 cap and drops the
@@ -449,8 +465,10 @@ text, which holds the target's own. `Covered` keeps the name apart from its fixe
 message (`Covered::with_cover`, `Covered::cover`, for hosted browsers too), and
 the loop records it on the step as `covered_by`, shown only when the page gave a
 name. The name is page text, so before it is recorded it is scrubbed of typed
-secrets, put on one line, stripped of control characters and double quotes (so
-it cannot end the quotes it is shown in) and cut to 100 characters. The digest
+secrets, put on one line, stripped of control characters, direction and
+zero-width format characters (so it cannot reorder the text around it) and
+double quotes (so it cannot end the quotes it is shown in) and cut to 100
+characters. The digest
 shows it among the page-supplied lines ("covered by \"Spring sale popup\";
 nothing was done"; a cover with no name still reads "covered by another
 element"), and the fallback's opening message lists it in Jev's last steps,
@@ -1001,17 +1019,19 @@ The details:
   and a page with a clock on it never repeats a pair this way. The page's own
   fingerprint is untouched.
 - **Stale decisions.** After a stale decision the page is read again and
-  compared with the page the decision was made on: the same address and
-  scroll, the same frames, the same visible controls (id, kind, label, value,
-  state) and the same text, each exactly as the observation reports it.
+  compared with the page the decision was made on: the same address, title
+  and scroll, the same frames, the same visible controls (id, kind, label,
+  value, state) and the same text, each exactly as the observation reports it.
   Nothing is masked, as nothing is in the pair counter: a page whose only
-  change is digits (a clock, a countdown, "3 minutes ago") is a different view
-  and so progress. If the two views are identical the stale decision counts;
-  if they differ, the count starts again, and so it does at any step the run
-  records, a refused cookie banner included. The third in a row ends the run
-  before it asks for another decision. A choice the page does not offer is
-  stale too. What the cap ends is a page that reads the same at every look
-  while the click guard keeps changing: the guard compares the text of the
+  change is digits (a clock, a countdown, "3 minutes ago", a counter in the
+  tab's title) is a different view and so progress. If the two views are
+  identical the stale decision counts; if they differ, the count starts again,
+  and so it does at any action the model chose and the run carried out. A
+  refused cookie banner is recorded as a step of its own but is not one of
+  those: it neither restarts the count nor adds to it. The third in a row ends
+  the run before it asks for another decision. A choice the page does not
+  offer is stale too. What the cap ends is a page that reads the same at every
+  look while the click guard keeps changing: the guard compares the text of the
   form, dialog, card or row around the button, below the fold too, and a
   link's `href`, which the view does not hold. A digits-only ticker is left to
   the budgets instead, as the pair counter leaves it.
@@ -1350,12 +1370,17 @@ now splits the check in two, and has no `pass` field:
   task wanted said, and the page disagrees. A claim that misses the task (a
   DONE where BLOCKED was right) is a plain failure, not a false green.
 
-A row passes when both are ok. The same three fields sit under `fallback`
-for the call after a fallback, and the result table marks a run `pass`,
-`FAIL` or `FALSE-GREEN`. The keyless corpus asserts none is a false green:
-its scripted plans end where the graders say they should. `split_tests.rs`
-pins the split without a browser (a `Done` outcome with a failing DOM probe
-is `verdict_ok` true, `truth_ok` false, `false_green` true), and on real
+A row passes when both are ok. The row's three fields are Jev's alone; the
+same three sit under `fallback` for the call after a fallback, and the result
+table marks a run `pass`, `FAIL` or `FALSE-GREEN`. The keyless corpus asserts
+none is a false green, Jev's or a scripted fallback's, and fails a task whose
+scripted fallback missed what the task expects of it or never ran (the
+failure reads `after fallback: …`), without folding that miss into Jev's own
+marks: a fallback that said DONE over the wrong page is not a false green of
+Jev's row. Its scripted plans end where the graders say they should.
+`split_tests.rs` pins the split without a browser (a `Done` outcome with a
+failing DOM probe is `verdict_ok` true, `truth_ok` false, `false_green` true;
+a fallback that missed its page leaves Jev's row green), and on real
 Chrome against `search-decoy.html`, a copy of the `enter_to_search` shape:
 a search field with no button, and a "Preview results" button that writes
 "Showing results for trail shoes" and posts nothing. The plan that types,
@@ -1400,14 +1425,19 @@ writes `tests/fixtures/evals/live-baseline.json` (or the file
 `JEV_EVAL_BASELINE` names) with, per task, the tally above, and a pin: the
 git commit, a hash of the crate's sources and fixtures (`worktree`), a hash
 of `tasks.json` and the fixture pages (`corpus`), the decision model asked
-for and the run's switches (`setup`). The pin is read before the first task
+for and the run's switches, including `JEV_EVAL_CONCURRENCY`, which sets the
+request load (`setup`). The pin is read before the first task
 and again after the last. If the two reads differ the tree changed under the
 run, and its numbers describe no one tree: the report says so, the baseline
 is not saved, and `JEV_EVAL_STRICT=1` fails. (The fixtures are read from disk
 as the run goes, so an edit to one lands on the tasks still to run.) A
 baseline is also refused below `JEV_EVAL_N=3` and for a run narrowed by
 `JEV_EVAL_TASKS`, which would replace the baseline of the whole corpus with a
-part.
+part, and, when `JEV_EVAL_STRICT=1` is set as well, for a run the strict gate
+rejects: the file is not written, since the next run would compare itself
+with the numbers the gate rejected and report no regression. Record a baseline
+that holds known failures (the first one, or a regression accepted on purpose)
+without `JEV_EVAL_STRICT`.
 
 A run is compared with the baseline on rates, so three baseline runs stand
 against five new ones: a task is a regression when its pass, `verdict_ok` or
@@ -2347,7 +2377,7 @@ put the old value back makes the result an error, "the choice did not stick".
 | `blocked` because the start page did not load, or a page was outside `JEV_ALLOWED_ORIGINS` | no |
 | `blocked` after Jev declined a confirm or prompt | no: that question is the caller's |
 | `needs_input`, `needs_confirmation`, `access_denied` | no: a different driver does not fix them, and must never get around a block or a confirmation |
-| `error` after the decision service kept sending replies Jev could not use (`decision_unusable`: three in a row, each failing validation or with a body that cannot be decoded) | yes, trigger `decision_unusable`; the owner's decision. Not after a declined confirm or prompt |
+| `error` after the decision service kept sending replies Jev could not use (`decision_unusable`: three in a row, each failing validation, a refusal, or with a body that cannot be decoded) | yes, trigger `decision_unusable`; the owner's decision. Not after a declined confirm or prompt |
 | `done`, `timed_out`, `unavailable`, and any other `error` (an unreachable provider, a refused key, billing or access, a rate limit, a text-helper failure) | no |
 
 After an `error` that falls back, the result is as for any other trigger:
@@ -2399,7 +2429,11 @@ images a user attaches: Vertex takes those and sends tool results as text, and
 the screenshot tool returns its picture as a tool result, so offering it
 there would spend a step on a picture the model never sees. A model without
 the tool also hears nothing of one: its instructions and opening message do
-not mention a screenshot, and its other tools are unchanged.
+not mention a screenshot, and its other tools are unchanged. The look of a
+page with no elements says "use a screenshot and x/y coordinates"; for such a
+model that one line, in the opening message and in every tool result, reads
+"use x/y coordinates" (`fallback/page_read.rs`; page text that happens to
+say the same is left alone).
 
 The result is one. `status`, `stopped_because`, the page (address, title,
 text, frames, headings, options) and `elapsed_ms` are the call's end state:

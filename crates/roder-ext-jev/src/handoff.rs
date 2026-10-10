@@ -21,9 +21,9 @@
 //! What a handoff said is remembered per session, and so per thread: see
 //! [`SessionState::classify`](crate::session::SessionState::classify).
 
-use serde_json::{Value, json};
+use std::hash::{DefaultHasher, Hash, Hasher};
 
-use crate::session::cut;
+use serde_json::{Value, json};
 
 #[cfg(test)]
 mod tests;
@@ -36,43 +36,51 @@ pub(crate) const REPEATED_HANDOFF: &str = "repeated_handoff";
 /// The statuses that hand a decision to the caller.
 const STATUSES: [&str; 3] = ["needs_input", "needs_confirmation", "access_denied"];
 
-/// Longest a remembered reason or address is, in characters. Both sides of a
-/// comparison are cut the same way.
-const REASON_CHARS: usize = 300;
-const URL_CHARS: usize = 2048;
-
 /// What a handoff said: enough to tell whether the next one is the same.
+///
+/// The address and the reason are kept as fingerprints of their whole text,
+/// whitespace aside, so nothing is cut before they are compared (a long
+/// reason that differs only at its end is another handoff) and a remembered
+/// handoff stays a few bytes. A fingerprint is only ever compared with
+/// another from the same process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Handoff {
     status: String,
     /// The page the call ended on.
-    url: String,
+    url: u64,
     /// Why it stopped, which names the field, the control or the evidence.
-    reason: String,
+    reason: u64,
+}
+
+/// A fingerprint of `text`'s words: runs of whitespace and whitespace at
+/// either end make no difference, and each word ends where it ends.
+fn fingerprint(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for word in text.split_whitespace() {
+        word.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 impl Handoff {
     /// The handoff `data`, a finished call's result, reports, if it does.
     fn of(data: &Value) -> Option<Self> {
         let status = data["status"].as_str().filter(|s| STATUSES.contains(s))?;
-        let reason = data["stopped_because"]
-            .as_str()
-            .unwrap_or_default()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
         Some(Self {
             status: status.to_string(),
-            url: cut(data["url"].as_str().unwrap_or_default(), URL_CHARS),
-            reason: cut(&reason, REASON_CHARS),
+            url: fingerprint(data["url"].as_str().unwrap_or_default()),
+            reason: fingerprint(data["stopped_because"].as_str().unwrap_or_default()),
         })
     }
 }
 
 /// Mark `data` as a handoff or a repeat of the one `last` holds, and keep
-/// what it said as the new `last`. A result that is not a handoff forgets
-/// it: only an unbroken run of the same handoff is a repeat, as only an
-/// unbroken run of errors adds up toward Roder's stop.
+/// what it said as the new `last`. A finished `jev_browse` result that is
+/// not a handoff forgets it: only an unbroken run of the same handoff is a
+/// repeat, as only an unbroken run of errors adds up toward Roder's stop. A
+/// call that never gets a result to classify (it ended in an error, found
+/// the session busy or closed its tab) and a `jev_tab_*` call leave it as it
+/// was, so the same handoff coming back after one is still a repeat.
 pub(crate) fn classify(last: &mut Option<Handoff>, data: &mut Value) {
     let current = Handoff::of(data);
     let class = match (&current, &*last) {

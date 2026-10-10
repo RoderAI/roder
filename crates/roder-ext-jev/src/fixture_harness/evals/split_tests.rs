@@ -12,10 +12,13 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use super::keyless::{end_to_end_failures, ends_well, false_green, graded_row};
 use super::probe::Probed;
 use super::watch::Watched;
 use super::{FallbackRow, Outcome, Row, StepDecider, Task, TaskValues, run_task, table};
 use crate::engine::{JevRunResult, JevStatus};
+use crate::fallback::FallbackOutcome;
+use crate::fallback::run::FallbackUsage;
 use crate::fixture_harness::Harness;
 
 const STATUS_TEXT: &str = "document.querySelector('#status').textContent";
@@ -198,6 +201,97 @@ fn a_fallback_that_did_not_run_carries_jevs_marks_and_misses_the_task() {
     let missed = after.missed();
     assert_eq!(missed.truth, ["the fallback did not run"]);
     assert!(missed.verdict.is_empty());
+}
+
+/// A task Jev alone is expected to give up on, with the page untouched, and
+/// a scripted fallback that must then finish it.
+fn fallback_task() -> Task {
+    task(json!({
+        "id": "needs_the_fallback",
+        "covers": "a page Jev cannot finish and the fallback can",
+        "page": "search-decoy.html",
+        "goal": "Search the site for trail shoes.",
+        "expect": {"status": "blocked", "stopped": true, "dom": {STATUS_TEXT: ""}},
+        "script": {"plan": [{"blocked": true}]},
+        "fallback": {
+            "plan": [{"say": "DONE: searched"}],
+            "expect": {"status": "done", "dom": {STATUS_TEXT: "Sent: trail shoes"}}
+        }
+    }))
+}
+
+/// Jev's outcome on [`fallback_task`]: blocked as the task asks, the page
+/// untouched. `after` is the call after the fallback: its verdict, and what
+/// the page's status line reads then.
+fn blocked_then(after: Option<(JevStatus, &str)>) -> Outcome {
+    let mut jev = outcome(JevStatus::Blocked, &[(STATUS_TEXT, json!(""))]);
+    jev.result.stopped_because = Some("nothing serves the goal".into());
+    jev.after = after.map(|(status, page)| {
+        let combined = outcome(status, &[(STATUS_TEXT, json!(page))]);
+        let fallback = FallbackOutcome {
+            status,
+            stopped_because: None,
+            message: String::new(),
+            model: "scripted/fallback (none)".into(),
+            actions: Vec::new(),
+            model_calls: 1,
+            usage: FallbackUsage::default(),
+            elapsed_ms: 5,
+            opened_tabs: Vec::new(),
+            target_id: String::new(),
+            last_page: None,
+        };
+        Box::new((combined, fallback))
+    });
+    jev
+}
+
+#[test]
+fn a_fallback_that_missed_its_page_does_not_turn_jevs_row_into_a_false_green() {
+    // Jev did what its task asked (an honest BLOCKED, the page untouched);
+    // the fallback then said DONE over a page that does not show it.
+    let task = fallback_task();
+    let row = graded_row(&task, &blocked_then(Some((JevStatus::Done, "nothing"))));
+    assert!(row.marks.verdict_ok && row.marks.truth_ok, "{row:?}");
+    assert!(!row.marks.false_green, "{row:?}");
+    assert!(row.failures.is_empty(), "{:?}", row.failures);
+    let json = serde_json::to_value(&row).unwrap();
+    assert_eq!(json["false_green"], false, "{json}");
+    // The miss is the fallback's: its own marks carry it.
+    let after = row.fallback.as_ref().expect("the fallback was graded");
+    assert!(after.ran && after.marks.false_green, "{after:?}");
+    // And the gate still fails the row, naming whose miss it was.
+    assert!(false_green(&row));
+    assert!(!ends_well(&row));
+    let failures = end_to_end_failures(&row);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].starts_with("after fallback: "), "{failures:?}");
+    assert!(failures[0].contains("dom"), "{failures:?}");
+}
+
+#[test]
+fn a_scripted_fallback_that_did_not_run_fails_the_row_not_jevs_marks() {
+    let task = fallback_task();
+    let row = graded_row(&task, &blocked_then(None));
+    assert!(row.passed() && !row.marks.false_green, "{row:?}");
+    assert!(!row.fallback.as_ref().expect("graded").ran);
+    assert!(!false_green(&row) && !ends_well(&row));
+    assert_eq!(end_to_end_failures(&row), ["the fallback did not run"]);
+}
+
+#[test]
+fn a_fallback_that_finished_the_task_ends_well() {
+    let task = fallback_task();
+    let page = "Sent: trail shoes";
+    let row = graded_row(&task, &blocked_then(Some((JevStatus::Done, page))));
+    assert!(row.passed() && !row.marks.false_green, "{row:?}");
+    assert!(ends_well(&row), "{:?}", end_to_end_failures(&row));
+    assert!(end_to_end_failures(&row).is_empty() && !false_green(&row));
+    // A task with no fallback is graded on Jev alone, as before.
+    let alone = graded_row(&status_task("done"), &outcome(JevStatus::Done, &[]));
+    assert!(alone.fallback.is_none());
+    assert_eq!(end_to_end_failures(&alone), alone.failures);
+    assert_eq!(ends_well(&alone), alone.passed());
 }
 
 /// The decoy page, played two ways on the same page: the plan a confused
