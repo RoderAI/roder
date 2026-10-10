@@ -17,13 +17,13 @@ From the repo root:
 .agents/skills/roder-tmux/scripts/roder_tmux.sh capture
 ```
 
-The default session is `roder`, the default command is `cargo run -p roder-cli --bin roder`, and captures go to `.roder/tmux-captures/`.
+The default session is `roder`, the default command is `cargo run -p roder --bin roder`, and captures go to `.roder/tmux-captures/`.
 
 ## Common Commands
 
 - Start `roder` in a detached tmux session:
   ```sh
-  .agents/skills/roder-tmux/scripts/roder_tmux.sh start -s roder -- cargo run -p roder-cli --bin roder
+  .agents/skills/roder-tmux/scripts/roder_tmux.sh start -s roder -- cargo run -p roder --bin roder
   ```
 - Start with an explicit window size (default 200x50 — an 80x24 tmux default
   truncates roder's `/remote` pairing URL and `/chrome` status panels):

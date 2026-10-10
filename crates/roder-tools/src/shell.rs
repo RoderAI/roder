@@ -10,7 +10,9 @@ use serde_json::json;
 use tokio::process::Command;
 
 use crate::backend::WorkspaceBackendHandle;
-use crate::command_shell::{command_args_for_shell, shell_for_context};
+use crate::command_shell::{
+    command_args_for_shell, detach_controlling_terminal, shell_for_context,
+};
 use crate::files::{parse, require_nonempty, result};
 use crate::remote_cancel::RemoteCancelOnDrop;
 use crate::workspace::Workspace;
@@ -140,6 +142,7 @@ impl ToolExecutor for ShellTool {
                 let mut process = Command::new(&shell);
                 process.args(command_args_for_shell(&shell, &command, true));
                 process.current_dir(&cwd).kill_on_drop(true);
+                detach_controlling_terminal(&mut process);
                 let output =
                     tokio::time::timeout(std::time::Duration::from_secs(timeout), process.output())
                         .await;

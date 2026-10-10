@@ -43,9 +43,9 @@ pub use image_support::forwards_tool_result_images;
 
 use crate::stream_diagnostics::ResponseStreamDiagnostics;
 use roder_api::catalog::{
-    PROVIDER_CODEX, PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER, PROVIDER_SUPERGROK,
-    PROVIDER_XAI, REASONING_MAX, REASONING_ULTRA, lookup_model, lookup_model_for_provider,
-    models_for_provider,
+    OPENROUTER_REASONING, PROVIDER_CODEX, PROVIDER_FIREWORKS, PROVIDER_OPENAI, PROVIDER_OPENROUTER,
+    PROVIDER_SUPERGROK, PROVIDER_XAI, REASONING_MAX, REASONING_MEDIUM, REASONING_ULTRA,
+    lookup_model, lookup_model_for_provider, models_for_provider,
 };
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::CompactionProgress;
@@ -54,7 +54,7 @@ use roder_api::inference::{
     HostedWebSearchMode, InferenceCapabilities, InferenceEngine, InferenceEvent,
     InferenceEventStream, InferenceFailure, InferenceProviderContext, InferenceProviderMetadata,
     InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, ReasoningDelta,
-    TokenUsage, ToolCallCompleted, ToolCallDelta, ToolCallStarted,
+    ReasoningEffortDescriptor, TokenUsage, ToolCallCompleted, ToolCallDelta, ToolCallStarted,
 };
 use roder_api::reliability::{
     ReliabilityRequestPolicy, provider_retry_delay_ms, provider_retry_metadata,
@@ -429,6 +429,10 @@ pub struct ModelEntry {
     name: Option<String>,
     #[serde(default)]
     context_length: Option<u32>,
+    /// OpenRouter lists the request parameters each route honours. Other
+    /// OpenAI-compatible `/models` endpoints omit the field.
+    #[serde(default)]
+    supported_parameters: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -510,12 +514,30 @@ fn models_from_response(body: ModelsResponse) -> Vec<ModelDescriptor> {
             if let Some(catalog) = lookup_model(id) {
                 return Some(ModelDescriptor::from(catalog));
             }
+            // Routes outside the built-in catalog still advertise whether they
+            // reason, so surface the effort ladder instead of pinning the model
+            // to "reasoning none".
+            let reasoning_capable = model
+                .supported_parameters
+                .iter()
+                .any(|parameter| parameter == "reasoning" || parameter == "include_reasoning");
+            let supported_reasoning = if reasoning_capable {
+                OPENROUTER_REASONING
+                    .iter()
+                    .map(|option| ReasoningEffortDescriptor {
+                        effort: option.effort.to_string(),
+                        description: option.description.to_string(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             Some(ModelDescriptor {
                 id: id.to_string(),
                 name: model.name.unwrap_or_else(|| id.to_string()),
                 context_window: model.context_length,
-                default_reasoning: None,
-                supported_reasoning: Vec::new(),
+                default_reasoning: reasoning_capable.then(|| REASONING_MEDIUM.to_string()),
+                supported_reasoning,
             })
         })
         .collect()
@@ -1391,6 +1413,38 @@ mod tests {
         assert_eq!(models[0].id, "x-ai/grok-4.6");
         assert_eq!(models[0].name, "Grok 4.6");
         assert_eq!(models[0].context_window, Some(500_000));
+    }
+
+    #[tokio::test]
+    async fn model_discovery_offers_reasoning_efforts_for_uncatalogued_openrouter_routes() {
+        let base_url = spawn_models_server(vec![(
+            "/models",
+            200,
+            r#"{"data":[
+                {"id":"vendor/thinker","name":"Thinker","context_length":131072,
+                 "supported_parameters":["tools","reasoning","include_reasoning"]},
+                {"id":"vendor/plain","name":"Plain","context_length":65536,
+                 "supported_parameters":["tools","temperature"]}
+            ]}"#,
+        )])
+        .await;
+
+        let models = discover_models(&base_url, Some("secret")).await.unwrap();
+
+        let thinker = models.iter().find(|m| m.id == "vendor/thinker").unwrap();
+        assert_eq!(thinker.context_window, Some(131_072));
+        assert_eq!(thinker.default_reasoning.as_deref(), Some("medium"));
+        assert_eq!(
+            thinker
+                .supported_reasoning
+                .iter()
+                .map(|option| option.effort.as_str())
+                .collect::<Vec<_>>(),
+            vec!["none", "low", "medium", "high"]
+        );
+        let plain = models.iter().find(|m| m.id == "vendor/plain").unwrap();
+        assert!(plain.supported_reasoning.is_empty());
+        assert_eq!(plain.default_reasoning, None);
     }
 
     #[tokio::test]

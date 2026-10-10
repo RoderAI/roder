@@ -15,6 +15,7 @@ base64.workspace = true
 dirs.workspace = true
 globset.workspace = true
 ignore.workspace = true
+libc.workspace = true
 roder-api.workspace = true
 roder-edit-core.workspace = true
 roder-search.workspace = true
