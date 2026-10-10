@@ -16,7 +16,9 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex, Notify};
 
 use crate::backend::WorkspaceBackendHandle;
-use crate::command_shell::{command_args_for_shell, shell_for_context};
+use crate::command_shell::{
+    command_args_for_shell, detach_controlling_terminal, shell_for_context,
+};
 use crate::exec_output::{format_exec_output, trim_output_buffer_to_max_bytes, truncate_output};
 use crate::files::{parse, require_nonempty, result};
 use crate::remote_cancel::RemoteCancelOnDrop;
@@ -807,15 +809,15 @@ impl ExecSession {
 }
 
 fn build_command(shell: &str, command: &str, login: bool, tty: bool) -> Command {
-    if tty && cfg!(target_os = "macos") {
+    let mut cmd = if tty && cfg!(target_os = "macos") {
         let mut cmd = Command::new("script");
         cmd.arg("-q").arg("/dev/null").arg(shell);
-        cmd.args(command_args_for_shell(shell, command, login));
-        return cmd;
-    }
-
-    let mut cmd = Command::new(shell);
+        cmd
+    } else {
+        Command::new(shell)
+    };
     cmd.args(command_args_for_shell(shell, command, login));
+    detach_controlling_terminal(&mut cmd);
     cmd
 }
 

@@ -5044,6 +5044,7 @@ dependencies = [
  "dirs 6.0.0",
  "globset",
  "ignore",
+ "libc",
  "regex",
  "roder-api",
  "roder-edit-core",
