@@ -225,7 +225,11 @@ impl TerminalSession {
         // after a respawn, so we may re-exec once via tmux.
         // Best effort: when the respawn cannot happen, run without enhanced
         // keys (Ctrl+J still inserts newlines) rather than refusing to start.
-        let _ = tmux_ensure_extended_keys_for_shift_enter();
+        // The terminal is not in the alternate screen yet, so the note stays in
+        // the scrollback to explain why Shift+Enter behaves like Enter.
+        if let Err(err) = tmux_ensure_extended_keys_for_shift_enter() {
+            eprintln!("roder: could not enable tmux extended keys: {err}");
+        }
         let tmux_keys = TmuxExtendedKeysGuard::apply();
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -322,9 +326,11 @@ fn tmux_ensure_extended_keys_for_shift_enter() -> anyhow::Result<()> {
 
 /// `sh` wrapper that makes the respawned process inherit the launching
 /// environment: it sources the handoff script (`$0`), deletes the script and its
-/// private directory, then execs roder with the original arguments.
+/// private directory, then execs roder with the original arguments. The
+/// utilities are absolute because sourcing restores the launcher's `PATH`.
 #[cfg(unix)]
-const RESPAWN_WRAPPER: &str = r#". "$0"; rm -f -- "$0"; rmdir -- "${0%/*}" 2>/dev/null; exec "$@""#;
+const RESPAWN_WRAPPER: &str =
+    r#". "$0"; /bin/rm -f -- "$0"; /bin/rmdir -- "${0%/*}" 2>/dev/null; exec "$@""#;
 
 /// Shell script that re-exports this process's environment.
 ///

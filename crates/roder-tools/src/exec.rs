@@ -851,12 +851,20 @@ fn spawn_waiter(
             tokio::select! {
                 status = child.wait() => exit_from_status(status, false),
                 _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
-                    if let Some(pid) = child.id() {
-                        kill_process_group(pid);
+                    // The command may have exited just before the deadline and
+                    // lost the select race; keep its real status and leave any
+                    // background processes it started alone.
+                    match child.try_wait() {
+                        Ok(Some(status)) => exit_from_status(Ok(status), false),
+                        _ => {
+                            if let Some(pid) = child.id() {
+                                kill_process_group(pid);
+                            }
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                            ExecExit { exit_code: -1, timed_out: true }
+                        }
                     }
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    ExecExit { exit_code: -1, timed_out: true }
                 }
             }
         } else {

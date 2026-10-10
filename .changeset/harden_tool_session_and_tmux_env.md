@@ -9,11 +9,12 @@ roder: patch
 
 Follow-up to the TUI suspend fix.
 
-- A `shell` command that times out or is cancelled, and an `exec_command`
-  session that times out, now has its whole process group killed. Tool children
-  run in their own session, so killing only the shell left everything it had
-  started running. Background processes of a command that finished normally are
-  left alone.
+- On unix, a `shell` command that times out or is cancelled, and an
+  `exec_command` session that times out, now has its whole process group
+  killed. Tool children run in their own session, so killing only the shell left
+  everything it had started running. A command that finishes by itself leaves
+  its background processes alone, unless they keep its output pipes open, in
+  which case the command is still waiting and the timeout applies.
 - Inside tmux, the launching environment is now handed to the respawned roder
   through a private `0600` file that a small `sh` wrapper sources and deletes,
   instead of `respawn-pane -e` arguments that any local user could read from the

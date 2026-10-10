@@ -135,10 +135,19 @@ mod tests {
         assert_eq!(pid, pgid);
     }
 
+    /// A killed orphan can linger as a zombie until init reaps it; that is dead.
     #[cfg(unix)]
     fn process_alive(pid: i32) -> bool {
         // SAFETY: signal 0 only probes for existence.
-        unsafe { libc::kill(pid, 0) == 0 }
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return false;
+        }
+        let state = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .unwrap_or_default();
+        !state.is_empty() && !state.starts_with('Z')
     }
 
     #[cfg(unix)]
