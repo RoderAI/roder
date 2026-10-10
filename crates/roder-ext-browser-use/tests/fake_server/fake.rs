@@ -83,6 +83,12 @@ pub fn run_fake_server() {
                     ));
                     continue;
                 }
+                // A reply that has an `error` member but is no JSON-RPC error
+                // object: not the server declining the call.
+                if name == "browser_click" && args["index"] == 556 {
+                    send(json!({"jsonrpc": "2.0", "id": id, "error": null}));
+                    continue;
+                }
                 // The same kind of reply when the page just navigated to cannot be read.
                 if name == "browser_get_state" && page == Page::Unreadable {
                     send(rpc_error(
@@ -90,6 +96,11 @@ pub fn run_fake_server() {
                         -32603,
                         "Internal error: cannot read the page",
                     ));
+                    continue;
+                }
+                // A state result that has no `content` list at all.
+                if name == "browser_get_state" && page == Page::NoContent {
+                    send(json!({"jsonrpc": "2.0", "id": id, "result": {"isError": false}}));
                     continue;
                 }
                 match name {
@@ -180,6 +191,8 @@ enum Page {
     LateSelect,
     /// A page whose state the server answers with a JSON-RPC error.
     Unreadable,
+    /// A page whose state result carries no `content`.
+    NoContent,
 }
 
 impl Page {
@@ -194,6 +207,7 @@ impl Page {
             Some("form") => Page::Form,
             Some("late-select") => Page::LateSelect,
             Some("unreadable") => Page::Unreadable,
+            Some("no-content") => Page::NoContent,
             _ => Page::Small,
         }
     }
@@ -212,7 +226,7 @@ impl Page {
                 "url": url, "elements": [{"id": 1, "label": "Go"}]
             }))
             .unwrap(),
-            Page::Small | Page::Unreadable => unreachable!(),
+            Page::Small | Page::Unreadable | Page::NoContent => unreachable!(),
         }
     }
 }

@@ -11,14 +11,22 @@
 //! Matching is on the whole text of one content item: no substring, no case
 //! folding, no guessing at an `Error:` prefix. Page-derived text (extracted
 //! content, HTML, an observation) must not be able to flip a result, and a
-//! false positive feeds core's failure stop. Exceptions inside the server
-//! already arrive with `isError` set and are left alone.
+//! false positive feeds core's failure stop. For that reason each text is also
+//! tied to the tools that can say it: the agent prefix to the agent tool, and
+//! the stale index to the two tools that take an element index. Exceptions
+//! inside the server already arrive with `isError` set and are left alone.
 
 use serde_json::{Value, json};
 
 /// The autonomous agent's remote tool, the only one whose results can carry
 /// [`AGENT_FAILED_PREFIX`].
 const AGENT_REMOTE: &str = "retry_with_browser_use_agent";
+
+/// The remote tools that take an element `index` (the pinned tool list gives
+/// `index` to these two and no other), the only ones that can answer
+/// `Element with index N not found`. A test ties this list to the pinned tool
+/// list.
+const INDEXED_REMOTES: &[&str] = &["browser_click", "browser_type"];
 
 /// Fixed `Error: ...` results of the pinned server. Each is the whole text.
 const PINNED_ERRORS: &[&str] = &[
@@ -41,7 +49,7 @@ const AGENT_FAILED_PREFIX: &str = "Agent task failed: ";
 /// failure.
 pub(crate) fn is_failed_text(remote: &str, text: &str) -> bool {
     PINNED_ERRORS.contains(&text)
-        || is_missing_element(text)
+        || (INDEXED_REMOTES.contains(&remote) && is_missing_element(text))
         || (remote == AGENT_REMOTE && text.starts_with(AGENT_FAILED_PREFIX))
 }
 
@@ -101,6 +109,47 @@ mod tests {
             let text = format!("Element with index {index} not found");
             assert!(is_failed_text("browser_click", &text), "{text}");
             assert!(is_failed_text("browser_type", &text), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_missing_element_counts_only_for_the_tools_that_take_an_index() {
+        use crate::catalog::pinned_tools;
+
+        let text = "Element with index 7 not found";
+        let mut indexed = Vec::new();
+        for tool in pinned_tools() {
+            let takes_index = tool
+                .input_schema
+                .as_ref()
+                .is_some_and(|schema| schema["properties"].get("index").is_some());
+            assert_eq!(
+                is_failed_text(&tool.name, text),
+                takes_index,
+                "{}",
+                tool.name
+            );
+            if takes_index {
+                indexed.push(tool.name.as_str());
+            }
+        }
+        assert_eq!(indexed, ["browser_click", "browser_type"]);
+    }
+
+    #[test]
+    fn page_text_that_reads_like_a_stale_index_does_not_fail_a_page_reading_result() {
+        for remote in [
+            "browser_extract_content",
+            "browser_get_html",
+            "browser_get_state",
+            "browser_screenshot",
+        ] {
+            let mut result = json!({
+                "content": [{"type": "text", "text": "Element with index 7 not found"}],
+                "isError": false
+            });
+            mark_failed(remote, &mut result);
+            assert_eq!(result["isError"], false, "{remote}");
         }
     }
 

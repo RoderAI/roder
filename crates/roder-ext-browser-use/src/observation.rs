@@ -38,19 +38,22 @@ pub(crate) fn observes(class: BrowserUseActionClass) -> bool {
 }
 
 /// Rewrites `result` as report first, then the observation `state`. An
-/// observation that is itself an error makes the whole result one.
+/// observation that is itself an error makes the whole result one. A result or
+/// a state without a `content` list cannot be put together, and `result` is
+/// left as it was.
 pub(crate) fn attach(result: &mut Value, state: Value) -> anyhow::Result<()> {
     let report = result["content"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("browser-use returned no content"))?
         .clone();
-    let mut content = Vec::with_capacity(report.len() + 2);
+    let observed = state["content"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("browser-use returned no observation content"))?;
+    let mut content = Vec::with_capacity(report.len() + observed.len() + 2);
     content.push(text_item(REPORT_LABEL));
     content.extend(report);
     content.push(text_item(OBSERVATION_LABEL));
-    if let Some(items) = state["content"].as_array() {
-        content.extend(items.iter().cloned());
-    }
+    content.extend(observed.iter().cloned());
     result["content"] = Value::Array(content);
     if state["isError"] == true {
         result["isError"] = json!(true);
@@ -137,6 +140,38 @@ mod tests {
         attach(&mut result, state).unwrap();
         assert_eq!(result["isError"], true);
         assert_eq!(texts(&result)[1], "Element with index 7 not found");
+    }
+
+    #[test]
+    fn a_state_without_content_cannot_be_attached() {
+        for state in [
+            json!({"isError": false}),
+            json!({"content": "text"}),
+            json!({"content": null}),
+            json!({"content": {"type": "text", "text": "{}"}}),
+        ] {
+            let mut result = json!({
+                "content": [{"type": "text", "text": "Clicked element 4"}],
+                "isError": false
+            });
+            let before = result.clone();
+            let error = attach(&mut result, state.clone()).unwrap_err();
+            assert!(
+                error.to_string().contains("no observation content"),
+                "{state}: {error}"
+            );
+            assert_eq!(result, before, "{state}: the action result was rewritten");
+        }
+    }
+
+    #[test]
+    fn a_state_with_empty_content_is_an_empty_observation() {
+        let mut result = json!({"content": [{"type": "text", "text": "Clicked element 4"}]});
+        attach(&mut result, json!({"content": []})).unwrap();
+        assert_eq!(
+            texts(&result),
+            [REPORT_LABEL, "Clicked element 4", OBSERVATION_LABEL]
+        );
     }
 
     #[test]

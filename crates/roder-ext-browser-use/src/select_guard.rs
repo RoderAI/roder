@@ -27,10 +27,11 @@
 //! routes that do work.
 //!
 //! The set is what the model was shown, which is what it chooses indexes from.
-//! It is replaced by every state shown, cleared when a state cannot be read, and
-//! dropped with the browser it describes. A page that was never shown to the
-//! thread, or a state of another shape, refuses nothing: the call goes to the
-//! server as before.
+//! It is replaced by every state shown, cleared when a state cannot be read,
+//! forgotten when a tab, a session or the browser is closed, and dropped with
+//! the browser it describes. A page that was never shown to the thread, or a
+//! state of another shape, refuses nothing: the call goes to the server as
+//! before.
 //!
 //! There is deliberately no guard for stale indexes under parallel tool calls.
 //! In the pinned release an element's index is its CDP backend node id: it does
@@ -45,6 +46,7 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
+use crate::policy::BrowserUseActionClass;
 use crate::state_view::Selects;
 
 /// The selects of the last page state shown for one thread's browser.
@@ -60,6 +62,24 @@ impl ShownSelects {
 
     fn contains(&self, index: u64) -> bool {
         self.0.lock().unwrap().contains(&index)
+    }
+}
+
+/// Forgets what the thread was shown after a management call (closing a tab, a
+/// session or the browser) that the server did not report as failed. The page
+/// that was shown may be gone, and an index is only unique within a page, so
+/// the same number on the page that is current now must not be refused as a
+/// select it is not. Calls of another class, and a management call that
+/// failed, leave the set alone.
+pub(crate) fn forget_after_close(
+    shown: &ShownSelects,
+    class: BrowserUseActionClass,
+    result: &Value,
+) {
+    if class == BrowserUseActionClass::Manage
+        && result.get("isError").and_then(Value::as_bool) != Some(true)
+    {
+        shown.replace(None);
     }
 }
 
@@ -240,6 +260,28 @@ mod tests {
         assert!(refusal(&shown, "browser_click", &json!({"index": 9}), false).is_some());
         shown.replace(None);
         assert!(refusal(&shown, "browser_click", &json!({"index": 9}), false).is_none());
+    }
+
+    #[test]
+    fn only_a_management_call_that_did_not_fail_forgets_the_selects() {
+        use BrowserUseActionClass::*;
+
+        let mut cases = Vec::new();
+        for class in [Read, Navigate, Act, Agent] {
+            cases.push((class, json!({"isError": false}), true));
+        }
+        cases.push((Manage, json!({"isError": true}), true));
+        cases.push((Manage, json!({"isError": false}), false));
+        cases.push((Manage, json!({"content": []}), false));
+        for (class, result, kept) in cases {
+            let shown = shown(&[7]);
+            forget_after_close(&shown, class, &result);
+            assert_eq!(
+                refusal(&shown, "browser_click", &json!({"index": 7}), false).is_some(),
+                kept,
+                "{class:?} {result}"
+            );
+        }
     }
 
     #[test]

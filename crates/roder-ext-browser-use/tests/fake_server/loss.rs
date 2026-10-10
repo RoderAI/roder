@@ -174,3 +174,70 @@ async fn an_error_reply_to_the_observation_after_an_action_still_takes_the_brows
     assert_ne!(state_json(&fresh.text)["browser_pid"], old_pid);
     server.shutdown().await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_reply_whose_error_is_not_a_json_rpc_error_object_takes_the_browser_down() {
+    // `"error": null` has the shape of an answer, but the server did not
+    // decline the call in the protocol's words, so nothing says the browser is
+    // as it was. It is an unusable reply, and the browser goes.
+    let server = fake_launch(BrowserUseConfig::default(), None);
+    let registry = registry_for(server.clone(), false);
+    let first = run(&registry, "browser_use_get_state", json!({})).await;
+    let old_pid = state_json(&first.text)["browser_pid"].as_u64().unwrap();
+
+    let lost = run(&registry, "browser_use_click", json!({"index": 556})).await;
+    assert!(lost.is_error, "{}", lost.text);
+    for words in LOSS_WORDS {
+        assert!(lost.text.contains(words), "{words}: {}", lost.text);
+    }
+
+    let fresh = run(&registry, "browser_use_get_state", json!({})).await;
+    assert!(!fresh.is_error, "{}", fresh.text);
+    assert!(
+        fresh.text.contains("ran in a fresh browser"),
+        "{}",
+        fresh.text
+    );
+    assert_ne!(state_json(&fresh.text)["browser_pid"], old_pid);
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_observation_without_content_takes_the_browser_down() {
+    // The action ran and the server answered the state with a result that
+    // carries no content. The observation is the evidence the report is
+    // checked against, so an apparently successful action next to nothing is
+    // not returned.
+    let server = fake_launch(BrowserUseConfig::default(), None);
+    let registry = registry_for(server.clone(), false);
+    let first = run(&registry, "browser_use_get_state", json!({})).await;
+    let old_pid = state_json(&first.text)["browser_pid"].as_u64().unwrap();
+
+    let lost = run(
+        &registry,
+        "browser_use_navigate",
+        json!({"url": "https://example.com/no-content"}),
+    )
+    .await;
+    assert!(lost.is_error, "{}", lost.text);
+    assert!(
+        lost.text.contains("no observation content"),
+        "{}",
+        lost.text
+    );
+    for words in LOSS_WORDS {
+        assert!(lost.text.contains(words), "{words}: {}", lost.text);
+    }
+
+    let fresh = run(&registry, "browser_use_get_state", json!({})).await;
+    assert!(!fresh.is_error, "{}", fresh.text);
+    assert!(
+        fresh.text.contains("ran in a fresh browser"),
+        "{}",
+        fresh.text
+    );
+    assert_ne!(state_json(&fresh.text)["browser_pid"], old_pid);
+    server.shutdown().await;
+}

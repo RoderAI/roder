@@ -307,3 +307,45 @@ async fn a_call_the_server_turns_down_leaves_what_was_known_about_its_selects() 
     assert_eq!(calls_seen(&registry, "thread").await, (0, 0));
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn closing_a_tab_or_session_forgets_the_selects_of_the_page_that_was_shown() {
+    let server = fake_launch(BrowserUseConfig::default(), None);
+    let registry = registry_for(server.clone(), false);
+
+    // Reading about tabs does not change which page the selects belong to.
+    open_form(&registry, "thread").await;
+    let listed = run(&registry, "browser_use_list_tabs", json!({})).await;
+    assert!(!listed.is_error, "{}", listed.text);
+    let kept = run(&registry, "browser_use_click", json!({"index": 7})).await;
+    assert!(kept.is_error, "{}", kept.text);
+
+    for (tool, args) in [
+        ("browser_use_close_tab", json!({"tab_id": "0000"})),
+        (
+            "browser_use_close_session",
+            json!({"session_id": "default"}),
+        ),
+        ("browser_use_close_all", json!({})),
+    ] {
+        open_form(&registry, "thread").await;
+        let refused = run(&registry, "browser_use_click", json!({"index": 7})).await;
+        assert!(refused.is_error, "{tool}: {}", refused.text);
+        let before = calls_seen(&registry, "thread").await;
+
+        let closed = run(&registry, tool, args).await;
+        assert!(!closed.is_error, "{tool}: {}", closed.text);
+
+        // The page that is current now was never shown to the thread, so its
+        // index 7 is not known to be a select.
+        let clicked = run(&registry, "browser_use_click", json!({"index": 7})).await;
+        assert!(!clicked.is_error, "{tool}: {}", clicked.text);
+        assert!(
+            clicked.text.contains("browser_click ok"),
+            "{tool}: {}",
+            clicked.text
+        );
+        assert_eq!(calls_seen(&registry, "thread").await.0, before.0 + 1);
+    }
+    server.shutdown().await;
+}

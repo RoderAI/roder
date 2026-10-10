@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::catalog::{BrowserUseToolDef, tool_defs};
 use crate::observation::{AGENT_REPORT_LABEL, observes};
 use crate::policy::BrowserUseActionClass;
-use crate::select_guard::refusal;
+use crate::select_guard::{forget_after_close, refusal};
 use crate::server::BrowserUseServer;
 use crate::state_view::{GET_STATE_REMOTE, compact_result, take_offset};
 
@@ -147,6 +147,8 @@ impl ToolExecutor for BrowserUseTool {
                 if self.def.remote == GET_STATE_REMOTE {
                     let selects = compact_result(&mut result, offset, &secrets);
                     server.shown_selects().replace(selects);
+                } else {
+                    forget_after_close(server.shown_selects(), self.def.class, &result);
                 }
                 Ok(render_result(self.def, &call, &result, &secrets))
             }

@@ -224,6 +224,13 @@ interactive elements 1-2 of 2:
 [image/png screenshot attached, N base64 characters]
 ```
 
+A call that does not get as far as the observation returns only its error, with
+no page state or screenshot: one the server rejects with a JSON-RPC error, one
+Roder refuses before sending anything (a click or type aimed at a native
+select, a navigation outside `RODER_BROWSER_USE_ALLOWED_DOMAINS`), and one that
+loses the browser (see "Browser loss is named" below). A dead click that the
+server reports as text is still observed (see "Dead actions are errors" below).
+
 The report is labelled as a claim and comes first, so the size cut (24,000
 bytes, applied after secrets are redacted) takes the tail of a long page state
 and never the report. The page state is the [compact view](#compact-page-state),
@@ -242,12 +249,15 @@ one; verify the outcome by navigating yourself.
 element index with the plain text `Element with index N not found`, and a few
 other dead ends with fixed `Error: ...` strings, without setting `isError`.
 Roder marks a result `is_error` when a content item's whole text equals one of
-those pinned strings (`Element with index <integer> not found`; the eight fixed
-`Error:` results for no session, bad click arguments, no CDP session, missing
-HTML, and uninitialised LLM, file system, tools or agent key; and, for the
-agent tool, the `Agent task failed: ` prefix). Nothing is matched by substring,
-case-insensitively or by guessing an `Error:` prefix, so page text cannot flip
-a result. The observation is still attached to a dead click, so the model can
+those pinned strings (`Element with index <integer> not found`, for
+`browser_click` and `browser_type` only, the two tools that take an element
+`index`; the eight fixed `Error:` results for no session, bad click arguments,
+no CDP session, missing HTML, and uninitialised LLM, file system, tools or
+agent key; and, for the agent tool, the `Agent task failed: ` prefix).
+Nothing is matched by substring, case-insensitively or by guessing an `Error:`
+prefix, and the stale-index text and the agent prefix count only for the tools
+that can say them, so page text (an extraction, HTML, a state) cannot flip a
+result. The observation is still attached to a dead click, so the model can
 pick a valid index. The strings live in
 `crates/roder-ext-browser-use/src/failed_action.rs`; a test pins them to the
 `browser-use[cli]==0.13.10` release they were read from, and the ignored live
@@ -283,11 +293,14 @@ same up front. Default mode still asks for approval first; the refusal is part
 of running the tool, not of policy.
 
 The set is replaced by every state shown, forgotten when a state cannot be read
-(a state of another shape, an error), and dropped with the browser it describes,
-including after a failed call or a restart, and it is per thread. An index that
-was never shown as a select is not refused, so a page the thread has not read
-behaves as before. A click that gives both `coordinate_x` and `coordinate_y` is a
-coordinate click on the server, which ignores the index, and is not checked.
+(a state of another shape, an error), forgotten after a successful
+`browser_use_close_tab`, `browser_use_close_session` or `browser_use_close_all`
+(the page that was shown may be gone, and an index is only unique within a
+page), and dropped with the browser it describes, including after a failed call
+or a restart, and it is per thread. An index that was never shown as a select
+is not refused, so a page the thread has not read behaves as before. A click
+that gives both `coordinate_x` and `coordinate_y` is a coordinate click on the
+server, which ignores the index, and is not checked.
 
 Two dead clicks stay silent because the pinned state gives Roder nothing to
 recognise them by. A click at coordinates that lands on a select, and a click on
@@ -325,10 +338,13 @@ action itself with a JSON-RPC error (for example an argument that fails the
 tool's schema), the server is alive and the call did not run. The browser, its
 profile and what the thread was shown about its selects stay as they were, the
 error is the server's own text, and it carries no loss message. Only that typed
-reply counts (`roder_ext_mcp::McpRpcError`), never the wording of a message. A
-JSON-RPC error in reply to the observation read that follows an action is still
-a loss: the action ran and the server then failed, so the browser is stopped
-and the error says so.
+reply counts (`roder_ext_mcp::McpRpcError`), never the wording of a message, and
+only an error object with an integer `code` and a string `message`: a reply
+whose `error` is anything else (`null`, a string, an object without them) is an
+unusable reply and loses the browser like one. A JSON-RPC error in reply to the
+observation read that follows an action is still a loss, and so is an
+observation reply that carries no `content` list: the action ran and the server
+then failed to show the page, so the browser is stopped and the error says so.
 
 ### Compact page state
 
@@ -400,8 +416,10 @@ including the browser.
 - A small shell guard in the same group watches Roder's pid and stops the
   group within about a second if Roder exits without cleaning up (a crash or
   `kill -9`).
-- If the server crashes, the next `browser_use_*` call starts a new one, and
-  its result says it ran in a fresh browser (see [Tool results](#tool-results)).
+- If the server crashes, the next `browser_use_*` call starts a new one. The
+  first successful result from it says it ran in a fresh browser; a call that
+  the server rejects or that fails first does not carry the notice, so a later
+  result does (see [Tool results](#tool-results)).
 - A thread's browser lives until Roder exits or that thread calls
   `browser_use_close_all`. There is no automatic idle eviction yet.
 - Cancelling an in-flight browser tool, or a call that fails or times out,
@@ -443,13 +461,15 @@ direct child is killed when Roder drops it.
   report order under a 60,000-byte page state, no observation after the agent
   tool, stale indexes as errors, a killed or timed-out server reporting the
   lost browser, a call the server turns down with a JSON-RPC error keeping the
-  same browser, profile and selects with no loss message, upstream-shaped
-  pretty-printed states of 100 and 400 elements that must come back within
-  budget with every index once across the offset pages, and a form with a
-  native select whose refused click and typed text must leave the server's call
-  counts at zero while clicks on other elements, a custom `div` dropdown and
-  coordinate clicks still arrive. The select set follows the state shown, per
-  thread, and is dropped with a lost browser. No uvx or network.
+  same browser, profile and selects with no loss message, an `error: null`
+  reply and an observation without `content` taking the browser down,
+  upstream-shaped pretty-printed states of 100 and 400 elements that must come
+  back within budget with every index once across the offset pages, and a form
+  with a native select whose refused click and typed text must leave the
+  server's call counts at zero while clicks on other elements, a custom `div`
+  dropdown and coordinate clicks still arrive. The select set follows the
+  state shown, per thread, and is dropped with a lost browser or a closed tab,
+  session or browser. No uvx or network.
 - `cargo test -p roder-ext-browser-use --test live -- --ignored --nocapture`
   starts the real server through uvx, checks its tool list and schemas against
   the pinned table, opens https://example.com in a headless browser and reads
