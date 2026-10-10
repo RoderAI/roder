@@ -6,9 +6,9 @@ source_config="${RODER_ROUTING_SOURCE_CONFIG:-$HOME/.roder/config.toml}"
 source_auth="${RODER_ROUTING_SOURCE_AUTH:-$HOME/.roder/auth}"
 
 provider="${RODER_ROUTING_PROVIDER:-codex}"
-simple_model="${RODER_ROUTING_SIMPLE_MODEL:-gpt-5.3-codex-spark}"
-standard_model="${RODER_ROUTING_STANDARD_MODEL:-gpt-5.4-mini}"
-strong_model="${RODER_ROUTING_STRONG_MODEL:-gpt-5.5}"
+simple_model="${RODER_ROUTING_SIMPLE_MODEL:-gpt-6-luna}"
+standard_model="${RODER_ROUTING_STANDARD_MODEL:-gpt-6-sol}"
+strong_model="${RODER_ROUTING_STRONG_MODEL:-gpt-6-astra}"
 
 simple_reasoning="${RODER_ROUTING_SIMPLE_REASONING:-low}"
 standard_reasoning="${RODER_ROUTING_STANDARD_REASONING:-medium}"

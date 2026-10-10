@@ -892,7 +892,7 @@ Response:
   "provider": "openai",
   "model": "gpt-6-sol",
   "reasoning": "high",
-  "modelProfile": "OpenAI GPT-6 Sol"
+  "modelProfile": "gpt-6-sol"
 }
 ```
 
