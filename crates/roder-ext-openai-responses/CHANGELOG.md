@@ -1,3 +1,11 @@
+## 0.2.3 (2026-10-10)
+
+### Fixes
+
+#### Enable provider-native tool search for GPT-6 point releases
+
+Enable provider-native tool search for GPT-6 point releases such as gpt-6.1-sol, which previously matched only the gpt-6-* ids.
+
 ## 0.2.2 (2026-10-08)
 
 ### Fixes

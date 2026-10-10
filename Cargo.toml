@@ -77,7 +77,7 @@ uuid = "1.23.1"
 wasm-bindgen = "0.2.106"
 which = "8"
 
-roder-api = { path = "crates/roder-api", version = "0.2.5" }
+roder-api = { path = "crates/roder-api", version = "0.2.6" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.2.0" }
 roder-app-server = { path = "crates/roder-app-server", version = "0.6.3" }
@@ -118,7 +118,7 @@ roder-ext-memory = { path = "crates/roder-ext-memory", version = "0.2.0" }
 roder-ext-mysql-session = { path = "crates/roder-ext-mysql-session", version = "0.4.0" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop", version = "0.2.0" }
 roder-ext-notify-terminal = { path = "crates/roder-ext-notify-terminal", version = "0.2.0" }
-roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses", version = "0.2.2" }
+roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses", version = "0.2.3" }
 roder-ext-openai-chat-completions = { path = "crates/roder-ext-openai-chat-completions", version = "0.2.0" }
 roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings", version = "0.2.0" }
 roder-ext-openai-images = { path = "crates/roder-ext-openai-images", version = "0.2.0" }
