@@ -48,33 +48,48 @@ impl DirectSession {
     /// A screenshot of the tab or, when none can be taken (a password the
     /// page shows, a capture Chrome returned empty), the placeholder. It is
     /// not an error on its own: the actions before it worked. The data says
-    /// so under `screenshot_unavailable` and gives the reason.
+    /// so under `screenshot_unavailable` and gives the reason. A page that
+    /// left the owner's scope is the exception: that stop stays an error and
+    /// keeps `data.stop`.
     pub(crate) async fn screen(&mut self) -> DirectStep {
-        let mut step = self.run("screenshot", &json!({})).await;
-        if step.image.is_some() {
-            return step;
+        let step = self.run("screenshot", &json!({})).await;
+        match step.image.is_some() {
+            true => step,
+            false => placeholder(step),
         }
-        let reason = if step.data["screenshot_withheld"] == json!(true) {
-            "a password or code typed on this page is still shown on it; clear that field or \
-             leave the page"
-                .to_string()
-        } else {
-            one_line(&step.text, 160)
-        };
-        let cleanup_error = step.data.get("cleanup_error").cloned();
-        step.is_error = cleanup_error.is_some();
-        step.text = unavailable_text(&reason);
-        step.data = json!({
-            "tool": "screenshot",
-            "screenshot_unavailable": true,
-            "screenshot_error": reason,
-        });
-        if let Some(error) = cleanup_error {
-            step.data["cleanup_error"] = error;
-        }
-        step.image = Some(SCREENSHOT_UNAVAILABLE.to_string());
-        step
     }
+}
+
+/// `step`, a screenshot call that came back without a picture, as the result
+/// that carries the placeholder in its place.
+fn placeholder(mut step: DirectStep) -> DirectStep {
+    let reason = if step.data["screenshot_withheld"] == json!(true) {
+        "a password or code typed on this page is still shown on it; clear that field or \
+         leave the page"
+            .to_string()
+    } else {
+        one_line(&step.text, 160)
+    };
+    let cleanup_error = step.data.get("cleanup_error").cloned();
+    // A stop (the page left the owner's scope) is the owner's rule ending the
+    // run, not a picture that merely failed: it stays an error and keeps its
+    // reason, whatever replaces the picture.
+    let stop = step.stop.clone();
+    step.is_error = cleanup_error.is_some() || stop.is_some();
+    step.text = unavailable_text(&reason);
+    step.data = json!({
+        "tool": "screenshot",
+        "screenshot_unavailable": true,
+        "screenshot_error": reason,
+    });
+    if let Some(error) = cleanup_error {
+        step.data["cleanup_error"] = error;
+    }
+    if let Some(stop) = stop {
+        step.data["stop"] = json!(stop);
+    }
+    step.image = Some(SCREENSHOT_UNAVAILABLE.to_string());
+    step
 }
 
 /// The note for a screenshot that is a placeholder, from its reason.
@@ -85,6 +100,8 @@ pub(crate) fn unavailable_note(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::direct::guard::StopKind;
+    use crate::direct::session::DirectStop;
 
     fn bytes() -> Vec<u8> {
         // Standard base64 decode, enough for a test: no dependency for it.
@@ -122,6 +139,47 @@ mod tests {
         assert_eq!((size(16), size(20)), (288, 96));
         assert!(png.len() < 1024, "{} bytes", png.len());
         assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND");
+    }
+
+    fn stopped(reason: &str) -> DirectStep {
+        DirectStep {
+            text: reason.to_string(),
+            data: json!({"stop": {"kind": "outside_scope", "reason": reason}, "tool": "screenshot"}),
+            is_error: true,
+            stop: Some(DirectStop {
+                kind: StopKind::OutsideScope,
+                reason: reason.to_string(),
+            }),
+            ..DirectStep::default()
+        }
+    }
+
+    #[test]
+    fn a_stop_keeps_its_error_and_its_reason_when_the_picture_is_replaced() {
+        let step = placeholder(stopped("left the allowed origins"));
+        assert!(step.is_error, "a stop is not a picture that merely failed");
+        assert_eq!(step.data["stop"]["kind"], "outside_scope");
+        assert_eq!(step.data["stop"]["reason"], "left the allowed origins");
+        assert_eq!(
+            step.stop.as_ref().map(|stop| stop.reason.as_str()),
+            Some("left the allowed origins")
+        );
+        assert_eq!(step.data["screenshot_unavailable"], true);
+        assert_eq!(step.data["screenshot_error"], "left the allowed origins");
+        assert_eq!(step.image.as_deref(), Some(SCREENSHOT_UNAVAILABLE));
+    }
+
+    #[test]
+    fn a_picture_withheld_for_a_secret_is_still_no_error() {
+        let step = placeholder(DirectStep {
+            text: "Screenshot withheld: ...".into(),
+            data: json!({"screenshot_withheld": true, "error": "Screenshot withheld: ..."}),
+            is_error: true,
+            ..DirectStep::default()
+        });
+        assert!(!step.is_error);
+        assert!(step.stop.is_none() && step.data.get("stop").is_none());
+        assert_eq!(step.data["screenshot_unavailable"], true);
     }
 
     #[test]

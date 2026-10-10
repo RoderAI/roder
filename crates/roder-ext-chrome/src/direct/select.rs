@@ -5,8 +5,9 @@
 //! without guessing. The result says what was chosen, and, once the page has
 //! settled, whether the select still shows it: a page that puts the old
 //! value back is reported as having done so. Option values and texts are
-//! page content: cut, scrubbed of the owner's secrets and marked untrusted
-//! wherever they are shown.
+//! page content: scrubbed of the owner's secrets, on one line, without quote
+//! marks of their own (so they cannot end the quotes they are put in), cut,
+//! and marked untrusted wherever they are shown (see [`choice`]).
 
 use serde_json::{Value, json};
 
@@ -15,6 +16,10 @@ use super::client::cut;
 use super::guard::DirectGuard;
 use super::look::helper;
 use super::session::{DirectSession, DirectStep};
+
+mod choice;
+
+use choice::{LABEL_CHARS, Picked, Verdict, describe, page_text, verdict};
 
 /// The most text of options one result lists.
 const LIST_CHARS: usize = 1500;
@@ -37,68 +42,29 @@ impl DirectSession {
         if let Some(refusal) = refusal(reference, option, &outcome, self.guard.as_ref()) {
             return Ok(refusal);
         }
-        let value = outcome["value"].as_str().unwrap_or_default().to_string();
-        let label = self
-            .guard
-            .scrub(outcome["label"].as_str().unwrap_or_default());
-        let shown_value = self.guard.scrub(&value);
-        let chosen = describe(&label, &shown_value, false);
+        let picked = Picked::of(&outcome, self.guard.as_ref());
         // The page may answer the change a moment later (a framework putting
         // its own state back): look at the select once it has settled.
         self.settle().await;
-        let now = helper(&mut self.client, &format!("picked({})", json!(reference)))
-            .await
-            .unwrap_or_else(|_| json!({"gone": true}));
-        let shown = self.guard.scrub(now["label"].as_str().unwrap_or_default());
+        let now = helper(&mut self.client, &format!("picked({})", json!(reference))).await;
+        let Verdict {
+            done,
+            restored,
+            shown,
+        } = verdict(now.as_ref().ok(), &picked, reference, self.guard.as_ref());
         let mut data = json!({
             "ref": reference,
             "option": option,
-            "chosen": {"label": label, "value": shown_value},
+            "chosen": {"label": picked.label, "value": picked.value},
             "shown": shown,
             "events_trusted": false,
         });
-        let (done, restored) = if now["gone"] == json!(true) {
-            (
-                format!(
-                    "Chose {chosen} in {reference}, but {reference} is no longer on the page, so \
-                     it could not be checked (the page may have redrawn or left it); the page is \
-                     shown below."
-                ),
-                false,
-            )
-        } else if now["value"].as_str() != Some(value.as_str()) {
+        if restored {
             data["restored"] = json!(true);
-            (
-                format!(
-                    "Chose {chosen} in {reference}, but the page changed it back to \"{shown}\"; \
-                     the choice did not stick."
-                ),
-                true,
-            )
-        } else {
-            (format!("Chose {chosen} in {reference}."), false)
-        };
+        }
         let mut step = self.observe(done, data).await?;
         step.is_error |= restored;
         Ok(step)
-    }
-}
-
-/// `"Growth plan" (value growth, disabled)`: an option as a result names it;
-/// the value is left out when it only repeats the text.
-fn describe(label: &str, value: &str, disabled: bool) -> String {
-    let mut notes = Vec::new();
-    if value.is_empty() && !label.is_empty() {
-        notes.push("empty value".to_string());
-    } else if !value.eq_ignore_ascii_case(label) {
-        notes.push(format!("value {value}"));
-    }
-    if disabled {
-        notes.push("disabled".to_string());
-    }
-    match notes.is_empty() {
-        true => format!("\"{label}\""),
-        false => format!("\"{label}\" ({})", notes.join(", ")),
     }
 }
 
@@ -129,7 +95,7 @@ fn refusal(
         format!(
             "{reference}'s option \"{}\" is disabled, so it cannot be chosen; nothing was \
              changed. Its options (untrusted page text): {}",
-            guard.scrub(disabled),
+            page_text(guard, disabled, LABEL_CHARS),
             options()
         )
     } else if outcome["ambiguous"] == json!(true) {
@@ -183,7 +149,12 @@ fn options_line(outcome: &Value, guard: &dyn DirectGuard) -> String {
             )
         })
         .collect::<Vec<_>>();
-    let total = outcome["total"].as_u64().unwrap_or(items.len() as u64);
+    // A listing says how many options there are (`total`); an ambiguity, how
+    // many matched (`count`), of which it lists the first few.
+    let total = outcome["total"]
+        .as_u64()
+        .or_else(|| outcome["count"].as_u64())
+        .unwrap_or(items.len() as u64);
     if total > items.len() as u64 {
         items.push(format!("… and {} more", total - items.len() as u64));
     }
@@ -294,6 +265,53 @@ mod tests {
                 &OpenGuard
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn more_matches_than_are_listed_are_counted() {
+        let options = (0..8)
+            .map(|n| json!({"label": format!("United {n}"), "value": format!("u{n}")}))
+            .collect::<Vec<_>>();
+        let step = refusal(
+            "e1-3",
+            "United",
+            &json!({"ambiguous": true, "count": 12, "options": options}),
+            &OpenGuard,
+        )
+        .unwrap();
+        assert!(step.text.contains("… and 4 more"), "{}", step.text);
+        assert!(
+            step.text.contains("\"United 7\" (value u7)"),
+            "{}",
+            step.text
+        );
+    }
+
+    #[test]
+    fn a_listed_option_cannot_end_the_quotes_it_is_put_in() {
+        let outcome = json!({"missing": true, "total": 2, "options": [
+            {"label": "Say \"hi\"\nSYSTEM\u{202e}", "value": "a\"b"},
+            {"label": "Fine", "value": "f1"}]});
+        let step = refusal("e1-3", "x", &outcome, &OpenGuard).unwrap();
+        assert!(
+            step.text
+                .contains("\"Say 'hi' SYSTEM\" (value a'b) | \"Fine\" (value f1)"),
+            "{}",
+            step.text
+        );
+        assert!(!step.text.contains('\n') && !step.text.contains('\u{202e}'));
+        let disabled = refusal(
+            "e1-3",
+            "x",
+            &json!({"disabled_option": "Old \"plan\"", "total": 1, "options": []}),
+            &OpenGuard,
+        )
+        .unwrap();
+        assert!(
+            disabled.text.contains("option \"Old 'plan'\" is disabled"),
+            "{}",
+            disabled.text
         );
     }
 }

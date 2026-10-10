@@ -66,6 +66,72 @@ async fn a_screenshot_that_cannot_be_taken_is_replaced_by_a_placeholder() {
     );
 }
 
+/// Lets the first check of the page's address through once armed and refuses
+/// every later one, as an owner's scope does for a page that navigated away
+/// meanwhile.
+#[derive(Default)]
+struct LeavesAfterTheFirstCheck {
+    armed: std::sync::atomic::AtomicBool,
+    checks: std::sync::atomic::AtomicUsize,
+}
+impl DirectGuard for LeavesAfterTheFirstCheck {
+    fn outside(&self, _: &str) -> Option<String> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if !self.armed.load(SeqCst) {
+            return None;
+        }
+        let earlier = self.checks.fetch_add(1, SeqCst);
+        (earlier > 0).then(|| "left the allowed origins".to_string())
+    }
+}
+
+#[tokio::test]
+async fn a_stop_is_still_a_stop_when_its_screenshot_is_replaced_by_a_placeholder() {
+    let Some(browser) = support::Browser::start().await.unwrap() else {
+        return;
+    };
+    let traps = Traps::start().await;
+    let (websocket, target_id) = first_page(&browser).await;
+    let tab = DirectTab::Page {
+        websocket,
+        target_id,
+    };
+    let guard = Arc::new(LeavesAfterTheFirstCheck::default());
+    let mut session = DirectSession::attach(&tab, guard.clone(), false)
+        .await
+        .unwrap();
+    let loaded = session
+        .run("navigate", &json!({"url": traps.url.clone()}))
+        .await;
+    assert!(!loaded.is_error, "{}", loaded.text);
+    // Only the checks of the batch count: it passes the one before its
+    // action, and the screenshot taken after it finds the page out of scope.
+    guard.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    let step = session
+        .run_computer(&actions(json!([{"type":"screenshot"}])))
+        .await;
+    let result = tool_result("id", "computer", &step);
+    assert!(
+        result.is_error,
+        "a run the owner's scope stopped is an error: {}",
+        result.text
+    );
+    assert_eq!(
+        result.data["stop"]["reason"], "left the allowed origins",
+        "{}",
+        result.data
+    );
+    assert_eq!(result.data["stop"]["kind"], "outside_scope");
+    assert_eq!(result.data["screenshot_unavailable"], true);
+    assert!(
+        result.data[VIEW_IMAGE_DISPLAY_KEY]["image_url"]
+            .as_str()
+            .is_some_and(|image| image.starts_with("data:image/png;base64,")),
+        "the result still carries the placeholder: {}",
+        result.data
+    );
+}
+
 struct NoTab;
 #[async_trait]
 impl DirectBinding for NoTab {

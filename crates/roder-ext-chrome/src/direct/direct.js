@@ -85,7 +85,7 @@
     const aria = el.getAttribute('aria-checked') || el.getAttribute('aria-selected');
     if (aria) item.checked = aria === 'true';
     if (el.getAttribute('aria-expanded')) item.expanded = el.getAttribute('aria-expanded') === 'true';
-    if (el.disabled || el.getAttribute('aria-disabled') === 'true') item.disabled = true;
+    if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') item.disabled = true;
     if (el.getAttribute('draggable') === 'true') item.draggable = true;
     item.x = Math.round(r.left); item.y = Math.round(r.top);
     item.w = Math.round(r.width); item.h = Math.round(r.height);
@@ -150,6 +150,19 @@
       form_labels: submits, secret_form: secretForm, consent: inConsent(at),
     };
   };
+  // How many characters (code points) `s` has, counted without building an
+  // array of them: a page's text can be megabytes.
+  const points = s => {
+    let n = s.length;
+    for (let i = 0; i + 1 < s.length; i++) {
+      const hi = s.charCodeAt(i);
+      if (hi >= 0xd800 && hi < 0xdc00) {
+        const lo = s.charCodeAt(i + 1);
+        if (lo >= 0xdc00 && lo < 0xe000) { n--; i++; }
+      }
+    }
+    return n;
+  };
   S.look = opts => {
     const max = opts?.max || 120;
     for (const [ref, el] of S.nodes) if (!el.isConnected) S.nodes.delete(ref);
@@ -179,6 +192,7 @@
     const f = focused();
     const full = (document.body?.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
     const keep = opts?.text || 3000;
+    const cutText = full.length > keep;
     return {
       url: location.href, title: document.title, http_status: status(),
       viewport: { w: innerWidth, h: innerHeight, scroll_y: Math.round(scrollY),
@@ -186,8 +200,8 @@
       focused: f ? cut(label(f) || f.tagName.toLowerCase(), 60) : null,
       elements: items, omitted: Math.max(0, found.length - max),
       // The text is cut at `keep` UTF-16 units; `text_cut` says it was, and
-      // `text_total` how many characters the whole page text has.
-      text: full.slice(0, keep), text_cut: full.length > keep, text_total: [...full].length,
+      // `text_total` (only then) how many characters the whole page text has.
+      text: full.slice(0, keep), text_cut: cutText, text_total: cutText ? points(full) : undefined,
     };
   };
   // Where a ref is on screen now, scrolled into view when it is not; at a
@@ -304,7 +318,9 @@
     if (el.tagName !== 'SELECT') {
       return { not_select: true, tag: el.tagName.toLowerCase(), label: cut(label(el), 60) };
     }
-    if (el.disabled) return { disabled_select: true };
+    // `:disabled` also holds for a select its fieldset disables, which has no
+    // `disabled` property of its own.
+    if (el.matches(':disabled')) return { disabled_select: true };
     const want = String(option), low = cut(want, 1e6).toLowerCase();
     const text = o => cut(o.text, 1e6).toLowerCase();
     const steps = [

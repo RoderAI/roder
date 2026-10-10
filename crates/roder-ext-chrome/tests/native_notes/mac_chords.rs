@@ -191,3 +191,50 @@ async fn an_uneventful_batch_adds_nothing_to_the_result() {
     assert_eq!(step.data["completed_actions"], 3);
     assert!(step.data.get("stopped_after").is_none());
 }
+
+#[tokio::test]
+async fn a_remapped_chord_is_not_reported_as_sent_when_its_action_failed() {
+    let Some(browser) = support::Browser::start().await.unwrap() else {
+        return;
+    };
+    let fixture = support::Fixture::start().await.unwrap();
+    let (websocket, target_id) = first_page(&browser).await;
+    let tab = DirectTab::Page {
+        websocket: websocket.clone(),
+        target_id,
+    };
+    let guard = Arc::new(LeavesAfterTheFirstCheck::default());
+    let mut session = DirectSession::attach(&tab, guard.clone(), false)
+        .await
+        .unwrap();
+    let loaded = session.run("navigate", &json!({"url": fixture.url})).await;
+    assert!(!loaded.is_error, "{}", loaded.text);
+    let _platform = report_platform(&websocket, "MacIntel").await;
+    // Focus the search field in a batch of its own, so that the chord is the
+    // only action of the next one: its checks are the one before it, which
+    // passes, and the one after it, which finds the page out of scope.
+    let focused = session
+        .run_computer(&actions(json!([
+            {"type":"click","button":"left","x":60,"y":100},
+        ])))
+        .await;
+    assert!(!focused.is_error, "{}", focused.text);
+    guard.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    let step = session
+        .run_computer(&actions(json!([
+            {"type":"keypress","keys":["CTRL","a"]},
+        ])))
+        .await;
+    assert!(step.is_error, "{}", step.text);
+    assert!(
+        step.text.contains("left the allowed origins"),
+        "the action failed for the scope: {}",
+        step.text
+    );
+    let notes = notes(&step.data);
+    assert!(
+        !step.text.contains("was sent as") && notes.iter().all(|note| !note.contains("was sent as")),
+        "a chord of a failed action is not claimed as sent: {notes:?}\n{}",
+        step.text
+    );
+}

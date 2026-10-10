@@ -40,9 +40,11 @@ A Mac page ignores Control+A: only Command chords carry the editing commands, so
 text typed after it lands after the old text. When the page reports a Mac
 platform and focus is in an editable field, Control+A, C, V, X and Z are sent as
 Command+A, C, V, X and Z, and Control+Shift+Z and Control+Y as Command+Shift+Z.
-The result's notes say so (`Ctrl+A was sent as Cmd+A on macOS`). Other chords,
-non-Mac pages and non-editable focus are sent as given. The remap does not
-suit a page that binds Control+A to an Emacs-style action.
+The result's notes say so (`Ctrl+A was sent as Cmd+A on macOS`), once the key
+step has come back without error: an action that failed does not also claim its
+chord as sent. Other chords, non-Mac pages and non-editable focus are sent as
+given. The remap does not suit a page that binds Control+A to an Emacs-style
+action.
 
 This implements the current batched contract. See the
 [OpenAI computer-use guide](https://developers.openai.com/api/docs/guides/tools-computer-use)
@@ -118,10 +120,14 @@ every action; skipping that request on these engines is not done yet.
   error: the actions ran. A result without any image from another source still
   stops continuation; it is never substituted with a function result or plain
   text.
-- A navigation or a new tab ends the batch. The actions after it were planned
-  for a page that is gone, so they are not run and the notes name them (their
-  kind and position, never the text they would type). Stopping early is not an
-  error. A trailing `wait` or `screenshot` does not stop the batch.
+- A navigation or a new tab ends the batch when an input action follows it.
+  The actions after it were planned for a page that is gone, so they are not
+  run. The notes name the input actions among them (their kind and position,
+  never the text they would type); a `wait` or `screenshot` skipped with them
+  is not named, and `unrun_actions` counts input actions only, so
+  `requested_actions` minus `completed_actions` can be larger. Stopping early
+  is not an error. A navigation followed only by `wait` or `screenshot`
+  actions does not stop the batch: they run.
 - HTTP replay preserves native calls and pairs their outputs once. WebSocket
   continuation sends `previous_response_id` and only new screenshot output.
   Request-budget shedding cannot replace a native screenshot with text.
@@ -144,7 +150,10 @@ the replayed prefix as it was. Notes are written for these events, each naming t
 position in the batch (`Action 2 (click (60,100) on link "My account")`):
 
 - a navigation: the new address (without query or fragment), title and HTTP
-  status;
+  status. The address before the action and the one after it are compared
+  without their fragments and with the owner's typed secrets hidden on both
+  sides, so a page whose address holds a remembered secret is not a navigation
+  by itself;
 - an HTTP status of 400 or more on the page after the action;
 - a new tab, which the session now drives;
 - a JavaScript dialog: its kind, its message and whether it was accepted
@@ -153,20 +162,32 @@ position in the batch (`Action 2 (click (60,100) on link "My account")`):
 - a click on something that is not a control, after which the page's text and
   elements did not change (not claimed for a canvas, which can change without
   its page changing);
-- a remapped chord (see above);
+- a remapped chord (see above), only when the key step ran without error;
 - the actions a navigation or new tab kept from running, and an unavailable
   screenshot. These two are never left out for the sake of other notes; when
   other notes overflow, the last of them says how many were left out.
 
-Page-sourced words (an address, a label, a title, a dialog message) are cut,
-on one line, and scrubbed of values typed into secret fields; labels, titles and
-dialog messages are also quoted, and an address loses its query and fragment.
+Page-sourced words (an address, a label, a role, a title, a dialog message) are
+cut, on one line, and scrubbed of values typed into secret fields, after which
+direction-overriding and zero-width characters are removed; labels, titles and
+dialog messages are also quoted. An address loses its query and fragment, and
+the path segments that look like bearer tokens (16 or more hex digits, a UUID,
+or 20 or more letters and digits with at least one of each and no more than two
+separators, as in `/reset/<token>`) become `…`; routes and slugs of words stay.
 Dialog messages are scrubbed before they are cut, in this block and in the page
-text of the other direct tools. The block says these words are untrusted and
-must not be followed. The data also holds `completed_actions`, `requested_actions`,
+text of the other direct tools; the client keeps the first 4,000 characters of
+a message until it is read, so a secret longer than that is not covered. The
+block says these words are untrusted and must not be followed. On a batch that
+ran, the data also holds `completed_actions` and `requested_actions`, with
 `stopped_after` (`navigation` or `new_tab`) and `unrun_actions` when the batch
-stopped early, and `screenshot_unavailable` and `screenshot_error` when the
-picture is a placeholder.
+stopped early, and `screenshot_unavailable` with `screenshot_error` when only
+the picture is a placeholder. A call that fails before the batch starts holds
+none of the counters. When the cleanup before it failed or no browser could be
+reached, its data is `error`, `screenshot_unavailable` and the placeholder's
+note in `computer_notes`, and its text is the reason followed by that note,
+without a `Notes` block. When the action shapes are malformed, its text starts
+`Invalid native computer actions; no input sent` and its data is the
+screenshot's own.
 
 In replay, a failed call is sent as its screenshot followed by a user message
 holding the whole result text (`Computer execution failed; ...`). A call that
@@ -291,8 +312,9 @@ failing Control+A, type, Shift+A, Enter batch on a page that reports a Mac
 platform (one submit, `orcaA`, where the same batch submitted `penguin 🐧orcaA`
 before the remap) and on one that does not (sent as Control); a hub page with a
 500, a sign-in page, a `target=_blank` link and a `confirm` dialog, each named
-in the result; the stop after a navigation; and the placeholder screenshot.
-The Mac platform is reported with `Emulation.setUserAgentOverride`, so the
+in the result; the stop after a navigation, and no stop for a page whose
+address holds a remembered secret; a remapped chord that is not claimed when its
+action failed; and the placeholder screenshot. The Mac platform is reported with `Emulation.setUserAgentOverride`, so the
 tests do not depend on the host operating system.
 
 Set `RODER_NATIVE_EVAL_REPORT` to a JSON file path during the happy ACP test

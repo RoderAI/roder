@@ -30,7 +30,10 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const DIALOG_MESSAGE_CHARS: usize = 500;
 /// What is kept of a message until it is read, so that the owner's secrets
 /// are scrubbed from it before the cut: a secret across the cut would
-/// otherwise show its first characters.
+/// otherwise show its first characters. The bound is what a page that loops
+/// `alert()` with huge messages can make this client hold, so a secret longer
+/// than it is not covered; the scrubber is the owner's, not the client's, and
+/// cannot be run here.
 const DIALOG_KEPT_CHARS: usize = 4000;
 
 /// The tab a [`super::DirectSession`] drives.

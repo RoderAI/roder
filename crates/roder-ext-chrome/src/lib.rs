@@ -25,6 +25,7 @@ pub mod direct;
 mod extension;
 mod extension_result;
 mod observed;
+mod observed_cut;
 mod observed_read;
 mod observed_render;
 mod policy;

@@ -253,6 +253,9 @@ fn page_words_are_one_clean_line() {
         one_line("a\nb\t\u{7}c\u{202e}d  e\u{200b}f", 100),
         "a b c d e f"
     );
+    // The Arabic letter mark is as invisible, and as able to reorder what is
+    // next to it, as the left-to-right mark.
+    assert_eq!(one_line("a\u{61c}b\u{200e}c", 100), "a b c");
     assert_eq!(one_line(&"é".repeat(10), 4), "éééé…");
 }
 

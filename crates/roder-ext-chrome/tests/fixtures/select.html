@@ -39,13 +39,21 @@
   <option value="stay">Stay</option>
   <option value="leave">Leave</option>
 </select>
+<!-- A select its fieldset disables: no `disabled` attribute of its own. -->
+<fieldset disabled>
+  <label for="locked">Locked</label>
+  <select id="locked">
+    <option value="open">Open</option>
+    <option value="shut">Shut</option>
+  </select>
+</fieldset>
 <button id="go">Go</button>
 <script>
 window.changes = [];
 window.goClicks = 0;
 const country = document.querySelector('#country');
 for (let i = 1; i <= 30; i++) country.add(new Option('Country ' + String(i).padStart(2, '0'), 'c' + i));
-for (const id of ['plan', 'tier', 'dup', 'country', 'snap', 'sticky']) {
+for (const id of ['plan', 'tier', 'dup', 'country', 'snap', 'sticky', 'locked']) {
   document.querySelector('#' + id).addEventListener('change', e => {
     window.changes.push([id, e.target.value, e.isTrusted]);
     document.querySelector('#log').textContent = 'changed ' + id + ' to ' + e.target.value;

@@ -39,6 +39,22 @@ async fn desktop_and_extension_say_the_same(desktop: &ToolRegistry, url: &str) {
         "a short page has no marker: {}",
         opened.text
     );
+    // A page is not the effect of an input: a navigation and a look carry no
+    // outcome line, as on the extension.
+    let no_outcome = |result: &ToolResult| {
+        !result.text.lines().any(|line| line.starts_with("Outcome: "))
+            && result.data["outcome"].is_null()
+    };
+    assert!(no_outcome(&opened), "{}", opened.text);
+    let looked = call(desktop, "chrome_page_snapshot", json!({})).await;
+    assert!(!looked.is_error, "{}", looked.text);
+    assert!(no_outcome(&looked), "{}", looked.text);
+    // The page script counts the characters of a text only when it cut it.
+    assert!(
+        looked.data["page"]["text_total"].is_null() && looked.data["page"]["text_cut"] == false,
+        "{}",
+        looked.data["page"]
+    );
 
     let base = "Outcome fixture Dead Add item Agree Next";
     let with_item = "Outcome fixture Dead Add item Item 1 Agree Next";
@@ -144,4 +160,49 @@ async fn desktop_and_extension_say_the_same(desktop: &ToolRegistry, url: &str) {
             && long.data["page"]["text_total"].as_u64().unwrap() > 5000,
         "{marker}"
     );
+
+    // Its total counts characters, not UTF-16 units: a code point outside the
+    // basic plane is one.
+    eval(
+        desktop,
+        "document.body.append(Object.assign(document.createElement('p'), \
+         {textContent: String.fromCodePoint(0x1F600).repeat(2500)})); true",
+    )
+    .await;
+    let counted = eval(
+        desktop,
+        "(() => { const t = document.body.innerText.replace(/[ \\t]+/g, ' ') \
+         .replace(/\\n\\s*\\n+/g, '\\n').trim(); return [[...t].length, t.length]; })()",
+    )
+    .await;
+    let (points, units) = (counted[0].as_u64().unwrap(), counted[1].as_u64().unwrap());
+    assert!(units >= points + 2500, "{counted}");
+    let astral = call(desktop, "chrome_page_snapshot", json!({})).await;
+    assert_eq!(
+        astral.data["page"]["text_total"].as_u64(),
+        Some(points),
+        "{}",
+        astral.text
+    );
+
+    // A change past the start of a long page is not reported as nothing: the
+    // look keeps only the start of the text, and the sentence says so.
+    eval(
+        desktop,
+        "const b = document.createElement('button'); b.id = 'report'; b.textContent = 'Report'; \
+         b.onclick = () => document.body.append(Object.assign(document.createElement('p'), \
+         {textContent: 'Late error: payment declined'})); document.body.prepend(b); \
+         window.scrollTo(0, 0); true",
+    )
+    .await;
+    let late = call(desktop, "chrome_click", json!({"selector": "#report"})).await;
+    assert!(!late.is_error, "{}", late.text);
+    assert_eq!(
+        outcome_sentence(&late.text),
+        "No visible change in the controls or in the start of the page text (the text is cut, \
+         so later changes are not compared).",
+        "{}",
+        late.text
+    );
+    assert_eq!(late.data["outcome"]["changed"], json!(false));
 }

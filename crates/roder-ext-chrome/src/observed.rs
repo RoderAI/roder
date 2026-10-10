@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
+use crate::observed_cut::{NO_CHANGE_IN_THE_START, URL_KEEP_CHARS, cut_by_extension, role_of};
 use crate::observed_read::Read;
 
 /// Characters of a control's label, value and selector a line carries.
@@ -23,9 +24,6 @@ const SELECTOR_CHARS: usize = 80;
 /// Characters of an address and of a title in a sentence.
 const URL_CHARS: usize = 110;
 const TITLE_CHARS: usize = 80;
-/// The most the extension keeps of a page's text, so a text this long was cut
-/// by it.
-const EXTENSION_TEXT_CHARS: usize = 12_000;
 
 /// One thing on the page to act on.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,8 +71,8 @@ pub(crate) struct Observed {
     pub(crate) title: String,
     /// The page's text on one line.
     pub(crate) text: String,
-    /// The most text the observer keeps, when it keeps a fixed amount.
-    pub(crate) text_limit: Option<usize>,
+    /// Whether `text` is only the start of the page's: the observer cut it.
+    pub(crate) text_cut: bool,
     pub(crate) controls: Vec<Control>,
     pub(crate) forms: Vec<String>,
     pub(crate) frames: Vec<String>,
@@ -122,11 +120,12 @@ impl Observed {
             })
             .collect();
         let viewport = &snapshot["viewport"];
+        let text = snapshot["text"].as_str().unwrap_or_default();
         Self {
-            url: one_line(snapshot["url"].as_str().unwrap_or_default(), 300),
+            url: one_line(snapshot["url"].as_str().unwrap_or_default(), URL_KEEP_CHARS),
             title: one_line(snapshot["title"].as_str().unwrap_or_default(), 150),
-            text: one_line(snapshot["text"].as_str().unwrap_or_default(), usize::MAX),
-            text_limit: Some(EXTENSION_TEXT_CHARS),
+            text: one_line(text, usize::MAX),
+            text_cut: cut_by_extension(text),
             controls,
             forms,
             frames,
@@ -145,9 +144,10 @@ impl Observed {
     pub(crate) fn from_look(look: &Value) -> Self {
         let viewport = &look["viewport"];
         Self {
-            url: one_line(look["url"].as_str().unwrap_or_default(), 300),
+            url: one_line(look["url"].as_str().unwrap_or_default(), URL_KEEP_CHARS),
             title: one_line(look["title"].as_str().unwrap_or_default(), 150),
             text: one_line(look["text"].as_str().unwrap_or_default(), usize::MAX),
+            text_cut: look["text_cut"] == true,
             controls: look["elements"]
                 .as_array()
                 .into_iter()
@@ -161,14 +161,6 @@ impl Observed {
             scroll_y: viewport["scroll_y"].as_f64().map(|y| y as i64),
             ..Self::default()
         }
-    }
-
-    /// Whether the text is as long as the observer keeps, which it is only
-    /// when the page had more. (A cut that lands on a space loses it to the
-    /// trim: one character short.)
-    pub(crate) fn text_cut_by_source(&self) -> bool {
-        self.text_limit
-            .is_some_and(|limit| self.text.chars().count() + 1 >= limit)
     }
 }
 
@@ -205,11 +197,7 @@ fn extension_control(control: &Value) -> Option<Control> {
         .filter(|value| !value.is_empty());
     Some(Control {
         reference,
-        role: control["role"]
-            .as_str()
-            .filter(|role| !role.is_empty())
-            .unwrap_or(tag)
-            .to_string(),
+        role: role_of([control["role"].as_str(), Some(tag)]),
         label,
         value,
         secret,
@@ -230,12 +218,11 @@ fn look_control(element: &Value) -> Option<Control> {
     let secret = element["secret"] == true;
     Some(Control {
         reference: reference(&element["ref"])?,
-        role: element["role"]
-            .as_str()
-            .or_else(|| element["type"].as_str())
-            .or_else(|| element["tag"].as_str())
-            .unwrap_or_default()
-            .to_string(),
+        role: role_of([
+            element["role"].as_str(),
+            element["type"].as_str(),
+            element["tag"].as_str(),
+        ]),
         label: text_of(&element["label"], LABEL_CHARS),
         value: element["value"]
             .as_str()
@@ -319,8 +306,8 @@ pub(crate) fn one_line(text: &str, chars: usize) -> String {
         .chars()
         .map(|c| match c {
             c if c.is_control() => ' ',
-            '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => ' ',
-            '\u{feff}' => ' ',
+            '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' => ' ',
+            '\u{2066}'..='\u{2069}' | '\u{feff}' => ' ',
             c => c,
         })
         .collect();
@@ -436,6 +423,9 @@ pub(crate) fn compare(before: Option<&Observed>, after: &Observed) -> Comparison
         .filter_map(|(missing, name)| missing.then_some(name))
         .collect();
     result.sentence = match (parts.is_empty(), unread.is_empty()) {
+        // The text is the observer's start of the page: what lies past it was
+        // not compared, so it is not said to be unchanged.
+        (true, true) if before.text_cut || after.text_cut => NO_CHANGE_IN_THE_START.to_string(),
         (true, true) => "No visible change.".to_string(),
         (true, false) => format!(
             "No visible change in what was compared; {} not read both times.",

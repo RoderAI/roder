@@ -208,3 +208,49 @@ async fn a_batch_stops_after_a_navigation_and_names_what_it_did_not_run() {
     );
     assert!(step.image.is_some());
 }
+
+#[tokio::test]
+async fn an_address_that_holds_a_remembered_secret_does_not_stop_a_batch_that_stayed_put() {
+    let Some(browser) = support::Browser::start().await.unwrap() else {
+        return;
+    };
+    let traps = Traps::start().await;
+    let (websocket, target_id) = first_page(&browser).await;
+    let tab = DirectTab::Page {
+        websocket,
+        target_id,
+    };
+    // The owner remembers a code typed earlier, and the page's address holds
+    // it: the look hides it, the address read before an action does not.
+    let guard = Remembering(Mutex::new(vec!["hunter22".to_string()]));
+    let mut session = DirectSession::attach(&tab, Arc::new(guard), false)
+        .await
+        .unwrap();
+    let loaded = session
+        .run(
+            "navigate",
+            &json!({"url": format!("{}?code=hunter22", traps.url)}),
+        )
+        .await;
+    assert!(!loaded.is_error, "{}", loaded.text);
+    // A confirm dialog is declined: the page stays where it is both times.
+    let step = session
+        .run_computer(&actions(json!([
+            {"type":"click","button":"left","x":60,"y":220},
+            {"type":"click","button":"left","x":60,"y":220},
+        ])))
+        .await;
+    assert!(!step.is_error, "{}", step.text);
+    assert_eq!(
+        step.data["completed_actions"], 2,
+        "the same page is not a navigation: {}",
+        step.data
+    );
+    assert!(step.data.get("stopped_after").is_none(), "{}", step.data);
+    let notes = notes(&step.data).join("\n");
+    assert!(
+        notes.contains("confirm dialog") && !notes.contains("loaded"),
+        "{notes}"
+    );
+    assert!(!notes.contains("hunter22"), "{notes}");
+}

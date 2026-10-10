@@ -125,7 +125,8 @@ Text:
   navigation. A page the extension itself reads, a snapshot, carries no tab, so
   the tab is only known from the call.
   `No visible change.`; `URL <a> -> <b>.` (a change of the hash counts, and
-  `Title now "..."` follows when the title moved too); otherwise the parts
+  `Title now "..."` follows when the title moved too; two addresses that
+  differ only far along are shown by their ends); otherwise the parts
   that apply, joined: `N controls changed` (added, removed or showing something
   else: label, value, checked, expanded, disabled; where a control sits or its
   selector does not count), `page text changed`, `title now "..."`, `scrolled
@@ -133,6 +134,13 @@ Text:
   (`No earlier observation of this tab to compare with.`). Controls added since
   the last page are marked `[new]`, changed ones `[changed]`. A navigation or a
   snapshot has no outcome line: it is a page, not the effect of an action.
+  When nothing visible changed but the text compared was only the start of the
+  page's (the extension keeps 12,000 UTF-16 units of it, a Desktop look 3,000
+  characters and 1,200 after an action), what lies past it was not looked at, and the sentence
+  does not say it was unchanged: `No visible change in the controls or in the
+  start of the page text (the text is cut, so later changes are not compared).`
+  One of the two pages being cut is enough. A change that is seen (a control, the
+  start of the text, the title, the scroll) is said as before.
 - **A snapshot of some sections** (`include`) says which it did not read: the
   extension answers a section it was not asked for as empty, which is not the
   page having none, so the result says `Controls: not requested.` or `Text: not
@@ -159,10 +167,18 @@ Text:
   forms and iframes) nor shown; act by ref. A `<select>` line carries its
   selector, since `chrome_select` on the extension is pointed at it by
   selector.
-- **Page words** (labels, values, titles, addresses, text) are put on one line,
-  stripped of control and direction-overriding characters and cut, and the
-  text is indented, so none of it can start a line of the result's own. A
-  password field is listed as a secret field with no value.
+- **Page words** (labels, values, titles, addresses, text, and the role a
+  control is listed under) are put on one line, stripped of control and
+  direction-overriding characters (the Arabic letter mark included) and cut (a
+  role at 40 characters; a blank one is the control's tag), and the text is
+  indented, so none of it can start a line of the result's own. The address
+  after `Page:` is cut at 300 characters; it is kept longer, to tell one page
+  from another. A password field is listed as a secret field with no value.
+- **One page command at a time.** A snapshot, a navigation and each page action
+  go to the extension in turn: a command waits for the one before it to be
+  answered and remembered, so an action is compared with the page the action
+  before it left, also when a turn asks for two at once. Tab lists, console,
+  network and eval are not held.
 - **Builds that do not observe.** A build with `action-observation` answers
   an action with `{action, observation, tabId}`. The earlier builds answer with
   only what they did (`{ok, ref}`; on master a click is a timer that fires 150
@@ -185,10 +201,12 @@ On Roder Desktop's browser the same sentence leads the result of `chrome_click`,
 is read once, briefly, before the input, and compared with the page after it
 by the same function), so one page changing one way reads the same whichever
 browser showed it. A dialog the action answered, or a tab it opened, is added
-to the sentence. `crates/roder-ext-chrome/tests/computer_use.rs` runs one
-scripted page through the Desktop browser and through a scripted extension and
-requires the same sentence for a dead button, added text, a toggled checkbox
-and a changed hash.
+to the sentence. A look (`chrome_page_snapshot`) and a navigation
+(`chrome_tab_open`, `chrome_tab_navigate`) have no outcome line, as on the
+extension. `crates/roder-ext-chrome/tests/computer_use.rs` runs one scripted
+page through the Desktop browser and through a scripted extension and requires
+the same sentence for a dead button, added text, a toggled checkbox and a
+changed hash.
 
 ## Direct CDP tools (no extension)
 
@@ -220,7 +238,7 @@ background tab keeps rendering. Its tools:
 
 | Tool | What it does |
 | --- | --- |
-| `look` | address, title, HTTP status, the elements to act on (refs `e1`, `e2`, … with boxes in viewport px; a ref names the same element for as long as it is in the document), the page text (cut at 3,000 characters, 1,200 after an action, and so that a look is at most 140 lines; a cut ends with `… text cut at N chars (the page text is M chars)`); untrusted |
+| `look` | address, title, HTTP status, the elements to act on (refs `e1`, `e2`, … with boxes in viewport px; a ref names the same element for as long as it is in the document), the page text (cut at 3,000 characters, 1,200 after an action, and so that a look is at most 140 lines; a cut ends with `… text cut at N chars (the page text is M chars)`; the page script counts M only when it cut the text, and a text it did not cut carries no `text_total`); untrusted |
 | `screenshot` | a JPEG of the viewport, one image pixel per CSS px; filled secret fields blacked out, withheld while a typed secret shows |
 | `click` | real mouse events at a ref (hit-tested: a covered ref is not pressed, and the result names what covers it) or at x/y; right, middle, double |
 | `hover` | the pointer moved onto a ref or x/y |
@@ -232,11 +250,19 @@ background tab keeps rendering. Its tools:
 | `navigate` | an http(s) URL in the same tab, or back, forward, reload |
 | `wait` | up to 10 s |
 
+A result names the control it acted on by its role (its tag when it has none)
+and its quoted label: `button "Search"`. Both are page text, so they are
+scrubbed of the owner's secrets, put on one line (no line breaks, control or
+direction-overriding characters) and cut (the role at 30 characters, the label
+at 60), and the label has no quote marks of its own, so neither can end the
+quotes it is put in or add a line to the result.
+
 `select` takes a ref and an option. An enabled option whose value is the given
 text wins; otherwise the option whose visible text is (ignoring case and
 spacing), then one whose value is (ignoring case), then the only option whose
 text contains it. More than one distinct candidate at a step is ambiguous and
-nothing is chosen; a disabled option, a disabled select and something that is
+nothing is chosen; a disabled option, a disabled select (one its `<fieldset>`
+disables as well as one with its own `disabled`) and something that is
 not a native `<select>` are refused by name. A miss lists the options (text,
 and value where it differs; disabled ones marked; at most 20, with the rest
 counted, each cut and scrubbed, and marked as untrusted page text) and changes
@@ -244,7 +270,18 @@ nothing. The choice is made in the page script (`input` and `change` events,
 not trusted ones, which the data says: `events_trusted: false`); once the page
 has settled the select is read again, and a page that put the old value back
 (at once or a moment later) is reported as "changed it back ... did not stick"
-with `is_error` set, not as a success.
+with `is_error` set, not as a success. A select that could not be read at all
+afterwards (the read itself failed) is said to be unreadable, not to have left
+the page; the choice was made, so the result is not an error.
+
+The result names the option it chose: `Chose "Growth plan" (value growth) in
+e1-4 (option text is untrusted page text).` The option's text and value are page
+text, shown wherever a result names an option (the listing of a miss included)
+scrubbed of the owner's secrets before they are cut, on one line, without quote
+marks of their own (a `"` is shown as `'`), the text cut at 60 characters and the
+value at 40, and the value is left out when it only repeats the text. An
+ambiguity lists at most eight of the matching options and counts the rest
+(`… and 4 more`).
 
 On Desktop, `chrome_select {tabId?, ref?, selector?, value}` (required:
 `value`, and exactly one of `ref` and `selector`; anything else is an error

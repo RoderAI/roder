@@ -10,8 +10,8 @@
 //! Notes exist only for events worth the model's attention: a result with
 //! nothing notable has no notes, so the replayed prefix does not change for
 //! noise. Page-sourced words (a label, a title, a dialog's message) are
-//! quoted, cut and scrubbed of the owner's secrets before they are written,
-//! and the block that carries them says they are untrusted.
+//! quoted, cut, scrubbed of the owner's secrets and made one plain line before
+//! they are written, and the block that carries them says they are untrusted.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -25,6 +25,7 @@ use super::guard::DirectGuard;
 use super::keys::Chord;
 use super::look::{self, Detail};
 use super::session::{DirectSession, DirectStep};
+use crate::observed::one_line;
 
 /// Notes a batch returns, at most.
 pub(crate) const MAX_NOTES: usize = 8;
@@ -34,6 +35,8 @@ pub(crate) const NOTE_CHARS: usize = 160;
 const URL_CHARS: usize = 70;
 const TITLE_CHARS: usize = 40;
 const LABEL_CHARS: usize = 40;
+/// A role is an attribute the page sets: it names what was hit, no more.
+const ROLE_CHARS: usize = 30;
 const DIALOG_CHARS: usize = 80;
 
 /// Why a batch stopped before its last action.
@@ -125,6 +128,20 @@ impl BatchFacts {
         self.events.push(clean(guard, &note));
     }
 
+    /// [`Self::said`] for a fact that holds only when the step went out: one
+    /// that failed, or came back as an error, says nothing of it, since its
+    /// failure is what the result reports.
+    pub(crate) fn said_if_sent(
+        &mut self,
+        guard: &dyn DirectGuard,
+        text: &str,
+        step: &anyhow::Result<DirectStep>,
+    ) {
+        if step.as_ref().is_ok_and(|done| !done.is_error) {
+            self.said(guard, text);
+        }
+    }
+
     /// Record what the step that just finished came to. Returns why the batch
     /// should not go on, when the page it was planned for is gone.
     pub(crate) fn observe(
@@ -144,10 +161,18 @@ impl BatchFacts {
         let hit = hit_phrase(target);
         let lead = self.lead(action, hit.as_deref());
         let opened = step.opened_tab.is_some();
+        // The look was scrubbed of what the owner remembered when it was
+        // read, the address before the action is raw, and a secret this very
+        // action typed is remembered only after it. The address before is
+        // scrubbed and matched to the look as read, or to the look scrubbed
+        // again for what was remembered since (not the look alone: a second
+        // scrub is not the first for a secret inside the redaction mark).
         let navigated = !opened
-            && url_before
-                .as_deref()
-                .is_some_and(|before| !same_document(before, &seen.url));
+            && url_before.as_deref().is_some_and(|before| {
+                let before = guard.scrub(before);
+                !same_document(&before, &seen.url)
+                    && !same_document(&before, &guard.scrub(&seen.url))
+            });
         let mut notes = Vec::new();
         for dialog in step.data["dialogs"].as_array().into_iter().flatten() {
             notes.push(format!(
@@ -320,9 +345,8 @@ pub(crate) fn describe(action: &ComputerAction) -> String {
     }
 }
 
-/// Page text as a note may carry it: one line, no quote marks of its own, cut,
-/// and in quotes so it reads as the page's words.
-fn quote(text: &str, chars: usize) -> String {
+/// Page text as a note may carry it: one line, no quote marks of its own, cut.
+fn words(text: &str, chars: usize) -> String {
     let plain: String = text
         .chars()
         .map(|c| match c {
@@ -331,8 +355,15 @@ fn quote(text: &str, chars: usize) -> String {
             c => c,
         })
         .collect();
-    let one_line = plain.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("\"{}\"", cut(&one_line, chars))
+    cut(
+        &plain.split_whitespace().collect::<Vec<_>>().join(" "),
+        chars,
+    )
+}
+
+/// [`words`] in quotes, so that it reads as the page's own.
+fn quote(text: &str, chars: usize) -> String {
+    format!("\"{}\"", words(text, chars))
 }
 
 /// What a probe hit, as a note names it: `link "Weekly report"`.
@@ -342,9 +373,9 @@ fn hit_phrase(target: &Value) -> Option<String> {
         return Some("the page background".to_string());
     }
     let kind = match tag {
-        "a" => "link",
-        "img" => "image",
-        other => other,
+        "a" => "link".to_string(),
+        "img" => "image".to_string(),
+        other => words(other, ROLE_CHARS),
     };
     Some(
         match target["label"]
@@ -352,7 +383,7 @@ fn hit_phrase(target: &Value) -> Option<String> {
             .filter(|label| !label.trim().is_empty())
         {
             Some(label) => format!("{kind} {}", quote(label, LABEL_CHARS)),
-            None => kind.to_string(),
+            None => kind,
         },
     )
 }
@@ -374,11 +405,21 @@ fn page_phrase(seen: &PageSeen) -> String {
 }
 
 /// An address without its query or fragment, which may carry what the owner
-/// would not want repeated, cut to what a note has room for.
+/// would not want repeated, and without the opaque segments of its path (see
+/// [`opaque_segment`]), cut to what a note has room for.
 fn short_url(url: &str) -> String {
     let bare = match reqwest::Url::parse(url) {
         Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
-            let mut bare = format!("{}{}", parsed.origin().ascii_serialization(), parsed.path());
+            let path = parsed
+                .path()
+                .split('/')
+                .map(|segment| match opaque_segment(segment) {
+                    true => "…",
+                    false => segment,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            let mut bare = format!("{}{path}", parsed.origin().ascii_serialization());
             if parsed.query().is_some() {
                 bare.push_str("?…");
             }
@@ -389,20 +430,39 @@ fn short_url(url: &str) -> String {
     cut(&bare, URL_CHARS)
 }
 
+/// Whether a path segment reads as a bearer token (a reset or invite link, a
+/// signed id) rather than as a name: 16 or more hex digits (a UUID among
+/// them), or 20 or more letters, digits, `-` and `_` with at least one digit,
+/// one letter and no more than two separators. A route (`/checkout/confirm`)
+/// and a slug of words (`/blog/how-to-build-a-rust-web-server-2024`) are not.
+fn opaque_segment(segment: &str) -> bool {
+    let hex = segment.chars().filter(char::is_ascii_hexdigit).count();
+    if hex >= 16 && segment.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return true;
+    }
+    segment.chars().count() >= 20
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        && segment.chars().any(|c| c.is_ascii_digit())
+        && segment.chars().any(|c| c.is_ascii_alphabetic())
+        && segment.chars().filter(|c| matches!(c, '-' | '_')).count() <= 2
+}
+
 /// Whether two addresses are the same document, whatever follows `#`.
 fn same_document(a: &str, b: &str) -> bool {
     a.split('#').next() == b.split('#').next()
 }
 
 /// A note as the result carries it: scrubbed of the owner's secrets, on one
-/// line, at most [`NOTE_CHARS`] characters.
+/// plain line, at most [`NOTE_CHARS`] characters.
+///
+/// The scrub comes first, so that a secret which holds an invisible character
+/// still matches. Then the page's words lose what would reorder or hide text
+/// in the note (direction overrides, zero-width characters).
 fn clean(guard: &dyn DirectGuard, note: &str) -> String {
-    let scrubbed = guard.scrub(note);
-    // `cut` adds an ellipsis after the characters it keeps.
-    cut(
-        &scrubbed.split_whitespace().collect::<Vec<_>>().join(" "),
-        NOTE_CHARS - 1,
-    )
+    // `one_line` adds an ellipsis after the characters it keeps.
+    one_line(&guard.scrub(note), NOTE_CHARS - 1)
 }
 
 impl DirectSession {

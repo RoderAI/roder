@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use roder_api::{
-    chrome::ChromeError,
+    chrome::{ChromeCommand, ChromeController, ChromeError, ChromePermissionMode, ChromeStatus},
     policy_mode::PolicyMode,
     tools::{ToolCall, ToolContributor, ToolExecutionContext, ToolRegistry, ToolResult},
 };
@@ -80,3 +80,4 @@ include!("extension_observation/outcomes.rs");
 include!("extension_observation/old_build.rs");
 include!("extension_observation/budget.rs");
 include!("extension_observation/snapshots.rs");
+include!("extension_observation/same_tab.rs");

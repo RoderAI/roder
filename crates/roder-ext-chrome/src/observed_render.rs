@@ -10,7 +10,7 @@
 //! what it cuts: a rendering that stays inside a margin of both is read whole,
 //! its outcome line first and its omission lines last.
 
-use crate::observed::{Comparison, Control, Observed, one_line};
+use crate::observed::{Comparison, Control, Observed, clip, one_line};
 
 /// How much one rendering may take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +28,9 @@ impl Budget {
     };
 }
 
+/// Characters of the page's address the result shows; the observation keeps
+/// more, to tell one page from another.
+const PAGE_URL_CHARS: usize = 300;
 /// Room kept for the line that says a block was cut.
 const MARKER_ROOM: usize = 80;
 /// Room kept for the text when the controls take the rest: its header and
@@ -109,7 +112,7 @@ pub(crate) fn render(view: &View<'_>, budget: Budget) -> String {
     if let Some(action) = &view.action {
         head.push(format!("Action result: {action}"));
     }
-    head.push(format!("Page: {}", page.url));
+    head.push(format!("Page: {}", clip(&page.url, PAGE_URL_CHARS)));
     head.push(format!("Title: {}", page.title));
     if let Some((width, height)) = page.viewport {
         head.push(match page.scroll_y {
@@ -269,7 +272,7 @@ fn text_block(page: &Observed, room: Room, withhold: bool) -> Option<String> {
     if total == 0 {
         return None;
     }
-    let source_cut = page.text_cut_by_source();
+    let source_cut = page.text_cut;
     let overhead = "Text:\n  ".len() + MARKER_ROOM;
     let mut kept = match withhold {
         true => 0,

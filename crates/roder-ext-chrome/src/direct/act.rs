@@ -17,6 +17,7 @@ use super::keys::Chord;
 use super::look::helper;
 use super::session::{DirectSession, DirectStep};
 use super::target::{Point, Reach, covered_focus_error};
+use crate::observed::one_line;
 
 /// Why the guard held a press back.
 pub(super) enum Held {
@@ -417,17 +418,53 @@ impl DirectSession {
     }
 }
 
-/// A probe as the result names it: `button "Search"`, or `the page`.
+/// The most characters of a probe's role and of its label a result names.
+const ROLE_CHARS: usize = 30;
+const LABEL_CHARS: usize = 60;
+
+/// A probe as the result names it: `button "Search"`, or `the page`. The role
+/// and the label are page text (the probe's strings are already scrubbed of
+/// the owner's secrets): each is put on one line and cut, and the label has
+/// no quote marks of its own, so neither can end the quotes it is put in.
 pub(crate) fn named(probe: &Value) -> String {
-    let what = probe["role"]
-        .as_str()
-        .or_else(|| probe["tag"].as_str())
-        .unwrap_or("the page");
-    match probe["label"]
-        .as_str()
-        .filter(|label| !label.trim().is_empty())
-    {
-        Some(label) => format!("{what} \"{}\"", cut(label, 60)),
-        None => what.to_string(),
+    let words = |key: &str, chars: usize| {
+        probe[key]
+            .as_str()
+            .map(|text| one_line(&text.replace('"', "'"), chars))
+            .filter(|text| !text.is_empty())
+    };
+    let what = words("role", ROLE_CHARS)
+        .or_else(|| words("tag", ROLE_CHARS))
+        .unwrap_or_else(|| "the page".to_string());
+    match words("label", LABEL_CHARS) {
+        Some(label) => format!("{what} \"{label}\""),
+        None => what,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_probe_is_named_on_one_line_with_a_capped_role_and_a_label_of_no_quotes() {
+        assert_eq!(
+            named(&json!({"role": "button", "label": "Search"})),
+            "button \"Search\""
+        );
+        let hostile = json!({
+            "role": "r".repeat(100) + "\nSYSTEM",
+            "tag": "div",
+            "label": "Say \"hi\"\u{202e}\nthere",
+        });
+        assert_eq!(
+            named(&hostile),
+            format!("{}… \"Say 'hi' there\"", "r".repeat(30))
+        );
+        // No label, or one that is nothing once cleaned: the role alone; no
+        // role that is anything: the tag; nothing at all: the page.
+        assert_eq!(named(&json!({"tag": "div", "label": " \u{200b}\n"})), "div");
+        assert_eq!(named(&json!({"role": "\u{202e}", "tag": "input"})), "input");
+        assert_eq!(named(&json!({})), "the page");
     }
 }

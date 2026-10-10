@@ -150,6 +150,37 @@ async fn desktop_select(registry: &ToolRegistry, url: &str) {
     );
     assert_eq!(eval(registry, "window.goClicks").await, 0);
 
+    // 5b. A select its fieldset disables has no `disabled` of its own, and is
+    // as little to be changed as one that does: listed as disabled, refused by
+    // name, and no event fired on it.
+    let locked_listed = looked.data["page"]["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["tag"] == "select" && e["label"] == "Locked")
+        .unwrap_or_else(|| panic!("no select labelled Locked: {}", looked.text));
+    assert_eq!(locked_listed["disabled"], json!(true), "{}", looked.text);
+    let locked = call(
+        registry,
+        "chrome_select",
+        json!({"selector": "#locked", "value": "shut"}),
+    )
+    .await;
+    assert!(
+        locked.is_error && locked.text.contains("is a disabled <select>"),
+        "{}",
+        locked.text
+    );
+    assert_eq!(eval(registry, &value_of("locked")).await, "open");
+    assert_eq!(
+        eval(
+            registry,
+            "window.changes.filter(c => c[0] === 'locked').length"
+        )
+        .await,
+        0
+    );
+
     // 6. Calls without exactly one target, or without a value, or aimed at
     // nothing, are errors that change nothing.
     for (args, wanted) in [

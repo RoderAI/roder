@@ -18,6 +18,11 @@
 //! kept in the result's data, `observation.build`, and is never put in the
 //! text the model reads: the model should act on the page, not on the
 //! extension's age.
+//!
+//! Page commands go to the extension one at a time. An action is compared with
+//! the page remembered for its tab, and is remembered in turn; two at once (a
+//! turn's parallel tool calls) could be answered out of order, and the one that
+//! changed the page would be told nothing did.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -46,6 +51,8 @@ const REMEMBERED_TABS: usize = 16;
 pub(crate) struct ActionObserver {
     delay: Duration,
     seen: Mutex<Seen>,
+    /// Held by a page command from its dispatch until its page is remembered.
+    turn: tokio::sync::Mutex<()>,
 }
 
 /// The tab a call that no tab was named for is about.
@@ -106,6 +113,7 @@ impl ActionObserver {
         Self {
             delay: FALLBACK_DELAY,
             seen: Mutex::new(Seen::default()),
+            turn: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -232,10 +240,16 @@ pub(crate) async fn run(
     }
     // The sections a snapshot was asked for: the others come back empty.
     let included = asked.get("include").and_then(Value::as_array).cloned();
+    let shape = shape(kind);
+    // A command that shows the page waits for the one before it to be
+    // remembered, and is compared with the page that one left.
+    let _turn = match shape {
+        Shape::Plain => None,
+        _ => Some(observer.turn.lock().await),
+    };
     let value = controller
         .dispatch(ChromeCommand::with_params(kind, asked))
         .await?;
-    let shape = shape(kind);
     let replied = match shape {
         Shape::Plain => None,
         Shape::Snapshot => snapshot_of(&value),

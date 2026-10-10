@@ -152,7 +152,7 @@ async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
     // An input says what it did to the page, as the extension's results do.
     let earlier = desktop_outcome::before(&mut session, short).await;
     let mut step = session.run(short, &args).await;
-    desktop_outcome::lead(&mut step, earlier);
+    desktop_outcome::lead(&mut step, short, earlier);
     let mut result = tool_result(&call.id, &call.name, &step);
     result.data["fallback"] = json!("desktop-cdp");
     result

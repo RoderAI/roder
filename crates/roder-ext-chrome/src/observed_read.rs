@@ -55,7 +55,7 @@ impl Observed {
         }
         if !self.read.text && earlier.read.text {
             self.text = earlier.text.clone();
-            self.text_limit = earlier.text_limit;
+            self.text_cut = earlier.text_cut;
             self.read.text = true;
         }
         self

@@ -249,12 +249,17 @@ impl DirectSession {
                     .map(|key| normalize_key(key))
                     .collect::<Vec<_>>()
                     .join("+");
-                // A Mac page ignores Control+a; say what was sent instead.
-                if let Some((twin, said)) = self.mac_chord(&chord).await? {
-                    facts.said(self.guard.as_ref(), &said);
-                    chord = twin;
+                // A Mac page ignores Control+a; say what was sent instead,
+                // once it was sent.
+                let remap = self.mac_chord(&chord).await?;
+                if let Some((twin, _)) = &remap {
+                    chord = twin.clone();
                 }
-                self.key(&json!({"key":chord})).await
+                let step = self.key(&json!({"key":chord})).await;
+                if let Some((_, said)) = &remap {
+                    facts.said_if_sent(self.guard.as_ref(), said, &step);
+                }
+                step
             }
             ComputerAction::Type { text } => self.type_text(&json!({"text":text})).await,
             ComputerAction::Wait => {
