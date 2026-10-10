@@ -1270,6 +1270,13 @@ mod tests {
     }
 
     #[test]
+    fn gpt_6_point_releases_support_provider_native_tool_search() {
+        assert!(openai_model_supports_tool_search("gpt-6.1-sol"));
+        // The GPT-6 family match must not catch unrelated ids that merely start with "gpt-6".
+        assert!(!openai_model_supports_tool_search("gpt-60-sol"));
+    }
+
+    #[test]
     fn keeps_explicit_openai_tools_for_unsupported_tool_search_model() {
         let mut request = request();
         request.model.model = "gpt-5.3".to_string();

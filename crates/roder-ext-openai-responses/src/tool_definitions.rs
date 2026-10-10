@@ -80,7 +80,12 @@ pub fn openai_model_supports_tool_search(model: &str) -> bool {
     model.starts_with("gpt-5.4")
         || model.starts_with("gpt-5.5")
         || model.starts_with("gpt-5.6")
-        || model.starts_with("gpt-6-")
+        || is_gpt_6_family(model)
+}
+
+/// GPT-6 family ids: `gpt-6`, `gpt-6-*` releases, and point releases such as `gpt-6.1-sol`.
+fn is_gpt_6_family(model: &str) -> bool {
+    model == "gpt-6" || model.starts_with("gpt-6-") || model.starts_with("gpt-6.")
 }
 
 /// GPT-5 and GPT-6 coding models use Codex's grammar-constrained custom tool.
