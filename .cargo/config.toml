@@ -1,5 +1,11 @@
 [build]
-incremental = true
+# Incremental state is keyed by workspace path, so every worktree sharing one
+# CARGO_TARGET_DIR (see .mise.toml) writes its own copy and nothing ever prunes
+# it: that is where worktree disk growth came from. sccache (also .mise.toml)
+# covers the rebuild cost across worktrees and clean builds, which incremental
+# cannot. This is the fallback for shells where mise is not active or trusted
+# (fresh worktrees, Codex/Cursor sandboxes); CARGO_INCREMENTAL overrides it.
+incremental = false
 
 [env]
 # The dynamic-workflow JS interpreter needs more than the default test stack

@@ -2,8 +2,35 @@
 python = "3.12"
 rust = "1.95.0"
 uv = "0.11.7"
+sccache = "0.15.0"
 
 [env]
+# One build directory for every checkout and worktree. Third-party dependencies
+# compile once and are reused; only workspace crates (whose cache key includes
+# the checkout path) rebuild per worktree. Matches ~/.zshenv and vex-git.
+CARGO_TARGET_DIR = "{{env.HOME}}/.cargo-target.noindex"
+
+# Off for the same reason as .cargo/config.toml: incremental state is per
+# worktree path and unbounded in a shared target dir.
+CARGO_INCREMENTAL = "0"
+
+# sccache keeps compiled output outside any target dir, so a deleted or wiped
+# target dir (or a fresh worktree) costs a warm rebuild instead of a cold one,
+# and all worktrees share one cache. The name is emitted only once sccache is
+# actually installed; an empty value means "no wrapper" to Cargo, whereas a
+# hardcoded "sccache" would fail every cargo command on a machine without it.
+# The mise install dir is probed directly because calling `mise` from inside an
+# env template deadlocks.
+RUSTC_WRAPPER = "{{ exec(command='if command -v sccache >/dev/null 2>&1 || ls \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/installs/sccache\"/*/*/sccache >/dev/null 2>&1; then echo sccache; fi') | trim }}"
+# Same cache dir as vex-git, so identical dependency compiles are shared.
+SCCACHE_DIR = "{{env.HOME}}/.cache/sccache"
+SCCACHE_CACHE_SIZE = "20G"
+# A cache read/write fault degrades to a normal compile instead of failing it.
+SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
+# Without this the server exits after ~10 minutes idle and the next build
+# silently starts a replacement configured from whatever env it inherits.
+SCCACHE_IDLE_TIMEOUT = "0"
+
 # Homebrew lld (user-installed, macOS); mise enter ensures these bins are on
 # PATH. Missing entries are ignored, so this is inert on Linux, where lld comes
 # from the system package manager instead.
