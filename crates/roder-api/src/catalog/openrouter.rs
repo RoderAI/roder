@@ -14,7 +14,7 @@
 
 use super::{
     EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, ModelCatalogEntry, OPENROUTER_REASONING, PROVIDER_OPENROUTER,
-    REASONING_HIGH, REASONING_MEDIUM, REASONING_NONE, ReasoningOption,
+    REASONING_HIGH, REASONING_MEDIUM, ReasoningOption,
 };
 
 #[allow(clippy::too_many_arguments)]

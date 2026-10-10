@@ -49,6 +49,49 @@ pub(crate) fn detach_controlling_terminal(command: &mut tokio::process::Command)
     let _ = command;
 }
 
+/// SIGKILLs the whole process group led by a child that went through
+/// [`detach_controlling_terminal`].
+///
+/// Detached children no longer share roder's process group, so killing only the
+/// shell (`Child::kill`, `kill_on_drop`) would leave everything it started
+/// running after a timeout or cancellation.
+pub(crate) fn kill_process_group(pid: u32) {
+    #[cfg(unix)]
+    // SAFETY: plain syscall; a stale or foreign id only yields ESRCH/EPERM.
+    unsafe {
+        libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+/// Kills the child's process group when dropped, unless disarmed.
+///
+/// Arm it for the lifetime of a command and disarm after the command finished
+/// on its own: a timeout or a cancelled turn then takes the descendants down,
+/// while background processes a finished command left behind keep running.
+pub(crate) struct ProcessGroupKillOnDrop {
+    pid: Option<u32>,
+}
+
+impl ProcessGroupKillOnDrop {
+    pub(crate) fn new(pid: Option<u32>) -> Self {
+        Self { pid }
+    }
+
+    pub(crate) fn disarm(&mut self) {
+        self.pid = None;
+    }
+}
+
+impl Drop for ProcessGroupKillOnDrop {
+    fn drop(&mut self) {
+        if let Some(pid) = self.pid.take() {
+            kill_process_group(pid);
+        }
+    }
+}
+
 fn is_powershell(shell: &str) -> bool {
     let name = shell
         .rsplit(['/', '\\'])
@@ -90,6 +133,58 @@ mod tests {
         // `setsid` makes the child a session and process-group leader, which
         // is what drops the inherited controlling terminal.
         assert_eq!(pid, pgid);
+    }
+
+    #[cfg(unix)]
+    fn process_alive(pid: i32) -> bool {
+        // SAFETY: signal 0 only probes for existence.
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_the_guard_kills_descendants_of_a_detached_child() {
+        let dir = std::env::temp_dir().join(format!("roder-pgkill-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("grandchild.pid");
+        let _ = std::fs::remove_file(&pidfile);
+
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg(format!("sleep 60 & echo $! > {}; wait", pidfile.display()))
+            .kill_on_drop(true);
+        detach_controlling_terminal(&mut command);
+        let child = command.spawn().expect("spawn sh");
+        let guard = ProcessGroupKillOnDrop::new(child.id());
+
+        let mut grandchild = None;
+        for _ in 0..250 {
+            if let Some(pid) = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|text| text.trim().parse::<i32>().ok())
+            {
+                grandchild = Some(pid);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let grandchild = grandchild.expect("grandchild pid was written");
+        assert!(process_alive(grandchild));
+
+        drop(guard);
+
+        let mut gone = false;
+        for _ in 0..250 {
+            if !process_alive(grandchild) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        drop(child);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(gone, "descendant {grandchild} survived the group kill");
     }
 
     #[cfg(unix)]

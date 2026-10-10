@@ -223,7 +223,9 @@ impl TerminalSession {
         // distinguishable from Enter (crossterm understands CSI 13;2u, but drops
         // the default xterm form CSI 27;2;13~). Existing panes only pick this up
         // after a respawn, so we may re-exec once via tmux.
-        tmux_ensure_extended_keys_for_shift_enter()?;
+        // Best effort: when the respawn cannot happen, run without enhanced
+        // keys (Ctrl+J still inserts newlines) rather than refusing to start.
+        let _ = tmux_ensure_extended_keys_for_shift_enter();
         let tmux_keys = TmuxExtendedKeysGuard::apply();
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -318,59 +320,129 @@ fn tmux_ensure_extended_keys_for_shift_enter() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `-e KEY=VALUE` arguments that carry this process's whole environment
-/// through `tmux respawn-pane`.
+/// `sh` wrapper that makes the respawned process inherit the launching
+/// environment: it sources the handoff script (`$0`), deletes the script and its
+/// private directory, then execs roder with the original arguments.
+#[cfg(unix)]
+const RESPAWN_WRAPPER: &str = r#". "$0"; rm -f -- "$0"; rmdir -- "${0%/*}" 2>/dev/null; exec "$@""#;
+
+/// Shell script that re-exports this process's environment.
 ///
-/// `respawn-pane` starts the new process with the tmux *server's* environment
-/// plus explicit `-e` values, not with the environment of the process it
-/// replaces. Without this, anything exported only in the shell that launched
-/// roder (provider API keys, `--config-dir` overrides, direnv or mise values)
-/// vanishes on the respawn, and the relaunched TUI reports its credentials as
-/// missing. `TMUX` and `TMUX_PANE` stay owned by tmux.
-fn respawn_environment_args(
+/// `tmux respawn-pane` starts the new process with the tmux *server's*
+/// environment, not the environment of the process it replaces. Without this,
+/// anything exported only in the shell that launched roder (provider API keys,
+/// `--config-dir` overrides, direnv or mise values) vanishes on the respawn and
+/// the relaunched TUI reports its credentials as missing.
+///
+/// The values travel in a private file rather than as `respawn-pane -e` argv
+/// entries, which any local user can read from the process list, and values are
+/// written as raw bytes so non-UTF-8 values survive. `TMUX` and `TMUX_PANE`
+/// stay owned by tmux.
+#[cfg(unix)]
+fn respawn_env_script(
     env: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
-) -> Vec<String> {
-    let mut args = Vec::new();
+) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut script = Vec::new();
     for (key, value) in env {
-        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
-            continue;
-        };
-        if key.is_empty()
-            || key.contains('=')
-            || key == "TMUX"
-            || key == "TMUX_PANE"
-            || key == TMUX_KEYS_READY_ENV
+        let name = key.as_bytes();
+        let valid_name = name
+            .first()
+            .is_some_and(|first| first.is_ascii_alphabetic() || *first == b'_')
+            && name
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+        if !valid_name
+            || name == b"TMUX"
+            || name == b"TMUX_PANE"
+            || name == TMUX_KEYS_READY_ENV.as_bytes()
         {
             continue;
         }
-        args.push("-e".to_string());
-        args.push(format!("{key}={value}"));
+        script.extend_from_slice(b"export ");
+        script.extend_from_slice(name);
+        script.extend_from_slice(b"='");
+        for byte in value.as_bytes() {
+            if *byte == b'\'' {
+                script.extend_from_slice(b"'\\''");
+            } else {
+                script.push(*byte);
+            }
+        }
+        script.extend_from_slice(b"'\n");
     }
-    args.push("-e".to_string());
-    args.push(format!("{TMUX_KEYS_READY_ENV}=1"));
-    args
+    script
 }
 
+/// Writes `script` to a fresh `0600` file inside a fresh `0700` directory and
+/// returns the file's path.
+#[cfg(unix)]
+fn write_respawn_env_file(script: &[u8]) -> anyhow::Result<std::path::PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!(
+        "roder-tmux-respawn-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    let path = dir.join("env.sh");
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .and_then(|mut file| file.write_all(script));
+    if let Err(err) = written {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(err.into());
+    }
+    Ok(path)
+}
+
+/// tmux only exists on unix; elsewhere there is nothing to respawn.
+#[cfg(not(unix))]
+fn tmux_respawn_self_for_extended_keys() -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
 fn tmux_respawn_self_for_extended_keys() -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let env_file = write_respawn_env_file(&respawn_env_script(std::env::vars_os()))?;
+
     let mut cmd = std::process::Command::new("tmux");
     cmd.arg("respawn-pane");
     cmd.arg("-k");
-    cmd.args(respawn_environment_args(std::env::vars_os()));
+    cmd.arg("-e");
+    cmd.arg(format!("{TMUX_KEYS_READY_ENV}=1"));
     // Preserve cwd.
     if let Ok(cwd) = std::env::current_dir() {
         cmd.arg("-c");
         cmd.arg(cwd);
     }
     cmd.arg("--");
+    cmd.args(["/bin/sh", "-c", RESPAWN_WRAPPER]);
+    cmd.arg(&env_file);
     cmd.arg(exe);
     cmd.args(args);
-    let status = cmd.status()?;
-    if status.success() {
+    let status = cmd.status();
+    if status.as_ref().is_ok_and(|status| status.success()) {
         // Parent is being replaced; exit so we do not double-run the TUI.
         std::process::exit(0);
     }
+    // The wrapper never ran, so nothing else will remove the secrets file.
+    let _ = std::fs::remove_file(&env_file);
+    if let Some(dir) = env_file.parent() {
+        let _ = std::fs::remove_dir(dir);
+    }
+    status?;
     Ok(())
 }
 
@@ -530,30 +602,93 @@ mod tests {
     use crossterm::event::{KeyEvent, KeyEventKind};
     use std::collections::VecDeque;
 
+    #[cfg(unix)]
+    /// Runs `script` the way the respawn wrapper does and returns the value of
+    /// `name` as the exec'd process would see it.
+    fn env_after_sourcing(script: &[u8], name: &str) -> Vec<u8> {
+        let dir = std::env::temp_dir().join(format!(
+            "roder-env-script-test-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("env.sh");
+        std::fs::write(&file, script).unwrap();
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(r#". "$0"; printf %s "${name}""#))
+            .arg(&file)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(output.status.success());
+        output.stdout
+    }
+
+    #[cfg(unix)]
     #[test]
-    fn tmux_respawn_carries_the_launching_environment() {
+    fn respawn_env_script_round_trips_awkward_values() {
+        use std::os::unix::ffi::OsStringExt;
         let os = std::ffi::OsString::from;
-        let args = respawn_environment_args([
+        let tricky = "it's \"quoted\" $HOME `uname`\nsecond line \\ end";
+        let script = respawn_env_script([
+            (os("RODER_TEST_TRICKY"), os(tricky)),
+            (
+                os("RODER_TEST_NON_UTF8"),
+                std::ffi::OsString::from_vec(vec![b'a', 0xff, b'z']),
+            ),
             (os("OPENROUTER_API_KEY"), os("sk-test")),
-            (os("RODER_TMUX_PREV_EXTENDED_KEYS"), os("off")),
+        ]);
+
+        assert_eq!(
+            env_after_sourcing(&script, "RODER_TEST_TRICKY"),
+            tricky.as_bytes()
+        );
+        assert_eq!(
+            env_after_sourcing(&script, "RODER_TEST_NON_UTF8"),
+            vec![b'a', 0xff, b'z']
+        );
+        assert_eq!(
+            env_after_sourcing(&script, "OPENROUTER_API_KEY"),
+            b"sk-test"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn respawn_env_script_skips_tmux_owned_and_invalid_names() {
+        let os = std::ffi::OsString::from;
+        let script = String::from_utf8(respawn_env_script([
             (os("TMUX"), os("/tmp/tmux-501/default,1,0")),
             (os("TMUX_PANE"), os("%3")),
             (os(TMUX_KEYS_READY_ENV), os("stale")),
             (os("BROKEN=NAME"), os("x")),
-        ]);
+            (os("1LEADING_DIGIT"), os("x")),
+            (os(""), os("x")),
+            (os("KEEP_ME"), os("ok")),
+        ]))
+        .unwrap();
 
-        let pairs = args
-            .chunks(2)
-            .map(|pair| (pair[0].as_str(), pair[1].as_str()))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            pairs,
-            vec![
-                ("-e", "OPENROUTER_API_KEY=sk-test"),
-                ("-e", "RODER_TMUX_PREV_EXTENDED_KEYS=off"),
-                ("-e", "RODER_TMUX_KEYS_READY=1"),
-            ]
-        );
+        assert_eq!(script, "export KEEP_ME='ok'\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn respawn_wrapper_removes_its_handoff_files() {
+        let dir = std::env::temp_dir().join(format!("roder-wrapper-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("env.sh");
+        std::fs::write(&file, "export RODER_WRAPPED='yes'\n").unwrap();
+
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", RESPAWN_WRAPPER])
+            .arg(&file)
+            .args(["/bin/sh", "-c", "printf %s \"$RODER_WRAPPED\""])
+            .output()
+            .unwrap();
+
+        assert_eq!(output.stdout, b"yes");
+        assert!(!file.exists(), "secrets file should be deleted");
+        assert!(!dir.exists(), "private directory should be removed");
     }
 
     #[test]
