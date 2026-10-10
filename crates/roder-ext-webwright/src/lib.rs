@@ -11,6 +11,8 @@ mod run_outcome;
 #[cfg(test)]
 mod run_outcome_tests;
 #[cfg(test)]
+mod run_script_limits_tests;
+#[cfg(test)]
 mod run_script_tests;
 mod showcase;
 mod task;

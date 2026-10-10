@@ -15,20 +15,20 @@ use crate::tools::{
 };
 use crate::tools_tests::{call, tempdir, webwright_context};
 
-const WORKSPACE: &str = ".roder/webwright/fixture";
+pub(crate) const WORKSPACE: &str = ".roder/webwright/fixture";
 const REDACTED: &str = "[redacted sensitive Webwright output line]";
 
 /// Everything verification looks for except a clean exit: a screenshot and a final datum line.
 const EVIDENCE: &str = "mkdir -p screenshots\nprintf png > screenshots/final_execution_001_ok.png\nprintf 'step 1 action: ok\\nfinal datum: Fixture Heading\\n' > final_script_log.txt\n";
 
-struct Fixture {
-    root: PathBuf,
-    registry: ToolRegistry,
-    ctx: ToolExecutionContext,
+pub(crate) struct Fixture {
+    pub(crate) root: PathBuf,
+    pub(crate) registry: ToolRegistry,
+    pub(crate) ctx: ToolExecutionContext,
 }
 
 impl Fixture {
-    async fn new(name: &str) -> Self {
+    pub(crate) async fn new(name: &str) -> Self {
         let root = tempdir(name);
         let mut registry = ToolRegistry::default();
         WebwrightToolContributor.contribute(&mut registry).unwrap();
@@ -52,15 +52,15 @@ impl Fixture {
         fixture
     }
 
-    fn workspace(&self) -> PathBuf {
+    pub(crate) fn workspace(&self) -> PathBuf {
         self.root.join(WORKSPACE)
     }
 
-    fn script(&self, body: &str) {
+    pub(crate) fn script(&self, body: &str) {
         fs::write(self.workspace().join("final_script.py"), body).unwrap();
     }
 
-    async fn tool(&self, name: &str, arguments: Value) -> ToolResult {
+    pub(crate) async fn tool(&self, name: &str, arguments: Value) -> ToolResult {
         self.registry
             .get(name)
             .unwrap()
@@ -70,7 +70,7 @@ impl Fixture {
     }
 
     /// Runs the script with `sh` as the interpreter.
-    async fn run(&self, timeout_seconds: u64) -> ToolResult {
+    pub(crate) async fn run(&self, timeout_seconds: u64) -> ToolResult {
         self.run_with("sh", timeout_seconds).await
     }
 
@@ -104,7 +104,7 @@ fn passed_check(verification: &ToolResult, id: &str) -> bool {
         .any(|check| check["id"] == id && check["passed"] == true)
 }
 
-async fn wait_for_pid(path: &Path) -> u32 {
+pub(crate) async fn wait_for_pid(path: &Path) -> u32 {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(pid) = fs::read_to_string(path)
@@ -123,7 +123,7 @@ async fn wait_for_pid(path: &Path) -> u32 {
 }
 
 /// A zombie is dead; only a process that can still run counts.
-fn is_running(pid: u32) -> bool {
+pub(crate) fn is_running(pid: u32) -> bool {
     let out = std::process::Command::new("ps")
         .args(["-o", "stat=", "-p", &pid.to_string()])
         .output()
@@ -133,7 +133,7 @@ fn is_running(pid: u32) -> bool {
     !stat.is_empty() && !stat.starts_with('Z')
 }
 
-async fn assert_dies(pid: u32) {
+pub(crate) async fn assert_dies(pid: u32) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while is_running(pid) {
         assert!(
@@ -207,7 +207,7 @@ async fn successful_run_text_is_one_line() {
 }
 
 #[tokio::test]
-async fn stderr_tail_is_capped_and_first_error_comes_from_the_whole_output() {
+async fn stderr_tail_is_capped_and_first_error_is_found_above_it() {
     let fixture = Fixture::new("cap-tail").await;
     fixture.script(
         r#"echo "RootError: root cause" >&2
@@ -236,7 +236,7 @@ exit 1
             .as_str()
             .unwrap()
             .contains("filler line 0 "),
-        "data keeps the full redacted stderr"
+        "data keeps the redacted stderr above the model's tail"
     );
 }
 
@@ -250,6 +250,9 @@ async fn stdout_tail_is_shown_when_stderr_is_empty() {
     assert!(run.is_error);
     assert!(run.text.contains("stdout tail"), "{}", run.text);
     assert!(run.text.contains("boom on stdout"), "{}", run.text);
+    // The first error line comes from stderr only; there is none to show here.
+    assert!(!run.text.contains("first error"), "{}", run.text);
+    assert!(run.data["webwright"]["firstError"].is_null());
 }
 
 #[tokio::test]
@@ -444,4 +447,30 @@ async fn preparing_again_keeps_the_manifest_and_run_state() {
     assert_eq!(manifest["browser"], "firefox");
     // The tool says the request was not applied, so the model is not misled.
     assert!(again.text.contains("kept its existing"), "{}", again.text);
+}
+
+#[tokio::test]
+async fn preparing_again_under_another_task_id_says_the_task_id_was_not_applied() {
+    let fixture = Fixture::new("keep-task-id").await;
+
+    // Same directory and same task text; only the requested taskId differs.
+    let again = fixture
+        .tool(
+            WEBWRIGHT_PREPARE_WORKSPACE_TOOL,
+            json!({
+                "task": "Open fixture page",
+                "taskId": "other",
+                "outputDir": WORKSPACE
+            }),
+        )
+        .await;
+
+    assert!(!again.is_error, "{}", again.text);
+    assert!(again.text.contains("not applied: taskId"), "{}", again.text);
+    // The result names the workspace that was kept, not the id that was asked for.
+    assert_eq!(again.data["webwright"]["taskId"], "fixture");
+    assert_eq!(
+        again.data["webwright"]["workspace"]["manifest"]["taskId"],
+        "fixture"
+    );
 }

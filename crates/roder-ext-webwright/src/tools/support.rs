@@ -179,6 +179,7 @@ pub(super) fn kept_manifest_note(
     requested: &WebwrightManifest,
 ) -> Option<String> {
     let differing = [
+        ("taskId", existing.task_id != requested.task_id),
         ("task", existing.task != requested.task),
         ("mode", existing.mode != requested.mode),
         ("startUrl", existing.start_url != requested.start_url),

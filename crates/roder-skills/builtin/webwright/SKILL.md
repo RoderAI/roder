@@ -48,7 +48,7 @@ If local Playwright dependencies are missing, ask the user to run `roder webwrig
 
 Only mark the task done when every critical point is checked and backed by a screenshot path or exact log line from the latest run. If evidence is ambiguous, fix the script and rerun in the next `run_<id>` directory.
 
-`webwright.run_script` reports an outcome class (`ok`, `nonzero_exit`, `signaled`, `timeout`, `launch_failed`), the elapsed time, the first error line and a redacted stderr tail. Fix the script from that text before rerunning. A run that does not exit 0 fails `webwright.verify_run` even if its log has a `final datum:` line and its screenshots exist.
+`webwright.run_script` reports an outcome class (`ok`, `nonzero_exit`, `signaled`, `timeout`, `launch_failed`), the elapsed time, the first error line and a redacted stderr tail. Fix the script from that text before rerunning. A run executed through `webwright.run_script` that does not exit 0 fails `webwright.verify_run` even if its log has a `final datum:` line and its screenshots exist; a run executed outside that tool has no recorded exit status, so check its exit status yourself.
 
 For `/webwright:craft`, also verify:
 

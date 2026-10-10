@@ -121,8 +121,8 @@ pub(crate) fn stderr_hint(stderr: &str) -> Option<&'static str> {
         .map(|(hint, _)| *hint)
 }
 
-/// The first unindented line that names an error or exception, else the last line written. Indented lines
-/// are traceback frames and call logs.
+/// The first unindented stderr line that names an error or exception, else the last non-empty stderr line;
+/// none when stderr is empty. Indented lines are traceback frames and call logs.
 pub(crate) fn first_error_line(stderr: &str) -> Option<String> {
     let line = stderr
         .lines()

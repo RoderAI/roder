@@ -181,6 +181,8 @@ impl ToolExecutor for PrepareWorkspaceTool {
         workspace.create(&manifest)?;
         workspace.ensure_starter_files(&manifest)?;
         let summary = workspace.summary()?;
+        // An existing manifest is kept, so the workspace keeps the task id it already has.
+        let task_id = existing.as_ref().map_or(task_id, |k| k.task_id.clone());
         let text = match existing
             .as_ref()
             .and_then(|existing| kept_manifest_note(existing, &manifest))
