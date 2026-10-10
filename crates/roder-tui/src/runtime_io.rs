@@ -318,22 +318,46 @@ fn tmux_ensure_extended_keys_for_shift_enter() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `-e KEY=VALUE` arguments that carry this process's whole environment
+/// through `tmux respawn-pane`.
+///
+/// `respawn-pane` starts the new process with the tmux *server's* environment
+/// plus explicit `-e` values, not with the environment of the process it
+/// replaces. Without this, anything exported only in the shell that launched
+/// roder (provider API keys, `--config-dir` overrides, direnv or mise values)
+/// vanishes on the respawn, and the relaunched TUI reports its credentials as
+/// missing. `TMUX` and `TMUX_PANE` stay owned by tmux.
+fn respawn_environment_args(
+    env: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    for (key, value) in env {
+        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
+            continue;
+        };
+        if key.is_empty()
+            || key.contains('=')
+            || key == "TMUX"
+            || key == "TMUX_PANE"
+            || key == TMUX_KEYS_READY_ENV
+        {
+            continue;
+        }
+        args.push("-e".to_string());
+        args.push(format!("{key}={value}"));
+    }
+    args.push("-e".to_string());
+    args.push(format!("{TMUX_KEYS_READY_ENV}=1"));
+    args
+}
+
 fn tmux_respawn_self_for_extended_keys() -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut cmd = std::process::Command::new("tmux");
     cmd.arg("respawn-pane");
     cmd.arg("-k");
-    cmd.arg("-e");
-    cmd.arg(format!("{TMUX_KEYS_READY_ENV}=1"));
-    if let Ok(prev) = std::env::var("RODER_TMUX_PREV_EXTENDED_KEYS") {
-        cmd.arg("-e");
-        cmd.arg(format!("RODER_TMUX_PREV_EXTENDED_KEYS={prev}"));
-    }
-    if let Ok(prev) = std::env::var("RODER_TMUX_PREV_EXTENDED_KEYS_FORMAT") {
-        cmd.arg("-e");
-        cmd.arg(format!("RODER_TMUX_PREV_EXTENDED_KEYS_FORMAT={prev}"));
-    }
+    cmd.args(respawn_environment_args(std::env::vars_os()));
     // Preserve cwd.
     if let Ok(cwd) = std::env::current_dir() {
         cmd.arg("-c");
@@ -505,6 +529,32 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyEvent, KeyEventKind};
     use std::collections::VecDeque;
+
+    #[test]
+    fn tmux_respawn_carries_the_launching_environment() {
+        let os = std::ffi::OsString::from;
+        let args = respawn_environment_args([
+            (os("OPENROUTER_API_KEY"), os("sk-test")),
+            (os("RODER_TMUX_PREV_EXTENDED_KEYS"), os("off")),
+            (os("TMUX"), os("/tmp/tmux-501/default,1,0")),
+            (os("TMUX_PANE"), os("%3")),
+            (os(TMUX_KEYS_READY_ENV), os("stale")),
+            (os("BROKEN=NAME"), os("x")),
+        ]);
+
+        let pairs = args
+            .chunks(2)
+            .map(|pair| (pair[0].as_str(), pair[1].as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pairs,
+            vec![
+                ("-e", "OPENROUTER_API_KEY=sk-test"),
+                ("-e", "RODER_TMUX_PREV_EXTENDED_KEYS=off"),
+                ("-e", "RODER_TMUX_KEYS_READY=1"),
+            ]
+        );
+    }
 
     #[test]
     fn system_clock_moves_forward() {
