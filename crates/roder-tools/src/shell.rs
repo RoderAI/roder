@@ -11,7 +11,7 @@ use tokio::process::Command;
 
 use crate::backend::WorkspaceBackendHandle;
 use crate::command_shell::{
-    command_args_for_shell, detach_controlling_terminal, shell_for_context,
+    ProcessGroupKillOnDrop, command_args_for_shell, detach_controlling_terminal, shell_for_context,
 };
 use crate::files::{parse, require_nonempty, result};
 use crate::remote_cancel::RemoteCancelOnDrop;
@@ -144,8 +144,7 @@ impl ToolExecutor for ShellTool {
                 process.current_dir(&cwd).kill_on_drop(true);
                 detach_controlling_terminal(&mut process);
                 let output =
-                    tokio::time::timeout(std::time::Duration::from_secs(timeout), process.output())
-                        .await;
+                    output_killing_group(process, std::time::Duration::from_secs(timeout)).await;
                 match output {
                     Ok(Ok(output)) => (
                         output
@@ -197,6 +196,29 @@ struct ShellArgs {
     command: String,
     workdir: Option<String>,
     timeout_seconds: Option<u64>,
+}
+
+/// `Command::output` under a timeout that, unlike dropping the child, also
+/// takes down everything the command started. The tool child runs in its own
+/// session, so `kill_on_drop` alone would only kill the shell.
+async fn output_killing_group(
+    mut process: Command,
+    timeout: std::time::Duration,
+) -> Result<std::io::Result<std::process::Output>, tokio::time::error::Elapsed> {
+    process
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = match process.spawn() {
+        Ok(child) => child,
+        Err(err) => return Ok(Err(err)),
+    };
+    let mut kill_group = ProcessGroupKillOnDrop::new(child.id());
+    let output = tokio::time::timeout(timeout, child.wait_with_output()).await;
+    if output.is_ok() {
+        kill_group.disarm();
+    }
+    output
 }
 
 fn aggregate_output(stdout: &[u8], stderr: &[u8]) -> String {

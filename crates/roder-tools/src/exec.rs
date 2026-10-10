@@ -17,7 +17,7 @@ use tokio::sync::{Mutex, Notify};
 
 use crate::backend::WorkspaceBackendHandle;
 use crate::command_shell::{
-    command_args_for_shell, detach_controlling_terminal, shell_for_context,
+    command_args_for_shell, detach_controlling_terminal, kill_process_group, shell_for_context,
 };
 use crate::exec_output::{format_exec_output, trim_output_buffer_to_max_bytes, truncate_output};
 use crate::files::{parse, require_nonempty, result};
@@ -851,9 +851,20 @@ fn spawn_waiter(
             tokio::select! {
                 status = child.wait() => exit_from_status(status, false),
                 _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    ExecExit { exit_code: -1, timed_out: true }
+                    // The command may have exited just before the deadline and
+                    // lost the select race; keep its real status and leave any
+                    // background processes it started alone.
+                    match child.try_wait() {
+                        Ok(Some(status)) => exit_from_status(Ok(status), false),
+                        _ => {
+                            if let Some(pid) = child.id() {
+                                kill_process_group(pid);
+                            }
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                            ExecExit { exit_code: -1, timed_out: true }
+                        }
+                    }
                 }
             }
         } else {
