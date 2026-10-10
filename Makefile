@@ -21,11 +21,23 @@ CARGO_RELEASE_BIN := $(CARGO_TARGET_DIR)/release/roder
 # of thousands of files the filesystem overhead dominates and builds crawl.
 # A clean cold rebuild is ~20s, so run this whenever target/ gets bloated.
 # Check size: du -sh target ; count files: find target -type f | wc -l
+#
+# CARGO_TARGET_DIR is normally one directory shared by every worktree and other
+# agents' sessions, so `cargo clean` there wipes all of them mid-build. Refuse
+# unless FORCE=1; to reclaim only this checkout, prefer `cargo clean -p <crate>`.
 clean-target:
 	@if pgrep -f "$(CURDIR)/target" >/dev/null 2>&1; then \
 		echo "Refusing: cargo/rustc still running for this repo. Check: pgrep -fl '$(CURDIR)/target'" >&2; \
 		exit 1; \
 	fi
+	@case "$(CARGO_TARGET_DIR)" in \
+		target|$(CURDIR)/target) ;; \
+		*) if [ "$(FORCE)" != "1" ]; then \
+			echo "Refusing: $(CARGO_TARGET_DIR) is shared across worktrees; cargo clean would wipe all of them." >&2; \
+			echo "Re-run with FORCE=1 if no other session is building, or use: cargo clean -p <crate>" >&2; \
+			exit 1; \
+		fi ;; \
+	esac
 	cargo clean
 
 # Drop stale target locks when no cargo/rustc is using this repo (see `make cargo-unlock-help`).
