@@ -1,6 +1,6 @@
 use super::{
-    ModelCatalogEntry, OPUS_REASONING, REASONING_HIGH, REASONING_MEDIUM, anthropic_model,
-    claude_code_model,
+    ModelCatalogEntry, OPUS_REASONING, REASONING_HIGH, REASONING_MEDIUM, REASONING_NONE,
+    anthropic_model, claude_code_model,
 };
 
 pub(super) const OPUS_55: ModelCatalogEntry = anthropic_model(
@@ -43,4 +43,47 @@ pub(super) const CLAUDE_CODE_SONNET_5: ModelCatalogEntry = claude_code_model(
     900_000,
     REASONING_HIGH,
     OPUS_REASONING,
+);
+
+pub(super) const SONNET_55: ModelCatalogEntry = anthropic_model(
+    "claude-sonnet-5-5",
+    "Claude Sonnet 5.5",
+    "Balanced Claude Sonnet model for coding and agent workflows.",
+    1_000_000,
+    900_000,
+    REASONING_HIGH,
+    OPUS_REASONING,
+    true,
+);
+
+pub(super) const HAIKU_55: ModelCatalogEntry = anthropic_model(
+    "claude-haiku-5-5",
+    "Claude Haiku 5.5",
+    "Fast Claude model for lower-latency tool workflows.",
+    200_000,
+    180_000,
+    REASONING_NONE,
+    &[],
+    // Mirrors Haiku 4.5: the compaction edit is rejected for Haiku-class models.
+    false,
+);
+
+pub(super) const CLAUDE_CODE_SONNET_55: ModelCatalogEntry = claude_code_model(
+    "claude-sonnet-5-5",
+    "Claude Code Sonnet 5.5",
+    "Claude Sonnet 5.5 through the local Claude Code harness.",
+    1_000_000,
+    900_000,
+    REASONING_HIGH,
+    OPUS_REASONING,
+);
+
+pub(super) const CLAUDE_CODE_HAIKU_55: ModelCatalogEntry = claude_code_model(
+    "claude-haiku-5-5",
+    "Claude Code Haiku 5.5",
+    "Claude Haiku 5.5 through the local Claude Code harness.",
+    200_000,
+    180_000,
+    REASONING_NONE,
+    &[],
 );
