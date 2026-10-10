@@ -22,7 +22,7 @@ Notes on provider semantics:
 - OpenAI `gpt-image-*` ids are **direct Image API model ids** used with
   `POST /v1/images/generations` and `POST /v1/images/edits`. The OpenAI
   Responses API hosted `image_generation` tool is a different surface that is
-  invoked through a text-capable mainline model (such as `gpt-5.5`); Roder does
+  invoked through a text-capable mainline model (such as `gpt-6-sol`); Roder does
   not bridge the hosted Responses tool yet.
 - Google Nano Banana display names map to canonical Gemini API model ids as
   listed above. Generation uses `generateContent` with inline image parts, and

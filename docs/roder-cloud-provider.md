@@ -12,7 +12,7 @@ The default model is the free hosted alias:
 roder.cloud/free
 ```
 
-The built-in catalog also lists the other hosted aliases (`roder.cloud/openai/gpt-5.5`, `roder.cloud/anthropic/claude-opus-4-7`, `roder.cloud/google/gemini-3.1-pro-preview`). Team-enabled models — including BYOK aliases like `openai/gpt-5.5` — appear automatically once a key is configured, because the model list comes from the service.
+The built-in catalog also lists the other hosted aliases (`roder.cloud/anthropic/claude-opus-4-7`, `roder.cloud/google/gemini-3.1-pro-preview`). Team-enabled models — including BYOK aliases like `openai/gpt-6-sol` — appear automatically once a key is configured, because the model list comes from the service.
 
 ## Authentication
 

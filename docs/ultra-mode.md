@@ -17,7 +17,7 @@ run through the existing agent-control and subagent dispatch paths.
 
 ## Relationship to Sol/Terra Ultra effort
 
-On Codex GPT-5.6 Sol and Terra, the catalog still exposes an **Ultra** reasoning
+On the retired Codex GPT-5.6 Sol and Terra models, the catalog still exposes an **Ultra** reasoning
 effort. Selecting Ultra effort:
 
 1. Keeps Ultra visible as the selected effort in Roder
