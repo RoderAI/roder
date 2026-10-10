@@ -972,6 +972,15 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         true,
         true,
     ),
+    opencode_model(
+        PROVIDER_OPENCODE,
+        "gpt-6-sol",
+        "GPT 6 Sol",
+        "OpenCode Zen GPT 6 Sol gateway model.",
+        1_050_000,
+        REASONING_MEDIUM,
+        STANDARD_REASONING,
+    ),
     retired(opencode_model(
         PROVIDER_OPENCODE,
         "gpt-5.5",
@@ -2003,6 +2012,7 @@ mod tests {
                 "grok-4.7",
                 "grok-4.6",
                 "grok-composer-2.5-fast",
+                "gpt-6-sol",
                 "big-pickle",
                 "mimo-v2.5-free",
                 "nemotron-3-ultra-free",
@@ -2073,7 +2083,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
-        assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 6);
+        assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
@@ -2742,6 +2752,21 @@ mod tests {
         let fallback =
             built_in_model_profile_for_provider("does-not-exist", "claude-opus-4-8").unwrap();
         assert_eq!(fallback.provider_family, ProviderFamily::Anthropic);
+    }
+
+    #[test]
+    fn opencode_default_model_is_a_listed_opencode_model() {
+        let provider = built_in_providers()
+            .iter()
+            .find(|provider| provider.id == PROVIDER_OPENCODE)
+            .expect("opencode provider");
+        assert!(
+            models_for_provider(PROVIDER_OPENCODE, false)
+                .iter()
+                .any(|model| model.id == provider.default_model),
+            "opencode default {} should be listed for opencode",
+            provider.default_model
+        );
     }
 
     #[test]
