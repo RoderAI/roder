@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::super::status_words;
 use super::{EARLIER_CALLS, cut, fallback, one_line, plural, seconds, text};
+use crate::space::MAX_TARGETS;
 
 pub(super) fn header(data: &Value, status: &str, now: &str) -> Vec<String> {
     let session = &data["session"];
@@ -40,14 +41,13 @@ pub(super) fn header(data: &Value, status: &str, now: &str) -> Vec<String> {
     }
     lines.push(outcome(data, status));
     match data["completion_verification"]["status"].as_str() {
-        Some("passed") => lines.push("Completion check: caller-defined URL/text predicates passed on fresh UI state; this verifies only those predicates.".into()),
-        Some("failed") => lines.push(if data["completion_verification"]["observation_available"] == true {
-            "Completion check: failed. The fresh UI state did not satisfy the caller-defined predicates; do not report success."
-        } else {
-            "Completion check: failed. No fresh UI observation was available; do not report success."
-        }.into()),
+        Some("passed") => lines.push("Completion check: condition met. The caller-defined URL/text predicates held on fresh UI state; this checks only those predicates, not the rest of the goal.".into()),
+        Some("failed") => lines.push(unmet(&data["completion_verification"])),
         Some("not_requested") => lines.push("Completion check: not requested. Done is a model claim; inspect the returned UI state before reporting success.".into()),
         _ => {}
+    }
+    if let Some(omitted) = omitted(data) {
+        lines.push(omitted);
     }
     if let Some(drivers) = fallback::drivers(data) {
         lines.push(drivers);
@@ -56,6 +56,39 @@ pub(super) fn header(data: &Value, status: &str, now: &str) -> Vec<String> {
         lines.push(next);
     }
     lines
+}
+
+/// What the page held that Jev was not offered: the controls its snapshot's
+/// caps and reach left out, and the options of a select past what a choice
+/// takes. Counts only, so it is Roder's own line and not page content.
+fn omitted(data: &Value) -> Option<String> {
+    let count = |key: &str| data["omitted"][key].as_u64().unwrap_or(0);
+    let (controls, options) = (count("controls"), count("options"));
+    let mut parts = Vec::new();
+    if controls > 0 {
+        parts.push(format!(
+            "{} (past its caps, out of scroll reach or cut off)",
+            plural(controls, "control", "controls")
+        ));
+    }
+    if options > 0 {
+        parts.push(format!(
+            "{} (a choice takes at most {MAX_TARGETS})",
+            plural(options, "select option", "select options")
+        ));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let these = if controls + options == 1 {
+        "this"
+    } else {
+        "these"
+    };
+    Some(format!(
+        "Not offered to Jev: {}. Jev could not act on {these}.",
+        parts.join(" and ")
+    ))
 }
 
 /// Today's date, and what "tonight" means: the date the session began on,
@@ -68,6 +101,32 @@ fn today(session: &Value, now: &str) -> String {
         ),
         _ => format!("Today: {now}. \"Tonight\" means this date."),
     }
+}
+
+/// The line for a completion check that was not met: which of the caller's
+/// predicates failed, or that none could be checked.
+fn unmet(check: &Value) -> String {
+    if check["observation_available"] != true {
+        return "Completion check: condition not met. No fresh UI observation was available, so \
+                no predicate could be shown to hold; do not report success."
+            .into();
+    }
+    let names = check["unmet"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let which = if names.is_empty() {
+        String::new()
+    } else {
+        format!(" ({names})")
+    };
+    format!(
+        "Completion check: condition not met{which}. The fresh UI state did not satisfy the \
+         caller-defined predicates; do not report success."
+    )
 }
 
 /// Which tab the call used and how it came to be on it.
@@ -136,6 +195,13 @@ fn next(data: &Value, status: &str) -> Option<String> {
                 "Next: Check the page below against the goal; Jev's done is a judgement, not a \
                  proof.",
             );
+            if data["suppressed_click"].is_object() {
+                next.push_str(
+                    " Jev did not make one click it was unsure of (\"Not clicked\" below). If the \
+                     goal needs it, make that click yourself or give Jev a goal that names that \
+                     control.",
+                );
+            }
             if has_tab {
                 next.push_str(
                     " To keep going from this page, call jev_browse again with url \"\" and tab \

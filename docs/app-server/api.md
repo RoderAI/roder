@@ -6005,7 +6005,11 @@ input revokes browser refs. See the linked guide for exact arguments/refusals.
 
 Completed desktop tool executions carry the bounded inline PNG under
 `input.__view_image.image_url` in the canonical transcript. Model providers
-receive the same screenshot as image content. ACP projects it into
+whose engine forwards tool-result images receive the same screenshot as image
+content; for any other engine the request omits the image and ends that result
+with a one-line notice (see
+[Screenshots from the other browser and desktop tools](../native-computer-use.md#screenshots-from-the-other-browser-and-desktop-tools)).
+The stored transcript keeps the image either way. ACP projects it into
 `tool_call_update.content` as a `content` entry containing an `image` block
 with `mimeType: "image/png"` and base64 `data`. Clients must preserve the
 tool's failed status even when its after-action screenshot is available.

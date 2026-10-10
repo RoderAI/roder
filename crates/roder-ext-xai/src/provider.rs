@@ -7,7 +7,7 @@ use roder_api::inference::{
 };
 use roder_ext_openai_responses::{
     OpenAiResponsesEngine, cache_ttl, cached_models, discover_models, force_refresh_requested,
-    save_cached_models,
+    forwards_tool_result_images, save_cached_models,
 };
 
 const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
@@ -32,6 +32,11 @@ impl InferenceEngine for SuperGrokEngine {
             provider_metadata: true,
             tool_search: false,
         }
+    }
+
+    /// The Responses engine this one delegates to decides, model by model.
+    fn tool_result_image_input(&self, model: &str) -> bool {
+        forwards_tool_result_images(PROVIDER_SUPERGROK, model)
     }
 
     fn metadata(&self) -> InferenceProviderMetadata {
@@ -127,6 +132,13 @@ mod tests {
             .unwrap();
         assert_eq!(composer.name, "Grok Composer 2.5 Fast");
         assert_eq!(composer.context_window, Some(200_000));
+    }
+
+    #[test]
+    fn supergrok_tool_result_images_follow_the_model_catalog() {
+        let engine = SuperGrokEngine;
+        assert!(engine.tool_result_image_input("grok-4.6"));
+        assert!(!engine.tool_result_image_input("grok-composer-2.5-fast"));
     }
 
     #[test]

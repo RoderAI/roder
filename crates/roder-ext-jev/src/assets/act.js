@@ -79,13 +79,17 @@
     const x=hit && tree.within(hit,e) ? inner(hit) : null;
     return !!x && area(tree.rect(x))>=0.75*area(tree.rect(e));
   };
-  // The centre first, then the four quarter points, of each rect.
+  // The centre first, then the four quarter points, of each rect. `cover`
+  // keeps what took the first point that was not the target's.
+  let cover=null;
   const find=test=>{
     for (const c of clipped()) {
       for (const [fx,fy] of [[.5,.5],[.25,.25],[.75,.25],[.25,.75],[.75,.75]]) {
         const x=c.left+(c.right-c.left)*fx, y=c.top+(c.bottom-c.top)*fy;
         // tree.hit starts from document.elementFromPoint.
-        if (test(tree.hit(x,y))) return {x,y};
+        const hit=tree.hit(x,y);
+        if (test(hit)) return {x,y};
+        cover ||= hit;
       }
     }
     return null;
@@ -97,9 +101,30 @@
     // stays open.
     e.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
     scrolled=true;
+    cover=null;
     point=find(owns) || find(fills);
   }
-  if (!point) return {covered:true};
+  // The name the page gives what covers the target: its label, else its
+  // text, else its tag, from the element hit or the nearest of its first
+  // few ancestors that has one. This is page text, as untrusted as the rest:
+  // the caller scrubs it, puts it on one line and cuts it. An ancestor of
+  // the target is no cover's name (its text holds the target's own), and a
+  // field's value is never read, bar a button's own label.
+  const nameOf=x=>{
+    for (let n=x, i=0; n && i<4 && n!==n.ownerDocument.body && n!==n.ownerDocument.documentElement;
+         n=tree.up(n), i++) {
+      const holds=tree.within(e,n);
+      const field=n.matches('input,textarea,select');
+      const button=n.matches('input[type="button"],input[type="submit"],input[type="reset"]');
+      const said=(n.getAttribute('aria-label')||n.getAttribute('title')||n.getAttribute('alt')||
+        (field ? n.getAttribute('placeholder') : '')||(button ? n.value : '')||
+        (holds||field ? '' : n.innerText)||'').replace(/\s+/g,' ').trim();
+      if (said) return said.slice(0,400);
+      if (holds) break;
+    }
+    return x?.tagName?.toLowerCase() || null;
+  };
+  if (!point) return {covered:true, by:cover ? nameOf(cover) : null};
   const popup=e.getAttribute('aria-haspopup'), expanded=e.getAttribute('aria-expanded');
   const announced=expanded!=='true' && ((!!popup && popup!=='false') || expanded==='false' ||
     !!e.getAttribute('aria-controls') || !!e.getAttribute('aria-owns'));

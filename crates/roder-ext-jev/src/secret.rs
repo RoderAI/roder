@@ -92,7 +92,8 @@ impl Secrets {
     }
 
     /// Scrub the parts of an observation that leave the loop: its address,
-    /// title and text, each action's label, value, current value, context
+    /// title and text (and the field values the text holds), each action's
+    /// label, value, current value, context
     /// and section, the dialogs' messages, and the frames' origins and
     /// text. The freshness marker, page key
     /// and guards are compared with the live page and never leave it, so
@@ -106,8 +107,10 @@ impl Secrets {
                 self.scrub_in_place(value);
             }
         }
-        if let Some(disabled) = observation.get_mut("disabled_controls") {
-            self.scrub_evidence(disabled);
+        for key in ["disabled_controls", "typed_values"] {
+            if let Some(evidence) = observation.get_mut(key) {
+                self.scrub_evidence(evidence);
+            }
         }
         for action in observation["actions"].as_array_mut().into_iter().flatten() {
             if let Some(form) = action.get_mut("form") {
@@ -199,5 +202,19 @@ mod tests {
         assert_eq!(page["frames"][0]["text"], "Code [secret] confirmed");
         // Compared with the live page, never reported.
         assert_eq!(page["marker"][0], "hunter2-7431");
+    }
+
+    #[test]
+    fn the_field_values_the_text_lists_are_scrubbed_with_it() {
+        let mut secrets = Secrets::default();
+        secrets.remember("hunter2-7431");
+        let mut page = json!({
+            "text": "Note\nhunter2-7431 here\nSave",
+            "typed_values": ["hunter2-7431 here", "plain"],
+        });
+        secrets.scrub_observation(&mut page);
+        // Still the same lines, so the page text can be told from the fields'.
+        assert_eq!(page["text"], "Note\n[secret] here\nSave");
+        assert_eq!(page["typed_values"], json!(["[secret] here", "plain"]));
     }
 }

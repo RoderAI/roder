@@ -63,8 +63,15 @@ async fn read(
             .unwrap_or_default()
             .to_string(),
         visible_text: text.chars().take(6000).collect(),
+        typed_values: observation["typed_values"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect(),
         controls: json!(crate::agent::controls(&observation)),
         page: serde_json::to_value(facts).unwrap_or_default(),
         observed_elements: observed.elements.len(),
+        omitted: crate::agent::omitted(&observation, &observed),
     })
 }

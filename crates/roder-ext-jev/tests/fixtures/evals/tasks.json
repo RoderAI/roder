@@ -657,6 +657,46 @@
     }
   },
   {
+    "id": "icon_by_picture_twin",
+    "covers": "the recorded icon_by_picture failure: after Bob's budget mail is deleted, an unsure second delete on his lunch mail is not clicked",
+    "page": "mailbox.html",
+    "goal": "Delete the email from Bob about the budget.",
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Moved to trash."
+      ],
+      "dom": {
+        "!!document.getElementById('mail1')": false,
+        "!!document.getElementById('mail3')": true,
+        "!!document.getElementById('mail0')": true
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "delete",
+          "context": "Bob Budget"
+        },
+        {
+          "click": "delete",
+          "context": "Bob Lunch",
+          "confidence": 0.6
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click delete"
+        ],
+        "page_changed": [
+          true
+        ],
+        "model_calls": 2
+      }
+    }
+  },
+  {
     "id": "unlabelled_fields",
     "covers": "a form whose fields are named only by the text around them",
     "page": "movie-search.html",

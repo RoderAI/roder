@@ -10,6 +10,7 @@ use crate::compaction::{
 };
 use crate::compaction_summary::CompactionSummaryContext;
 use crate::runtime::Runtime;
+use crate::tool_result_images::ToolImages;
 
 impl Runtime {
     pub(crate) async fn compact_transcript_if_needed(
@@ -22,7 +23,9 @@ impl Runtime {
         options: CompactionOptions,
     ) -> anyhow::Result<Vec<TranscriptItem>> {
         let cfg = self.status().await;
-        let requires_native_compaction = self.engine_for(provider)?.requires_native_compaction();
+        let engine = self.engine_for(provider)?;
+        let requires_native_compaction = engine.requires_native_compaction();
+        let images = ToolImages::for_engine(engine.as_ref(), model);
         let mut compaction_model = model_entry_for_compaction(provider, model).cloned();
         if requires_native_compaction && let Some(entry) = &mut compaction_model {
             // Explicit native compaction must fit within the context window.
@@ -31,13 +34,14 @@ impl Runtime {
         }
         let model_entry = compaction_model.as_ref();
         let threshold = cfg.auto_compact_token_limit;
-        if let Some(reason) = compaction_skip_reason(&transcript, model_entry, threshold, &options)
+        if let Some(reason) =
+            compaction_skip_reason(&transcript, model_entry, threshold, &options, images)
         {
             self.emit_compaction_skipped(
                 thread_id,
                 turn_id,
                 reason,
-                estimate_prompt_tokens(&transcript),
+                estimate_prompt_tokens(&transcript, images),
                 threshold,
                 None,
             )
@@ -70,13 +74,14 @@ impl Runtime {
                     },
                     model_entry,
                     threshold,
+                    images,
                 )
             {
                 self.emit_compaction_skipped(
                     thread_id,
                     turn_id,
                     CompactionSkipReason::PruneSufficient,
-                    estimate_prompt_tokens(&working),
+                    estimate_prompt_tokens(&working, images),
                     threshold,
                     Some(pruned_tool_count),
                 )
@@ -85,12 +90,14 @@ impl Runtime {
             }
         }
 
-        if let Some(reason) = compaction_skip_reason(&working, model_entry, threshold, &options) {
+        if let Some(reason) =
+            compaction_skip_reason(&working, model_entry, threshold, &options, images)
+        {
             self.emit_compaction_skipped(
                 thread_id,
                 turn_id,
                 reason,
-                estimate_prompt_tokens(&working),
+                estimate_prompt_tokens(&working, images),
                 threshold,
                 Some(pruned_tool_count),
             )
@@ -98,7 +105,7 @@ impl Runtime {
             return Ok(working);
         }
 
-        let estimated_tokens = estimate_prompt_tokens(&working);
+        let estimated_tokens = estimate_prompt_tokens(&working, images);
         let original_item_count = working.len() as u64;
         let original_estimated_tokens = estimated_tokens;
         let compaction_started_at = std::time::Instant::now();
@@ -129,7 +136,7 @@ impl Runtime {
                     thread_id,
                     turn_id,
                     CompactionSkipReason::NewInput,
-                    estimate_prompt_tokens(&window),
+                    estimate_prompt_tokens(&window, images),
                     threshold,
                     None,
                 )
@@ -137,7 +144,10 @@ impl Runtime {
                 return Ok(window);
             }
             crate::provider_compaction::NativeCompactionOutcome::Compacted(compacted) => {
-                self.record_compaction_hysteresis(thread_id, estimate_prompt_tokens(&compacted));
+                self.record_compaction_hysteresis(
+                    thread_id,
+                    estimate_prompt_tokens(&compacted, images),
+                );
                 self.emit(RoderEvent::ContextCompactionRecorded(
                     ContextCompactionRecorded {
                         thread_id: thread_id.clone(),
@@ -145,7 +155,7 @@ impl Runtime {
                         original_item_count,
                         original_estimated_tokens,
                         compacted_item_count: compacted.len() as u64,
-                        compacted_estimated_tokens: estimate_prompt_tokens(&compacted),
+                        compacted_estimated_tokens: estimate_prompt_tokens(&compacted, images),
                         file_backed: false,
                         strategy: Some("provider_native".into()),
                         pruned_tool_count: Some(pruned_tool_count),
@@ -166,7 +176,7 @@ impl Runtime {
         } else {
             split.tail
         };
-        let summary_head = head_items_for_summary_prompt(&split.head);
+        let summary_head = head_items_for_summary_prompt(&split.head, images);
         let (summary, strategy) = self
             .build_compaction_summary(
                 CompactionSummaryContext {
@@ -186,8 +196,8 @@ impl Runtime {
             .await?;
         let mut compacted = vec![compaction];
         compacted.extend(suffix);
-        self.record_compaction_hysteresis(thread_id, estimate_prompt_tokens(&compacted));
-        let compacted_estimated_tokens = estimate_prompt_tokens(&compacted);
+        self.record_compaction_hysteresis(thread_id, estimate_prompt_tokens(&compacted, images));
+        let compacted_estimated_tokens = estimate_prompt_tokens(&compacted, images);
         let duration_ms = u64::try_from(compaction_started_at.elapsed().as_millis()).ok();
         self.emit(RoderEvent::ContextCompactionRecorded(
             ContextCompactionRecorded {

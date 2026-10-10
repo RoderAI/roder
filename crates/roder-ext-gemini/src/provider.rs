@@ -89,6 +89,11 @@ impl InferenceEngine for GeminiEngine {
         }
     }
 
+    /// `media::gemini_tool_result` sends a tool result's image as inline data.
+    fn tool_result_image_input(&self, _model: &str) -> bool {
+        true
+    }
+
     fn metadata(&self) -> InferenceProviderMetadata {
         InferenceProviderMetadata {
             name: "Google".to_string(),
@@ -685,6 +690,11 @@ mod tests {
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn tool_result_images_are_sent_as_inline_data() {
+        assert!(GeminiEngine::new(None).tool_result_image_input("gemini-3.1-pro-preview"));
+    }
 
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {

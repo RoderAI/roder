@@ -158,6 +158,31 @@ async fn effects_are_observed_evidence_and_do_not_leak_between_calls() {
     assert!(bottle["recent_actions"].as_array().unwrap().is_empty());
 }
 
+/// The strategies that send history to the Decisions service name the keys
+/// they send; what covered a step's target is not among them.
+#[tokio::test]
+async fn what_covered_a_step_is_in_no_decisions_request() {
+    let history = vec![
+        json!({"action":"Add", "kind":"click", "covered":true, "page_changed":false,
+               "covered_by":"Spring sale popup"}),
+    ];
+    for strategy in [Strategy::Effects, Strategy::Verified, Strategy::Grounded] {
+        let transport = answering("DONE", 1.0);
+        OpenAiDecisionsClient::configured(transport.clone(), strategy)
+            .choose(&two_targets(), "Add Lamp", &history)
+            .await
+            .unwrap();
+        let requests = transport.requests.lock().unwrap();
+        assert!(!requests.is_empty());
+        for request in requests.iter() {
+            assert!(
+                !request.to_string().contains("Spring sale popup"),
+                "{strategy:?}: {request}"
+            );
+        }
+    }
+}
+
 #[test]
 fn production_requests_images_and_text_only_explicitly_disables_them() {
     let client = OpenAiDecisionsClient::with_transport(answering("DONE", 1.0));

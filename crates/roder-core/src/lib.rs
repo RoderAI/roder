@@ -1,5 +1,6 @@
 mod agent_control_tools;
 pub mod artifacts;
+mod browser_routing;
 pub mod bus;
 mod compaction;
 mod compaction_runtime;
@@ -38,6 +39,7 @@ mod thread_item_cache;
 mod tool_execution;
 mod tool_output;
 mod tool_preview;
+mod tool_result_images;
 pub mod tool_search;
 mod tool_validation;
 mod transcript;

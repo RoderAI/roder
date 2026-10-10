@@ -154,7 +154,7 @@ impl JevDecisionTransport for TypeSafeHttpTransport {
                         format!("Model provider failed ({detail}); no action executed.")
                     }
                 };
-                failure.stop(message)
+                failure.stop_decision(message)
             })
     }
 }
@@ -364,16 +364,16 @@ pub(crate) async fn choose(
     let result = transport.decide(&body).await?;
     let usage = result.get("usage").cloned().unwrap_or_else(|| json!({}));
     // The service has answered, so the call is billed even when its answer
-    // cannot be used: that usage is kept.
+    // cannot be used: that usage is kept, and the loop may ask again.
     let answer = read_answer(&result, &space, &operation_ids)
-        .map_err(|error| anyhow::Error::from(JevBilled::new(usage.clone(), error)))?;
+        .map_err(|error| anyhow::Error::from(JevBilled::unusable(usage.clone(), error)))?;
     // A missing or invalid answer is `None`, which the loop treats as
     // irreversible: the gate fails closed without failing the decision.
     if let Some(required) = asked.iter().find(|q| {
         q.operation == answer.operation && Some(q.target.as_str()) == answer.target.as_deref()
     }) {
         reject_refusal(&result["answers"][&required.key], &required.key)
-            .map_err(|error| anyhow::Error::from(JevBilled::new(usage.clone(), error)))?;
+            .map_err(|error| anyhow::Error::from(JevBilled::unusable(usage.clone(), error)))?;
     }
     let irreversible = irreversible::chosen_probability(
         &result["answers"],
@@ -473,9 +473,13 @@ fn read_answer(
 }
 
 #[cfg(test)]
+mod body_loop_tests;
+#[cfg(test)]
 mod gate_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod unusable_tests;
 
 fn reject_refusal(answer: &Value, name: &str) -> anyhow::Result<()> {
     if answer["type"] == "refusal" {

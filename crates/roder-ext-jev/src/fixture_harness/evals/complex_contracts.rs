@@ -49,8 +49,8 @@ async fn contracts(holdout: bool) {
         .await
         .unwrap();
         let errors = task.expect.grade(&outcome);
-        if !errors.is_empty() {
-            failures.push(format!("{}: {}", task.id, errors.join("; ")));
+        if !errors.passed() {
+            failures.push(format!("{}: {}", task.id, errors.failures().join("; ")));
             continue;
         }
         // A successful trace cannot hide a forbidden mutation, duplicate
@@ -62,7 +62,7 @@ async fn contracts(holdout: bool) {
         ] {
             let previous = outcome.probed.dom.insert(probe.into(), Ok(wrong));
             assert!(
-                !task.expect.grade(&outcome).is_empty(),
+                !task.expect.grade(&outcome).passed(),
                 "{}: {probe}",
                 task.id
             );
@@ -70,7 +70,7 @@ async fn contracts(holdout: bool) {
         }
         outcome.result.visible_text.clear();
         assert!(
-            !task.expect.grade(&outcome).is_empty(),
+            !task.expect.grade(&outcome).passed(),
             "{}: missing completion",
             task.id
         );
@@ -141,6 +141,6 @@ async fn complex_contracts_reject_actual_wrong_row_duplicate_and_partial_actions
             &serde_json::json!(count),
             "{id}: {counter}"
         );
-        assert!(!task.expect.grade(&outcome).is_empty(), "{id}: {counter}");
+        assert!(!task.expect.grade(&outcome).passed(), "{id}: {counter}");
     }
 }

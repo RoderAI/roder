@@ -3,9 +3,19 @@
 //! Roder gives the model only a tool result's text, never its data, so the
 //! page itself has to be in it (see [`digest`]).
 
+#[cfg(test)]
+mod cover_tests;
 mod digest;
 #[cfg(test)]
+mod hint_tests;
+#[cfg(test)]
+mod not_clicked_tests;
+#[cfg(test)]
+mod omission_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod toggle_tests;
 
 use chrono::{DateTime, Local};
 pub(crate) use digest::digest;
@@ -66,7 +76,8 @@ pub(crate) fn next_step(status: &str) -> Option<&'static str> {
         "blocked" => {
             "Read the page below to see where Jev stopped. Then call again with url \"\" and a \
              narrower goal that names the control to use, start from a more specific page, or \
-             use another browser tool."
+             use another browser tool family if one is available (chrome_*, browser_use_*, \
+             webwright.*)."
         }
         "budget_exceeded" => {
             "Split the task into smaller goals, and run each with url \"\" from the page where \

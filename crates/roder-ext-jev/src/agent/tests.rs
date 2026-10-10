@@ -40,6 +40,41 @@ fn a_wait_or_a_change_keeps_the_run_going() {
 }
 
 #[test]
+fn a_wait_that_changed_nothing_is_skipped_not_counted() {
+    // Three no-ops with waits that changed nothing between them are still a
+    // run of three; the waits are neither a no-op of the three nor a break.
+    let history = vec![
+        entry("click", Some(false)),
+        entry("wait", Some(false)),
+        entry("click", Some(false)),
+        entry("wait", Some(false)),
+        entry("wait", Some(false)),
+        entry("click", Some(false)),
+    ];
+    assert_eq!(stalled(&history), Some(JevStopCause::Stalled));
+    // Two no-ops and any number of waits are not three.
+    assert!(stalled(&history[..5]).is_none());
+    assert!(
+        stalled(&[
+            entry("wait", Some(false)),
+            entry("wait", Some(false)),
+            entry("wait", Some(false)),
+        ])
+        .is_none()
+    );
+    // A wait after which the page changed is progress, and breaks the run.
+    assert!(
+        stalled(&[
+            entry("click", Some(false)),
+            entry("click", Some(false)),
+            entry("wait", Some(true)),
+            entry("click", Some(false)),
+        ])
+        .is_none()
+    );
+}
+
+#[test]
 fn three_covered_attempts_are_told_apart_from_a_stall() {
     let covered = || json!({"kind": "click", "page_changed": false, "covered": true});
     assert_eq!(

@@ -4,9 +4,10 @@
 use serde_json::Value;
 
 use super::{
-    FRAME_CHARS, FRAMES, HEADING_CHARS, JOINED_LINE, REASON_CHARS, SHORT_LINE, STEP_CHARS,
-    STEP_LINES, TEXT_LINE_CHARS, clip, cut, keep, one_line, text,
+    FRAME_CHARS, FRAMES, HEADING_CHARS, JOINED_LINE, NOT_CLICKED_CHARS, REASON_CHARS, SHORT_LINE,
+    STEP_CHARS, STEP_LINES, TEXT_LINE_CHARS, clip, cut, keep, one_line, text,
 };
+use crate::agent::{REPEAT_CONFIDENCE, tidy_cover};
 
 pub(super) fn reason(data: &Value) -> Vec<String> {
     let who = match data["fallback"]["ran"] == Value::Bool(true) {
@@ -42,6 +43,44 @@ pub(super) fn steps(data: &Value) -> Vec<String> {
     out
 }
 
+/// The click a `done` run ended on instead of making: what it was, where it
+/// sat, and the click before it that it was read as repeating. Its labels
+/// are page text, so it sits among the page-supplied lines.
+pub(super) fn not_clicked(data: &Value) -> Vec<String> {
+    let held = &data["suppressed_click"];
+    let Some(label) = held["label"].as_str() else {
+        return Vec::new();
+    };
+    let named = |label: &str, context: &Value| {
+        let mut named = format!("\"{}\"", cut(&one_line(label), 60));
+        if let Some(context) = context
+            .as_str()
+            .filter(|context| !context.trim().is_empty())
+        {
+            named.push_str(&format!(" (in: {})", cut(&one_line(context), 50)));
+        }
+        named
+    };
+    let confidence = held["confidence"]
+        .as_f64()
+        .map(|confidence| format!(" at confidence {confidence:.2}"))
+        .unwrap_or_default();
+    let line = match held["kind"].as_str() {
+        Some("twin_control") => format!(
+            "Not clicked: {}, chosen{confidence} right after a click on {} that changed the page. \
+             Below {REPEAT_CONFIDENCE:.2} confidence Jev reads that as the goal being met.",
+            named(label, &held["context"]),
+            named(label, &held["previous_context"]),
+        ),
+        _ => format!(
+            "Not clicked: {} again, chosen{confidence} right after that click changed the page. \
+             Below {REPEAT_CONFIDENCE:.2} confidence Jev reads that as the goal being met.",
+            named(label, &held["context"]),
+        ),
+    };
+    vec![clip(&line, NOT_CLICKED_CHARS)]
+}
+
 fn step(action: &Value) -> String {
     let mut line = format!(
         " {}. {} \"{}\"",
@@ -60,7 +99,10 @@ fn step(action: &Value) -> String {
         outcome.push(format!("it was covered; Jev {}", one_line(how)));
     }
     if action["covered"] == Value::Bool(true) {
-        outcome.push("covered by another element; nothing was done".to_string());
+        outcome.push(match covered_by(action) {
+            Some(cover) => format!("covered by \"{cover}\"; nothing was done"),
+            None => "covered by another element; nothing was done".to_string(),
+        });
     }
     if let Some(refused) = action["refused"].as_str() {
         outcome.push(format!("the page refused it: {}", one_line(refused)));
@@ -98,6 +140,13 @@ fn step(action: &Value) -> String {
         line.push_str(&outcome.join("; "));
     }
     clip(&line, STEP_CHARS)
+}
+
+/// What covered a step's target, as the page names it. Page text, so it
+/// is held to the same line and length the record keeps it to, whoever
+/// built the data.
+fn covered_by(action: &Value) -> Option<String> {
+    tidy_cover(&one_line(action["covered_by"].as_str()?))
 }
 
 pub(super) fn frames(data: &Value) -> Vec<String> {

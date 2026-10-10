@@ -2,10 +2,11 @@
 //!
 //! A port of upstream Jev's `agent.py`: observe, ask for one operation, execute
 //! it, observe again. The budgets and the rule that three consecutive actions
-//! changing nothing mean `blocked` are upstream's. The statuses past `done` and
-//! `blocked` are Jev's: upstream raises on a budget, a missing value or a
-//! provider failure, and a run stopped that way ends with a [`JevStop`]
-//! status (any other error is `error`) instead of reporting `ready`. An
+//! changing nothing mean `blocked` are upstream's, though an unchanged wait no
+//! longer hides one. The statuses past `done` and `blocked` are Jev's:
+//! upstream raises on a budget, a missing value or a provider failure, and a
+//! run stopped that way ends with a [`JevStop`] status (any other error is
+//! `error`) instead of reporting `ready`. An
 //! action the page refused and the dialogs it opened are recorded on the step;
 //! a blocked run whose page asked for a confirmation Jev declined says so.
 //! Two more behaviours are Jev's: the opt-in irreversible-action gate stops
@@ -14,7 +15,10 @@
 //! default) is recorded as a step of its own that costs no model call and
 //! counts toward no budget. A value typed into a password or one-time-code
 //! field is recorded as `[secret]` and scrubbed from every later page read
-//! (see [`crate::secret`]).
+//! (see [`crate::secret`]). A run going round in circles that the stall rule
+//! misses ends `blocked` too: the same control a fourth time on the same
+//! page, three stale decisions in a row with nothing new on the page, or six
+//! waits in a row that changed nothing (see `loops`).
 
 use std::time::Instant;
 
@@ -23,7 +27,7 @@ use serde_json::{Value, json};
 use crate::effects;
 use crate::engine::{
     Covered, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevPageFacts, JevStatus,
-    JevStop, JevStopCause, JevTextValue, StaleObservation,
+    JevStop, JevStopCause, JevSuppressedClick, JevTextValue, StaleObservation,
 };
 use crate::secret::{self, SECRET, Secrets};
 
@@ -37,6 +41,8 @@ pub(crate) struct Agent {
     decision_calls: Vec<JevDecisionRecord>,
     /// The usage of decisions that were billed but could not be used.
     unusable_decisions: Vec<Value>,
+    /// The unusable replies to the decision being asked, in a row.
+    unusable_streak: unusable::UnusableStreak,
     status: JevStatus,
     started_at: Instant,
     elapsed_ms: u64,
@@ -53,10 +59,11 @@ pub(crate) struct Agent {
     looked_again: bool,
     /// What ended the run, once it stopped short of its goal.
     cause: Option<JevStopCause>,
+    /// The click a `done` run ended on instead of making.
+    suppressed_click: Option<JevSuppressedClick>,
+    /// What the caps on a run going round in circles remember.
+    watch: loops::LoopWatch,
 }
-
-/// Below this, a repeat of the last effective click is read as DONE.
-const REPEAT_CONFIDENCE: f64 = 0.7;
 
 /// The kind of a history entry recording a refused cookie banner: not a
 /// model step, so no budget, stall or repeat rule counts it.
@@ -82,6 +89,7 @@ impl Agent {
             decisions: 0,
             decision_calls: Vec::new(),
             unusable_decisions: Vec::new(),
+            unusable_streak: unusable::UnusableStreak::default(),
             status: JevStatus::Ready,
             started_at: Instant::now(),
             elapsed_ms: 0,
@@ -91,6 +99,8 @@ impl Agent {
             facts: None,
             looked_again: false,
             cause: None,
+            suppressed_click: None,
+            watch: loops::LoopWatch::default(),
         };
         agent.observe().await?;
         agent.look_again_while_empty().await?;
@@ -136,6 +146,7 @@ impl Agent {
                 Err(error) if error.is::<StaleObservation>() => {
                     // The page moved under the decision; observe and choose again.
                     self.status = JevStatus::Ready;
+                    let before = loops::settled_view(&self.observation);
                     if let Err(error) = self.observe().await {
                         return Some(self.fail(&error));
                     }
@@ -143,6 +154,17 @@ impl Agent {
                         return Some(self.fail(&error));
                     }
                     self.elapsed();
+                    let same = before == loops::settled_view(&self.observation);
+                    if let Some(stop) = self.after_stale(&error, same) {
+                        return Some(self.fail(&stop));
+                    }
+                }
+                Err(error) if Self::is_unusable_reply(&error) => {
+                    // The service answered with something that cannot be
+                    // used; the page has not moved, so just ask again.
+                    if let Some(reason) = self.after_unusable_reply(&error) {
+                        return Some(reason);
+                    }
                 }
                 Err(error) => return Some(self.fail(&error)),
             }
@@ -240,23 +262,6 @@ impl Agent {
         self.act(decision).await
     }
 
-    /// An unsure repeat of the click that just took effect. Live runs show
-    /// the model split between that click and DONE once the page confirms
-    /// the first one (confidence 0.43 to 0.66), while a click that is meant
-    /// to repeat stays above 0.75. Clicking again is the costly mistake: a
-    /// second item in the cart.
-    fn repeats_a_finished_click(&self, action: &Value, decision: &JevDecision) -> bool {
-        let Some(last) = self.last_step() else {
-            return false;
-        };
-        action["kind"] == json!("click")
-            && decision.confidence < REPEAT_CONFIDENCE
-            && last["kind"] == action["kind"]
-            && last["choice"] == json!(decision.choice)
-            && last["action"] == action["label"]
-            && last["page_changed"] == json!(true)
-    }
-
     async fn act(&mut self, decision: JevDecision) -> anyhow::Result<()> {
         let selected = decision.choice.clone();
         // A page that showed nothing yet is read again once before a
@@ -299,10 +304,15 @@ impl Agent {
         let Some(action) = action else {
             return Err(StaleObservation::new("Chosen action is no longer observed").into());
         };
-        if self.repeats_a_finished_click(&action, &decision) {
+        if let Some(held) = self.unsure_repeat(&action, &decision) {
+            self.suppressed_click = Some(held);
             self.status = JevStatus::Done;
             self.elapsed();
             return Ok(());
+        }
+        let pair = loops::pair_of(&self.observation, &action);
+        if let Some(stop) = self.pair_looped(&action, pair.as_ref()) {
+            return Err(stop);
         }
         if self.history.iter().filter(chosen).count() >= self.config.max_actions {
             return Err(JevStop::new(
@@ -322,7 +332,7 @@ impl Agent {
         if secret && let Some(text) = &text {
             self.secrets.remember(text);
         }
-        let (covered, refused, uncovered) = match self
+        let (covered, refused, uncovered, cover) = match self
             .browser
             .act(
                 &action,
@@ -334,11 +344,16 @@ impl Agent {
         {
             // A refusal is recorded and the run goes on: the next decision
             // sees the page as it stands.
-            Ok(outcome) => (false, outcome.refused, outcome.uncovered),
+            Ok(outcome) => (false, outcome.refused, outcome.uncovered, None),
             // Nothing was dispatched, but the attempt is a step that changed
             // nothing: a target that stays covered stalls the run instead of
             // paying for a decision per retry until the model-call budget.
-            Err(error) if error.is::<Covered>() => (true, None, None),
+            Err(error) if error.is::<Covered>() => {
+                let cover = error
+                    .downcast_ref::<Covered>()
+                    .and_then(|covered| self.cover_name(covered));
+                (true, None, None, cover)
+            }
             Err(error) => return Err(error),
         };
         self.pending_text = None;
@@ -365,6 +380,8 @@ impl Agent {
                 (false, false) => text,
             },
             "covered": covered,
+            // What covered it, as the page names it (not sent to the model).
+            "covered_by": cover,
             "refused": refused.map(|reason| self.secrets.scrub(&reason)),
             "uncovered": uncovered.map(|how| self.secrets.scrub(&how)),
             "text_helper": written.as_ref().map(|written| written.model.clone()),
@@ -378,6 +395,7 @@ impl Agent {
             "executed_ms": self.elapsed_ms,
             "elapsed_ms": self.elapsed_ms,
         }));
+        self.watch.record(pair);
 
         // A refused cookie banner may be recorded after this step.
         let step = self.history.len() - 1;
@@ -401,7 +419,11 @@ impl Agent {
             }
             None => JevStatus::Ready,
         };
-        Ok(())
+        // The stall rule has its say first.
+        match self.status == JevStatus::Ready {
+            true => self.waited_out().map_or(Ok(()), Err),
+            false => Ok(()),
+        }
     }
 
     pub(crate) async fn close(&mut self) -> anyhow::Result<()> {
@@ -412,7 +434,10 @@ impl Agent {
 /// Upstream's stall rule: three consecutive executed actions, none of them a
 /// wait, none of which changed the page.
 /// A refused cookie banner is not an action the model chose, so it neither
-/// counts nor breaks the run of three.
+/// counts nor breaks the run of three. Nor does a wait after which the page
+/// was the same: it is skipped, so no-ops with such waits between them are
+/// still a run of three. (Six of those waits in a row are a stop of their
+/// own, see `loops`.) A wait that changed the page breaks the run.
 /// Which rule stalled the run: three covered attempts in a row, or any
 /// three that changed nothing.
 fn stalled(history: &[Value]) -> Option<JevStopCause> {
@@ -420,6 +445,7 @@ fn stalled(history: &[Value]) -> Option<JevStopCause> {
         .iter()
         .rev()
         .filter(chosen)
+        .filter(|entry| !loops::idle_wait(entry))
         .take(3)
         .collect::<Vec<_>>();
     let stalled = recent.len() == 3
@@ -434,11 +460,17 @@ fn stalled(history: &[Value]) -> Option<JevStopCause> {
     }
 }
 
+mod cover;
 mod look;
+mod loops;
 mod opt_in;
 mod predict;
+mod repeat;
 mod result;
-pub(crate) use result::controls;
+pub(crate) use cover::tidy_cover;
+pub(crate) use repeat::REPEAT_CONFIDENCE;
+pub(crate) use result::{controls, omitted};
 #[cfg(test)]
 mod tests;
 mod typing;
+mod unusable;

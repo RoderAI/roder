@@ -99,8 +99,13 @@ impl Browser {
             endpoint: String::new(),
         };
         for _ in 0..200 {
-            if let Ok(port) = std::fs::read_to_string(browser.profile.join("DevToolsActivePort")) {
-                browser.endpoint = format!("http://127.0.0.1:{}", port.lines().next().unwrap());
+            // Chrome creates the file before it writes the port into it.
+            if let Some(port) = std::fs::read_to_string(browser.profile.join("DevToolsActivePort"))
+                .ok()
+                .and_then(|file| file.lines().next().map(str::to_string))
+                .filter(|port| !port.is_empty())
+            {
+                browser.endpoint = format!("http://127.0.0.1:{port}");
                 return Ok(Some(browser));
             }
             anyhow::ensure!(
@@ -162,35 +167,51 @@ impl Fixture {
     /// Grade application events, independently of the model's final answer.
     pub async fn grade(&self, primitives: bool) -> Value {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let events = self.events.lock().await;
-        let seen = |kind: &str| {
-            events
-                .iter()
-                .any(|e| e["type"] == kind && e["trusted"] == true)
-        };
-        let submitted = events
-            .iter()
-            .any(|e| e["type"] == "submit" && e["value"] == "orcaA" && e["trusted"] == true);
-        let scroll = events
-            .iter()
-            .any(|e| e["type"] == "scroll" && e["top"].as_i64().unwrap_or(0) > 0);
-        let drag = events.iter().any(|e| {
-            e["type"] == "drag"
-                && e["path"].as_array().is_some_and(|path| {
-                    path.contains(&json!([80, 320])) && path.contains(&json!([120, 285]))
-                })
-        });
-        let checks = if primitives {
-            json!({"filters":seen("filters"),"submitted_value":submitted,
-            "double_click":seen("double"),"right_click":seen("right"),"wheel_click":seen("wheel"),"move":seen("move"),
-            "nested_scroll":scroll,"drag_path":drag,
-            "shift_click":events.iter().any(|e|e["type"]=="filters" && e["shift"]==true)})
-        } else {
-            json!({"filters":seen("filters"),"submitted_value":submitted})
-        };
-        let passed = checks.as_object().unwrap().values().all(|v| v == true);
-        json!({"passed":passed,"checks":checks,"events":*events})
+        grade_events(&self.events.lock().await, primitives)
     }
+}
+
+/// The only value the fixture form may be submitted with.
+pub const EXPECTED_SUBMIT: &str = "orcaA";
+
+/// Grade recorded fixture events. Pure: no browser and no I/O.
+///
+/// `submitted_value` needs exactly one trusted `submit` event, and its value
+/// must be [`EXPECTED_SUBMIT`]. A run that submits wrong text and later
+/// submits the right text, or submits the right text twice, fails: each
+/// submit is a server-visible action the task did not ask for. Events without
+/// `trusted: true` are not counted. Every other check is unchanged.
+pub fn grade_events(events: &[Value], primitives: bool) -> Value {
+    let seen = |kind: &str| {
+        events
+            .iter()
+            .any(|e| e["type"] == kind && e["trusted"] == true)
+    };
+    let trusted_submits: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "submit" && e["trusted"] == true)
+        .collect();
+    let submitted =
+        matches!(trusted_submits.as_slice(), [only] if only["value"] == EXPECTED_SUBMIT);
+    let scroll = events
+        .iter()
+        .any(|e| e["type"] == "scroll" && e["top"].as_i64().unwrap_or(0) > 0);
+    let drag = events.iter().any(|e| {
+        e["type"] == "drag"
+            && e["path"].as_array().is_some_and(|path| {
+                path.contains(&json!([80, 320])) && path.contains(&json!([120, 285]))
+            })
+    });
+    let checks = if primitives {
+        json!({"filters":seen("filters"),"submitted_value":submitted,
+        "double_click":seen("double"),"right_click":seen("right"),"wheel_click":seen("wheel"),"move":seen("move"),
+        "nested_scroll":scroll,"drag_path":drag,
+        "shift_click":events.iter().any(|e|e["type"]=="filters" && e["shift"]==true)})
+    } else {
+        json!({"filters":seen("filters"),"submitted_value":submitted})
+    };
+    let passed = checks.as_object().unwrap().values().all(|v| v == true);
+    json!({"passed":passed,"checks":checks,"trusted_submits":trusted_submits.len(),"events":events})
 }
 
 pub async fn read_request(socket: &mut tokio::net::TcpStream) -> anyhow::Result<(String, Vec<u8>)> {

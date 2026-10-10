@@ -9,8 +9,9 @@
 <body>
   <h1>Covered button</h1>
   <!-- The button is visible to snapshot.js but a modal backdrop sits on top,
-       so act.js's hit test must refuse it. -->
+       so act.js's hit test must refuse it. The backdrop is named, as a page's
+       popup usually is, so a refusal can say what covered the button. -->
   <button type="button" id="buy" onclick="window.clicks = (window.clicks || 0) + 1">Buy now</button>
-  <div id="overlay"></div>
+  <div id="overlay" aria-label="Spring sale popup"></div>
 </body>
 </html>

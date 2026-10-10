@@ -1,5 +1,6 @@
 //! Graders over what a run leaves behind: its status, the final page, the
-//! posted forms, the DOM, and the executed trace.
+//! posted forms, the DOM, and the executed trace. The status is the agent's
+//! verdict; the rest is the truth (see [`Graded`]).
 
 use std::collections::BTreeMap;
 
@@ -77,6 +78,73 @@ pub(crate) struct ExpectedPost {
     pub(crate) secret_fields: Vec<String>,
 }
 
+/// Every way an outcome missed an [`Expect`], split by who vouches for what
+/// was checked.
+///
+/// The agent's verdict is what it claims about itself: the final status and
+/// whether it gave a stop reason. The truth is what the page, the POST log,
+/// the DOM probes and the executed trace show, none of which the agent's
+/// word can change. A run whose verdict matches the task while the truth
+/// does not is a false green (see [`Marks`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Graded {
+    pub(crate) verdict: Vec<String>,
+    pub(crate) truth: Vec<String>,
+}
+
+impl Graded {
+    /// Both kinds of miss in one list, the verdict's first.
+    pub(crate) fn failures(&self) -> Vec<String> {
+        self.verdict.iter().chain(&self.truth).cloned().collect()
+    }
+
+    pub(crate) fn marks(&self) -> Marks {
+        Marks::new(self.verdict.is_empty(), self.truth.is_empty())
+    }
+
+    pub(crate) fn passed(&self) -> bool {
+        self.marks().passed()
+    }
+
+    /// The misses of two expectations graded on the same outcome.
+    pub(crate) fn and(mut self, other: Self) -> Self {
+        self.verdict.extend(other.verdict);
+        self.truth.extend(other.truth);
+        self
+    }
+}
+
+/// What a row says about a run, as three flat row fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct Marks {
+    /// The agent's claim is the one the task asked for.
+    pub(crate) verdict_ok: bool,
+    /// The page, POST log, DOM and trace bear out the task.
+    pub(crate) truth_ok: bool,
+    /// The claim was right and the truth was not: a DONE the page does not
+    /// back. Always `verdict_ok && !truth_ok`.
+    pub(crate) false_green: bool,
+}
+
+impl Marks {
+    pub(crate) fn new(verdict_ok: bool, truth_ok: bool) -> Self {
+        Self {
+            verdict_ok,
+            truth_ok,
+            false_green: verdict_ok && !truth_ok,
+        }
+    }
+
+    /// A task that never ran claimed nothing and proved nothing.
+    pub(crate) fn nothing() -> Self {
+        Self::new(false, false)
+    }
+
+    pub(crate) fn passed(self) -> bool {
+        self.verdict_ok && self.truth_ok
+    }
+}
+
 impl Expect {
     pub(crate) fn check(&self) -> anyhow::Result<()> {
         for status in self.status.iter().flat_map(Statuses::all) {
@@ -115,12 +183,19 @@ impl Expect {
     }
 
     /// Every way the outcome misses this expectation; empty means a pass.
-    pub(crate) fn grade(&self, outcome: &Outcome) -> Vec<String> {
+    pub(crate) fn grade(&self, outcome: &Outcome) -> Graded {
         let result = &outcome.result;
-        let mut failures = Vec::new();
+        let (mut verdict, mut truth) = (Vec::new(), Vec::new());
+        // The agent's claim: its status and whether it said why it stopped.
+        let mut claim = |ok: bool, failure: String| {
+            if !ok {
+                verdict.push(failure);
+            }
+        };
+        // Everything else is read from what the run left behind.
         let mut check = |ok: bool, failure: String| {
             if !ok {
-                failures.push(failure);
+                truth.push(failure);
             }
         };
         if let Some(statuses) = &self.status {
@@ -129,19 +204,19 @@ impl Expect {
                 Statuses::One(status) => format!("status {actual} != {status:?}"),
                 Statuses::Any(statuses) => format!("status {actual} not in {statuses:?}"),
             };
-            check(
+            claim(
                 statuses.all().iter().any(|status| actual == json!(status)),
                 failure,
             );
         }
         if let Some(stopped) = self.stopped {
-            check(
+            claim(
                 result.stopped_because.is_some() == stopped,
                 format!("stopped_because {:?}", result.stopped_because),
             );
         }
         if let Some(needle) = &self.stopped_because_contains {
-            check(
+            claim(
                 result
                     .stopped_because
                     .as_deref()
@@ -270,6 +345,6 @@ impl Expect {
                 format!("page_changed {actual:?} != {changed:?}"),
             );
         }
-        failures
+        Graded { verdict, truth }
     }
 }

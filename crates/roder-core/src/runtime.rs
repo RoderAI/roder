@@ -86,6 +86,7 @@ mod codex_v2;
 use crate::artifacts::{
     ContextArtifactStore as FilesystemContextArtifactStore, default_context_artifact_dir,
 };
+use crate::browser_routing::apply_browser_routing;
 use crate::bus::EventBus;
 use crate::dynamic_workflows::{
     DynamicWorkflowEffortProfile, RuntimeDynamicWorkflowConfig, WorkflowTriggerDecision,
@@ -112,6 +113,7 @@ use crate::speed_policy::{SpeedPolicyState, reasoning_from_decision};
 use crate::subagent_traces::{RuntimeAgentSwarmProgressSink, RuntimeSubagentTraceSink};
 use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamState};
 use crate::thread_item_cache::{ThreadItemCache, ThreadItemCacheEntry};
+use crate::tool_result_images::ToolImages;
 use crate::verification_gate::VerificationGateState;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
@@ -3723,6 +3725,7 @@ impl Runtime {
             model = routing_selection.selection.model.clone();
             let engine = self.engine_for(&provider)?;
             let capabilities = engine.capabilities();
+            let tool_images = ToolImages::for_engine(engine.as_ref(), &model);
             model_profile = model_profile_for_provider_model(&cfg, &provider, &model);
             let tools = if capabilities.tool_calls {
                 if model == routing_tools_model && provider == routing_tools_provider {
@@ -3789,7 +3792,7 @@ impl Runtime {
             compacted_this_turn |=
                 self.compaction_generation(&req.thread_id) != compaction_generation_before;
             if round_index == 0 {
-                self.complete_context_assembly(&req, &turn_id, &transcript)
+                self.complete_context_assembly(&req, &turn_id, &transcript, tool_images)
                     .await;
             }
 
@@ -3880,8 +3883,6 @@ impl Runtime {
                 .goals
                 .apply_goal_instructions(&req.thread_id, instructions, effective_policy_mode)
                 .await?;
-            instructions =
-                apply_parallel_web_tools(instructions, tools.iter().map(|spec| spec.name.as_str()));
             let mut request_metadata = serde_json::json!({});
             if let Some(decision) = &speed_policy_decision {
                 request_metadata["speedPolicy"] = serde_json::json!(decision);
@@ -3917,6 +3918,16 @@ impl Runtime {
             } else {
                 tools.clone()
             };
+            // Tool guidance describes the tools this request can call, which is
+            // fewer than `tools` on a deadline finalization or forced ledger round.
+            instructions = apply_parallel_web_tools(
+                instructions,
+                request_tools.iter().map(|spec| spec.name.as_str()),
+            );
+            instructions = apply_browser_routing(
+                instructions,
+                request_tools.iter().map(|spec| spec.name.as_str()),
+            );
             let request_tool_choice = if deadline_finalization_requested {
                 ToolChoice::None
             } else if task_ledger_tools.is_some() {
@@ -3952,7 +3963,7 @@ impl Runtime {
                     model: model.clone(),
                 },
                 instructions,
-                transcript: transcript.clone(),
+                transcript: crate::tool_result_images::request_transcript(&transcript, tool_images),
                 tools: request_tools,
                 tool_choice: request_tool_choice,
                 reasoning: request_reasoning,
@@ -4957,7 +4968,8 @@ impl Runtime {
             ),
         };
         let before_len = transcript.len();
-        let before_tokens = crate::compaction::estimate_prompt_tokens(transcript);
+        let tool_images = self.tool_images(provider, model);
+        let before_tokens = crate::compaction::estimate_prompt_tokens(transcript, tool_images);
         *transcript = self
             .compact_transcript_if_needed(
                 thread_id,
@@ -4968,7 +4980,7 @@ impl Runtime {
                 force_options,
             )
             .await?;
-        let after_tokens = crate::compaction::estimate_prompt_tokens(transcript);
+        let after_tokens = crate::compaction::estimate_prompt_tokens(transcript, tool_images);
         *compacted_this_turn = *compacted_this_turn
             || transcript
                 .iter()

@@ -45,6 +45,7 @@ impl Agent {
             }
         };
         self.decisions += 1;
+        self.unusable_streak.clear();
         self.decision_calls.push(JevDecisionRecord {
             choice: decision.choice.clone(),
             operation: decision.operation.clone(),

@@ -205,8 +205,55 @@ fn native_screenshot_is_counted_and_never_shed_as_an_invalid_output() {
     assert!(prepare_request_payload(&body, bytes - 1).is_err());
 }
 
+/// The display payload a live native result gets: the executor's data, with
+/// the screenshot and any notes, run through the real record conversion.
+fn live_payload(notes: &[&str]) -> Option<Value> {
+    let mut data =
+        json!({"__view_image":{"image_url":"data:image/jpeg;base64,YWJj","detail":"original"}});
+    if !notes.is_empty() {
+        data["computer_notes"] = json!(notes);
+    }
+    roder_api::transcript::tool_display_payload(Some("computer"), None, Some(&data))
+}
+fn set_result(request: &mut AgentInferenceRequest, text: &str, payload: Option<Value>) {
+    if let TranscriptItem::ToolResult(result) = request.transcript.last_mut().unwrap() {
+        result.result = text.to_string();
+        result.display_payload = payload;
+    }
+}
+fn with_native_result(text: &str, payload: Option<Value>, is_error: bool) -> AgentInferenceRequest {
+    let mut request = native_request();
+    request.transcript.push(TranscriptItem::ProviderMetadata(
+        json!({"output":[native_item()]}),
+    ));
+    add_result(&mut request, is_error);
+    set_result(&mut request, text, payload);
+    request
+}
+fn replayed(request: &AgentInferenceRequest) -> Vec<Value> {
+    let input = OpenAiResponsesEngine::map_request(request)["input"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let at = input
+        .iter()
+        .position(|item| item["type"] == "computer_call_output")
+        .unwrap();
+    input[at..].to_vec()
+}
+const SCREENSHOT: &str = r#"{"type":"computer_call_output","call_id":"call_native","output":{
+    "type":"computer_screenshot","image_url":"data:image/jpeg;base64,YWJj","detail":"original"}}"#;
+
 #[tokio::test]
 async fn native_websocket_stream_executes_once_and_continues_with_native_screenshot() {
+    let screenshot = serde_json::from_str::<Value>(SCREENSHOT).unwrap();
+    native_websocket_round(&[], json!([screenshot])).await;
+}
+
+/// Two rounds over a scripted socket: the first yields the native call, the
+/// second must send exactly `next_input` after `previous_response_id`, the
+/// result of the call carrying `notes`.
+async fn native_websocket_round(notes: &[&str], next_input: Value) {
     use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -227,11 +274,7 @@ async fn native_websocket_stream_executes_once_and_continues_with_native_screens
         let next: Value =
             serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(next["previous_response_id"], "resp_ws_native");
-        assert_eq!(
-            next["input"],
-            json!([{"type":"computer_call_output","call_id":"call_native","output":{
-            "type":"computer_screenshot","image_url":"data:image/jpeg;base64,YWJj","detail":"original"}}])
-        );
+        assert_eq!(next["input"], next_input);
         socket
             .send(Message::Text(
                 json!({"type":"response.completed","response":{"id":"resp_ws_done","output":[]}})
@@ -268,6 +311,7 @@ async fn native_websocket_stream_executes_once_and_continues_with_native_screens
         json!({"output":[native_item()]}),
     ));
     add_result(&mut request, false);
+    set_result(&mut request, "Observed current screen", live_payload(notes));
     let body = OpenAiResponsesEngine::map_request(&request);
     let second = try_websocket_stream(
         &url,
@@ -290,3 +334,6 @@ async fn native_websocket_stream_executes_once_and_continues_with_native_screens
     );
     server.await.unwrap();
 }
+
+#[path = "computer_notes_tests.rs"]
+mod computer_notes_tests;

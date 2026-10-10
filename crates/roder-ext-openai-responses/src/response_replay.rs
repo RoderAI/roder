@@ -91,6 +91,8 @@ pub(super) fn response_input_items(
                         if result.is_error {
                             items.push(json!({"type":"message","role":"user","content":[{
                                 "type":"input_text", "text":format!("Computer execution failed; inspect the returned screen before continuing: {}", result.result)}]}));
+                        } else if let Some(notes) = computer_notes_message(result) {
+                            items.push(notes);
                         }
                     }
                     continue;

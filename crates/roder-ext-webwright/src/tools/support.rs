@@ -5,12 +5,17 @@ use std::time::Duration;
 use roder_api::tools::{ToolCall, ToolExecutionContext, ToolResult, ToolSpec};
 use serde::Serialize;
 use serde_json::json;
-use tokio::process::Command;
 
+use super::exec::execute_script;
 use crate::playwright::{DependencyCheckMode, preflight_local_dependencies};
 use crate::redaction::{redact_sensitive_line, redact_sensitive_text};
+use crate::run_outcome::{
+    RunExitRecord, RunOutcome, RunReport, first_error_line, render_text, stderr_hint,
+    write_exit_record,
+};
 use crate::workspace::{
-    FINAL_LOG_FILE, FINAL_SCRIPT_FILE, WebwrightRunSummary, WebwrightWorkspace, scoped_path,
+    FINAL_LOG_FILE, FINAL_SCRIPT_FILE, WebwrightManifest, WebwrightRunSummary, WebwrightWorkspace,
+    scoped_path,
 };
 
 #[derive(Debug, Serialize)]
@@ -33,11 +38,32 @@ pub(super) struct ScriptLintCheck {
 pub(super) struct ScriptRunResult {
     pub(super) run_id: u32,
     pub(super) run_dir: String,
+    pub(super) outcome: RunOutcome,
     pub(super) exit_code: Option<i32>,
+    pub(super) elapsed_ms: u64,
+    /// Redacted. For `launch_failed`, the launch error.
     pub(super) stdout: String,
     pub(super) stderr: String,
     pub(super) timed_out: bool,
+    /// A guess from the stderr text; see `run_outcome::stderr_hint`.
+    pub(super) hint: Option<&'static str>,
+    pub(super) first_error: Option<String>,
     pub(super) workspace: serde_json::Value,
+}
+
+impl ScriptRunResult {
+    /// The text the model reads: outcome class, elapsed time, first error and the redacted output tail.
+    pub(super) fn text(&self, timeout_seconds: u64) -> String {
+        render_text(&RunReport {
+            run_id: self.run_id,
+            outcome: self.outcome,
+            exit_code: self.exit_code,
+            elapsed: Duration::from_millis(self.elapsed_ms),
+            timeout_seconds,
+            stdout: &self.stdout,
+            stderr: &self.stderr,
+        })
+    }
 }
 
 pub(super) fn allocate_next_run(
@@ -91,27 +117,26 @@ pub(super) async fn run_final_script(
     timeout_seconds: u64,
 ) -> anyhow::Result<ScriptRunResult> {
     let run_dir = PathBuf::from(&run.run_dir);
-    let run_future = Command::new(interpreter)
-        .arg(FINAL_SCRIPT_FILE)
-        .current_dir(&run_dir)
-        .output();
-    let output = match tokio::time::timeout(Duration::from_secs(timeout_seconds), run_future).await
-    {
-        Ok(output) => output?,
-        Err(_) => {
-            return Ok(ScriptRunResult {
-                run_id: run.run_id,
-                run_dir: run.run_dir.clone(),
-                exit_code: None,
-                stdout: String::new(),
-                stderr: format!("timed out after {timeout_seconds}s"),
-                timed_out: true,
-                workspace: serde_json::Value::Null,
-            });
-        }
+    // Left behind if this call is cancelled, so verification can tell the run never finished.
+    write_exit_record(&run_dir, &RunExitRecord::running())?;
+    let execution =
+        execute_script(interpreter, &run_dir, Duration::from_secs(timeout_seconds)).await;
+    let outcome = if execution.launch_error.is_some() {
+        RunOutcome::LaunchFailed
+    } else {
+        RunOutcome::finished(execution.exit_code, execution.timed_out)
     };
-    let stdout = redact_sensitive_text(&String::from_utf8_lossy(&output.stdout));
-    let stderr = redact_sensitive_text(&String::from_utf8_lossy(&output.stderr));
+    let elapsed_ms = u64::try_from(execution.elapsed.as_millis()).unwrap_or(u64::MAX);
+    write_exit_record(
+        &run_dir,
+        &RunExitRecord {
+            outcome,
+            exit_code: execution.exit_code,
+            elapsed_ms,
+        },
+    )?;
+    let stdout = redact_sensitive_text(&execution.stdout);
+    let stderr = redact_sensitive_text(&execution.launch_error.unwrap_or(execution.stderr));
     let log_path = run_dir.join(FINAL_LOG_FILE);
     if !log_path.exists() {
         let mut log = String::new();
@@ -127,14 +152,48 @@ pub(super) async fn run_final_script(
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| anyhow::anyhow!("invalid Webwright run directory {}", run.run_dir))?;
+    // The run result is the point of this call; a summary that cannot be built must not hide it.
+    let workspace = WebwrightWorkspace::new(workspace_root)
+        .summary()
+        .ok()
+        .and_then(|summary| serde_json::to_value(summary).ok())
+        .unwrap_or(serde_json::Value::Null);
     Ok(ScriptRunResult {
         run_id: run.run_id,
         run_dir: run.run_dir.clone(),
-        exit_code: output.status.code(),
+        outcome,
+        exit_code: execution.exit_code,
+        elapsed_ms,
+        timed_out: outcome == RunOutcome::Timeout,
+        hint: stderr_hint(&stderr),
+        first_error: first_error_line(&stderr),
         stdout,
         stderr,
-        timed_out: false,
-        workspace: serde_json::to_value(WebwrightWorkspace::new(workspace_root).summary()?)?,
+        workspace,
+    })
+}
+
+/// Names the requested manifest fields that an existing `webwright.json` kept instead of applying.
+pub(super) fn kept_manifest_note(
+    existing: &WebwrightManifest,
+    requested: &WebwrightManifest,
+) -> Option<String> {
+    let differing = [
+        ("taskId", existing.task_id != requested.task_id),
+        ("task", existing.task != requested.task),
+        ("mode", existing.mode != requested.mode),
+        ("startUrl", existing.start_url != requested.start_url),
+        ("browser", existing.browser != requested.browser),
+        ("headless", existing.headless != requested.headless),
+    ]
+    .into_iter()
+    .filter_map(|(field, differs)| differs.then_some(field))
+    .collect::<Vec<_>>();
+    (!differing.is_empty()).then(|| {
+        format!(
+            "kept its existing webwright.json; not applied: {}; use a new taskId or outputDir to change them",
+            differing.join(", ")
+        )
     })
 }
 

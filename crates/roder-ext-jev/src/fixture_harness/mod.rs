@@ -1,5 +1,6 @@
-//! A keyless real-DOM harness: fixture pages, a throwaway headless Chrome,
-//! and the real [`Page`] driven by scripted decisions.
+//! A keyless real-DOM harness: fixture pages, a throwaway headless Chrome
+//! shared by the whole test process, and the real [`Page`] driven by
+//! scripted decisions.
 //!
 //! Nothing else exercises `snapshot.js`, `act.js`, `settle.js` or the CDP
 //! input path against a real document. When no Chrome binary is installed,
@@ -15,11 +16,13 @@
 //! add it to the eval corpus instead (see [`evals`]).
 
 mod browser;
+mod chrome_process;
 pub(crate) mod fallback_script;
 mod proxy;
 mod scripted;
 mod sessions;
 mod site;
+mod tab_relay;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,9 +47,9 @@ pub(crate) struct Harness {
 }
 
 impl Harness {
-    /// `None` when Chrome is not installed and not required; any other
-    /// failure panics, since a harness that half-starts would hide real
-    /// breakage.
+    /// On the process-wide Chrome. `None` when Chrome is not installed and
+    /// not required; any other failure panics, since a harness that
+    /// half-starts would hide real breakage.
     pub(crate) async fn start() -> Option<Self> {
         let chrome = TestChrome::launch().await.expect("start headless Chrome")?;
         let site = FixtureSite::start().await.expect("start the fixture site");
@@ -56,7 +59,7 @@ impl Harness {
         })
     }
 
-    /// Like [`Harness::start`], on a Chrome with a real window.
+    /// Like [`Harness::start`], on a Chrome of its own with a real window.
     pub(crate) async fn start_headed() -> Option<Self> {
         let chrome = TestChrome::launch_headed()
             .await
@@ -68,8 +71,8 @@ impl Harness {
         })
     }
 
-    /// A fresh fixture site on the same Chrome, so one run's recorded POSTs
-    /// are its own without paying for another browser.
+    /// A fresh fixture site on the same endpoint, so one run's recorded POSTs
+    /// are its own while the tabs stay counted together.
     pub(crate) async fn with_new_site(&self) -> Self {
         Self {
             site: FixtureSite::start().await.expect("start the fixture site"),
@@ -77,28 +80,30 @@ impl Harness {
         }
     }
 
-    /// This Chrome's DevTools HTTP address.
+    /// This test's DevTools HTTP address on the shared Chrome. Tabs created
+    /// through it, or through a connection to it, are in the test's own
+    /// browser context.
     pub(crate) fn endpoint(&self) -> &str {
         &self.chrome.endpoint
     }
 
-    /// How many page tabs this Chrome has open, to check that none leaked.
-    pub(crate) async fn page_targets(&self) -> usize {
-        let mut connection = self.connect().await.expect("connect to Chrome");
-        let targets = connection
-            .call("Target.getTargets", serde_json::json!({}), None)
+    /// The page tabs this test owns that Chrome lists now: those in its
+    /// browser context, popups included. Another test's tabs on the same
+    /// Chrome are not among them.
+    pub(crate) async fn owned_pages(&self) -> Vec<Value> {
+        self.chrome
+            .owned_pages()
             .await
-            .expect("list targets");
-        targets["targetInfos"].as_array().map_or(0, |targets| {
-            targets
-                .iter()
-                .filter(|target| target["type"] == "page")
-                .count()
-        })
+            .expect("list the test's tabs")
     }
 
-    /// Wait up to 2 s for this Chrome to have `count` page tabs, and return
-    /// how many it has. Chrome drops a closed tab from its list shortly
+    /// How many page tabs this test owns, to check that none leaked.
+    pub(crate) async fn page_targets(&self) -> usize {
+        self.owned_pages().await.len()
+    }
+
+    /// Wait up to 2 s for this test to own `count` page tabs, and return
+    /// how many it owns. Chrome drops a closed tab from its list shortly
     /// after `Target.closeTarget` answers.
     pub(crate) async fn settled_page_targets(&self, count: usize) -> usize {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
@@ -133,9 +138,8 @@ impl Harness {
         Page::open(connection, url, autoconsent).await
     }
 
-    /// Connect to this Chrome. With dozens of test Chromes starting at once
-    /// (`--test-threads=32`), the DevTools endpoint can miss its first
-    /// request, so try it a few times.
+    /// Connect to this test's endpoint on the Chrome. A loaded machine can
+    /// make the endpoint miss its first request, so try it a few times.
     pub(crate) async fn connect(&self) -> anyhow::Result<Connection> {
         let mut attempt = 1;
         loop {
@@ -292,8 +296,12 @@ mod act_edge_tests;
 mod autoconsent_tests;
 mod booking_tests;
 mod clickable_tests;
+mod completion_match_tests;
 mod composed_tests;
 mod consent_tests;
+mod cover_tests;
+mod decision_fallback_live;
+mod decision_fallback_tests;
 mod dialog_tests;
 mod digest_tests;
 mod evals;
@@ -307,7 +315,10 @@ mod hidden_tab_tests;
 mod input_cost_tests;
 mod key_tests;
 mod launch_tests;
+mod loop_tests;
 mod observe_edge_tests;
+mod omission_tests;
+mod outcome_class_tests;
 mod pointer_tests;
 mod reach_tests;
 mod region_tests;
@@ -317,10 +328,12 @@ mod session_life_tests;
 mod session_tests;
 mod settle_tests;
 mod setup_tests;
+mod shared_chrome_tests;
 mod snapshot_cost_tests;
 mod snapshot_tests;
 mod tab_tests;
 mod tests;
+mod toggle_tests;
 mod twin_tests;
 mod uncover_tests;
 

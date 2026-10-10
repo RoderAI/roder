@@ -4,6 +4,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::redaction::redact_sensitive_line;
+use crate::run_outcome::{RunOutcome, read_exit_record};
 use crate::workspace::{FINAL_LOG_FILE, PLAN_FILE, WebwrightWorkspace};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -50,6 +51,7 @@ pub fn verify_workspace(root: impl AsRef<Path>) -> VerificationResult {
             checks.push(critical_points_check(&root.join(PLAN_FILE)));
             checks.push(screenshot_count_check(&summary));
             checks.push(final_datum_check(&workspace));
+            checks.push(script_exit_check(&workspace));
             checks
         }
         Err(err) => vec![VerificationCheck {
@@ -155,6 +157,42 @@ fn final_datum_check(workspace: &WebwrightWorkspace) -> VerificationCheck {
         message: datum
             .map(|line| format!("found {}", redact_sensitive_line(line)))
             .unwrap_or_else(|| format!("missing `final datum:` line in {}", log_path.display())),
+    }
+}
+
+/// The script must have exited 0. A log with a final datum and a screenshot are written by a script that
+/// fails after them just as well, so they cannot stand in for the exit status. Runs that
+/// `webwright.run_script` did not execute have no recorded status to check.
+fn script_exit_check(workspace: &WebwrightWorkspace) -> VerificationCheck {
+    let id = "script_exit".to_string();
+    let Ok(Some(run_id)) = workspace.latest_run_id() else {
+        return VerificationCheck {
+            id,
+            passed: false,
+            message: "missing latest Webwright run for exit status check".to_string(),
+        };
+    };
+    match read_exit_record(&workspace.run_dir(run_id)) {
+        Ok(None) => VerificationCheck {
+            id,
+            passed: true,
+            message: "no exit status recorded for the latest run (it was not executed by webwright.run_script)".to_string(),
+        },
+        Ok(Some(record)) if record.outcome == RunOutcome::Ok => VerificationCheck {
+            id,
+            passed: true,
+            message: format!("latest run exited 0 in {}ms", record.elapsed_ms),
+        },
+        Ok(Some(record)) => VerificationCheck {
+            id,
+            passed: false,
+            message: format!("latest run did not exit cleanly: {}", record.failure()),
+        },
+        Err(err) => VerificationCheck {
+            id,
+            passed: false,
+            message: format!("cannot read the latest run's exit status: {err:#}"),
+        },
     }
 }
 

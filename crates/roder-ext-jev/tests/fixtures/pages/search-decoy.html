@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shop search</title>
+<style>
+  body { font: 14px sans-serif; }
+  #status { color: #060; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<!-- The shape of the one false DONE the live corpus recorded
+     (enter_to_search: status done, no POST). The search field has no
+     button and only Enter in it submits the form. "Preview results" is the
+     decoy: it draws what a finished search would say and posts nothing, so a
+     model that reads the page's words as proof stops here. The truth is
+     the POST log, never this text. -->
+<form id="search" action="/submit/search" method="post">
+  <input type="search" name="q" aria-label="Search">
+</form>
+<button type="button" id="preview">Preview results</button>
+<p id="status" role="status"></p>
+<script>
+  document.getElementById('preview').addEventListener('click', () => {
+    const query = document.querySelector('[name=q]').value;
+    document.getElementById('status').textContent = 'Showing results for ' + query;
+  });
+</script>
+</body>
+</html>

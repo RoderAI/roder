@@ -427,17 +427,13 @@ async fn a_covered_control_is_not_pressed_by_keyboard() {
     );
 }
 
-/// Evaluate `expression` in the tab showing `page`, over a connection of
-/// the test's own.
+/// Evaluate `expression` in the tab of the test's own showing `page`: the
+/// Chrome is shared, and other tests open the same pages.
 async fn evaluate_on(harness: &super::Harness, page: &str, expression: &str) -> Value {
     let mut connection = harness.connect().await.unwrap();
-    let targets = connection
-        .call("Target.getTargets", json!({}), None)
+    let target = harness
+        .owned_pages()
         .await
-        .unwrap();
-    let target = targets["targetInfos"]
-        .as_array()
-        .unwrap()
         .iter()
         .find(|target| target["url"].as_str().is_some_and(|url| url.contains(page)))
         .unwrap()["targetId"]

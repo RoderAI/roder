@@ -63,8 +63,13 @@ pub(crate) struct Reply {
 pub(crate) trait FallbackModel: Send + Sync {
     /// `provider/model (effort)`, for the result.
     fn label(&self) -> String;
-    /// Whether screenshots can be shown to it.
-    fn sees_images(&self) -> bool;
+    /// Whether the picture a tool returns reaches it: its engine puts a tool
+    /// result's image in front of this model
+    /// (`InferenceEngine::tool_result_image_input`). That is narrower than
+    /// taking images in a user message (`capabilities().image_input`): an
+    /// engine can do that and still send tool results as text, and the
+    /// screenshot tool returns its picture as a tool result.
+    fn sees_tool_result_images(&self) -> bool;
     async fn reply(&self, turn: Turn<'_>) -> anyhow::Result<Reply>;
 }
 
@@ -103,8 +108,8 @@ impl FallbackModel for EngineModel {
         )
     }
 
-    fn sees_images(&self) -> bool {
-        self.engine.capabilities().image_input
+    fn sees_tool_result_images(&self) -> bool {
+        self.engine.tool_result_image_input(&self.selection.model)
     }
 
     async fn reply(&self, turn: Turn<'_>) -> anyhow::Result<Reply> {
@@ -242,6 +247,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::fallback::offered::offered_tools;
 
     struct Engine {
         id: &'static str,
@@ -272,6 +278,92 @@ mod tests {
         ) -> anyhow::Result<InferenceEventStream> {
             anyhow::bail!("not in unit tests")
         }
+    }
+
+    /// An engine whose two image answers are set apart: whether it takes
+    /// images in a user message, and the one model it forwards a tool
+    /// result's images to.
+    struct Imaging {
+        user_images: bool,
+        tool_result_images_for: Option<&'static str>,
+    }
+
+    #[async_trait]
+    impl InferenceEngine for Imaging {
+        fn id(&self) -> String {
+            "imaging".into()
+        }
+        fn capabilities(&self) -> InferenceCapabilities {
+            InferenceCapabilities {
+                tool_calls: true,
+                image_input: self.user_images,
+                ..InferenceCapabilities::text_only()
+            }
+        }
+        fn tool_result_image_input(&self, model: &str) -> bool {
+            self.tool_result_images_for == Some(model)
+        }
+        async fn list_models(
+            &self,
+            _ctx: InferenceProviderContext<'_>,
+        ) -> anyhow::Result<Vec<ModelDescriptor>> {
+            Ok(Vec::new())
+        }
+        async fn stream_turn(
+            &self,
+            _ctx: InferenceTurnContext<'_>,
+            _request: AgentInferenceRequest,
+        ) -> anyhow::Result<InferenceEventStream> {
+            anyhow::bail!("not in unit tests")
+        }
+    }
+
+    /// Whether the fallback model on `Imaging`'s engine, running `model`, is
+    /// shown the pictures a tool returns.
+    fn on(user_images: bool, tool_result_images_for: Option<&'static str>, model: &str) -> bool {
+        let engines: Vec<Arc<dyn InferenceEngine>> = vec![Arc::new(Imaging {
+            user_images,
+            tool_result_images_for,
+        })];
+        let turn = selection("imaging", model);
+        resolve(
+            &FallbackSettings::default(),
+            Some(&turn),
+            &engines,
+            "t",
+            false,
+        )
+        .unwrap()
+        .sees_tool_result_images()
+    }
+
+    #[test]
+    fn pictures_follow_what_the_engine_forwards_in_tool_results_not_what_it_takes_from_users() {
+        // An engine that takes user images but forwards none in tool
+        // results (Vertex): a screenshot would never be seen.
+        assert!(!on(true, None, "vision"));
+        // The converse, and both.
+        assert!(on(false, Some("vision"), "vision"));
+        assert!(on(true, Some("vision"), "vision"));
+        assert!(!on(false, None, "vision"));
+        // The engine is asked about the model the fallback runs on.
+        assert!(!on(true, Some("vision"), "text"));
+    }
+
+    #[test]
+    fn the_screenshot_tool_is_offered_only_when_the_engine_forwards_tool_result_images() {
+        let offers = |user_images, tool_result_images_for| {
+            let pictures = on(user_images, tool_result_images_for, "vision");
+            offered_tools(pictures, false)
+                .iter()
+                .any(|tool| tool.name == "jev_tab_screenshot")
+        };
+        // Takes images from the user, forwards none from a tool: no tool.
+        assert!(!offers(true, None));
+        // The converse: it gets the tool.
+        assert!(offers(false, Some("vision")));
+        assert!(offers(true, Some("vision")));
+        assert!(!offers(false, None));
     }
 
     fn engines() -> Vec<Arc<dyn InferenceEngine>> {

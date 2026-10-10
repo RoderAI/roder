@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use anyhow::{Context, bail};
 use async_trait::async_trait;
 use roder_api::inference::{TokenUsage, ToolCallCompleted};
+use roder_api::transcript::TranscriptItem;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -43,9 +44,19 @@ impl FallbackStep {
 pub(crate) struct ScriptedFallback {
     plan: Vec<FallbackStep>,
     played: Mutex<usize>,
+    /// Whether it is shown the pictures tools return.
     images: bool,
     /// The click tool's parameters as the first request offered them.
     pub(crate) click_parameters: Mutex<Vec<String>>,
+    /// The names of the tools the first request offered.
+    offered: Mutex<Vec<String>>,
+    /// The standing instructions the first request carried.
+    instructions: Mutex<String>,
+    /// The first message the fallback was given: the goal, what Jev did and
+    /// the page.
+    opening: Mutex<String>,
+    /// The tool results the newest request carried, as the model read them.
+    results: Mutex<Vec<String>>,
 }
 
 impl ScriptedFallback {
@@ -55,7 +66,17 @@ impl ScriptedFallback {
             played: Mutex::new(0),
             images: true,
             click_parameters: Mutex::new(Vec::new()),
+            offered: Mutex::new(Vec::new()),
+            instructions: Mutex::new(String::new()),
+            opening: Mutex::new(String::new()),
+            results: Mutex::new(Vec::new()),
         }
+    }
+
+    /// A model whose engine does not show it the pictures a tool returns.
+    pub(crate) fn without_images(mut self) -> Self {
+        self.images = false;
+        self
     }
 
     pub(crate) fn from_json(plan: Value) -> Self {
@@ -66,6 +87,26 @@ impl ScriptedFallback {
     pub(crate) fn played(&self) -> usize {
         *self.played.lock().unwrap()
     }
+
+    /// The first message it was given, as the fallback model read it.
+    pub(crate) fn opening(&self) -> String {
+        self.opening.lock().unwrap().clone()
+    }
+
+    /// The tool results the last request carried, as the model read them.
+    pub(crate) fn tool_results(&self) -> Vec<String> {
+        self.results.lock().unwrap().clone()
+    }
+
+    /// The names of the tools the first request offered.
+    pub(crate) fn offered_tools(&self) -> Vec<String> {
+        self.offered.lock().unwrap().clone()
+    }
+
+    /// The standing instructions the first request carried.
+    pub(crate) fn instructions(&self) -> String {
+        self.instructions.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -74,7 +115,7 @@ impl FallbackModel for ScriptedFallback {
         "scripted/fallback (none)".into()
     }
 
-    fn sees_images(&self) -> bool {
+    fn sees_tool_result_images(&self) -> bool {
         self.images
     }
 
@@ -84,6 +125,24 @@ impl FallbackModel for ScriptedFallback {
             *played += 1;
             *played - 1
         };
+        if index == 0
+            && let Some(TranscriptItem::UserMessage(first)) = turn.transcript.first()
+        {
+            *self.opening.lock().unwrap() = first.text.clone();
+        }
+        *self.results.lock().unwrap() = turn
+            .transcript
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItem::ToolResult(result) => Some(result.result.clone()),
+                _ => None,
+            })
+            .collect();
+        if index == 0 {
+            *self.offered.lock().unwrap() =
+                turn.tools.iter().map(|tool| tool.name.clone()).collect();
+            *self.instructions.lock().unwrap() = turn.instructions.to_string();
+        }
         if index == 0
             && let Some(click) = turn.tools.iter().find(|tool| tool.name == "jev_tab_click")
         {

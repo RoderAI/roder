@@ -16,8 +16,10 @@ use crate::agent::Agent;
 use crate::prompts::MAX_STEPS;
 use crate::scope::JevOriginScope;
 use crate::secret::Secrets;
+pub use covered::Covered;
 pub use records::{
-    JevActionRecord, JevControl, JevDecisionRecord, JevFrameText, JevPageFacts, JevRunResult,
+    JevActionRecord, JevControl, JevDecisionRecord, JevFrameText, JevOmitted, JevPageFacts,
+    JevRunResult, JevSuppressedClick, JevSuppressedKind,
 };
 
 /// A stale observation means the browser changed after JEV made its decision.
@@ -37,27 +39,6 @@ impl std::fmt::Display for StaleObservation {
 }
 
 impl std::error::Error for StaleObservation {}
-
-/// The target is still observed as it was, but another element would take
-/// the click at every point tried, so no input was dispatched. Unlike a stale
-/// observation this is recorded as an executed step that changed nothing, so
-/// a target that stays covered ends the run through the stall rule.
-#[derive(Debug)]
-pub struct Covered(String);
-
-impl Covered {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-impl std::fmt::Display for Covered {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.0)
-    }
-}
-
-impl std::error::Error for Covered {}
 
 /// What an executed action came to. An action that ran but that the page
 /// did not keep is still a step: the loop records why on it and goes on, so
@@ -224,8 +205,9 @@ pub enum JevStatus {
     /// The model answered DONE.
     Done,
     /// No supported operation could progress: the model answered BLOCKED,
-    /// three steps changed nothing, DONE followed a covered attempt, the
-    /// start page did not load, or a page was outside the allowed origins.
+    /// three steps changed nothing, DONE followed a covered attempt, the run
+    /// went round in circles or never saw the page settle, the start page
+    /// did not load, or a page was outside the allowed origins.
     Blocked,
     /// The action budget (60 by default, or `JEV_MAX_ACTIONS` and
     /// [`JevEngineConfig::with_max_actions`]) or the model-call budget of
@@ -286,6 +268,24 @@ pub enum JevStopCause {
     /// A provider, resolver or embedder ended the run with its own
     /// [`JevStop`], or an error did.
     Stopped,
+    /// The decision service's reply could not be used three times running
+    /// (the first answer and two asks again): it failed validation, was a
+    /// refusal, or its body could not be decoded. The status is `error` and
+    /// `stopped_because` gives the count and the first reason. This is the
+    /// only `error` cause eligible for Roder's fallback: to a model with the
+    /// full browser tools in `JEV_FALLBACK=auto` (a hand-over in `handover`,
+    /// nothing in `off`), and not after a dialog Jev declined, which is the
+    /// caller's to answer.
+    DecisionUnusable,
+    /// The run was going round in circles: Jev was about to choose the same
+    /// control a fourth time on a page that looked the same each time, or
+    /// had waited six times in a row with nothing changing.
+    /// `stopped_because` names the control.
+    Looped,
+    /// The page kept changing under Jev's decisions: three in a row went
+    /// stale, each time with nothing new on the page. `stopped_because` gives
+    /// the last stale message.
+    Unsettled,
 }
 
 /// Ends a run with a typed status. The loop maps any other error to
@@ -484,4 +484,5 @@ impl JevEngine {
     }
 }
 
+mod covered;
 mod records;

@@ -22,6 +22,12 @@ pub(super) fn resolve() -> anyhow::Result<Arc<dyn JevDecisionClient>> {
     )
 }
 
+/// What to do when Jev cannot start for want of a key. Families are named by
+/// tool-name prefix only: this crate cannot see which of them are advertised
+/// or working.
+const OTHER_BROWSERS: &str = "otherwise use another browser tool family if one is available \
+     (chrome_*, browser_use_*, webwright.*)";
+
 fn resolve_with(
     provider: &str,
     key: impl Fn(&str) -> Option<String>,
@@ -29,11 +35,19 @@ fn resolve_with(
 ) -> anyhow::Result<Arc<dyn JevDecisionClient>> {
     match provider {
         "jev" => Ok(Arc::new(JevTypeSafeDecisionClient::new(
-            key("jev").context("JEV_API_KEY is required for the Jev decision provider")?,
+            key("jev").with_context(|| {
+                format!("JEV_API_KEY is required for the Jev decision provider; {OTHER_BROWSERS}")
+            })?,
             model.unwrap_or_else(|| "jev-latest".into()),
         ))),
         "openai" => {
-            let client=OpenAiDecisionsClient::new(key("openai").context("OPENAI_API_KEY or a configured OpenAI API key is required for Decisions; Codex sign-in is not supported")?);
+            let api_key = key("openai").with_context(|| {
+                format!(
+                    "OPENAI_API_KEY or a configured OpenAI API key is required for Decisions; \
+                     Codex sign-in is not supported; {OTHER_BROWSERS}"
+                )
+            })?;
+            let client = OpenAiDecisionsClient::new(api_key);
             let client = match env_value("JEV_DECISIONS_TEXT_ONLY").as_deref() {
                 None | Some("0") => client,
                 Some("1") => client.text_only(),
@@ -64,6 +78,21 @@ mod tests {
         );
         let error = resolve_with("openai", |_| None, None).err().unwrap();
         assert!(error.to_string().contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn missing_key_errors_name_other_browser_families_without_promising_them() {
+        for (provider, key_name) in [("jev", "JEV_API_KEY"), ("openai", "OPENAI_API_KEY")] {
+            let error = resolve_with(provider, |_| None, None)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains(key_name), "{error}");
+            for prefix in ["chrome_*", "browser_use_*", "webwright.*"] {
+                assert!(error.contains(prefix), "{provider} {prefix}: {error}");
+            }
+            assert!(error.contains("if one is available"), "{error}");
+        }
     }
 
     #[test]

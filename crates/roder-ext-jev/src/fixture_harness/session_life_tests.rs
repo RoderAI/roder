@@ -261,8 +261,8 @@ async fn secret_typed_in_call1_scrubbed_in_call2() {
 }
 
 /// Resuming is measured at about 100 ms on an idle machine, well under the
-/// 300 ms the design asks for. The suite starts a headless Chrome per test
-/// in parallel, so the bound asserted here is a generous ceiling that only
+/// 300 ms the design asks for. The suite's tests run in parallel on one
+/// shared Chrome, so the bound asserted here is a generous ceiling that only
 /// a pathological regression (a reload, a fixed sleep) crosses; the timing
 /// itself is printed.
 #[tokio::test]

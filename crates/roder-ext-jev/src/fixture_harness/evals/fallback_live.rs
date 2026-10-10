@@ -12,7 +12,7 @@ use roder_api::inference::{
     AgentInferenceRequest, InferenceCapabilities, InferenceEngine, InferenceEventStream,
     InferenceProviderContext, InferenceTurnContext, ModelDescriptor,
 };
-use roder_ext_openai_responses::OpenAiResponsesEngine;
+use roder_ext_openai_responses::{OpenAiResponsesEngine, forwards_tool_result_images};
 
 use super::live::env;
 use crate::fallback::model::{FallbackModel, resolve};
@@ -52,6 +52,12 @@ impl InferenceEngine for CodexEngine {
             image_input: true,
             ..InferenceCapabilities::coding_agent_default()
         }
+    }
+
+    /// The Responses engine this one delegates to decides, as Roder's host
+    /// engine for the same sign-in does.
+    fn tool_result_image_input(&self, model: &str) -> bool {
+        forwards_tool_result_images(PROVIDER_CODEX, model)
     }
 
     async fn list_models(

@@ -218,6 +218,37 @@ impl Chord {
         }
     }
 
+    /// The Command chord that does what this Control chord does on Windows and
+    /// Linux, for the editing family (select all, copy, paste, cut, undo,
+    /// redo). A Mac page ignores these with Control held: only Command chords
+    /// carry the editing commands, so a model that sends Control+a types over
+    /// nothing it selected. `None` for every other chord.
+    pub(crate) fn mac_equivalent(&self) -> Option<Self> {
+        let key = self.key.to_ascii_lowercase();
+        let chord = match (self.modifiers, key.as_str()) {
+            (2, "a" | "c" | "v" | "x" | "z") => format!("Meta+{key}"),
+            (10, "z") | (2, "y") => "Meta+Shift+z".to_string(),
+            _ => return None,
+        };
+        Self::parse(&chord).ok()
+    }
+
+    /// The chord as a person writes it in prose: `Ctrl+Shift+Z`, `Cmd+A`.
+    pub(crate) fn spoken(&self) -> String {
+        let mut parts = Vec::new();
+        for (bit, name) in [(2, "Ctrl"), (1, "Alt"), (4, "Cmd"), (8, "Shift")] {
+            if self.modifiers & bit != 0 {
+                parts.push(name.to_string());
+            }
+        }
+        parts.push(match self.key.as_str() {
+            " " => "Space".to_string(),
+            key if key.chars().count() == 1 => key.to_uppercase(),
+            key => key.to_string(),
+        });
+        parts.join("+")
+    }
+
     /// Enter: what submits a form or presses a focused control.
     pub(crate) fn is_enter(&self) -> bool {
         self.key == "Enter"
@@ -292,6 +323,57 @@ mod tests {
 #[cfg(test)]
 mod native_chord_tests {
     use super::*;
+
+    #[test]
+    fn control_editing_chords_have_a_command_twin_for_mac_pages() {
+        let twin = |raw: &str| Chord::parse(raw).unwrap().mac_equivalent();
+        for (control, command, editing) in [
+            ("Control+a", "Meta+a", "selectAll"),
+            ("Ctrl+c", "Meta+c", "copy"),
+            ("Control+V", "Meta+v", "paste"),
+            ("Control+x", "Meta+x", "cut"),
+            ("Control+z", "Meta+z", "undo"),
+            ("Control+Shift+z", "Meta+Shift+z", "redo"),
+            ("Control+y", "Meta+Shift+z", "redo"),
+        ] {
+            let twin = twin(control).unwrap_or_else(|| panic!("{control} has a twin"));
+            assert_eq!(
+                twin.name(),
+                Chord::parse(command).unwrap().name(),
+                "{control}"
+            );
+            assert_eq!(twin.editing_command(true), Some(editing), "{control}");
+        }
+        // Everything else is the caller's chord, unchanged.
+        for other in [
+            "Meta+a",
+            "a",
+            "Control+b",
+            "Control+Alt+a",
+            "Control+Shift+a",
+            "Control+Meta+a",
+            "Shift+z",
+            "Control+Enter",
+            "Control+ArrowDown",
+        ] {
+            assert!(twin(other).is_none(), "{other} is not remapped");
+        }
+    }
+
+    #[test]
+    fn chords_are_spoken_the_way_a_person_names_them() {
+        assert_eq!(Chord::parse("Control+a").unwrap().spoken(), "Ctrl+A");
+        assert_eq!(
+            Chord::parse("Control+y")
+                .unwrap()
+                .mac_equivalent()
+                .unwrap()
+                .spoken(),
+            "Cmd+Shift+Z"
+        );
+        assert_eq!(Chord::parse("Enter").unwrap().spoken(), "Enter");
+        assert_eq!(Chord::parse("Alt+Space").unwrap().spoken(), "Alt+Space");
+    }
     #[test]
     fn modifier_down_and_up_bracket_the_key_and_mac_edit_command() {
         let chord = Chord::parse("Meta+a").unwrap();

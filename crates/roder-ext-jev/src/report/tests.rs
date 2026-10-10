@@ -412,7 +412,7 @@ fn digest_groups_controls_by_context() {
             {"label": "8:15 PM Dining Room", "kind": "click", "context": "Angie's Pizza"},
             {"label": "8:15 PM Dining Room", "kind": "click", "context": "Kuma on Valencia"},
             {"label": "Email", "kind": "fill", "role": "textbox", "value": "a@b.test"},
-            {"label": "Terms", "kind": "click", "role": "checkbox", "value": "checked"},
+            {"label": "Terms", "kind": "click", "role": "checkbox", "checked": true},
             {"label": "Later", "kind": "click", "context": "Angie's Pizza", "offscreen": true},
             {"label": "Home", "kind": "click", "role": "link"},
             {"label": "Home", "kind": "click", "role": "link"},

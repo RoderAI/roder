@@ -8,6 +8,7 @@ use roder_api::tools::{
 };
 use serde_json::json;
 
+use crate::handoff;
 use crate::report;
 use crate::runner::{JevRequest, run};
 use crate::session::log as session_log;
@@ -51,7 +52,7 @@ pub fn jev_tool_spec() -> ToolSpec {
              either inside the call, with the result saying which driver did what, or, when \
              the result says so, through the jev_tab_* tools, which act only in this thread's \
              Jev tab. \
-             A done status is the driver model's claim. Verify the returned UI state before reporting success. Supply success_condition with URL/text predicates to reject false DONE claims and allow fallback to continue. A passed check covers only those predicates. \
+             A done status is the driver model's claim. Verify the returned UI state before reporting success. Supply success_condition with URL/text predicates (url_contains, text_contains, text_absent) to reject false DONE claims and allow fallback to continue. A met condition covers only those predicates. \
              Requires a Jev API key, or an OpenAI API key with JEV_DECISION_PROVIDER=openai (environment or Roder provider configuration). Roder asks for approval in default policy mode.",
             today = report::today(),
         ),
@@ -62,7 +63,11 @@ pub fn jev_tool_spec() -> ToolSpec {
                 "goal":{"type":"string","description":"What Jev should do on the page, complete and self-contained, ending in a visible stop point. Write out every detail the site will ask for: dates as YYYY-MM-DD (or 'today'), times, quantities, names. Example: 'Filter the catalogue to paperback books under $20, sort by price, and stop when the sorted list shows.'"},
                 "url":{"type":"string","description":"The http(s) page to start on. Required on the thread's first jev_browse call, when there is no page yet. After that, leave it empty (\"\") to continue on the page this thread's Jev tab is showing, or give another URL to go somewhere else; it loads in the same tab and is not reloaded if the tab is already there."},
                 "tab":{"type":"string","enum":["current","new","reset","close"],"description":"\"current\" (default): use this thread's Jev tab. \"new\": open a second tab in the session for url (the first stays open); only when you need the earlier page too, since another site loads fine in the current tab. \"reset\": close the session's tabs and start over at url. \"close\": close the session's tabs and stop; nothing is browsed."},
-                "success_condition":{"type":"object","properties":{"url_contains":{"type":"string","description":"Substring required in the final URL. Empty skips this predicate."},"text_contains":{"type":"string","description":"Substring required in the freshly observed visible page text. Empty skips this predicate."}},"additionalProperties":false,"description":"Independent UI predicates checked after model completion. Both must match when provided; failure blocks DONE and permits bounded fallback. Empty object skips verification. This checks only these predicates, not the entire natural-language goal."},
+                "success_condition":{"type":"object","properties":{
+                    "url_contains":{"type":"string","description":"Substring required in the final URL. Case matters in the path, query and fragment (/Orders/ABC and /orders/abc can be different pages), so write them as the page's address does; only the scheme and host of a full URL (https://...) are compared without case. Empty skips this predicate."},
+                    "text_contains":{"type":"string","description":"Text required in the freshly observed page text (what is on screen, up to 6000 characters). Case, runs of whitespace (line breaks, non-breaking spaces) and zero-width characters are ignored on both sides, so \"count: 1\" matches a counter shown as \"Count:\" and \"1\" on separate lines. What a form field holds does not count as page text. Empty skips this predicate."},
+                    "text_absent":{"type":"string","description":"Text that must not appear in the freshly observed page text, compared the same way (a spinner or error message that must be gone). Only text on screen is seen: it passes for text scrolled out of view. Empty skips this predicate."}},
+                    "additionalProperties":false,"description":"Independent UI predicates checked after model completion. All that are given must hold (each string at most 4096 bytes); failure blocks DONE and permits bounded fallback. Empty object skips verification. The result says condition met or not met. This checks only these predicates, not the entire natural-language goal."},
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"description":"Maximum runtime for this call; 120 by default."},
                 "foreground":{"type":"boolean","description":"Show the tab while Jev works (default true). false keeps it hidden; either way the tab stays open for the next call."},
                 "authorize_irreversible":{"type":"boolean","description":"Defaults to false. When the operator has turned on Jev's irreversible-action gate, a run stops with status needs_confirmation before a purchase, payment, send, publish, delete or other change that cannot be undone. Set true only after the user has confirmed that exact step; the call then always needs the user's approval, and Jev still stops unless it is confident it has the right control."}
@@ -132,21 +137,27 @@ impl ToolExecutor for JevTool {
             Err(error) => Err(error),
         };
         Ok(match result {
-            Ok(mut data) => {
-                let text = report::tool_text(&mut data);
-                if let Some(dir) = session_log::dir() {
-                    session_log::append(&dir, &ctx.thread_id, &call.arguments, &data, &text);
-                }
-                ToolResult {
-                    id: call.id,
-                    name: call.name,
-                    text,
-                    is_error: !matches!(data["status"].as_str(), Some("done" | "closed")),
-                    data,
-                }
-            }
+            Ok(data) => finished(call, &ctx.thread_id, data),
             Err(error) => error_result(&call, error.to_string()),
         })
+    }
+}
+
+/// The tool's result for the data a finished call returned: the text the
+/// caller reads, logged when `JEV_SESSION_LOG` asks, and whether the call
+/// counts as a failed tool call (see [`handoff`]: a first `needs_input`,
+/// `needs_confirmation` or `access_denied` does not).
+pub(crate) fn finished(call: ToolCall, thread: &str, mut data: serde_json::Value) -> ToolResult {
+    let text = report::tool_text(&mut data);
+    if let Some(dir) = session_log::dir() {
+        session_log::append(&dir, thread, &call.arguments, &data, &text);
+    }
+    ToolResult {
+        id: call.id,
+        name: call.name,
+        text,
+        is_error: handoff::is_error(&data),
+        data,
     }
 }
 
@@ -266,6 +277,19 @@ mod tests {
         }
         assert!(!description.contains("visible_text"), "{description}");
         assert!(description.contains("If the user asked for that site, tell them"));
+    }
+
+    /// A path in another case can be another page, so the schema must not
+    /// tell the caller that a URL is matched without case.
+    #[test]
+    fn url_contains_says_the_case_of_the_path_matters() {
+        let spec = jev_tool_spec();
+        let predicates = &spec.parameters["properties"]["success_condition"]["properties"];
+        let url = predicates["url_contains"]["description"].as_str().unwrap();
+        assert!(url.contains("Case matters in the path"), "{url}");
+        assert!(!url.to_lowercase().contains("case is ignored"), "{url}");
+        let text = predicates["text_contains"]["description"].as_str().unwrap();
+        assert!(text.contains("Case, runs of whitespace"), "{text}");
     }
 
     /// The live booking benchmark stays a held-out measure: nothing in the

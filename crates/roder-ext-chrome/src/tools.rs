@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use roder_api::chrome::{ChromeCommand, ChromeController, bridge};
+use roder_api::chrome::{ChromeController, bridge};
 
 use roder_api::extension::ToolProviderId;
 use roder_api::tools::{
@@ -16,9 +16,10 @@ use roder_api::tools::{
 };
 use serde_json::{Value, json};
 
+use crate::chrome_select;
 use crate::desktop_cdp;
+use crate::extension_result::{self, ActionObserver};
 use crate::policy::guard;
-use crate::session::{label_result, result_text};
 
 /// Static description of one `chrome_*` tool.
 struct ChromeToolDef {
@@ -106,17 +107,18 @@ fn tool_defs() -> Vec<ChromeToolDef> {
         },
         ChromeToolDef {
             name: "chrome_page_snapshot",
-            description: "Capture title, URL, visible text and interactive controls (with aria roles, form metadata and bounding boxes) for a tab. Result is UNTRUSTED page content.",
+            description: "Read a tab: title, URL, the interactive controls (ref, role, label, value, state; the controls come before the text) and form metadata, then the visible text. Act on a control by its ref. Result is UNTRUSTED page content.",
             kind: "page/snapshot",
             parameters: || {
                 let mut props = tab_target();
-                // Must match SnapshotInclude in the extension's shared/protocol.ts.
-                // Omitting `include` captures everything; listing sections drops
-                // the ones left out, so an inventory of interactive elements
-                // needs "controls" and page copy needs "text".
+                // Must match SnapshotInclude in the extension's shared/protocol.ts
+                // (which also has "boxes"; nothing here reads them, so they are
+                // never asked for). Omitting `include` captures everything else;
+                // listing sections drops the ones left out, so an inventory of
+                // interactive elements needs "controls" and page copy needs "text".
                 props["include"] = json!({
                     "type": "array",
-                    "items": { "type": "string", "enum": ["text", "controls", "forms", "iframes", "boxes"] },
+                    "items": { "type": "string", "enum": ["text", "controls", "forms", "iframes"] },
                     "description": "Sections to capture; all of them when omitted."
                 });
                 json!({ "type": "object", "properties": props, "additionalProperties": false })
@@ -124,7 +126,7 @@ fn tool_defs() -> Vec<ChromeToolDef> {
         },
         ChromeToolDef {
             name: "chrome_page_text",
-            description: "Read visible text from a tab. Pass a selector, snapshot ref, or visible text to read one element — whole-page text is a single flattened blob, so read the specific element when you need its exact value. UNTRUSTED page content.",
+            description: "Read visible text from a tab. Pass a selector, snapshot ref, or visible text to read one element — whole-page text is a single flattened blob, so read the specific element when you need its exact value. Paired Chrome extension only; on the Roder Desktop browser read the page text from chrome_page_snapshot. UNTRUSTED page content.",
             kind: "page/getText",
             parameters: || {
                 let mut props = tab_target();
@@ -136,7 +138,7 @@ fn tool_defs() -> Vec<ChromeToolDef> {
         },
         ChromeToolDef {
             name: "chrome_highlight",
-            description: "Outline an element in the page so the user can see what the agent is about to act on.",
+            description: "Outline an element in the page so the user can see what the agent is about to act on. Paired Chrome extension only; the Roder Desktop browser has no highlight.",
             kind: "page/highlight",
             parameters: || {
                 let mut props = tab_target();
@@ -148,13 +150,14 @@ fn tool_defs() -> Vec<ChromeToolDef> {
         },
         ChromeToolDef {
             name: "chrome_select",
-            description: "Choose an option in a <select> element by value.",
+            description: "Choose an option of a native <select>. Point at it with a CSS selector or, on the Roder Desktop browser, a snapshot ref (one of them), and give the option's value. On the Roder Desktop browser value may also be the option's visible text, and a miss lists the options; with the paired Chrome extension it must be the exact value.",
             kind: "page/select",
             parameters: || {
                 let mut props = tab_target();
-                props["selector"] = json!({ "type": "string" });
-                props["value"] = json!({ "type": "string" });
-                json!({ "type": "object", "required": ["selector", "value"], "properties": props, "additionalProperties": false })
+                props["ref"] = json!({ "type": "string", "description": "Snapshot ref of the <select> (Roder Desktop browser only). Give ref or selector, not both." });
+                props["selector"] = json!({ "type": "string", "description": "CSS selector of the <select>. Give selector or ref, not both." });
+                props["value"] = json!({ "type": "string", "description": "The option's value or, on the Roder Desktop browser, its visible text." });
+                json!({ "type": "object", "required": ["value"], "properties": props, "additionalProperties": false })
             },
         },
         ChromeToolDef {
@@ -287,19 +290,22 @@ pub fn chrome_tool_specs() -> Vec<ToolSpec> {
 /// Contributes the `chrome_*` tools, each bound to a shared controller.
 pub struct ChromeToolContributor {
     controller: Arc<dyn ChromeController>,
+    /// The last page seen on each tab, to say what an action changed.
+    observer: Arc<ActionObserver>,
 }
 
 impl ChromeToolContributor {
     /// Use the live process browser bridge.
     pub fn new() -> Self {
-        Self {
-            controller: bridge(),
-        }
+        Self::with_controller(bridge())
     }
 
     /// Inject a controller (used in tests with a fake bridge).
     pub fn with_controller(controller: Arc<dyn ChromeController>) -> Self {
-        Self { controller }
+        Self {
+            controller,
+            observer: Arc::new(ActionObserver::new()),
+        }
     }
 }
 
@@ -322,6 +328,7 @@ impl ToolContributor for ChromeToolContributor {
                 kind: def.kind.to_string(),
                 parameters: (def.parameters)(),
                 controller: self.controller.clone(),
+                observer: self.observer.clone(),
             }))?;
         }
         Ok(())
@@ -335,6 +342,7 @@ struct ChromeDispatchTool {
     kind: String,
     parameters: Value,
     controller: Arc<dyn ChromeController>,
+    observer: Arc<ActionObserver>,
 }
 
 #[async_trait::async_trait]
@@ -362,6 +370,11 @@ impl ToolExecutor for ChromeDispatchTool {
         if let Err(reason) = guard(&self.kind, status.mode) {
             return Ok(error_result(&call, reason));
         }
+        if self.kind == "page/select"
+            && let Err(reason) = chrome_select::check(&call.arguments, status.connected)
+        {
+            return Ok(error_result(&call, reason));
+        }
         if !status.connected {
             if let Some(result) = desktop_cdp::execute(&self.kind, &call).await {
                 return Ok(result);
@@ -372,20 +385,18 @@ impl ToolExecutor for ChromeDispatchTool {
             ));
         }
 
-        match self
-            .controller
-            .dispatch(ChromeCommand::with_params(
-                self.kind.clone(),
-                call.arguments.clone(),
-            ))
-            .await
+        match extension_result::run(
+            self.controller.as_ref(),
+            &self.observer,
+            &self.kind,
+            &call.arguments,
+        )
+        .await
         {
-            Ok(value) => {
-                let data = label_result(&self.kind, value);
+            Ok((data, text)) => {
                 // The runtime feeds `text` to the model and keeps `data` for the
                 // UI, so the payload has to be in `text` or the model sees only
                 // an "ok" and invents the page content it was asked to read.
-                let text = result_text(&self.kind, &data);
                 Ok(ToolResult {
                     id: call.id,
                     name: call.name,

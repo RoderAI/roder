@@ -58,7 +58,7 @@ async fn live_profiles_observations_and_operator_domain_scope() {
                     })
                     .unwrap_or("none");
                 let body = format!(
-                    "<!doctype html><title>MCP fixture</title><h1>MCP fixture</h1><p>Cookie: {cookie}</p><p id='count'>Count: 0</p><button onclick=\"document.querySelector('#count').textContent='Count: 1'\">Increment</button>"
+                    "<!doctype html><title>MCP fixture</title><h1>MCP fixture</h1><p>Cookie: {cookie}</p><p id='count'>Count: 0</p><button onclick=\"document.querySelector('#count').textContent='Count: 1'\">Increment</button><select id='pick' onchange=\"document.querySelector('#count').textContent='Picked: '+this.value\"><option value=''>Pick one</option><option value='b'>Beta</option></select>"
                 );
                 let set = if request.starts_with("GET /set ") {
                     "Set-Cookie: session=thread-a; Path=/; SameSite=Lax\r\n"
@@ -133,15 +133,45 @@ async fn live_profiles_observations_and_operator_domain_scope() {
         own_html.text
     );
     assert_eq!(own.data["__view_image"]["detail"], "original");
+    // The real server's pretty-printed state must come back as the compact
+    // view, one `[index] tag ...` line per element. A pin bump that changes
+    // the state's shape would fall back to raw JSON and fail here.
     let state = call(&registry, "a", "browser_use_get_state", json!({})).await;
-    let page: Value = serde_json::from_str(state.data["content"].as_str().unwrap()).unwrap();
-    let index = page["interactive_elements"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|element| element["tag"] == "button")
-        .unwrap()["index"]
-        .clone();
+    let view = state.data["content"].as_str().unwrap();
+    assert!(
+        view.contains("interactive elements 1-") && !view.contains("\"interactive_elements\""),
+        "the real state was not compacted:\n{view}"
+    );
+    let index: u64 = view
+        .lines()
+        .find_map(|line| {
+            let (index, rest) = line.strip_prefix('[')?.split_once("] ")?;
+            rest.starts_with("button ").then(|| index.parse().ok())?
+        })
+        .unwrap_or_else(|| panic!("no button line in:\n{view}"));
+    // The real server lists a native select with the tag `select`, which is
+    // what the wrapper's refusal reads. A pin bump that spells it otherwise
+    // fails here.
+    let select: u64 = view
+        .lines()
+        .find_map(|line| {
+            let (index, rest) = line.strip_prefix('[')?.split_once("] ")?;
+            rest.starts_with("select ").then(|| index.parse().ok())?
+        })
+        .unwrap_or_else(|| panic!("no select line in:\n{view}"));
+    // Paging past the end is answered by the wrapper, not the real server.
+    let past = call(
+        &registry,
+        "a",
+        "browser_use_get_state",
+        json!({"offset": 500}),
+    )
+    .await;
+    assert!(
+        !past.is_error && past.text.contains("none at offset 500"),
+        "{}",
+        past.text
+    );
     let clicked = call(&registry, "a", "browser_use_click", json!({"index":index})).await;
     assert!(
         !clicked.is_error && clicked.text.contains("Observed page after the action"),
@@ -157,6 +187,37 @@ async fn live_profiles_observations_and_operator_domain_scope() {
     .await;
     assert!(outcome.text.contains("Count: 1"), "{}", outcome.text);
     assert!(clicked.text.starts_with("Browser page content"));
+    // The pinned server reports a stale index as plain text, not as an
+    // error. Roder's exact-string classification depends on this wording, so
+    // a pin bump that changes it fails here.
+    let stale = call(&registry, "a", "browser_use_click", json!({"index":987654})).await;
+    assert!(
+        stale.is_error && stale.text.contains("Element with index 987654 not found"),
+        "{}",
+        stale.text
+    );
+    assert!(stale.text.contains("Observed page after the action"));
+    // The server would answer both of these with success and leave the select
+    // as it was, so Roder refuses them and the page is left alone.
+    for (tool, args) in [
+        ("browser_use_click", json!({"index": select})),
+        ("browser_use_type", json!({"index": select, "text": "Beta"})),
+    ] {
+        let refused = call(&registry, "a", tool, args).await;
+        assert!(
+            refused.is_error && refused.text.contains("is a native <select>"),
+            "{tool}: {}",
+            refused.text
+        );
+    }
+    let untouched = call(
+        &registry,
+        "a",
+        "browser_use_get_html",
+        json!({"selector":"#count"}),
+    )
+    .await;
+    assert!(untouched.text.contains("Count: 1"), "{}", untouched.text);
     let refused = call(
         &registry,
         "a",
@@ -177,6 +238,6 @@ async fn live_profiles_observations_and_operator_domain_scope() {
     server.shutdown().await;
     site.abort();
     eprintln!(
-        "PASS: real pinned server, isolated thread cookies, reused own profile, observed click outcome, original screenshot, rejected off-domain request"
+        "PASS: real pinned server, isolated thread cookies, reused own profile, observed click outcome, original screenshot, refused select, rejected off-domain request"
     );
 }

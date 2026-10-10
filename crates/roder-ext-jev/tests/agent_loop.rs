@@ -1,13 +1,13 @@
 //! Deterministic tests of the agent loop's current behaviour.
 //!
-//! These pin what the loop does today, including its rough edges (the stale
-//! loop bounded only by the model-call budget), so a later change to any of
-//! them shows up here as a deliberate test update. A covered target is
-//! recorded as a step that changed nothing, so the stall rule, not the budget,
-//! ends a run whose target stays covered. A run that stops early says why
-//! with its status: a budget, a timeout, a missing value, an unavailable
-//! provider, or an error. Refused actions and dialogs are in
-//! `agent_outcomes.rs`.
+//! These pin what the loop does today, including its rough edges, so a later
+//! change to any of them shows up here as a deliberate test update. A covered
+//! target is recorded as a step that changed nothing, so the stall rule, not
+//! the budget, ends a run whose target stays covered. A run that stops early
+//! says why with its status: a budget, a timeout, a missing value, an
+//! unavailable provider, or an error. Refused actions and dialogs are in
+//! `agent_outcomes.rs`; the caps on a run going round in circles are in
+//! `agent_loop_caps.rs`.
 
 mod support;
 
@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use roder_ext_jev::{
-    JevEngine, JevEngineConfig, JevRunResult, JevStatus, JevStop, JevTextValue,
+    JevEngine, JevEngineConfig, JevRunResult, JevStatus, JevStop, JevStopCause, JevTextValue,
     JevTextValueResolver,
 };
 use serde_json::{Value, json};
@@ -93,8 +93,11 @@ async fn three_unchanged_fingerprints_block_the_run() {
 }
 
 #[tokio::test]
-async fn an_always_missing_choice_loops_until_the_model_call_budget() {
-    // Nothing but the 120-call budget bounds this loop today.
+async fn an_always_missing_choice_ends_unsettled_after_three_tries() {
+    // A choice the page does not offer is a stale decision, and nothing is
+    // recorded for it. Before the stale cap only the 120-call budget bounded
+    // this loop; now three stale decisions in a row, each leaving the same
+    // page, end it (see `agent_loop_caps.rs`).
     let browser = ScriptedBrowser::new(vec![page("page", &[("real", "click")])]);
     let browser_log = browser.log();
 
@@ -105,17 +108,23 @@ async fn an_always_missing_choice_loops_until_the_model_call_budget() {
     )
     .await;
 
-    assert_eq!(result.status, JevStatus::BudgetExceeded);
-    assert_eq!(
-        result.stopped_because.as_deref(),
-        Some("Reached the demo's model-call budget")
+    assert_eq!(result.status, JevStatus::Blocked);
+    assert_eq!(result.stop_cause, Some(JevStopCause::Unsettled));
+    assert!(
+        result
+            .stopped_because
+            .as_deref()
+            .unwrap()
+            .contains("Chosen action is no longer observed"),
+        "{:?}",
+        result.stopped_because
     );
-    assert_eq!(result.model_calls, 120);
+    assert_eq!(result.model_calls, 3);
     assert!(result.actions.is_empty());
     let browser_log = browser_log.lock().unwrap();
     assert!(browser_log.acts.is_empty());
     // The first observation plus one re-observe per stale choice.
-    assert_eq!(browser_log.observes, 121);
+    assert_eq!(browser_log.observes, 4);
 }
 
 #[tokio::test]

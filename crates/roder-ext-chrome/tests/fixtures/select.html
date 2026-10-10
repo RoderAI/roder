@@ -1,0 +1,70 @@
+<!doctype html><title>Select fixture</title>
+<style>body { margin:40px } p, label { display:block; margin:8px 0 }</style>
+<h1>Select fixture</h1>
+<p id="log">no changes</p>
+<label for="plan">Plan</label>
+<select id="plan">
+  <option value="starter">Starter</option>
+  <option value="growth">Growth plan</option>
+  <option value="pro">Pro</option>
+  <option value="legacy" disabled>Legacy</option>
+</select>
+<!-- Value "a" is the second option's value and the first option's text. -->
+<label for="tier">Tier</label>
+<select id="tier">
+  <option value="b">A</option>
+  <option value="a">B</option>
+</select>
+<label for="dup">Duplicate</label>
+<select id="dup">
+  <option value="1">Same</option>
+  <option value="2">Same</option>
+</select>
+<label for="country">Country</label>
+<select id="country"></select>
+<!-- A page that puts the old value back: at once, and a moment later. -->
+<label for="snap">Snaps back</label>
+<select id="snap">
+  <option value="free">Free</option>
+  <option value="paid">Paid</option>
+</select>
+<label for="sticky">Slips back</label>
+<select id="sticky">
+  <option value="free">Free</option>
+  <option value="paid">Paid</option>
+</select>
+<!-- A select that loads another page when it is changed. -->
+<label for="jump">Jump</label>
+<select id="jump">
+  <option value="stay">Stay</option>
+  <option value="leave">Leave</option>
+</select>
+<!-- A select its fieldset disables: no `disabled` attribute of its own. -->
+<fieldset disabled>
+  <label for="locked">Locked</label>
+  <select id="locked">
+    <option value="open">Open</option>
+    <option value="shut">Shut</option>
+  </select>
+</fieldset>
+<button id="go">Go</button>
+<script>
+window.changes = [];
+window.goClicks = 0;
+const country = document.querySelector('#country');
+for (let i = 1; i <= 30; i++) country.add(new Option('Country ' + String(i).padStart(2, '0'), 'c' + i));
+for (const id of ['plan', 'tier', 'dup', 'country', 'snap', 'sticky', 'locked']) {
+  document.querySelector('#' + id).addEventListener('change', e => {
+    window.changes.push([id, e.target.value, e.isTrusted]);
+    document.querySelector('#log').textContent = 'changed ' + id + ' to ' + e.target.value;
+  });
+}
+document.querySelector('#snap').addEventListener('change', e => { e.target.value = 'free'; });
+document.querySelector('#sticky').addEventListener('change', e => {
+  setTimeout(() => { e.target.value = 'free'; }, 80);
+});
+document.querySelector('#jump').addEventListener('change', e => {
+  if (e.target.value === 'leave') location.href = '/';
+});
+document.querySelector('#go').onclick = () => { window.goClicks++; };
+</script>

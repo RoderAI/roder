@@ -217,7 +217,7 @@ async fn a_combobox_fill_returns_once_suggestions_show() {
     let mut page = harness.open("settle-combobox.html").await.unwrap();
     // The ticker also changes the text a fill's freshness check compares, so
     // on a loaded machine the act can go stale; observe again, as the loop
-    // does.
+    // does. With a dozen test threads at once, most attempts do.
     let mut attempts = 0;
     let city = loop {
         let observation = page.observe().await.unwrap();
@@ -231,7 +231,7 @@ async fn a_combobox_fill_returns_once_suggestions_show() {
             .await
         {
             Ok(_) => break city,
-            Err(error) if error.is::<StaleObservation>() && attempts < 5 => attempts += 1,
+            Err(error) if error.is::<StaleObservation>() && attempts < 40 => attempts += 1,
             Err(error) => panic!("{error:#}"),
         }
     };

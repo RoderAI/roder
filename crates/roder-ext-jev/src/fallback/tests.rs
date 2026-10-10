@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::run::{FallbackAction, FallbackUsage};
 use super::trigger::Trigger;
 use super::{FallbackMode, FallbackOutcome, FinalPage, Report, report};
-use crate::engine::{JevRunResult, JevStatus, JevStopCause};
+use crate::engine::{JevOmitted, JevRunResult, JevStatus, JevStopCause};
 
 fn jev() -> JevRunResult {
     let mut result = JevRunResult::before_start(
@@ -70,9 +70,11 @@ fn a_fallback_that_ran_is_the_calls_end_state_with_each_drivers_cost() {
         url: "https://shop.test/menu#slot".into(),
         title: "Menu".into(),
         visible_text: "Selected 7:00 PM at Luna Cafe".into(),
+        typed_values: Vec::new(),
         controls: json!([{"label": "Log in", "kind": "click"}]),
         page: json!({"headings": ["Menu"]}),
         observed_elements: 9,
+        omitted: JevOmitted::default(),
     };
     let ran = Report::Ran {
         trigger: Trigger::Covered,
@@ -115,6 +117,49 @@ fn a_fallback_that_ran_is_the_calls_end_state_with_each_drivers_cost() {
         "{text}"
     );
     assert!(!text.contains("jev_tab_look"), "{text}");
+}
+
+/// A fallback that ran and moved the tab, and the page it left.
+fn after_a_fallback(jev: &JevRunResult, page: Option<FinalPage>) -> Value {
+    let mut data = serde_json::to_value(jev).unwrap();
+    let ran = Report::Ran {
+        trigger: Trigger::Covered,
+        outcome: Box::new(outcome(JevStatus::Done)),
+    };
+    report(&mut data, jev, &ran, FallbackMode::Auto, Some("t1"), page);
+    data
+}
+
+#[test]
+fn what_was_not_offered_is_the_count_of_the_page_the_call_ended_on() {
+    let mut jev = jev();
+    jev.omitted = JevOmitted {
+        controls: 4,
+        options: 0,
+    };
+    // Jev's own count stands while no other driver moved the tab.
+    let before = serde_json::to_value(&jev).unwrap();
+    assert_eq!(before["omitted"], json!({"controls": 4, "options": 0}));
+
+    // The page read after the fallback has its own.
+    let page = FinalPage {
+        omitted: JevOmitted {
+            controls: 0,
+            options: 45,
+        },
+        ..FinalPage::default()
+    };
+    let data = after_a_fallback(&jev, Some(page));
+    assert_eq!(data["omitted"], json!({"controls": 0, "options": 45}));
+
+    // One that lost nothing leaves no count, not Jev's old one.
+    let data = after_a_fallback(&jev, Some(FinalPage::default()));
+    assert!(data.get("omitted").is_none(), "{data:#}");
+
+    // With no fresh read, the fallback's last page stands in and Jev's count
+    // described a page it left.
+    let data = after_a_fallback(&jev, None);
+    assert!(data.get("omitted").is_none(), "{data:#}");
 }
 
 #[test]

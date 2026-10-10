@@ -144,10 +144,14 @@ fn spec(prefix: &str, short: &str, place: &str) -> ToolSpec {
             ),
         ),
         "select" => (
-            format!("Choose an option of a native <select> in {place}, by its text or value."),
+            format!(
+                "Choose an option of a native <select> in {place}, by its value or its visible \
+                 text. An option that cannot be told apart, or is disabled, is not chosen; a \
+                 miss lists the options."
+            ),
             json!({
                 "ref": {"type": "string", "description": "The select's ref from the last look."},
-                "option": {"type": "string"},
+                "option": {"type": "string", "description": "The option's value or visible text."},
             }),
         ),
         "navigate" => (

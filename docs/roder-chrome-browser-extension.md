@@ -88,6 +88,126 @@ All browser-origin payloads (DOM text, controls, console lines, network
 metadata) carry `untrusted: true`. The model layer treats them as **data, never
 instructions**.
 
+### What the model reads after a `chrome_*` call
+
+The extension answers in JSON; the model does not read the JSON. A snapshot, a
+navigation and every page action (`chrome_click`, `chrome_type`,
+`chrome_keypress`, `chrome_scroll`, `chrome_select`) are read into one page
+model and rendered as lines (`roder-ext-chrome`, `extension_result.rs`,
+`observed.rs`, `observed_render.rs`). Other results (tab lists, console,
+network, eval) stay labelled JSON, cut at 24,000 characters.
+
+```text
+<the untrusted-content label>
+Outcome: 1 control changed; page text changed.        (page actions only)
+Action result: {"ref":"c2"}                            (what the action itself answered)
+Page: https://app.example/cart
+Title: Cart
+Viewport 1280x800 px, scrolled to 0.
+Controls (ref, role, "label"; act by ref, or for a select by the selector shown):
+c1 button "Add"
+c2 checkbox "Agree" [checked] [changed]
+c3 link "Checkout" [new]
+Forms:  ...
+Frames: ...
+Text:
+  <the page text, on one line>
+```
+
+- **The outcome sentence** is what the action did to the page, from comparing
+  the page it shows with the last page seen on the same tab (the tab the
+  extension says it answered for, else the `tabId` the call named, else the
+  active tab; the last 16 tabs are kept). A call that named no tab is about the
+  active tab and is compared with the last page read without a tab named, unless
+  the extension says that was another tab's. A call that names a tab is compared
+  only with a page of that tab, never with a page of no known tab, which may have
+  been another's; it says so (`No earlier observation ...`) rather than claim a
+  navigation. A page the extension itself reads, a snapshot, carries no tab, so
+  the tab is only known from the call.
+  `No visible change.`; `URL <a> -> <b>.` (a change of the hash counts, and
+  `Title now "..."` follows when the title moved too; two addresses that
+  differ only far along are shown by their ends); otherwise the parts
+  that apply, joined: `N controls changed` (added, removed or showing something
+  else: label, value, checked, expanded, disabled; where a control sits or its
+  selector does not count), `page text changed`, `title now "..."`, `scrolled
+  to y=N`. The first action on a tab has nothing to compare with and says so
+  (`No earlier observation of this tab to compare with.`). Controls added since
+  the last page are marked `[new]`, changed ones `[changed]`. A navigation or a
+  snapshot has no outcome line: it is a page, not the effect of an action.
+  When nothing visible changed but the text compared was only the start of the
+  page's (the extension keeps 12,000 UTF-16 units of it, a Desktop look 3,000
+  characters and 1,200 after an action), what lies past it was not looked at, and the sentence
+  does not say it was unchanged: `No visible change in the controls or in the
+  start of the page text (the text is cut, so later changes are not compared).`
+  One of the two pages being cut is enough. A change that is seen (a control, the
+  start of the text, the title, the scroll) is said as before.
+- **A snapshot of some sections** (`include`) says which it did not read: the
+  extension answers a section it was not asked for as empty, which is not the
+  page having none, so the result says `Controls: not requested.` or `Text: not
+  requested.` instead of `Controls: none found.` and never reports a section it
+  did not read as empty. Such a snapshot does not replace the fuller page kept
+  for the tab: its unread sections are filled in from the previous page when that
+  was the same address, so the next action is not told that every control is new
+  or the text changed. A section only one of the two pages read is not compared,
+  and the sentence says so (`No visible change in what was compared; controls not
+  read both times.`).
+- **Controls before text, cut text first.** Controls come before the page
+  text. A result stays within 18,000 characters and 150 lines, a margin inside
+  the runtime's own cut of a tool result (20,000 characters, 200 lines), which
+  keeps only the two ends of what it cuts and so could take the outcome line
+  away. When the result would pass either, the text is cut first
+  (`… text cut at N chars (the page text is M chars)`, `at least M` when the
+  extension itself had cut its 12,000-character text), then forms and frames
+  (each keeps its header and says `… N more forms not listed`), and the
+  controls last (`… N more controls not listed`). The outcome line is always
+  the first line after the label. A page of many short controls is cut by
+  lines, not characters: about 140 control lines fit. While any control
+  is left out the text is withheld whole and says so. Boxes are neither asked
+  for (a `chrome_page_snapshot` without `include` asks for text, controls,
+  forms and iframes) nor shown; act by ref. A `<select>` line carries its
+  selector, since `chrome_select` on the extension is pointed at it by
+  selector.
+- **Page words** (labels, values, titles, addresses, text, and the role a
+  control is listed under) are put on one line, stripped of control and
+  direction-overriding characters (the Arabic letter mark included) and cut (a
+  role at 40 characters; a blank one is the control's tag), and the text is
+  indented, so none of it can start a line of the result's own. The address
+  after `Page:` is cut at 300 characters; it is kept longer, to tell one page
+  from another. A password field is listed as a secret field with no value.
+- **One page command at a time.** A snapshot, a navigation and each page action
+  go to the extension in turn: a command waits for the one before it to be
+  answered and remembered, so an action is compared with the page the action
+  before it left, also when a turn asks for two at once. Tab lists, console,
+  network and eval are not held.
+- **Builds that do not observe.** A build with `action-observation` answers
+  an action with `{action, observation, tabId}`. The earlier builds answer with
+  only what they did (`{ok, ref}`; on master a click is a timer that fires 150
+  ms later). For those, Roder waits 150 ms and sends one `page/snapshot` (the
+  same `tabId`; no boxes) and renders that as the observation. The wait starts
+  when the answer arrives, so the snapshot reaches the page just after that
+  click and a page that reacts later (a request, a submit that navigates) can
+  be read mid-change. It asks once:
+  if that snapshot fails (a revoked site permission, say) the result says the
+  action ran but the page could not be read, with the reason, and points at
+  `chrome_page_snapshot`. Which build answered is in the result's data, never in
+  the text: `observation.build` is `action-observation` or `legacy`,
+  `observation.source` is `action_result`, `snapshot_fallback` or
+  `unavailable` (with `observation.error`), and `outcome` carries the sentence
+  and its parts. The fallback snapshot is kept under `observed`, the action's
+  own answer under `content`.
+
+On Roder Desktop's browser the same sentence leads the result of `chrome_click`,
+`chrome_type`, `chrome_keypress`, `chrome_scroll` and `chrome_select` (the page
+is read once, briefly, before the input, and compared with the page after it
+by the same function), so one page changing one way reads the same whichever
+browser showed it. A dialog the action answered, or a tab it opened, is added
+to the sentence. A look (`chrome_page_snapshot`) and a navigation
+(`chrome_tab_open`, `chrome_tab_navigate`) have no outcome line, as on the
+extension. `crates/roder-ext-chrome/tests/computer_use.rs` runs one scripted
+page through the Desktop browser and through a scripted extension and requires
+the same sentence for a dead button, added text, a toggled checkbox and a
+changed hash.
+
 ## Direct CDP tools (no extension)
 
 `roder_ext_chrome::direct` is Roder's own CDP toolset for one tab, used where
@@ -96,7 +216,14 @@ no extension is involved:
 - **Roder Desktop's integrated browser.** When no extension is connected, the
   `chrome_*` tools fall back to the integrated browser's DevTools port
   (`RODER_DESKTOP_CDP_PORT`, default 9334) through the same client; the
-  screenshot tool goes through the toolset's `screenshot`.
+  screenshot tool goes through the toolset's `screenshot`. `chrome_select` goes
+  through the toolset's `select` (see below). `chrome_page_text` and
+  `chrome_highlight` have no Desktop route: with the Desktop browser reachable
+  they answer "not supported on the Roder Desktop browser" (and point at
+  `chrome_page_snapshot` / the action tools) instead of claiming that no
+  browser is connected. The other extension-only tools (`chrome_tab_activate`,
+  `chrome_tab_close`, `chrome_tabs_group`, the debugger, console, network and
+  recording tools) still answer "not connected" on Desktop.
 - **Jev's tab.** `roder-ext-jev` binds the whole set to its session's tab as
   the `jev_tab_*` tools, and runs its automatic fallback on it (see
   [`docs/jev-browser.md`](jev-browser.md), "When Jev cannot progress").
@@ -111,17 +238,65 @@ background tab keeps rendering. Its tools:
 
 | Tool | What it does |
 | --- | --- |
-| `look` | address, title, HTTP status, the elements to act on (refs `e1`, `e2`, … with boxes in viewport px; a ref names the same element for as long as it is in the document), the page text; untrusted |
+| `look` | address, title, HTTP status, the elements to act on (refs `e1`, `e2`, … with boxes in viewport px; a ref names the same element for as long as it is in the document), the page text (cut at 3,000 characters, 1,200 after an action, and so that a look is at most 140 lines; a cut ends with `… text cut at N chars (the page text is M chars)`; the page script counts M only when it cut the text, and a text it did not cut carries no `text_total`); untrusted |
 | `screenshot` | a JPEG of the viewport, one image pixel per CSS px; filled secret fields blacked out, withheld while a typed secret shows |
 | `click` | real mouse events at a ref (hit-tested: a covered ref is not pressed, and the result names what covers it) or at x/y; right, middle, double |
 | `hover` | the pointer moved onto a ref or x/y |
 | `drag` | press, move in steps, release, between refs or points |
 | `type` | text inserted into a ref (clicked first, content replaced) or the focused field; `submit` presses Enter; a secret field's text is reported as `[secret]` |
-| `key` | any key or chord (`Escape`, `Shift+Tab`, `Control+a`, a character), repeatable |
+| `key` | any key or chord (`Escape`, `Shift+Tab`, `Control+a`, a character), repeatable; Enter and Space press what has focus, so they are refused for a control something covers, and the result names the cover like a refused click does (page text: scrubbed, on one line, without its own quote marks, cut at 60 characters) |
 | `scroll` | the mouse wheel at a ref, x/y or the middle of the page |
-| `select` | a native select's option by text or value |
+| `select` | a native select's option by value, else by visible text (see below) |
 | `navigate` | an http(s) URL in the same tab, or back, forward, reload |
 | `wait` | up to 10 s |
+
+A result names the control it acted on by its role (its tag when it has none)
+and its quoted label: `button "Search"`. Both are page text, so they are
+scrubbed of the owner's secrets, put on one line (no line breaks, control or
+direction-overriding characters) and cut (the role at 30 characters, the label
+at 60), and the label has no quote marks of its own, so neither can end the
+quotes it is put in or add a line to the result.
+
+`select` takes a ref and an option. An enabled option whose value is the given
+text wins; otherwise the option whose visible text is (ignoring case and
+spacing), then one whose value is (ignoring case), then the only option whose
+text contains it. More than one distinct candidate at a step is ambiguous and
+nothing is chosen; a disabled option, a disabled select (one its `<fieldset>`
+disables as well as one with its own `disabled`) and something that is
+not a native `<select>` are refused by name. A miss lists the options (text,
+and value where it differs; disabled ones marked; at most 20, with the rest
+counted, each cut and scrubbed, and marked as untrusted page text) and changes
+nothing. The choice is made in the page script (`input` and `change` events,
+not trusted ones, which the data says: `events_trusted: false`); once the page
+has settled the select is read again, and a page that put the old value back
+(at once or a moment later) is reported as "changed it back ... did not stick"
+with `is_error` set, not as a success. A select that could not be read at all
+afterwards (the read itself failed) is said to be unreadable, not to have left
+the page; the choice was made, so the result is not an error.
+
+The result names the option it chose: `Chose "Growth plan" (value growth) in
+e1-4 (option text is untrusted page text).` The option's text and value are page
+text, shown wherever a result names an option (the listing of a miss included)
+scrubbed of the owner's secrets before they are cut, on one line, without quote
+marks of their own (a `"` is shown as `'`), the text cut at 60 characters and the
+value at 40, and the value is left out when it only repeats the text. An
+ambiguity lists at most eight of the matching options and counts the rest
+(`… and 4 more`).
+
+On Desktop, `chrome_select {tabId?, ref?, selector?, value}` (required:
+`value`, and exactly one of `ref` and `selector`; anything else is an error
+before any tab is touched) maps onto it: a selector is resolved to a ref
+through the same resolver as `chrome_click` (one visible match, or an error),
+and `value` becomes the option. With the paired extension the wire command is
+unchanged, `{type: "page/select", tabId?, selector, value}` and the extension
+still needs the option's exact value; a `ref` is refused before it is sent,
+since the extension reads a selector only.
+
+Each `chrome_*` input on the Desktop browser leads with the same `Outcome:`
+sentence the extension's results do (see above), computed from a brief look
+before the input and the look after it. The untrusted-content label is the first
+line and the outcome the second, as on the extension path, since the sentence can
+carry the page's title and address.
 
 After every action it waits for the page (a load it started, then 250 ms
 without a DOM change, at most 2 s), follows a tab the action opened, and reads
@@ -205,15 +380,15 @@ not-supported error; "Not yet" = no surface yet.
 | Close tab                          | P1   | `chrome_tab_close` / `chrome/tabs/close`               | Implemented   | |
 | Tab group                          | P1   | `chrome_tabs_group` / `chrome/tabs/group`              | Implemented   | one reusable orange `Roder` group per window |
 | Navigate                           | P0   | `chrome_navigate` / `chrome/tabs/navigate`            | Implemented   | protected: control mode + approval |
-| DOM snapshot (aria/forms/boxes)    | P0   | `chrome_page_snapshot` / `chrome/page/snapshot`        | Implemented   | aria roles, form metadata, bounding boxes, iframes; `untrusted:true` |
-| Page text                          | P1   | `chrome_page_text` / `chrome/page/getText`             | Implemented   | optional `selector`/`ref`/`text` reads one element; also via snapshot `include:["text"]` |
+| DOM snapshot (aria/forms)          | P0   | `chrome_page_snapshot` / `chrome/page/snapshot`        | Implemented   | the tool renders controls (ref, role, label, value, state) before the text, then forms and iframes, within 18,000 characters and 150 lines; boxes are not asked for or shown (the `chrome/page/snapshot` method is unchanged); `untrusted:true` |
+| Page text                          | P1   | `chrome_page_text` / `chrome/page/getText`             | Implemented   | optional `selector`/`ref`/`text` reads one element; also via snapshot `include:["text"]`; extension only (Desktop browser: explicit "not supported", use `chrome_page_snapshot`) |
 | Screenshot                         | P0   | `chrome_screenshot`                                    | Implemented   | full visible-tab PNG data URL; **region crop not supported in MV3 SW** |
 | Click                              | P0   | `chrome_click` / `chrome/page/action`                  | Implemented   | by selector, visible text, or snapshot ref |
 | Type                               | P0   | `chrome_type`                                          | Implemented   | optional submit |
 | Keypress                           | P1   | `chrome_keypress`                                      | Implemented   | |
 | Scroll                             | P1   | `chrome_scroll`                                        | Implemented   | |
-| Select option                      | P2   | `chrome_select` / `chrome/page/action` (`page/select`) | Implemented   | |
-| Highlight element                  | P2   | `chrome_highlight` / `chrome/page/action`              | Implemented   | inspection aid |
+| Select option                      | P2   | `chrome_select` / `chrome/page/action` (`page/select`) | Implemented   | `ref` or `selector`, plus `value`. Extension: selector and exact value. Desktop browser: ref or selector; value, then visible text; a miss lists the options |
+| Highlight element                  | P2   | `chrome_highlight` / `chrome/page/action`              | Implemented   | inspection aid; extension only (Desktop browser: explicit "not supported") |
 | Debugger attach/detach             | P0   | `chrome_debug_attach` / `chrome/debug/attach`          | Implemented   | required before console/network reads return anything |
 | Console read                       | P0   | `chrome_console_read` / `chrome/debug/console`         | Implemented   | CDP, redacted, bounded; needs debugger site perm + attach |
 | Network read                       | P0   | `chrome_network_read` / `chrome/debug/network`         | Implemented   | metadata only, no bodies/headers; redacted URLs; needs attach |

@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use super::client::{DirectDialog, DirectTab, TabClient, cut};
 use super::guard::{DirectGuard, StopKind};
 use super::look::{self, Detail};
+use super::target::Reach;
 
 /// How long a page may take to finish loading after an action.
 const LOAD_WAIT: Duration = Duration::from_secs(8);
@@ -90,6 +91,9 @@ pub struct DirectSession {
     pub(crate) guard: Arc<dyn DirectGuard>,
     /// A call's `authorize_irreversible` counts: the host asked the user.
     pub(crate) may_authorize: bool,
+    /// Whether the tools this session runs take `x`/`y`, which decides what
+    /// an error about a covered ref may suggest.
+    pub(crate) reach: Reach,
     /// Page targets open when the session attached, or since followed;
     /// a tab one of them opens later is the action's.
     known: Vec<String>,
@@ -113,8 +117,16 @@ impl DirectSession {
             client,
             guard,
             may_authorize,
+            reach: Reach::default(),
             known,
         })
+    }
+
+    /// This session runs tools that take a ref, a selector or text and no
+    /// coordinates (the `chrome_*` tools): an error never suggests x/y.
+    pub(crate) fn refs_only(mut self) -> Self {
+        self.reach = Reach::RefOnly;
+        self
     }
 
     /// Whether a call's `authorize_irreversible` counts on this session.
@@ -160,7 +172,7 @@ impl DirectSession {
         match name {
             "look" => {
                 let look = look::read(&mut self.client, self.guard.as_ref(), Detail::FULL).await?;
-                let dialogs = self.client.take_dialogs();
+                let dialogs = self.take_dialogs();
                 let mut text = look::render(&look);
                 prepend_dialogs(&mut text, &dialogs);
                 Ok(DirectStep {
@@ -185,20 +197,33 @@ impl DirectSession {
         }
     }
 
+    /// The dialogs answered since the last read, their text scrubbed of the
+    /// owner's secrets: it is page text, and reaches the model.
+    fn take_dialogs(&mut self) -> Vec<DirectDialog> {
+        let guard = self.guard.clone();
+        self.client.take_dialogs(|text| guard.scrub(text))
+    }
+
     /// Settle after an input, follow a tab it opened, read the page again,
     /// and check it against the guard; `done` says what the action did.
-    pub(crate) async fn after(
+    pub(crate) async fn after(&mut self, done: String, data: Value) -> anyhow::Result<DirectStep> {
+        self.settle().await;
+        self.observe(done, data).await
+    }
+
+    /// [`Self::after`] for an action that has settled the page itself, to
+    /// look at what it left before saying what it did.
+    pub(crate) async fn observe(
         &mut self,
         done: String,
         mut data: Value,
     ) -> anyhow::Result<DirectStep> {
-        self.settle().await;
         let opened_tab = self.follow_opened_tab().await;
         if opened_tab.is_some() {
             self.settle().await;
         }
         let look = look::read(&mut self.client, self.guard.as_ref(), Detail::BRIEF).await?;
-        let dialogs = self.client.take_dialogs();
+        let dialogs = self.take_dialogs();
         let facts = look::facts(&look);
         let mut text = done;
         if opened_tab.is_some() {
@@ -243,7 +268,7 @@ impl DirectSession {
 
     /// Wait out an input's effect: a short pause, a load it started, then
     /// a quiet document (at most [`QUIET_CAP_MS`]).
-    async fn settle(&mut self) {
+    pub(crate) async fn settle(&mut self) {
         tokio::time::sleep(AFTER_INPUT).await;
         let deadline = tokio::time::Instant::now() + LOAD_WAIT;
         while tokio::time::Instant::now() < deadline {

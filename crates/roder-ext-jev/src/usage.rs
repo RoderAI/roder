@@ -92,6 +92,20 @@ impl JevBilled {
         Self { usage, error }
     }
 
+    /// A decision service reply that cannot be acted on: it failed
+    /// validation, named an action the page never offered, was a refusal, or
+    /// its body could not be decoded (an empty `usage`, which the run's sums
+    /// report as unknown). The loop asks the decision again, up to twice,
+    /// before it ends the run with [`crate::JevStopCause::DecisionUnusable`];
+    /// what follows depends on the operator's `JEV_FALLBACK` (a model with
+    /// the full browser tools in `auto`, a hand-over or nothing otherwise),
+    /// and no fallback follows a dialog Jev declined. Any other billed
+    /// failure ends the run at once. A hosted decision client can return
+    /// this for its own invalid replies.
+    pub fn unusable(usage: Value, error: anyhow::Error) -> Self {
+        Self::new(usage, UnusableAnswer(error).into())
+    }
+
     /// The usage the provider reported for the call.
     pub fn usage(&self) -> &Value {
         &self.usage
@@ -115,6 +129,30 @@ impl std::fmt::Display for JevBilled {
 impl std::error::Error for JevBilled {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(self.error.as_ref())
+    }
+}
+
+/// What marks a [`JevBilled`] reply as one the loop may ask again: it is
+/// found anywhere in the error's chain, and shows as the error it wraps.
+#[derive(Debug)]
+pub(crate) struct UnusableAnswer(anyhow::Error);
+
+impl UnusableAnswer {
+    /// Whether `error` is, or wraps, a reply marked unusable.
+    pub(crate) fn is_behind(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| cause.is::<Self>())
+    }
+}
+
+impl std::fmt::Display for UnusableAnswer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+impl std::error::Error for UnusableAnswer {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
     }
 }
 

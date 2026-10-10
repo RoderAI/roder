@@ -263,7 +263,7 @@
     entries.push({e,r,y,rname,offscreen:y<0 || y>=innerHeight});
   }
   // Controls no scroll can reach, or that an ancestor cuts off, are counted
-  // as omitted.
+  // as omitted (see `omitted_actions` below).
   let unreached=0;
   // Builds an entry's actions, returning how many controls it added: a
   // select counts once, however many options it has.
@@ -346,7 +346,7 @@
   const disabled_controls=every(':disabled,[aria-disabled="true"]').filter(visible)
     .map(e=>({label:asText(name(e)),role:role(e)})).filter(e=>e.label).slice(0,20);
   const readText=parts.text({tree,visible,safe,placed,roots,regions,rectOf,cut});
-  const pageText=readText(), height=document.documentElement.scrollHeight;
+  const {text:pageText,held:typed_values}=readText(), height=document.documentElement.scrollHeight;
   const page_key=cache.pageKey(), guards={};
   // Compare meaning and identity. Geometry is always resolved and hit-tested just before input.
   // Only what is on screen counts: a list growing below the fold must not make a decision stale.
@@ -367,7 +367,12 @@
   };
   const kept=capped([...actions.filter(a=>!a.offscreen),
     ...capped(actions.filter(a=>a.offscreen),100)],250);
-  const omitted_actions=actions.length-kept.length+skipped+unreached;
+  // The controls left out, one each: a select with 40 options or a field with
+  // its "Open" click is one control, not 40 or 2 actions. The key keeps its
+  // upstream name.
+  const listed=new Set(kept.map(a=>a.node));
+  const omitted_actions=new Set(actions.filter(a=>!listed.has(a.node)).map(a=>a.node)).size+
+    skipped+unreached;
   actions.splice(0,actions.length,...kept);
   for (const a of actions) if (deferred.has(a)) a.label=asText(genericName(deferred.get(a))||a.role);
   // Where each box is scrolled to: top, bottom, or how far down in tenths,
@@ -403,5 +408,5 @@
     label:'Press Escape to close the open popup, menu, suggestion list or dialog'});
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
   return {url:location.href,title:document.title.toWellFormed(),w:innerWidth,h:innerHeight,text:pageText,
-    disabled_controls,scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
+    typed_values,disabled_controls,scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
 })

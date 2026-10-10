@@ -7,6 +7,11 @@
 // holds is page text too, where the field is (a textarea's passage to copy,
 // a filled-in form), never a secret's (see `safe`). Text a box has scrolled
 // out of its own view is not shown, so scrolling the box shows something new.
+// The function returns {text, held}: `held` lists the field values `text`
+// holds, in order, each whole or, for the one the limit cut, as much as
+// `text` kept of it (its last line), so a caller can tell the page's own
+// words from what a field holds (a completion check must not count a value
+// typed in, nor the start of one too long to fit).
 (({tree, visible, safe, placed, roots, regions, rectOf, cut}) => {
   // The scroll box, of those observed, that holds an element, and its rect.
   const holder=new Map(), rects=new Map(regions.map(e=>[e,rectOf(e)]));
@@ -26,8 +31,11 @@
   const shown=(r,clip)=>r.width>0 && r.height>0 && r.bottom>0 && r.top<innerHeight && r.right>0 &&
     r.left<innerWidth && (!clip || (r.bottom>clip.top && r.top<clip.bottom && r.right>clip.left &&
       r.left<clip.right));
-  const words=[]; let length=0;
-  const add=value=>{ words.push(value); length+=value.length; };
+  const words=[], fieldAt=new Set(); let length=0;
+  const add=(value,field)=>{
+    if (field) fieldAt.add(words.length);
+    words.push(value); length+=value.length;
+  };
   // Everything under `start` (a document, a shadow root, or an element a
   // slot shows), the element itself first.
   const read=start=>{
@@ -71,13 +79,24 @@
         const framed=tree.frameDoc(node);
         if (framed && roots.includes(framed)) read(framed);
         const value=typed(node) ? node.value.trim() : '';
-        if (value && visible(node) && shown(at(node.getBoundingClientRect()),where.clip)) add(value);
+        if (value && visible(node) && shown(at(node.getBoundingClientRect()),where.clip)) add(value,true);
       }
       node=inside ? walker.nextNode() : past();
     }
   };
   return ()=>{
     read(document);
-    return cut(words.join('\n'),6000).toWellFormed();
+    const text=cut(words.join('\n'),6000).toWellFormed();
+    // Words are joined by one line break each, so a word stands at
+    // [start,end) of the joined text. What `text` holds of a field's word is
+    // reported as `text` holds it, so it is exactly the line (or lines) the
+    // check finds there; a word the limit left none of is not reported.
+    const held=[]; let end=-1;
+    words.forEach((word,i)=>{
+      const start=end+1;
+      end+=word.length+1;
+      if (fieldAt.has(i) && start<text.length) held.push(text.slice(start,end));
+    });
+    return {text,held};
   };
 })

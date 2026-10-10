@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Past the caps</title>
+  <style>
+    body { margin: 0; font: 11px sans-serif; }
+    #grid { width: 1100px; }
+    #grid button { width: 40px; height: 14px; margin: 1px; padding: 0; font-size: 9px; }
+    label { display: block; }
+  </style>
+</head>
+<body>
+  <!-- 255 small buttons, then a select with 12 options and three text fields,
+       all inside the 1120x780 viewport. The snapshot keeps 250 controls in
+       document order, so the last five buttons, the select and the three
+       fields are left out: 9 controls. Counted as actions they are 5 + 12 +
+       6 = 23, because a select has one action per option and a field has a
+       fill and an "Open" click. -->
+  <div id="grid"></div>
+  <label>Size <select id="size"></select></label>
+  <label>First <input name="first"></label>
+  <label>Second <input name="second"></label>
+  <label>Third <input name="third"></label>
+  <script>
+    const grid = document.getElementById('grid');
+    for (let i = 1; i <= 255; i++) grid.insertAdjacentHTML('beforeend', `<button type="button">B${i}</button>`);
+    const size = document.getElementById('size');
+    for (let i = 1; i <= 12; i++) size.add(new Option('Size ' + i, 's' + i));
+  </script>
+</body>
+</html>

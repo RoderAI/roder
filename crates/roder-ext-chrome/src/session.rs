@@ -31,9 +31,12 @@ pub fn label_result(kind: &str, value: Value) -> Value {
     }
 }
 
-/// Largest tool text we hand the model for one browser result. Snapshots of a
-/// real page run long; past this the text is truncated with an explicit marker
-/// so the model knows to narrow its request (a selector, a smaller `include`).
+/// Largest tool text we hand the model for one browser result that is not a
+/// page (tab lists, console and network lines, eval): the extension's JSON,
+/// which past this is truncated with an explicit marker so the model knows to
+/// narrow its request. A page (a snapshot, a navigation, an action) is rendered
+/// instead, within `observed_render::Budget::RESULT`, which also counts
+/// lines.
 const MAX_RESULT_TEXT: usize = 24_000;
 
 /// Render a bridge result as the tool text the model actually reads.

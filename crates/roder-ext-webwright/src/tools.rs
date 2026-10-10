@@ -1,3 +1,4 @@
+mod exec;
 mod support;
 
 use std::fs;
@@ -11,14 +12,16 @@ use roder_api::tools::{
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::run_outcome::RunOutcome;
 use crate::verify::verify_workspace;
 use crate::workspace::{
     FINAL_LOG_FILE, FINAL_SCRIPT_FILE, WebwrightManifest, WebwrightMode, WebwrightWorkspace,
     sanitize_task_id,
 };
 use support::{
-    allocate_next_run, default_python_for_workspace, error_result, lint_script_text,
-    read_tail_lines, resolve_workspace_arg, run_final_script, workspace_path, workspace_tool_spec,
+    allocate_next_run, default_python_for_workspace, error_result, kept_manifest_note,
+    lint_script_text, read_tail_lines, resolve_workspace_arg, run_final_script, workspace_path,
+    workspace_tool_spec,
 };
 
 pub const WEBWRIGHT_PREPARE_WORKSPACE_TOOL: &str = "webwright.prepare_workspace";
@@ -174,13 +177,23 @@ impl ToolExecutor for PrepareWorkspaceTool {
             args.headless.unwrap_or(true),
         );
         let workspace = WebwrightWorkspace::new(&root);
+        let existing = workspace.read_manifest()?;
         workspace.create(&manifest)?;
         workspace.ensure_starter_files(&manifest)?;
         let summary = workspace.summary()?;
+        // An existing manifest is kept, so the workspace keeps the task id it already has.
+        let task_id = existing.as_ref().map_or(task_id, |k| k.task_id.clone());
+        let text = match existing
+            .as_ref()
+            .and_then(|existing| kept_manifest_note(existing, &manifest))
+        {
+            Some(note) => format!("prepared Webwright workspace {} ({note})", root.display()),
+            None => format!("prepared Webwright workspace {}", root.display()),
+        };
         Ok(ToolResult {
             id: call.id,
             name: call.name,
-            text: format!("prepared Webwright workspace {}", root.display()),
+            text,
             data: json!({ "webwright": { "taskId": task_id, "workspace": summary } }),
             is_error: false,
         })
@@ -281,9 +294,11 @@ impl ToolExecutor for RunScriptTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: WEBWRIGHT_RUN_SCRIPT_TOOL.to_string(),
-            description:
-                "Allocate a Webwright run directory and execute its copied final_script.py."
-                    .to_string(),
+            description: "Allocate a Webwright run directory and execute its copied final_script.py. \
+                Reports an outcome class (ok, nonzero_exit, signaled, timeout, launch_failed), the elapsed time, \
+                the first error line and a redacted stderr tail; a run that does not exit 0 fails \
+                webwright.verify_run."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "required": ["workspace"],
@@ -315,18 +330,14 @@ impl ToolExecutor for RunScriptTool {
             Some(python) => python.to_string(),
             None => default_python_for_workspace(&ctx, &workspace)?,
         };
-        let result =
-            run_final_script(&run, &interpreter, args.timeout_seconds.unwrap_or(60)).await?;
-        let is_error = result.timed_out || result.exit_code != Some(0);
+        let timeout_seconds = args.timeout_seconds.unwrap_or(60);
+        let result = run_final_script(&run, &interpreter, timeout_seconds).await?;
         Ok(ToolResult {
             id: call.id,
             name: call.name,
-            text: format!(
-                "webwright run_{:03} exited with {:?}",
-                result.run_id, result.exit_code
-            ),
+            text: result.text(timeout_seconds),
+            is_error: result.outcome != RunOutcome::Ok,
             data: json!({ "webwright": result }),
-            is_error,
         })
     }
 }

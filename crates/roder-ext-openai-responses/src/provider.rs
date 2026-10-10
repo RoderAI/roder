@@ -37,6 +37,9 @@ use response_instructions::*;
 #[path = "response_tools.rs"]
 mod response_tools;
 use response_tools::*;
+#[path = "image_support.rs"]
+mod image_support;
+pub use image_support::forwards_tool_result_images;
 
 use crate::stream_diagnostics::ResponseStreamDiagnostics;
 use roder_api::catalog::{
@@ -111,12 +114,7 @@ impl OpenAiResponsesEngine {
         headers: Vec<(String, String)>,
     ) -> Self {
         let provider_id = provider_id.into();
-        let profile = match provider_id.as_str() {
-            PROVIDER_XAI | PROVIDER_SUPERGROK => ResponsesProviderProfile::Xai,
-            PROVIDER_OPENROUTER => ResponsesProviderProfile::OpenRouter,
-            PROVIDER_FIREWORKS => ResponsesProviderProfile::Fireworks,
-            _ => ResponsesProviderProfile::OpenAi,
-        };
+        let profile = ResponsesProviderProfile::for_provider_id(&provider_id);
         let display_name = match provider_id.as_str() {
             PROVIDER_XAI => "xAI".to_string(),
             PROVIDER_OPENROUTER => "OpenRouter".to_string(),
@@ -218,13 +216,9 @@ impl OpenAiResponsesEngine {
         options: RequestMappingOptions<'_>,
     ) -> (Value, ResponsesToolNameMap) {
         let (tools, tool_name_map) = responses_tools(request, options.profile);
-        let supports_images = if matches!(options.profile, ResponsesProviderProfile::Xai) {
-            lookup_model_for_provider(&request.model.provider, &request.model.model)
-                .map(|entry| entry.supports_images)
-                .unwrap_or(true)
-        } else {
-            true
-        };
+        let supports_images = options
+            .profile
+            .supports_images(&request.model.provider, &request.model.model);
         let input = response_input_items_with_options(
             request,
             &tool_name_map,
@@ -652,6 +646,10 @@ fn map_tool_name<'a>(tool_name: &'a str, tool_name_map: &'a HashMap<String, Stri
 impl InferenceEngine for OpenAiResponsesEngine {
     fn id(&self) -> InferenceEngineId {
         self.provider_id.clone()
+    }
+
+    fn tool_result_image_input(&self, model: &str) -> bool {
+        self.profile.supports_images(&self.provider_id, model)
     }
 
     fn capabilities(&self) -> InferenceCapabilities {

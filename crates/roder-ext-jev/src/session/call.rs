@@ -226,6 +226,7 @@ impl JevSessions {
             fallback.page,
         );
         value["completion_verification"] = final_check;
+        state.classify(&mut value);
         // The model that wrote values, which is not the one resolved when an
         // unusable Codex sign-in fell back.
         let text = helper.map(|helper| helper.current());

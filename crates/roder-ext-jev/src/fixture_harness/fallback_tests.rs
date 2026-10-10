@@ -58,12 +58,8 @@ pub(super) async fn fall_back(
     .unwrap();
     let after = harness.settled_page_targets(before + 1).await;
     if after != before + 1 {
-        let mut connection = harness.connect().await.unwrap();
-        let listed = connection
-            .call("Target.getTargets", json!({}), None)
-            .await
-            .unwrap();
-        panic!("{before} -> {after} tabs: {listed:#}\n{result:#}");
+        let listed = harness.owned_pages().await;
+        panic!("{before} -> {after} tabs: {listed:#?}\n{result:#}");
     }
     assert_eq!(targets(&sessions, "fallback").len(), 1, "{result:#}");
     result
@@ -262,4 +258,94 @@ async fn jevs_next_call_goes_on_where_the_fallback_left_the_tab() {
     assert!(second.get("fallback").is_none(), "{second:#}");
     assert_eq!(targets(&sessions, "on"), tab);
     assert_eq!(second["session"]["totals"]["fallback_actions"], 2);
+}
+
+/// The screenshot tool returns its picture as a tool result, so a model the
+/// picture would not reach (its engine does not forward tool-result images)
+/// gets neither the tool nor advice to use it; one it reaches gets both.
+#[tokio::test]
+async fn the_screenshot_tool_is_offered_only_to_a_model_shown_tool_result_images() {
+    let harness = harness_or_skip!();
+    let sessions = test_sessions();
+    for sees_images in [true, false] {
+        let plan = json!([
+            {"tool": "click", "args": {"ref_of": "Products"}},
+            {"say": "DONE: looked"}
+        ]);
+        let scripted = ScriptedFallback::from_json(plan);
+        let model = Arc::new(match sees_images {
+            true => scripted,
+            false => scripted.without_images(),
+        });
+        let result = call_falling_back(
+            &harness,
+            &sessions,
+            &format!("pictures-{sees_images}"),
+            json!({"goal": "open laptops", "url": harness.site.url("hover-menu.html")}),
+            jev(json!([{"blocked": true}])),
+            model.clone(),
+            &ceilings(FallbackMode::Auto),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["fallback"]["ran"], true, "{result:#}");
+        let offered = model.offered_tools();
+        assert_eq!(
+            offered.contains(&"jev_tab_screenshot".to_string()),
+            sees_images,
+            "{offered:?}"
+        );
+        // Everything else is offered either way.
+        for tool in ["look", "click", "type", "key", "scroll", "select", "wait"] {
+            assert!(offered.contains(&format!("jev_tab_{tool}")), "{offered:?}");
+        }
+        let said = format!("{}\n{}", model.instructions(), model.opening());
+        assert_eq!(said.contains("screenshot"), sees_images, "{said}");
+    }
+}
+
+/// A look that finds no element says what to use instead. That is the
+/// screenshot tool, which a model that is not shown tool-result pictures is
+/// not offered, so its reads (the opening one and each result) must say
+/// coordinates alone; a model that is shown them still hears of the tool.
+#[tokio::test]
+async fn an_empty_page_read_does_not_send_a_model_without_pictures_to_a_screenshot() {
+    let harness = harness_or_skip!();
+    let sessions = test_sessions();
+    for sees_images in [true, false] {
+        let scripted =
+            ScriptedFallback::from_json(json!([{"tool": "look"}, {"say": "DONE: looked"}]));
+        let model = Arc::new(match sees_images {
+            true => scripted,
+            false => scripted.without_images(),
+        });
+        let result = call_falling_back(
+            &harness,
+            &sessions,
+            &format!("empty-{sees_images}"),
+            json!({"goal": "reveal the code", "url": harness.site.url("keyboard-only.html")}),
+            jev(json!([{"blocked": true}])),
+            model.clone(),
+            &ceilings(FallbackMode::Auto),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["fallback"]["trigger"]["kind"], "nothing_to_act_on");
+        let hint = match sees_images {
+            true => "Elements: none found; use a screenshot and x/y coordinates.",
+            false => "Elements: none found; use x/y coordinates.",
+        };
+        // The tab as the opening message shows it, and the look the model
+        // asked for: the page really has no elements in either.
+        let opening = model.opening();
+        let results = model.tool_results();
+        assert_eq!(results.len(), 1, "{results:?}");
+        for read in [&opening, &results[0]] {
+            assert!(read.lines().any(|line| line == hint), "{hint}\n{read}");
+        }
+        if !sees_images {
+            let said = format!("{}\n{opening}\n{}", model.instructions(), results[0]);
+            assert!(!said.contains("screenshot"), "{said}");
+        }
+    }
 }

@@ -265,17 +265,46 @@ fn parse_sse_message(body: &str) -> anyhow::Result<serde_json::Value> {
     last_response.ok_or_else(|| anyhow::anyhow!("no JSON-RPC response found in SSE stream"))
 }
 
+/// A JSON-RPC error reply: the server received the request and answered it
+/// with an error, so it is alive and speaking the protocol. Every other way a
+/// request can fail (the server exited, a write failed, no answer in time, an
+/// answer that is not a response, an `error` that is not a JSON-RPC error
+/// object with an integer `code` and a string `message`) is a different error,
+/// so a caller that must tell "the server said no" from "the server is gone or
+/// silent" downcasts the `anyhow::Error` of a request to this type. Context
+/// added by callers does not hide it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpRpcError {
+    pub code: i64,
+    pub message: String,
+}
+
+impl std::fmt::Display for McpRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MCP error {}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for McpRpcError {}
+
 pub(crate) fn rpc_result(message: serde_json::Value) -> anyhow::Result<serde_json::Value> {
     if let Some(error) = message.get("error") {
-        let code = error
-            .get("code")
-            .and_then(|code| code.as_i64())
-            .unwrap_or(0);
-        let text = error
-            .get("message")
-            .and_then(|text| text.as_str())
-            .unwrap_or("unknown error");
-        anyhow::bail!("MCP error {code}: {text}");
+        let code = error.get("code").and_then(|code| code.as_i64());
+        let text = error.get("message").and_then(|text| text.as_str());
+        // Only a well-formed error object is the server declining the request.
+        // Anything else under `error` keeps the wording but not the type.
+        let (Some(code), Some(text)) = (code, text) else {
+            anyhow::bail!(
+                "MCP error {}: {}",
+                code.unwrap_or(0),
+                text.unwrap_or("unknown error")
+            );
+        };
+        return Err(McpRpcError {
+            code,
+            message: text.to_string(),
+        }
+        .into());
     }
     message
         .get("result")
@@ -349,5 +378,73 @@ mod tests {
         });
         let error = rpc_result(message).unwrap_err();
         assert!(error.to_string().contains("-32601"));
+    }
+
+    #[test]
+    fn rpc_error_is_typed_and_keeps_its_text_under_added_context() {
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": { "code": -32602, "message": "Invalid params" }
+        });
+        let error = rpc_result(message)
+            .context("tools/call browser_click")
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<McpRpcError>(),
+            Some(&McpRpcError {
+                code: -32602,
+                message: "Invalid params".into()
+            })
+        );
+        assert_eq!(
+            format!("{error:#}"),
+            "tools/call browser_click: MCP error -32602: Invalid params"
+        );
+    }
+
+    #[test]
+    fn an_error_that_is_not_a_json_rpc_error_object_is_not_an_rpc_error() {
+        // A JSON-RPC error object has an integer `code` and a string
+        // `message`. Anything else that sits under `error` is an unusable
+        // reply, not the server declining the request.
+        for error in [
+            serde_json::json!(null),
+            serde_json::json!({}),
+            serde_json::json!("boom"),
+            serde_json::json!({"code": "x", "message": 1}),
+            serde_json::json!({"code": -32000}),
+            serde_json::json!({"message": "no code"}),
+            serde_json::json!({"code": -32000.5, "message": "not an integer"}),
+        ] {
+            let message = serde_json::json!({"jsonrpc": "2.0", "id": 1, "error": error});
+            let failure = rpc_result(message).unwrap_err();
+            assert!(
+                failure.downcast_ref::<McpRpcError>().is_none(),
+                "{error} was taken for a JSON-RPC error reply"
+            );
+            assert!(
+                failure.to_string().starts_with("MCP error "),
+                "{error}: {failure}"
+            );
+        }
+        let text = rpc_result(serde_json::json!({"id": 1, "error": {"message": "no code"}}))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(text, "MCP error 0: no code");
+        let text = rpc_result(serde_json::json!({"id": 1, "error": null}))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(text, "MCP error 0: unknown error");
+    }
+
+    #[test]
+    fn a_result_and_other_failures_are_not_rpc_errors() {
+        let ok = rpc_result(serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {}}));
+        assert!(ok.is_ok());
+        let missing = rpc_result(serde_json::json!({"jsonrpc": "2.0", "id": 1})).unwrap_err();
+        assert!(missing.downcast_ref::<McpRpcError>().is_none());
+        let other = anyhow::anyhow!("MCP error -32601: looks like one, but is only text");
+        assert!(other.downcast_ref::<McpRpcError>().is_none());
     }
 }

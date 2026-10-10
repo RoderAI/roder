@@ -4,15 +4,17 @@
 
 mod support;
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use roder_ext_jev::{
-    JevBilled, JevDecisionTransport, JevEngine, JevEngineConfig, JevOriginScope, JevRunResult,
-    JevStatus, JevStop, JevTextValue, JevTextValueResolver, JevTypeSafeDecisionClient,
+    JevBilled, JevDecision, JevDecisionClient, JevDecisionTransport, JevEngine, JevEngineConfig,
+    JevOriginScope, JevRunResult, JevStatus, JevStop, JevStopCause, JevTextValue,
+    JevTextValueResolver, JevTypeSafeDecisionClient,
 };
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use support::{ScriptedBrowser, ScriptedDecider, page};
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -189,17 +191,72 @@ async fn a_step_that_opened_a_tab_is_recorded() {
     assert_eq!(record["opened_tab"], json!(true));
 }
 
-/// A decision service answer that fails validation.
-struct InvalidAnswer;
+/// A decision service whose replies are scripted: `true` is a reply that
+/// passes validation (it picks the first target of the operation named, when
+/// the page has one for it), `false` one that does not. Every reply reports
+/// the same usage, and the last one scripted repeats.
+struct Replies {
+    script: Mutex<VecDeque<(bool, &'static str)>>,
+    last: (bool, &'static str),
+    calls: Arc<Mutex<usize>>,
+}
+
+impl Replies {
+    fn new(script: &[(bool, &'static str)]) -> Self {
+        Self {
+            script: Mutex::new(script.iter().copied().collect()),
+            last: *script.last().expect("at least one reply"),
+            calls: Arc::default(),
+        }
+    }
+
+    fn calls(&self) -> Arc<Mutex<usize>> {
+        Arc::clone(&self.calls)
+    }
+
+    fn config(self) -> JevEngineConfig {
+        let decision = JevTypeSafeDecisionClient::with_transport("jev-test", Arc::new(self));
+        JevEngineConfig::new("Scripted goal", Arc::new(decision)).with_wait(Duration::ZERO)
+    }
+}
+
+/// An answer choosing `choice` among `ids`, certain of it.
+fn answer(choice: &str, ids: &Map<String, Value>) -> Value {
+    let probabilities = ids
+        .keys()
+        .map(|id| (id.clone(), json!(f64::from(id == choice))))
+        .collect::<Map<_, _>>();
+    json!({"choice": choice, "confidence": 0.9, "probabilities": probabilities})
+}
 
 #[async_trait]
-impl JevDecisionTransport for InvalidAnswer {
-    async fn decide(&self, _request: &Value) -> anyhow::Result<Value> {
-        Ok(json!({
-            "answers": {"operation": {"choice": "NOT_OFFERED", "confidence": 0.9,
-                "probabilities": {"NOT_OFFERED": 1.0}}},
-            "usage": {"input_tokens": 50, "output_tokens": 1},
-        }))
+impl JevDecisionTransport for Replies {
+    async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
+        *self.calls.lock().unwrap() += 1;
+        let (valid, operation) = self.script.lock().unwrap().pop_front().unwrap_or(self.last);
+        let usage = json!({"input_tokens": 50, "output_tokens": 1});
+        let questions = &request["questions"];
+        let operations = questions["operation"]["criteria"].as_object().unwrap();
+        if !valid {
+            // An operation the page never offered.
+            return Ok(json!({
+                "answers": {"operation": {"choice": "NOT_OFFERED", "confidence": 0.9,
+                    "probabilities": {"NOT_OFFERED": 1.0}}},
+                "usage": usage,
+            }));
+        }
+        let mut answers = Map::new();
+        answers.insert("operation".into(), answer(operation, operations));
+        if let Some(targets) =
+            questions[format!("{}_target", operation.to_lowercase())]["criteria"].as_object()
+        {
+            let first = targets.keys().next().unwrap();
+            answers.insert(
+                format!("{}_target", operation.to_lowercase()),
+                answer(first, targets),
+            );
+        }
+        Ok(json!({"answers": answers, "usage": usage}))
     }
 }
 
@@ -218,26 +275,35 @@ impl JevTextValueResolver for NoValue {
 }
 
 /// Calls that were answered but could not be used were billed all the same,
-/// so they count in the run's usage; before, only usable ones did.
+/// so they count in the run's usage; before, only usable ones did. A decision
+/// that stays unusable is asked again twice, and every call is counted.
 #[tokio::test]
 async fn billed_calls_with_unusable_answers_count_in_the_usage() {
-    let decision = JevTypeSafeDecisionClient::with_transport("jev-test", Arc::new(InvalidAnswer));
-    let invalid =
-        JevEngineConfig::new("Scripted goal", Arc::new(decision)).with_wait(Duration::ZERO);
+    let replies = Replies::new(&[(false, "")]);
+    let calls = replies.calls();
     let result = run(
         ScriptedBrowser::new(vec![page("one", &[("next", "click")])]),
-        invalid,
+        replies.config(),
     )
     .await;
     assert_eq!(result.status, JevStatus::Error);
-    assert_eq!(
-        result.stopped_because.as_deref(),
-        Some("Invalid browser decision response; no action executed.")
-    );
-    assert_eq!(result.model_calls, 1);
+    assert_eq!(*calls.lock().unwrap(), 3);
+    assert_eq!(result.model_calls, 3);
     assert_eq!(
         serde_json::to_value(result.usage.decision).unwrap(),
-        json!({"calls": 1, "input_tokens": 50, "output_tokens": 1})
+        json!({"calls": 3, "input_tokens": 150, "output_tokens": 3})
+    );
+    assert_eq!(
+        result.stopped_because.as_deref(),
+        Some(
+            "The decision service gave 3 unusable replies in a row. The first: \
+             Invalid browser decision response; no action executed."
+        )
+    );
+    assert_eq!(result.stop_cause, Some(JevStopCause::DecisionUnusable));
+    assert_eq!(
+        serde_json::to_value(&result).unwrap()["stop_cause"],
+        "decision_unusable"
     );
 
     let decider = ScriptedDecider::new(&["name"])
@@ -253,6 +319,127 @@ async fn billed_calls_with_unusable_answers_count_in_the_usage() {
         serde_json::to_value(result.usage.text).unwrap(),
         json!({"calls": 1, "input_tokens": 20, "output_tokens": 2})
     );
+}
+
+/// One unusable reply is asked again, and the run goes on as if it had not
+/// happened, its billed usage still counted.
+#[tokio::test]
+async fn an_unusable_reply_is_asked_again() {
+    let replies = Replies::new(&[(false, ""), (true, "DONE")]);
+    let calls = replies.calls();
+    let result = run(
+        ScriptedBrowser::new(vec![page("one", &[("next", "click")])]),
+        replies.config(),
+    )
+    .await;
+    assert_eq!(result.status, JevStatus::Done);
+    assert_eq!(*calls.lock().unwrap(), 2);
+    assert_eq!(result.model_calls, 2);
+    assert_eq!(result.stopped_because, None);
+    assert_eq!(
+        serde_json::to_value(&result).unwrap()["stop_cause"],
+        Value::Null
+    );
+    assert_eq!(result.decisions.len(), 1);
+    assert_eq!(
+        serde_json::to_value(result.usage.decision).unwrap(),
+        json!({"calls": 2, "input_tokens": 100, "output_tokens": 2})
+    );
+}
+
+/// The cap is two asks per decision: a usable reply starts the count again,
+/// so scattered bad replies never add up to a stop.
+#[tokio::test]
+async fn a_usable_reply_starts_the_unusable_count_again() {
+    let replies = Replies::new(&[
+        (false, ""),
+        (false, ""),
+        (true, "CLICK"),
+        (false, ""),
+        (false, ""),
+        (true, "DONE"),
+    ]);
+    let calls = replies.calls();
+    let result = run(ScriptedBrowser::new(steps(1)), replies.config()).await;
+    assert_eq!(result.status, JevStatus::Done);
+    assert_eq!(*calls.lock().unwrap(), 6);
+    assert_eq!(result.model_calls, 6);
+    assert_eq!(result.actions.len(), 1);
+}
+
+/// A hosted client that marks its own invalid replies with
+/// [`JevBilled::unusable`], each with a longer-winded reason than the last.
+struct Rambling(Mutex<usize>);
+
+#[async_trait]
+impl JevDecisionClient for Rambling {
+    async fn choose(
+        &self,
+        _observation: &Value,
+        _goal: &str,
+        _history: &[Value],
+    ) -> anyhow::Result<JevDecision> {
+        let mut asked = self.0.lock().unwrap();
+        *asked += 1;
+        let reason = format!("reply {asked} was\nnot   json {}", "x".repeat(400));
+        Err(JevBilled::unusable(json!({"input_tokens": 9}), anyhow::anyhow!(reason)).into())
+    }
+}
+
+/// The stop reason names the count and the first reason, on one line and cut
+/// short: a service's text is not trusted to be short.
+#[tokio::test]
+async fn the_stop_names_the_first_reason_on_one_line() {
+    let config = JevEngineConfig::new("Scripted goal", Arc::new(Rambling(Mutex::new(0))))
+        .with_wait(Duration::ZERO);
+    let result = run(
+        ScriptedBrowser::new(vec![page("one", &[("next", "click")])]),
+        config,
+    )
+    .await;
+    assert_eq!(result.status, JevStatus::Error);
+    assert_eq!(result.model_calls, 3);
+    assert_eq!(result.stop_cause, Some(JevStopCause::DecisionUnusable));
+    let reason = result.stopped_because.unwrap();
+    assert!(
+        reason.starts_with(
+            "The decision service gave 3 unusable replies in a row. The first: \
+             reply 1 was not json xxx"
+        ),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains('\n') && !reason.contains("reply 2"),
+        "{reason}"
+    );
+    assert!(reason.chars().count() < 280, "{}", reason.chars().count());
+    assert!(reason.ends_with('…'), "{reason}");
+}
+
+/// Only a reply the service gave that failed validation is asked again: a
+/// decision that fails any other way ends the run on its first failure.
+#[tokio::test]
+async fn a_decision_that_fails_otherwise_is_not_asked_again() {
+    for status in [None, Some(JevStatus::Unavailable)] {
+        let decider = ScriptedDecider::new(&["next"]).failing_after(0, status);
+        let log = decider.log();
+        let result = run(
+            ScriptedBrowser::new(vec![page("one", &[("next", "click")])]),
+            config(decider),
+        )
+        .await;
+        assert_eq!(log.lock().unwrap().seen.len(), 1, "{status:?}");
+        assert_eq!(
+            result.status,
+            status.unwrap_or(JevStatus::Error),
+            "{status:?}"
+        );
+        assert_eq!(
+            serde_json::to_value(&result).unwrap()["stop_cause"],
+            "stopped",
+            "{status:?}"
+        );
+    }
 }
 
 /// An operator's huge action ceiling does not overflow the model-call

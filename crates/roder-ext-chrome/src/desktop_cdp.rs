@@ -4,6 +4,8 @@ use std::time::Duration;
 use roder_api::tools::{ToolCall, ToolResult};
 use serde_json::{Value, json};
 
+use crate::chrome_select::{self, Target};
+use crate::desktop_outcome;
 use crate::desktop_scope::DesktopScope;
 use crate::direct::{DirectGuard, DirectSession, DirectTab, TabClient, tool_result};
 
@@ -31,11 +33,32 @@ pub async fn execute(kind: &str, call: &ToolCall) -> Option<ToolResult> {
         "page/snapshot" => Some(direct(call, kind).await),
         "page/screenshot" => Some(direct(call, kind).await),
         "page/eval" => Some(eval(call).await),
-        "page/click" | "page/type" | "page/scroll" | "page/keypress" => {
+        "page/click" | "page/type" | "page/scroll" | "page/keypress" | "page/select" => {
             Some(direct(call, kind).await)
         }
+        "page/getText" | "page/highlight" => unsupported(call, kind).await,
         _ => None,
     }
+}
+
+/// A tool only the paired extension has. Said plainly when the Desktop
+/// browser is there to say it about; with no browser at all the caller's
+/// "not connected" is the truth.
+async fn unsupported(call: &ToolCall, kind: &str) -> Option<ToolResult> {
+    targets().await.ok()?;
+    let message = match kind {
+        "page/getText" => format!(
+            "{} is not supported on the Roder Desktop browser; only the paired Chrome extension \
+             has it. chrome_page_snapshot returns the page text, with the elements and their refs.",
+            call.name
+        ),
+        _ => format!(
+            "{} is not supported on the Roder Desktop browser; only the paired Chrome extension \
+             has it. Act on the element directly (chrome_click, chrome_type, chrome_select).",
+            call.name
+        ),
+    };
+    Some(error_result(call, message))
 }
 
 async fn tabs_list(call: &ToolCall) -> ToolResult {
@@ -60,6 +83,16 @@ async fn tabs_list(call: &ToolCall) -> ToolResult {
 
 /// Execute the canonical direct tools: real input, stable refs, and observed state.
 async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
+    // `chrome_select` is {ref | selector, value}; the direct select takes
+    // {ref, option}. A call that names no target is refused before any tab
+    // is touched.
+    let select = match kind {
+        "page/select" => match chrome_select::parse(&call.arguments) {
+            Ok(select) => Some(select),
+            Err(error) => return error_result(call, error),
+        },
+        _ => None,
+    };
     let tab = match desktop_tab(call).await {
         Ok(tab) => tab,
         Err(error) => return error_result(call, error),
@@ -68,8 +101,10 @@ async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
         Ok(scope) => scope,
         Err(error) => return error_result(call, format!("{error:#}")),
     };
+    // The `chrome_*` tools name a target by selector, text or ref and take no
+    // coordinates, so a covered target is never answered with "press at x/y".
     let mut session = match DirectSession::attach(&tab, Arc::new(scope), false).await {
-        Ok(session) => session,
+        Ok(session) => session.refs_only(),
         Err(error) => {
             return error_result(
                 call,
@@ -86,8 +121,19 @@ async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
         "page/type" => "type",
         "page/scroll" => "scroll",
         "page/keypress" => "key",
+        "page/select" => "select",
         _ => return error_result(call, "Unsupported Desktop browser action"),
     };
+    if let Some(select) = select {
+        let reference = match select.target {
+            Target::Ref(reference) => reference.to_string(),
+            Target::Selector(selector) => match session.resolve_ref(selector, "").await {
+                Ok(reference) => reference,
+                Err(error) => return error_result(call, format!("{error:#}")),
+            },
+        };
+        args = json!({"ref": reference, "option": select.value});
+    }
     if matches!(short, "click" | "type" | "scroll") {
         let reference = args["ref"].as_str().filter(|r| !r.is_empty());
         let selector = args["selector"].as_str().unwrap_or_default();
@@ -103,7 +149,10 @@ async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
             }
         }
     }
-    let step = session.run(short, &args).await;
+    // An input says what it did to the page, as the extension's results do.
+    let earlier = desktop_outcome::before(&mut session, short).await;
+    let mut step = session.run(short, &args).await;
+    desktop_outcome::lead(&mut step, short, earlier);
     let mut result = tool_result(&call.id, &call.name, &step);
     result.data["fallback"] = json!("desktop-cdp");
     result
