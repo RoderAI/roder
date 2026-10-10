@@ -109,8 +109,9 @@ impl KimiCodeInferenceEngine {
             });
         }
         anyhow::bail!(
-            "{} auth is missing; run `roder auth login kimi-code` or set {} / {}",
+            "{} auth is missing; run `{}` or set {} / {}",
             self.spec.name,
+            roder_api::cli_identity::auth_login_command("kimi-code"),
             self.spec.api_key_env,
             self.spec
                 .api_key_aliases

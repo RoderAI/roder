@@ -255,7 +255,7 @@ pub(crate) fn parse_value(content: &str) -> anyhow::Result<Option<String>> {
 ///
 /// A default GPT-6 Sol choice whose sign-in stops producing a usable token
 /// switches, for the rest of the run, to the model resolution put behind
-/// it, which then carries [`crate::text_model::CODEX_UNUSABLE`] as its note;
+/// it, which then carries [`crate::text_model::codex_unusable()`] as its note;
 /// [`TextHelper::current`] names the model in use for the result.
 pub(crate) struct TextHelper {
     model: Mutex<TextModel>,

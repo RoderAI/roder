@@ -21,9 +21,14 @@ impl Default for Store {
 }
 
 impl Store {
+    /// The token store of the program embedding Roder: its configured
+    /// sign-in folder, else Roder's data folder.
     pub fn new() -> Self {
         Self {
-            data_dir: roder_data_dir(),
+            data_dir: roder_api::cli_identity::cli_identity()
+                .auth_dir
+                .clone()
+                .unwrap_or_else(roder_data_dir),
         }
     }
 

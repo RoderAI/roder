@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(value["text_model"]["model"], json!("deepseek-chat"));
         assert_eq!(
             value["text_model"]["note"],
-            json!(crate::text_model::CODEX_UNUSABLE)
+            json!(crate::text_model::codex_unusable())
         );
         assert!(!value.to_string().contains("sk-deepseek"));
     }

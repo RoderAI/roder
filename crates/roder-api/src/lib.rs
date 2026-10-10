@@ -4,6 +4,7 @@ pub mod backend;
 pub mod capabilities;
 pub mod catalog;
 pub mod chrome;
+pub mod cli_identity;
 pub mod code_index;
 pub mod command_shell;
 pub mod computer;
