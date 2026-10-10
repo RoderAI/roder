@@ -89,7 +89,7 @@ Request:
   "prompt": "Report repository status using only local git and test commands.",
   "enabled": true,
   "modelProvider": "codex",
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "catchUp": {
     "runLatestOnly": null
   },
@@ -116,7 +116,7 @@ Response:
     "prompt": "Report repository status using only local git and test commands.",
     "enabled": true,
     "modelProvider": "codex",
-    "model": "gpt-5.5",
+    "model": "gpt-6-sol",
     "catchUp": {
       "runLatestOnly": null
     },

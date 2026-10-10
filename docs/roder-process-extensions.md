@@ -178,7 +178,7 @@ check is opt-in:
 RODER_PROCESS_EXT_LIVE=1 \
 PY_CHAT_COMPLETIONS_API_KEY="$OPENAI_API_KEY" \
 PY_CHAT_COMPLETIONS_BASE_URL="https://api.openai.com/v1" \
-PY_CHAT_COMPLETIONS_MODEL="gpt-5.5" \
+PY_CHAT_COMPLETIONS_MODEL="gpt-6-sol" \
 cargo test -p roder-app-server --features e2e-tests \
   --test process_extension_python_provider -- --ignored --nocapture
 ```

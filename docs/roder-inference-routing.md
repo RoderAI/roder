@@ -44,24 +44,24 @@ enabled = true
 router = "local"
 profile = "coding"
 baseline_provider = "codex"
-baseline_model = "gpt-5.5"
+baseline_model = "gpt-6-sol"
 
 [inference_router.extension]
 objective = "cost"
 
 [inference_router.extension.tiers.simple]
 provider = "codex"
-model = "gpt-5.3-codex-spark"
+model = "gpt-6-luna"
 reasoning = "low"
 
 [inference_router.extension.tiers.standard]
 provider = "codex"
-model = "gpt-5.5-mini"
+model = "gpt-6-sol"
 reasoning = "medium"
 
 [inference_router.extension.tiers.strong]
 provider = "codex"
-model = "gpt-5.5"
+model = "gpt-6-astra"
 reasoning = "high"
 
 [inference_router.extension.profiles.coding]
@@ -77,11 +77,15 @@ security = "strong"
 data_loss = "strong"
 infra = "strong"
 
-[inference_router.extension.prices."codex/gpt-5.3-codex-spark"]
+[inference_router.extension.prices."codex/gpt-6-luna"]
 input_per_million = 0.10
 output_per_million = 0.40
 
-[inference_router.extension.prices."codex/gpt-5.5"]
+[inference_router.extension.prices."codex/gpt-6-sol"]
+input_per_million = 0.50
+output_per_million = 2.00
+
+[inference_router.extension.prices."codex/gpt-6-astra"]
 input_per_million = 2.00
 output_per_million = 8.00
 ```
@@ -200,8 +204,8 @@ variables when setting up the lab:
 
 ```sh
 RODER_ROUTING_PROVIDER=codex \
-RODER_ROUTING_SIMPLE_MODEL=gpt-5.3-codex-spark \
-RODER_ROUTING_STANDARD_MODEL=gpt-5.4-mini \
-RODER_ROUTING_STRONG_MODEL=gpt-5.5 \
+RODER_ROUTING_SIMPLE_MODEL=gpt-6-luna \
+RODER_ROUTING_STANDARD_MODEL=gpt-6-sol \
+RODER_ROUTING_STRONG_MODEL=gpt-6-astra \
 scripts/roder-inference-routing-lab-setup.sh /tmp/my-routing-lab
 ```

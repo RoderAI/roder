@@ -124,6 +124,16 @@ pub(super) const GPT_6_SOL: ModelCatalogEntry = openai_codex_model(
     1_050_000,
 );
 
+pub(super) const GPT_61_SOL: ModelCatalogEntry = openai_codex_model(
+    "gpt-6.1-sol",
+    "GPT-6.1-Sol",
+    "Agentic coding model balancing intelligence and cost.",
+    REASONING_MEDIUM,
+    GPT_6_SOL_LUNA_REASONING,
+    1_050_000,
+    1_050_000,
+);
+
 pub(super) const GPT_6_LUNA: ModelCatalogEntry = openai_codex_model(
     "gpt-6-luna",
     "GPT-6 Luna",

@@ -10,7 +10,7 @@ opencode-go
 Model labels use `<provider>/<model>`, for example:
 
 ```text
-opencode/gpt-5.5
+opencode/gpt-6-sol
 opencode/big-pickle
 opencode/deepseek-v4-flash
 opencode/mimo-v2.5-free

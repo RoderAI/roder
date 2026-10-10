@@ -167,7 +167,7 @@ are `userMessage`, `agentMessage`, `reasoning`, `toolExecution`,
 `routingDecision`, `compaction`, `error`, and `raw`.
 
 `provider` is an inference backend. Provider/model notation is exposed as a
-provider id plus model id, for example `openai` and `gpt-5.5`, or provider
+provider id plus model id, for example `openai` and `gpt-6-sol`, or provider
 catalog entries that intentionally use Codex provider IDs.
 
 `mode` is Roder's policy mode. App-server clients see it in `thread/state` and
@@ -664,7 +664,7 @@ Response:
 ```json
 {
   "provider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "cwd": "/Users/pz/w/gode"
 }
 ```
@@ -693,12 +693,12 @@ Response:
 ```json
 {
   "active_provider": "openai",
-  "active_model": "gpt-5.5",
+  "active_model": "gpt-6-sol",
   "active_reasoning": "high",
   "selectionMode": {
     "type": "manual",
     "provider": "openai",
-    "model": "gpt-5.5",
+    "model": "gpt-6-sol",
     "reasoning": "high"
   },
   "routingOptions": [
@@ -708,7 +708,7 @@ Response:
       "routerId": "local",
       "baseline": {
         "provider": "openai",
-        "model": "gpt-5.5"
+        "model": "gpt-6-sol"
       },
       "profile": "coding",
       "objective": "cost",
@@ -816,7 +816,7 @@ Request:
 ```json
 {
   "provider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "reasoning": "high"
 }
 ```
@@ -826,7 +826,7 @@ Response:
 ```json
 {
   "provider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "reasoning": "high"
 }
 ```
@@ -854,7 +854,7 @@ Manual request:
   "selection": {
     "type": "manual",
     "provider": "openai",
-    "model": "gpt-5.5",
+    "model": "gpt-6-sol",
     "reasoning": "high"
   },
   "threadId": "thread-123"
@@ -884,15 +884,15 @@ Response:
     "label": "Auto: Coding",
     "baseline": {
       "provider": "openai",
-      "model": "gpt-5.5"
+      "model": "gpt-6-sol"
     },
     "profile": "coding",
     "reasoning": "high"
   },
   "provider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "reasoning": "high",
-  "modelProfile": "OpenAI GPT-5.5"
+  "modelProfile": "gpt-6-sol"
 }
 ```
 
@@ -1022,7 +1022,7 @@ Response:
   "search_index": { "enabled": true },
   "shell": { "shell": "bash", "options": ["zsh", "bash"] },
   "default_provider": "openai",
-  "default_model": "gpt-5.5",
+  "default_model": "gpt-6-sol",
   "default_reasoning": "medium",
   "default_mode": "default",
   "agent_swarm_mode": false,
@@ -1278,7 +1278,7 @@ Request:
 {
   "workspaceId": "ws_abc123",
   "rootId": "root_abc123",
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "modelProvider": "openai",
   "reasoning": "high",
   "toolAllowlist": ["edit", "read_file"],
@@ -1302,7 +1302,7 @@ Response:
     "id": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
-    "model": "gpt-5.5",
+    "model": "gpt-6-sol",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
     "status": {
@@ -1323,7 +1323,7 @@ Response:
       }
     ]
   },
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "modelProvider": "openai",
   "reasoning": "high",
   "workspaceId": "ws_abc123",
@@ -1650,7 +1650,7 @@ Request:
     { "type": "text", "text": "inspect this repo" }
   ],
   "modelProvider": "openai",
-  "model": "gpt-5.5",
+  "model": "gpt-6-sol",
   "reasoning": "high",
   "policyMode": "default"
 }
@@ -3147,7 +3147,7 @@ Request:
   "leadThreadId": "thread-123",
   "displayMode": "in_process",
   "members": [
-    { "name": "Reviewer", "modelProvider": "openai", "model": "gpt-5.5" }
+    { "name": "Reviewer", "modelProvider": "openai", "model": "gpt-6-sol" }
   ]
 }
 ```
@@ -5015,18 +5015,18 @@ Response:
   "decisionCount": 1,
   "routerId": "local",
   "latestOutcome": "selected",
-  "defaultSelection": { "provider": "codex", "model": "gpt-5.5" },
-  "selectedSelection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+  "defaultSelection": { "provider": "codex", "model": "gpt-6-sol" },
+  "selectedSelection": { "provider": "codex", "model": "gpt-6-luna" },
   "latestDecision": {
     "threadId": "thread-123",
     "turnId": "turn-123",
     "roundIndex": 0,
-    "defaultSelection": { "provider": "codex", "model": "gpt-5.5" },
-    "selectedSelection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+    "defaultSelection": { "provider": "codex", "model": "gpt-6-sol" },
+    "selectedSelection": { "provider": "codex", "model": "gpt-6-luna" },
     "decision": {
       "routerId": "local",
       "outcome": "selected",
-      "selected": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+      "selected": { "provider": "codex", "model": "gpt-6-luna" },
       "reason": "routine local-profiler signal",
       "metadata": {
         "tier": "simple",
@@ -5036,7 +5036,7 @@ Response:
     "timestamp": "2026-06-06T12:00:00Z"
   },
   "summary": {
-    "text": "1 routing decision(s); latest selected via router local selected codex/gpt-5.3-codex-spark.",
+    "text": "1 routing decision(s); latest selected via router local selected codex/gpt-6-luna.",
     "notes": [],
     "truncated": false
   }
@@ -5085,22 +5085,22 @@ Response:
       "threadId": "thread-123",
       "turnId": "turn-123",
       "roundIndex": 0,
-      "defaultSelection": { "provider": "codex", "model": "gpt-5.5" },
-      "selectedSelection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+      "defaultSelection": { "provider": "codex", "model": "gpt-6-sol" },
+      "selectedSelection": { "provider": "codex", "model": "gpt-6-luna" },
       "decision": {
         "routerId": "local",
         "outcome": "selected",
-        "selected": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+        "selected": { "provider": "codex", "model": "gpt-6-luna" },
         "reasoning": { "enabled": true, "level": "low" },
         "reason": "routine local-profiler signal",
         "confidence": 0.76,
         "matchedSignals": [
           { "key": "intent", "value": "small_edit", "source": "local_profiler", "weight": 0.6 }
         ],
-        "baseline": { "provider": "codex", "model": "gpt-5.5" },
+        "baseline": { "provider": "codex", "model": "gpt-6-sol" },
         "costDelta": {
           "selectedEstimate": {
-            "selection": { "provider": "codex", "model": "gpt-5.3-codex-spark" },
+            "selection": { "provider": "codex", "model": "gpt-6-luna" },
             "promptCostUsd": 0.00004,
             "completionCostUsd": 0.0,
             "totalCostUsd": 0.00004,
@@ -5109,7 +5109,7 @@ Response:
             "incomplete": true
           },
           "baselineEstimate": {
-            "selection": { "provider": "codex", "model": "gpt-5.5" },
+            "selection": { "provider": "codex", "model": "gpt-6-sol" },
             "promptCostUsd": 0.0004,
             "completionCostUsd": 0.0,
             "totalCostUsd": 0.0004,
@@ -5604,7 +5604,7 @@ or the remote WebSocket notification stream for remote clients.
     "id": "thread-123",
     "preview": "Untitled thread",
     "modelProvider": "openai",
-    "model": "gpt-5.5",
+    "model": "gpt-6-sol",
     "createdAt": 1770000000,
     "updatedAt": 1770000000,
     "status": { "type": "idle", "activeTurnId": null, "activeFlags": [] },

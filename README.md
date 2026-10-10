@@ -12,7 +12,7 @@ The full mission, design philosophy, and architectural commitments live in [`WHI
 
 ## Provider quickstart
 
-Roder model labels use `provider/model`, for example `openai/gpt-5.5` or
+Roder model labels use `provider/model`, for example `openai/gpt-6-sol` or
 `synthetic/syn:large:text`. Select a provider/model from the TUI provider menu,
 or set defaults in `~/.roder/config.toml`:
 
@@ -29,14 +29,14 @@ Quickstart for bundled chat providers:
 
 | Provider | Setup | Example model |
 | --- | --- | --- |
-| OpenAI | `export OPENAI_API_KEY=...` | `openai/gpt-5.5` |
-| Codex | `roder auth login codex` | `codex/gpt-5.6-sol` |
+| OpenAI | `export OPENAI_API_KEY=...` | `openai/gpt-6-sol` |
+| Codex | `roder auth login codex` | `codex/gpt-6-sol` |
 | Anthropic | `export ANTHROPIC_API_KEY=...` | `anthropic/claude-sonnet-4-6` |
 | Gemini | `export GEMINI_API_KEY=...` | `gemini/gemini-3.5-flash` |
 | Vertex AI | `export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json` | `vertex/gemini-3.5-flash` |
 | xAI | `export XAI_API_KEY=...` | `xai/grok-4.5` |
 | SuperGrok | `roder auth login supergrok` | `supergrok/grok-4.5` |
-| OpenCode Zen | `export OPENCODE_API_KEY=...` | `opencode/gpt-5.5` |
+| OpenCode Zen | `export OPENCODE_API_KEY=...` | `opencode/gpt-6-sol` |
 | OpenCode Go | `export OPENCODE_GO_API_KEY=...` | `opencode-go/kimi-k2.6` |
 | OpenRouter | `export OPENROUTER_API_KEY=...` | `openrouter/x-ai/grok-build-0.1` |
 | Fireworks AI | `export FIREWORKS_API_KEY=...` | `fireworks/accounts/fireworks/models/qwen3-235b-a22b` |

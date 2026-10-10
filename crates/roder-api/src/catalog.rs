@@ -436,7 +436,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_OPENCODE,
         name: "OpenCode Zen",
         kind: PROVIDER_KIND_OPENCODE,
-        default_model: "gpt-5.5",
+        default_model: "gpt-6-sol",
         base_url: Some("https://opencode.ai/zen/v1"),
         env_key: Some("OPENCODE_API_KEY"),
         env_aliases: &["OPENCODE_ZEN_API_KEY", "RODER_OPENCODE_API_KEY"],
@@ -529,14 +529,22 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     },
 ];
 
+/// Retired models stay in the catalog so existing threads, profiles, and compaction policy still
+/// resolve them, but they are hidden from every model list.
+const fn retired(mut model: ModelCatalogEntry) -> ModelCatalogEntry {
+    model.hidden = true;
+    model
+}
+
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     openai_codex::GPT_6_ASTRA,
     openai_codex::GPT_6_SOL,
+    openai_codex::GPT_61_SOL,
     openai_codex::GPT_6_LUNA,
-    openai_codex::GPT_56_SOL,
-    openai_codex::GPT_56_TERRA,
-    openai_codex::GPT_56_LUNA,
-    openai_model(
+    retired(openai_codex::GPT_56_SOL),
+    retired(openai_codex::GPT_56_TERRA),
+    retired(openai_codex::GPT_56_LUNA),
+    retired(openai_model(
         "gpt-5.5",
         "GPT-5.5",
         "Frontier model for complex coding, research, and real-world work.",
@@ -544,9 +552,9 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         945_000,
         true,
         STANDARD_REASONING,
-    ),
-    openai_codex::GPT_54,
-    openai_model(
+    )),
+    retired(openai_codex::GPT_54),
+    retired(openai_model(
         "gpt-5.4-mini",
         "GPT-5.4-Mini",
         "Small, fast, and cost-efficient model for simpler coding tasks.",
@@ -554,8 +562,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         360_000,
         true,
         STANDARD_REASONING,
-    ),
-    ModelCatalogEntry {
+    )),
+    retired(ModelCatalogEntry {
         id: "gpt-5.3-codex-spark",
         display_name: "GPT-5.3-Codex-Spark",
         description: "Ultra-fast coding model optimized for low-latency Codex workflows.",
@@ -571,7 +579,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         supports_structured: false,
         edit_tool: Some("patch"),
         hidden: false,
-    },
+    }),
     ModelCatalogEntry {
         id: "codex-auto-review",
         display_name: "Codex Auto Review",
@@ -591,6 +599,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     },
     anthropic::OPUS_55,
     anthropic::SONNET_5,
+    anthropic::SONNET_55,
     anthropic_model(
         "claude-fable-5-1",
         "Claude Fable 5.1",
@@ -652,8 +661,10 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         // Live API rejects the compaction edit for Haiku 4.5 with 400.
         false,
     ),
+    anthropic::HAIKU_55,
     anthropic::CLAUDE_CODE_OPUS_55,
     anthropic::CLAUDE_CODE_SONNET_5,
+    anthropic::CLAUDE_CODE_SONNET_55,
     claude_code_model(
         "fable",
         "Claude Code Fable",
@@ -690,6 +701,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_NONE,
         &[],
     ),
+    anthropic::CLAUDE_CODE_HAIKU_55,
     claude_code_model(
         "claude-sonnet-4-6",
         "Claude Code Sonnet 4.6",
@@ -962,14 +974,23 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     opencode_model(
         PROVIDER_OPENCODE,
+        "gpt-6-sol",
+        "GPT 6 Sol",
+        "OpenCode Zen GPT 6 Sol gateway model.",
+        1_050_000,
+        REASONING_MEDIUM,
+        STANDARD_REASONING,
+    ),
+    retired(opencode_model(
+        PROVIDER_OPENCODE,
         "gpt-5.5",
         "GPT 5.5",
         "OpenCode Zen GPT 5.5 gateway model.",
         1_050_000,
         REASONING_MEDIUM,
         STANDARD_REASONING,
-    ),
-    opencode_model(
+    )),
+    retired(opencode_model(
         PROVIDER_OPENCODE,
         "gpt-5.3-codex-spark",
         "GPT 5.3 Codex Spark",
@@ -977,7 +998,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         128_000,
         REASONING_HIGH,
         STANDARD_REASONING,
-    ),
+    )),
     opencode_model(
         PROVIDER_OPENCODE,
         "big-pickle",
@@ -1126,12 +1147,12 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "Free hosted model on roder.cloud.",
         32_768,
     ),
-    roder_cloud_model(
+    retired(roder_cloud_model(
         "roder.cloud/openai/gpt-5.5",
         "GPT-5.5 (Roder Cloud)",
         "roder.cloud hosted route for OpenAI GPT-5.5.",
         400_000,
-    ),
+    )),
     roder_cloud_model(
         "roder.cloud/anthropic/claude-opus-4-7",
         "Claude Opus 4.7 (Roder Cloud)",
@@ -1237,7 +1258,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_MEDIUM,
         SONNET_REASONING,
     ),
-    cursor_model(
+    retired(cursor_model(
         "gpt-5.5",
         "GPT-5.5",
         "OpenAI GPT-5.5 routed through Cursor's AgentService.",
@@ -1245,8 +1266,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         945_000,
         REASONING_MEDIUM,
         STANDARD_REASONING,
-    ),
-    cursor_model(
+    )),
+    retired(cursor_model(
         "gpt-5.5-fast",
         "GPT-5.5 Fast",
         "OpenAI GPT-5.5 fast variant routed through Cursor's AgentService.",
@@ -1254,7 +1275,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         945_000,
         REASONING_MEDIUM,
         STANDARD_REASONING,
-    ),
+    )),
     cursor_model(
         "gemini-3.1-pro-preview",
         "Gemini 3.1 Pro",
@@ -1945,28 +1966,26 @@ mod tests {
             vec![
                 "gpt-6-astra",
                 "gpt-6-sol",
+                "gpt-6.1-sol",
                 "gpt-6-luna",
-                "gpt-5.6-sol",
-                "gpt-5.6-terra",
-                "gpt-5.6-luna",
-                "gpt-5.5",
-                "gpt-5.4",
-                "gpt-5.4-mini",
-                "gpt-5.3-codex-spark",
                 "claude-opus-5-5",
                 "claude-sonnet-5",
+                "claude-sonnet-5-5",
                 "claude-fable-5-1",
                 "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5-20251001",
+                "claude-haiku-5-5",
                 "claude-opus-5-5",
                 "claude-sonnet-5",
+                "claude-sonnet-5-5",
                 "fable",
                 "sonnet",
                 "opus",
                 "haiku",
+                "claude-haiku-5-5",
                 "claude-sonnet-4-6",
                 "claude-opus-4-8",
                 "claude-fable-5",
@@ -1993,8 +2012,7 @@ mod tests {
                 "grok-4.7",
                 "grok-4.6",
                 "grok-composer-2.5-fast",
-                "gpt-5.5",
-                "gpt-5.3-codex-spark",
+                "gpt-6-sol",
                 "big-pickle",
                 "mimo-v2.5-free",
                 "nemotron-3-ultra-free",
@@ -2010,7 +2028,6 @@ mod tests {
                 "x-ai/grok-4.6",
                 "accounts/fireworks/models/qwen3-235b-a22b",
                 "roder.cloud/free",
-                "roder.cloud/openai/gpt-5.5",
                 "roder.cloud/anthropic/claude-opus-4-7",
                 "roder.cloud/google/gemini-3.1-pro-preview",
                 "poolside/laguna-m.1",
@@ -2048,8 +2065,6 @@ mod tests {
                 "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-sonnet-4-6",
-                "gpt-5.5",
-                "gpt-5.5-fast",
                 "gemini-3.1-pro-preview",
                 "grok-4.6",
                 "gemini-3.7-flash",
@@ -2060,21 +2075,21 @@ mod tests {
 
     #[test]
     fn provider_model_lists_match_gode_catalog() {
-        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 9);
-        assert_eq!(models_for_codex(false).len(), 10);
-        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 8);
-        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 10);
+        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 4);
+        assert_eq!(models_for_codex(false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 10);
+        assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 12);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_VERTEX, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_XAI, false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
-        assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
         assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
-        assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
-        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 11);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 9);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
         assert_eq!(
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
@@ -2101,18 +2116,7 @@ mod tests {
 
         assert_eq!(
             ids,
-            vec![
-                "gpt-6-astra",
-                "gpt-6-sol",
-                "gpt-6-luna",
-                "gpt-5.6-sol",
-                "gpt-5.6-terra",
-                "gpt-5.6-luna",
-                "gpt-5.5",
-                "gpt-5.4",
-                "gpt-5.4-mini",
-                "gpt-5.3-codex-spark",
-            ]
+            vec!["gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"]
         );
     }
 
@@ -2156,7 +2160,12 @@ mod tests {
             assert!(model.supports_compaction, "{id} compaction support");
             assert!(model.supports_images, "{id} image support");
             assert!(model.supports_tools, "{id} tool support");
-            assert!(!model.hidden, "{id} visibility");
+            // GPT-6 family is offered; GPT-5.x entries stay resolvable but hidden.
+            let offered = matches!(
+                id,
+                "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna" | "gpt-6.1-sol"
+            );
+            assert_eq!(model.hidden, !offered, "{id} visibility");
         };
 
         assert_model(
@@ -2177,6 +2186,22 @@ mod tests {
         assert_model(
             "gpt-6-sol",
             "GPT-6 Sol",
+            "Agentic coding model balancing intelligence and cost.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_NONE,
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            1_050_000,
+            1_050_000,
+        );
+        assert_model(
+            "gpt-6.1-sol",
+            "GPT-6.1-Sol",
             "Agentic coding model balancing intelligence and cost.",
             REASONING_MEDIUM,
             &[
@@ -2730,11 +2755,53 @@ mod tests {
     }
 
     #[test]
-    fn cursor_gpt55_advertises_standard_reasoning_effort() {
-        let gpt55 = models_for_provider(PROVIDER_CURSOR, false)
+    fn opencode_default_model_is_a_listed_opencode_model() {
+        let provider = built_in_providers()
+            .iter()
+            .find(|provider| provider.id == PROVIDER_OPENCODE)
+            .expect("opencode provider");
+        assert!(
+            models_for_provider(PROVIDER_OPENCODE, false)
+                .iter()
+                .any(|model| model.id == provider.default_model),
+            "opencode default {} should be listed for opencode",
+            provider.default_model
+        );
+    }
+
+    #[test]
+    fn retired_gpt_5_models_are_hidden_but_still_resolvable() {
+        let visible = built_in_models(false)
             .into_iter()
-            .find(|model| model.id == "gpt-5.5")
-            .expect("cursor catalog should expose gpt-5.5");
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+        for id in [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.5-fast",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex-spark",
+            "roder.cloud/openai/gpt-5.5",
+        ] {
+            assert!(
+                !visible.contains(&id),
+                "{id} should be hidden from model lists"
+            );
+            // Existing threads, profiles, and compaction policy still resolve these ids.
+            assert!(lookup_model(id).is_some(), "{id} should still resolve");
+        }
+        assert!(visible.contains(&"gpt-6-sol") && visible.contains(&"gpt-6.1-sol"));
+    }
+
+    #[test]
+    fn retired_cursor_gpt55_keeps_standard_reasoning_metadata() {
+        let gpt55 = ModelDescriptor::from(
+            lookup_model_for_provider(PROVIDER_CURSOR, "gpt-5.5")
+                .expect("cursor catalog should still resolve retired gpt-5.5"),
+        );
 
         assert_eq!(gpt55.default_reasoning.as_deref(), Some(REASONING_MEDIUM));
         assert_eq!(
@@ -2751,10 +2818,10 @@ mod tests {
             ]
         );
 
-        let gpt55_fast = models_for_provider(PROVIDER_CURSOR, false)
-            .into_iter()
-            .find(|model| model.id == "gpt-5.5-fast")
-            .expect("cursor catalog should expose gpt-5.5-fast");
+        let gpt55_fast = ModelDescriptor::from(
+            lookup_model_for_provider(PROVIDER_CURSOR, "gpt-5.5-fast")
+                .expect("cursor catalog should still resolve retired gpt-5.5-fast"),
+        );
         assert_eq!(
             gpt55_fast.default_reasoning.as_deref(),
             Some(REASONING_MEDIUM)
