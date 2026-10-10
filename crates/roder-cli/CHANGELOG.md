@@ -1,3 +1,28 @@
+## 0.3.8 (2026-10-10)
+
+### Fixes
+
+#### Refresh the OpenRouter model catalog and stop assuming server-side compaction
+
+OpenRouter now ships 25 catalogued routes (Kimi K3, Claude 5.5 family, GPT-6.x,
+Gemini 3.7/3.8 Flash, Grok 4.6/4.7, DeepSeek V4, Qwen 3.8, GLM 5.3, MiMo 2.6,
+Mistral Large 4, Muse Spark) with the context windows, image support, and
+reasoning efforts reported by the live `/models` listing. OpenRouter accepts
+the OpenAI `context_management` field but does not compact server-side, so the
+OpenRouter entries (including Grok 4.6, which previously claimed it) now compact
+client-side at 90% of the window instead of overflowing. Routes that are only
+discovered at runtime now offer reasoning efforts when OpenRouter reports that
+they support reasoning.
+
+#### Keep the launching environment when roder respawns itself inside tmux
+
+Inside tmux, roder restarts its pane once to enable extended key reporting.
+`tmux respawn-pane` starts the new process with the tmux server's environment,
+not the environment roder was launched with, so anything exported only in the
+launching shell (provider API keys such as `OPENROUTER_API_KEY`, direnv or mise
+values) was silently dropped and the relaunched TUI reported its credentials as
+missing. The respawn now passes the full environment through explicitly.
+
 ## 0.3.7 (2026-10-10)
 
 ### Features
