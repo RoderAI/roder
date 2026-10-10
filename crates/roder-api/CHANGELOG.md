@@ -1,3 +1,15 @@
+## 0.2.7 (2026-10-10)
+
+### Features
+
+#### Tool display payloads keep a bounded computer_notes array
+
+Tool display payloads keep a bounded `computer_notes` array (8 notes of 160 characters). Adds `tool_result_computer_notes`, `COMPUTER_NOTES_DISPLAY_KEY`, `MAX_COMPUTER_NOTES` and `COMPUTER_NOTE_CHARS`.
+
+#### InferenceEngine reports whether it receives tool-result images
+
+Adds `InferenceEngine::tool_result_image_input(model)`, which defaults to `false`. It says whether an engine puts tool-result images in front of the model.
+
 ## 0.2.6 (2026-10-10)
 
 ### Features

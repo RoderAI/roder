@@ -1,3 +1,51 @@
+## 0.4.3 (2026-10-10)
+
+### Features
+
+#### Jev names what covered a click
+
+A step whose click was covered now names what covered it: `JevActionRecord.covered_by`, `Covered::with_cover` and `Covered::cover`. The name is page text, scrubbed, on one line and cut to 100 characters, and the digest and the fallback prompt show it as untrusted. The hosted chooser request is unchanged.
+
+The fallback's opening message now labels Jev's stop reason as untrusted page text, collapses it to one line and cuts it to 300 characters, because a `looped` stop quotes the page's own control label; the standing fallback instructions say the reason and the last steps are untrusted too.
+
+#### Jev retries an unusable decision reply and falls back when it stays unusable
+
+Jev asks the decision again, up to twice, when the service's reply cannot be used. That includes a reply body that cannot be decoded, after the HTTP layer's one resend; it is counted with unknown usage. If the replies stay unusable the run ends `error` with the new `JevStopCause::DecisionUnusable`, whose stop reason gives the reply count and the first reason. With the default `JEV_FALLBACK=auto` the frontier model then takes over with the new `decision_unusable` fallback trigger, unless Jev declined a page dialog during the run; `handover` tells the caller to go on with the browser tools instead, and `off` leaves the error as it was. New public `JevBilled::unusable` marks a billed reply the loop may ask again about. Every other `error` (a refused key, billing or rate limit, a server error, an unreachable provider) still does not fall back.
+
+#### jev_browse handoff statuses are outcomes, not tool failures
+
+A first `needs_input`, `needs_confirmation` or `access_denied` result from `jev_browse` is no longer a failed tool call (`is_error` false, `data.outcome_class` "handoff"). An identical repeat on the same page is an error again (`repeated_handoff`). Other statuses and the result text are unchanged.
+
+#### Jev ends runs that go round in circles
+
+Jev ends a run that goes round in circles instead of burning its budget. The fourth identical (page, control) pair, six waits in a row that change nothing, and three stale decisions in a row with nothing new on the page each end the run blocked with the new stop causes `looped` and `unsettled`, and the frontier fallback takes over as it does after a stall. The stale cap compares pages exactly: a page whose only change is digits (a clock, a countdown) counts as progress and is left to the action and model-call budgets, as the same-pair counter already treats it. An unchanged wait no longer hides a stall. New public `JevStopCause::Looped` and `JevStopCause::Unsettled`.
+
+#### jev_browse success_condition matches text more reliably and adds text_absent
+
+`jev_browse` `success_condition` gains `text_absent`, compares `text_contains` and `text_absent` ignoring case, and all three ignoring whitespace runs, no-break spaces and zero-width characters (`url_contains` keeps the case of the path, query and fragment, as before), leaves form-field values out of the page text being matched, and reports the unmet predicates (condition met / not met).
+
+#### Jev stops before clicking the wrong twin row
+
+An unsure delete (or other commit-named click) on a twin control right after a click on the same label that changed the page now ends the run done without clicking, instead of clicking the wrong twin. The run result gains `suppressed_click` (`JevSuppressedClick`, `JevSuppressedKind`) and the result text a "Not clicked:" line. The old same-control rule also reports what it held back.
+
+#### jev_browse says what it did not offer Jev, and reports checkbox state correctly
+
+`jev_browse` results now say what the page held that Jev was not offered: a counts-only "Not offered to Jev" header line and an `omitted` field (`controls` the snapshot left out, counted per control instead of per action, and `options` past the 255 a choice takes, such as a 300-option select). Checkboxes, radios and switches now report `checked` true/false in the result's controls and read [checked]/[unchecked] in the options list, instead of the HTML value "on". `JevControl` gains `checked`, `JevRunResult` gains `omitted`, and `JevOmitted` is new public API.
+
+### Fixes
+
+#### jev_browse hints name the other browser tool families
+
+The blocked next-step hint and the missing-key errors for `jev_browse` now name the other browser tool families (`chrome_*`, `browser_use_*`, `webwright.*`) without claiming they are available.
+
+#### Jev eval rows split verdict from truth
+
+Jev eval rows split the old pass flag into `verdict_ok`, `truth_ok` and `false_green` and carry per-phase laps, `omitted_actions` and settle timing. The live tier gains `JEV_EVAL_N` repeats, a pinned per-task baseline with mid-run-edit detection, and a search-decoy false-DONE fixture. All of it is test-only code under `fixture_harness`; the one production edit (`Page::settle` returning the page's settle reply) does not change behaviour. Docs updated.
+
+#### Jev fallback offers its screenshot tool only where the model can see the result
+
+The Jev fallback offers its screenshot tool only to a model whose engine forwards tool-result images (`tool_result_image_input`), not merely one that takes user images, and a model without the tool is no longer told to use one.
+
 ## 0.4.2 (2026-10-09)
 
 ### Features
