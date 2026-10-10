@@ -3883,10 +3883,6 @@ impl Runtime {
                 .goals
                 .apply_goal_instructions(&req.thread_id, instructions, effective_policy_mode)
                 .await?;
-            instructions =
-                apply_parallel_web_tools(instructions, tools.iter().map(|spec| spec.name.as_str()));
-            instructions =
-                apply_browser_routing(instructions, tools.iter().map(|spec| spec.name.as_str()));
             let mut request_metadata = serde_json::json!({});
             if let Some(decision) = &speed_policy_decision {
                 request_metadata["speedPolicy"] = serde_json::json!(decision);
@@ -3922,6 +3918,16 @@ impl Runtime {
             } else {
                 tools.clone()
             };
+            // Tool guidance describes the tools this request can call, which is
+            // fewer than `tools` on a deadline finalization or forced ledger round.
+            instructions = apply_parallel_web_tools(
+                instructions,
+                request_tools.iter().map(|spec| spec.name.as_str()),
+            );
+            instructions = apply_browser_routing(
+                instructions,
+                request_tools.iter().map(|spec| spec.name.as_str()),
+            );
             let request_tool_choice = if deadline_finalization_requested {
                 ToolChoice::None
             } else if task_ledger_tools.is_some() {
