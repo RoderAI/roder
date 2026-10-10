@@ -121,9 +121,16 @@ pub(crate) struct TextModel {
 }
 
 /// The note a model standing in for GPT-6 Sol carries. It never quotes the
-/// token or the auth error.
-pub(crate) const CODEX_UNUSABLE: &str =
-    "Codex sign-in unusable; sign in again with `roder auth login codex` to use gpt-6-sol";
+/// token or the auth error, and names the embedding program's sign-in.
+pub(crate) fn codex_unusable() -> &'static str {
+    static NOTE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NOTE.get_or_init(|| {
+        format!(
+            "Codex sign-in unusable; sign in again with `{}` to use gpt-6-sol",
+            roder_api::cli_identity::auth_login_command("codex")
+        )
+    })
+}
 
 impl TextModel {
     /// The reasoning effort the request asks for, as reported.
@@ -161,7 +168,7 @@ impl TextModel {
 
     /// This model standing in for an unusable Codex sign-in.
     pub(crate) fn standing_in(mut self) -> Self {
-        self.note = Some(CODEX_UNUSABLE);
+        self.note = Some(codex_unusable());
         self.fallback = None;
         self
     }
@@ -238,7 +245,7 @@ pub(crate) struct Explicit {
 ///
 /// The default GPT-6 Sol choice alone falls back: a stored sign-in that
 /// cannot produce a token now yields the next source with
-/// [`CODEX_UNUSABLE`] as its note, and a usable one carries the next source
+/// [`codex_unusable`] as its note, and a usable one carries the next source
 /// as its `fallback` for a sign-in that fails mid-run. Setting
 /// `JEV_TEXT_MODEL_REASONING` makes the choice explicit: no fallback.
 pub(crate) async fn resolve(
@@ -310,8 +317,9 @@ async fn explicit_model(
     }
     let provider = chat_completions_provider(entry.provider).with_context(|| {
         format!(
-            "JEV_TEXT_MODEL={model} is served by {}, which cannot answer the text helper (sign in with `roder auth login codex` for OpenAI models)",
-            entry.provider
+            "JEV_TEXT_MODEL={model} is served by {}, which cannot answer the text helper (sign in with `{}` for OpenAI models)",
+            entry.provider,
+            roder_api::cli_identity::auth_login_command("codex")
         )
     })?;
     let api_key = keys.key(provider.id).with_context(|| {

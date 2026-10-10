@@ -33,8 +33,6 @@ pub(crate) const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const ORIGINATOR: &str = "roder";
 const USER_AGENT: &str = "roder/0.1.0";
 
-const SIGN_IN: &str = "sign in again with `roder auth login codex`";
-
 /// The reply's schema: exactly one key, `text`, a string or null. The
 /// backend holds the model to it; `parse_value` checks it again.
 pub(crate) fn value_format() -> Value {
@@ -180,10 +178,12 @@ async fn current_token(auth: &dyn CodexAuth) -> anyhow::Result<CodexToken> {
     match auth.token().await {
         Ok(Some(token)) => Ok(token),
         Ok(None) => Err(SignInUnusable::stop(format!(
-            "Text helper has no Codex sign-in; {SIGN_IN}. Nothing typed."
+            "Text helper has no Codex sign-in; sign in again with `{}`. Nothing typed.",
+            roder_api::cli_identity::auth_login_command("codex")
         ))),
         Err(_) => Err(SignInUnusable::stop(format!(
-            "Text helper could not refresh the Codex sign-in; {SIGN_IN}. Nothing typed."
+            "Text helper could not refresh the Codex sign-in; sign in again with `{}`. Nothing typed.",
+            roder_api::cli_identity::auth_login_command("codex")
         ))),
     }
 }
@@ -245,7 +245,8 @@ pub(crate) async fn post(
 
 fn refused() -> anyhow::Error {
     SignInUnusable::stop(format!(
-        "Text helper's Codex sign-in was refused (HTTP 401); {SIGN_IN}. Nothing typed."
+        "Text helper's Codex sign-in was refused (HTTP 401); sign in again with `{}`. Nothing typed.",
+        roder_api::cli_identity::auth_login_command("codex")
     ))
 }
 

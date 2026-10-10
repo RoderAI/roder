@@ -993,7 +993,8 @@ fn xai_error_message(status: reqwest::StatusCode, body: &str) -> String {
     };
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return format!(
-            "xAI auth failed ({status}): {detail}. Check XAI_API_KEY or run `roder auth login supergrok` for SuperGrok."
+            "xAI auth failed ({status}): {detail}. Check XAI_API_KEY or run `{}` for SuperGrok.",
+            roder_api::cli_identity::auth_login_command("supergrok")
         );
     }
     if status == reqwest::StatusCode::FORBIDDEN {
