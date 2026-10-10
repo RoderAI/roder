@@ -1,3 +1,11 @@
+## 0.5.3 (2026-10-10)
+
+### Fixes
+
+#### Codex OAuth engine reports tool-result image support
+
+The Codex OAuth engine reports tool-result image support like the Responses engine it delegates to.
+
 ## 0.5.2 (2026-10-09)
 
 ### Features

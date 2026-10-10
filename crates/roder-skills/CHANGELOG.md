@@ -1,3 +1,15 @@
+## 0.2.1 (2026-10-10)
+
+### Fixes
+
+#### Chrome skill no longer says snapshots return element boxes
+
+The built-in chrome skill no longer says `chrome_page_snapshot` returns element boxes.
+
+#### Webwright skill documents run_script outcomes
+
+The built-in Webwright skill now mentions the `run_script` outcome classes and that a run that does not exit 0 fails `verify_run`.
+
 ## 0.2.0 (2026-09-26)
 
 ### Breaking Changes

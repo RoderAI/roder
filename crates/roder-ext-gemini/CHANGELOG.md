@@ -1,3 +1,11 @@
+## 0.2.2 (2026-10-10)
+
+### Fixes
+
+#### Gemini engine declares tool-result image support
+
+The Gemini engine declares that tool-result images are forwarded to the model as inline data.
+
 ## 0.2.1 (2026-10-09)
 
 ### Fixes

@@ -1,3 +1,11 @@
+## 0.2.1 (2026-10-10)
+
+### Fixes
+
+#### SuperGrok reports tool-result image support from the model catalog
+
+The SuperGrok engine reports tool-result image support from the model catalog, as the Responses engine it delegates to does.
+
 ## 0.2.0 (2026-09-26)
 
 ### Breaking Changes
