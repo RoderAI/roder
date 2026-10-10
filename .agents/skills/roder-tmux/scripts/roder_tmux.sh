@@ -19,7 +19,7 @@ Usage:
 
 Defaults:
   session: roder
-  command: cargo run -p roder-cli --bin roder
+  command: cargo run -p roder --bin roder
   output:  .roder/tmux-captures/
 USAGE
 }
@@ -124,7 +124,7 @@ cmd_start() {
 
   local shell_command
   if [[ ${#command[@]} -eq 0 ]]; then
-    shell_command="cargo run -p roder-cli --bin roder"
+    shell_command="cargo run -p roder --bin roder"
   else
     shell_command="$(shell_join "${command[@]}")"
   fi

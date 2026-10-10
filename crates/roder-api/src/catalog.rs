@@ -9,6 +9,7 @@ mod anthropic;
 mod deepseek;
 pub mod image_models;
 mod openai_codex;
+mod openrouter;
 mod synthetic;
 mod xiaomi_mimo;
 
@@ -1107,23 +1108,31 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_NONE,
         &[],
     ),
-    ModelCatalogEntry {
-        id: "x-ai/grok-4.6",
-        display_name: "Grok 4.6",
-        description: "OpenRouter route for xAI's flagship model for coding and long-running agent workflows.",
-        provider: PROVIDER_OPENROUTER,
-        default_reasoning: REASONING_HIGH,
-        supported_reasoning: OPENROUTER_REASONING,
-        context_window: 500_000,
-        max_context_window: 500_000,
-        auto_compact_token_limit: 450_000,
-        supports_compaction: true,
-        supports_images: true,
-        supports_tools: true,
-        supports_structured: true,
-        edit_tool: Some(EDIT_TOOL_PATCH),
-        hidden: false,
-    },
+    openrouter::X_AI_GROK_4_6,
+    openrouter::X_AI_GROK_4_7,
+    openrouter::MOONSHOTAI_KIMI_K3,
+    openrouter::MOONSHOTAI_KIMI_K2_7_CODE,
+    openrouter::MOONSHOTAI_KIMI_K2_6,
+    openrouter::ANTHROPIC_CLAUDE_OPUS_5_5,
+    openrouter::ANTHROPIC_CLAUDE_SONNET_5_5,
+    openrouter::ANTHROPIC_CLAUDE_HAIKU_5_5,
+    openrouter::ANTHROPIC_CLAUDE_FABLE_5_1,
+    openrouter::ANTHROPIC_CLAUDE_OPUS_5,
+    openrouter::OPENAI_GPT_6_1_SOL,
+    openrouter::OPENAI_GPT_6_SOL,
+    openrouter::OPENAI_GPT_6_LUNA,
+    openrouter::OPENAI_GPT_6_ASTRA,
+    openrouter::GOOGLE_GEMINI_3_8_FLASH,
+    openrouter::GOOGLE_GEMINI_3_7_FLASH,
+    openrouter::DEEPSEEK_DEEPSEEK_V4_PRO_0813,
+    openrouter::DEEPSEEK_DEEPSEEK_V4_1_FLASH,
+    openrouter::QWEN_QWEN3_8_MAX_0902,
+    openrouter::QWEN_QWEN3_8_FLASH,
+    openrouter::Z_AI_GLM_5_3,
+    openrouter::Z_AI_GLM_5_3_FLASH,
+    openrouter::XIAOMI_MIMO_V2_6_PRO,
+    openrouter::MISTRALAI_MISTRAL_LARGE_4_0,
+    openrouter::META_MUSE_SPARK_1_3,
     ModelCatalogEntry {
         id: "accounts/fireworks/models/qwen3-235b-a22b",
         display_name: "Qwen3 235B A22B",
@@ -1854,6 +1863,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn openrouter_catalog_entries_are_well_formed() {
+        let entries = BUILT_IN_MODELS
+            .iter()
+            .filter(|model| model.provider == PROVIDER_OPENROUTER)
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty());
+        for model in entries {
+            assert!(
+                model.id.contains('/'),
+                "{} is not an OpenRouter slug",
+                model.id
+            );
+            assert!(
+                model.context_window > 0,
+                "{} has no context window",
+                model.id
+            );
+            assert_eq!(
+                model.max_context_window, model.context_window,
+                "{}",
+                model.id
+            );
+            assert!(
+                model.auto_compact_token_limit > 0
+                    && model.auto_compact_token_limit < model.context_window,
+                "{} compaction threshold must sit inside its window",
+                model.id
+            );
+            // OpenRouter accepts `context_management` but never compacts, so
+            // roder has to do it client-side at the threshold.
+            assert!(
+                !model.supports_compaction,
+                "{} must compact client-side",
+                model.id
+            );
+            assert!(model.supports_tools, "{} must support tools", model.id);
+        }
+    }
+
+    #[test]
+    fn openrouter_catalog_resolves_kimi_k3_with_live_limits() {
+        let k3 = lookup_model_for_provider(PROVIDER_OPENROUTER, "moonshotai/kimi-k3")
+            .expect("kimi k3 is catalogued");
+        assert_eq!(k3.context_window, 1_048_576);
+        assert!(k3.supports_images);
+        assert!(!k3.supported_reasoning.is_empty());
+        assert_eq!(k3.auto_compact_token_limit, 943_718);
+    }
+
+    #[test]
     fn catalog_contains_gode_providers() {
         let ids = BUILT_IN_PROVIDERS
             .iter()
@@ -2026,6 +2085,30 @@ mod tests {
                 "deepseek-v4-pro",
                 "kimi-for-coding",
                 "x-ai/grok-4.6",
+                "x-ai/grok-4.7",
+                "moonshotai/kimi-k3",
+                "moonshotai/kimi-k2.7-code",
+                "moonshotai/kimi-k2.6",
+                "anthropic/claude-opus-5.5",
+                "anthropic/claude-sonnet-5.5",
+                "anthropic/claude-haiku-5.5",
+                "anthropic/claude-fable-5.1",
+                "anthropic/claude-opus-5",
+                "openai/gpt-6.1-sol",
+                "openai/gpt-6-sol",
+                "openai/gpt-6-luna",
+                "openai/gpt-6-astra",
+                "google/gemini-3.8-flash",
+                "google/gemini-3.7-flash",
+                "deepseek/deepseek-v4-pro-0813",
+                "deepseek/deepseek-v4.1-flash",
+                "qwen/qwen3.8-max-0902",
+                "qwen/qwen3.8-flash",
+                "z-ai/glm-5.3",
+                "z-ai/glm-5.3-flash",
+                "xiaomi/mimo-v2.6-pro",
+                "mistralai/mistral-large-4-0",
+                "meta/muse-spark-1.3",
                 "accounts/fireworks/models/qwen3-235b-a22b",
                 "roder.cloud/free",
                 "roder.cloud/anthropic/claude-opus-4-7",
@@ -2085,7 +2168,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
-        assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 1);
+        assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 25);
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
