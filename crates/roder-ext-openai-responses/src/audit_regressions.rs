@@ -288,7 +288,7 @@ async fn audit_openrouter_credit_hold_retries_unchanged_request_after_settlement
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
         let mut requests = vec![];
-        let started = std::time::Instant::now();
+        let mut started = None;
         for attempt in 0..2 {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut bytes = vec![];
@@ -313,9 +313,10 @@ async fn audit_openrouter_credit_hold_retries_unchanged_request_after_settlement
             }
             if attempt == 0 {
                 let body = json!({"error":{"code":402,"metadata":{"reason":"in_flight_budget_exhausted","limit_source":"openrouter_in_flight_budget"}}}).to_string();
+                started = Some(std::time::Instant::now());
                 socket.write_all(format!("HTTP/1.1 402 Payment Required\r\nRetry-After: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
             } else {
-                assert!(started.elapsed() >= Duration::from_millis(900));
+                assert!(started.unwrap().elapsed() >= Duration::from_millis(900));
                 socket
                     .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     .await

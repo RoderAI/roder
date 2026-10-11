@@ -259,7 +259,11 @@ pub(super) fn http_failure(
         None
     };
     let code = credit_reason.or_else(|| data.pointer("/error/code").and_then(Value::as_str));
-    let kind = failure_kind(code, Some(status.as_u16()));
+    let kind = if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+        failure_kind(credit_reason, Some(402))
+    } else {
+        failure_kind(code, Some(status.as_u16()))
+    };
     ProviderFailure {
         kind,
         message: format!("OpenAI Responses error {status}: {body}"),
@@ -338,7 +342,7 @@ mod credit_limit_tests {
             serde_json::json!({"reason":"unknown","limit_source":"openrouter_in_flight_budget"}),
             serde_json::Value::Null,
         ] {
-            let body = serde_json::json!({"error":{"code":402,"metadata":metadata}});
+            let body = serde_json::json!({"error":{"code":"in_flight_budget_exhausted","metadata":metadata}});
             let failure = http_failure(
                 reqwest::StatusCode::PAYMENT_REQUIRED,
                 &body.to_string(),
