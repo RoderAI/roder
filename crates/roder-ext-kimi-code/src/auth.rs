@@ -69,7 +69,8 @@ struct DeviceTokenErrorResponse {
 }
 
 pub struct Store {
-    data_dir: PathBuf,
+    /// The folder the token files live in.
+    auth_dir: PathBuf,
 }
 
 impl Default for Store {
@@ -79,9 +80,11 @@ impl Default for Store {
 }
 
 impl Store {
+    /// The embedding program's sign-in folder, else `auth/` under Roder's
+    /// data folder.
     pub fn new() -> Self {
         Self {
-            data_dir: roder_data_dir(),
+            auth_dir: roder_api::cli_identity::auth_dir_or(roder_data_dir().join("auth")),
         }
     }
 
@@ -110,11 +113,11 @@ impl Store {
     }
 
     fn path(&self) -> PathBuf {
-        self.data_dir.join("auth").join("kimi-code.json")
+        self.auth_dir.join("kimi-code.json")
     }
 
     fn device_id_path(&self) -> PathBuf {
-        self.data_dir.join("auth").join("kimi-code-device-id")
+        self.auth_dir.join("kimi-code-device-id")
     }
 }
 

@@ -4,10 +4,12 @@
 //! their own command line: a hint such as "run `roder auth login codex`" means
 //! nothing to their users. An embedding program sets its identity once at
 //! startup with [`set_cli_identity`]; every user-facing sign-in hint and the
-//! sign-in token folder then follow it. Without one, Roder's defaults apply.
+//! provider sign-in token folder (Codex, SuperGrok, Kimi Code) then follow
+//! it. Until one is set, Roder's defaults apply; reading the identity never
+//! fixes it, so setting it later still takes effect.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 /// The `{provider}` placeholder in [`CliIdentity::auth_login`].
 pub const PROVIDER_PLACEHOLDER: &str = "{provider}";
@@ -19,8 +21,9 @@ pub struct CliIdentity {
     /// The command that signs in to a provider, with `{provider}` where the
     /// provider id goes, such as `roder auth login {provider}`.
     pub auth_login: String,
-    /// Where provider sign-in tokens are kept. `None` keeps Roder's data
-    /// folder (`RODER_DATA_DIR`, else `~/.roder`).
+    /// The folder provider sign-in tokens are kept in, used as given.
+    /// `None` keeps them in `auth/` under Roder's data folder
+    /// (`RODER_DATA_DIR`, else `RODER_CONFIG_DIR`, else `~/.roder`).
     pub auth_dir: Option<PathBuf>,
 }
 
@@ -42,6 +45,7 @@ impl Default for CliIdentity {
 }
 
 static IDENTITY: OnceLock<CliIdentity> = OnceLock::new();
+static RODER: LazyLock<CliIdentity> = LazyLock::new(CliIdentity::default);
 
 /// Name the program embedding Roder, before any provider or sign-in runs.
 /// The first identity set wins; a later one is returned as the error.
@@ -49,9 +53,16 @@ pub fn set_cli_identity(identity: CliIdentity) -> Result<(), CliIdentity> {
     IDENTITY.set(identity)
 }
 
-/// The embedding program's identity, or Roder's own.
+/// The embedding program's identity, or Roder's own while none is set.
 pub fn cli_identity() -> &'static CliIdentity {
-    IDENTITY.get_or_init(CliIdentity::default)
+    IDENTITY.get().unwrap_or(&RODER)
+}
+
+/// The folder provider sign-in tokens go in: the embedding program's
+/// `auth_dir`, else `default` (a token store's `auth/` under Roder's data
+/// folder).
+pub fn auth_dir_or(default: PathBuf) -> PathBuf {
+    cli_identity().auth_dir.clone().unwrap_or(default)
 }
 
 /// The command a user of this program runs to sign in to `provider`.
@@ -78,5 +89,28 @@ mod tests {
             embedded.auth_login_command("codex"),
             "com agent login codex"
         );
+    }
+
+    #[test]
+    fn reading_the_identity_leaves_it_settable() {
+        // The only test in this binary that sets the process-wide identity.
+        assert_eq!(cli_identity().name, "roder");
+        assert_eq!(
+            auth_dir_or(PathBuf::from("/default")),
+            PathBuf::from("/default")
+        );
+        let embedded = CliIdentity {
+            name: "com".to_string(),
+            auth_login: "com agent login {provider}".to_string(),
+            auth_dir: Some(PathBuf::from("/tokens")),
+        };
+        set_cli_identity(embedded.clone()).unwrap();
+        assert_eq!(cli_identity(), &embedded);
+        assert_eq!(auth_login_command("codex"), "com agent login codex");
+        assert_eq!(
+            auth_dir_or(PathBuf::from("/default")),
+            PathBuf::from("/tokens")
+        );
+        assert!(set_cli_identity(CliIdentity::default()).is_err());
     }
 }
