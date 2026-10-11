@@ -232,7 +232,25 @@ pub(super) fn http_failure(
     retry_not_before: Option<tokio::time::Instant>,
 ) -> ProviderFailure {
     let data: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-    let code = data.pointer("/error/code").and_then(Value::as_str);
+    let credit_reason = if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+        match (
+            data.pointer("/error/metadata/reason")
+                .and_then(Value::as_str),
+            data.pointer("/error/metadata/limit_source")
+                .and_then(Value::as_str),
+        ) {
+            (Some("in_flight_budget_exhausted"), Some("openrouter_in_flight_budget")) => {
+                Some("in_flight_budget_exhausted")
+            }
+            (Some("weight_exceeds_budget"), Some("openrouter_credits")) => {
+                Some("weight_exceeds_budget")
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let code = credit_reason.or_else(|| data.pointer("/error/code").and_then(Value::as_str));
     let kind = failure_kind(code, Some(status.as_u16()));
     ProviderFailure {
         kind,
@@ -254,9 +272,11 @@ pub(super) fn failure_kind(code: Option<&str>, status: Option<u16>) -> ProviderF
         Some("context_length_exceeded" | "context_window_exceeded") => {
             ProviderFailureKind::ContextWindowExceeded
         }
-        Some("insufficient_quota" | "quota_exceeded") => ProviderFailureKind::QuotaExceeded,
+        Some("insufficient_quota" | "quota_exceeded" | "weight_exceeds_budget") => {
+            ProviderFailureKind::QuotaExceeded
+        }
         Some("usage_limit_reached" | "usage_limit_exceeded") => ProviderFailureKind::UsageLimit,
-        Some("rate_limit_exceeded" | "rate_limit" | "slow_down") => {
+        Some("rate_limit_exceeded" | "rate_limit" | "slow_down" | "in_flight_budget_exhausted") => {
             ProviderFailureKind::RateLimited
         }
         Some("server_overloaded" | "server_error") => ProviderFailureKind::ServerOverloaded,
@@ -269,11 +289,60 @@ pub(super) fn failure_kind(code: Option<&str>, status: Option<u16>) -> ProviderF
             | "misalignment",
         ) => ProviderFailureKind::InvalidRequest,
         _ => match status {
+            Some(402) => ProviderFailureKind::QuotaExceeded,
             Some(401 | 403) => ProviderFailureKind::Authentication,
             Some(429) => ProviderFailureKind::RateLimited,
             Some(500..=599) => ProviderFailureKind::ServerOverloaded,
             _ => ProviderFailureKind::InvalidRequest,
         },
+    }
+}
+
+#[cfg(test)]
+mod credit_limit_tests {
+    use super::*;
+
+    #[test]
+    fn openrouter_in_flight_limit_preserves_retry_advice_and_is_recoverable() {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        let body = serde_json::json!({"error":{"code":402,"metadata":{
+            "reason":"in_flight_budget_exhausted","limit_source":"openrouter_in_flight_budget"}}});
+        let failure = http_failure(
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            &body.to_string(),
+            Some(deadline),
+        );
+        assert_eq!(failure.kind, ProviderFailureKind::RateLimited);
+        assert!(failure.kind.is_retryable());
+        assert_eq!(
+            failure.provider_code.as_deref(),
+            Some("in_flight_budget_exhausted")
+        );
+        assert_eq!(failure.status, Some(402));
+        assert_eq!(failure.retry_not_before, Some(deadline));
+    }
+
+    #[test]
+    fn permanent_or_unrecognized_credit_limits_do_not_retry() {
+        for metadata in [
+            serde_json::json!({"reason":"weight_exceeds_budget","limit_source":"openrouter_credits"}),
+            serde_json::json!({"reason":"in_flight_budget_exhausted","limit_source":"other_provider"}),
+            serde_json::json!({"reason":"unknown","limit_source":"openrouter_in_flight_budget"}),
+            serde_json::Value::Null,
+        ] {
+            let body = serde_json::json!({"error":{"code":402,"metadata":metadata}});
+            let failure = http_failure(
+                reqwest::StatusCode::PAYMENT_REQUIRED,
+                &body.to_string(),
+                None,
+            );
+            assert_eq!(failure.kind, ProviderFailureKind::QuotaExceeded);
+            assert!(!failure.kind.is_retryable());
+        }
+        assert_eq!(
+            http_failure(reqwest::StatusCode::PAYMENT_REQUIRED, "not JSON", None).kind,
+            ProviderFailureKind::QuotaExceeded
+        );
     }
 }
 
