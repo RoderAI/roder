@@ -1,3 +1,15 @@
+## 0.2.7 (2026-10-11)
+
+### Fixes
+
+#### Honor the rate-limit retry policy for OpenRouter credit holds
+
+Use the configured HTTP 429 retry eligibility for the recognized temporary HTTP 402 in-flight spending hold. Wait for Retry-After and resend identical inference input; permanent credit failures do not retry.
+
+#### Recover temporary OpenRouter in-flight credit limits
+
+Classify the structured HTTP 402 in-flight budget limit as retryable and retain Retry-After advice. Requests exceeding the whole credit budget, exhausted credits, and unrecognized payment failures remain non-retryable quota failures.
+
 ## 0.2.6 (2026-10-11)
 
 ### Fixes
