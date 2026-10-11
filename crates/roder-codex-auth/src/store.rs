@@ -80,8 +80,8 @@ impl Store {
         self.auth_dir().join(BACKUP_FILE)
     }
 
-    fn auth_dir(&self) -> PathBuf {
-        self.auth_dir.clone()
+    fn auth_dir(&self) -> &Path {
+        &self.auth_dir
     }
 
     fn audit(&self, action: &str, reason: Option<&str>) -> anyhow::Result<()> {
