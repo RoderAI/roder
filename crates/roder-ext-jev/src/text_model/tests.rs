@@ -138,7 +138,7 @@ async fn an_unusable_default_sign_in_falls_through_with_a_note() {
     .unwrap();
     assert_eq!(resolved.model, "deepseek-chat");
     assert_eq!(resolved.source, "turn-model");
-    assert_eq!(resolved.note, Some(CODEX_UNUSABLE));
+    assert_eq!(resolved.note, Some(codex_unusable()));
     assert!(resolved.fallback.is_none());
     // Without a turn model, the provider list stands in the same way.
     let resolved = pick(Explicit::default(), None, &[("xai", "sk-xai")], &UNUSABLE)
@@ -146,7 +146,7 @@ async fn an_unusable_default_sign_in_falls_through_with_a_note() {
         .unwrap()
         .unwrap();
     assert_eq!(resolved.source, "roder-provider");
-    assert_eq!(resolved.note, Some(CODEX_UNUSABLE));
+    assert_eq!(resolved.note, Some(codex_unusable()));
     // With nothing to stand in, GPT-6 Sol stays and each fill says why.
     let resolved = pick(Explicit::default(), None, &[], &UNUSABLE)
         .await
@@ -186,7 +186,7 @@ async fn an_explicit_choice_never_falls_back() {
 #[test]
 fn the_note_never_carries_credentials_or_auth_errors() {
     for leak in ["token", "refresh", "401", "invalid", "Bearer", "error"] {
-        assert!(!CODEX_UNUSABLE.contains(leak), "{leak}");
+        assert!(!codex_unusable().contains(leak), "{leak}");
     }
 }
 

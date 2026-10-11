@@ -11,7 +11,8 @@ const BACKUP_FILE: &str = "codex.json.bak";
 const AUDIT_FILE: &str = "codex.audit.jsonl";
 
 pub struct Store {
-    data_dir: PathBuf,
+    /// The folder the token files live in.
+    auth_dir: PathBuf,
 }
 
 impl Default for Store {
@@ -21,9 +22,11 @@ impl Default for Store {
 }
 
 impl Store {
+    /// The token store of the program embedding Roder: its configured
+    /// sign-in folder, else `auth/` under Roder's data folder.
     pub fn new() -> Self {
         Self {
-            data_dir: roder_data_dir(),
+            auth_dir: roder_api::cli_identity::auth_dir_or(roder_data_dir().join("auth")),
         }
     }
 
@@ -77,8 +80,8 @@ impl Store {
         self.auth_dir().join(BACKUP_FILE)
     }
 
-    fn auth_dir(&self) -> PathBuf {
-        self.data_dir.join("auth")
+    fn auth_dir(&self) -> &Path {
+        &self.auth_dir
     }
 
     fn audit(&self, action: &str, reason: Option<&str>) -> anyhow::Result<()> {
@@ -104,7 +107,9 @@ impl Store {
 
     #[cfg(test)]
     fn with_data_dir(data_dir: PathBuf) -> Self {
-        Self { data_dir }
+        Self {
+            auth_dir: data_dir.join("auth"),
+        }
     }
 }
 
@@ -191,6 +196,28 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn an_embedding_programs_auth_dir_holds_the_tokens_directly() {
+        // The only test in this binary that sets the process-wide identity.
+        let tokens_dir = unique_test_home("embedded-auth-dir").join("tokens");
+        roder_api::cli_identity::set_cli_identity(roder_api::cli_identity::CliIdentity {
+            name: "com".to_string(),
+            auth_login: "com agent login {provider}".to_string(),
+            auth_dir: Some(tokens_dir.clone()),
+        })
+        .unwrap();
+        Store::new()
+            .save(Tokens {
+                token_type: "oauth".to_string(),
+                refresh: "refresh".to_string(),
+                ..Tokens::default()
+            })
+            .unwrap();
+        assert!(tokens_dir.join(PRIMARY_FILE).is_file());
+        assert!(!tokens_dir.join("auth").exists());
+        assert_eq!(Store::new().load().unwrap().refresh, "refresh");
+    }
 
     #[test]
     fn store_loads_roder_owned_tokens() {

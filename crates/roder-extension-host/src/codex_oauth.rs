@@ -75,7 +75,10 @@ impl InferenceEngine for CodexOAuthInferenceEngine {
 
 async fn codex_responses_engine() -> anyhow::Result<OpenAiResponsesEngine> {
     let Some((access_token, account_id)) = roder_codex_auth::access_token().await? else {
-        anyhow::bail!("codex auth is missing; run `roder auth login codex`")
+        anyhow::bail!(
+            "codex auth is missing; run `{}`",
+            roder_api::cli_identity::auth_login_command("codex")
+        )
     };
     let mut headers = vec![
         ("originator".to_string(), "roder".to_string()),

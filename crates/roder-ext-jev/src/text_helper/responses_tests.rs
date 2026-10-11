@@ -446,7 +446,7 @@ async fn a_default_choice_falls_back_when_the_sign_in_is_unusable() {
         let current = helper.current();
         assert_eq!(current.model, "deepseek-chat");
         assert_eq!(current.source, "roder-provider");
-        assert_eq!(current.note, Some(crate::text_model::CODEX_UNUSABLE));
+        assert_eq!(current.note, Some(crate::text_model::codex_unusable()));
         // The next field goes straight to the stand-in.
         helper.resolve(&context).await.unwrap();
         assert_eq!(backend.hits(), 0);
@@ -476,7 +476,7 @@ async fn a_default_choice_falls_back_when_the_same_token_is_refused() {
     assert_eq!(backend.hits(), 1);
     assert_eq!(
         helper.current().note,
-        Some(crate::text_model::CODEX_UNUSABLE)
+        Some(crate::text_model::codex_unusable())
     );
 }
 

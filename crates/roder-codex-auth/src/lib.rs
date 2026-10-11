@@ -106,9 +106,10 @@ pub async fn login() -> anyhow::Result<Tokens> {
     let listener = match TcpListener::bind(("127.0.0.1", CALLBACK_PORT)) {
         Ok(l) => l,
         Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+            let cli = &roder_api::cli_identity::cli_identity().name;
             anyhow::bail!(
                 "Port {CALLBACK_PORT} is already in use by another process.\n\
-                 This usually happens if another roder instance, background app-server, or a previous login process is still running.\n\n\
+                 This usually happens if another {cli} instance, background app-server, or a previous login process is still running.\n\n\
                  Please close or kill that process to free the port. You can run the following command to force-kill it:\n\
                  lsof -t -i :{CALLBACK_PORT} | xargs kill -9\n"
             );

@@ -69,7 +69,8 @@ struct DeviceTokenErrorResponse {
 }
 
 pub struct Store {
-    data_dir: PathBuf,
+    /// The folder the token files live in.
+    auth_dir: PathBuf,
 }
 
 impl Default for Store {
@@ -79,9 +80,11 @@ impl Default for Store {
 }
 
 impl Store {
+    /// The embedding program's sign-in folder, else `auth/` under Roder's
+    /// data folder.
     pub fn new() -> Self {
         Self {
-            data_dir: roder_data_dir(),
+            auth_dir: roder_api::cli_identity::auth_dir_or(roder_data_dir().join("auth")),
         }
     }
 
@@ -110,11 +113,16 @@ impl Store {
     }
 
     fn path(&self) -> PathBuf {
-        self.data_dir.join("auth").join("kimi-code.json")
+        self.auth_dir.join("kimi-code.json")
+    }
+
+    #[cfg(test)]
+    fn with_auth_dir(auth_dir: PathBuf) -> Self {
+        Self { auth_dir }
     }
 
     fn device_id_path(&self) -> PathBuf {
-        self.data_dir.join("auth").join("kimi-code-device-id")
+        self.auth_dir.join("kimi-code-device-id")
     }
 }
 
@@ -582,6 +590,25 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_configured_auth_dir_holds_the_token_and_device_id_directly() {
+        let auth_dir = std::env::temp_dir()
+            .join(format!("roder-kimi-auth-dir-{}", std::process::id()))
+            .join("tokens");
+        let store = Store::with_auth_dir(auth_dir.clone());
+        assert_eq!(store.path(), auth_dir.join("kimi-code.json"));
+        assert_eq!(store.device_id_path(), auth_dir.join("kimi-code-device-id"));
+        store
+            .save(Tokens {
+                refresh: "refresh".to_string(),
+                ..Tokens::default()
+            })
+            .unwrap();
+        assert!(auth_dir.join("kimi-code.json").is_file());
+        assert_eq!(store.load().unwrap().refresh, "refresh");
+        let _ = std::fs::remove_dir_all(auth_dir.parent().unwrap());
+    }
 
     #[test]
     fn oauth_host_defaults_to_auth_kimi_com() {

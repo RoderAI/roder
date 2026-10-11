@@ -230,10 +230,11 @@ fn next(data: &Value, status: &str) -> Option<String> {
         && data["text_calls"].as_u64() == Some(0)
         && data["text_model"].is_null()
     {
-        next.push_str(
-            " No text model is configured, so Jev cannot type: sign in with `roder auth login \
-             codex`, configure a Roder chat-completions provider or set JEV_TEXT_MODEL_API_KEY.",
-        );
+        next.push_str(&format!(
+            " No text model is configured, so Jev cannot type: sign in with `{}`, configure a \
+             Roder chat-completions provider or set JEV_TEXT_MODEL_API_KEY.",
+            roder_api::cli_identity::auth_login_command("codex")
+        ));
     }
     Some(next)
 }

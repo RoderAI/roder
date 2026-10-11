@@ -88,7 +88,10 @@ impl InferenceEngine for SuperGrokEngine {
         request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
         let Some(access_token) = roder_supergrok_auth::access_token().await? else {
-            anyhow::bail!("supergrok auth is missing; run `roder auth login supergrok`")
+            anyhow::bail!(
+                "supergrok auth is missing; run `{}`",
+                roder_api::cli_identity::auth_login_command("supergrok")
+            )
         };
         OpenAiResponsesEngine::new_with_config(
             Some(access_token),
