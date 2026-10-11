@@ -281,3 +281,64 @@ async fn audit_http_retry_honors_retry_after() {
         "Retry-After: 1 ignored; second request after {elapsed:?}"
     );
 }
+
+#[tokio::test]
+async fn audit_openrouter_credit_hold_retries_unchanged_request_after_settlement() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let mut requests = vec![];
+        let mut started = None;
+        for attempt in 0..2 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = vec![];
+            loop {
+                let mut buf = [0; 4096];
+                let size = socket.read(&mut buf).await.unwrap();
+                assert!(size > 0);
+                bytes.extend_from_slice(&buf[..size]);
+                if let Some(end) = bytes.windows(4).position(|chunk| chunk == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length: "))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if bytes.len() >= end + 4 + length {
+                        requests.push(bytes[end + 4..].to_vec());
+                        break;
+                    }
+                }
+            }
+            if attempt == 0 {
+                let body = json!({"error":{"code":402,"metadata":{"reason":"in_flight_budget_exhausted","limit_source":"openrouter_in_flight_budget"}}}).to_string();
+                started = Some(std::time::Instant::now());
+                socket.write_all(format!("HTTP/1.1 402 Payment Required\r\nRetry-After: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            } else {
+                assert!(started.unwrap().elapsed() >= Duration::from_millis(900));
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        }
+        assert_eq!(requests[0], requests[1]);
+    });
+    let policy = ReliabilityRequestPolicy {
+        provider_retry_max_attempts: 2,
+        provider_retry_initial_backoff_ms: 0,
+        ..Default::default()
+    };
+    send_responses_request(
+        &format!("http://{address}"),
+        "fixture-key",
+        &[],
+        None,
+        &json!({"model":"moonshotai/kimi-k3","input":"Continue the current browser"}),
+        Some(&policy),
+    )
+    .await
+    .unwrap();
+    task.await.unwrap();
+}

@@ -112,10 +112,18 @@ pub(super) async fn send_responses_endpoint(
                 let text = response.text().await.unwrap_or_default();
                 let mut failure = http_failure(status, &text, retry_after);
                 failure.request_id = request_id;
+                // OpenRouter's temporary spending hold has HTTP 402 but the
+                // same recovery semantics as a rate limit. Let the configured
+                // rate-limit retry policy govern only this recognized case.
+                let retry_status = if status == reqwest::StatusCode::PAYMENT_REQUIRED
+                    && failure.provider_code.as_deref() == Some("in_flight_budget_exhausted")
+                {
+                    429
+                } else {
+                    status.as_u16()
+                };
                 let retryable = failure.kind.is_retryable()
-                    && policy
-                        .provider_retry_status_codes
-                        .contains(&status.as_u16());
+                    && policy.provider_retry_status_codes.contains(&retry_status);
                 last_error = Some(failure);
                 if retryable && attempt < attempts {
                     push_retry_event(
@@ -251,7 +259,11 @@ pub(super) fn http_failure(
         None
     };
     let code = credit_reason.or_else(|| data.pointer("/error/code").and_then(Value::as_str));
-    let kind = failure_kind(code, Some(status.as_u16()));
+    let kind = if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+        failure_kind(credit_reason, Some(402))
+    } else {
+        failure_kind(code, Some(status.as_u16()))
+    };
     ProviderFailure {
         kind,
         message: format!("OpenAI Responses error {status}: {body}"),
@@ -330,7 +342,7 @@ mod credit_limit_tests {
             serde_json::json!({"reason":"unknown","limit_source":"openrouter_in_flight_budget"}),
             serde_json::Value::Null,
         ] {
-            let body = serde_json::json!({"error":{"code":402,"metadata":metadata}});
+            let body = serde_json::json!({"error":{"code":"in_flight_budget_exhausted","metadata":metadata}});
             let failure = http_failure(
                 reqwest::StatusCode::PAYMENT_REQUIRED,
                 &body.to_string(),
