@@ -112,10 +112,18 @@ pub(super) async fn send_responses_endpoint(
                 let text = response.text().await.unwrap_or_default();
                 let mut failure = http_failure(status, &text, retry_after);
                 failure.request_id = request_id;
+                // OpenRouter's temporary spending hold has HTTP 402 but the
+                // same recovery semantics as a rate limit. Let the configured
+                // rate-limit retry policy govern only this recognized case.
+                let retry_status = if status == reqwest::StatusCode::PAYMENT_REQUIRED
+                    && failure.provider_code.as_deref() == Some("in_flight_budget_exhausted")
+                {
+                    429
+                } else {
+                    status.as_u16()
+                };
                 let retryable = failure.kind.is_retryable()
-                    && policy
-                        .provider_retry_status_codes
-                        .contains(&status.as_u16());
+                    && policy.provider_retry_status_codes.contains(&retry_status);
                 last_error = Some(failure);
                 if retryable && attempt < attempts {
                     push_retry_event(
