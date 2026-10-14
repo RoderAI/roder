@@ -358,12 +358,23 @@ impl OpenAiResponsesEngine {
                 options.thread_id.filter(|thread_id| !thread_id.is_empty())
             }
             ResponsesProviderProfile::Fireworks => None,
-            ResponsesProviderProfile::OpenAi | ResponsesProviderProfile::OpenRouter => {
-                request.runtime.prompt_cache_key.as_deref()
-            }
+            ResponsesProviderProfile::OpenAi => request.runtime.prompt_cache_key.as_deref(),
+            // OpenRouter caches per upstream provider. A session key pins every
+            // turn of a conversation to one provider from the first request;
+            // without it stickiness starts only after a cache hit, so early
+            // turns scatter across cold caches.
+            ResponsesProviderProfile::OpenRouter => request
+                .runtime
+                .prompt_cache_key
+                .as_deref()
+                .or(options.thread_id)
+                .filter(|key| !key.is_empty()),
         };
         if let Some(prompt_cache_key) = prompt_cache_key {
             body["prompt_cache_key"] = json!(prompt_cache_key);
+            if options.profile == ResponsesProviderProfile::OpenRouter {
+                body["session_id"] = json!(openrouter_session_id(prompt_cache_key));
+            }
         }
         if options.profile != ResponsesProviderProfile::Fireworks
             && let Some(threshold) = request
@@ -383,6 +394,14 @@ fn openai_reasoning_effort_for_request(effort: &str) -> &str {
         REASONING_MAX
     } else {
         effort
+    }
+}
+
+/// OpenRouter's sticky-routing key (`session_id`) is at most 256 characters.
+fn openrouter_session_id(key: &str) -> &str {
+    match key.char_indices().nth(256) {
+        Some((end, _)) => &key[..end],
+        None => key,
     }
 }
 
@@ -2756,6 +2775,40 @@ mod tests {
         assert!(forbidden.contains("entitlement or quota"));
         assert!(forbidden.contains("X Premium+ may not include"));
         assert!(forbidden.contains("subscription missing"));
+    }
+
+    #[test]
+    fn openrouter_pins_conversations_with_a_session_key() {
+        let mut request = request();
+        request.model.provider = PROVIDER_OPENROUTER.to_string();
+        request.runtime.prompt_cache_key = None;
+        let options = RequestMappingOptions {
+            profile: ResponsesProviderProfile::OpenRouter,
+            thread_id: Some("run-1"),
+        };
+
+        let body = OpenAiResponsesEngine::map_request_with_options(&request, options).0;
+        assert_eq!(body["prompt_cache_key"], "run-1");
+        assert_eq!(body["session_id"], "run-1");
+
+        request.runtime.prompt_cache_key = Some("thread-7".to_string());
+        let body = OpenAiResponsesEngine::map_request_with_options(&request, options).0;
+        assert_eq!(body["prompt_cache_key"], "thread-7");
+        assert_eq!(body["session_id"], "thread-7");
+
+        request.runtime.prompt_cache_key = Some("k".repeat(300));
+        let body = OpenAiResponsesEngine::map_request_with_options(&request, options).0;
+        assert_eq!(body["session_id"].as_str().unwrap().len(), 256);
+
+        let openai = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::OpenAi,
+                thread_id: Some("run-1"),
+            },
+        )
+        .0;
+        assert!(openai.get("session_id").is_none());
     }
 
     #[test]
