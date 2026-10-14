@@ -14,6 +14,7 @@ use semver::Version;
 mod cancellation;
 mod client;
 pub mod config;
+mod egress;
 mod ports;
 mod session;
 mod standby;
@@ -161,6 +162,7 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
 
         let client = self.client(&config);
         let sandbox = client.create_sandbox(&name, &config).await?;
+        egress::verify(&sandbox, &config)?;
         let sandbox = if let Some(lifecycle) = &config.lifecycle {
             // `createIfNotExist=true` may have returned a persistent sandbox;
             // reconcile mutable lifecycle policy without replacing it.
@@ -222,6 +224,7 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
             }
         };
 
+        egress::verify(&sandbox, &config)?;
         let sandbox = if let Some(lifecycle) = &config.lifecycle {
             // Mutable lifecycle policy is intentionally reapplied on every
             // rejoin; this preserves the sandbox generation and its checkout.

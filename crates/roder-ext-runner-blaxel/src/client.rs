@@ -26,6 +26,8 @@ pub struct BlaxelClient {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Sandbox {
     #[serde(default)]
+    pub spec: Value,
+    #[serde(default)]
     pub metadata: SandboxMetadata,
     /// `RUNNING` or `STANDBY` (read-only, system-managed).
     #[serde(default)]
@@ -165,6 +167,9 @@ impl BlaxelClient {
         let mut spec = json!({ "runtime": runtime });
         if let Some(region) = &config.region {
             spec["region"] = json!(region);
+        }
+        if let Some(gateway) = &config.egress_gateway {
+            spec["network"] = json!({"egress": {"mode": "dedicated", "gateway": gateway}});
         }
         if let Some(lifecycle) = &config.lifecycle {
             spec["lifecycle"] = lifecycle.api_value();
