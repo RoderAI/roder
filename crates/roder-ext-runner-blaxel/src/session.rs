@@ -38,6 +38,7 @@ pub struct BlaxelRunnerSession {
     base_url: String,
     workspace: Option<String>,
     region: Option<String>,
+    egress_gateway: Option<String>,
     image: String,
     memory_mb: u32,
     ports: Vec<crate::SandboxPort>,
@@ -70,6 +71,7 @@ impl BlaxelRunnerSession {
             base_url: config.base_url.clone(),
             workspace: config.workspace.clone(),
             region: config.region.clone(),
+            egress_gateway: config.egress_gateway.clone(),
             image: config.image.clone(),
             memory_mb: config.memory_mb,
             ports: config.ports.clone(),
@@ -218,6 +220,9 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
         }
         if let Some(region) = &self.region {
             metadata["region"] = json!(region);
+        }
+        if let Some(gateway) = &self.egress_gateway {
+            metadata["egress_gateway"] = json!(gateway);
         }
         if let Some(ttl) = &self.ttl {
             metadata["ttl"] = json!(ttl);

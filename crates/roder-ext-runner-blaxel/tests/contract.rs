@@ -19,6 +19,86 @@ use fake_server::FakeBlaxelServer;
 static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[tokio::test]
+async fn dedicated_egress_is_created_and_survives_detach_and_rejoin() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+    }
+    let server = FakeBlaxelServer::start().await;
+    let provider = BlaxelRunnerProvider::default();
+    let destination = RunnerDestination {
+        id: "egress".into(),
+        provider_id: PROVIDER_ID.into(),
+        default_manifest: RunnerManifest::default(),
+        config: serde_json::json!({"token":"test-token", "base_url":server.base_url(),
+            "region":"us-was-1", "egress_gateway":"egress-gateway-1", "cleanup":"keep"}),
+    };
+    let session = provider.create_session(destination).await.unwrap();
+    let state = session.detach().await.unwrap();
+    assert_eq!(state.metadata["egress_gateway"], "egress-gateway-1");
+    let rejoined = provider.rejoin_session(state.clone()).await.unwrap();
+    assert_eq!(
+        rejoined.state().metadata["egress_gateway"],
+        "egress-gateway-1"
+    );
+    let request = server
+        .requests()
+        .into_iter()
+        .find(|request| request.starts_with("POST /sandboxes?"))
+        .unwrap();
+    let body: serde_json::Value =
+        serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(
+        body["spec"]["network"],
+        serde_json::json!({"egress":{"mode":"dedicated","gateway":"egress-gateway-1"}})
+    );
+    let mut wrong = state;
+    wrong.metadata["egress_gateway"] = serde_json::json!("egress-gateway-2");
+    assert!(provider.rejoin_session(wrong).await.is_err());
+}
+
+#[tokio::test]
+async fn dedicated_egress_cannot_reuse_an_existing_shared_sandbox() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+    }
+    let server = FakeBlaxelServer::start().await;
+    let provider = BlaxelRunnerProvider::default();
+    let mut destination = RunnerDestination {
+        id: "shared-first".into(),
+        provider_id: PROVIDER_ID.into(),
+        default_manifest: RunnerManifest::default(),
+        config: serde_json::json!({"token":"test-token", "base_url":server.base_url(),
+            "sandbox_name":"same-sandbox", "region":"us-was-1", "cleanup":"keep"}),
+    };
+    provider.create_session(destination.clone()).await.unwrap();
+    destination.config["egress_gateway"] = serde_json::json!("egress-gateway-1");
+    assert!(provider.create_session(destination).await.is_err());
+    assert!(!server.has_process_request());
+}
+
+#[test]
+fn dedicated_egress_rejects_missing_regions_and_invalid_gateways() {
+    for config in [
+        serde_json::json!({"egress_gateway":"egress-gateway-1"}),
+        serde_json::json!({"egress_gateway":"egress-gateway-1", "region":"auto"}),
+        serde_json::json!({"egress_gateway":"../another-gateway", "region":"us-was-1"}),
+        serde_json::json!({"egress_gateway":42, "region":"us-was-1"}),
+    ] {
+        let destination = RunnerDestination {
+            id: "invalid-egress".into(),
+            provider_id: PROVIDER_ID.into(),
+            default_manifest: RunnerManifest::default(),
+            config,
+        };
+        assert!(BlaxelConfig::from_destination(&destination).is_err());
+    }
+}
+
+#[tokio::test]
 async fn additional_ports_are_created_before_workload_operations_and_survive_rejoin() {
     let _guard = ENV_LOCK.lock().await;
     clear_env();

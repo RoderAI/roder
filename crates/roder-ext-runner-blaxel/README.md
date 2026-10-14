@@ -1,5 +1,12 @@
 # roder-ext-runner-blaxel
 
+For an allowlisted outbound address, provision a dedicated gateway in Blaxel and
+set `egress_gateway` and the matching concrete `region` in the runner destination.
+The provider sends `spec.network.egress = { mode: "dedicated", gateway: ... }`
+when creating the sandbox and preserves it in detached session state. Creation
+and rejoin refuse a sandbox with a different assignment. Omit `egress_gateway`
+to retain shared egress. Gateway assignment cannot be changed in place.
+
 `roder-ext-runner-blaxel` is the Blaxel runner provider for [Roder](https://roder.sh).
 
 ## What It Does

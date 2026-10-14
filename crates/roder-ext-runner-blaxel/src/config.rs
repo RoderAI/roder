@@ -192,6 +192,8 @@ pub struct BlaxelConfig {
     /// Additional ports are immutable runtime configuration, declared at creation.
     pub ports: Vec<crate::SandboxPort>,
     pub region: Option<String>,
+    /// Immutable dedicated outbound gateway; absence uses shared egress.
+    pub egress_gateway: Option<String>,
     pub ttl: Option<String>,
     /// Seconds to keep a bounded process lease alive after each runner operation.
     pub standby_after_seconds: Option<u64>,
@@ -361,6 +363,7 @@ impl BlaxelConfig {
             memory_mb,
             ports: crate::ports::parse_ports(config)?,
             region: string_field(config, "region"),
+            egress_gateway: crate::egress::gateway(config)?,
             ttl: string_field(config, "ttl"),
             standby_after_seconds,
             lifecycle,
