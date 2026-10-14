@@ -115,6 +115,23 @@ mod tests {
     }
 
     #[test]
+    fn empty_model_routing_load_balances_that_model_only() {
+        let routing = OpenRouterRouting::from_config(
+            None,
+            HashMap::from([("x-ai/grok-4.6".to_string(), Map::new())]),
+            None,
+        );
+
+        let mut balanced = json!({ "model": "x-ai/grok-4.6" });
+        routing.apply(&mut balanced);
+        assert!(balanced.get("provider").is_none());
+
+        let mut other = json!({ "model": "moonshotai/kimi-k3" });
+        routing.apply(&mut other);
+        assert_eq!(other["provider"], json!({ "sort": "price" }));
+    }
+
+    #[test]
     fn configured_service_tier_yields_to_request_tier() {
         let routing = OpenRouterRouting::from_config(None, HashMap::new(), Some("flex".into()));
 

@@ -134,7 +134,8 @@ impl OpenAiResponsesEngine {
             profile,
             discover_models: false,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
-            openrouter_routing: None,
+            openrouter_routing: (profile == ResponsesProviderProfile::OpenRouter)
+                .then(OpenRouterRouting::default),
         }
     }
 
