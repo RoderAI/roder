@@ -1321,6 +1321,7 @@ pub(crate) async fn build_runtime_from_config(
         openrouter_base_url: keys.openrouter_base_url,
         openrouter_http_referer: keys.openrouter_http_referer,
         openrouter_app_title: keys.openrouter_app_title,
+        openrouter_routing: keys.openrouter_routing,
         fireworks_api_key: keys.fireworks,
         fireworks_base_url: keys.fireworks_base_url,
         roder_cloud_api_key: keys.roder_cloud,
@@ -2600,6 +2601,7 @@ struct ProviderKeys {
     openrouter_base_url: Option<String>,
     openrouter_http_referer: Option<String>,
     openrouter_app_title: Option<String>,
+    openrouter_routing: roder_ext_openai_responses::OpenRouterRouting,
     fireworks: Option<String>,
     fireworks_base_url: Option<String>,
     roder_cloud: Option<String>,
@@ -2834,6 +2836,17 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.app_title.clone())
             .or_else(|| std::env::var("RODER_OPENROUTER_APP_TITLE").ok())
             .or_else(|| std::env::var("OPENROUTER_APP_TITLE").ok()),
+        openrouter_routing: cfg
+            .providers
+            .get(PROVIDER_OPENROUTER)
+            .map(|p| {
+                roder_ext_openai_responses::OpenRouterRouting::from_config(
+                    p.routing.clone(),
+                    p.model_routing.clone(),
+                    p.service_tier.clone(),
+                )
+            })
+            .unwrap_or_default(),
         fireworks: std::env::var("FIREWORKS_API_KEY")
             .ok()
             .or_else(|| std::env::var("RODER_FIREWORKS_API_KEY").ok())
@@ -3632,6 +3645,7 @@ mod tests {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            openrouter_routing: Default::default(),
             fireworks: None,
             fireworks_base_url: None,
             roder_cloud: None,

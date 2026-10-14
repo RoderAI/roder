@@ -55,7 +55,7 @@ use roder_ext_openai_images::{OpenAiImagesConfig, OpenAiImagesExtension};
 use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
 use roder_ext_openai_speech::OpenAiSpeechExtension;
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
-use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension};
+use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension, OpenRouterRouting};
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
 use roder_ext_postgres_session::{
     PostgresSessionConfig, PostgresSessionExtension, redact_database_url,
@@ -145,6 +145,7 @@ pub struct DefaultRegistryConfig {
     pub openrouter_base_url: Option<String>,
     pub openrouter_http_referer: Option<String>,
     pub openrouter_app_title: Option<String>,
+    pub openrouter_routing: OpenRouterRouting,
     pub fireworks_api_key: Option<String>,
     pub fireworks_base_url: Option<String>,
     pub roder_cloud_api_key: Option<String>,
@@ -275,6 +276,7 @@ impl Default for DefaultRegistryConfig {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            openrouter_routing: OpenRouterRouting::default(),
             fireworks_api_key: None,
             fireworks_base_url: None,
             roder_cloud_api_key: None,
@@ -482,6 +484,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         base_url: config.openrouter_base_url,
         http_referer: config.openrouter_http_referer,
         app_title: config.openrouter_app_title,
+        routing: config.openrouter_routing,
     }))?;
     builder.install(FireworksExtension::new(FireworksConfig {
         api_key: config.fireworks_api_key,
@@ -1764,6 +1767,7 @@ mod tests {
             openrouter_base_url: None,
             openrouter_http_referer: None,
             openrouter_app_title: None,
+            openrouter_routing: OpenRouterRouting::default(),
             fireworks_api_key: Some("fireworks".to_string()),
             fireworks_base_url: None,
             roder_cloud_api_key: Some("roder_test".to_string()),

@@ -270,6 +270,18 @@ pub struct ProviderConfig {
     pub permission_mode: Option<String>,
     pub setting_sources: Option<Vec<String>>,
     pub tool_search: Option<ToolSearchConfig>,
+    /// OpenRouter provider routing preferences sent as the request's
+    /// `provider` object (`only`, `order`, `allow_fallbacks`, `sort`,
+    /// `max_price`, ...). Unset routes by price; `{}` restores OpenRouter's
+    /// load balancing.
+    pub routing: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Per-model OpenRouter routing keyed by model slug; replaces `routing`
+    /// for that model.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub model_routing: HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    /// OpenRouter `service_tier` (`default`, `flex`, `priority`,
+    /// `ultrafast`); a per-request tier takes precedence.
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2646,6 +2658,37 @@ mod tests {
             Some("https://example.com")
         );
         assert_eq!(provider.app_title.as_deref(), Some("Roder"));
+    }
+
+    #[test]
+    fn deserializes_openrouter_provider_routing_config() {
+        let config: Config = toml::from_str(
+            r#"
+            [providers.openrouter]
+            service_tier = "flex"
+
+            [providers.openrouter.routing]
+            sort = "throughput"
+
+            [providers.openrouter.model_routing."deepseek/deepseek-v4.1-flash"]
+            only = ["deepinfra/fp8"]
+            allow_fallbacks = false
+            "#,
+        )
+        .unwrap();
+
+        let provider = config.providers.get("openrouter").unwrap();
+        assert_eq!(
+            serde_json::Value::Object(provider.routing.clone().unwrap()),
+            serde_json::json!({ "sort": "throughput" })
+        );
+        assert_eq!(
+            serde_json::Value::Object(
+                provider.model_routing["deepseek/deepseek-v4.1-flash"].clone()
+            ),
+            serde_json::json!({ "only": ["deepinfra/fp8"], "allow_fallbacks": false })
+        );
+        assert_eq!(provider.service_tier.as_deref(), Some("flex"));
     }
 
     #[test]
