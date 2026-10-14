@@ -367,8 +367,8 @@ impl OpenAiResponsesEngine {
                 .runtime
                 .prompt_cache_key
                 .as_deref()
-                .or(options.thread_id)
-                .filter(|key| !key.is_empty()),
+                .filter(|key| !key.is_empty())
+                .or(options.thread_id.filter(|key| !key.is_empty())),
         };
         if let Some(prompt_cache_key) = prompt_cache_key {
             body["prompt_cache_key"] = json!(prompt_cache_key);
@@ -2795,6 +2795,10 @@ mod tests {
         let body = OpenAiResponsesEngine::map_request_with_options(&request, options).0;
         assert_eq!(body["prompt_cache_key"], "thread-7");
         assert_eq!(body["session_id"], "thread-7");
+
+        request.runtime.prompt_cache_key = Some(String::new());
+        let body = OpenAiResponsesEngine::map_request_with_options(&request, options).0;
+        assert_eq!(body["session_id"], "run-1");
 
         request.runtime.prompt_cache_key = Some("k".repeat(300));
         let body = OpenAiResponsesEngine::map_request_with_options(&request, options).0;
