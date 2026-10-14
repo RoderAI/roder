@@ -217,8 +217,7 @@ fn websocket_stream(
             let mut request = incremental_request(&body,last.as_ref());
             let mut repaired_previous = false;
             loop {
-                let payload = prepare_request_payload(&request,request_byte_limit())?;
-                let cacheable = payload.metadata["shed_tool_images"] == 0;
+                let payload = prepare_request_payload(&request)?;
                 socket.send(Message::Text(std::str::from_utf8(&payload.bytes)?.to_string().into())).await.map_err(|error| socket_failure(&mut lease,error.to_string()))?;
                 yield InferenceEvent::ProviderMetadata(payload.metadata);
                 yield InferenceEvent::ProviderMetadata(json!({"type":"responses_transport","transport":"websocket","connection_reused":reused || round > 0,"incremental":request.get("previous_response_id").is_some()}));
@@ -245,7 +244,7 @@ fn websocket_stream(
                     if let Some(message) = state.protocol_failure.take() { Err(ProviderFailure::new(ProviderFailureKind::Protocol,message))?; }
                     if state.successful {
                         let response = event.data.get("response").unwrap_or(&event.data);
-                        let next_last = response.get("id").and_then(Value::as_str).filter(|_|cacheable)
+                        let next_last = response.get("id").and_then(Value::as_str)
                             .map(|id|LastResponse {request:body.clone(),output:state.response_output.clone(),id:id.into()});
                         let pending = std::mem::take(&mut state.pending_client_tool_searches);
                         if !pending.is_empty() && let Some(ctx) = continuation.as_mut() {

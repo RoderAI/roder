@@ -192,17 +192,16 @@ fn malformed_native_item_fails_protocol_instead_of_ending_the_turn_silently() {
     assert!(state.protocol_failure.is_some());
 }
 #[test]
-fn native_screenshot_is_counted_and_never_shed_as_an_invalid_output() {
+fn native_screenshot_is_counted_and_sent_unchanged() {
     let mut request = native_request();
     request.transcript.push(TranscriptItem::ProviderMetadata(
         json!({"output":[native_item()]}),
     ));
     add_result(&mut request, false);
     let body = OpenAiResponsesEngine::map_request(&request);
-    let bytes = serde_json::to_vec(&body).unwrap().len();
-    let payload = prepare_request_payload(&body, bytes).unwrap();
+    let payload = prepare_request_payload(&body).unwrap();
     assert_eq!(payload.metadata["image_count"], 1);
-    assert!(prepare_request_payload(&body, bytes - 1).is_err());
+    assert_eq!(payload.bytes, serde_json::to_vec(&body).unwrap());
 }
 
 /// The display payload a live native result gets: the executor's data, with
