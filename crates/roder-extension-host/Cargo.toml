@@ -1,6 +1,6 @@
 [package]
 name = "roder-extension-host"
-version = "0.5.4"
+version = "0.5.5"
 edition.workspace = true
 description.workspace = true
 license.workspace = true
