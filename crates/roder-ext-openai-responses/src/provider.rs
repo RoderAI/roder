@@ -143,7 +143,6 @@ impl OpenAiResponsesEngine {
         api_key: Option<String>,
         base_url: impl Into<String>,
         headers: Vec<(String, String)>,
-        routing: OpenRouterRouting,
     ) -> Self {
         Self {
             api_key,
@@ -154,8 +153,17 @@ impl OpenAiResponsesEngine {
             profile: ResponsesProviderProfile::OpenRouter,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
-            openrouter_routing: Some(routing),
+            openrouter_routing: Some(OpenRouterRouting::default()),
         }
+    }
+
+    /// Replace the price-first default routing of an OpenRouter engine. Has no
+    /// effect on other providers.
+    pub fn with_openrouter_routing(mut self, routing: OpenRouterRouting) -> Self {
+        if self.profile == ResponsesProviderProfile::OpenRouter {
+            self.openrouter_routing = Some(routing);
+        }
+        self
     }
 
     pub fn new_fireworks_provider(api_key: Option<String>, base_url: impl Into<String>) -> Self {
@@ -1892,15 +1900,15 @@ mod tests {
             Some("secret".to_string()),
             format!("http://{addr}"),
             Vec::new(),
-            OpenRouterRouting::from_config(
-                None,
-                HashMap::from([(
-                    "deepseek/deepseek-v4.1-flash".to_string(),
-                    routing.as_object().unwrap().clone(),
-                )]),
-                Some("flex".to_string()),
-            ),
-        );
+        )
+        .with_openrouter_routing(OpenRouterRouting::from_config(
+            None,
+            HashMap::from([(
+                "deepseek/deepseek-v4.1-flash".to_string(),
+                routing.as_object().unwrap().clone(),
+            )]),
+            Some("flex".to_string()),
+        ));
         let mut request = request();
         request.model = ModelSelection {
             provider: PROVIDER_OPENROUTER.to_string(),

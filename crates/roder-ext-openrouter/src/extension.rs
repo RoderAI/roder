@@ -49,15 +49,17 @@ impl RoderExtension for OpenRouterExtension {
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
-        registry.inference_engine(Arc::new(OpenAiResponsesEngine::new_openrouter_provider(
-            self.config.api_key.clone(),
-            self.config
-                .base_url
-                .clone()
-                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
-            openrouter_headers(&self.config),
-            self.config.routing.clone(),
-        )));
+        registry.inference_engine(Arc::new(
+            OpenAiResponsesEngine::new_openrouter_provider(
+                self.config.api_key.clone(),
+                self.config
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+                openrouter_headers(&self.config),
+            )
+            .with_openrouter_routing(self.config.routing.clone()),
+        ));
         Ok(())
     }
 }
