@@ -190,6 +190,18 @@ pub struct DefaultRegistryConfig {
     pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
     /// `[review.publishers.github]` settings for the GitHub review publisher.
     pub github_review: GithubReviewConfig,
+    /// Where this registry keeps Roder's data: memory, knowledge, the code
+    /// index and, without `thread_dir`, threads. `None` is the configured
+    /// Roder directory. A host embedding Roder points it at its own folder so
+    /// it neither reads nor writes the user's own Roder data.
+    pub data_dir: Option<PathBuf>,
+    /// Install the memory extension, including the recall context it adds
+    /// to every turn.
+    pub memory: bool,
+    /// Install the knowledge extension when `[knowledge]` enables it.
+    pub knowledge: bool,
+    /// Index the workspace and offer code-index context.
+    pub code_index: bool,
 }
 
 /// Out-of-tree extensions installed after the built-in set. Supplied by
@@ -316,6 +328,10 @@ impl Default for DefaultRegistryConfig {
             extra_extensions: ExtraExtensions::default(),
             process_extensions: Vec::new(),
             github_review: GithubReviewConfig::default(),
+            data_dir: None,
+            memory: true,
+            knowledge: true,
+            code_index: true,
         }
     }
 }
@@ -601,8 +617,13 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         subagents::install_subagents(&mut builder, subagents)?;
     }
 
-    let roder_home = roder_home_dir()?;
-    context::install_code_index_context_provider(&mut builder, &workspace, &roder_home)?;
+    let roder_home = match config.data_dir {
+        Some(dir) => dir,
+        None => roder_home_dir()?,
+    };
+    if config.code_index {
+        context::install_code_index_context_provider(&mut builder, &workspace, &roder_home)?;
+    }
     match config.session_store {
         SessionStoreConfig::Jsonl => {
             let thread_dir = config
@@ -636,6 +657,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         }
     }
     match selected_memory_backend().as_deref() {
+        _ if !config.memory => {}
         Some("honcho") => builder.install(honcho_memory_extension()?)?,
         None | Some("sqlite") => builder.install(
             MemoryExtension::new(roder_home.join("memory"))
@@ -645,7 +667,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             anyhow::bail!("unknown memory backend {other:?}; expected \"sqlite\" or \"honcho\"")
         }
     }
-    {
+    if config.knowledge {
         let knowledge = roder_config::load_config()
             .ok()
             .and_then(|config| config.knowledge)
@@ -1653,6 +1675,52 @@ mod tests {
         assert!(err.to_string().contains("already installed"));
     }
 
+    fn context_provider_ids(registry: &ExtensionRegistry) -> Vec<String> {
+        registry
+            .context_providers
+            .iter()
+            .map(|provider| provider.id())
+            .collect()
+    }
+
+    #[test]
+    fn a_host_folder_keeps_roder_data_out_of_the_users_own() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let registry = build_default_registry(DefaultRegistryConfig {
+            data_dir: Some(data_dir.path().to_path_buf()),
+            workspace: Some(workspace.path().to_path_buf()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let ids = context_provider_ids(&registry);
+        assert!(ids.iter().any(|id| id == "memory-context"), "{ids:?}");
+        assert!(data_dir.path().join("memory").exists());
+        assert!(data_dir.path().join("code-index").exists());
+    }
+
+    #[test]
+    fn memory_knowledge_and_code_index_can_be_left_out() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let registry = build_default_registry(DefaultRegistryConfig {
+            data_dir: Some(data_dir.path().to_path_buf()),
+            workspace: Some(workspace.path().to_path_buf()),
+            memory: false,
+            knowledge: false,
+            code_index: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let ids = context_provider_ids(&registry);
+        assert!(!ids.iter().any(|id| id == "memory-context"), "{ids:?}");
+        assert!(!ids.iter().any(|id| id == "code-index-context-provider"), "{ids:?}");
+        assert!(!data_dir.path().join("memory").exists());
+        assert!(!data_dir.path().join("code-index").exists());
+    }
+
     #[test]
     fn default_registry_installs_zerolang_tools_without_zero_binary() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1809,6 +1877,10 @@ mod tests {
             extra_extensions: ExtraExtensions::default(),
             process_extensions: Vec::new(),
             github_review: GithubReviewConfig::default(),
+            data_dir: None,
+            memory: true,
+            knowledge: true,
+            code_index: true,
         })
         .unwrap();
         for provider in [
