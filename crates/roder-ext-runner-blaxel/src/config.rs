@@ -194,6 +194,9 @@ pub struct BlaxelConfig {
     pub region: Option<String>,
     /// Immutable dedicated outbound gateway; absence uses shared egress.
     pub egress_gateway: Option<String>,
+    /// Workspace frozen with a dedicated assignment; credentials may rotate,
+    /// but an identically named gateway in another workspace is not the same IP.
+    pub egress_workspace: Option<String>,
     pub ttl: Option<String>,
     /// Seconds to keep a bounded process lease alive after each runner operation.
     pub standby_after_seconds: Option<u64>,
@@ -329,6 +332,22 @@ impl BlaxelConfig {
 
         let workspace = first_env(&[RODER_WORKSPACE_ENV, WORKSPACE_ENV, BLAXEL_WORKSPACE_ENV])
             .or_else(|| string_field(config, "workspace"));
+        let egress_gateway = crate::egress::gateway(config)?;
+        let egress_workspace = if egress_gateway.is_some() {
+            anyhow::ensure!(
+                workspace.is_some(),
+                "dedicated egress requires an explicit provider workspace"
+            );
+            if let Some(expected) = config.get("egress_workspace") {
+                anyhow::ensure!(
+                    workspace.as_deref() == expected.as_str(),
+                    "dedicated egress provider workspace changed"
+                );
+            }
+            workspace.clone()
+        } else {
+            None
+        };
 
         let base_url = first_env(&[RODER_BASE_URL_ENV, BASE_URL_ENV])
             .or_else(|| string_field(config, "base_url"))
@@ -363,7 +382,8 @@ impl BlaxelConfig {
             memory_mb,
             ports: crate::ports::parse_ports(config)?,
             region: string_field(config, "region"),
-            egress_gateway: crate::egress::gateway(config)?,
+            egress_gateway,
+            egress_workspace,
             ttl: string_field(config, "ttl"),
             standby_after_seconds,
             lifecycle,

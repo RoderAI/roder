@@ -32,11 +32,12 @@ async fn dedicated_egress_is_created_and_survives_detach_and_rejoin() {
         provider_id: PROVIDER_ID.into(),
         default_manifest: RunnerManifest::default(),
         config: serde_json::json!({"token":"test-token", "base_url":server.base_url(),
-            "region":"us-was-1", "egress_gateway":"egress-gateway-1", "cleanup":"keep"}),
+            "region":"us-was-1", "workspace":"test-workspace", "egress_gateway":"egress-gateway-1", "cleanup":"keep"}),
     };
     let session = provider.create_session(destination).await.unwrap();
     let state = session.detach().await.unwrap();
     assert_eq!(state.metadata["egress_gateway"], "egress-gateway-1");
+    assert_eq!(state.metadata["egress_workspace"], "test-workspace");
     let rejoined = provider.rejoin_session(state.clone()).await.unwrap();
     assert_eq!(
         rejoined.state().metadata["egress_gateway"],
@@ -53,6 +54,9 @@ async fn dedicated_egress_is_created_and_survives_detach_and_rejoin() {
         body["spec"]["network"],
         serde_json::json!({"egress":{"mode":"dedicated","gateway":"egress-gateway-1"}})
     );
+    let mut relocated = state.clone();
+    relocated.metadata["workspace"] = serde_json::json!("other-workspace");
+    assert!(provider.rejoin_session(relocated).await.is_err());
     let mut wrong = state;
     wrong.metadata["egress_gateway"] = serde_json::json!("egress-gateway-2");
     assert!(provider.rejoin_session(wrong).await.is_err());
@@ -72,7 +76,7 @@ async fn dedicated_egress_cannot_reuse_an_existing_shared_sandbox() {
         provider_id: PROVIDER_ID.into(),
         default_manifest: RunnerManifest::default(),
         config: serde_json::json!({"token":"test-token", "base_url":server.base_url(),
-            "sandbox_name":"same-sandbox", "region":"us-was-1", "cleanup":"keep"}),
+            "sandbox_name":"same-sandbox", "region":"us-was-1", "workspace":"test-workspace", "cleanup":"keep"}),
     };
     provider.create_session(destination.clone()).await.unwrap();
     destination.config["egress_gateway"] = serde_json::json!("egress-gateway-1");
