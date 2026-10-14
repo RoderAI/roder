@@ -190,10 +190,12 @@ pub struct DefaultRegistryConfig {
     pub process_extensions: Vec<roder_api::process_extension::ProcessExtensionConfig>,
     /// `[review.publishers.github]` settings for the GitHub review publisher.
     pub github_review: GithubReviewConfig,
-    /// Where this registry keeps Roder's data: memory, knowledge, the code
-    /// index and, without `thread_dir`, threads. `None` is the configured
-    /// Roder directory. A host embedding Roder points it at its own folder so
-    /// it neither reads nor writes the user's own Roder data.
+    /// Where the extensions this registry installs keep Roder's data:
+    /// memory, knowledge (over any `[knowledge].store_path`), the code index
+    /// and, without `thread_dir`, threads. `None` is the configured Roder
+    /// directory. A host embedding Roder points it at its own folder so the
+    /// registry neither reads nor writes the user's own Roder data. It does
+    /// not reach an app server's own `index/*` handlers.
     pub data_dir: Option<PathBuf>,
     /// Install the memory extension, including the recall context it adds
     /// to every turn.
@@ -617,6 +619,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         subagents::install_subagents(&mut builder, subagents)?;
     }
 
+    let host_data_dir = config.data_dir.is_some();
     let roder_home = match config.data_dir {
         Some(dir) => dir,
         None => roder_home_dir()?,
@@ -675,9 +678,11 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         if knowledge.enabled {
             match knowledge.backend.as_deref() {
                 None | Some("markdown") => {
+                    // A host's own data folder wins over the user's store.
                     let base_path = knowledge
                         .store_path
                         .clone()
+                        .filter(|_| !host_data_dir)
                         .unwrap_or_else(|| roder_home.join("knowledge"));
                     builder.install(
                         KnowledgeMdExtension::new(base_path)
@@ -1716,7 +1721,10 @@ mod tests {
 
         let ids = context_provider_ids(&registry);
         assert!(!ids.iter().any(|id| id == "memory-context"), "{ids:?}");
-        assert!(!ids.iter().any(|id| id == "code-index-context-provider"), "{ids:?}");
+        assert!(
+            !ids.iter().any(|id| id == "code-index-context-provider"),
+            "{ids:?}"
+        );
         assert!(!data_dir.path().join("memory").exists());
         assert!(!data_dir.path().join("code-index").exists());
     }
