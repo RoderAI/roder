@@ -29,6 +29,9 @@ pub(super) async fn compact(
         },
     );
     body.as_object_mut().unwrap().remove("context_management");
+    if let Some(routing) = &engine.openrouter_routing {
+        routing.apply(&mut body);
+    }
     // Codex remote V2 keeps current tools and instructions for both API keys
     // and subscriptions, requesting an opaque boundary on the Responses stream.
     let retained = retained_client_messages(&body);

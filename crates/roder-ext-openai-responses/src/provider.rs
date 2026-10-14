@@ -39,7 +39,10 @@ mod response_tools;
 use response_tools::*;
 #[path = "image_support.rs"]
 mod image_support;
+#[path = "openrouter_routing.rs"]
+mod openrouter_routing;
 pub use image_support::forwards_tool_result_images;
+pub use openrouter_routing::OpenRouterRouting;
 
 use crate::stream_diagnostics::ResponseStreamDiagnostics;
 use roder_api::catalog::{
@@ -83,6 +86,7 @@ pub struct OpenAiResponsesEngine {
     profile: ResponsesProviderProfile,
     discover_models: bool,
     refresh_in_flight: Arc<AtomicBool>,
+    openrouter_routing: Option<OpenRouterRouting>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +134,7 @@ impl OpenAiResponsesEngine {
             profile,
             discover_models: false,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            openrouter_routing: None,
         }
     }
 
@@ -137,6 +142,7 @@ impl OpenAiResponsesEngine {
         api_key: Option<String>,
         base_url: impl Into<String>,
         headers: Vec<(String, String)>,
+        routing: OpenRouterRouting,
     ) -> Self {
         Self {
             api_key,
@@ -147,6 +153,7 @@ impl OpenAiResponsesEngine {
             profile: ResponsesProviderProfile::OpenRouter,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            openrouter_routing: Some(routing),
         }
     }
 
@@ -160,6 +167,7 @@ impl OpenAiResponsesEngine {
             profile: ResponsesProviderProfile::Fireworks,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            openrouter_routing: None,
         }
     }
 
@@ -178,6 +186,7 @@ impl OpenAiResponsesEngine {
             profile: ResponsesProviderProfile::OpenAi,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            openrouter_routing: None,
         }
     }
 
@@ -290,14 +299,16 @@ impl OpenAiResponsesEngine {
                 ResponsesProviderProfile::Xai | ResponsesProviderProfile::Fireworks => {}
             }
         }
-        // Only OpenAI's own Responses API takes `service_tier` (Fast mode is
-        // `"priority"`); OpenRouter, xAI, and Fireworks never receive it.
-        if options.profile == ResponsesProviderProfile::OpenAi
-            && let Some(service_tier) = request
-                .runtime
-                .service_tier
-                .as_deref()
-                .filter(|tier| !tier.is_empty())
+        // OpenAI and OpenRouter take `service_tier` (Fast mode is
+        // `"priority"`); xAI and Fireworks never receive it.
+        if matches!(
+            options.profile,
+            ResponsesProviderProfile::OpenAi | ResponsesProviderProfile::OpenRouter
+        ) && let Some(service_tier) = request
+            .runtime
+            .service_tier
+            .as_deref()
+            .filter(|tier| !tier.is_empty())
         {
             body["service_tier"] = json!(service_tier);
         }
@@ -803,6 +814,9 @@ impl InferenceEngine for OpenAiResponsesEngine {
         );
         if self.provider_id == PROVIDER_CODEX {
             body.as_object_mut().unwrap().remove("context_management");
+        }
+        if let Some(routing) = &self.openrouter_routing {
+            routing.apply(&mut body);
         }
         // Provider-native tool search may require client-executed searches
         // against the runtime catalog within the same turn.
@@ -1836,6 +1850,80 @@ mod tests {
             err.to_string(),
             "xAI API key is missing; set XAI_API_KEY or configure it from the provider menu"
         );
+    }
+
+    #[tokio::test]
+    async fn openrouter_stream_turn_sends_model_provider_routing() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let body = loop {
+                let mut buf = [0_u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap();
+                assert!(n > 0);
+                bytes.extend_from_slice(&buf[..n]);
+                let Some(end) = bytes.windows(4).position(|chunk| chunk == b"\r\n\r\n") else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                if bytes.len() >= end + 4 + length {
+                    break serde_json::from_slice::<Value>(&bytes[end + 4..end + 4 + length])
+                        .unwrap();
+                }
+            };
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+            body
+        });
+        let routing = json!({ "only": ["deepinfra/fp8"], "allow_fallbacks": false });
+        let engine = OpenAiResponsesEngine::new_openrouter_provider(
+            Some("secret".to_string()),
+            format!("http://{addr}"),
+            Vec::new(),
+            OpenRouterRouting::from_config(
+                None,
+                HashMap::from([(
+                    "deepseek/deepseek-v4.1-flash".to_string(),
+                    routing.as_object().unwrap().clone(),
+                )]),
+                Some("flex".to_string()),
+            ),
+        );
+        let mut request = request();
+        request.model = ModelSelection {
+            provider: PROVIDER_OPENROUTER.to_string(),
+            model: "deepseek/deepseek-v4.1-flash".to_string(),
+        };
+
+        if let Ok(mut stream) = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request,
+            )
+            .await
+        {
+            while stream.next().await.is_some() {}
+        }
+
+        let body = server.await.unwrap();
+        assert_eq!(body["model"], "deepseek/deepseek-v4.1-flash");
+        assert_eq!(body["provider"], routing);
+        assert_eq!(body["service_tier"], "flex");
     }
 
     async fn spawn_models_server(routes: Vec<(&'static str, u16, &'static str)>) -> String {
@@ -2943,7 +3031,7 @@ mod tests {
     }
 
     #[test]
-    fn sends_service_tier_only_to_openai_when_requested() {
+    fn sends_service_tier_only_to_openai_and_openrouter_when_requested() {
         let mut request = request();
         let body = OpenAiResponsesEngine::map_request_with_options(
             &request,
@@ -2960,8 +3048,17 @@ mod tests {
         .0;
         assert_eq!(body["service_tier"], json!("priority"));
 
+        let body = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::OpenRouter,
+                thread_id: None,
+            },
+        )
+        .0;
+        assert_eq!(body["service_tier"], json!("priority"));
+
         for profile in [
-            ResponsesProviderProfile::OpenRouter,
             ResponsesProviderProfile::Xai,
             ResponsesProviderProfile::Fireworks,
         ] {

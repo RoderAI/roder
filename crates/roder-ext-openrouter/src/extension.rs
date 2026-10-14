@@ -5,7 +5,7 @@ use roder_api::catalog::PROVIDER_OPENROUTER;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
-use roder_ext_openai_responses::OpenAiResponsesEngine;
+use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenRouterRouting};
 use semver::Version;
 
 const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -16,6 +16,7 @@ pub struct OpenRouterConfig {
     pub base_url: Option<String>,
     pub http_referer: Option<String>,
     pub app_title: Option<String>,
+    pub routing: OpenRouterRouting,
 }
 
 pub struct OpenRouterExtension {
@@ -55,6 +56,7 @@ impl RoderExtension for OpenRouterExtension {
                 .clone()
                 .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
             openrouter_headers(&self.config),
+            self.config.routing.clone(),
         )));
         Ok(())
     }

@@ -95,6 +95,51 @@ RODER_OPENROUTER_APP_TITLE
 
 Roder only sends attribution headers when configured.
 
+## Provider Routing
+
+OpenRouter can serve a model from several upstream providers. Roder forwards
+routing preferences as the request's `provider` object, so every field from
+OpenRouter's [provider selection](https://openrouter.ai/docs/guides/routing/provider-selection)
+works (`order`, `only`, `ignore`, `allow_fallbacks`, `require_parameters`,
+`data_collection`, `zdr`, `quantizations`, `sort`, `max_price`,
+`preferred_min_throughput`, `preferred_max_latency`, ...).
+
+By default Roder routes by price: with no `routing` configured every request
+sends `provider = { sort = "price" }`, so the cheapest endpoint is tried first
+and the rest are fallbacks. Set `routing = {}` to use OpenRouter's own load
+balancing instead (price-weighted, but spread across providers).
+
+`routing` applies to every OpenRouter model; `model_routing` entries are keyed
+by the OpenRouter model slug and replace `routing` for that model (they are not
+merged, so include `sort` in an entry that should stay price-first):
+
+```toml
+[providers.openrouter.routing]
+sort = { by = "price", partition = "none" }
+max_price = { prompt = 1, completion = 2 }   # USD per million tokens; blocks pricier endpoints
+
+[providers.openrouter.model_routing."deepseek/deepseek-v4.1-flash"]
+only = ["deepinfra/fp8"]
+allow_fallbacks = false
+```
+
+## Service Tiers
+
+`service_tier` selects OpenRouter's
+[service tier](https://openrouter.ai/docs/guides/features/service-tiers) for
+every OpenRouter request:
+
+```toml
+[providers.openrouter]
+service_tier = "flex"   # default | flex | priority | ultrafast
+```
+
+A per-request service tier (the runtime `service_tier` hint, e.g. `"priority"`
+for Fast mode) takes precedence. `flex` never falls back to default-tier
+endpoints, so a model without flex capacity fails rather than silently paying
+standard prices; `priority` and `ultrafast` fall back to lower tiers. The tier
+that actually served the request is recorded on the turn's token usage.
+
 ## Model Discovery
 
 Roder returns built-in OpenRouter models immediately, refreshes stale model data in the background, and caches successful discovery in `~/.roder/models-cache.json`.
