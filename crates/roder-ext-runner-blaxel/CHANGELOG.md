@@ -1,3 +1,9 @@
+## 0.2.2 (2026-10-14)
+
+### Features
+
+- Support dedicated egress gateways for Blaxel sandboxes. Preserve assignments in detached sessions and refuse reuse when a sandbox's gateway or region does not match.
+
 ## 0.2.1 (2026-10-08)
 
 ### Features
