@@ -3398,7 +3398,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3598,7 +3598,7 @@ dependencies = [
 
 [[package]]
 name = "roder-config"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -4263,7 +4263,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-responses"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4315,7 +4315,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openrouter"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4818,7 +4818,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "anyhow",
  "async-trait",
