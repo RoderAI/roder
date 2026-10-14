@@ -6041,9 +6041,9 @@ Example ACP notification after refused input with a fresh partial-state PNG:
 
 ### Responses request and recovery behavior
 
-Responses retries preserve typed provider errors and honor valid `Retry-After` deadlines. Quota, authentication, invalid-request, tool-search exhaustion, and request-budget errors fail without a transient retry. Steering preempts unfinished sampling and retry waits. Completed output items remain in replay history; unfinished deltas do not. Read-only tools that explicitly opt in may execute while sampling continues when the model permits parallel tools and the advertised toolset has no exclusive swarm batch.
+Responses retries preserve typed provider errors and honor valid `Retry-After` deadlines. Quota, authentication, invalid-request, and tool-search exhaustion errors fail without a transient retry. Steering preempts unfinished sampling and retry waits. Completed output items remain in replay history; unfinished deltas do not. Read-only tools that explicitly opt in may execute while sampling continues when the model permits parallel tools and the advertised toolset has no exclusive swarm batch.
 
-The client measures serialized request bytes, including schemas, opaque provider items, and base64 image URLs. `RODER_RESPONSES_MAX_REQUEST_BYTES` sets a positive byte limit; the default is 15 MiB as a client guard, not a claim about every backend's limit. When needed, previously viewed tool images are omitted from the outgoing request while retaining the newest tool image and canonical history. User image attachments are retained. A request still over the limit fails with `request_too_large` before submission. Request-budget metadata reports byte/image counts and omitted tool images without including their contents.
+Requests are sent exactly as built; the client applies no byte limit and never omits history or images. The provider judges size: HTTP 413 becomes `request_too_large`, and an over-long prompt (including OpenRouter's HTTP 400 "maximum context length" error) becomes `context_window_exceeded`. The runtime compacts and resends on either. Request-budget metadata reports serialized byte and image counts without including their contents.
 
 Manual compaction uses the target task's active or saved provider/model selection.
 

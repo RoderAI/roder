@@ -70,7 +70,7 @@ pub(super) async fn send_responses_endpoint(
     } = endpoint;
     let policy = policy.cloned().unwrap_or_default();
     let attempts = policy.provider_retry_max_attempts.max(1);
-    let payload = prepare_request_payload(body, request_byte_limit())?;
+    let payload = prepare_request_payload(body)?;
     let client = responses_stream_client(idle_timeout)?;
     let mut last_error = None;
     let mut retry_events = Vec::new();
@@ -261,6 +261,19 @@ pub(super) fn http_failure(
     let code = credit_reason.or_else(|| data.pointer("/error/code").and_then(Value::as_str));
     let kind = if status == reqwest::StatusCode::PAYMENT_REQUIRED {
         failure_kind(credit_reason, Some(402))
+    } else if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+        ProviderFailureKind::RequestTooLarge
+    } else if status == reqwest::StatusCode::BAD_REQUEST
+        && code.is_none()
+        && data
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .is_some_and(context_window_message)
+    {
+        // OpenRouter reports an over-long prompt as HTTP 400 with a numeric
+        // code and only this message, e.g. "This endpoint's maximum context
+        // length is 131072 tokens. However, you requested about 200046 tokens".
+        ProviderFailureKind::ContextWindowExceeded
     } else {
         failure_kind(code, Some(status.as_u16()))
     };
@@ -277,6 +290,17 @@ pub(super) fn http_failure(
         retry_not_before,
         retry_budget_exhausted: false,
     }
+}
+
+fn context_window_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "maximum context length",
+        "context length exceeded",
+        "context window exceeded",
+    ]
+    .iter()
+    .any(|phrase| message.contains(phrase))
 }
 
 pub(super) fn failure_kind(code: Option<&str>, status: Option<u16>) -> ProviderFailureKind {
@@ -313,6 +337,34 @@ pub(super) fn failure_kind(code: Option<&str>, status: Option<u16>) -> ProviderF
 #[cfg(test)]
 mod credit_limit_tests {
     use super::*;
+
+    #[test]
+    fn provider_overflow_and_size_rejections_trigger_compaction_kinds() {
+        // Exact OpenRouter body for a prompt over the endpoint's window.
+        let body = r#"{"error":{"message":"This endpoint's maximum context length is 131072 tokens. However, you requested about 200046 tokens (200030 of text input, 16 in the output). Please reduce the length of either one, or use the context-compression plugin to compress your prompt automatically.","code":400,"metadata":{"provider_name":null}}}"#;
+        let failure = http_failure(reqwest::StatusCode::BAD_REQUEST, body, None);
+        assert_eq!(failure.kind, ProviderFailureKind::ContextWindowExceeded);
+        let failure = http_failure(reqwest::StatusCode::PAYLOAD_TOO_LARGE, "", None);
+        assert_eq!(failure.kind, ProviderFailureKind::RequestTooLarge);
+        let failure = http_failure(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"Invalid tool schema","code":400}}"#,
+            None,
+        );
+        assert_eq!(failure.kind, ProviderFailureKind::InvalidRequest);
+        let failure = http_failure(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"context window setting must be positive","code":400}}"#,
+            None,
+        );
+        assert_eq!(failure.kind, ProviderFailureKind::InvalidRequest);
+        let failure = http_failure(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":{"message":"maximum context length provider unavailable","code":503}}"#,
+            None,
+        );
+        assert_ne!(failure.kind, ProviderFailureKind::ContextWindowExceeded);
+    }
 
     #[test]
     fn openrouter_in_flight_limit_preserves_retry_advice_and_is_recoverable() {

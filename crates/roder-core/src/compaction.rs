@@ -458,6 +458,20 @@ fn estimate_text_tokens(text: &str) -> u32 {
 /// True when a provider/runtime error indicates the prompt exceeded the model
 /// context / maximum prompt length. Used to force emergency compaction and
 /// same-turn recovery.
+/// A provider rejected the request as too long for its context window or too
+/// large to accept; the runtime compacts and resends in response.
+pub(crate) fn is_context_overflow_failure(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<roder_api::provider_error::ProviderFailure>()
+        .is_some_and(|failure| {
+            matches!(
+                failure.kind,
+                roder_api::provider_error::ProviderFailureKind::ContextWindowExceeded
+                    | roder_api::provider_error::ProviderFailureKind::RequestTooLarge
+            )
+        })
+}
+
 pub(crate) fn is_context_limit_failure_message(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("context window")
@@ -571,6 +585,22 @@ pub(crate) fn build_compaction_record(summary: String) -> TranscriptItem {
 #[cfg(test)]
 mod tests {
     use roder_api::transcript::{AssistantMessage, ErrorRecord, UserMessage};
+
+    #[test]
+    fn typed_provider_overflow_triggers_recovery_without_known_wording() {
+        use roder_api::provider_error::{ProviderFailure, ProviderFailureKind};
+        let empty_413 = anyhow::Error::new(ProviderFailure::new(
+            ProviderFailureKind::RequestTooLarge,
+            "OpenAI Responses error 413 Payload Too Large: ",
+        ));
+        assert!(!is_context_limit_failure_message(&empty_413.to_string()));
+        assert!(is_context_overflow_failure(&empty_413));
+        let rate_limited = anyhow::Error::new(ProviderFailure::new(
+            ProviderFailureKind::RateLimited,
+            "slow down",
+        ));
+        assert!(!is_context_overflow_failure(&rate_limited));
+    }
 
     use super::*;
 

@@ -553,7 +553,6 @@ struct ContextLimitRecoveringEngine {
     requests: Mutex<Vec<AgentInferenceRequest>>,
 }
 
-
 #[async_trait::async_trait]
 impl InferenceEngine for ErrorRecoveringEngine {
     fn id(&self) -> InferenceEngineId {
@@ -674,7 +673,6 @@ impl InferenceEngine for PhasePreservingEngine {
         Ok(Box::pin(stream::iter(events)))
     }
 }
-
 
 #[async_trait::async_trait]
 impl InferenceEngine for ContextLimitRecoveringEngine {
@@ -995,7 +993,6 @@ async fn provider_start_errors_are_emitted_for_the_active_thread() {
     }
 }
 
-
 #[tokio::test]
 async fn context_limit_stream_start_errors_auto_compact_and_retry() {
     let engine = Arc::new(ContextLimitRecoveringEngine {
@@ -1059,7 +1056,10 @@ async fn context_limit_stream_start_errors_auto_compact_and_retry() {
             _ => {}
         }
     };
-    assert!(completed, "turn should complete after context-limit recovery");
+    assert!(
+        completed,
+        "turn should complete after context-limit recovery"
+    );
 
     assert!(saw_retry, "expected a context_limit_recovery retry event");
     let requests = engine.requests.lock().unwrap();
