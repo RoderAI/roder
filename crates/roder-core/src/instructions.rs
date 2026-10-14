@@ -355,7 +355,10 @@ mod tests {
             ["web_search", "parallel_extract"],
         );
         {
-            let developer = injected.developer.as_deref().expect("developer instructions");
+            let developer = injected
+                .developer
+                .as_deref()
+                .expect("developer instructions");
             assert!(developer.starts_with("existing"));
             assert!(developer.contains("## Parallel Web Access"));
             assert!(developer.contains("`web_search`"));

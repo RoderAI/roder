@@ -4053,6 +4053,7 @@ impl Runtime {
                                     &provider,
                                     &model,
                                     &error,
+                                    crate::compaction::is_context_overflow_failure(&err),
                                     &mut transcript,
                                     &mut compacted_this_turn,
                                     &mut context_limit_recovery_attempts,
@@ -4139,6 +4140,7 @@ impl Runtime {
                                 &provider,
                                 &model,
                                 &error,
+                                crate::compaction::is_context_overflow_failure(&err),
                                 &mut transcript,
                                 &mut compacted_this_turn,
                                 &mut context_limit_recovery_attempts,
@@ -4287,6 +4289,7 @@ impl Runtime {
                                 &provider,
                                 &model,
                                 &error,
+                                crate::compaction::is_context_overflow_failure(&err),
                                 &mut transcript,
                                 &mut compacted_this_turn,
                                 &mut context_limit_recovery_attempts,
@@ -4387,6 +4390,7 @@ impl Runtime {
                                 &provider,
                                 &model,
                                 &error,
+                                false,
                                 &mut transcript,
                                 &mut compacted_this_turn,
                                 &mut context_limit_recovery_attempts,
@@ -4930,12 +4934,13 @@ impl Runtime {
         provider: &str,
         model: &str,
         error: &str,
+        typed_overflow: bool,
         transcript: &mut Vec<TranscriptItem>,
         compacted_this_turn: &mut bool,
         recovery_attempts: &mut u32,
     ) -> anyhow::Result<bool> {
         const MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS: u32 = 2;
-        if !crate::compaction::is_context_limit_failure_message(error) {
+        if !typed_overflow && !crate::compaction::is_context_limit_failure_message(error) {
             return Ok(false);
         }
         if *recovery_attempts >= MAX_CONTEXT_LIMIT_RECOVERY_ATTEMPTS {

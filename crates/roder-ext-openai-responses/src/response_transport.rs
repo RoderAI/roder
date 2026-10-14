@@ -263,7 +263,8 @@ pub(super) fn http_failure(
         failure_kind(credit_reason, Some(402))
     } else if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
         ProviderFailureKind::RequestTooLarge
-    } else if code.is_none()
+    } else if status == reqwest::StatusCode::BAD_REQUEST
+        && code.is_none()
         && data
             .pointer("/error/message")
             .and_then(Value::as_str)
@@ -296,7 +297,7 @@ fn context_window_message(message: &str) -> bool {
     [
         "maximum context length",
         "context length exceeded",
-        "context window",
+        "context window exceeded",
     ]
     .iter()
     .any(|phrase| message.contains(phrase))
@@ -351,6 +352,18 @@ mod credit_limit_tests {
             None,
         );
         assert_eq!(failure.kind, ProviderFailureKind::InvalidRequest);
+        let failure = http_failure(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"context window setting must be positive","code":400}}"#,
+            None,
+        );
+        assert_eq!(failure.kind, ProviderFailureKind::InvalidRequest);
+        let failure = http_failure(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":{"message":"maximum context length provider unavailable","code":503}}"#,
+            None,
+        );
+        assert_ne!(failure.kind, ProviderFailureKind::ContextWindowExceeded);
     }
 
     #[test]
