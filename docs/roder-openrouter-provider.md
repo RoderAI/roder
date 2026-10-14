@@ -123,6 +123,18 @@ only = ["deepinfra/fp8"]
 allow_fallbacks = false
 ```
 
+## Prompt Caching
+
+Upstream providers cache prompt prefixes per provider, so a conversation only
+hits the cache when its turns reach the same endpoint. Roder sends every
+OpenRouter request a sticky key (`prompt_cache_key` and `session_id`): the
+runtime's prompt cache key (the thread id for normal turns) or, for direct
+engine callers, the turn context's thread id. OpenRouter's sticky routing then
+pins the conversation to one provider from its first request. `session_id` is
+limited to 256 characters, so longer keys are truncated there (keys sharing
+their first 256 characters share provider affinity); `prompt_cache_key` is sent
+unchanged.
+
 ## Service Tiers
 
 `service_tier` selects OpenRouter's
