@@ -84,8 +84,14 @@ async fn dedicated_egress_cannot_reuse_an_existing_shared_sandbox() {
     assert!(!server.has_process_request());
 }
 
-#[test]
-fn dedicated_egress_rejects_missing_regions_and_invalid_gateways() {
+#[tokio::test]
+async fn dedicated_egress_rejects_missing_regions_and_invalid_gateways() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    unsafe {
+        std::env::set_var(TOKEN_ENV, "test-token");
+        std::env::set_var(WORKSPACE_ENV, "test-workspace");
+    }
     for config in [
         serde_json::json!({"egress_gateway":"egress-gateway-1"}),
         serde_json::json!({"egress_gateway":"egress-gateway-1", "region":"auto"}),
@@ -98,8 +104,16 @@ fn dedicated_egress_rejects_missing_regions_and_invalid_gateways() {
             default_manifest: RunnerManifest::default(),
             config,
         };
-        assert!(BlaxelConfig::from_destination(&destination).is_err());
+        let error = BlaxelConfig::from_destination(&destination).unwrap_err();
+        assert!(error.to_string().contains("egress"), "{error}");
     }
+    let valid = RunnerDestination {
+        id: "valid-egress".into(),
+        provider_id: PROVIDER_ID.into(),
+        default_manifest: RunnerManifest::default(),
+        config: serde_json::json!({"region":"us-was-1","egress_gateway":"egress-gateway-1"}),
+    };
+    assert!(BlaxelConfig::from_destination(&valid).is_ok());
 }
 
 #[tokio::test]
