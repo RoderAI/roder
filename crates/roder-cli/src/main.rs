@@ -1364,6 +1364,10 @@ pub(crate) async fn build_runtime_from_config(
             cfg.process_extensions.clone(),
             workspace.as_deref(),
         ),
+        data_dir: None,
+        memory: true,
+        knowledge: true,
+        code_index: true,
     })?;
 
     let runtime = Arc::new(Runtime::new(
