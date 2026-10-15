@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "openrouter_error.rs"]
+mod openrouter_error;
+
 pub(super) struct RetriedResponse {
     pub(super) response: reqwest::Response,
     pub(super) retry_events: Vec<Value>,
@@ -258,7 +261,9 @@ pub(super) fn http_failure(
     } else {
         None
     };
-    let code = credit_reason.or_else(|| data.pointer("/error/code").and_then(Value::as_str));
+    let code = credit_reason
+        .or_else(|| data.pointer("/error/code").and_then(Value::as_str))
+        .or_else(|| openrouter_error::context_code(status, &data));
     let kind = if status == reqwest::StatusCode::PAYMENT_REQUIRED {
         failure_kind(credit_reason, Some(402))
     } else if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
@@ -364,6 +369,46 @@ mod credit_limit_tests {
             None,
         );
         assert_ne!(failure.kind, ProviderFailureKind::ContextWindowExceeded);
+    }
+
+    #[test]
+    fn openrouter_wrapped_context_overflow_preserves_the_upstream_code() {
+        let raw = serde_json::json!({"error": {
+            "code": "context_length_exceeded", "type": "invalid_request_error",
+            "message": "Input including images exceeds the model context window."
+        }});
+        let body = serde_json::json!({"error": {
+            "code": 400, "message": "Provider returned error",
+            "metadata": {"raw": raw.to_string(), "provider_name": "synthetic-upstream"}
+        }});
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let failure = http_failure(
+            reqwest::StatusCode::BAD_REQUEST,
+            &body.to_string(),
+            Some(deadline),
+        );
+        assert_eq!(failure.kind, ProviderFailureKind::ContextWindowExceeded);
+        assert_eq!(
+            failure.provider_code.as_deref(),
+            Some("context_length_exceeded")
+        );
+        assert_eq!(failure.status, Some(400));
+        assert_eq!(failure.retry_not_before, Some(deadline));
+    }
+
+    #[test]
+    fn explicit_http_error_codes_keep_precedence_over_wrapped_errors() {
+        let body = serde_json::json!({"error": {
+            "code": "invalid_request_error", "metadata": {
+                "raw": r#"{"error":{"code":"context_length_exceeded"}}"#
+            }
+        }});
+        let failure = http_failure(reqwest::StatusCode::BAD_REQUEST, &body.to_string(), None);
+        assert_eq!(failure.kind, ProviderFailureKind::InvalidRequest);
+        assert_eq!(
+            failure.provider_code.as_deref(),
+            Some("invalid_request_error")
+        );
     }
 
     #[test]
