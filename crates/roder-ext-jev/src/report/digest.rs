@@ -101,6 +101,14 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
     );
     let session = budget.take(session(data), SESSION_CHARS, 10);
     let headings = budget.take(headings(data), HEADING_CHARS + 12, 1);
+    let dom = data["page"]["dom_snapshot"].as_str().unwrap_or_default();
+    let dom = if dom.is_empty() {
+        Vec::new()
+    } else {
+        let mut lines = vec!["DOM snapshot (node references are observation only):".to_string()];
+        lines.extend(dom.lines().map(|line| clip(&defuse(line), 250)));
+        budget.take(lines, 1800, 28)
+    };
     // The page text keeps at least this much of what is left.
     let text_floor = budget.chars.min(TEXT_FLOOR);
     let options = options(
@@ -127,6 +135,7 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
         fallback_steps,
         frames,
         headings,
+        dom,
         page_text,
         options,
     ]

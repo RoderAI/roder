@@ -41,6 +41,7 @@ fn resolve_with(
                 Some("1") => true,
                 _ => bail!("JEV_IMAGES must be 0 or 1"),
             };
+            let profile = prompt_profile(env_value("JEV_PROMPT_PROFILE").as_deref())?;
             Ok(Arc::new(
                 JevTypeSafeDecisionClient::new(
                     key("jev").with_context(|| {
@@ -51,7 +52,8 @@ fn resolve_with(
                     })?,
                     model.unwrap_or_else(|| "jev-latest".into()),
                 )
-                .with_images(images),
+                .with_images(images)
+                .with_profile(profile),
             ))
         }
         "openai" => {
@@ -193,5 +195,28 @@ mod capability_tests {
             credential_fingerprint(Some("first")),
             credential_fingerprint(None)
         );
+    }
+}
+
+/// Keep the measured candidate opt-in while broad validation continues.
+fn prompt_profile(raw: Option<&str>) -> anyhow::Result<crate::jev_prompt::Profile> {
+    use crate::jev_prompt::Profile;
+    match raw {
+        None | Some("workflow") => Ok(Profile::Workflow),
+        Some("dom") => Ok(Profile::Dom),
+        _ => bail!("JEV_PROMPT_PROFILE must be workflow or dom"),
+    }
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+    #[test]
+    fn dom_evidence_is_an_explicit_profile_and_unknown_profiles_fail() {
+        use crate::jev_prompt::Profile;
+        assert_eq!(prompt_profile(None).unwrap(), Profile::Workflow);
+        assert_eq!(prompt_profile(Some("workflow")).unwrap(), Profile::Workflow);
+        assert_eq!(prompt_profile(Some("dom")).unwrap(), Profile::Dom);
+        assert!(prompt_profile(Some("typo")).is_err());
     }
 }
