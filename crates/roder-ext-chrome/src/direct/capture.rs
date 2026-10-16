@@ -35,6 +35,11 @@ impl DirectSession {
             .await?;
         let number = |index: usize| view[index].as_f64().unwrap_or(0.0);
         let (width, height, ratio) = (number(2), number(3), number(4).max(0.1));
+        if self.client.headless() {
+            // Another run's tab may have been activated since; headless
+            // Chrome draws no frame for a tab that is not in front.
+            self.client.call("Page.bringToFront", json!({})).await?;
+        }
         self.client.mask_pending(true);
         let masked = helper(&mut self.client, "mask(true)").await?;
         // Viewport CSS pixels, one image pixel each, so a point in the
