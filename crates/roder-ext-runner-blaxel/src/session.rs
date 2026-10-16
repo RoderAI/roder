@@ -114,11 +114,10 @@ impl BlaxelRunnerSession {
         Ok(endpoint)
     }
 
-    /// End any previous post-operation lease before doing new work.
+    /// The grace lease keeps running through new work; finishing the work
+    /// replaces it only once it is no longer fresh.
     async fn begin_operation(&self) -> anyhow::Result<String> {
-        let endpoint = self.ensure_active().await?;
-        self.standby_grace.cancel(&self.client, &endpoint).await?;
-        Ok(endpoint)
+        self.ensure_active().await
     }
 
     async fn finish_operation(&self, endpoint: &str) -> anyhow::Result<()> {

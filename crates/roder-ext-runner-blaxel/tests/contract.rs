@@ -725,7 +725,7 @@ async fn rejoin_reconciles_mutable_lifecycle_without_replacing_the_sandbox() {
 }
 
 #[tokio::test]
-async fn standby_grace_is_bounded_replaced_and_rearmed_after_native_errors() {
+async fn standby_grace_is_bounded_and_kept_across_back_to_back_operations() {
     let _guard = ENV_LOCK.lock().await;
     clear_env();
     unsafe {
@@ -786,10 +786,12 @@ async fn standby_grace_is_bounded_replaced_and_rearmed_after_native_errors() {
                 .is_some_and(|name| name.starts_with("roder-standby-grace-"))
         })
         .collect();
+    // Create starts the lease; the failed read, write and read that follow
+    // within a quarter of its duration keep it rather than replacing it.
     assert_eq!(
         grace_bodies.len(),
-        4,
-        "create, failed read, write, and read should each leave one new grace lease"
+        1,
+        "back-to-back operations should keep the fresh grace lease"
     );
     let names: std::collections::HashSet<_> = grace_bodies
         .iter()
@@ -811,8 +813,8 @@ async fn standby_grace_is_bounded_replaced_and_rearmed_after_native_errors() {
                     && request.contains("/kill HTTP/1.1")
             })
             .count(),
-        4,
-        "each previous/final grace lease should be stopped before replacement or pause"
+        1,
+        "the one grace lease should be stopped on pause"
     );
 
     session.close().await.unwrap();
