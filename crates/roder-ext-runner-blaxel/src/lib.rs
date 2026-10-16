@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
 };
-use roder_api::remote_runner::{
-    RemoteRunnerProvider, RemoteRunnerProviderId, RemoteRunnerSession, RunnerCapabilities,
-    RunnerDestination, RunnerMountCapabilities, RunnerSessionState,
-};
+use roder_api::remote_runner::{RemoteRunnerProvider, RunnerDestination};
 use semver::Version;
 
 mod cancellation;
@@ -17,10 +13,13 @@ pub mod config;
 mod egress;
 pub mod forks;
 mod ports;
+mod provider;
+pub use provider::BlaxelRunnerProvider;
 mod session;
 mod standby;
+mod workspace;
+pub use workspace::BlaxelWorkspace;
 
-use cancellation::CANCELLATION_DIR;
 pub use client::{BlaxelClient, ProcessResponse, Sandbox, wait_until_ready};
 pub use config::{
     BASE_URL_ENV, BlaxelConfig, CleanupMode, DEFAULT_BASE_URL, EXTENSION_ID, ExpirationPolicy,
@@ -29,8 +28,6 @@ pub use config::{
 };
 pub use ports::{PortProtocol, SandboxPort};
 pub use session::BlaxelRunnerSession;
-
-const READINESS_ATTEMPTS: u32 = 20;
 
 #[derive(Debug, Default)]
 pub struct BlaxelRunnerExtension;
@@ -66,199 +63,6 @@ impl RoderExtension for BlaxelRunnerExtension {
 /// User-Agent sent on every Blaxel request. Blaxel's edge (CloudFront) rejects
 /// requests with an empty User-Agent (403), so this must be non-empty.
 const USER_AGENT: &str = concat!("roder-ext-runner-blaxel/", env!("CARGO_PKG_VERSION"));
-
-#[derive(Debug)]
-pub struct BlaxelRunnerProvider {
-    http: reqwest::Client,
-}
-
-impl Default for BlaxelRunnerProvider {
-    fn default() -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(
-                client::HTTP_REQUEST_TIMEOUT_SECONDS,
-            ))
-            .build()
-            .expect("build Blaxel HTTP client");
-        Self { http }
-    }
-}
-
-impl BlaxelRunnerProvider {
-    fn client(&self, config: &BlaxelConfig) -> BlaxelClient {
-        BlaxelClient::new(self.http.clone(), config)
-    }
-}
-
-#[async_trait]
-impl RemoteRunnerProvider for BlaxelRunnerProvider {
-    fn id(&self) -> RemoteRunnerProviderId {
-        PROVIDER_ID.to_string()
-    }
-
-    fn capabilities(&self) -> RunnerCapabilities {
-        RunnerCapabilities {
-            command_exec: true,
-            file_read: true,
-            file_write: true,
-            port_preview: true,
-            snapshots: false,
-            cancellation: true,
-            artifact_export: false,
-            mounts: RunnerMountCapabilities::default(),
-            pausable: true,
-            detachable: true,
-        }
-    }
-
-    fn default_workspace(&self) -> Option<String> {
-        Some(config::DEFAULT_WORKING_DIR.to_string())
-    }
-
-    fn setup_hint(&self) -> Option<String> {
-        let has_token = [config::RODER_TOKEN_ENV, TOKEN_ENV, config::BL_TOKEN_ENV]
-            .iter()
-            .any(|name| {
-                std::env::var(name)
-                    .ok()
-                    .is_some_and(|value| !value.trim().is_empty())
-            });
-        if has_token {
-            None
-        } else {
-            Some(format!(
-                "set {TOKEN_ENV} (or BL_API_KEY) and {WORKSPACE_ENV} to run Blaxel sandboxes; \
-                 see docs/roder-blaxel-runner.md"
-            ))
-        }
-    }
-
-    async fn validate_destination(&self, destination: &RunnerDestination) -> anyhow::Result<()> {
-        let config = BlaxelConfig::from_destination(destination)?;
-        if config.token.is_empty() {
-            anyhow::bail!("blaxel runner token cannot be empty");
-        }
-        if !destination.default_manifest.mounts.is_empty() {
-            anyhow::bail!("blaxel runner does not support managed mounts");
-        }
-        Ok(())
-    }
-
-    async fn create_session(
-        &self,
-        destination: RunnerDestination,
-    ) -> anyhow::Result<Arc<dyn RemoteRunnerSession>> {
-        let mut config = BlaxelConfig::from_destination(&destination)?;
-        let external_id = config
-            .external_id
-            .clone()
-            .unwrap_or_else(|| destination.id.clone());
-        config.external_id = Some(external_id.clone());
-        let name = config.sandbox_name.clone().unwrap_or_else(|| {
-            sanitize_name(&format!("{}-{}", config.sandbox_name_prefix, external_id))
-        });
-        config.sandbox_name = Some(name.clone());
-
-        let client = self.client(&config);
-        let sandbox = client.create_sandbox(&name, &config).await?;
-        egress::verify(&sandbox, &config)?;
-        let sandbox = if let Some(lifecycle) = &config.lifecycle {
-            // `createIfNotExist=true` may have returned a persistent sandbox;
-            // reconcile mutable lifecycle policy without replacing it.
-            client
-                .update_sandbox_lifecycle(sandbox.name(), lifecycle)
-                .await?
-        } else {
-            sandbox
-        };
-        let (sandbox, endpoint) = wait_until_ready(&client, sandbox, READINESS_ATTEMPTS).await?;
-        client.make_dir(&endpoint, &config.working_dir).await.ok();
-        client.make_dir(&endpoint, CANCELLATION_DIR).await?;
-
-        let session = Arc::new(BlaxelRunnerSession::new(
-            client,
-            &config,
-            destination.id,
-            sandbox.metadata.name,
-            Some(external_id),
-            endpoint,
-            false,
-        ));
-        session.refresh_standby_grace().await?;
-        Ok(session)
-    }
-
-    async fn resume_session(
-        &self,
-        state: RunnerSessionState,
-    ) -> anyhow::Result<Arc<dyn RemoteRunnerSession>> {
-        self.rejoin_session(state).await
-    }
-
-    async fn rejoin_session(
-        &self,
-        state: RunnerSessionState,
-    ) -> anyhow::Result<Arc<dyn RemoteRunnerSession>> {
-        anyhow::ensure!(
-            state.metadata.get("fork_adopted").is_none(),
-            "fork sessions require explicit adoption with current ownership and runtime pins"
-        );
-        let config = BlaxelConfig::from_state(&state)?;
-        let client = self.client(&config);
-        let name = config
-            .sandbox_name
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("blaxel runner state is missing sandbox_name"))?;
-
-        // Prefer the named sandbox; fall back to external-id recovery so a lost
-        // name still rejoins a non-terminated sandbox.
-        let sandbox = match client.get_sandbox(&name).await {
-            Ok(sandbox) if !sandbox.is_terminated() => sandbox,
-            other => {
-                let recovered = if let Some(external_id) = &config.external_id {
-                    client.get_sandbox_by_external_id(external_id).await?
-                } else {
-                    None
-                };
-                match recovered {
-                    Some(sandbox) => sandbox,
-                    None => other?,
-                }
-            }
-        };
-
-        egress::verify(&sandbox, &config)?;
-        let sandbox = if let Some(lifecycle) = &config.lifecycle {
-            // Mutable lifecycle policy is intentionally reapplied on every
-            // rejoin; this preserves the sandbox generation and its checkout.
-            client
-                .update_sandbox_lifecycle(sandbox.name(), lifecycle)
-                .await?
-        } else {
-            sandbox
-        };
-        let external_id = sandbox
-            .metadata
-            .external_id
-            .clone()
-            .or(config.external_id.clone());
-        let (sandbox, endpoint) = wait_until_ready(&client, sandbox, READINESS_ATTEMPTS).await?;
-        client.make_dir(&endpoint, CANCELLATION_DIR).await?;
-        let session = Arc::new(BlaxelRunnerSession::new(
-            client,
-            &config,
-            state.destination_id,
-            sandbox.metadata.name,
-            external_id,
-            endpoint,
-            false,
-        ));
-        session.refresh_standby_grace().await?;
-        Ok(session)
-    }
-}
 
 /// Sanitize an arbitrary id into a Blaxel sandbox name: lowercase alphanumeric
 /// with single hyphens, max 49 chars (per the control-plane name rule).

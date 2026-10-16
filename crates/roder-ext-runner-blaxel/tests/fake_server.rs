@@ -17,6 +17,7 @@ pub struct FakeBlaxelServer {
 
 #[derive(Default)]
 struct ServerState {
+    expected_token: String,
     requests: Vec<String>,
     sandboxes: HashMap<String, Option<String>>,
     sandbox_specs: HashMap<String, serde_json::Value>,
@@ -44,9 +45,16 @@ struct FakeProcess {
 
 impl FakeBlaxelServer {
     pub async fn start() -> Self {
+        Self::start_with_token("test-token").await
+    }
+
+    pub async fn start_with_token(token: &str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let state = Arc::new(Mutex::new(ServerState::default()));
+        let state = Arc::new(Mutex::new(ServerState {
+            expected_token: token.into(),
+            ..Default::default()
+        }));
         let server = Self {
             base_url: base_url.clone(),
             state: state.clone(),
@@ -77,6 +85,10 @@ impl FakeBlaxelServer {
             }
         });
         server
+    }
+
+    pub fn set_token(&self, token: &str) {
+        self.state.lock().unwrap().expected_token = token.into();
     }
 
     pub fn base_url(&self) -> String {
@@ -147,10 +159,10 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
     let first = request.lines().next().unwrap_or_default().to_string();
     state.lock().unwrap().requests.push(request.to_string());
 
-    if !request
-        .to_ascii_lowercase()
-        .contains("authorization: bearer test-token")
-    {
+    if !request.to_ascii_lowercase().contains(&format!(
+        "authorization: bearer {}",
+        state.lock().unwrap().expected_token
+    )) {
         return ("401 Unauthorized", json_error("missing or invalid token"));
     }
 
@@ -158,6 +170,11 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
     let method = parts.next().unwrap_or_default();
     let full_path = parts.next().unwrap_or_default();
     let path = full_path.split('?').next().unwrap_or_default();
+    let path = if path.starts_with("/v0/") {
+        &path[3..]
+    } else {
+        path
+    };
     let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
 
     match (method, path) {

@@ -317,21 +317,37 @@ fn parse_lifecycle(config: &Value) -> anyhow::Result<Option<SandboxLifecycle>> {
 }
 
 impl BlaxelConfig {
-    fn resolve(config: &Value, default_cleanup: CleanupMode) -> anyhow::Result<Self> {
-        // Environment overrides win over persisted/destination config so a
-        // rotated key or relocated endpoint takes effect without rewriting
-        // thread state.
-        let token = first_env(&[RODER_TOKEN_ENV, TOKEN_ENV, BL_TOKEN_ENV])
-            .or_else(|| string_field(config, "token"))
-            .or_else(|| string_field(config, "api_key"))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "blaxel runner requires {TOKEN_ENV} (or {BL_TOKEN_ENV}) or a destination config token"
-                )
-            })?;
-
-        let workspace = first_env(&[RODER_WORKSPACE_ENV, WORKSPACE_ENV, BLAXEL_WORKSPACE_ENV])
-            .or_else(|| string_field(config, "workspace"));
+    fn resolve(
+        config: &Value,
+        default_cleanup: CleanupMode,
+        profile: Option<&crate::BlaxelWorkspace>,
+    ) -> anyhow::Result<Self> {
+        let (token, workspace, base_url) = if let Some(profile) = profile {
+            profile.assert_scope(config)?;
+            (
+                profile.token.clone(),
+                Some(profile.workspace.clone()),
+                profile.base_url.clone(),
+            )
+        } else {
+            anyhow::ensure!(
+                config.get("explicit_workspace").is_none(),
+                "explicit workspace state requires an explicit workspace provider"
+            );
+            // Default runners continue to pick up operator credential rotation.
+            let token = first_env(&[RODER_TOKEN_ENV, TOKEN_ENV, BL_TOKEN_ENV])
+                .or_else(|| string_field(config, "token"))
+                .or_else(|| string_field(config, "api_key"))
+                .ok_or_else(|| anyhow::anyhow!("blaxel runner requires {TOKEN_ENV} (or {BL_TOKEN_ENV}) or a destination config token"))?;
+            let workspace = first_env(&[RODER_WORKSPACE_ENV, WORKSPACE_ENV, BLAXEL_WORKSPACE_ENV])
+                .or_else(|| string_field(config, "workspace"));
+            let base_url = first_env(&[RODER_BASE_URL_ENV, BASE_URL_ENV])
+                .or_else(|| string_field(config, "base_url"))
+                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+                .trim_end_matches('/')
+                .to_string();
+            (Redacted(token), workspace, base_url)
+        };
         let egress_gateway = crate::egress::gateway(config)?;
         let egress_workspace = if egress_gateway.is_some() {
             anyhow::ensure!(
@@ -349,12 +365,6 @@ impl BlaxelConfig {
             None
         };
 
-        let base_url = first_env(&[RODER_BASE_URL_ENV, BASE_URL_ENV])
-            .or_else(|| string_field(config, "base_url"))
-            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
-            .trim_end_matches('/')
-            .to_string();
-
         let cleanup = config
             .get("cleanup")
             .and_then(Value::as_str)
@@ -371,7 +381,7 @@ impl BlaxelConfig {
         let lifecycle = parse_lifecycle(config)?;
 
         Ok(Self {
-            token: Redacted(token),
+            token,
             workspace,
             base_url,
             sandbox_name: string_field(config, "sandbox_name"),
@@ -397,6 +407,22 @@ impl BlaxelConfig {
     /// default to `delete-on-close`; reusing an existing `sandbox_name`
     /// defaults to `detach-on-close`.
     pub fn from_destination(destination: &RunnerDestination) -> anyhow::Result<Self> {
+        Self::from_destination_with_workspace(destination, None)
+    }
+
+    /// Resolve runtime settings with a separately selected account. The account
+    /// is checked against any persisted scope before using its credentials.
+    pub fn from_destination_in_workspace(
+        destination: &RunnerDestination,
+        workspace: &crate::BlaxelWorkspace,
+    ) -> anyhow::Result<Self> {
+        Self::from_destination_with_workspace(destination, Some(workspace))
+    }
+
+    fn from_destination_with_workspace(
+        destination: &RunnerDestination,
+        profile: Option<&crate::BlaxelWorkspace>,
+    ) -> anyhow::Result<Self> {
         let reusing_existing = destination
             .config
             .get("sandbox_name")
@@ -408,13 +434,34 @@ impl BlaxelConfig {
         } else {
             CleanupMode::DeleteOnClose
         };
-        Self::resolve(&destination.config, default_cleanup)
+        Self::resolve(&destination.config, default_cleanup, profile)
+    }
+
+    pub(crate) fn from_state_in_workspace(
+        state: &RunnerSessionState,
+        profile: &crate::BlaxelWorkspace,
+    ) -> anyhow::Result<Self> {
+        // Explicit profiles require persisted scope; never interpret old or
+        // foreign state using whichever account the caller selected today.
+        anyhow::ensure!(
+            state
+                .metadata
+                .get("explicit_workspace")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && state.metadata.get("workspace").and_then(Value::as_str)
+                    == Some(profile.workspace.as_str())
+                && state.metadata.get("base_url").and_then(Value::as_str)
+                    == Some(profile.base_url.as_str()),
+            "session state does not belong to explicit workspace"
+        );
+        Self::resolve(&state.metadata, CleanupMode::DetachOnClose, Some(profile))
     }
 
     /// Resolve from persisted session state for resume/rejoin. The token always
     /// comes from the environment, never from state.
     pub fn from_state(state: &RunnerSessionState) -> anyhow::Result<Self> {
-        let mut config = Self::resolve(&state.metadata, CleanupMode::DetachOnClose)?;
+        let mut config = Self::resolve(&state.metadata, CleanupMode::DetachOnClose, None)?;
         if let Some(name) = state
             .metadata
             .get("sandbox_name")
@@ -428,113 +475,4 @@ impl BlaxelConfig {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{ExpirationPolicyType, parse_lifecycle, parse_standby_after};
-
-    #[test]
-    fn parses_standby_after_and_explicit_disable() {
-        assert_eq!(
-            parse_standby_after(&json!({ "standby_after": "5m" })).unwrap(),
-            Some(300)
-        );
-        assert_eq!(
-            parse_standby_after(&json!({ "standby_after": "300s" })).unwrap(),
-            Some(300)
-        );
-        assert_eq!(
-            parse_standby_after(&json!({ "standby_after": "0s" })).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn standby_after_is_strict_and_bounded() {
-        for invalid in [json!(300), json!("5 minutes"), json!("1.5h"), json!("25h")] {
-            let error = parse_standby_after(&json!({ "standby_after": invalid })).unwrap_err();
-            assert!(error.to_string().contains("standby_after"));
-        }
-    }
-
-    #[test]
-    fn parses_lifecycle_policy_and_emits_blaxel_shape() {
-        let lifecycle = parse_lifecycle(&json!({
-            "lifecycle": {
-                "expiration_policies": [{ "type": "ttl-idle", "value": "7d" }]
-            }
-        }))
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(lifecycle.expiration_policies.len(), 1);
-        assert_eq!(
-            lifecycle.expiration_policies[0].kind,
-            ExpirationPolicyType::TtlIdle
-        );
-        assert_eq!(
-            lifecycle.api_value(),
-            json!({
-                "expirationPolicies": [{
-                    "action": "delete",
-                    "type": "ttl-idle",
-                    "value": "7d"
-                }]
-            })
-        );
-        assert_eq!(
-            lifecycle.config_value(),
-            json!({
-                "expiration_policies": [{ "type": "ttl-idle", "value": "7d" }]
-            })
-        );
-    }
-
-    #[test]
-    fn lifecycle_rejects_unknown_keys_actions_and_duplicate_types() {
-        let invalid = [
-            json!({ "lifecycle": { "unknown": true } }),
-            json!({
-                "lifecycle": {
-                    "expiration_policies": [{
-                        "type": "ttl-idle",
-                        "value": "7d",
-                        "unknown": true
-                    }]
-                }
-            }),
-            json!({
-                "lifecycle": {
-                    "expiration_policies": [{
-                        "type": "ttl-idle",
-                        "value": "7d",
-                        "action": "pause"
-                    }]
-                }
-            }),
-            json!({
-                "lifecycle": {
-                    "expiration_policies": [
-                        { "type": "ttl-idle", "value": "7d" },
-                        { "type": "ttl-idle", "value": "14d" }
-                    ]
-                }
-            }),
-        ];
-
-        for config in invalid {
-            assert!(parse_lifecycle(&config).is_err(), "accepted {config}");
-        }
-    }
-
-    #[test]
-    fn lifecycle_empty_policy_list_is_an_explicit_clear() {
-        let lifecycle = parse_lifecycle(&json!({
-            "lifecycle": { "expiration_policies": [] }
-        }))
-        .unwrap()
-        .unwrap();
-        assert_eq!(lifecycle.api_value(), json!({ "expirationPolicies": [] }));
-        assert!(parse_lifecycle(&json!({})).unwrap().is_none());
-    }
-}
+mod tests;

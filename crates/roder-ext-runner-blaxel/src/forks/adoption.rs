@@ -1,4 +1,4 @@
-use reqwest::{Method, Url};
+use reqwest::Method;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -293,25 +293,9 @@ impl BlaxelForkClient {
     }
 
     fn endpoint(&self, endpoint: &str) -> Result<String, ForkError> {
-        let url = Url::parse(endpoint).map_err(|_| ForkError::rejected("invalid fork endpoint"))?;
-        let provider = url.scheme() == "https"
-            && url.host_str().is_some_and(|host| host.ends_with(".bl.run"))
-            && url.port().is_none();
-        // A loopback control-plane test server may also emulate the VM endpoint.
-        let local = self.base_url.starts_with("http://")
-            && Url::parse(&self.base_url)
-                .ok()
-                .is_some_and(|control| control.origin() == url.origin());
-        if !(provider || local)
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || !matches!(url.path(), "" | "/")
-        {
-            return Err(ForkError::rejected("unsupported fork endpoint"));
-        }
-        Ok(url.as_str().trim_end_matches('/').into())
+        crate::workspace::validate_endpoint(&self.base_url, endpoint)
+            .map_err(|_| ForkError::rejected("unsupported fork endpoint"))?;
+        Ok(endpoint.trim_end_matches('/').into())
     }
 }
 

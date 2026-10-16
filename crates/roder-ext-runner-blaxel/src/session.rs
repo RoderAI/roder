@@ -38,6 +38,7 @@ pub struct BlaxelRunnerSession {
     // Echoed into session state so resume/rejoin reconstruct the config.
     base_url: String,
     workspace: Option<String>,
+    explicit_workspace: bool,
     region: Option<String>,
     egress_gateway: Option<String>,
     egress_workspace: Option<String>,
@@ -53,6 +54,11 @@ pub struct BlaxelRunnerSession {
 }
 
 impl BlaxelRunnerSession {
+    pub(crate) fn with_explicit_workspace(mut self, explicit: bool) -> Self {
+        self.explicit_workspace = explicit;
+        self
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: BlaxelClient,
@@ -73,6 +79,7 @@ impl BlaxelRunnerSession {
             cleanup: config.cleanup,
             base_url: config.base_url.clone(),
             workspace: config.workspace.clone(),
+            explicit_workspace: false,
             region: config.region.clone(),
             egress_gateway: config.egress_gateway.clone(),
             egress_workspace: config.egress_workspace.clone(),
@@ -223,6 +230,9 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
             "cleanup": self.cleanup.as_str(),
             "paused": paused,
         });
+        if self.explicit_workspace {
+            metadata["explicit_workspace"] = json!(true);
+        }
         if self.fork_allocation.is_some() {
             metadata["fork_adopted"] = json!(true);
         }

@@ -18,8 +18,41 @@ and note your workspace name (visible in the console URL `app.blaxel.ai/{workspa
 | `BL_WORKSPACE` (or `RODER_BLAXEL_WORKSPACE`) | Blaxel workspace name |
 | `BLAXEL_RUNNER_BASE_URL` / `RODER_BLAXEL_BASE_URL` | Override control-plane base URL (default `https://api.blaxel.ai/v0`) |
 
-The credential is always read from the environment and is **never** written to
-thread metadata, session state, logs, or error messages.
+The default provider reads credentials from the environment. Credentials are
+**never** written to thread metadata or session state.
+
+### Explicit accounts for snapshot sources
+
+Use an explicit workspace when the source must run in a different account from
+the default provider, such as a snapshot-enabled account alongside a static-IP
+account. Construct the profile from the operator-selected credential; do not take
+it from model input or change process-wide environment variables:
+
+```rust,no_run
+use roder_ext_runner_blaxel::{BlaxelRunnerProvider, BlaxelWorkspace, Redacted};
+# fn main() -> anyhow::Result<()> {
+let workspace = BlaxelWorkspace::new(
+    Redacted(std::env::var("BL_SNAPSHOT_API_KEY")?),
+    std::env::var("BL_SNAPSHOT_WORKSPACE")?,
+)?;
+let provider = BlaxelRunnerProvider::for_workspace(workspace)?;
+# Ok(())
+# }
+```
+
+This provider uses that account for create, rejoin and session cleanup, regardless
+of default environment credentials or destination credential fields. Any supplied
+destination workspace/base URL must agree with the profile. State records the
+explicit account and endpoint, without its key; rejoin requires the same account
+and endpoint with a current credential. The default provider refuses explicit
+account state. Dedicated egress must still match its assigned workspace and region.
+
+Explicit profiles accept the production Blaxel control plane or loopback test
+endpoints, disable redirects and automatic HTTP retries, and check sandbox endpoint
+origins before sending credentials. The provider still uses normal source-create
+semantics; forked children require the separate ownership-checked adoption API.
+Profiles grant neither tenant authorization nor browser control, snapshot entitlement
+or qualification. Callers own those decisions and ambiguous-allocation reconciliation.
 
 ## Configuration
 

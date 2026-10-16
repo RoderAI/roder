@@ -12,7 +12,7 @@ mod types;
 
 use std::time::Duration;
 
-use reqwest::{Method, Url};
+use reqwest::Method;
 use serde_json::{Value, json};
 
 use crate::Redacted;
@@ -49,26 +49,8 @@ impl BlaxelForkClient {
         workspace: impl Into<String>,
         base_url: &str,
     ) -> Result<Self, ForkError> {
-        let workspace = workspace.into();
-        validate_name(&workspace)?;
-        if token.is_empty() {
-            return Err(ForkError::rejected("missing workspace credential"));
-        }
-        let url =
-            Url::parse(base_url).map_err(|_| ForkError::rejected("invalid control plane URL"))?;
-        let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-        if !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || url.path().trim_end_matches('/') != "/v0"
-            || !((url.scheme() == "https"
-                && url.host_str() == Some("api.blaxel.ai")
-                && url.port().is_none())
-                || (url.scheme() == "http" && loopback))
-        {
-            return Err(ForkError::rejected("unsupported control plane URL"));
-        }
+        let profile = crate::BlaxelWorkspace::with_base_url(token, workspace, base_url)
+            .map_err(|_| ForkError::rejected("invalid workspace profile"))?;
         let http = reqwest::Client::builder()
             .user_agent(crate::USER_AGENT)
             .redirect(reqwest::redirect::Policy::none())
@@ -79,9 +61,9 @@ impl BlaxelForkClient {
             .map_err(|_| ForkError::rejected("cannot construct provider client"))?;
         Ok(Self {
             http,
-            token,
-            workspace,
-            base_url: base_url.trim_end_matches('/').into(),
+            token: profile.token,
+            workspace: profile.workspace,
+            base_url: profile.base_url,
         })
     }
 
