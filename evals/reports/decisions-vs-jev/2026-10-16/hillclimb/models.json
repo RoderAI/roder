@@ -1,0 +1,46 @@
+{
+  "confirmation": {
+    "vision": {
+      "gpt-6-luna": 72
+    },
+    "jev-vision@jev-preview": {
+      "jev-1.14.0": 72
+    },
+    "jev_dom-vision@jev-preview": {
+      "jev-1.14.0": 72
+    }
+  },
+  "complex-dev": {
+    "vision": {
+      "gpt-6-luna": 16
+    },
+    "jev-vision@jev-preview": {
+      "jev-1.14.0": 16
+    },
+    "jev_dom-vision@jev-preview": {
+      "jev-1.14.0": 16
+    }
+  },
+  "complex-holdout": {
+    "vision": {
+      "gpt-6-luna": 18
+    },
+    "jev-vision@jev-preview": {
+      "jev-1.14.0": 18
+    },
+    "jev_dom-vision@jev-preview": {
+      "jev-1.14.0": 18
+    }
+  },
+  "search-regression": {
+    "vision": {
+      "gpt-6-luna": 12
+    },
+    "jev-vision@jev-preview": {
+      "jev-1.14.0": 12
+    },
+    "jev_dom-vision@jev-preview": {
+      "jev-1.14.0": 12
+    }
+  }
+}
