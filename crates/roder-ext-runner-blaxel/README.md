@@ -63,9 +63,14 @@ for setup, configuration, and the lifecycle model.
 `forks::BlaxelForkClient` uses an explicit `Redacted` credential and workspace;
 it never falls back to the default runner environment. Its snapshot create,
 lookup, catalog reconciliation and delete methods use workspace-scoped IDs,
-including snapshots whose source has been deleted. `fork_live` and
-`fork_snapshot` require a deterministic target, a generation marker and a fresh
-maximum lifetime of at most 24 hours. Credentials never follow redirects.
+including snapshots whose source has been deleted. Capture public runtime pins
+using `qualify_source`, then persist them with the authorized checkpoint.
+Snapshot capture and live forks recheck those pins before mutating the provider.
+Snapshot forks re-read the snapshot and any surviving source's attachment settings.
+Only public shared networking, no attached storage and matching mk3 node-generation
+pins are supported. `fork_live` and `fork_snapshot` require a deterministic target,
+a generation marker and a fresh maximum lifetime of at most 24 hours.
+Credentials never follow redirects.
 
 Persist the allocation intent before dispatch. Mutations are sent once: an
 `Outcome::Unknown` requires reconciling the recorded identity, and HTTP 409
@@ -73,10 +78,23 @@ requires validating the existing resource rather than adopting it automatically.
 A fork receipt proves acceptance only. A delete receipt proves acceptance or
 observed absence; confirm accepted deletions through a later lookup.
 
-These operations do not adopt a browser into a runner session, prove generation
-ownership, provide capacity scheduling or authorize inherited browser controls.
-The generic runner snapshot capability remains disabled. Callers must supply
-those policies and retain cleanup ownership across cancellation.
+`inspect_child` distinguishes missing, pending and ready children; it reads admin
+environment values only to verify the exact generation marker. `adopt_child`
+rechecks ownership, runtime pins, ports, lifetime and endpoint, then creates a
+runner session using reads only. It does not wake, redeploy, create directories,
+execute processes or refresh standby leases. Inherited `externalId` and application
+secrets are discarded. Generic provider rejoin rejects adopted-fork state; after
+a restart, re-adopt using the durable allocation intent and checkpoint pins.
+
+`delete_child` and adopted sessions' delete-on-close path recheck the current
+generation marker before DELETE, including failed or partially ready children.
+Never reuse target names across allocation generations. Accepted deletion still
+needs a later lookup to prove absence. Caller-owned intents must survive cancellation.
+
+Provider adoption does not authorize inherited browser controls or supply capacity
+scheduling. The caller must rotate/rebind browser controls, fence root cancellation
+and perform account/application eligibility checks before executing child work.
+The generic runner snapshot capability remains disabled.
 
 ## How It Fits Into Roder
 

@@ -1,101 +1,19 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
+use tokio::net::TcpListener;
 
 use roder_ext_runner_blaxel::{
     Redacted,
     forks::{BlaxelForkClient, DeleteReceipt, ForkRequest, Outcome, Snapshot},
 };
 use serde_json::{Value, json};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-    sync::Mutex,
-};
-
-struct Server {
-    url: String,
-    requests: Arc<Mutex<Vec<String>>>,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-impl Server {
-    async fn start(responses: Vec<String>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/v0", listener.local_addr().unwrap());
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let captured = requests.clone();
-        let task = tokio::spawn(async move {
-            for response in responses {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut bytes = Vec::new();
-                let mut buffer = [0; 4096];
-                loop {
-                    let n = socket.read(&mut buffer).await.unwrap();
-                    if n == 0 {
-                        break;
-                    }
-                    bytes.extend_from_slice(&buffer[..n]);
-                    if let Some(split) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let header = String::from_utf8_lossy(&bytes[..split]);
-                        let length: usize = header
-                            .lines()
-                            .find_map(|line| {
-                                line.to_lowercase()
-                                    .strip_prefix("content-length:")
-                                    .map(|v| v.trim().parse().unwrap())
-                            })
-                            .unwrap_or(0);
-                        if bytes.len() >= split + 4 + length {
-                            break;
-                        }
-                    }
-                }
-                captured
-                    .lock()
-                    .await
-                    .push(String::from_utf8(bytes).unwrap());
-                if !response.is_empty() {
-                    socket.write_all(response.as_bytes()).await.unwrap();
-                }
-            }
-        });
-        Self {
-            url,
-            requests,
-            task,
-        }
-    }
-
-    fn client(&self) -> BlaxelForkClient {
-        BlaxelForkClient::with_base_url(
-            Redacted("fixture-credential".into()),
-            "snapshot-workspace",
-            &self.url,
-        )
-        .unwrap()
-    }
-
-    async fn requests(&self) -> Vec<String> {
-        self.requests.lock().await.clone()
-    }
-}
-
-fn response(status: u16, body: Value) -> String {
-    let body = body.to_string();
-    format!(
-        "HTTP/1.1 {status} test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )
-}
+#[path = "support/forks.rs"]
+mod support;
+use support::{Server, response, runtime, source};
 
 fn snapshot(status: &str) -> Value {
     json!({"id":"opaque-id","name":"checkpoint-one","workspace":"snapshot-workspace","status":status,
-        "source":{"name":"source-one","kind":"sandbox","deleted":false}})
+        "source":{"name":"source-one","kind":"sandbox","deleted":false},
+        "spec":{"image":"sandbox/verify:immutable","memory":2048,"region":"us-was-1","generation":"mk3","ports":[{"target":4319,"protocol":"HTTP"}]}})
 }
 
 fn request() -> ForkRequest {
@@ -111,6 +29,7 @@ fn request() -> ForkRequest {
 #[tokio::test]
 async fn snapshot_create_lookup_and_cleanup_preserve_explicit_workspace_identity() {
     let server = Server::start(vec![
+        response(200, source()),
         response(201, snapshot("creating")),
         response(200, snapshot("ready")),
         "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".into(),
@@ -120,7 +39,7 @@ async fn snapshot_create_lookup_and_cleanup_preserve_explicit_workspace_identity
     .await;
     let client = server.client();
     let created = client
-        .create_snapshot("source-one", "checkpoint-one")
+        .create_snapshot("source-one", "checkpoint-one", &runtime())
         .await
         .unwrap();
     assert!(!created.is_ready());
@@ -142,25 +61,28 @@ async fn snapshot_create_lookup_and_cleanup_preserve_explicit_workspace_identity
         DeleteReceipt::Absent
     );
     let requests = server.requests().await;
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 6);
     for request in &requests {
         let headers = request.split("\r\n\r\n").next().unwrap().to_lowercase();
         assert!(headers.contains("authorization: bearer fixture-credential"));
         assert!(headers.contains("x-blaxel-workspace: snapshot-workspace"));
         assert!(headers.contains("blaxel-version: 2026-04-28"));
     }
-    let body: Value = serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    let body: Value = serde_json::from_str(requests[1].split("\r\n\r\n").nth(1).unwrap()).unwrap();
     assert_eq!(
         body,
         json!({"name":"checkpoint-one","source":{"name":"source-one"}})
     );
-    assert!(requests[2].starts_with("DELETE /v0/snapshots/opaque-id "));
+    assert!(requests[3].starts_with("DELETE /v0/snapshots/opaque-id "));
 }
 
 #[tokio::test]
 async fn live_and_snapshot_forks_send_new_lifetime_and_marker_without_external_id() {
     let server = Server::start(vec![
+        response(200, source()),
         response(200, json!({"name":"child-one","type":"sandbox"})),
+        response(200, snapshot("ready")),
+        response(200, source()),
         response(
             200,
             json!({"name":"child-one","type":"sandbox","snapshotId":"opaque-id"}),
@@ -168,13 +90,22 @@ async fn live_and_snapshot_forks_send_new_lifetime_and_marker_without_external_i
     ])
     .await;
     let client = server.client();
-    client.fork_live("source-one", &request()).await.unwrap();
+    client
+        .fork_live("source-one", &request(), &runtime())
+        .await
+        .unwrap();
     let snapshot: Snapshot = serde_json::from_value(snapshot("ready")).unwrap();
-    client.fork_snapshot(&snapshot, &request()).await.unwrap();
+    client
+        .fork_snapshot(&snapshot, &request(), &runtime())
+        .await
+        .unwrap();
     let requests = server.requests().await;
-    assert!(requests[0].starts_with("POST /v0/sandboxes/source-one/fork "));
-    assert!(requests[1].starts_with("POST /v0/snapshots/opaque-id/fork "));
-    for request in requests {
+    assert!(requests[1].starts_with("POST /v0/sandboxes/source-one/fork "));
+    assert!(requests[4].starts_with("POST /v0/snapshots/opaque-id/fork "));
+    for request in requests
+        .into_iter()
+        .filter(|request| request.starts_with("POST"))
+    {
         let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
         assert_eq!(body["targetName"], "child-one");
         assert_eq!(body["envs"][0]["value"], "fixture-generation");
@@ -194,17 +125,17 @@ async fn unknown_response_is_not_replayed_and_errors_do_not_leak_provider_bodies
             json!({"name":"child-one","type":"sandbox","snapshotId":"untracked"}),
         ),
     ] {
-        let server = Server::start(vec![reply]).await;
+        let server = Server::start(vec![response(200, source()), reply]).await;
         let error = server
             .client()
-            .fork_live("source-one", &request())
+            .fork_live("source-one", &request(), &runtime())
             .await
             .unwrap_err();
         assert_eq!(error.outcome, Outcome::Unknown);
         let displayed = format!("{error:?} {error}");
         assert!(!displayed.contains("provider-secret"));
         assert!(!displayed.contains("fixture-credential"));
-        assert_eq!(server.requests().await.len(), 1);
+        assert_eq!(server.requests().await.len(), 2);
     }
 }
 
@@ -213,26 +144,26 @@ async fn conflicts_missing_sources_and_throttling_are_not_adopted_or_retried() {
     for status in [403, 404, 409, 429] {
         let reply = response(status, json!({"secret":"provider-secret"}))
             .replace("Content-Type:", "Retry-After: 7\r\nContent-Type:");
-        let server = Server::start(vec![reply]).await;
+        let server = Server::start(vec![response(200, source()), reply]).await;
         let error = server
             .client()
-            .fork_live("source-one", &request())
+            .fork_live("source-one", &request(), &runtime())
             .await
             .unwrap_err();
         assert_eq!(error.outcome, Outcome::Rejected);
         assert_eq!(error.status, Some(status));
         assert_eq!(error.retry_after, Some(Duration::from_secs(7)));
-        assert_eq!(server.requests().await.len(), 1);
+        assert_eq!(server.requests().await.len(), 2);
     }
 }
 
 #[tokio::test]
 async fn redirects_never_forward_credentials() {
     let receiver = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let server = Server::start(vec![format!("HTTP/1.1 307 Redirect\r\nLocation: http://{}/stolen\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",receiver.local_addr().unwrap())]).await;
+    let server = Server::start(vec![response(200, source()), format!("HTTP/1.1 307 Redirect\r\nLocation: http://{}/stolen\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",receiver.local_addr().unwrap())]).await;
     let error = server
         .client()
-        .fork_live("source-one", &request())
+        .fork_live("source-one", &request(), &runtime())
         .await
         .unwrap_err();
     assert_eq!(error.status, Some(307));
@@ -248,11 +179,16 @@ async fn redirects_never_forward_credentials() {
 async fn snapshot_lookup_and_create_reject_foreign_receipts() {
     let mut foreign = snapshot("ready");
     foreign["workspace"] = json!("other-workspace");
-    let server = Server::start(vec![response(200, foreign.clone()), response(201, foreign)]).await;
+    let server = Server::start(vec![
+        response(200, foreign.clone()),
+        response(200, source()),
+        response(201, foreign),
+    ])
+    .await;
     assert!(server.client().get_snapshot("opaque-id").await.is_err());
     let error = server
         .client()
-        .create_snapshot("source-one", "checkpoint-one")
+        .create_snapshot("source-one", "checkpoint-one", &runtime())
         .await
         .unwrap_err();
     assert_eq!(error.outcome, Outcome::Unknown);
@@ -304,17 +240,22 @@ async fn invalid_or_unready_inputs_do_not_dispatch() {
         let snapshot: Snapshot = serde_json::from_value(snapshot(status)).unwrap();
         assert_eq!(
             client
-                .fork_snapshot(&snapshot, &request())
+                .fork_snapshot(&snapshot, &request(), &runtime())
                 .await
                 .unwrap_err()
                 .outcome,
             Outcome::Rejected
         );
     }
-    assert!(client.fork_live("child-one", &request()).await.is_err());
     assert!(
         client
-            .create_snapshot("../source", "checkpoint-one")
+            .fork_live("child-one", &request(), &runtime())
+            .await
+            .is_err()
+    );
+    assert!(
+        client
+            .create_snapshot("../source", "checkpoint-one", &runtime())
             .await
             .is_err()
     );
@@ -413,17 +354,17 @@ async fn oversized_and_invalid_mutation_receipts_are_unknown() {
         response(200, json!({})),
         "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\n???".into(),
     ] {
-        let server = Server::start(vec![reply]).await;
+        let server = Server::start(vec![response(200, source()), reply]).await;
         assert_eq!(
             server
                 .client()
-                .create_snapshot("source-one", "checkpoint-one")
+                .create_snapshot("source-one", "checkpoint-one", &runtime())
                 .await
                 .unwrap_err()
                 .outcome,
             Outcome::Unknown
         );
-        assert_eq!(server.requests().await.len(), 1);
+        assert_eq!(server.requests().await.len(), 2);
     }
 }
 
@@ -441,14 +382,17 @@ async fn deletion_timeout_retains_unknown_outcome_and_does_not_claim_absence() {
 
 #[tokio::test]
 async fn unexpected_snapshot_handle_is_retained_without_logging_it() {
-    let server = Server::start(vec![response(
-        200,
-        json!({"name":"child-one","type":"sandbox","snapshotId":"unexpected-provider-handle"}),
-    )])
+    let server = Server::start(vec![
+        response(200, source()),
+        response(
+            200,
+            json!({"name":"child-one","type":"sandbox","snapshotId":"unexpected-provider-handle"}),
+        ),
+    ])
     .await;
     let error = server
         .client()
-        .fork_live("source-one", &request())
+        .fork_live("source-one", &request(), &runtime())
         .await
         .unwrap_err();
     assert_eq!(

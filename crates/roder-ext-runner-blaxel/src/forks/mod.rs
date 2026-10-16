@@ -1,10 +1,13 @@
 //! Explicit snapshot/fork operations for an already-authorized allocation.
 //!
 //! These primitives do not enable the generic runner snapshot capability, retry
-//! mutations, or adopt inherited browser sessions. Callers own durable intents,
+//! mutations, or authorize inherited browser controls. Callers own durable intents,
 //! capacity admission, ownership checks, cancellation and cleanup reconciliation.
 
+mod adoption;
 mod http;
+mod runtime;
+mod snapshot_spec;
 mod types;
 
 use std::time::Duration;
@@ -13,6 +16,11 @@ use reqwest::{Method, Url};
 use serde_json::{Value, json};
 
 use crate::Redacted;
+
+pub(crate) use adoption::ForkAllocation;
+pub use adoption::{ForkReadiness, ForkSessionOptions};
+pub use runtime::ForkRuntime;
+pub use snapshot_spec::SnapshotSpec;
 
 pub use types::{
     DeleteReceipt, ForkError, ForkReceipt, ForkRequest, Outcome, Snapshot, SnapshotSource,
@@ -77,11 +85,18 @@ impl BlaxelForkClient {
         })
     }
 
-    /// Persist (workspace, source, name) before dispatch. A timeout, 409 or lost
+    /// Recheck the source against persisted public-network/runtime pins, then
+    /// capture it. Persist (workspace, source, name) before dispatch. A timeout, 409 or lost
     /// response requires inspecting that exact identity before any retry.
-    pub async fn create_snapshot(&self, source: &str, name: &str) -> Result<Snapshot, ForkError> {
+    pub async fn create_snapshot(
+        &self,
+        source: &str,
+        name: &str,
+        expected: &ForkRuntime,
+    ) -> Result<Snapshot, ForkError> {
         validate_name(source)?;
         validate_name(name)?;
+        self.check_source(source, expected).await?;
         let snapshot: Snapshot = self
             .request(
                 Method::POST,
@@ -195,16 +210,18 @@ impl BlaxelForkClient {
         })
     }
 
-    /// Fork the live state without requesting a persistent snapshot.
+    /// Recheck source runtime pins, then fork live state without a persistent snapshot.
     pub async fn fork_live(
         &self,
         source: &str,
         request: &ForkRequest,
+        expected: &ForkRuntime,
     ) -> Result<ForkReceipt, ForkError> {
         validate_name(source)?;
         if source == request.target() {
             return Err(ForkError::rejected("fork target equals source"));
         }
+        self.check_source(source, expected).await?;
         self.fork(
             &format!("sandboxes/{}/fork", urlencoding::encode(source)),
             request,
@@ -213,20 +230,44 @@ impl BlaxelForkClient {
         .await
     }
 
-    /// Use a fresh provider GET receipt. A local ready receipt is necessary but
-    /// does not replace application authorization or guarantee current readiness.
+    /// Re-read snapshot readiness/configuration and any surviving source's
+    /// attachment settings before forking. Expected pins must originate from the
+    /// authorized checkpoint capture, not an arbitrary imported snapshot.
+    /// A ready receipt does not replace application authorization.
     pub async fn fork_snapshot(
         &self,
         snapshot: &Snapshot,
         request: &ForkRequest,
+        expected: &ForkRuntime,
     ) -> Result<ForkReceipt, ForkError> {
         validate_id(&snapshot.id)?;
+        expected.validate()?;
         if snapshot.workspace != self.workspace
             || snapshot.source.kind != "sandbox"
             || !snapshot.is_ready()
             || snapshot.source.name == request.target()
         {
             return Err(ForkError::rejected("snapshot is not eligible for fork"));
+        }
+        let current = self
+            .get_snapshot(&snapshot.id)
+            .await?
+            .ok_or_else(|| ForkError::rejected("fork snapshot is absent"))?;
+        if !current.is_ready()
+            || current.name != snapshot.name
+            || current.source.name != snapshot.source.name
+            || !current
+                .spec
+                .as_ref()
+                .is_some_and(|spec| spec.matches(expected))
+        {
+            return Err(ForkError::rejected(
+                "snapshot configuration or readiness changed",
+            ));
+        }
+        if !current.source.deleted {
+            self.check_snapshot_source_network(&current.source.name)
+                .await?;
         }
         self.fork(
             &format!("snapshots/{}/fork", urlencoding::encode(&snapshot.id)),

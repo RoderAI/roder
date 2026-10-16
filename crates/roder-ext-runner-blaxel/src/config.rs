@@ -237,7 +237,7 @@ fn strict_optional_string(config: &Value, key: &str) -> anyhow::Result<Option<St
     Ok(Some(value.to_string()))
 }
 
-fn duration_seconds(value: &str, field: &str) -> anyhow::Result<u64> {
+pub(crate) fn duration_seconds(value: &str, field: &str) -> anyhow::Result<u64> {
     let unit = value
         .chars()
         .last()

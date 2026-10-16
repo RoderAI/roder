@@ -84,6 +84,8 @@ pub struct Snapshot {
     pub workspace: String,
     pub status: String,
     pub source: SnapshotSource,
+    #[serde(default)]
+    pub spec: Option<super::SnapshotSpec>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -201,6 +201,10 @@ impl RemoteRunnerProvider for BlaxelRunnerProvider {
         &self,
         state: RunnerSessionState,
     ) -> anyhow::Result<Arc<dyn RemoteRunnerSession>> {
+        anyhow::ensure!(
+            state.metadata.get("fork_adopted").is_none(),
+            "fork sessions require explicit adoption with current ownership and runtime pins"
+        );
         let config = BlaxelConfig::from_state(&state)?;
         let client = self.client(&config);
         let name = config

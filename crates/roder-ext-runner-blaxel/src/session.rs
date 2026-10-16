@@ -32,6 +32,7 @@ pub struct BlaxelRunnerSession {
     destination_id: String,
     sandbox_name: String,
     external_id: Option<String>,
+    fork_allocation: Option<crate::forks::ForkAllocation>,
     working_dir: String,
     cleanup: CleanupMode,
     // Echoed into session state so resume/rejoin reconstruct the config.
@@ -67,6 +68,7 @@ impl BlaxelRunnerSession {
             destination_id,
             sandbox_name,
             external_id,
+            fork_allocation: None,
             working_dir: config.working_dir.clone(),
             cleanup: config.cleanup,
             base_url: config.base_url.clone(),
@@ -87,6 +89,11 @@ impl BlaxelRunnerSession {
             running_processes: Default::default(),
             standby_grace: StandbyGrace::new(config.standby_after_seconds),
         }
+    }
+
+    pub(crate) fn with_fork_allocation(mut self, allocation: crate::forks::ForkAllocation) -> Self {
+        self.fork_allocation = Some(allocation);
+        self
     }
 
     fn endpoint(&self) -> String {
@@ -216,6 +223,9 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
             "cleanup": self.cleanup.as_str(),
             "paused": paused,
         });
+        if self.fork_allocation.is_some() {
+            metadata["fork_adopted"] = json!(true);
+        }
         if let Some(workspace) = &self.workspace {
             metadata["workspace"] = json!(workspace);
         }
@@ -413,6 +423,12 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
 
     async fn close(&self) -> anyhow::Result<()> {
         self.set_paused(true);
+        if self.cleanup.deletes_on_close()
+            && let Some(allocation) = &self.fork_allocation
+        {
+            allocation.client.delete_child(&allocation.request).await?;
+            return Ok(());
+        }
         let endpoint = self.endpoint();
         let grace_result = self.standby_grace.cancel(&self.client, &endpoint).await;
         if self.cleanup.deletes_on_close() {
