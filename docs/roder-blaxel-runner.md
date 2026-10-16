@@ -32,7 +32,7 @@ it from model input or change process-wide environment variables:
 use roder_ext_runner_blaxel::{BlaxelRunnerProvider, BlaxelWorkspace, Redacted};
 # fn main() -> anyhow::Result<()> {
 let workspace = BlaxelWorkspace::new(
-    Redacted(std::env::var("BL_SNAPSHOT_API_KEY")?),
+    Redacted(std::env::var("BLAXEL_SNAPSHOT_API_KEY")?),
     std::env::var("BL_SNAPSHOT_WORKSPACE")?,
 )?;
 let provider = BlaxelRunnerProvider::for_workspace(workspace)?;
