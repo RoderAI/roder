@@ -1,5 +1,9 @@
 # Jev 1.14 with screenshots: faster than visual Decisions, not more accurate
 
+> [Follow-up hill climb](hillclimb/README.md): the opt-in DOM-grounded Jev image
+> candidate passed 72/72 confirmation attempts and 15/18 compound held-out
+> attempts. This page retains the original untuned comparison.
+
 On the 24-task confirmation set, **Jev 1.14 with viewport screenshots passed
 66/72 (91.7%)**. Visual OpenAI Decisions passed **71/72 (98.6%)** in the same
 run. Jev was faster: median wall time **1,536 ms vs 1,862.5 ms**, and median
@@ -166,6 +170,7 @@ report=evals/reports/decisions-vs-jev/2026-10-16
 p=vision,jev@jev-1.13.0,jev@jev-preview,jev-vision@jev-preview
 python3 "$report/analyze.py" --tasks 24 --repeats 3 --providers $p "$report/confirmation.jsonl.gz"
 python3 "$report/analyze.py" --tasks 4 --repeats 3 --providers $p "$report/holdout.jsonl.gz"
+# Example: one of the comparisons retained in paired.json.
 python3 "$report/paired.py" "$report/confirmation.jsonl.gz" jev-vision@jev-preview:vision
 ```
 

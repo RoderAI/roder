@@ -25,3 +25,20 @@ operation, and explicit completion-versus-pending-update criteria. It retains th
 same offered actions and irreversible-action gate. It can also run without images.
 For paired evals, append `-vision` to any Jev profile, for example
 `jev_workflow-vision@jev-preview` or `jev_dom-vision@jev-preview`.
+
+For example, a synthetic account page produces this shape:
+
+```text
+- main
+  - heading "Account" [level=1]
+  - form "Profile"
+    - textbox "Name" [node=2] [value="Ada"]
+    - combobox "Country" [node=3] [value="Chile"]
+    - button "Save" [disabled]
+  - status
+    - text "Saved account"
+```
+
+Nodes link to each model request's offered target through its explicit `node`
+field. A disabled button can appear as evidence without becoming an executable
+target. This avoids turning page descriptions into permission to act.
