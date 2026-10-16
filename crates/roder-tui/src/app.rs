@@ -1,4 +1,5 @@
 #![allow(dead_code, clippy::collapsible_if, clippy::too_many_arguments)]
+mod agent_activity;
 mod automations;
 mod chrome;
 mod commands;
@@ -1384,6 +1385,7 @@ where
     timeline: TimelineState,
     resume_history: ResumeHistoryState,
     team_ui: TeamUiState,
+    agent_activity: agent_activity::AgentActivityState,
     team_timelines: HashMap<String, TimelineState>,
     plan_panel: PlanPanelState,
     tool_names: HashMap<String, String>,
@@ -1847,6 +1849,7 @@ where
             timeline: TimelineState::new(scroll_settings, timeline_settings),
             resume_history: ResumeHistoryState::default(),
             team_ui: TeamUiState::default(),
+            agent_activity: agent_activity::AgentActivityState::default(),
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
             tool_names: HashMap::new(),
@@ -2068,6 +2071,8 @@ where
                             if self.handle_confirm_key(key).await {
                                 break;
                             }
+                        } else if self.agent_activity.is_open() {
+                            self.agent_activity.handle_key(key);
                         } else if self.show_shortcuts_dialog {
                             if key.modifiers.contains(KeyModifiers::CONTROL)
                                 && key.code == KeyCode::Char('c')
@@ -2241,6 +2246,14 @@ where
                         {
                             continue;
                         } else {
+                            if key.code == KeyCode::Left
+                                && key.modifiers.is_empty()
+                                && !self.timeline.is_focused()
+                                && composer_text(&self.composer).is_empty()
+                            {
+                                self.agent_activity.open();
+                                continue;
+                            }
                             if is_team_focus_next_key(key) {
                                 self.cycle_team_focus(true);
                                 continue;
@@ -2362,6 +2375,10 @@ where
                     Err(_) => break,
                 };
                 self.last_event_at = clock.now();
+                if self.route_background_agent_event(&envelope.event) {
+                    needs_redraw = true;
+                    continue;
+                }
                 needs_redraw = true;
                 self.push_event(format!("{} #{}", envelope.kind, envelope.seq));
                 self.remote_panel.apply_event(&envelope);
@@ -2593,10 +2610,12 @@ where
                             self.active_turn_timer.pause(clock.now());
                             self.progress.set(TerminalProgress::Paused);
                         }
-                        self.record_tool_requested_with_id(
-                            ev.tool_id,
-                            fallback_entry(format!("{} needs approval", ev.tool_name)),
-                        );
+                        if ev.thread_id == self.thread_id {
+                            self.record_tool_requested_with_id(
+                                ev.tool_id,
+                                fallback_entry(format!("{} needs approval", ev.tool_name)),
+                            );
+                        }
                         self.confirm_dialog =
                             Some(ConfirmDialogState::new(ConfirmDialog::ToolApproval {
                                 approval_id: ev.approval_id,
@@ -2610,7 +2629,7 @@ where
                             self.active_turn_timer.resume(clock.now());
                             self.progress.set(TerminalProgress::Working);
                         }
-                        if !ev.approved {
+                        if !ev.approved && ev.thread_id == self.thread_id {
                             self.record_tool_completed(&ev.tool_id, true, None);
                         }
                     }
@@ -2621,8 +2640,10 @@ where
                             .and_then(|question| question.get("question"))
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("user input requested");
-                        self.timeline
-                            .push_system(format!("user input requested: {question}"));
+                        if ev.thread_id == self.thread_id {
+                            self.timeline
+                                .push_system(format!("user input requested: {question}"));
+                        }
                         match UserInputDialogState::from_event(
                             ev.request_id.clone(),
                             ev.turn_id.clone(),
@@ -2648,10 +2669,12 @@ where
                         }
                     }
                     RoderEvent::UserInputResolved(ev) => {
-                        self.timeline.push_system(format!(
-                            "user input resolved: {}",
-                            short_id(&ev.request_id)
-                        ));
+                        if ev.thread_id == self.thread_id {
+                            self.timeline.push_system(format!(
+                                "user input resolved: {}",
+                                short_id(&ev.request_id)
+                            ));
+                        }
                         // Clear the dialog if it is still open (e.g. resolved by
                         // another client) and resume the paused turn.
                         if self
@@ -2999,6 +3022,7 @@ where
 
     fn has_streaming_animation(&self) -> bool {
         self.timeline.has_streaming_animation()
+            || self.agent_activity.has_visible_animation()
             || self
                 .team_timelines
                 .values()
@@ -4399,6 +4423,9 @@ where
     }
 
     fn handle_paste(&mut self, text: String) {
+        if self.agent_activity.is_open() {
+            return;
+        }
         if self.tool_detail_modal.is_some() {
             return;
         }
@@ -4436,6 +4463,9 @@ where
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.agent_activity.is_open() {
+            return;
+        }
         self.update_context_counter_hover(&mouse);
         self.update_queued_prompt_button_hover(&mouse);
         if let Some(modal) = self.tool_detail_modal.as_mut() {
@@ -4847,6 +4877,10 @@ where
     }
 
     fn render_overlays(&mut self, f: &mut Frame<'_>, area: Rect) {
+        if self.agent_activity.is_open() {
+            self.agent_activity
+                .render(f, area, self.theme, self.animation_frame);
+        }
         if self.show_palette {
             self.render_palette_popup(f, area);
         }
@@ -5328,6 +5362,11 @@ where
             .as_ref()
             .map(|goal| format!("  goal:{}", goals::goal_footer_label(goal)))
             .unwrap_or_default();
+        let agents_hint = if self.agent_activity.count() > 0 {
+            format!("  left: {} agents", self.agent_activity.count())
+        } else {
+            String::new()
+        };
         let shortcut_context = match self.timeline.focus() {
             TimelineFocus::Timeline => FooterShortcutContext::Timeline,
             TimelineFocus::Composer if self.active_turn_id.is_some() => {
@@ -5340,7 +5379,7 @@ where
         Paragraph::new(line_with_gap(
             vec![Span::styled(
                 format!(
-                    " {status}{queue_hint}{pending_hint}{shell_hint}{voice_hint}{roadmap_hint}{goal_hint}  {interaction_hint}",
+                    " {status}{queue_hint}{pending_hint}{shell_hint}{voice_hint}{roadmap_hint}{goal_hint}{agents_hint}  {interaction_hint}",
                     queue_hint = if self.queued_prompts.is_empty() {
                         String::new()
                     } else {
@@ -10475,6 +10514,7 @@ mod tests {
             timeline: TimelineState::default(),
             resume_history: ResumeHistoryState::default(),
             team_ui: TeamUiState::default(),
+            agent_activity: agent_activity::AgentActivityState::default(),
             team_timelines: HashMap::new(),
             plan_panel: PlanPanelState::default(),
             tool_names: HashMap::new(),
@@ -11203,6 +11243,182 @@ mod tests {
         app.apply_thread(idle);
 
         assert_eq!(app.active_turn_id, None);
+    }
+
+    #[test]
+    fn background_agent_events_do_not_mutate_parent_state() {
+        use roder_api::events::{InferenceEventReceived, TurnStarted};
+        use roder_api::inference::{InferenceEvent, ReasoningDelta};
+        use time::OffsetDateTime;
+        let mut app = test_app();
+        app.active_turn_id = Some("parent-turn".to_string());
+        app.current_turn_output_tokens = 42;
+        let started = RoderEvent::TurnStarted(TurnStarted {
+            thread_id: "child-thread".to_string(),
+            turn_id: "child-turn".to_string(),
+            runtime_profile: Default::default(),
+            timestamp: OffsetDateTime::now_utc(),
+        });
+        assert!(app.route_background_agent_event(&started));
+        let delta = RoderEvent::InferenceEventReceived(InferenceEventReceived {
+            thread_id: "child-thread".to_string(),
+            turn_id: "child-turn".to_string(),
+            event: InferenceEvent::ReasoningDelta(ReasoningDelta {
+                text: "child reasoning must not enter parent".to_string(),
+            }),
+            timestamp: OffsetDateTime::now_utc(),
+        });
+        assert!(app.route_background_agent_event(&delta));
+        assert_eq!(app.active_turn_id.as_deref(), Some("parent-turn"));
+        assert_eq!(app.current_turn_output_tokens, 42);
+        assert_eq!(app.agent_activity.count(), 1);
+        let render = app.timeline.render(app.theme, Rect::new(0, 0, 80, 8));
+        assert!(!format!("{:?}", render.text).contains("child reasoning"));
+        let parent = RoderEvent::TurnStarted(TurnStarted {
+            thread_id: app.thread_id.clone(),
+            turn_id: "parent-turn".to_string(),
+            runtime_profile: Default::default(),
+            timestamp: OffsetDateTime::now_utc(),
+        });
+        assert!(!app.route_background_agent_event(&parent));
+        let approval = RoderEvent::ApprovalRequested(roder_api::events::ApprovalRequested {
+            thread_id: "child-thread".to_string(),
+            turn_id: "child-turn".to_string(),
+            approval_id: "approval-child".to_string(),
+            tool_id: "tool-child".to_string(),
+            tool_name: "shell".to_string(),
+            reason: Some("needs approval".to_string()),
+            timestamp: OffsetDateTime::now_utc(),
+        });
+        assert!(!app.route_background_agent_event(&approval));
+        let usage = RoderEvent::InferenceEventReceived(InferenceEventReceived {
+            thread_id: "child-thread".to_string(),
+            turn_id: "child-turn".to_string(),
+            event: InferenceEvent::Usage(TokenUsage {
+                completion_tokens: 123,
+                ..Default::default()
+            }),
+            timestamp: OffsetDateTime::now_utc(),
+        });
+        assert!(app.route_background_agent_event(&usage));
+        assert_eq!(app.current_turn_output_tokens, 42);
+    }
+
+    #[test]
+    fn agent_overview_renders_without_foreground_bleed() {
+        use roder_api::events::{InferenceEventReceived, TeamMemberCompleted, TeamMemberStarted};
+        use roder_api::inference::{InferenceEvent, ReasoningDelta};
+        use time::OffsetDateTime;
+        let mut app = test_app();
+        app.timeline
+            .push_system("FOREGROUND MUST NOT BLEED INTO AGENT VIEW");
+        let mut member = test_members().remove(1);
+        member.name = "widget_tests".to_string();
+        member.agent_path = Some("/root/widget_tests".to_string());
+        let child_thread_id = member.thread_id.clone();
+        assert!(
+            app.route_background_agent_event(&RoderEvent::TeamMemberStarted(TeamMemberStarted {
+                team_id: "native-team".to_string(),
+                member,
+                timestamp: OffsetDateTime::now_utc(),
+            },))
+        );
+        assert!(
+            app.route_background_agent_event(&RoderEvent::InferenceEventReceived(
+                InferenceEventReceived {
+                    thread_id: child_thread_id.clone(),
+                    turn_id: "widget-turn".to_string(),
+                    event: InferenceEvent::ReasoningDelta(ReasoningDelta {
+                        text: "Checking widget tests independently of the parent transcript."
+                            .to_string(),
+                    }),
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+        );
+        assert!(
+            app.route_background_agent_event(&RoderEvent::TeamMemberCompleted(
+                TeamMemberCompleted {
+                    team_id: "native-team".to_string(),
+                    member_id: "builder".to_string(),
+                    member_thread_id: child_thread_id,
+                    turn_id: Some("widget-turn".to_string()),
+                    status: TeamMemberStatus::Completed,
+                    final_message: None,
+                    error: None,
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+        );
+        app.agent_activity.open();
+        let mut terminal = Terminal::new(TestBackend::new(131, 25)).unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+        let screen = |terminal: &Terminal<TestBackend>| {
+            let buffer = terminal.backend().buffer();
+            (0..25)
+                .map(|y| {
+                    (0..131)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let overview = screen(&terminal);
+        assert!(overview.contains("/root/widget_tests"));
+        assert!(overview.contains("[completed]"));
+        assert!(!overview.contains("FOREGROUND MUST NOT BLEED"));
+        println!("AGENT_OVERVIEW_CAPTURE_BEGIN\n{overview}\nAGENT_OVERVIEW_CAPTURE_END");
+        app.agent_activity
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        terminal.draw(|f| app.render(f)).unwrap();
+        let inspector = screen(&terminal);
+        assert!(
+            inspector.contains("Checking widget tests independently"),
+            "{inspector}"
+        );
+        assert!(!inspector.contains("FOREGROUND MUST NOT BLEED"));
+        println!("AGENT_INSPECTOR_CAPTURE_BEGIN\n{inspector}\nAGENT_INSPECTOR_CAPTURE_END");
+        let composer_before = composer_text(&app.composer);
+        app.handle_paste("must not alter hidden composer".to_string());
+        assert_eq!(composer_text(&app.composer), composer_before);
+    }
+
+    #[test]
+    fn known_team_member_streams_are_isolated_and_still_available_to_team_focus() {
+        use roder_api::events::{InferenceEventReceived, TurnStarted};
+        use roder_api::inference::{InferenceEvent, ReasoningDelta};
+        use time::OffsetDateTime;
+        let mut app = test_app();
+        app.team_ui.set_team("team-1".to_string(), test_members());
+        app.active_turn_id = Some("parent-turn".to_string());
+        assert!(
+            app.route_background_agent_event(&RoderEvent::TurnStarted(TurnStarted {
+                thread_id: "thread-builder".to_string(),
+                turn_id: "builder-turn".to_string(),
+                runtime_profile: Default::default(),
+                timestamp: OffsetDateTime::now_utc(),
+            }))
+        );
+        assert!(
+            app.route_background_agent_event(&RoderEvent::InferenceEventReceived(
+                InferenceEventReceived {
+                    thread_id: "thread-builder".to_string(),
+                    turn_id: "builder-turn".to_string(),
+                    event: InferenceEvent::ReasoningDelta(ReasoningDelta {
+                        text: "BUILDER THINKING".into(),
+                    }),
+                    timestamp: OffsetDateTime::now_utc(),
+                },
+            ))
+        );
+        assert_eq!(app.active_turn_id.as_deref(), Some("parent-turn"));
+        assert_eq!(app.agent_activity.count(), 1);
+        assert!(app.team_ui.focused_label().unwrap().contains("+1"));
+        app.cycle_team_focus(true);
+        app.timeline.flush_streaming_animation();
+        let rendered = app.timeline.render(app.theme, Rect::new(0, 0, 80, 12));
+        assert!(format!("{:?}", rendered.text).contains("BUILDER THINKING"));
     }
 
     #[test]

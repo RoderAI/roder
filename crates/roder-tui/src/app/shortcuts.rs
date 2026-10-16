@@ -41,6 +41,10 @@ const GLOBAL_SHORTCUTS: &[Shortcut] = &[
         action: "toggle events",
     },
     Shortcut {
+        keys: "left (empty input)",
+        action: "agent overview; enter inspects, left/esc returns",
+    },
+    Shortcut {
         keys: "shift+tab",
         action: "cycle mode",
     },

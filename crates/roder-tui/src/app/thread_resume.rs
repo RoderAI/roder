@@ -72,6 +72,9 @@ where
     ) {
         let thread_id = thread.id.clone();
         let active_turn_id = thread.status.active_turn_id.clone();
+        if self.thread_id != thread_id {
+            self.agent_activity = super::agent_activity::AgentActivityState::default();
+        }
         self.thread_id = thread_id.clone();
         self.active_turn_id = active_turn_id;
         self.active_turn_timer = TurnTimer::default();
