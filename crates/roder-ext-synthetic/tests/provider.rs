@@ -20,15 +20,15 @@ static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
 
 fn isolate_config_dir() {
     CONFIG_ISOLATION.get_or_init(|| {
-        let temp = std::env::temp_dir().join(format!(
-            "roder-ext-synthetic-tests-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("roder-ext-synthetic-tests-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
         // SAFETY: set once before any test reads the config; all tests run in
         // the same process and never restore a real config dir.
-        unsafe { std::env::set_var("RODER_CONFIG_DIR", &temp); }
+        unsafe {
+            std::env::set_var("RODER_CONFIG_DIR", &temp);
+        }
     });
 }
 
@@ -73,8 +73,16 @@ async fn list_models_returns_alias_fallback_without_credentials() {
     );
     assert!(models.iter().any(|model| model.id == "syn:large:vision"));
     assert!(models.iter().any(|model| model.id == "hf:zai-org/GLM-5.2"));
-    assert!(models.iter().any(|model| model.id == "hf:MiniMaxAI/MiniMax-M3"));
-    assert!(models.iter().any(|model| model.id == "hf:openai/gpt-oss-120b"));
+    assert!(
+        models
+            .iter()
+            .any(|model| model.id == "hf:MiniMaxAI/MiniMax-M3")
+    );
+    assert!(
+        models
+            .iter()
+            .any(|model| model.id == "hf:openai/gpt-oss-120b")
+    );
 }
 
 #[tokio::test]

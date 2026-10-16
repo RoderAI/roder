@@ -30,8 +30,8 @@ use roder_commands::{
 use roder_core::{
     CreateThreadRequest, Runtime, RuntimeDrainOutcome, StartTurnRequest,
     TeamMemberStartRequest as RuntimeTeamMemberStartRequest,
-    TeamStartRequest as RuntimeTeamStartRequest, TeamState,
-    media_artifacts::MediaArtifactStore, policy_gate::DefaultPolicyGate,
+    TeamStartRequest as RuntimeTeamStartRequest, TeamState, media_artifacts::MediaArtifactStore,
+    policy_gate::DefaultPolicyGate,
 };
 use roder_protocol::*;
 use roder_roadmap::{ListOptions, list_documents, parse_document, validate_document};
@@ -97,7 +97,8 @@ struct RoadmapThreadParams {
 pub struct AppServer {
     pub runtime: Arc<Runtime>,
     pub(crate) system_instructions: Option<String>,
-    pub(crate) runtime_lease_supervisor: std::sync::Mutex<Option<crate::hosted::lease_supervisor::HostedRuntimeLeaseSupervisor>>,
+    pub(crate) runtime_lease_supervisor:
+        std::sync::Mutex<Option<crate::hosted::lease_supervisor::HostedRuntimeLeaseSupervisor>>,
     pub(crate) runtime_owner_release: tokio::sync::Mutex<()>,
     pub(crate) external_tool_executors: Arc<crate::hosted::external_tools::ExecutorBindings>,
     pub(crate) agent_backend: Option<crate::backend::AgentBackendBridge>,
@@ -165,8 +166,14 @@ impl AppServer {
         Self::with_feature_config(runtime, AppServerFeatureConfig::default())
     }
 
-    pub fn with_agent_backend(mut self, backend: Arc<dyn roder_api::backend::AgentBackend>) -> Self {
-        self.agent_backend = Some(crate::backend::AgentBackendBridge::new(backend, self.runtime.clone()));
+    pub fn with_agent_backend(
+        mut self,
+        backend: Arc<dyn roder_api::backend::AgentBackend>,
+    ) -> Self {
+        self.agent_backend = Some(crate::backend::AgentBackendBridge::new(
+            backend,
+            self.runtime.clone(),
+        ));
         self
     }
 
@@ -184,8 +191,18 @@ impl AppServer {
             && let Some(result) = backend.handle(&req).await
         {
             return match result {
-                Ok(val) => JsonRpcResponse { jsonrpc: "2.0".into(), id: req.id, result: Some(val), error: None },
-                Err(err) => JsonRpcResponse { jsonrpc: "2.0".into(), id: req.id, result: None, error: Some(err) },
+                Ok(val) => JsonRpcResponse {
+                    jsonrpc: "2.0".into(),
+                    id: req.id,
+                    result: Some(val),
+                    error: None,
+                },
+                Err(err) => JsonRpcResponse {
+                    jsonrpc: "2.0".into(),
+                    id: req.id,
+                    result: None,
+                    error: Some(err),
+                },
             };
         }
         let result = match req.method.as_str() {

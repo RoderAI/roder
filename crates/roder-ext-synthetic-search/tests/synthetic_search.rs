@@ -38,10 +38,12 @@ async fn basic_search_posts_query_and_normalizes_results() {
     assert!(headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("authorization") && value == "Bearer secret-test-key"
     }));
-    assert!(headers
-        .iter()
-        .any(|(name, value)| name.eq_ignore_ascii_case("content-type")
-            && value.starts_with("application/json")));
+    assert!(
+        headers
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("content-type")
+                && value.starts_with("application/json"))
+    );
     assert_eq!(response.provider, "synthetic");
     assert_eq!(response.results[0].url, "https://example.com/roder");
     assert_eq!(response.results[0].title.as_deref(), Some("Roder"));
@@ -205,11 +207,7 @@ async fn validation_errors_do_not_send_requests() {
 
 #[tokio::test]
 async fn empty_results_return_an_error() {
-    let server = MockServer::start(vec![MockResponse::json(
-        200,
-        json!({ "results": [] }),
-    )])
-    .await;
+    let server = MockServer::start(vec![MockResponse::json(200, json!({ "results": [] }))]).await;
     let client = test_client(&server);
 
     let error = client

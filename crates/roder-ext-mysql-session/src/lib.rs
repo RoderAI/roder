@@ -17,6 +17,6 @@ pub mod schema;
 pub mod store;
 mod write_guard;
 
-pub use extension::*;
 pub use config::{MysqlSessionConfig, redact_database_url, validate_tenant_id};
+pub use extension::*;
 pub use store::MysqlSessionStore;

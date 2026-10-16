@@ -14,7 +14,7 @@ CARGO_TARGET_DIR ?= target
 CARGO_DEBUG_BIN := $(CARGO_TARGET_DIR)/debug/roder
 CARGO_RELEASE_BIN := $(CARGO_TARGET_DIR)/release/roder
 
-.PHONY: build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock
+.PHONY: fmt fmt-check build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock
 
 # Wipe the cargo target dir. Incremental builds accumulate session artifacts
 # unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
@@ -102,6 +102,14 @@ mock-app-server:
 
 jaeger:
 	./jaeger.sh
+
+# rustfmt.toml is stable-only and identical to ComposalAI/vex's, so any
+# toolchain formats the same way. Run fmt-check before pushing (CI is off).
+fmt:
+	cargo fmt
+
+fmt-check:
+	cargo fmt --check
 
 dev-deps:
 	cargo install cargo-nextest --locked

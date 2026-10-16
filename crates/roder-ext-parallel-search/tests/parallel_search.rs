@@ -118,10 +118,7 @@ async fn advanced_settings_carry_domains_and_location() {
         json!(["spam.example"])
     );
     assert_eq!(body["advanced_settings"]["location"], "us");
-    assert_eq!(
-        response.results[0].snippet.as_deref(),
-        Some("A\n\nB")
-    );
+    assert_eq!(response.results[0].snippet.as_deref(), Some("A\n\nB"));
 }
 
 #[tokio::test]

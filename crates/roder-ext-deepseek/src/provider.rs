@@ -1,6 +1,4 @@
-use roder_api::catalog::{
-    DEEPSEEK_DEFAULT_BASE_URL, PROVIDER_DEEPSEEK, models_for_provider,
-};
+use roder_api::catalog::{DEEPSEEK_DEFAULT_BASE_URL, PROVIDER_DEEPSEEK, models_for_provider};
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, InferenceCapabilities, InferenceEngine, InferenceEventStream,
@@ -165,10 +163,8 @@ fn isolate_config_dir() {
     use std::sync::OnceLock;
     static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
     CONFIG_ISOLATION.get_or_init(|| {
-        let temp = std::env::temp_dir().join(format!(
-            "roder-ext-deepseek-tests-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("roder-ext-deepseek-tests-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
         // SAFETY: set once before any test reads the config; all tests run in

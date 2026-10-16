@@ -223,11 +223,7 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
         let dispatcher = dispatcher.clone();
         tokio::spawn(async move {
             dispatcher
-                .dispatch(
-                    "parent".to_string(),
-                    "turn-1".to_string(),
-                    runner_request(),
-                )
+                .dispatch("parent".to_string(), "turn-1".to_string(), runner_request())
                 .await
         })
     };
@@ -236,11 +232,7 @@ async fn speed_lane_concurrency_caps_reject_extra_runner_work() {
     }
 
     let err = dispatcher
-        .dispatch(
-            "parent".to_string(),
-            "turn-2".to_string(),
-            runner_request(),
-        )
+        .dispatch("parent".to_string(), "turn-2".to_string(), runner_request())
         .await
         .unwrap_err();
     assert!(err.to_string().contains("runner lane max_concurrent"));

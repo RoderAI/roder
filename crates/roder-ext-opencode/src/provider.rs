@@ -409,11 +409,7 @@ async fn send_chat_completion_request(
                 let retryable = policy
                     .provider_retry_status_codes
                     .contains(&status.as_u16());
-                last_error = Some(format_chat_completion_error(
-                    provider_name,
-                    status,
-                    &text,
-                ));
+                last_error = Some(format_chat_completion_error(provider_name, status, &text));
                 if retryable && attempt < attempts {
                     push_retry_event(
                         &mut retry_events,
@@ -658,10 +654,11 @@ fn format_chat_completion_error(
 fn parse_opencode_error_detail(body: &str) -> Option<String> {
     let value: Value = serde_json::from_str(body).ok()?;
     let error = value.get("error").unwrap_or(&value);
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .or_else(|| value.pointer("/error/error/message").and_then(Value::as_str))?;
+    let message = error.get("message").and_then(Value::as_str).or_else(|| {
+        value
+            .pointer("/error/error/message")
+            .and_then(Value::as_str)
+    })?;
     let error_type = error
         .get("type")
         .and_then(Value::as_str)
@@ -1373,7 +1370,10 @@ mod tests {
             reqwest::StatusCode::UNAUTHORIZED,
             r#"{"type":"error","error":{"type":"CreditsError","message":"No payment method. Add a payment method here: https://opencode.ai/billing"}}"#,
         );
-        assert!(billing.contains("CreditsError: No payment method"), "{billing}");
+        assert!(
+            billing.contains("CreditsError: No payment method"),
+            "{billing}"
+        );
     }
 
     struct CapturedChatServer {

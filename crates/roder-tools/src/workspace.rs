@@ -227,7 +227,9 @@ mod tests {
             skill_dir.join("SKILL.md").canonicalize().unwrap()
         );
         assert_eq!(
-            workspace.resolve_for_write("workspace://notes.txt").unwrap(),
+            workspace
+                .resolve_for_write("workspace://notes.txt")
+                .unwrap(),
             root.canonicalize().unwrap().join("notes.txt")
         );
 
@@ -282,10 +284,7 @@ pub(crate) fn expand_home(input: &str) -> anyhow::Result<PathBuf> {
 }
 
 pub(crate) fn is_home_relative(input: &str) -> bool {
-    input == "~"
-        || input.starts_with("~/")
-        || input == "user://"
-        || input.starts_with("user://")
+    input == "~" || input.starts_with("~/") || input == "user://" || input.starts_with("user://")
 }
 
 fn home_dir() -> anyhow::Result<PathBuf> {

@@ -20,10 +20,8 @@ static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
 
 fn isolate_config_dir() {
     CONFIG_ISOLATION.get_or_init(|| {
-        let temp = std::env::temp_dir().join(format!(
-            "roder-ext-deepseek-tests-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("roder-ext-deepseek-tests-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
         // SAFETY: set once before any test reads the config; all tests run in
@@ -82,7 +80,10 @@ async fn stream_turn_fails_locally_without_api_key() {
         Ok(_) => panic!("expected missing-key error"),
         Err(error) => error.to_string(),
     };
-    assert!(error.contains("DeepSeek API key is missing"), "error: {error}");
+    assert!(
+        error.contains("DeepSeek API key is missing"),
+        "error: {error}"
+    );
     assert!(error.contains("DEEPSEEK_API_KEY"), "error: {error}");
     assert!(error.contains("[providers.deepseek]"), "guidance: {error}");
 }

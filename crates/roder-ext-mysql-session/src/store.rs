@@ -74,7 +74,10 @@ impl MysqlSessionStore {
     /// mirroring the PostgreSQL store's hosted-tenancy contract.
     pub fn for_tenant(&self, tenant_id: &str) -> anyhow::Result<Self> {
         let tenant_id = validate_tenant_id(tenant_id)?;
-        anyhow::ensure!(self.owner.is_none() || tenant_id == self.tenant_id, "cannot rescope an owned session store");
+        anyhow::ensure!(
+            self.owner.is_none() || tenant_id == self.tenant_id,
+            "cannot rescope an owned session store"
+        );
         Ok(Self {
             executor: self.executor.clone(),
             pool: self.pool.clone(),
@@ -369,7 +372,8 @@ impl ThreadStore for MysqlSessionStore {
         self.executor
             .run(async move {
                 let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
-                crate::event_log::append_event(&mut tx, &tenant_id, &row_thread_id, &row_envelope).await?;
+                crate::event_log::append_event(&mut tx, &tenant_id, &row_thread_id, &row_envelope)
+                    .await?;
                 tx.commit().await?;
                 Ok(())
             })
@@ -390,7 +394,8 @@ impl ThreadStore for MysqlSessionStore {
         self.executor
             .run(async move {
                 let mut tx = crate::write_guard::begin(&pool, &tenant_id, owner.as_ref()).await?;
-                crate::event_log::append_item_event(&mut tx, &tenant_id, &thread_id, &item_event).await?;
+                crate::event_log::append_item_event(&mut tx, &tenant_id, &thread_id, &item_event)
+                    .await?;
                 tx.commit().await?;
                 Ok(())
             })
@@ -425,8 +430,12 @@ impl ThreadStore for MysqlSessionStore {
 }
 
 impl ThreadStoreFactory for MysqlSessionStore {
-    fn id(&self) -> ThreadStoreId { "mysql-session".to_string() }
-    fn create(&self) -> Arc<dyn ThreadStore> { Arc::new(self.clone()) }
+    fn id(&self) -> ThreadStoreId {
+        "mysql-session".to_string()
+    }
+    fn create(&self) -> Arc<dyn ThreadStore> {
+        Arc::new(self.clone())
+    }
 }
 
 pub struct MysqlSessionStoreFactory {

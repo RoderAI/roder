@@ -138,8 +138,7 @@ pub fn normalize_synthetic_response(
     raw: Value,
 ) -> anyhow::Result<WebSearchResponse> {
     if raw.get("error").is_some() {
-        let message = error_message(&raw)
-            .unwrap_or_else(|| "Synthetic search failed".to_string());
+        let message = error_message(&raw).unwrap_or_else(|| "Synthetic search failed".to_string());
         anyhow::bail!("{message}");
     }
 
@@ -187,10 +186,7 @@ fn result_from_value(value: &Value) -> Option<WebSearchResult> {
     let title = string_field(value, &["title", "name", "headline"]);
     let snippet = string_field(value, &["text", "snippet", "excerpt", "summary", "content"]);
     let content = string_field(value, &["raw_content", "rawContent", "markdown"]);
-    let published_at = string_field(
-        value,
-        &["published", "published_at", "publishedAt", "date"],
-    );
+    let published_at = string_field(value, &["published", "published_at", "publishedAt", "date"]);
     let score = number_field(value, &["score", "relevance", "rank_score", "rankScore"]);
     let source = string_field(value, &["source", "site_name", "siteName"]);
 
@@ -382,7 +378,10 @@ mod tests {
             Some("2026-06-22")
         );
         assert_eq!(response.results[0].score, Some(0.91));
-        assert_eq!(synthetic_request_id(&response.raw).as_deref(), Some("req-1"));
+        assert_eq!(
+            synthetic_request_id(&response.raw).as_deref(),
+            Some("req-1")
+        );
     }
 
     #[test]
