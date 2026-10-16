@@ -386,7 +386,12 @@ async fn owner_drain_requires_a_forwarded_connection_and_write_scope() {
     assert_eq!(denied.error.unwrap().code, -32012);
     edge.pool.begin_owner_drain().await;
     expect_closed(&mut reader).await;
-    assert!(call(&mut direct, "hosted/whoami", serde_json::json!({})).await.error.is_none());
+    assert!(
+        call(&mut direct, "hosted/whoami", serde_json::json!({}))
+            .await
+            .error
+            .is_none()
+    );
     direct.close(None).await.unwrap();
     edge.controller.stop().await.unwrap();
     owner.controller.stop().await.unwrap();

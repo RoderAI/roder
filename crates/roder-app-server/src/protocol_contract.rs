@@ -4,9 +4,9 @@ use roder_api::thread::{
 use roder_api::transcript::{InputImage, TranscriptItem};
 use roder_protocol::{Thread, ThreadRunnerParams, ThreadStatus, Turn, TurnInputItem};
 
-mod terminal;
 #[cfg(test)]
 mod chronology_tests;
+mod terminal;
 
 pub(crate) fn protocol_thread_from_metadata(
     metadata: roder_api::thread::ThreadMetadata,
@@ -110,7 +110,10 @@ pub(crate) fn protocol_turns_from_snapshot(
             .iter()
             .any(|record| record.turn_id == item_turn.turn_id)
     }) {
-        turns.push((item_turn.created_at, protocol_turn_from_item_turn(item_turn)));
+        turns.push((
+            item_turn.created_at,
+            protocol_turn_from_item_turn(item_turn),
+        ));
     }
     // Event-only historical turns can precede saved records. Sort before losing
     // subsecond precision in the public protocol timestamps.

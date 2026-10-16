@@ -374,7 +374,8 @@ mod tests {
         async fn start(responses: Vec<SyntheticMockResponse>) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
-            let responses = std::sync::Arc::new(Mutex::new(std::collections::VecDeque::from(responses)));
+            let responses =
+                std::sync::Arc::new(Mutex::new(std::collections::VecDeque::from(responses)));
             let requests = std::sync::Arc::new(Mutex::new(Vec::new()));
             let server_responses = responses.clone();
             let server_requests = requests.clone();
@@ -427,7 +428,11 @@ mod tests {
                         let response = responses.lock().await.pop_front().unwrap_or_else(|| {
                             SyntheticMockResponse::json(500, json!({"message":"no response"}))
                         });
-                        let reason = if response.status == 200 { "OK" } else { "Error" };
+                        let reason = if response.status == 200 {
+                            "OK"
+                        } else {
+                            "Error"
+                        };
                         let raw = format!(
                             "HTTP/1.1 {} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                             response.status,

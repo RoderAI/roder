@@ -1,0 +1,8 @@
+# One rustfmt configuration, kept identical in ComposalAI/vex and RoderAI/roder.
+# Stable options only, so every toolchain (stable, 1.95.0, nightly) formats the
+# same way. CI runs `cargo fmt --check` in each Rust workspace.
+edition = "2024"
+style_edition = "2024"
+max_width = 100
+use_field_init_shorthand = true
+use_try_shorthand = true

@@ -197,7 +197,8 @@ fn number_to_u32(value: Option<&Value>) -> Option<u32> {
 }
 
 fn first_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter().find_map(|key| value.get(*key).and_then(Value::as_str))
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
 }
 
 fn sse_frame_boundary(buffer: &str) -> Option<(usize, usize)> {

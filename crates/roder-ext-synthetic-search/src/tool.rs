@@ -9,9 +9,7 @@ use roder_web_search::{
     RenderOptions, WebSearchRequest, canonical_web_search_schema, render_web_search_response,
 };
 
-use crate::client::{
-    SyntheticSearchClient, SyntheticSearchConfig, synthetic_request_id,
-};
+use crate::client::{SyntheticSearchClient, SyntheticSearchConfig, synthetic_request_id};
 
 pub const SYNTHETIC_SEARCH_TOOL_NAME: &str = "synthetic_search";
 

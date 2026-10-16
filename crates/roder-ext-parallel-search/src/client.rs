@@ -333,10 +333,7 @@ pub fn parallel_request_body(
         .filter(|value| !value.is_empty())
     {
         // API field is ISO 3166-1 alpha-2 `location`, not `country`.
-        advanced.insert(
-            "location".to_string(),
-            json!(country.to_ascii_lowercase()),
-        );
+        advanced.insert("location".to_string(), json!(country.to_ascii_lowercase()));
     }
     body["advanced_settings"] = Value::Object(advanced);
 
@@ -421,13 +418,7 @@ pub fn parallel_request_id(raw: &Value) -> Option<String> {
 pub fn parallel_extract_request_id(raw: &Value) -> Option<String> {
     string_field(
         raw,
-        &[
-            "extract_id",
-            "extractId",
-            "request_id",
-            "requestId",
-            "id",
-        ],
+        &["extract_id", "extractId", "request_id", "requestId", "id"],
     )
 }
 

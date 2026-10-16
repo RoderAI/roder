@@ -188,10 +188,9 @@ impl ToolExecutor for TaskTool {
     ) -> anyhow::Result<ToolResult> {
         let request = match parse_task_request(call.arguments, self.fixed_subagent_type.as_deref())
         {
-            Ok(request) => apply_parent_model_selection(
-                request,
-                ctx.handles.parent_model_selection.as_ref(),
-            ),
+            Ok(request) => {
+                apply_parent_model_selection(request, ctx.handles.parent_model_selection.as_ref())
+            }
             Err(err) => {
                 return Ok(error_result(
                     call.id,

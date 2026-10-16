@@ -118,9 +118,10 @@ impl HostedRuntimePool {
         // Revocation is permanent. Existing sockets still hold their fenced
         // server, but reconnects must resolve durable ownership again instead
         // of pinning the tenant to a dead cached runtime forever.
-        if tenants.get(tenant_id).is_some_and(|entry| {
-            entry.server.runtime.ensure_execution_authority().is_err()
-        }) {
+        if tenants
+            .get(tenant_id)
+            .is_some_and(|entry| entry.server.runtime.ensure_execution_authority().is_err())
+        {
             anyhow::ensure!(!self.is_draining(), "hosted replica is draining");
             tenants.remove(tenant_id);
         }
@@ -174,7 +175,9 @@ impl HostedRuntimePool {
     pub async fn evict_idle(&self) -> Vec<String> {
         let mut evicted = Vec::new();
         let mut tenants = self.tenants.lock().await;
-        if self.is_draining() { return evicted; }
+        if self.is_draining() {
+            return evicted;
+        }
         let mut keep = HashMap::new();
         for (tenant_id, entry) in tenants.drain() {
             let idle = entry.last_used.elapsed() >= self.profile.idle_ttl;
@@ -192,11 +195,17 @@ impl HostedRuntimePool {
 
     /// Stop turn admission and persist terminal cleanup before the gateway exits.
     pub(crate) async fn drain_on_shutdown(&self) -> anyhow::Result<()> {
-        let servers = self.tenants.lock().await.values()
-            .map(|entry| entry.server.clone()).collect::<Vec<_>>();
+        let servers = self
+            .tenants
+            .lock()
+            .await
+            .values()
+            .map(|entry| entry.server.clone())
+            .collect::<Vec<_>>();
         let mut drains = tokio::task::JoinSet::new();
         for server in servers {
-            let timeout = Duration::from_millis(server.features.lifecycle.shutdown_drain_timeout_ms);
+            let timeout =
+                Duration::from_millis(server.features.lifecycle.shutdown_drain_timeout_ms);
             let deadline = tokio::time::Instant::now() + timeout;
             let task = tokio::spawn(async move { server.drain_runtime(timeout).await });
             drains.spawn(wait_for_shutdown_drain(task, deadline));
@@ -211,7 +220,11 @@ impl HostedRuntimePool {
             }
         }
         self.tenants.lock().await.clear();
-        anyhow::ensure!(failures.is_empty(), "hosted shutdown did not drain cleanly: {}", failures.join(", "));
+        anyhow::ensure!(
+            failures.is_empty(),
+            "hosted shutdown did not drain cleanly: {}",
+            failures.join(", ")
+        );
         Ok(())
     }
 
@@ -301,10 +314,19 @@ mod tests {
         let result = wait_for_shutdown_drain(
             task,
             tokio::time::Instant::now() + Duration::from_millis(10),
-        ).await;
-        assert!(result.unwrap_err().to_string().contains("deadline exceeded"));
+        )
+        .await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("deadline exceeded")
+        );
         release.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), completion).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), completion)
+            .await
+            .unwrap()
+            .unwrap();
         abort.abort();
     }
 

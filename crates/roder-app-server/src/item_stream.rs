@@ -36,21 +36,43 @@ async fn item_event_kinds_for_event(
 ) -> anyhow::Result<Option<(ThreadId, TurnId, OffsetDateTime, Vec<ThreadItemEventKind>)>> {
     match &envelope.event {
         RoderEvent::ToolCallRequested(event) => Ok(Some((
-            event.thread_id.clone(), event.turn_id.clone(), event.timestamp,
-            vec![ThreadItemEventKind::ItemStarted { item: ThreadItem::ToolExecution {
-                id: event.tool_id.clone(), tool_call_id: event.tool_id.clone(),
-                tool_name: event.tool_name.clone(), status: ThreadItemStatus::InProgress,
-                input: event.display_payload.clone(), output: None, error: None,
-            }}],
+            event.thread_id.clone(),
+            event.turn_id.clone(),
+            event.timestamp,
+            vec![ThreadItemEventKind::ItemStarted {
+                item: ThreadItem::ToolExecution {
+                    id: event.tool_id.clone(),
+                    tool_call_id: event.tool_id.clone(),
+                    tool_name: event.tool_name.clone(),
+                    status: ThreadItemStatus::InProgress,
+                    input: event.display_payload.clone(),
+                    output: None,
+                    error: None,
+                },
+            }],
         ))),
         RoderEvent::ToolCallCompleted(event) => Ok(Some((
-            event.thread_id.clone(), event.turn_id.clone(), event.timestamp,
-            vec![ThreadItemEventKind::ItemCompleted { item: ThreadItem::ToolExecution {
-                id: event.tool_id.clone(), tool_call_id: event.tool_id.clone(),
-                tool_name: event.tool_name.clone().unwrap_or_else(|| "Codex tool".into()),
-                status: if event.is_error { ThreadItemStatus::Failed } else { ThreadItemStatus::Completed },
-                input: event.display_payload.clone(), output: event.output.clone(), error: None,
-            }}],
+            event.thread_id.clone(),
+            event.turn_id.clone(),
+            event.timestamp,
+            vec![ThreadItemEventKind::ItemCompleted {
+                item: ThreadItem::ToolExecution {
+                    id: event.tool_id.clone(),
+                    tool_call_id: event.tool_id.clone(),
+                    tool_name: event
+                        .tool_name
+                        .clone()
+                        .unwrap_or_else(|| "Codex tool".into()),
+                    status: if event.is_error {
+                        ThreadItemStatus::Failed
+                    } else {
+                        ThreadItemStatus::Completed
+                    },
+                    input: event.display_payload.clone(),
+                    output: event.output.clone(),
+                    error: None,
+                },
+            }],
         ))),
         RoderEvent::InferenceEventReceived(event) => {
             let item_id = if matches!(event.event, InferenceEvent::ReasoningDelta(_)) {

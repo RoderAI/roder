@@ -1785,7 +1785,8 @@ mod tests {
 
     #[test]
     fn omitting_tools_keeps_mcp_tools_message_empty() {
-        let bytes = encode_agent_client_message_with_history("hi", "m", "c", "mid", &[], &[], &[], None);
+        let bytes =
+            encode_agent_client_message_with_history("hi", "m", "c", "mid", &[], &[], &[], None);
         let run = submessage(&bytes, 1).unwrap();
         // mcp_tools(4) is present but its repeated definition list is empty.
         let mcp_tools = submessage(&run, 4).unwrap_or_default();
@@ -1861,8 +1862,16 @@ mod tests {
             }],
         }];
         use base64::Engine as _;
-        let bytes =
-            encode_agent_client_message_with_history("now", "m", "c", "mid", &history, &[], &[], None);
+        let bytes = encode_agent_client_message_with_history(
+            "now",
+            "m",
+            "c",
+            "mid",
+            &history,
+            &[],
+            &[],
+            None,
+        );
         let run = submessage(&bytes, 1).unwrap();
         // History images also require the inline-images capability flag.
         assert_eq!(scalar_u64(&run, 19), Some(1));

@@ -32,9 +32,7 @@ impl RoderExtension for ParallelSearchExtension {
             name: "Parallel Search".to_string(),
             version: Version::new(0, 1, 0),
             api_version: "0.1.0".to_string(),
-            description: Some(
-                "Parallel.ai search and URL extract tool provider".to_string(),
-            ),
+            description: Some("Parallel.ai search and URL extract tool provider".to_string()),
             provides: vec![ProvidedService::ToolProvider("parallel-search".to_string())],
             required_capabilities: vec![CapabilityRequest::new("network.web")],
         }

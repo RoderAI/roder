@@ -74,7 +74,9 @@ async fn mysql_generation_loss_revokes_the_runtime_and_closes_its_socket() {
     }
     #[async_trait::async_trait]
     impl HostedRuntimeLeaseBackend for Backend {
-        async fn release(&self) -> anyhow::Result<bool> { self.store.release_runtime_owner(&self.lease).await }
+        async fn release(&self) -> anyhow::Result<bool> {
+            self.store.release_runtime_owner(&self.lease).await
+        }
         async fn renew(&self, ttl: Duration) -> anyhow::Result<bool> {
             Ok(self
                 .store
@@ -193,7 +195,10 @@ async fn reconnect_resolves_ownership_again_after_cached_runtime_revocation() {
     let factory_calls = calls.clone();
     let factory_authorities = authorities.clone();
     let pool = Arc::new(HostedRuntimePool::new(
-        HostedRuntimeProfile { data_root: temp_dir("owner-recovery"), ..Default::default() },
+        HostedRuntimeProfile {
+            data_root: temp_dir("owner-recovery"),
+            ..Default::default()
+        },
         Arc::new(move |_, _| {
             factory_calls.fetch_add(1, Ordering::SeqCst);
             let authority = Arc::new(RuntimeExecutionLease::new(
@@ -209,12 +214,31 @@ async fn reconnect_resolves_ownership_again_after_cached_runtime_revocation() {
             })
         }),
     ));
-    let fixture = fixture_with_pool(pool, RateLimitConfig::default(), Arc::new(AllowAllHostedRequestPolicy)).await;
-    let mut old = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
-    assert!(call(&mut old, "hosted/whoami", serde_json::json!({})).await.error.is_none());
+    let fixture = fixture_with_pool(
+        pool,
+        RateLimitConfig::default(),
+        Arc::new(AllowAllHostedRequestPolicy),
+    )
+    .await;
+    let mut old = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
+    assert!(
+        call(&mut old, "hosted/whoami", serde_json::json!({}))
+            .await
+            .error
+            .is_none()
+    );
     authorities.lock().unwrap()[0].revoke();
-    let mut replacement = connect(&fixture.url, "rk_test_tenant_a_writer").await.unwrap();
-    assert!(call(&mut replacement, "hosted/whoami", serde_json::json!({})).await.error.is_none());
+    let mut replacement = connect(&fixture.url, "rk_test_tenant_a_writer")
+        .await
+        .unwrap();
+    assert!(
+        call(&mut replacement, "hosted/whoami", serde_json::json!({}))
+            .await
+            .error
+            .is_none()
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(fixture.pool.len().await, 1);
     assert!(authorities.lock().unwrap()[0].require_live().is_err());

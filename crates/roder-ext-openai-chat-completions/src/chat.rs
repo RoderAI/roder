@@ -231,7 +231,11 @@ fn scrub_secret(body: &str, secret: Option<&str>) -> String {
     let mut result = if trimmed.len() <= max {
         trimmed.to_string()
     } else {
-        format!("{}…(truncated, {total} bytes total)", &trimmed[..max], total = trimmed.len())
+        format!(
+            "{}…(truncated, {total} bytes total)",
+            &trimmed[..max],
+            total = trimmed.len()
+        )
     };
     if let Some(secret) = secret
         && !secret.is_empty()

@@ -97,7 +97,12 @@ async fn fixture_with_policy(
     allow_local_workspaces: bool,
     request_policy: Arc<dyn HostedRequestPolicy>,
 ) -> Fixture {
-    fixture_with_pool(tenant_pool(label, allow_local_workspaces), limits, request_policy).await
+    fixture_with_pool(
+        tenant_pool(label, allow_local_workspaces),
+        limits,
+        request_policy,
+    )
+    .await
 }
 
 async fn fixture_with_pool(
