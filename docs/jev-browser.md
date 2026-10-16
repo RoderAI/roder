@@ -118,6 +118,15 @@ recorded as `[secret]`.
 
 `JEV_MODEL` selects the TypeSafe decision model and defaults to `jev-latest`.
 
+`JEV_IMAGES=1` opts into TypeSafe image input (a TypeSafe "danger zone"
+feature, off by default): each decision also sends the current viewport
+screenshot, fitted to TypeSafe's limits (PNG or JPEG, 280 to 1568 px per side),
+as an image asset referenced from the request state, with the
+`TypeSafe-Danger-Zone-Images: true` header. Recognized secret fields and
+previously typed secrets suppress capture, as for Decisions. Images are billed
+as input tokens. Unset or `0` keeps the text-only request byte for byte; other
+values fail. See the [October 16 evaluation](../evals/reports/decisions-vs-jev/2026-10-16/README.md).
+
 ## The browser
 
 The task runs in a foreground tab by default: Roder shows it as soon as it

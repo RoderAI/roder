@@ -20,6 +20,7 @@ async-trait = "0.1.89"
 async-stream = "0.3.6"
 base64 = "0.22.1"
 png = "0.17.16"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 boa_engine = { version = "0.21.1", default-features = false }
 bytes = "1.11.1"
 chrono = "0.4.42"
