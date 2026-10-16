@@ -99,6 +99,10 @@ impl Agent {
                 .unwrap_or_default();
         let mut facts = self.facts.clone().unwrap_or_default();
         facts.frames = frames;
+        facts.dom_snapshot = self.observation["dom_snapshot"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         (facts != JevPageFacts::default()).then_some(facts)
     }
 }

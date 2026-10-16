@@ -295,6 +295,9 @@ pub struct JevControl {
 /// can tell ([`super::JevBrowser::describe`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JevPageFacts {
+    /// Bounded semantic DOM tree from the final scrubbed observation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub dom_snapshot: String,
     /// The main document's HTTP status, when the browser reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_status: Option<u16>,

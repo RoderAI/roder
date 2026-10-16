@@ -102,7 +102,7 @@ impl Secrets {
         if self.0.is_empty() {
             return;
         }
-        for key in ["url", "title", "text"] {
+        for key in ["url", "title", "text", "dom_snapshot"] {
             if let Some(value) = observation.get_mut(key) {
                 self.scrub_in_place(value);
             }

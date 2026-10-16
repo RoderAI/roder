@@ -143,7 +143,7 @@ pub(crate) fn attach(request: &mut Value, fitted: &Fitted, observation: &Value) 
         .flatten()
         .filter_map(|action| {
             action.get("rect").map(|rect| {
-                json!({"label": action["label"], "context": action["context"], "rect": rect})
+                json!({"label": action["label"], "context": action["context"], "rect": image_rect(rect, fitted, observation)})
             })
         })
         .collect::<Vec<_>>();
@@ -158,6 +158,32 @@ pub(crate) fn attach(request: &mut Value, fitted: &Fitted, observation: &Value) 
         );
         state.insert("candidate_rectangles".into(), json!(rectangles));
     }
+}
+
+/// Candidate boxes are in CSS viewport coordinates; fitting the screenshot
+/// changes the pixel coordinates the model must match them against.
+fn image_rect(rect: &Value, fitted: &Fitted, observation: &Value) -> Value {
+    let (Some(width), Some(height)) = (observation["w"].as_f64(), observation["h"].as_f64()) else {
+        return rect.clone();
+    };
+    if width <= 0.0
+        || height <= 0.0
+        || (width == fitted.width as f64 && height == fitted.height as f64)
+    {
+        return rect.clone();
+    }
+    let mut scaled = rect.clone();
+    for (key, ratio) in [
+        ("x", fitted.width as f64 / width),
+        ("w", fitted.width as f64 / width),
+        ("y", fitted.height as f64 / height),
+        ("h", fitted.height as f64 / height),
+    ] {
+        if let Some(value) = rect[key].as_f64() {
+            scaled[key] = json!(value * ratio);
+        }
+    }
+    scaled
 }
 
 /// Whether a request carries images, and so needs [`IMAGES_HEADER`].
@@ -287,5 +313,29 @@ pub(crate) mod tests {
             json!([{"label":"Buy","context":"Oak","rect":[1,2,3,4]}])
         );
         assert!(!has_assets(&json!({"state":{}})));
+    }
+}
+
+#[cfg(test)]
+mod coordinate_tests {
+    use super::*;
+    #[test]
+    fn resized_image_rectangles_follow_image_pixels_in_both_axes() {
+        let fitted = Fitted {
+            format: "jpeg",
+            data_base64: String::new(),
+            width: 1000,
+            height: 500,
+        };
+        let rect = json!({"x":200,"y":100,"w":400,"h":200});
+        assert_eq!(
+            image_rect(&rect, &fitted, &json!({"w":2000,"h":1000})),
+            json!({"x":100.0,"y":50.0,"w":200.0,"h":100.0})
+        );
+        assert_eq!(
+            image_rect(&rect, &fitted, &json!({"w":500,"h":250})),
+            json!({"x":400.0,"y":200.0,"w":800.0,"h":400.0})
+        );
+        assert_eq!(image_rect(&rect, &fitted, &json!({"w":1000,"h":500})), rect);
     }
 }

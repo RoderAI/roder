@@ -49,6 +49,10 @@ async fn read(
         .iter()
         .map(|heading| secrets.scrub(heading))
         .collect();
+    facts.dom_snapshot = observation["dom_snapshot"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     facts.frames = serde_json::from_value(observation["frames"].clone()).unwrap_or_default();
     let text = observation["text"].as_str().unwrap_or_default();
     let observed = action_space(

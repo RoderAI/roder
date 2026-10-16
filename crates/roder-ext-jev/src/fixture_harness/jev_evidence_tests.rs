@@ -124,3 +124,46 @@ fn production_jev_profile_keeps_candidates_and_safety_questions() {
             .contains("untrusted")
     );
 }
+
+#[test]
+fn dom_profile_uses_observed_structure_preserves_gate_and_candidate_ids() {
+    let observation = json!({"actions":[{"kind":"click","node":12,"label":"Save","form":null}],"dom_snapshot":"- main\n  - button \"Save\" [node=12]"});
+    let (mut request, _, _) = crate::decide::request_body(
+        &observation,
+        "Save draft",
+        &[],
+        "jev-preview",
+        chrono::Local::now().date_naive(),
+    );
+    request["questions"]["safety"] = json!({"type":"noul","instructions":"Is this irreversible?"});
+    let before = request.clone();
+    jev_prompt::rewrite(&mut request, jev_prompt::Profile::Dom, &[], &observation);
+    assert_eq!(
+        request["state"]["dom_snapshot"],
+        observation["dom_snapshot"]
+    );
+    assert_eq!(
+        request["questions"]["safety"],
+        before["questions"]["safety"]
+    );
+    assert_eq!(
+        request["questions"]["click_target"]["criteria"]["1"]["element"],
+        before["questions"]["click_target"]["criteria"]["1"]["element"]
+    );
+    assert_eq!(
+        request["questions"]["operation"]["criteria"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        before["questions"]["operation"]["criteria"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        request["questions"]["operation"]["criteria"]["CLICK"]["available_targets"],
+        request["questions"]["click_target"]["criteria"]
+    );
+}

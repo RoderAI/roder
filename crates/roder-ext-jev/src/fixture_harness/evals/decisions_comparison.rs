@@ -47,6 +47,7 @@ async fn decisions_vs_jev() {
     use crate::jev_prompt::Profile;
     let jev_variants = [
         ("jev", Profile::Baseline),
+        ("jev_dom", Profile::Dom),
         ("jev_literal", Profile::Literal),
         ("jev_effects", Profile::Effects),
         ("jev_criteria", Profile::Criteria),
@@ -72,14 +73,16 @@ async fn decisions_vs_jev() {
     // A TypeSafe variant may pin its own model as `name@model` (for example
     // `jev@jev-1.13.0,jev@jev-preview`), so model versions run in one paired
     // dataset; without it, `JEV_MODEL` (default `jev-latest`) applies.
-    // `jev-vision` is the baseline Jev request plus the viewport screenshot.
+    // Append `-vision` to any Jev profile to add the viewport screenshot.
+    // For example: `jev_workflow-vision@jev-preview`.
     let wanted = env("DECISIONS_EVAL_VARIANTS").unwrap_or_else(|| "vision,jev".into());
     let wanted_list = wanted.split(',').map(str::trim).collect::<Vec<_>>();
     for spec in &wanted_list {
-        let name = spec.split_once('@').map_or(*spec, |(name, _)| name);
+        let (name, _) = parse_spec(spec).unwrap();
         assert!(
-            name == "jev-vision"
-                || jev_variants.iter().any(|(n, _)| *n == name)
+            jev_variants
+                .iter()
+                .any(|(n, _)| *n == name.strip_suffix("-vision").unwrap_or(name))
                 || (variants.iter().any(|(n, _)| *n == name) && !spec.contains('@')),
             "Unknown variant {spec}"
         );
@@ -101,20 +104,16 @@ async fn decisions_vs_jev() {
         })
         .collect();
     for spec in &wanted_list {
-        let (name, model) = match spec.split_once('@') {
-            Some((name, model)) => (name, model.to_string()),
-            None => (
-                *spec,
-                env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
-            ),
+        let (name, model) = parse_spec(spec).unwrap();
+        let model = model
+            .map(str::to_string)
+            .unwrap_or_else(|| env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()));
+        let images = name.ends_with("-vision");
+        let profile_name = name.strip_suffix("-vision").unwrap_or(name);
+        let Some((_, profile)) = jev_variants.iter().find(|(n, _)| *n == profile_name) else {
+            continue;
         };
-        let (profile, images) = match name {
-            "jev-vision" => (Profile::Baseline, true),
-            _ => match jev_variants.iter().find(|(n, _)| *n == name) {
-                Some((_, profile)) => (*profile, false),
-                None => continue,
-            },
-        };
+        let profile = *profile;
         providers.push((
             spec,
             Arc::new(
@@ -290,4 +289,31 @@ fn reversed_order_preserves_candidate_meaning_and_safety_questions() {
         "finished"
     );
     assert_eq!(request["questions"]["gate"], gate);
+}
+
+/// Reject a malformed model pin before any provider can make a paid call.
+fn parse_spec(spec: &str) -> anyhow::Result<(&str, Option<&str>)> {
+    match spec.split_once('@') {
+        Some((name, model)) => {
+            let model = model.trim();
+            anyhow::ensure!(!model.is_empty(), "Missing model in variant {spec}");
+            Ok((name, Some(model)))
+        }
+        None => Ok((spec, None)),
+    }
+}
+
+#[test]
+fn model_pins_and_image_profiles_parse_before_provider_calls() {
+    assert_eq!(
+        parse_spec("jev_dom-vision@jev-preview").unwrap(),
+        ("jev_dom-vision", Some("jev-preview"))
+    );
+    assert_eq!(
+        parse_spec("jev_workflow-vision").unwrap(),
+        ("jev_workflow-vision", None)
+    );
+    for spec in ["jev@", "jev-vision@   "] {
+        assert!(parse_spec(spec).is_err(), "{spec}");
+    }
 }
