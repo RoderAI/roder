@@ -5,7 +5,9 @@ use serde_json::{Value, json};
 
 use super::{BlaxelClient, ProcessResponse, decode, ensure_ok};
 
-const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+// Most commands finish within milliseconds: check soon, then back off.
+const PROCESS_POLL_FIRST: Duration = Duration::from_millis(10);
+const PROCESS_POLL_MAX: Duration = Duration::from_millis(250);
 const PROCESS_COMPLETION_GRACE: Duration = Duration::from_secs(30);
 
 impl BlaxelClient {
@@ -41,11 +43,13 @@ impl BlaxelClient {
             .checked_add(Duration::from_secs(timeout_seconds.max(1)))
             .and_then(|deadline| deadline.checked_add(PROCESS_COMPLETION_GRACE))
             .ok_or_else(|| anyhow::anyhow!("blaxel process lease is too large"))?;
+        let mut poll = PROCESS_POLL_FIRST;
         while !process.is_terminal() {
             if Instant::now() >= completion_deadline {
                 bail!("blaxel process {process_name} did not terminate within its server lease");
             }
-            tokio::time::sleep(PROCESS_POLL_INTERVAL).await;
+            tokio::time::sleep(poll).await;
+            poll = (poll * 2).min(PROCESS_POLL_MAX);
             // Process creation and the read index are not atomic. Preserve the
             // last known running state across a transient 404; cancellation is
             // still addressable by the unique process name.
