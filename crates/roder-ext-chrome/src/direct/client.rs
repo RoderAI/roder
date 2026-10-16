@@ -152,12 +152,16 @@ impl TabClient {
             json!({"enabled": true}),
         )
         .await?;
-        // The product, unlike the user agent, is not the page's to override.
+        // The browser's own version, which a page's user agent override does
+        // not change. Headless shell names its product HeadlessChrome; the new
+        // headless mode says so only in its default user agent.
         let version = self.call("Browser.getVersion", json!({})).await;
         self.headless = version.is_ok_and(|version| {
-            version["product"]
-                .as_str()
-                .is_some_and(|product| product.starts_with("HeadlessChrome/"))
+            ["product", "userAgent"].iter().any(|key| {
+                version[key]
+                    .as_str()
+                    .is_some_and(|value| value.contains("HeadlessChrome/"))
+            })
         });
         Ok(())
     }
