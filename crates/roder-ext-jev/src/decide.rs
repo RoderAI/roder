@@ -29,11 +29,22 @@ pub struct JevTypeSafeDecisionClient {
     model: String,
     profile: crate::jev_prompt::Profile,
     transport: Arc<dyn JevDecisionTransport>,
+    images: bool,
 }
 
 impl JevTypeSafeDecisionClient {
     pub(crate) fn with_profile(mut self, profile: crate::jev_prompt::Profile) -> Self {
         self.profile = profile;
+        self
+    }
+
+    /// Send the current viewport screenshot with each decision (TypeSafe
+    /// image input, off by default). The engine captures it only for clients
+    /// that use images and never around secret fields; it is fitted to
+    /// TypeSafe's limits and referenced from the request state. A screenshot
+    /// that cannot be fitted is left out and the decision is made from text.
+    pub fn with_images(mut self, images: bool) -> Self {
+        self.images = images;
         self
     }
     pub fn new(key: impl Into<String>, model: impl Into<String>) -> Self {
@@ -45,6 +56,7 @@ impl JevTypeSafeDecisionClient {
                 key,
                 RetryPolicy::default(),
             )),
+            images: false,
         }
     }
 
@@ -56,34 +68,60 @@ impl JevTypeSafeDecisionClient {
             model: model.into(),
             profile: crate::jev_prompt::Profile::Workflow,
             transport,
+            images: false,
         }
     }
 }
 
-#[async_trait]
-impl JevDecisionClient for JevTypeSafeDecisionClient {
-    async fn choose(
+impl JevTypeSafeDecisionClient {
+    async fn decide(
         &self,
         observation: &Value,
         goal: &str,
         history: &[Value],
+        gate: bool,
     ) -> anyhow::Result<JevDecision> {
+        let image = match observation["_screenshot"].as_str() {
+            Some(screenshot) if self.images => images::fit(screenshot).ok(),
+            _ => None,
+        };
+        let imaged = Imaged {
+            inner: self.transport.as_ref(),
+            image,
+            observation,
+        };
         choose(
             observation,
             goal,
             history,
             &self.model,
             &crate::jev_prompt::Transport {
-                inner: self.transport.as_ref(),
+                inner: &imaged,
                 profile: self.profile,
                 history,
                 observation,
             },
             chrono::Local::now().date_naive(),
-            false,
+            gate,
         )
         .await
         .map(|(decision, _)| decision)
+    }
+}
+
+#[async_trait]
+impl JevDecisionClient for JevTypeSafeDecisionClient {
+    fn uses_images(&self) -> bool {
+        self.images
+    }
+
+    async fn choose(
+        &self,
+        observation: &Value,
+        goal: &str,
+        history: &[Value],
+    ) -> anyhow::Result<JevDecision> {
+        self.decide(observation, goal, history, false).await
     }
 
     /// The same request with the irreversible-action gate's questions added
@@ -94,22 +132,29 @@ impl JevDecisionClient for JevTypeSafeDecisionClient {
         goal: &str,
         history: &[Value],
     ) -> anyhow::Result<JevDecision> {
-        choose(
-            observation,
-            goal,
-            history,
-            &self.model,
-            &crate::jev_prompt::Transport {
-                inner: self.transport.as_ref(),
-                profile: self.profile,
-                history,
-                observation,
-            },
-            chrono::Local::now().date_naive(),
-            true,
-        )
-        .await
-        .map(|(decision, _)| decision)
+        self.decide(observation, goal, history, true).await
+    }
+}
+
+/// Adds the fitted viewport screenshot once the prompt profile has shaped
+/// the request; without one the request passes through unchanged.
+struct Imaged<'a> {
+    inner: &'a dyn JevDecisionTransport,
+    image: Option<images::Fitted>,
+    observation: &'a Value,
+}
+
+#[async_trait]
+impl JevDecisionTransport for Imaged<'_> {
+    async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
+        match &self.image {
+            None => self.inner.decide(request).await,
+            Some(fitted) => {
+                let mut request = request.clone();
+                images::attach(&mut request, fitted, self.observation);
+                self.inner.decide(&request).await
+            }
+        }
     }
 }
 
@@ -133,8 +178,12 @@ impl TypeSafeHttpTransport {
 #[async_trait]
 impl JevDecisionTransport for TypeSafeHttpTransport {
     async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
+        let headers = match images::has_assets(request) {
+            true => vec![(images::IMAGES_HEADER, "true".to_string())],
+            false => Vec::new(),
+        };
         self.http
-            .post(&self.url, &self.key, request)
+            .post_with(&self.url, &self.key, &headers, request)
             .await
             .map_err(|failure| {
                 let message = match &failure {
@@ -476,6 +525,9 @@ fn read_answer(
 mod body_loop_tests;
 #[cfg(test)]
 mod gate_tests;
+pub(crate) mod images;
+#[cfg(test)]
+mod images_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

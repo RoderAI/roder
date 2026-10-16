@@ -69,17 +69,29 @@ async fn decisions_vs_jev() {
         ("vision", Strategy::Vision),
         ("grounded", Strategy::Grounded),
     ];
+    // A TypeSafe variant may pin its own model as `name@model` (for example
+    // `jev@jev-1.13.0,jev@jev-preview`), so model versions run in one paired
+    // dataset; without it, `JEV_MODEL` (default `jev-latest`) applies.
+    // `jev-vision` is the baseline Jev request plus the viewport screenshot.
     let wanted = env("DECISIONS_EVAL_VARIANTS").unwrap_or_else(|| "vision,jev".into());
-    for name in wanted.split(',').map(str::trim) {
+    let wanted_list = wanted.split(',').map(str::trim).collect::<Vec<_>>();
+    for spec in &wanted_list {
+        let name = spec.split_once('@').map_or(*spec, |(name, _)| name);
         assert!(
-            jev_variants.iter().any(|(n, _)| *n == name)
-                || variants.iter().any(|(n, _)| *n == name),
-            "Unknown variant {name}"
+            name == "jev-vision"
+                || jev_variants.iter().any(|(n, _)| *n == name)
+                || (variants.iter().any(|(n, _)| *n == name) && !spec.contains('@')),
+            "Unknown variant {spec}"
         );
     }
+    let mut seen = std::collections::HashSet::new();
+    assert!(
+        wanted_list.iter().all(|spec| seen.insert(*spec)),
+        "Duplicate variant"
+    );
     let mut providers: Vec<(&str, Arc<dyn JevDecisionClient>)> = variants
         .into_iter()
-        .filter(|(name, _)| wanted.split(',').map(str::trim).any(|w| w == *name))
+        .filter(|(name, _)| wanted_list.contains(name))
         .map(|(name, strategy)| {
             (
                 name,
@@ -88,19 +100,29 @@ async fn decisions_vs_jev() {
             )
         })
         .collect();
-    for (name, profile) in jev_variants {
-        if wanted.split(',').map(str::trim).any(|w| w == name) {
-            providers.push((
-                name,
-                Arc::new(
-                    JevTypeSafeDecisionClient::with_transport(
-                        env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
-                        jev_wire.clone(),
-                    )
-                    .with_profile(profile),
-                ),
-            ));
-        }
+    for spec in &wanted_list {
+        let (name, model) = match spec.split_once('@') {
+            Some((name, model)) => (name, model.to_string()),
+            None => (
+                *spec,
+                env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
+            ),
+        };
+        let (profile, images) = match name {
+            "jev-vision" => (Profile::Baseline, true),
+            _ => match jev_variants.iter().find(|(n, _)| *n == name) {
+                Some((_, profile)) => (*profile, false),
+                None => continue,
+            },
+        };
+        providers.push((
+            spec,
+            Arc::new(
+                JevTypeSafeDecisionClient::with_transport(model, jev_wire.clone())
+                    .with_profile(profile)
+                    .with_images(images),
+            ),
+        ));
     }
     let tasks = if let Some(suite) = env("BROWSER_EVAL_SUITE") {
         match suite.as_str() {

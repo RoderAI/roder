@@ -34,12 +34,26 @@ fn resolve_with(
     model: Option<String>,
 ) -> anyhow::Result<Arc<dyn JevDecisionClient>> {
     match provider {
-        "jev" => Ok(Arc::new(JevTypeSafeDecisionClient::new(
-            key("jev").with_context(|| {
-                format!("JEV_API_KEY is required for the Jev decision provider; {OTHER_BROWSERS}")
-            })?,
-            model.unwrap_or_else(|| "jev-latest".into()),
-        ))),
+        "jev" => {
+            // TypeSafe image input is a "danger zone" feature: opt-in only.
+            let images = match env_value("JEV_IMAGES").as_deref() {
+                None | Some("0") => false,
+                Some("1") => true,
+                _ => bail!("JEV_IMAGES must be 0 or 1"),
+            };
+            Ok(Arc::new(
+                JevTypeSafeDecisionClient::new(
+                    key("jev").with_context(|| {
+                        format!(
+                            "JEV_API_KEY is required for the Jev decision provider; \
+                             {OTHER_BROWSERS}"
+                        )
+                    })?,
+                    model.unwrap_or_else(|| "jev-latest".into()),
+                )
+                .with_images(images),
+            ))
+        }
         "openai" => {
             let api_key = key("openai").with_context(|| {
                 format!(
