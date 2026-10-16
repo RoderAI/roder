@@ -56,7 +56,13 @@ async fn source_pins_are_read_without_secret_values_or_workload_side_effects() {
 
 #[tokio::test]
 async fn adoption_only_reads_the_child_and_drops_inherited_identity_and_secrets() {
-    let server = Server::start(vec![response(200, child())]).await;
+    let mut child = child();
+    // Env.secret is optional in the provider contract; omitted means false.
+    child["spec"]["runtime"]["envs"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("secret");
+    let server = Server::start(vec![response(200, child)]).await;
     let session = server
         .client()
         .adopt_child(&request(), &runtime(), &options())

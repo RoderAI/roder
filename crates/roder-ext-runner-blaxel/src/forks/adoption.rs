@@ -147,7 +147,7 @@ impl BlaxelForkClient {
             .collect();
         if matches.len() != 1
             || matches[0]["value"] != request.marker_value.as_str()
-            || matches[0]["secret"] != false
+            || matches[0].get("secret").is_some_and(|value| value != false)
         {
             return Err(ForkError::rejected("fork generation marker mismatch"));
         }
