@@ -1,0 +1,260 @@
+//! Explicit snapshot/fork operations for an already-authorized allocation.
+//!
+//! These primitives do not enable the generic runner snapshot capability, retry
+//! mutations, or adopt inherited browser sessions. Callers own durable intents,
+//! capacity admission, ownership checks, cancellation and cleanup reconciliation.
+
+mod http;
+mod types;
+
+use std::time::Duration;
+
+use reqwest::{Method, Url};
+use serde_json::{Value, json};
+
+use crate::Redacted;
+
+pub use types::{
+    DeleteReceipt, ForkError, ForkReceipt, ForkRequest, Outcome, Snapshot, SnapshotSource,
+};
+use types::{validate_id, validate_name};
+
+/// An explicit workspace profile, independent of the default runner credential.
+/// It does not read environment variables or follow redirects. Clone this client
+/// to share connection pooling within one workspace, never across profiles.
+#[derive(Clone)]
+pub struct BlaxelForkClient {
+    http: reqwest::Client,
+    token: Redacted,
+    workspace: String,
+    base_url: String,
+}
+
+impl BlaxelForkClient {
+    pub fn new(token: Redacted, workspace: impl Into<String>) -> Result<Self, ForkError> {
+        Self::with_base_url(token, workspace, crate::config::DEFAULT_BASE_URL)
+    }
+
+    /// Alternate endpoints are limited to loopback for isolated transport tests.
+    pub fn with_base_url(
+        token: Redacted,
+        workspace: impl Into<String>,
+        base_url: &str,
+    ) -> Result<Self, ForkError> {
+        let workspace = workspace.into();
+        validate_name(&workspace)?;
+        if token.is_empty() {
+            return Err(ForkError::rejected("missing workspace credential"));
+        }
+        let url =
+            Url::parse(base_url).map_err(|_| ForkError::rejected("invalid control plane URL"))?;
+        let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        if !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path().trim_end_matches('/') != "/v0"
+            || !((url.scheme() == "https"
+                && url.host_str() == Some("api.blaxel.ai")
+                && url.port().is_none())
+                || (url.scheme() == "http" && loopback))
+        {
+            return Err(ForkError::rejected("unsupported control plane URL"));
+        }
+        let http = reqwest::Client::builder()
+            .user_agent(crate::USER_AGENT)
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|_| ForkError::rejected("cannot construct provider client"))?;
+        Ok(Self {
+            http,
+            token,
+            workspace,
+            base_url: base_url.trim_end_matches('/').into(),
+        })
+    }
+
+    /// Persist (workspace, source, name) before dispatch. A timeout, 409 or lost
+    /// response requires inspecting that exact identity before any retry.
+    pub async fn create_snapshot(&self, source: &str, name: &str) -> Result<Snapshot, ForkError> {
+        validate_name(source)?;
+        validate_name(name)?;
+        let snapshot: Snapshot = self
+            .request(
+                Method::POST,
+                "snapshots",
+                Some(json!({"name":name,"source":{"name":source}})),
+            )
+            .await?
+            .ok_or_else(|| ForkError::unknown("missing snapshot receipt"))?;
+        if !snapshot.matches(&self.workspace, source, name) || validate_id(&snapshot.id).is_err() {
+            return Err(ForkError::unknown("snapshot receipt identity mismatch"));
+        }
+        Ok(snapshot)
+    }
+
+    pub async fn get_snapshot(&self, id: &str) -> Result<Option<Snapshot>, ForkError> {
+        validate_id(id)?;
+        let snapshot: Option<Snapshot> = self
+            .request(
+                Method::GET,
+                &format!("snapshots/{}", urlencoding::encode(id)),
+                None,
+            )
+            .await?;
+        if let Some(snapshot) = &snapshot
+            && (snapshot.id != id
+                || snapshot.workspace != self.workspace
+                || snapshot.source.kind != "sandbox")
+        {
+            return Err(ForkError::rejected("snapshot lookup identity mismatch"));
+        }
+        Ok(snapshot)
+    }
+
+    /// Search the workspace catalog, including snapshots whose source is gone.
+    /// The caller must also validate its durable generation/ownership record.
+    pub async fn find_snapshot(
+        &self,
+        source: &str,
+        name: &str,
+    ) -> Result<Option<Snapshot>, ForkError> {
+        validate_name(source)?;
+        validate_name(name)?;
+        let mut cursor: Option<String> = None;
+        let mut found = None;
+        // Bound both memory and requests even if a provider repeats a cursor.
+        for _ in 0..100 {
+            let mut path = "snapshots?limit=100".to_string();
+            if let Some(cursor) = &cursor {
+                path.push_str(&format!("&cursor={}", urlencoding::encode(cursor)));
+            }
+            #[derive(serde::Deserialize)]
+            struct Page {
+                data: Vec<Snapshot>,
+                meta: Meta,
+            }
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Meta {
+                has_more: bool,
+                next_cursor: Option<String>,
+            }
+            let page: Page = self
+                .request(Method::GET, &path, None)
+                .await?
+                .ok_or_else(|| ForkError::rejected("snapshot catalog unavailable"))?;
+            for snapshot in page.data {
+                if snapshot.workspace != self.workspace {
+                    return Err(ForkError::rejected("snapshot catalog workspace mismatch"));
+                }
+                if snapshot.name == name && snapshot.source.name == source {
+                    if !snapshot.matches(&self.workspace, source, name)
+                        || validate_id(&snapshot.id).is_err()
+                        || found.is_some()
+                    {
+                        return Err(ForkError::rejected("snapshot catalog identity mismatch"));
+                    }
+                    found = Some(snapshot);
+                }
+            }
+            if !page.meta.has_more {
+                return Ok(found);
+            }
+            let next = page
+                .meta
+                .next_cursor
+                .filter(|next| !next.is_empty() && next.len() <= 4096)
+                .ok_or_else(|| ForkError::rejected("invalid snapshot catalog cursor"))?;
+            if cursor.as_ref() == Some(&next) {
+                return Err(ForkError::rejected("repeated snapshot catalog cursor"));
+            }
+            cursor = Some(next);
+        }
+        Err(ForkError::rejected("snapshot catalog page limit exceeded"))
+    }
+
+    /// Delete only a previously ownership-validated ID. Acceptance still requires
+    /// a subsequent GET returning None before recording confirmed deletion.
+    pub async fn delete_snapshot(&self, id: &str) -> Result<DeleteReceipt, ForkError> {
+        validate_id(id)?;
+        let result: Option<Value> = self
+            .request(
+                Method::DELETE,
+                &format!("snapshots/{}", urlencoding::encode(id)),
+                None,
+            )
+            .await?;
+        Ok(if result.is_some() {
+            DeleteReceipt::Accepted
+        } else {
+            DeleteReceipt::Absent
+        })
+    }
+
+    /// Fork the live state without requesting a persistent snapshot.
+    pub async fn fork_live(
+        &self,
+        source: &str,
+        request: &ForkRequest,
+    ) -> Result<ForkReceipt, ForkError> {
+        validate_name(source)?;
+        if source == request.target() {
+            return Err(ForkError::rejected("fork target equals source"));
+        }
+        self.fork(
+            &format!("sandboxes/{}/fork", urlencoding::encode(source)),
+            request,
+            None,
+        )
+        .await
+    }
+
+    /// Use a fresh provider GET receipt. A local ready receipt is necessary but
+    /// does not replace application authorization or guarantee current readiness.
+    pub async fn fork_snapshot(
+        &self,
+        snapshot: &Snapshot,
+        request: &ForkRequest,
+    ) -> Result<ForkReceipt, ForkError> {
+        validate_id(&snapshot.id)?;
+        if snapshot.workspace != self.workspace
+            || snapshot.source.kind != "sandbox"
+            || !snapshot.is_ready()
+            || snapshot.source.name == request.target()
+        {
+            return Err(ForkError::rejected("snapshot is not eligible for fork"));
+        }
+        self.fork(
+            &format!("snapshots/{}/fork", urlencoding::encode(&snapshot.id)),
+            request,
+            Some(&snapshot.id),
+        )
+        .await
+    }
+
+    async fn fork(
+        &self,
+        path: &str,
+        request: &ForkRequest,
+        snapshot_id: Option<&str>,
+    ) -> Result<ForkReceipt, ForkError> {
+        let receipt: ForkReceipt = self
+            .request(Method::POST, path, Some(request.body()))
+            .await?
+            .ok_or_else(|| ForkError::unknown("missing fork receipt"))?;
+        let actual_snapshot = receipt.snapshot_id.as_deref().filter(|id| !id.is_empty());
+        if receipt.name != request.target()
+            || receipt.target_type != "sandbox"
+            || actual_snapshot != snapshot_id
+        {
+            let mut error = ForkError::unknown("fork receipt identity mismatch");
+            error.fork_receipt = Some(receipt);
+            return Err(error);
+        }
+        Ok(receipt)
+    }
+}

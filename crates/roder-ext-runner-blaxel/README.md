@@ -58,6 +58,26 @@ are never written to session state. See
 [`docs/roder-blaxel-runner.md`](https://github.com/RoderAI/roder/blob/master/docs/roder-blaxel-runner.md)
 for setup, configuration, and the lifecycle model.
 
+## Explicit snapshot and fork client
+
+`forks::BlaxelForkClient` uses an explicit `Redacted` credential and workspace;
+it never falls back to the default runner environment. Its snapshot create,
+lookup, catalog reconciliation and delete methods use workspace-scoped IDs,
+including snapshots whose source has been deleted. `fork_live` and
+`fork_snapshot` require a deterministic target, a generation marker and a fresh
+maximum lifetime of at most 24 hours. Credentials never follow redirects.
+
+Persist the allocation intent before dispatch. Mutations are sent once: an
+`Outcome::Unknown` requires reconciling the recorded identity, and HTTP 409
+requires validating the existing resource rather than adopting it automatically.
+A fork receipt proves acceptance only. A delete receipt proves acceptance or
+observed absence; confirm accepted deletions through a later lookup.
+
+These operations do not adopt a browser into a runner session, prove generation
+ownership, provide capacity scheduling or authorize inherited browser controls.
+The generic runner snapshot capability remains disabled. Callers must supply
+those policies and retain cleanup ownership across cancellation.
+
 ## How It Fits Into Roder
 
 Roder is an agentic software development system with a Rust CLI/TUI, a JSON-RPC app-server, SDKs, package resources, and first-party runtime extensions. This package is released as part of that workspace so downstream users can depend on the same component boundaries that Roder itself uses.

@@ -15,6 +15,7 @@ mod cancellation;
 mod client;
 pub mod config;
 mod egress;
+pub mod forks;
 mod ports;
 mod session;
 mod standby;
