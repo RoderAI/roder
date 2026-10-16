@@ -19,6 +19,12 @@ const JPEG_QUALITY: u32 = 70;
 
 impl DirectSession {
     pub(crate) async fn screenshot(&mut self) -> anyhow::Result<DirectStep> {
+        if self.client.headless() {
+            // Headless Chrome can leave a capture waiting for a frame that an
+            // idle or background tab never draws; a tab in front draws one.
+            // Done first, so the page is checked for secrets as it will show.
+            self.client.call("Page.bringToFront", json!({})).await?;
+        }
         let shown = helper(&mut self.client, "shown()").await?;
         let shown = shown.as_str().unwrap_or_default();
         if self.guard.scrub(shown) != shown {

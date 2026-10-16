@@ -80,6 +80,9 @@ pub(crate) struct TabClient {
     target_id: String,
     /// Dialogs answered since the last [`TabClient::take_dialogs`].
     dialogs: Vec<DirectDialog>,
+    /// A headless Chrome renders only its active tab, so a screenshot of
+    /// any other waits for a frame that never comes.
+    headless: bool,
 }
 
 impl TabClient {
@@ -107,6 +110,7 @@ impl TabClient {
             session: None,
             target_id: tab.target_id().to_string(),
             dialogs: Vec::new(),
+            headless: false,
         };
         if let Some(target) = target {
             client.attach_to(&target).await?;
@@ -148,7 +152,23 @@ impl TabClient {
             json!({"enabled": true}),
         )
         .await?;
+        // The browser's own version, which a page's user agent override does
+        // not change. Headless shell names its product HeadlessChrome; the new
+        // headless mode says so only in its default user agent.
+        let version = self.call("Browser.getVersion", json!({})).await;
+        self.headless = version.is_ok_and(|version| {
+            ["product", "userAgent"].iter().any(|key| {
+                version[key]
+                    .as_str()
+                    .is_some_and(|value| value.contains("HeadlessChrome/"))
+            })
+        });
         Ok(())
+    }
+
+    /// Whether the tab is in a headless Chrome.
+    pub(crate) fn headless(&self) -> bool {
+        self.headless
     }
 
     /// Whether the client reaches the browser (and so other tabs).
