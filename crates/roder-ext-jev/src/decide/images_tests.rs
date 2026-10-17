@@ -191,7 +191,7 @@ async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operati
 }
 
 #[tokio::test]
-async fn target_images_omit_the_asset_and_header_when_no_target_question_exists() {
+async fn target_images_keep_shared_visual_evidence_outside_populated_editable_fields() {
     let server = MockServer::start(vec![Reply::ok(DONE)]).await;
     client(&server, true)
         .with_profile(crate::jev_prompt::Profile::DomTargets)
@@ -202,6 +202,8 @@ async fn target_images_omit_the_asset_and_header_when_no_target_question_exists(
         )
         .await
         .unwrap();
-    assert!(server.requests()[0].1.get("assets").is_none());
-    assert_eq!(images_header(&server.heads()[0]), None);
+    let requests = server.requests();
+    assert_eq!(requests[0].1["assets"].as_object().unwrap().len(), 1);
+    assert!(requests[0].1["state"]["viewport_screenshot"]["image"].is_string());
+    assert_eq!(images_header(&server.heads()[0]).as_deref(), Some("true"));
 }

@@ -27,17 +27,19 @@ same offered actions and irreversible-action gate. It can also run without image
 For paired evals, append `-vision` to any Jev profile, for example
 `jev_workflow-vision@jev-preview` or `jev_dom-vision@jev-preview`.
 
-`dom_targets` uses the same DOM questions as `dom`, but scopes screenshots to
-conditional target-selection questions through their instructions. Operation and
-irreversible-action questions use the full DOM values without image evidence.
+`dom_targets` uses the same DOM questions as `dom`. When an offered editable
+field is populated, screenshots are scoped to conditional target-selection
+questions through their instructions. Operation and irreversible-action questions
+then use the full DOM values without image evidence.
 This keeps clipped or horizontally scrolled input text in a screenshot from
 overriding the complete observed field value when selecting the next operation.
 Images remain available for locating controls by their appearance; no additional
-model call is needed. TypeSafe expands each target question's image reference,
-so measure token usage as well as outcomes. A decision with no target questions
-omits the image asset. The paired eval name is `jev_dom_targets-vision@jev-preview`.
+model call is needed. Other pages keep the image in shared state, including
+confirmation pages where visual outcome evidence remains useful. TypeSafe expands
+each target question's image reference, so measure token usage as well as outcomes.
+The paired eval name is `jev_dom_targets-vision@jev-preview`.
 
-For example, a synthetic account page produces this shape:
+For example, a synthetic account page produces this shape (node IDs are illustrative):
 
 ```text
 - main
