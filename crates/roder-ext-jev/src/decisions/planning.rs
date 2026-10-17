@@ -15,6 +15,8 @@ pub(crate) enum Strategy {
     Effects,
     Verified,
     Vision,
+    VisionDom,
+    VisionAudited,
     Grounded,
 }
 
@@ -103,6 +105,17 @@ pub(super) async fn evaluate(
     request: &Value,
     strategy: Strategy,
 ) -> anyhow::Result<Value> {
+    // Completion audits contain only independent predicates. They deliberately
+    // bypass task-local visual evidence, even inside a visual browser decision.
+    if request["questions"].get("operation").is_none() {
+        return transport
+            .decide(&super::semantic::predicate_body(request)?)
+            .await;
+    }
+    if matches!(strategy, Strategy::VisionDom | Strategy::VisionAudited) {
+        return super::semantic::evaluate(transport, request, strategy == Strategy::VisionAudited)
+            .await;
+    }
     let mut body = if matches!(strategy, Strategy::Original | Strategy::Refusals) {
         request_body(request)?
     } else {

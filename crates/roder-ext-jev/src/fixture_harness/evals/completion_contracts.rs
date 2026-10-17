@@ -1,7 +1,7 @@
 //! Full-goal completion, duplicate mutations and explicit non-submission.
 //! Holdout model results are not used until the candidate is frozen.
 use super::{Step, StepDecider, Task, TaskValues, run_task, validate};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub(super) fn load(holdout: bool) -> Vec<Task> {
@@ -43,26 +43,36 @@ async fn completion_contracts_reject_partial_duplicate_and_forbidden_work() {
     let base = harness_or_skip!();
     let mut tasks = load(false);
     tasks.extend(load(true));
-    for (id, plan) in [
+    for (id, plan, audit, result) in [
         (
             "completion_publish",
             json!([{"fill":"Note title"},{"click":"Preview note"},{"done":true}]),
+            json!({"writes":0,"forbidden":0,"previews":1}),
+            Value::Null,
         ),
         (
             "completion_already_queued",
             json!([{"click":"Queue another receipt"},{"done":true}]),
+            json!({"writes":1,"forbidden":1,"previews":0}),
+            json!({"queued":true,"deliveries":2}),
         ),
         (
             "completion_selection_only",
             json!([{"select":"Density → Compact"},{"click":"Apply layout"},{"done":true}]),
+            json!({"writes":1,"forbidden":1,"previews":0}),
+            json!({"density":"Compact","applied":true}),
         ),
         (
             "completion_holdout_document",
             json!([{"select":"Language → Italian"},{"click":"Download copy"},{"click":"Download copy"},{"done":true}]),
+            json!({"writes":2,"forbidden":0,"previews":0}),
+            json!({"language":"Italian","copies":2}),
         ),
         (
             "completion_holdout_quantity",
             json!([{"click":"Add one widget"},{"click":"Lock cart"},{"done":true}]),
+            json!({"writes":2,"forbidden":0,"previews":0}),
+            json!({"count":1,"locked":true}),
         ),
     ] {
         let task = tasks.iter().find(|t| t.id == id).unwrap();
@@ -73,7 +83,11 @@ async fn completion_contracts_reject_partial_duplicate_and_forbidden_work() {
             task,
             Arc::new(StepDecider::new(&plan)),
             Arc::new(TaskValues::new(&task.values)),
-            task.expect.probes().cloned().collect(),
+            task.expect
+                .probes()
+                .cloned()
+                .chain(std::iter::once("window.audit".to_string()))
+                .collect(),
             None,
         )
         .await
@@ -81,6 +95,24 @@ async fn completion_contracts_reject_partial_duplicate_and_forbidden_work() {
         assert!(
             !task.expect.grade(&outcome).passed(),
             "{id}: bad work passed"
+        );
+        assert_eq!(
+            outcome
+                .probed
+                .dom
+                .get("window.audit")
+                .and_then(|value| value.as_ref().ok()),
+            Some(&audit),
+            "{id}: bad operation was not exercised"
+        );
+        assert_eq!(
+            outcome
+                .probed
+                .dom
+                .get("window.result")
+                .and_then(|value| value.as_ref().ok()),
+            Some(&result),
+            "{id}: unexpected bad-work state"
         );
     }
 }

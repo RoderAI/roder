@@ -171,6 +171,7 @@ pub struct JevRunResult {
     /// nothing, which is the usual page.
     #[serde(skip_serializing_if = "JevOmitted::is_empty")]
     pub omitted: JevOmitted,
+    /// Answered/billed provider requests, including component batches and audits.
     pub model_calls: usize,
     pub text_calls: usize,
     /// Summed decision and text-helper tokens, `"unknown"` where a provider

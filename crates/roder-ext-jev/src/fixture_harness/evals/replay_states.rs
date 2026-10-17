@@ -124,12 +124,19 @@ async fn export_replay_states() {
             task,
             decision,
             Arc::new(TaskValues::new(&task.values)),
-            task.expect.probes().cloned().collect(),
+            task.expect
+                .probes()
+                .chain(task.script.expect.probes())
+                .cloned()
+                .collect(),
             None,
         )
         .await
         .unwrap();
-        let grade = task.expect.grade(&outcome);
+        let grade = task
+            .expect
+            .grade(&outcome)
+            .and(task.script.expect.grade(&outcome));
         assert!(grade.passed(), "{}: {:?}", task.id, grade.failures());
     }
     let stamp = SystemTime::now()
