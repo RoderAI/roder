@@ -1,8 +1,10 @@
 # Integration review after the source freeze
 
 The 664-attempt campaign finished before these follow-ups changed source. The
-candidate executable and all 377 source/fixture bytes still matched the freeze
-at completion; `validation-source-after-campaign.log.gz` records that check.
+377 frozen source/configuration/fixture files still matched the freeze at
+completion; `validation-source-after-campaign.log.gz` records that source check.
+The executable is identified separately by the SHA-256 digest in `freeze.json`;
+that log does not verify its bytes.
 The measured source remains `50fdd040910dcfe466b31b9a96947436717643cc`.
 
 - [Custom-client budgets](https://github.com/RoderAI/roder/pull/157#discussion_r4301541312):

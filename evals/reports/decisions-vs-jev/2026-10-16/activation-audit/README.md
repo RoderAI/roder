@@ -101,18 +101,20 @@ Reproduce with an isolated library test executable built at `freeze.json`'s
 
 ```sh
 python3 verify_source.py
-JEV_EVAL_BINARY=/absolute/path/to/copied-test-binary python3 reproduce.py
-python3 summarize.py
-python3 summarize_probes.py
-python3 inspect.py confirmation.jsonl.gz complex-dev.jsonl.gz compound-regression.jsonl.gz search-regression.jsonl.gz transfer.jsonl.gz completion-regression.jsonl.gz completion-transfer.jsonl.gz
+JEV_EVAL_BINARY=/absolute/path/to/copied-test-binary python3 reproduce.py --source-checkout /absolute/path/to/original-frozen-build-checkout --output /absolute/path/to/new-report-output
+python3 summarize.py --data-directory /absolute/path/to/new-report-output
+python3 inspect.py /absolute/path/to/new-report-output/*.jsonl.gz
 ```
 
-The reproduction runner verifies the executable, protocol and current source bytes, sets the
+The reproduction runner verifies the executable, protocol and the supplied frozen build checkout’s source bytes, sets the
 required stack size, and refuses to overwrite data or logs. Use `--output` with
 a new output directory. An independently rebuilt executable must have its own
 verified freeze if its digest differs. `task-grid.json` was derived from the
 original protocol and fixtures at the frozen source commit; summary and pooled
 validators reject substituted task IDs as well as duplicate or missing attempts.
+`summarize_probes.py` analyzes the retained development probes separately; rerunning
+the campaign does not recreate those probes. Keep the original build checkout at
+the frozen commit: the executable loads fixtures from its compiled manifest path.
 This later helper repair leaves the original protocol and measured data intact.
 `audits.py` separately lists every audit and proposed correction, without treating
 a proposal as proof that the browser executed it. Model calls are paid. Raw requests and responses, not expected oracle labels,

@@ -28,6 +28,7 @@ for source in args.sources:
         if not any(w.get('error') for w in wires):
             require(row['model_calls'] == len(wires), 'Component requests under/over-counted')
             require(row['telemetry']['usage']['decision']['calls'] == len(wires), 'Aggregated usage call count differs')
+        previous_response = {}
         for wire in wires:
             request, response = wire['request'], wire.get('response') or {}
             group['wire_calls'] += 1
@@ -61,6 +62,9 @@ for source in args.sources:
                 require(provider in ['vision_activation','jev_activation-vision@jev-1.14.0'], 'Unexpected scoped image provider')
             group['images'][image_scope] += 1
             if set(questions) == {'required','performed','ready'}:
+                prior_answers = previous_response.get('answers', [])
+                prior_done = any(a.get('name') == 'operation' and a.get('choice') == 'DONE' for a in prior_answers) if isinstance(prior_answers, list) else prior_answers.get('operation', {}).get('choice') == 'DONE'
+                require(prior_done, 'Audit lacks its preceding DONE response')
                 require(image_scope == 'text', 'Audit includes an image')
                 group['audits'] += 1
                 if native:
@@ -73,11 +77,12 @@ for source in args.sources:
                     require(all(q['type']=='noul' for q in questions.values()), 'TypeSafe audit is not Noul-only')
                     probabilities = {n:response.get('answers', {}).get(n, {}).get('noul') for n in questions}
                     control = questions['required']['instructions']['control']
-                valid = all(isinstance(p,(float,int)) and not isinstance(p,bool) and math.isfinite(p) and 0<=p<=1 for p in probabilities.values())
+                valid = (not native or all(values.get(n, {}).get('type') == 'predicate' for n in questions)) and all(isinstance(p,(float,int)) and not isinstance(p,bool) and math.isfinite(p) and 0<=p<=1 for p in probabilities.values())
                 support = max(0, probabilities['required'] + probabilities['ready'] - probabilities['performed'] - 1) if valid else None
                 audits.append({'source':source.name,'provider':provider,'task':row['task'],'repeat':row['repeat'],
                     'control':control,'probabilities':probabilities,'support':support,
                     'proposes_click':support is not None and support>0.5+1e-9,
                     'passed':bool(row['truth_ok'] and row['verdict_ok'])})
+            previous_response = response
     result[source.name] = groups
 print(json.dumps({'datasets':result,'audit_count':len(audits),'proposed_corrections':sum(a['proposes_click'] for a in audits),'audits':audits},indent=2))

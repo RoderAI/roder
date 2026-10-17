@@ -31,6 +31,20 @@ with tempfile.TemporaryDirectory(prefix='native-report-checks-') as tmp:
  with gzip.open(source,'wt') as f:f.write(json.dumps(bad)+'\n')
  for opt in [False,True]:run(folder,'inspect.py',source,opt=opt,ok=False)
  print('Component call mismatch rejected, normal and optimized Python')
+ # Audit evidence must follow DONE and carry typed predicate answers.
+ audit_row=next(copy.deepcopy(r) for r in rows if r['telemetry']['provider']=='vision_activation' and any({q['name'] for q in w['request']['questions']}=={'required','performed','ready'} for w in r['telemetry']['wire']))
+ audit_index=next(i for i,w in enumerate(audit_row['telemetry']['wire']) if {q['name'] for q in w['request']['questions']}=={'required','performed','ready'})
+ for opt in [False,True]:
+  bad=copy.deepcopy(audit_row)
+  bad['telemetry']['wire'][audit_index-1]['response']['answers']=[]
+  with gzip.open(source,'wt') as f:f.write(json.dumps(bad)+'\n')
+  run(folder,'inspect.py',source,opt=opt,ok=False)
+  bad=copy.deepcopy(audit_row)
+  bad['telemetry']['wire'][audit_index]['response']['answers'][0]['type']='choice'
+  with gzip.open(source,'wt') as f:f.write(json.dumps(bad)+'\n')
+  inspected=json.loads(run(folder,'inspect.py',source,opt=opt).stdout)
+  if inspected['audits'][0]['support'] is not None:raise RuntimeError('Wrong answer type gained audit support')
+ print('Audits require preceding DONE and typed predicates, normal and optimized Python')
  # Synthetic complete grids test the all-failure analysis path, not model quality.
  protocol=json.loads((folder/'protocol.json').read_text())
  prototypes={}

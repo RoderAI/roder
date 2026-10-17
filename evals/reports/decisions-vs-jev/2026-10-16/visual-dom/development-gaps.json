@@ -1,12 +1,12 @@
 [
   {
     "artifact": "pilot-v1.jsonl.gz",
-    "source": "/Users/pz/.cargo-target.noindex/jev-evals/decisions-vs-jev-1792212889326904000-22063.jsonl",
+    "source": "decisions-vs-jev-1792212889326904000-22063.jsonl",
     "note": "Scratch source disappeared before archiving; stdout logs and request-level probes retained separately."
   },
   {
     "artifact": "pilot-v2.jsonl.gz",
-    "source": "/Users/pz/.cargo-target.noindex/jev-evals/decisions-vs-jev-1792213404432868000-30981.jsonl",
+    "source": "decisions-vs-jev-1792213404432868000-30981.jsonl",
     "note": "Scratch source disappeared before archiving; stdout logs and request-level probes retained separately."
   }
 ]

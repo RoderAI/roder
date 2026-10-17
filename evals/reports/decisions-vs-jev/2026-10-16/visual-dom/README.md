@@ -42,7 +42,8 @@ inherently blocked.
 
 `JEV_DECISIONS_PROFILE=activation` adds the same clipped-field policy and
 completion audit evaluated for Jev. The [Decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create)
-puts images in shared input. On a page with an observed populated clipped field,
+puts images in shared input. In the audited (`activation`) profile, with a fresh screenshot available and
+text-only mode disabled, on a page with an observed populated clipped field,
 operation and safety questions therefore run in a text batch while conditional
 target questions run in a separate image batch. These independent requests share
 the same observation. Singleton targets resolve locally; no empty image batch
@@ -151,7 +152,8 @@ python3 -O extract_examples.py
 python3 -O inspect.py confirmation.jsonl.gz complex-dev.jsonl.gz compound-regression.jsonl.gz search-regression.jsonl.gz transfer.jsonl.gz completion-regression.jsonl.gz completion-transfer.jsonl.gz
 ```
 
-The source verifier checks Git objects at the frozen commit, independent of later
+The preserved branch `pz/jev-eval-evidence-20261016` retains the frozen source
+commits across the later release rebase. The source verifier checks Git objects at the frozen commit, independent of later
 report edits. Summaries reject any missing, duplicate or substituted task ID,
 provider or repetition. Inspection checks image placement, component call counts
 and every completion audit. A proposed correction is not proof of execution;
@@ -161,14 +163,14 @@ For a paid rerun, provide Chrome, configured OpenAI/TypeSafe credentials and an
 isolated copy of the test executable:
 
 ```sh
-JEV_EVAL_BINARY=/absolute/path/to/copied-test-binary python3 reproduce.py --output /absolute/path/to/new-report-output
+JEV_EVAL_BINARY=/absolute/path/to/copied-test-binary python3 reproduce.py --source-checkout /absolute/path/to/original-frozen-build-checkout --output /absolute/path/to/new-report-output
 ```
 
 The runner requires the recorded executable and protocol digests and refuses
 existing outputs. An independently rebuilt executable with a different digest
 requires its own verified source/binary freeze; do not label it as this run.
 It sets `RUST_MIN_STACK=16777216` for the standalone Rust executable and checks
-current source bytes before paid calls. Keep the original build checkout at the
+the supplied frozen build checkout’s source bytes before paid calls. Keep the original build checkout at the
 frozen source: the executable loads fixture pages through its compiled manifest
 path. These checks do not make an existing executable portable to another host.
 

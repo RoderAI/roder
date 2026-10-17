@@ -7,8 +7,12 @@ import subprocess
 ROOT = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--working-tree', action='store_true', help='Also require frozen source bytes in the current checkout')
+parser.add_argument('--source-checkout', type=Path, help='Frozen build checkout whose source bytes and fixtures must match')
 args = parser.parse_args()
 checkout = Path(subprocess.check_output(['git','rev-parse','--show-toplevel'], cwd=ROOT, text=True).strip())
+if args.source_checkout:
+    checkout = args.source_checkout.resolve()
+    args.working_tree = True
 freeze = json.loads((ROOT / "freeze.json").read_text())
 commit = freeze["code_commit"]
 if hashlib.sha256((ROOT / "protocol.json").read_bytes()).hexdigest() != freeze["protocol_sha256"]:

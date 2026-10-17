@@ -6,9 +6,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 ROOT = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, default=ROOT)
+parser.add_argument('--source-checkout', type=Path, help='Original frozen build checkout; required before paid calls')
 args = parser.parse_args()
 binary = os.environ.get('JEV_EVAL_BINARY')
 if not binary:
@@ -18,7 +20,9 @@ if hashlib.sha256(Path(binary).read_bytes()).hexdigest() != freeze['binary_sha25
     raise SystemExit('Binary hash mismatch; use the recorded build or declare a new verified freeze')
 if hashlib.sha256((ROOT / 'protocol.json').read_bytes()).hexdigest() != freeze['protocol_sha256']:
     raise SystemExit('Protocol hash mismatch')
-subprocess.run([sys.executable, str(ROOT / 'verify_source.py'), '--working-tree'], check=True)
+if not args.source_checkout:
+    raise SystemExit('Set --source-checkout to the original frozen build checkout')
+subprocess.run([sys.executable, str(ROOT / 'verify_source.py'), '--source-checkout', str(args.source_checkout)], check=True)
 protocol = json.loads((ROOT / 'protocol.json').read_text())
 grid = json.loads((ROOT / 'task-grid.json').read_text())
 for suite in protocol['suites']:
@@ -39,7 +43,7 @@ for suite in protocol['suites']:
     log = args.output / (suite['name'] + '.log')
     with log.open('x') as handle:
         result = subprocess.run([binary, 'decisions_vs_jev', '--ignored', '--nocapture', '--test-threads=1'],
-                                env=env, stdout=handle, stderr=subprocess.STDOUT)
+                                env=env, cwd=args.source_checkout, stdout=handle, stderr=subprocess.STDOUT)
     if result.returncode:
         raise SystemExit(str(log) + ' failed; retain partial data and logs')
     source = next((line.split('rows: ', 1)[1].strip() for line in log.read_text().splitlines() if 'rows: ' in line), None)
