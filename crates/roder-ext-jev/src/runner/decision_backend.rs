@@ -205,7 +205,8 @@ fn prompt_profile(raw: Option<&str>) -> anyhow::Result<crate::jev_prompt::Profil
         None | Some("workflow") => Ok(Profile::Workflow),
         Some("dom") => Ok(Profile::Dom),
         Some("dom_targets") => Ok(Profile::DomTargets),
-        _ => bail!("JEV_PROMPT_PROFILE must be workflow, dom or dom_targets"),
+        Some("activation") => Ok(Profile::Activation),
+        _ => bail!("JEV_PROMPT_PROFILE must be workflow, dom, dom_targets or activation"),
     }
 }
 
@@ -221,6 +222,10 @@ mod prompt_tests {
         assert_eq!(
             prompt_profile(Some("dom_targets")).unwrap(),
             Profile::DomTargets
+        );
+        assert_eq!(
+            prompt_profile(Some("activation")).unwrap(),
+            Profile::Activation
         );
         assert!(prompt_profile(Some("typo")).is_err());
     }

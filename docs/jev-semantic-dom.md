@@ -19,7 +19,7 @@ To try the experimental prompt using that evidence:
 JEV_PROMPT_PROFILE=dom JEV_IMAGES=1 JEV_MODEL=jev-1.14.0 roder
 ```
 
-`JEV_PROMPT_PROFILE` accepts `workflow` (the default), `dom` or `dom_targets`;
+`JEV_PROMPT_PROFILE` accepts `workflow` (the default), `dom`, `dom_targets` or `activation`;
 other values fail.
 The `dom` profile supplies structure, form ownership, available targets per
 operation, and explicit completion-versus-pending-update criteria. It retains the
@@ -39,6 +39,27 @@ model call is needed. Other pages keep the image in shared state, including
 confirmation pages where visual outcome evidence remains useful. TypeSafe expands
 each target question's image reference, so measure token usage as well as outcomes.
 The paired eval name is `jev_dom_targets-vision@jev-preview`.
+
+`activation` adds an experimental completion audit to `dom_targets`. When Jev
+selects DONE and supplies a valid conditional click target, a second, text-only
+request asks three independent Nouls: whether that activation is required,
+whether it has already happened, and whether its prerequisites are ready.
+Code combines their estimated probabilities as
+`max(0, required + ready - performed - 1)`. If this conservative support exceeds
+0.5, it resolves the original offered CLICK target, retaining that target's raw
+Choice probabilities and applying the existing irreversible-action gate.
+The corrected operation's confidence field contains this derived support;
+it is not raw Choice confidence or a guarantee of correctness.
+
+A clearly required, unperformed activation whose prerequisites are unproven
+produces an unusable answer, allowing the existing bounded retry/fallback policy
+to handle it. Missing or refused unused click targets cannot supply a correction.
+This check is limited to one conditional click and does not establish universal
+goal completion. It adds a billed request on audited DONE decisions; token and
+call totals include both requests. The default remains `workflow` with images
+off. To evaluate the audit, use
+`JEV_PROMPT_PROFILE=activation JEV_IMAGES=1 JEV_MODEL=jev-1.14.0` or paired eval
+variant `jev_activation-vision@jev-1.14.0`.
 
 For example, a synthetic account page produces this shape (node IDs are illustrative):
 

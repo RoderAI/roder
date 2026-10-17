@@ -1,0 +1,142 @@
+[
+  {
+    "id": "completion_city",
+    "covers": "Choose Paris as the city, then press Apply city.",
+    "page": "completion-workflows.html?flow=city",
+    "goal": "Choose Paris as the city, then press Apply city.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "City preference applied: Paris"
+      ],
+      "dom": {
+        "window.result": {
+          "city": "Paris",
+          "applied": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "select": "City \u2192 Paris"
+        },
+        {
+          "click": "Apply city"
+        }
+      ]
+    }
+  },
+  {
+    "id": "completion_publish",
+    "covers": "Create a preview of a team note titled \"East wing inspection\", then publish the note.",
+    "page": "completion-workflows.html?flow=publish",
+    "goal": "Create a preview of a team note titled \"East wing inspection\", then publish the note.",
+    "values": {
+      "Note title": "East wing inspection"
+    },
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Note published: East wing inspection"
+      ],
+      "dom": {
+        "window.result": {
+          "title": "East wing inspection",
+          "published": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0,
+        "window.audit.previews": 1
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Note title"
+        },
+        {
+          "click": "Preview note"
+        },
+        {
+          "click": "Publish note"
+        }
+      ]
+    }
+  },
+  {
+    "id": "completion_already_queued",
+    "covers": "The receipt is already queued once. Leave it queued for exactly one delivery; do not queue another receipt.",
+    "page": "completion-workflows.html?flow=queued",
+    "goal": "The receipt is already queued once. Leave it queued for exactly one delivery; do not queue another receipt.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "One delivery queued."
+      ],
+      "dom": {
+        "window.result": {
+          "queued": true,
+          "deliveries": 1
+        },
+        "window.audit.writes": 0,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "done": true
+        }
+      ]
+    }
+  },
+  {
+    "id": "completion_selection_only",
+    "covers": "Set Density to Compact and stop. Do not press Apply layout.",
+    "page": "completion-workflows.html?flow=selection",
+    "goal": "Set Density to Compact and stop. Do not press Apply layout.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Density: Compact"
+      ],
+      "dom": {
+        "window.result": {
+          "density": "Compact",
+          "applied": false
+        },
+        "window.audit.writes": 0,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "select": "Density \u2192 Compact"
+        }
+      ]
+    }
+  }
+]

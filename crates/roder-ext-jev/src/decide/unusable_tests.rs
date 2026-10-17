@@ -33,9 +33,20 @@ fn page() -> Value {
 
 async fn choose_with(transport: &dyn JevDecisionTransport) -> anyhow::Error {
     let today = NaiveDate::from_ymd_opt(2026, 10, 9).unwrap();
-    choose(&page(), "Buy", &[], "jev-test", transport, today, false)
-        .await
-        .expect_err("the choice should fail")
+    choose(
+        &page(),
+        "Buy",
+        &[],
+        "jev-test",
+        transport,
+        today,
+        DecisionOptions {
+            gate: false,
+            activation_audit: None,
+        },
+    )
+    .await
+    .expect_err("the choice should fail")
 }
 
 /// An operation answer that validates, choosing `operation`.
@@ -101,7 +112,10 @@ async fn a_refused_gate_question_is_unusable_too() {
         "jev-test",
         &Fixed(reply),
         today,
-        true,
+        DecisionOptions {
+            gate: true,
+            activation_audit: None,
+        },
     )
     .await
     .expect_err("a refused gate question should fail");

@@ -89,7 +89,8 @@ pub struct JevDecision {
     pub choice: String,
     pub operation: String,
     pub target: Option<String>,
-    /// The operation head's confidence.
+    /// The operation head's confidence, or conservative support when an
+    /// experimental profile composes separate typed judgments for the operation.
     pub confidence: f64,
     /// The target head's confidence, for an operation that has targets.
     pub target_confidence: Option<f64>,

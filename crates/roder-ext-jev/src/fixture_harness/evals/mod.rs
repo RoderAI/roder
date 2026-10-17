@@ -40,12 +40,14 @@ mod watch;
 #[cfg(test)]
 mod watch_tests;
 
+mod completion_contracts;
 mod complex_contracts;
 mod decisions_comparison;
 mod decisions_live;
 mod keyless;
 mod live;
 mod miniwob;
+mod replay_states;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

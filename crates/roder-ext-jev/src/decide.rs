@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
@@ -21,6 +21,16 @@ use crate::irreversible;
 use crate::prompts::{NEXT_ACTION, TARGET};
 use crate::space::{ActionSpace, action_space};
 use crate::usage::JevBilled;
+
+mod activation;
+mod answer;
+use answer::read_answer;
+pub(crate) use answer::validate_choice;
+
+pub(crate) struct DecisionOptions<'a> {
+    pub gate: bool,
+    pub activation_audit: Option<&'a dyn JevDecisionTransport>,
+}
 
 pub(crate) const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 
@@ -89,14 +99,16 @@ impl JevTypeSafeDecisionClient {
             inner: self.transport.as_ref(),
             image,
             observation,
-            placement: if self.profile == crate::jev_prompt::Profile::DomTargets
-                && observation["actions"].as_array().is_some_and(|actions| {
-                    actions.iter().any(|a| {
-                        a["kind"] == "fill"
-                            && a["value_clipped"] == true
-                            && a["value"].as_str().is_some_and(|value| !value.is_empty())
-                    })
-                }) {
+            placement: if matches!(
+                self.profile,
+                crate::jev_prompt::Profile::DomTargets | crate::jev_prompt::Profile::Activation
+            ) && observation["actions"].as_array().is_some_and(|actions| {
+                actions.iter().any(|a| {
+                    a["kind"] == "fill"
+                        && a["value_clipped"] == true
+                        && a["value"].as_str().is_some_and(|value| !value.is_empty())
+                })
+            }) {
                 images::Placement::Targets
             } else {
                 images::Placement::State
@@ -114,7 +126,11 @@ impl JevTypeSafeDecisionClient {
                 observation,
             },
             chrono::Local::now().date_naive(),
-            gate,
+            DecisionOptions {
+                gate,
+                activation_audit: (self.profile == crate::jev_prompt::Profile::Activation)
+                    .then_some(self.transport.as_ref()),
+            },
         )
         .await
         .map(|(decision, _)| decision)
@@ -361,48 +377,6 @@ pub(crate) fn request_body(
 /// Upstream's `validate_choice`: the answer must pick a known id, cover exactly
 /// the offered ids, stay inside [0, 1], sum to one within tolerance, and not
 /// contradict its own argmax.
-pub(crate) fn validate_choice(answer: &Value, ids: &[String]) -> anyhow::Result<()> {
-    let Some(probabilities) = answer.get("probabilities").and_then(Value::as_object) else {
-        bail!("Invalid browser decision response; no action executed.");
-    };
-    let Some(choice) = answer.get("choice").and_then(Value::as_str) else {
-        bail!("Invalid browser decision response; no action executed.");
-    };
-    let Some(confidence) = answer.get("confidence").and_then(Value::as_f64) else {
-        bail!("Invalid browser decision response; no action executed.");
-    };
-    let known = ids.iter().any(|id| id == choice)
-        && probabilities.len() == ids.len()
-        && ids.iter().all(|id| probabilities.contains_key(id));
-    let mut numbers = Vec::with_capacity(probabilities.len() + 1);
-    for value in probabilities.values() {
-        match value.as_f64() {
-            Some(number) => numbers.push(number),
-            None => bail!("Invalid browser decision response; no action executed."),
-        }
-    }
-    numbers.push(confidence);
-    let bounded = numbers
-        .iter()
-        .all(|number| number.is_finite() && (0.0..=1.0).contains(number));
-    let total = probabilities
-        .values()
-        .filter_map(Value::as_f64)
-        .sum::<f64>();
-    let highest = probabilities
-        .values()
-        .filter_map(Value::as_f64)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let chosen = probabilities
-        .get(choice)
-        .and_then(Value::as_f64)
-        .unwrap_or(f64::NEG_INFINITY);
-    if !(known && bounded && (total - 1.0).abs() < 0.02 && chosen >= highest - 1e-6) {
-        bail!("Invalid browser decision response; no action executed.");
-    }
-    Ok(())
-}
-
 /// Ask for the next operation and resolve it to an executable choice. With
 /// `gate`, the request also carries the irreversible-action gate's questions
 /// and the decision the chosen action's answer; without it the request is
@@ -414,10 +388,10 @@ pub(crate) async fn choose(
     model: &str,
     transport: &dyn JevDecisionTransport,
     today: NaiveDate,
-    gate: bool,
+    options: DecisionOptions<'_>,
 ) -> anyhow::Result<(JevDecision, ActionSpace)> {
     let (mut body, space, operation_ids) = request_body(page, goal, history, model, today);
-    let asked = if gate {
+    let asked = if options.gate {
         irreversible::add_questions(&mut body)
     } else {
         Vec::new()
@@ -429,6 +403,21 @@ pub(crate) async fn choose(
     // cannot be used: that usage is kept, and the loop may ask again.
     let answer = read_answer(&result, &space, &operation_ids)
         .map_err(|error| anyhow::Error::from(JevBilled::unusable(usage.clone(), error)))?;
+    let (answer, usage) = if let Some(auditor) = options
+        .activation_audit
+        .filter(|_| answer.operation == "DONE")
+    {
+        let mut audit_body = body.clone();
+        crate::jev_prompt::rewrite(
+            &mut audit_body,
+            crate::jev_prompt::Profile::DomTargets,
+            history,
+            page,
+        );
+        activation::repair(auditor, &audit_body, &result, &space, answer).await?
+    } else {
+        (answer, usage)
+    };
     // A missing or invalid answer is `None`, which the loop treats as
     // irreversible: the gate fails closed without failing the decision.
     if let Some(required) = asked.iter().find(|q| {
@@ -458,80 +447,6 @@ pub(crate) async fn choose(
         },
         space,
     ))
-}
-
-/// A validated answer, resolved to an observed action.
-struct Answer {
-    choice: String,
-    operation: String,
-    target: Option<String>,
-    confidence: f64,
-    target_confidence: Option<f64>,
-    probabilities: Map<String, Value>,
-}
-
-fn read_answer(
-    result: &Value,
-    space: &ActionSpace,
-    operation_ids: &[String],
-) -> anyhow::Result<Answer> {
-    let answers = &result["answers"];
-    let operation_answer = &answers["operation"];
-    reject_refusal(operation_answer, "operation")?;
-    validate_choice(operation_answer, operation_ids)?;
-    let operation = operation_answer["choice"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-
-    let mut probabilities = Map::new();
-    let mut target = None;
-    let mut target_confidence = None;
-    let choice;
-    if let Some(candidates) = space.targets_for(&operation) {
-        let target_ids = candidates
-            .iter()
-            .map(|(index, _)| index.clone())
-            .collect::<Vec<_>>();
-        // Only the head the operation selected can cause an action.
-        let target_answer = &answers[format!("{}_target", operation.to_lowercase())];
-        reject_refusal(
-            target_answer,
-            &format!("{}_target", operation.to_lowercase()),
-        )?;
-        validate_choice(target_answer, &target_ids)?;
-        let selected = target_answer["choice"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let action = space
-            .target_action(&operation, &selected)
-            .context("Decision service chose an unoffered target")?;
-        choice = action["id"].as_str().unwrap_or_default().to_string();
-        for (index, candidate) in candidates {
-            let id = candidate["id"].as_str().unwrap_or_default().to_string();
-            probabilities.insert(id, target_answer["probabilities"][index].clone());
-        }
-        target = Some(selected);
-        target_confidence = target_answer["confidence"].as_f64();
-    } else {
-        choice = match space.control(&operation) {
-            Some(action) => action["id"].as_str().unwrap_or_default().to_string(),
-            None => operation.clone(),
-        };
-        probabilities.insert(
-            choice.clone(),
-            operation_answer["probabilities"][&operation].clone(),
-        );
-    }
-    Ok(Answer {
-        choice,
-        operation,
-        target,
-        confidence: operation_answer["confidence"].as_f64().unwrap_or_default(),
-        target_confidence,
-        probabilities,
-    })
 }
 
 #[cfg(test)]
