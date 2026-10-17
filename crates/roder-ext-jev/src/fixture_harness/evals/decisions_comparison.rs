@@ -49,6 +49,7 @@ async fn decisions_vs_jev() {
         ("jev", Profile::Baseline),
         ("jev_dom", Profile::Dom),
         ("jev_dom_targets", Profile::DomTargets),
+        ("jev_activation", Profile::Activation),
         ("jev_literal", Profile::Literal),
         ("jev_effects", Profile::Effects),
         ("jev_criteria", Profile::Criteria),
@@ -133,6 +134,8 @@ async fn decisions_vs_jev() {
             }
             "complex_dev" => super::complex_contracts::load(false),
             "complex_holdout" => super::complex_contracts::load(true),
+            "completion_dev" => super::completion_contracts::load(false),
+            "completion_holdout" => super::completion_contracts::load(true),
             _ => panic!("Unknown BROWSER_EVAL_SUITE"),
         }
     } else if env("DECISIONS_EVAL_HOLDOUT").as_deref() == Some("1") {

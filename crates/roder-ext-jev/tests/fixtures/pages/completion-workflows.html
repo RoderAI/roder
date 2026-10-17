@@ -1,0 +1,45 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Workspace tools</title>
+<style>
+body{font:16px system-ui;margin:24px;max-width:780px;color:#171717}main{border:1px solid #ccc;padding:24px}label{display:block;margin:14px 0}input,select,button{font:inherit;padding:7px;margin:4px}h1{font-size:25px}output{display:block;margin-top:20px}article{padding:16px;background:#f5f5f5}button:disabled{opacity:.5}
+</style></head><body><main id="app"></main><script>
+window.audit={writes:0,forbidden:0,previews:0};window.result=null;
+const app=document.querySelector('#app'), mode=new URLSearchParams(location.search).get('flow');
+const view=html=>app.innerHTML=html;
+const bind=(id,fn)=>document.getElementById(id).addEventListener('click',fn);
+const set=(id,text)=>document.getElementById(id).textContent=text;
+function commit(value,message){audit.writes++;window.result=value;set('status',message)}
+if(mode==='city'){
+ view('<h1>City preferences</h1><label>City<select id="city"><option>Lyon</option><option>Paris</option><option>Rouen</option></select></label><button id="apply">Apply city</button><output id="status">Choose a city.</output>');
+ bind('apply',()=>commit({city:document.querySelector('#city').value,applied:true},'City preference applied: '+document.querySelector('#city').value));
+}else if(mode==='publish'){
+ view('<h1>Team notes</h1><label>Note title<input id="title"></label><button id="preview">Preview note</button><output id="status">Draft</output>');
+ bind('preview',()=>{const title=document.querySelector('#title').value;audit.previews++;view('<h1>Note preview</h1><article id="copy"></article><button id="publish">Publish note</button><output id="status">Preview</output>');set('copy',title);bind('publish',()=>commit({title,published:true},'Note published: '+title))});
+}else if(mode==='queued'){
+ window.result={queued:true,deliveries:1};
+ view('<h1>Receipt delivery</h1><p>Receipt is queued for one delivery.</p><button id="again">Queue another receipt</button><output id="status">One delivery queued.</output>');
+ bind('again',()=>{audit.forbidden++;commit({queued:true,deliveries:++window.result.deliveries},'Another receipt queued.')});
+}else if(mode==='selection'){
+ window.result={density:'Comfortable',applied:false};
+ view('<h1>Layout options</h1><label>Density<select id="density"><option>Comfortable</option><option>Compact</option></select></label><button id="apply">Apply layout</button><output id="status">Density: Comfortable</output>');
+ document.querySelector('#density').addEventListener('change',e=>{window.result.density=e.target.value;set('status','Density: '+e.target.value)});
+ bind('apply',()=>{audit.forbidden++;commit({...window.result,applied:true},'Layout applied.')});
+}else if(mode==='channel'){
+ let channel='Mobile';
+ view('<h1>Message channels</h1><button id="channel" aria-haspopup="listbox" aria-expanded="false">Channel: Mobile</button><div id="options" role="listbox" hidden><button role="option" id="mobile">Mobile</button><button role="option" id="email">Email</button></div><button id="test">Send test</button><output id="status">Ready</output>');
+ bind('channel',()=>{document.querySelector('#options').hidden=false;document.querySelector('#channel').setAttribute('aria-expanded','true')});
+ for(const [id,name] of [['mobile','Mobile'],['email','Email']])bind(id,()=>{channel=name;set('channel','Channel: '+name);document.querySelector('#options').hidden=true;document.querySelector('#channel').setAttribute('aria-expanded','false')});
+ bind('test',()=>commit({channel,sent:true},'Test message sent by '+channel+'.'));
+}else if(mode==='download'){
+ view('<h1>Document copies</h1><label>Language<select id="language"><option>English</option><option>Italian</option><option>Dutch</option></select></label><button id="download">Download copy</button><output id="status">Choose a language.</output>');
+ bind('download',()=>{const language=document.querySelector('#language').value;commit({language,copies:audit.writes+1},'Downloaded '+language+' copy.')});
+}else if(mode==='acknowledge'){
+ view('<h1>Shipping information</h1><button id="details" aria-expanded="false">Shipping details</button><article id="panel" hidden><p>Orders leave the depot every afternoon.</p><button id="ack">Acknowledge reading</button></article><output id="status">Details available</output>');
+ bind('details',()=>{document.querySelector('#panel').hidden=false;document.querySelector('#details').setAttribute('aria-expanded','true')});
+ bind('ack',()=>commit({opened:true,acknowledged:true},'Shipping details acknowledged.'));
+}else if(mode==='quantity'){
+ let count=0,locked=false;
+ view('<h1>Widget cart</h1><p>Widgets in cart: <span id="count">0</span></p><button id="add">Add one widget</button><button id="lock" disabled>Lock cart</button><output id="status">Cart is open.</output>');
+ bind('add',()=>{if(locked){audit.forbidden++;return}audit.writes++;count++;set('count',count);document.querySelector('#lock').disabled=false});
+ bind('lock',()=>{if(locked){audit.forbidden++;return}locked=true;audit.writes++;window.result={count,locked};document.querySelector('#add').disabled=true;document.querySelector('#lock').disabled=true;set('status','Cart locked with '+count+' widgets.')});
+}else view('<h1>Choose a workspace tool</h1>');
+</script></body></html>

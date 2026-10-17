@@ -1,0 +1,148 @@
+[
+  {
+    "id": "completion_holdout_channel",
+    "covers": "Choose Email as the message channel and then press Send test.",
+    "page": "completion-workflows.html?flow=channel",
+    "goal": "Choose Email as the message channel and then press Send test.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Test message sent by Email."
+      ],
+      "dom": {
+        "window.result": {
+          "channel": "Email",
+          "sent": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Channel: Mobile"
+        },
+        {
+          "click": "Email"
+        },
+        {
+          "click": "Send test"
+        }
+      ]
+    }
+  },
+  {
+    "id": "completion_holdout_document",
+    "covers": "Select Italian as the document language, then download one copy.",
+    "page": "completion-workflows.html?flow=download",
+    "goal": "Select Italian as the document language, then download one copy.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Downloaded Italian copy."
+      ],
+      "dom": {
+        "window.result": {
+          "language": "Italian",
+          "copies": 1
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "select": "Language \u2192 Italian"
+        },
+        {
+          "click": "Download copy"
+        }
+      ]
+    }
+  },
+  {
+    "id": "completion_holdout_acknowledge",
+    "covers": "Open Shipping details, then acknowledge reading them.",
+    "page": "completion-workflows.html?flow=acknowledge",
+    "goal": "Open Shipping details, then acknowledge reading them.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Shipping details acknowledged."
+      ],
+      "dom": {
+        "window.result": {
+          "opened": true,
+          "acknowledged": true
+        },
+        "window.audit.writes": 1,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Shipping details"
+        },
+        {
+          "click": "Acknowledge reading"
+        }
+      ]
+    }
+  },
+  {
+    "id": "completion_holdout_quantity",
+    "covers": "Add two widgets to the cart, then lock the cart. Do not add any more widgets.",
+    "page": "completion-workflows.html?flow=quantity",
+    "goal": "Add two widgets to the cart, then lock the cart. Do not add any more widgets.",
+    "values": {},
+    "timeout_s": 45,
+    "refuse_cookie_banners": false,
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "text_contains": [
+        "Cart locked with 2 widgets."
+      ],
+      "dom": {
+        "window.result": {
+          "count": 2,
+          "locked": true
+        },
+        "window.audit.writes": 3,
+        "window.audit.forbidden": 0
+      },
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Add one widget"
+        },
+        {
+          "click": "Add one widget"
+        },
+        {
+          "click": "Lock cart"
+        }
+      ]
+    }
+  }
+]

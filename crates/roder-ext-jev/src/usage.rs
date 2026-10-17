@@ -36,11 +36,15 @@ pub struct JevCallUsage {
 impl JevCallUsage {
     /// Sum `usages`, one per call, reading each count under either name.
     pub(crate) fn sum<'a>(usages: impl IntoIterator<Item = &'a Value>) -> Self {
-        let mut calls = 0;
+        let mut calls = 0usize;
         let mut input = Some(0);
         let mut output = Some(0);
         for usage in usages {
-            calls += 1;
+            let nested = usage["calls"]
+                .as_u64()
+                .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+                .unwrap_or(1);
+            calls = calls.saturating_add(nested);
             input = input
                 .zip(count(usage, &["input_tokens", "prompt_tokens"]))
                 .map(add);
@@ -168,6 +172,16 @@ fn count(usage: &Value, names: &[&str]) -> Option<u64> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn nested_wire_calls_and_unknown_counts_are_preserved() {
+        let first = json!({"calls":2,"input_tokens":14,"output_tokens":"unknown"});
+        let next = json!({"input_tokens":3,"output_tokens":1});
+        let total = JevCallUsage::sum([&first, &next]);
+        assert_eq!(total.calls, 3);
+        assert_eq!(total.input_tokens, JevTokenCount::Known(17));
+        assert_eq!(total.output_tokens, JevTokenCount::Unknown);
+    }
 
     #[test]
     fn counts_sum_under_either_providers_names() {

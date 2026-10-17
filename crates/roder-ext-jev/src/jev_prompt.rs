@@ -9,6 +9,7 @@ pub(crate) enum Profile {
     Baseline,
     Dom,
     DomTargets,
+    Activation,
     Literal,
     Effects,
     Criteria,
@@ -48,7 +49,7 @@ pub(crate) fn rewrite(
     history: &[Value],
     observation: &Value,
 ) {
-    if profile == Profile::DomTargets {
+    if matches!(profile, Profile::DomTargets | Profile::Activation) {
         rewrite(request, Profile::Dom, history, observation);
         return;
     }

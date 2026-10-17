@@ -29,9 +29,20 @@ async fn ask(page: &Value, history: &[Value], gate: bool, response: Value) -> (V
         request: Mutex::new(None),
         response,
     };
-    let (decision, _) = choose(page, "Goal", history, "jev-latest", &transport, day(), gate)
-        .await
-        .unwrap();
+    let (decision, _) = choose(
+        page,
+        "Goal",
+        history,
+        "jev-latest",
+        &transport,
+        day(),
+        DecisionOptions {
+            gate,
+            activation_audit: None,
+        },
+    )
+    .await
+    .unwrap();
     let request = transport.request.lock().unwrap().take().unwrap();
     (request, decision)
 }
@@ -77,7 +88,10 @@ async fn the_default_request_is_still_the_golden_body_byte_for_byte() {
         "jev-latest",
         &transport,
         day(),
-        false,
+        DecisionOptions {
+            gate: false,
+            activation_audit: None,
+        },
     )
     .await
     .unwrap();
@@ -90,9 +104,20 @@ async fn the_default_request_is_still_the_golden_body_byte_for_byte() {
 
     // The recorded page offers nothing that commits, so even with the gate
     // on its request is the same.
-    let (gated, _) = choose(&page, goal, &history, "jev-latest", &transport, day(), true)
-        .await
-        .unwrap();
+    let (gated, _) = choose(
+        &page,
+        goal,
+        &history,
+        "jev-latest",
+        &transport,
+        day(),
+        DecisionOptions {
+            gate: true,
+            activation_audit: None,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(gated.irreversible, None);
     let sent = transport.request.lock().unwrap().take().unwrap();
     assert_eq!(
