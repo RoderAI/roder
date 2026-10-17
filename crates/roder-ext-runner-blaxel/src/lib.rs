@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate self as roder_ext_runner_blaxel;
+
 use std::sync::Arc;
 
 use roder_api::capabilities::CapabilityRequest;

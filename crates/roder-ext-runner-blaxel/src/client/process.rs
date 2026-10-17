@@ -135,3 +135,59 @@ impl BlaxelClient {
         Ok(true)
     }
 }
+
+impl BlaxelClient {
+    /// Bounded metadata projection. Never return process logs or provider errors.
+    pub(crate) async fn observe_process(
+        &self,
+        endpoint: &str,
+        name: &str,
+    ) -> anyhow::Result<roder_api::remote_runner::RunnerCommandObservation> {
+        use roder_api::remote_runner::RunnerCommandObservation;
+        #[derive(serde::Deserialize)]
+        struct Metadata {
+            name: String,
+            status: String,
+            #[serde(rename = "exitCode")]
+            exit_code: Option<i32>,
+        }
+        let mut response = self
+            .sandbox(
+                endpoint,
+                reqwest::Method::GET,
+                &format!("process/{}", urlencoding::encode(name)),
+            )
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("Durable command observation unavailable"))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(RunnerCommandObservation::NotObserved);
+        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Durable command observation refused"
+        );
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| anyhow::anyhow!("Durable command observation unavailable"))?
+        {
+            anyhow::ensure!(
+                bytes.len() + chunk.len() <= 65536,
+                "Durable command observation exceeds budget"
+            );
+            bytes.extend_from_slice(&chunk);
+        }
+        let metadata: Metadata = serde_json::from_slice(&bytes)
+            .map_err(|_| anyhow::anyhow!("Invalid durable command observation"))?;
+        anyhow::ensure!(metadata.name == name, "Durable command identity changed");
+        Ok(match metadata.status.as_str() {
+            "running" if metadata.exit_code.is_none() => RunnerCommandObservation::Running,
+            "completed" | "failed" | "killed" | "stopped" => RunnerCommandObservation::Exited {
+                exit_code: metadata.exit_code,
+            },
+            _ => RunnerCommandObservation::Unknown,
+        })
+    }
+}

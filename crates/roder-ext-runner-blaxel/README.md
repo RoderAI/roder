@@ -121,3 +121,19 @@ This package is versioned and published with the Roder workspace. Before publish
 make registry-readmes
 python3 scripts/generate-knope-config.py --check
 ```
+
+### Recoverable process identity
+
+`run_durable_command` is an explicit operation for an active original session
+created through `for_workspace`. The caller must first retain a unique command ID
+and win its own durable launch claim. Blaxel derives a stable provider process
+name from 128 bits of SHA-256 of that ID. The live session refuses another durable
+start with the same ID even after completion; this is not an idempotent start API
+or permission to replay after an unknown result.
+
+A fresh joined session can call `observe_durable_command` with the same ID. It
+makes one bounded GET and returns `NotObserved`, `Running`, `Exited` or `Unknown`,
+without process logs, environment, a wake request or a keep-alive mutation. A 404
+can race delayed creation and does not authorize restart. Provider process state
+does not attest to browser readiness, identity, admission or control ownership.
+Default-account, paused and adopted-fork sessions refuse these operations.

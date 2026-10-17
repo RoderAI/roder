@@ -1,11 +1,12 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use roder_api::remote_runner::{
-    RemoteRunnerSession, RunnerCommandId, RunnerCommandRequest, RunnerCommandResult,
-    RunnerFileReadRequest, RunnerFileReadResult, RunnerFileWriteRequest, RunnerPortRequest,
-    RunnerPortResult, RunnerSessionState, RunnerSnapshotRef,
+    RemoteRunnerSession, RunnerCommandId, RunnerCommandObservation, RunnerCommandRequest,
+    RunnerCommandResult, RunnerFileReadRequest, RunnerFileReadResult, RunnerFileWriteRequest,
+    RunnerPortRequest, RunnerPortResult, RunnerSessionState, RunnerSnapshotRef,
 };
 use serde_json::json;
 
@@ -16,6 +17,8 @@ use crate::cancellation::{
 use crate::client::BlaxelClient;
 use crate::config::{BlaxelConfig, CleanupMode, PROVIDER_ID, SandboxLifecycle};
 use crate::standby::StandbyGrace;
+
+mod commands;
 
 const DEFAULT_PROCESS_TIMEOUT_MS: u64 = 600_000;
 const MAX_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
@@ -50,6 +53,7 @@ pub struct BlaxelRunnerSession {
     lifecycle: Option<SandboxLifecycle>,
     inner: Mutex<Inner>,
     running_processes: RunningProcesses,
+    durable_commands: Mutex<HashSet<RunnerCommandId>>,
     standby_grace: StandbyGrace,
 }
 
@@ -94,6 +98,7 @@ impl BlaxelRunnerSession {
                 paused,
             }),
             running_processes: Default::default(),
+            durable_commands: Default::default(),
             standby_grace: StandbyGrace::new(config.standby_after_seconds),
         }
     }
@@ -182,8 +187,19 @@ impl BlaxelRunnerSession {
         &self,
         command_id: &RunnerCommandId,
         timeout_seconds: u64,
+        durable: bool,
     ) -> anyhow::Result<TrackedProcess> {
-        let tracked = TrackedProcess::new(timeout_seconds);
+        let mut tracked = TrackedProcess::new(timeout_seconds);
+        if durable {
+            tracked.name = commands::durable_process_name(command_id)?;
+            anyhow::ensure!(
+                self.durable_commands
+                    .lock()
+                    .unwrap()
+                    .insert(command_id.clone()),
+                "Durable command was already attempted"
+            );
+        }
         let mut processes = self.running_processes.lock().unwrap();
         if let Some(current) = processes.get(command_id) {
             anyhow::ensure!(
@@ -276,70 +292,24 @@ impl RemoteRunnerSession for BlaxelRunnerSession {
         &self,
         request: RunnerCommandRequest,
     ) -> anyhow::Result<RunnerCommandResult> {
-        let timeout_seconds = process_timeout_seconds(request.timeout_ms);
-        let tracked = self.register_process(&request.command_id, timeout_seconds)?;
-        let process_name = tracked.name.clone();
-        let mut process_guard = ActiveProcessGuard::new(
-            self.client.clone(),
-            self.endpoint(),
-            request.command_id.clone(),
-            tracked.clone(),
-            self.running_processes.clone(),
-        );
-        let endpoint = match self.begin_operation().await {
-            Ok(endpoint) => endpoint,
-            Err(error) => {
-                process_guard.complete();
-                return Err(error);
-            }
-        };
-        if self
-            .running_processes
-            .lock()
-            .unwrap()
-            .get(&request.command_id)
-            .is_some_and(|process| process.cancelled)
-        {
-            anyhow::bail!(
-                "remote command {} was cancelled before start",
-                request.command_id
-            );
-        }
-        let command = shell_join(&request.program, &request.args);
-        let command = format!(
-            "if [ -e {} ]; then exit 130; fi; exec {command}",
-            shell_quote(&cancellation_marker(&process_name))
-        );
-        let environment = tagged_environment(&request, &tracked.tag);
-        let cwd = request
-            .cwd
-            .as_ref()
-            .map(|cwd| self.resolve_path(cwd))
-            .unwrap_or_else(|| self.working_dir.clone());
-        // If process execution errors, leave the guard armed: the remote
-        // process may still be running and cancellation must settle it before
-        // a post-operation standby lease is appropriate.
-        let result = self
-            .client
-            .exec(
-                &endpoint,
-                &process_name,
-                &command,
-                Some(&cwd),
-                &environment,
-                timeout_seconds,
-            )
-            .await?;
-        if result.exit_code.is_some() {
-            process_guard.complete();
-        }
-        self.finish_operation(&endpoint).await?;
-        Ok(RunnerCommandResult {
-            command_id: request.command_id,
-            exit_code: result.exit_code,
-            stdout: result.stdout,
-            stderr: result.stderr,
-        })
+        self.execute_command(request, false).await
+    }
+
+    async fn run_durable_command(
+        &self,
+        request: RunnerCommandRequest,
+    ) -> anyhow::Result<RunnerCommandResult> {
+        self.check_durable_target()?;
+        self.execute_command(request, true).await
+    }
+
+    async fn observe_durable_command(
+        &self,
+        command_id: &RunnerCommandId,
+    ) -> anyhow::Result<RunnerCommandObservation> {
+        self.check_durable_target()?;
+        let name = commands::durable_process_name(command_id)?;
+        self.client.observe_process(&self.endpoint(), &name).await
     }
 
     async fn cancel_command(&self, command_id: &RunnerCommandId) -> anyhow::Result<bool> {

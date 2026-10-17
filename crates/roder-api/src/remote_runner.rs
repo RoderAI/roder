@@ -200,6 +200,17 @@ pub struct RunnerCommandResult {
     pub stderr: String,
 }
 
+/// Provider process metadata only; no stdout, environment or browser authority.
+/// `NotObserved` is not proof a delayed command cannot still start.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RunnerCommandObservation {
+    NotObserved,
+    Running,
+    Exited { exit_code: Option<i32> },
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunnerFileReadRequest {
     pub path: PathBuf,
@@ -389,6 +400,26 @@ pub trait RemoteRunnerSession: Send + Sync + 'static {
         &self,
         request: RunnerCommandRequest,
     ) -> anyhow::Result<RunnerCommandResult>;
+
+    /// Start a command with a provider identity recoverable from its exact ID.
+    /// The caller must durably claim this globally unique ID before calling.
+    /// This is not an idempotent start: never replay after an unknown outcome.
+    /// Unsupported providers refuse rather than fall back to ephemeral execution.
+    async fn run_durable_command(
+        &self,
+        _request: RunnerCommandRequest,
+    ) -> anyhow::Result<RunnerCommandResult> {
+        anyhow::bail!("durable command execution is not supported by this provider")
+    }
+
+    /// Read one durable command's provider metadata without starting, resuming,
+    /// cancelling or claiming it. No observation permits a replacement start.
+    async fn observe_durable_command(
+        &self,
+        _command_id: &RunnerCommandId,
+    ) -> anyhow::Result<RunnerCommandObservation> {
+        anyhow::bail!("durable command observation is not supported by this provider")
+    }
 
     async fn cancel_command(&self, _command_id: &RunnerCommandId) -> anyhow::Result<bool> {
         Ok(false)
