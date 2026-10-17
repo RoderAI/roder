@@ -106,3 +106,93 @@ async fn semantic_dom_excludes_text_clipped_inside_a_scroll_panel() {
     assert!(dom.contains("Hidden conclusion"), "{dom}");
     assert!(!dom.contains("Visible introduction"), "{dom}");
 }
+
+#[tokio::test]
+async fn semantic_dom_maps_controls_inside_headings_and_styled_toggle_state() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("keys.html").await.unwrap();
+    page.evaluate(r#"document.body.innerHTML='<h2>Account <a href="/home">Open profile</a><span><button>Expand</button></span></h2><label><input type="checkbox" checked style="position:absolute;opacity:0;width:0;height:0">Notifications</label><label><input type="radio" checked style="position:absolute;opacity:0;width:0;height:0">Daily</label>'; true"#).await.unwrap();
+    let observation = page.observe().await.unwrap();
+    let dom = observation["dom_snapshot"].as_str().unwrap();
+    for label in ["Open profile", "Expand", "Notifications", "Daily"] {
+        let action = observation["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["label"] == label)
+            .unwrap();
+        let line = dom
+            .lines()
+            .find(|line| line.contains(&format!("node={}", action["node"])))
+            .unwrap_or_else(|| panic!("Missing {label}: {dom}"));
+        if matches!(label, "Notifications" | "Daily") {
+            assert!(line.contains("checked=true"), "{line}");
+        }
+    }
+    assert!(!dom.contains("text \"Account"), "{dom}");
+}
+
+#[tokio::test]
+async fn offscreen_dom_changes_do_not_invalidate_a_page_level_decision() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("keys.html").await.unwrap();
+    page.evaluate(r#"document.body.innerHTML='<button>Visible action</button><div style="height:2000px"></div><button id="far">Far action</button>'; true"#).await.unwrap();
+    let observation = page.observe().await.unwrap();
+    let far = observation["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["label"] == "Far action")
+        .unwrap();
+    assert_eq!(far["offscreen"], true);
+    page.evaluate("document.querySelector('#far').textContent='Changed far action'; true")
+        .await
+        .unwrap();
+    let updated = page.observe().await.unwrap();
+    assert_ne!(updated["dom_snapshot"], observation["dom_snapshot"]);
+    assert!(page.fresh(&observation, None).await.unwrap());
+    assert!(!page.fresh(&observation, Some(far)).await.unwrap());
+}
+
+#[tokio::test]
+async fn semantic_dom_scrubs_complete_escaped_echoes_before_prompt_or_digest() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("keys.html").await.unwrap();
+    let secret = format!("ab\"cd\\ef  gh\n{}", "x".repeat(200));
+    page.evaluate(&format!("document.body.innerHTML='<main><p></p><button>Save</button></main>'; document.querySelector('p').textContent={}; true", serde_json::to_string(&secret).unwrap())).await.unwrap();
+    let mut observation = page.observe().await.unwrap();
+    let escaped = serde_json::to_string(&secret).unwrap();
+    assert!(
+        observation["dom_snapshot"]
+            .as_str()
+            .unwrap()
+            .contains(&escaped)
+    );
+    let mut secrets = Secrets::default();
+    secrets.remember(&secret);
+    secrets.scrub_observation(&mut observation);
+    assert!(
+        observation["dom_snapshot"]
+            .as_str()
+            .unwrap()
+            .contains("[secret]")
+    );
+    let (mut request, _, _) = crate::decide::request_body(
+        &observation,
+        "Inspect result",
+        &[],
+        "jev-preview",
+        chrono::Local::now().date_naive(),
+    );
+    crate::jev_prompt::rewrite(
+        &mut request,
+        crate::jev_prompt::Profile::Dom,
+        &[],
+        &observation,
+    );
+    assert!(!request.to_string().contains("ab\\\"cd"));
+    assert!(!request.to_string().contains(&"x".repeat(50)));
+    let data = json!({"status":"done", "visible_text":"Result", "page":{"dom_snapshot":observation["dom_snapshot"]}});
+    let text = crate::report::tool_text(&mut data.clone());
+    assert!(!text.contains(&"x".repeat(50)));
+}

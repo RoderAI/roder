@@ -407,8 +407,7 @@
   if (open) actions.push({id:'press_escape',kind:'key',key:'Escape',
     label:'Press Escape to close the open popup, menu, suggestion list or dialog'});
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
-  const dom_snapshot=parts.dom({tree,visible,safe,name,role,identity,actions,rectOf,placed,cut});
-  marker.push(dom_snapshot);
+  const dom_snapshot=parts.dom({tree,visible,safe,name,role,identity,actions,rectOf,placed});
   return {url:location.href,title:document.title.toWellFormed(),w:innerWidth,h:innerHeight,text:pageText,
     typed_values,disabled_controls,dom_snapshot,scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
 })

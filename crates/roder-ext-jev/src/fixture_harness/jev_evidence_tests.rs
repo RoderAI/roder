@@ -77,7 +77,7 @@ async fn jev_evidence_names_form_ownership_and_disabled_controls() {
 
 #[test]
 fn production_jev_profile_keeps_candidates_and_safety_questions() {
-    let observation = json!({"actions":[{"kind":"click","label":"Save","node":1,"form":null}], "disabled_controls":[{"label":"Publish","role":"button"}]});
+    let observation = json!({"actions":[{"kind":"click","label":"Submit","node":1,"form":null}], "disabled_controls":[{"label":"Publish","role":"button"}]});
     let history = (0..12).map(|i|json!({"action":format!("Step {i}"),"context":"Draft A","page_changed":true,"effect":"verbose effect","text_added":["previous text"]})).collect::<Vec<_>>();
     let (mut request, _, _) = crate::decide::request_body(
         &observation,
@@ -86,8 +86,10 @@ fn production_jev_profile_keeps_candidates_and_safety_questions() {
         "jev-latest",
         chrono::Local::now().date_naive(),
     );
-    request["questions"]["safety"] =
-        json!({"type":"noul","instructions":"Is the selected action irreversible?"});
+    let asked = crate::irreversible::add_questions(&mut request);
+    assert_eq!(asked.len(), 1);
+    let gate = &asked[0].key;
+    assert_eq!(request["questions"][gate]["type"], "noul");
     let original = request.clone();
     jev_prompt::rewrite(
         &mut request,
@@ -95,10 +97,7 @@ fn production_jev_profile_keeps_candidates_and_safety_questions() {
         &history,
         &observation,
     );
-    assert_eq!(
-        request["questions"]["safety"],
-        original["questions"]["safety"]
-    );
+    assert_eq!(request["questions"][gate], original["questions"][gate]);
     assert_eq!(
         request["questions"]["operation"]["criteria"],
         original["questions"]["operation"]["criteria"]
@@ -127,7 +126,7 @@ fn production_jev_profile_keeps_candidates_and_safety_questions() {
 
 #[test]
 fn dom_profile_uses_observed_structure_preserves_gate_and_candidate_ids() {
-    let observation = json!({"actions":[{"kind":"click","node":12,"label":"Save","form":null}],"dom_snapshot":"- main\n  - button \"Save\" [node=12]"});
+    let observation = json!({"actions":[{"kind":"click","node":12,"label":"Submit","form":null}],"dom_snapshot":"- main\n  - button \"Submit\" [node=12]"});
     let (mut request, _, _) = crate::decide::request_body(
         &observation,
         "Save draft",
@@ -135,17 +134,17 @@ fn dom_profile_uses_observed_structure_preserves_gate_and_candidate_ids() {
         "jev-preview",
         chrono::Local::now().date_naive(),
     );
-    request["questions"]["safety"] = json!({"type":"noul","instructions":"Is this irreversible?"});
+    let asked = crate::irreversible::add_questions(&mut request);
+    assert_eq!(asked.len(), 1);
+    let gate = &asked[0].key;
+    assert_eq!(request["questions"][gate]["type"], "noul");
     let before = request.clone();
     jev_prompt::rewrite(&mut request, jev_prompt::Profile::Dom, &[], &observation);
     assert_eq!(
         request["state"]["dom_snapshot"],
         observation["dom_snapshot"]
     );
-    assert_eq!(
-        request["questions"]["safety"],
-        before["questions"]["safety"]
-    );
+    assert_eq!(request["questions"][gate], before["questions"][gate]);
     assert_eq!(
         request["questions"]["click_target"]["criteria"]["1"]["element"],
         before["questions"]["click_target"]["criteria"]["1"]["element"]

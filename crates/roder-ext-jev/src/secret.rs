@@ -75,6 +75,30 @@ impl Secrets {
         })
     }
 
+    /// DOM labels are JSON string literals. Match their escaped contents as
+    /// well as plain text and whitespace normalized by accessible-name helpers.
+    /// The serializer retains whole labels, so truncation cannot hide a suffix
+    /// from this scrubber; the snapshot budget drops an oversized line instead.
+    fn scrub_dom(&self, text: &str) -> String {
+        self.0.iter().fold(text.to_string(), |mut text, secret| {
+            // ECMAScript \s includes BOM and excludes NEXT LINE (U+0085).
+            let normalized = secret
+                .split(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            for value in [secret.as_str(), normalized.as_str()] {
+                if value.is_empty() {
+                    continue;
+                }
+                let quoted = serde_json::to_string(value).expect("string serialization");
+                let escaped = &quoted[1..quoted.len() - 1];
+                text = text.replace(escaped, SECRET).replace(value, SECRET);
+            }
+            text
+        })
+    }
+
     fn scrub_in_place(&self, value: &mut Value) {
         if let Value::String(text) = value
             && self.0.iter().any(|secret| text.contains(secret.as_str()))
@@ -102,10 +126,13 @@ impl Secrets {
         if self.0.is_empty() {
             return;
         }
-        for key in ["url", "title", "text", "dom_snapshot"] {
+        for key in ["url", "title", "text"] {
             if let Some(value) = observation.get_mut(key) {
                 self.scrub_in_place(value);
             }
+        }
+        if let Some(Value::String(dom)) = observation.get_mut("dom_snapshot") {
+            *dom = self.scrub_dom(dom);
         }
         for key in ["disabled_controls", "typed_values"] {
             if let Some(evidence) = observation.get_mut(key) {
@@ -146,6 +173,32 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn dom_scrubbing_handles_json_escaping_and_accessible_name_whitespace() {
+        for secret in [
+            "ab\"cd",
+            "ab\\cd",
+            "ab\ncd",
+            "ab  cd",
+            "ab\u{feff}cd",
+            "ab\u{85}cd",
+        ] {
+            let mut secrets = Secrets::default();
+            secrets.remember(secret);
+            let normalized = secret
+                .split(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut page = json!({"dom_snapshot":format!("- text {}\n- button {}\n- button Save", serde_json::to_string(secret).unwrap(), serde_json::to_string(&normalized).unwrap()),"actions":[]});
+            secrets.scrub_observation(&mut page);
+            assert_eq!(
+                page["dom_snapshot"],
+                "- text \"[secret]\"\n- button \"[secret]\"\n- button Save"
+            );
+        }
+    }
 
     #[test]
     fn short_secret_input_survives_session_transfer_without_storing_the_value() {

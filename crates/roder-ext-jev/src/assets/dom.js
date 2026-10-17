@@ -1,14 +1,17 @@
 // A bounded semantic DOM tree, following the role/name/state shape of Codex's
 // browser snapshots. Observation only: node refs identify existing controls;
 // only the offered action space grants an action. Never read secret values.
-(({tree,visible,safe,name,role,identity,actions,rectOf,placed,cut}) => {
+(({tree,visible,safe,name,role,identity,actions,rectOf,placed}) => {
   const lines=[], seen=new Set(), offered=new Map(); let size=0, visited=0, omitted=false;
   for (const a of actions) if (a.node && !offered.has(a.node)) offered.set(a.node,a);
   const implicit={MAIN:'main',NAV:'navigation',ASIDE:'complementary',HEADER:'banner',
     FOOTER:'contentinfo',FORM:'form',DIALOG:'dialog',UL:'list',OL:'list',LI:'listitem',
     TABLE:'table',THEAD:'rowgroup',TBODY:'rowgroup',TR:'row',TH:'columnheader',TD:'cell',
     SECTION:'region',ARTICLE:'article',P:'paragraph',IMG:'img'};
-  const quote=s=>JSON.stringify(cut(String(s).replace(/\s+/g,' ').trim(),160).toWellFormed());
+  // Keep complete strings until the Rust secret scrubber runs. Truncating or
+  // collapsing whitespace here can turn a known secret into an unmatchable echo.
+  // The whole-line budget below still bounds the snapshot without partial labels.
+  const quote=s=>JSON.stringify(String(s).toWellFormed());
   const add=(depth,line)=>{
     const text='  '.repeat(Math.min(depth,10))+'- '+line;
     if (lines.length>=100 || size+text.length+1>6000) { omitted=true; return false; }
@@ -41,7 +44,7 @@
     }
     return words.join(' ');
   };
-  const walk=(e,depth)=>{
+  const walk=(e,depth,quiet=false)=>{
     if (!e || seen.has(e) || omitted) return;
     if (++visited>5000) { omitted=true; return; }
     seen.add(e);
@@ -52,7 +55,7 @@
     const action=offered.get(identity(e));
     let childDepth=depth;
     if (kind && (inView || action)) {
-      let label=(action?.kind==='select' ? name(e) : action?.label) || (heading ? headingText(e) : name(e));
+      let label=(heading ? headingText(e) : name(e)) || action?.label;
       // Containers get only explicit names; their descendants supply content.
       if (!action && ['main','navigation','complementary','banner','contentinfo','form','dialog','list','listitem','table','rowgroup','row','columnheader','cell','region','article','paragraph','status','alert'].includes(kind))
         label=e.getAttribute('aria-label') || (e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>name(e.getRootNode().getElementById?.(id) || e.ownerDocument.getElementById(id))).join(' ');
@@ -61,11 +64,14 @@
       if (heading) states.push('level='+e.tagName.slice(1));
       if (e.matches(':disabled') || e.getAttribute('aria-disabled')==='true') states.push('disabled');
       if (e===tree.active()) states.push('active');
+      const checked=action?.checked ??
+        (e.tagName==='INPUT' && ['checkbox','radio'].includes(e.type) ? e.checked : null);
       for (const attr of ['checked','selected','expanded','busy']) {
+        if (attr==='checked' && checked!==null) continue;
         const v=e.getAttribute('aria-'+attr);
         if (v!==null) states.push(attr+'='+v);
       }
-      if (e.tagName==='INPUT' && ['checkbox','radio'].includes(e.type)) states.push('checked='+e.checked);
+      if (checked!==null) states.push('checked='+checked);
       if (action?.offscreen) states.push('offscreen');
       if (safe(e) && action?.kind==='fill' && action.value) states.push('value='+quote(action.value));
       if (action?.kind==='select') states.push('value='+quote(action.current_value||''));
@@ -73,16 +79,17 @@
       if (!add(depth,kind+(label ? ' '+quote(label) : '')+states.map(s=>' ['+s+']').join(''))) return;
       childDepth=depth+1;
     }
-    // Native controls and headings already contain their label; avoid duplication
-    // and never descend into a field's initial DOM value (notably textarea).
-    if (['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.tagName) || e.isContentEditable || heading) return;
+    // Never descend into a field's initial DOM value (notably textarea).
+    // Headings may contain offered links/buttons; retain them while suppressing
+    // duplicate text already represented by the heading's accessible name.
+    if (['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.tagName) || e.isContentEditable) return;
     const frame=tree.frameDoc(e);
     if (frame?.body) { walk(frame.body,childDepth); return; }
     const children=e.shadowRoot ? e.shadowRoot.childNodes :
       e.tagName==='SLOT' && e.assignedNodes().length ? e.assignedNodes() : e.childNodes;
     for (const n of children) {
-      if (n.nodeType===1) walk(n,childDepth);
-      else if (n.nodeType===3 && inView && n.textContent.trim()) add(childDepth,'text '+quote(n.textContent));
+      if (n.nodeType===1) walk(n,childDepth,quiet||heading);
+      else if (n.nodeType===3 && inView && !quiet && !heading && n.textContent.trim()) add(childDepth,'text '+quote(n.textContent));
       if (omitted) break;
     }
   };

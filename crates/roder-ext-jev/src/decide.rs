@@ -89,7 +89,13 @@ impl JevTypeSafeDecisionClient {
             inner: self.transport.as_ref(),
             image,
             observation,
-            placement: if self.profile == crate::jev_prompt::Profile::DomTargets {
+            placement: if self.profile == crate::jev_prompt::Profile::DomTargets
+                && observation["actions"].as_array().is_some_and(|actions| {
+                    actions.iter().any(|a| {
+                        a["kind"] == "fill"
+                            && a["value"].as_str().is_some_and(|value| !value.is_empty())
+                    })
+                }) {
                 images::Placement::Targets
             } else {
                 images::Placement::State
