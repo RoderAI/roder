@@ -158,8 +158,9 @@ async fn offscreen_dom_changes_do_not_invalidate_a_page_level_decision() {
 async fn semantic_dom_scrubs_complete_escaped_echoes_before_prompt_or_digest() {
     let harness = harness_or_skip!();
     let mut page = harness.open("keys.html").await.unwrap();
-    let secret = format!("ab\"cd\\ef  gh\n{}", "x".repeat(200));
-    page.evaluate(&format!("document.body.innerHTML='<main><p></p><button>Save</button></main>'; document.querySelector('p').textContent={}; true", serde_json::to_string(&secret).unwrap())).await.unwrap();
+    let secret = "ab\"cd\\ef  gh\nij";
+    let long = format!("long-secret-prefix-{}", "x".repeat(200));
+    page.evaluate(&format!("document.body.innerHTML='<main><p id=short></p><p id=long></p><button>Save</button></main>'; document.querySelector('#short').textContent={}; document.querySelector('#long').textContent={}; true", serde_json::to_string(secret).unwrap(),serde_json::to_string(&long).unwrap())).await.unwrap();
     let mut observation = page.observe().await.unwrap();
     let escaped = serde_json::to_string(&secret).unwrap();
     assert!(
@@ -168,8 +169,21 @@ async fn semantic_dom_scrubs_complete_escaped_echoes_before_prompt_or_digest() {
             .unwrap()
             .contains(&escaped)
     );
+    assert!(
+        !observation["dom_snapshot"]
+            .as_str()
+            .unwrap()
+            .contains("long-secret-prefix")
+    );
+    assert!(
+        observation["dom_snapshot"]
+            .as_str()
+            .unwrap()
+            .contains("button \"Save\"")
+    );
     let mut secrets = Secrets::default();
-    secrets.remember(&secret);
+    secrets.remember(secret);
+    secrets.remember(&long);
     secrets.scrub_observation(&mut observation);
     assert!(
         observation["dom_snapshot"]
@@ -195,4 +209,44 @@ async fn semantic_dom_scrubs_complete_escaped_echoes_before_prompt_or_digest() {
     let data = json!({"status":"done", "visible_text":"Result", "page":{"dom_snapshot":observation["dom_snapshot"]}});
     let text = crate::report::tool_text(&mut data.clone());
     assert!(!text.contains(&"x".repeat(50)));
+}
+
+#[tokio::test]
+async fn oversized_dom_records_do_not_hide_later_controls() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("keys.html").await.unwrap();
+    page.evaluate("document.body.innerHTML='<main><p></p><div>Odd role</div><button>Continue</button></main>'; document.querySelector('p').textContent='x'.repeat(8000); document.querySelector('div').setAttribute('role','y'.repeat(8000)); true").await.unwrap();
+    let observed = page.observe().await.unwrap();
+    let dom = observed["dom_snapshot"].as_str().unwrap();
+    let button = observed["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["label"] == "Continue")
+        .unwrap();
+    assert!(
+        dom.contains(&format!("button \"Continue\" [node={}]", button["node"])),
+        "{dom}"
+    );
+    assert!(dom.contains("[long text omitted]"), "{dom}");
+    assert!(dom.contains("[oversized DOM record omitted]"), "{dom}");
+    assert!(dom.contains("DOM snapshot truncated"));
+    assert!(dom.len() <= 6100);
+}
+
+#[tokio::test]
+async fn observed_field_clipping_distinguishes_scroll_from_a_populated_field() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("keys.html").await.unwrap();
+    page.evaluate(r#"document.body.innerHTML='<label>Short<input value="Ada" style="width:300px"></label><label>Long<input id="long" style="width:70px"></label>'; const field=document.querySelector('#long'); field.value='A long value whose beginning is outside the visible input'; field.focus(); field.setSelectionRange(field.value.length,field.value.length); field.scrollLeft=field.scrollWidth; true"#).await.unwrap();
+    let observed = page.observe().await.unwrap();
+    for label in ["Short", "Long"] {
+        let action = observed["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["kind"] == "fill" && a["label"] == label)
+            .unwrap();
+        assert_eq!(action["value_clipped"] == true, label == "Long", "{action}");
+    }
 }

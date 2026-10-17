@@ -16,7 +16,7 @@ tree; cross-origin frames retain their existing separate read-only text path.
 To try the experimental prompt using that evidence:
 
 ```sh
-JEV_PROMPT_PROFILE=dom JEV_IMAGES=1 JEV_MODEL=jev-preview roder
+JEV_PROMPT_PROFILE=dom JEV_IMAGES=1 JEV_MODEL=jev-1.14.0 roder
 ```
 
 `JEV_PROMPT_PROFILE` accepts `workflow` (the default), `dom` or `dom_targets`;
@@ -27,10 +27,11 @@ same offered actions and irreversible-action gate. It can also run without image
 For paired evals, append `-vision` to any Jev profile, for example
 `jev_workflow-vision@jev-preview` or `jev_dom-vision@jev-preview`.
 
-`dom_targets` uses the same DOM questions as `dom`. When an offered editable
-field is populated, screenshots are scoped to conditional target-selection
+`dom_targets` uses the same DOM questions as `dom`. When an offered populated
+editable field is visibly clipped or internally scrolled, screenshots are scoped to conditional target-selection
 questions through their instructions. Operation and irreversible-action questions
 then use the full DOM values without image evidence.
+The clipping flag comes from observed control scroll/overflow metrics.
 This keeps clipped or horizontally scrolled input text in a screenshot from
 overriding the complete observed field value when selecting the next operation.
 Images remain available for locating controls by their appearance; no additional

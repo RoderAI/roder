@@ -93,6 +93,7 @@ impl JevTypeSafeDecisionClient {
                 && observation["actions"].as_array().is_some_and(|actions| {
                     actions.iter().any(|a| {
                         a["kind"] == "fill"
+                            && a["value_clipped"] == true
                             && a["value"].as_str().is_some_and(|value| !value.is_empty())
                     })
                 }) {

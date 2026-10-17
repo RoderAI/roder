@@ -77,8 +77,8 @@ impl Secrets {
 
     /// DOM labels are JSON string literals. Match their escaped contents as
     /// well as plain text and whitespace normalized by accessible-name helpers.
-    /// The serializer retains whole labels, so truncation cannot hide a suffix
-    /// from this scrubber; the snapshot budget drops an oversized line instead.
+    /// The serializer keeps short labels whole and replaces long ones entirely,
+    /// so an unmatched secret prefix cannot escape through label truncation.
     fn scrub_dom(&self, text: &str) -> String {
         self.0.iter().fold(text.to_string(), |mut text, secret| {
             // ECMAScript \s includes BOM and excludes NEXT LINE (U+0085).

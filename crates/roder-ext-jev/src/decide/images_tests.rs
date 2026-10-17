@@ -147,11 +147,12 @@ async fn a_rejected_image_request_stops_without_an_action_and_names_the_reason()
 async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operation() {
     use crate::jev_prompt::Profile;
     let reply = r#"{"answers":{"operation":{"choice":"DONE","confidence":1.0,"probabilities":{"CLICK":0.0,"TYPE_TEXT":0.0,"DONE":1.0,"BLOCKED":0.0}}}}"#;
-    let server = MockServer::start(vec![Reply::ok(reply), Reply::ok(reply)]).await;
+    let server =
+        MockServer::start(vec![Reply::ok(reply), Reply::ok(reply), Reply::ok(reply)]).await;
     let mut observation = page(Some(data_url(ImageFormat::Png, 1120, 780)));
     observation["actions"] = json!([
         {"kind":"click","node":1,"id":"click:1","label":"Submit","role":"button","rect":{"x":0,"y":0,"w":100,"h":30}},
-        {"kind":"fill","node":2,"id":"fill:2","label":"Name","role":"textbox","value":"Ada","rect":{"x":0,"y":40,"w":100,"h":30}}
+        {"kind":"fill","node":2,"id":"fill:2","label":"Name","role":"textbox","value":"Ada","value_clipped":true,"rect":{"x":0,"y":40,"w":100,"h":30}}
     ]);
     observation["dom_snapshot"] = json!("- textbox Name [value=\"Ada\"]\n- button Submit");
     for profile in [Profile::Dom, Profile::DomTargets] {
@@ -161,6 +162,15 @@ async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operati
             .await
             .unwrap();
     }
+    observation["actions"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("value_clipped");
+    client(&server, true)
+        .with_profile(Profile::DomTargets)
+        .choose_gated(&observation, "Submit Ada", &[])
+        .await
+        .unwrap();
     let requests = server.requests();
     let shared = &requests[0].1;
     let scoped = &requests[1].1;
@@ -188,6 +198,8 @@ async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operati
     }
     assert!(gates > 0);
     assert_eq!(images_header(&server.heads()[1]).as_deref(), Some("true"));
+    // A populated field alone must not remove shared visual evidence.
+    assert_eq!(&requests[2].1, shared);
 }
 
 #[tokio::test]

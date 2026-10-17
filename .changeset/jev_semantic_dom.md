@@ -13,7 +13,7 @@ remains Workflow. The paired eval supports image input for every Jev profile.
 Candidate rectangles are scaled into the fitted screenshot's pixels when the
 viewport image is resized, so visual references stay aligned.
 
-For populated editable fields, `JEV_PROMPT_PROFILE=dom_targets` keeps screenshots
+For clipped populated editable fields, `JEV_PROMPT_PROFILE=dom_targets` keeps screenshots
 in conditional target questions while selecting operations and evaluating
 irreversible actions from DOM evidence. Other pages retain shared visual evidence.
 
