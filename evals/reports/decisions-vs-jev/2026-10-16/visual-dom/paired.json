@@ -1,0 +1,115 @@
+{
+  "vision_dom:vision": {
+    "both_pass": 147,
+    "subject_only_pass": [
+      "twin_by_context#1",
+      "frame_form#1",
+      "twin_by_context#2",
+      "frame_form#2",
+      "twin_by_context#3",
+      "complex_allocation#2",
+      "login_form#1",
+      "one_time_code_resolved#1",
+      "login_form#2",
+      "one_time_code_resolved#3"
+    ],
+    "control_only_pass": [
+      "icon_by_picture#1",
+      "icon_by_picture#2",
+      "icon_by_picture_twin#2",
+      "cookie_banner_refused#2",
+      "cookie_banner_refused#3"
+    ],
+    "median_paired_delta_ms_both_pass": 58
+  },
+  "vision_dom:jev_activation-vision@jev-1.14.0": {
+    "both_pass": 156,
+    "subject_only_pass": [
+      "login_form#3"
+    ],
+    "control_only_pass": [
+      "icon_by_picture#1",
+      "icon_by_picture#2",
+      "icon_by_picture#3",
+      "complex_allocation#1",
+      "icon_by_picture_twin#1",
+      "icon_by_picture_twin#2",
+      "cookie_banner_refused#2",
+      "icon_by_picture_twin#3",
+      "cookie_banner_refused#3"
+    ],
+    "median_paired_delta_ms_both_pass": 659.0
+  },
+  "vision_activation:vision": {
+    "both_pass": 140,
+    "subject_only_pass": [
+      "twin_by_context#1",
+      "frame_form#1",
+      "twin_by_context#2",
+      "frame_form#2",
+      "twin_by_context#3",
+      "complex_allocation#1",
+      "login_form#1",
+      "one_time_code_resolved#1",
+      "login_form#2",
+      "one_time_code_resolved#3"
+    ],
+    "control_only_pass": [
+      "search_autocomplete#1",
+      "date_field#1",
+      "icon_by_picture#1",
+      "icon_by_picture#2",
+      "shadow_component#2",
+      "gate_authorized_delete#2",
+      "unlabelled_fields#3",
+      "escape_popup#1",
+      "cookie_banner_refused#1",
+      "icon_by_picture_twin#2",
+      "cookie_banner_refused#2",
+      "cookie_banner_refused#3"
+    ],
+    "median_paired_delta_ms_both_pass": 213.0
+  },
+  "vision_activation:jev_activation-vision@jev-1.14.0": {
+    "both_pass": 149,
+    "subject_only_pass": [
+      "login_form#3"
+    ],
+    "control_only_pass": [
+      "search_autocomplete#1",
+      "date_field#1",
+      "icon_by_picture#1",
+      "icon_by_picture#2",
+      "shadow_component#2",
+      "gate_authorized_delete#2",
+      "icon_by_picture#3",
+      "unlabelled_fields#3",
+      "complex_allocation#2",
+      "icon_by_picture_twin#1",
+      "escape_popup#1",
+      "cookie_banner_refused#1",
+      "icon_by_picture_twin#2",
+      "cookie_banner_refused#2",
+      "icon_by_picture_twin#3",
+      "cookie_banner_refused#3"
+    ],
+    "median_paired_delta_ms_both_pass": 767
+  },
+  "vision_activation:vision_dom": {
+    "both_pass": 149,
+    "subject_only_pass": [
+      "complex_allocation#1"
+    ],
+    "control_only_pass": [
+      "search_autocomplete#1",
+      "date_field#1",
+      "shadow_component#2",
+      "gate_authorized_delete#2",
+      "unlabelled_fields#3",
+      "complex_allocation#2",
+      "escape_popup#1",
+      "cookie_banner_refused#1"
+    ],
+    "median_paired_delta_ms_both_pass": 142
+  }
+}

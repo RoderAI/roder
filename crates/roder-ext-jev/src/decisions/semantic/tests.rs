@@ -219,12 +219,26 @@ async fn native_predicate_audit_recovers_click_without_fabricating_target_probab
 #[tokio::test]
 async fn audit_does_not_repeat_completed_actions_or_bypass_a_refused_gate() {
     let wire = transport("DONE", 0.99, false);
-    let decision = OpenAiDecisionsClient::with_transport(wire)
+    let decision = OpenAiDecisionsClient::with_transport(wire.clone())
         .with_browser_profile(DecisionsBrowserProfile::Audited)
         .choose(&page(false), "Publish title", &[])
         .await
         .unwrap();
     assert_eq!(decision.operation, "DONE");
+    assert_eq!(wire.requests.lock().unwrap().len(), 2);
+    let mut fields_only = page(false);
+    fields_only["actions"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|a| a["kind"] == "fill");
+    let wire = transport("DONE", 0.99, false);
+    let decision = OpenAiDecisionsClient::with_transport(wire.clone())
+        .with_browser_profile(DecisionsBrowserProfile::Audited)
+        .choose(&fields_only, "Keep the current title", &[])
+        .await
+        .unwrap();
+    assert_eq!(decision.operation, "DONE");
+    assert_eq!(wire.requests.lock().unwrap().len(), 1);
     let wire = transport("DONE", 0.3, true);
     let error = OpenAiDecisionsClient::with_transport(wire)
         .with_browser_profile(DecisionsBrowserProfile::Audited)

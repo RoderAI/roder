@@ -1,0 +1,1514 @@
+[
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 1,
+    "provider": "jev_activation-vision@jev-1.14.0",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60684/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 341
+      },
+      {
+        "step": 2,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60684/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 748
+      },
+      {
+        "step": 3,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60684/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1244
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.96,
+        "target_confidence": 1.0,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.0,
+          "e5": 1.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.91,
+        "target_confidence": 0.91,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.0,
+          "e6": 0.0,
+          "e7": 0.92,
+          "e8": 0.0,
+          "e9": 0.0,
+          "e10": 0.08,
+          "e11": 0.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.6499999999999999,
+        "target_confidence": 0.99,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.0,
+          "e6": 0.01,
+          "e7": 0.99,
+          "e8": 0.0
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.97,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.98
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 1,
+    "provider": "vision",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60702/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 623
+      },
+      {
+        "step": 2,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60702/pages/keys.html",
+        "page_changed": true,
+        "uncovered": "pressed Escape to close \"Paris\"",
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 1407
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.99,
+        "target_confidence": 1.0,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.0,
+          "e5": 1.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "7",
+        "confidence": 0.87,
+        "target_confidence": 0.68,
+        "probabilities": {
+          "e2": 0.02,
+          "e4": 0.0,
+          "e6": 0.01,
+          "e7": 0.21,
+          "e8": 0.02,
+          "e9": 0.01,
+          "e10": 0.72,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.74,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.79
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 1,
+    "provider": "vision_dom",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60725/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 697
+      },
+      {
+        "step": 2,
+        "action": "Wait for the page to update",
+        "kind": "wait",
+        "text": null,
+        "url": "http://127.0.0.1:60725/pages/keys.html",
+        "page_changed": false,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1271
+      },
+      {
+        "step": 3,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60725/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2002
+      },
+      {
+        "step": 4,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60725/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2497
+      },
+      {
+        "step": 5,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60725/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 3138
+      },
+      {
+        "step": 6,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60725/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 3784
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.93,
+        "target_confidence": 0.97,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.02,
+          "e5": 0.98
+        }
+      },
+      {
+        "operation": "WAIT",
+        "target": null,
+        "confidence": 0.42,
+        "target_confidence": null,
+        "probabilities": {
+          "wait": 0.5
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.58,
+        "target_confidence": 0.6,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.02,
+          "e6": 0.01,
+          "e7": 0.26,
+          "e8": 0.65,
+          "e9": 0.04,
+          "e10": 0.01,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.62,
+        "target_confidence": 0.45,
+        "probabilities": {
+          "e1": 0.13,
+          "e3": 0.24,
+          "e5": 0.63
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.48,
+        "target_confidence": 0.41,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.03,
+          "e6": 0.01,
+          "e7": 0.48,
+          "e8": 0.4,
+          "e9": 0.01,
+          "e10": 0.04,
+          "e11": 0.02
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.95,
+        "target_confidence": 0.81,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.01,
+          "e6": 0.04,
+          "e7": 0.85,
+          "e8": 0.09
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.7,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.76
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 1,
+    "provider": "vision_activation",
+    "status": "blocked",
+    "passed": false,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 559
+      },
+      {
+        "step": 2,
+        "action": "Wait for the page to update",
+        "kind": "wait",
+        "text": null,
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": false,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1432
+      },
+      {
+        "step": 3,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2513
+      },
+      {
+        "step": 4,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 3344
+      },
+      {
+        "step": 5,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 4247
+      },
+      {
+        "step": 6,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 4748
+      },
+      {
+        "step": 7,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 5401
+      },
+      {
+        "step": 8,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:60766/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 5944
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.84,
+        "target_confidence": 0.99,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.01,
+          "e5": 0.99
+        }
+      },
+      {
+        "operation": "WAIT",
+        "target": null,
+        "confidence": 0.51,
+        "target_confidence": null,
+        "probabilities": {
+          "wait": 0.58
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.51,
+        "target_confidence": 0.69,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.02,
+          "e6": 0.0,
+          "e7": 0.2,
+          "e8": 0.73,
+          "e9": 0.02,
+          "e10": 0.02,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.77,
+        "target_confidence": 0.73,
+        "probabilities": {
+          "e1": 0.07,
+          "e3": 0.11,
+          "e5": 0.82
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.5,
+        "target_confidence": 0.47,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.02,
+          "e6": 0.01,
+          "e7": 0.38,
+          "e8": 0.54,
+          "e9": 0.02,
+          "e10": 0.01,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.85,
+        "target_confidence": 0.96,
+        "probabilities": {
+          "e1": 0.01,
+          "e3": 0.02,
+          "e5": 0.97
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.48,
+        "target_confidence": 0.47,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.01,
+          "e6": 0.05,
+          "e7": 0.31,
+          "e8": 0.54,
+          "e9": 0.01,
+          "e10": 0.05,
+          "e11": 0.02
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.75,
+        "target_confidence": 0.94,
+        "probabilities": {
+          "e1": 0.01,
+          "e3": 0.03,
+          "e5": 0.96
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.59,
+        "target_confidence": 0.76,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.01,
+          "e6": 0.01,
+          "e7": 0.19,
+          "e8": 0.79,
+          "e9": 0.0,
+          "e10": 0.0,
+          "e11": 0.0
+        }
+      }
+    ],
+    "failures": [
+      "status \"blocked\" != \"done\"",
+      "stopped_because Some(\"Jev had chosen \\\"Parma\\\" 3 times on a page that looked the same each time and was about to do it again. It stopped instead of going round in circles.\")",
+      "visible text lacks \"Go clicked for Paris\""
+    ]
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 2,
+    "provider": "vision",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61513/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 568
+      },
+      {
+        "step": 2,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61513/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 1164
+      },
+      {
+        "step": 3,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61513/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 2003
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.99,
+        "target_confidence": 1.0,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.0,
+          "e5": 1.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.92,
+        "target_confidence": 0.47,
+        "probabilities": {
+          "e2": 0.02,
+          "e4": 0.0,
+          "e6": 0.01,
+          "e7": 0.54,
+          "e8": 0.04,
+          "e9": 0.02,
+          "e10": 0.36,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.95,
+        "target_confidence": 0.96,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.0,
+          "e6": 0.0,
+          "e7": 0.97,
+          "e8": 0.03
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.61,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.69
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 2,
+    "provider": "vision_dom",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 463
+      },
+      {
+        "step": 2,
+        "action": "Wait for the page to update",
+        "kind": "wait",
+        "text": null,
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": false,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 906
+      },
+      {
+        "step": 3,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 1626
+      },
+      {
+        "step": 4,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2048
+      },
+      {
+        "step": 5,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2631
+      },
+      {
+        "step": 6,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 3029
+      },
+      {
+        "step": 7,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 3536
+      },
+      {
+        "step": 8,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61523/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 4060
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.91,
+        "target_confidence": 0.99,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.01,
+          "e5": 0.99
+        }
+      },
+      {
+        "operation": "WAIT",
+        "target": null,
+        "confidence": 0.49,
+        "target_confidence": null,
+        "probabilities": {
+          "wait": 0.56
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.72,
+        "target_confidence": 0.81,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.02,
+          "e6": 0.0,
+          "e7": 0.12,
+          "e8": 0.83,
+          "e9": 0.02,
+          "e10": 0.01,
+          "e11": 0.0
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.77,
+        "target_confidence": 0.8,
+        "probabilities": {
+          "e1": 0.02,
+          "e3": 0.11,
+          "e5": 0.87
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.63,
+        "target_confidence": 0.42,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.02,
+          "e6": 0.01,
+          "e7": 0.43,
+          "e8": 0.49,
+          "e9": 0.02,
+          "e10": 0.02,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.87,
+        "target_confidence": 0.93,
+        "probabilities": {
+          "e1": 0.02,
+          "e3": 0.03,
+          "e5": 0.95
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.6,
+        "target_confidence": 0.47,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.03,
+          "e6": 0.02,
+          "e7": 0.54,
+          "e8": 0.36,
+          "e9": 0.01,
+          "e10": 0.02,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.79,
+        "target_confidence": 0.75,
+        "probabilities": {
+          "e2": 0.02,
+          "e4": 0.01,
+          "e6": 0.13,
+          "e7": 0.8,
+          "e8": 0.04
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.77,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.82
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 2,
+    "provider": "vision_activation",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61533/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 451
+      },
+      {
+        "step": 2,
+        "action": "Wait for the page to update",
+        "kind": "wait",
+        "text": null,
+        "url": "http://127.0.0.1:61533/pages/keys.html",
+        "page_changed": false,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 954
+      },
+      {
+        "step": 3,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61533/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 1575
+      },
+      {
+        "step": 4,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61533/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2150
+      },
+      {
+        "step": 5,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61533/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2879
+      },
+      {
+        "step": 6,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61533/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 3430
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.9,
+        "target_confidence": 0.97,
+        "probabilities": {
+          "e1": 0.01,
+          "e3": 0.01,
+          "e5": 0.98
+        }
+      },
+      {
+        "operation": "WAIT",
+        "target": null,
+        "confidence": 0.42,
+        "target_confidence": null,
+        "probabilities": {
+          "wait": 0.5
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.56,
+        "target_confidence": 0.61,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.04,
+          "e6": 0.01,
+          "e7": 0.2,
+          "e8": 0.66,
+          "e9": 0.04,
+          "e10": 0.03,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.77,
+        "target_confidence": 0.79,
+        "probabilities": {
+          "e1": 0.06,
+          "e3": 0.08,
+          "e5": 0.86
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.63,
+        "target_confidence": 0.51,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.01,
+          "e6": 0.01,
+          "e7": 0.57,
+          "e8": 0.33,
+          "e9": 0.01,
+          "e10": 0.05,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.93,
+        "target_confidence": 0.87,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.01,
+          "e6": 0.04,
+          "e7": 0.9,
+          "e8": 0.05
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.61,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.69
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 2,
+    "provider": "jev_activation-vision@jev-1.14.0",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61541/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 380
+      },
+      {
+        "step": 2,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61541/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 808
+      },
+      {
+        "step": 3,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61541/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1276
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.95,
+        "target_confidence": 1.0,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.0,
+          "e5": 1.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.92,
+        "target_confidence": 0.91,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.0,
+          "e6": 0.0,
+          "e7": 0.92,
+          "e8": 0.0,
+          "e9": 0.0,
+          "e10": 0.08,
+          "e11": 0.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.5899999999999999,
+        "target_confidence": 0.99,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.0,
+          "e6": 0.01,
+          "e7": 0.99,
+          "e8": 0.0
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.97,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.98
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 3,
+    "provider": "vision_dom",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61858/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 492
+      },
+      {
+        "step": 2,
+        "action": "Wait for the page to update",
+        "kind": "wait",
+        "text": null,
+        "url": "http://127.0.0.1:61858/pages/keys.html",
+        "page_changed": false,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1053
+      },
+      {
+        "step": 3,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61858/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 1755
+      },
+      {
+        "step": 4,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61858/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 2226
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.9,
+        "target_confidence": 0.99,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.01,
+          "e5": 0.99
+        }
+      },
+      {
+        "operation": "WAIT",
+        "target": null,
+        "confidence": 0.45,
+        "target_confidence": null,
+        "probabilities": {
+          "wait": 0.53
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.42,
+        "target_confidence": 0.49,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.02,
+          "e6": 0.01,
+          "e7": 0.55,
+          "e8": 0.37,
+          "e9": 0.02,
+          "e10": 0.01,
+          "e11": 0.01
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.84,
+        "target_confidence": 0.84,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.01,
+          "e6": 0.08,
+          "e7": 0.87,
+          "e8": 0.04
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.89,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.91
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 3,
+    "provider": "vision_activation",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61866/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 717
+      },
+      {
+        "step": 2,
+        "action": "Wait for the page to update",
+        "kind": "wait",
+        "text": null,
+        "url": "http://127.0.0.1:61866/pages/keys.html",
+        "page_changed": false,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1669
+      },
+      {
+        "step": 3,
+        "action": "Parma",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61866/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Paris -> Parma; City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2419
+      },
+      {
+        "step": 4,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61866/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: Parma -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 2998
+      },
+      {
+        "step": 5,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61866/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 3872
+      },
+      {
+        "step": 6,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61866/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 4456
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.82,
+        "target_confidence": 0.97,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.02,
+          "e5": 0.98
+        }
+      },
+      {
+        "operation": "WAIT",
+        "target": null,
+        "confidence": 0.62,
+        "target_confidence": null,
+        "probabilities": {
+          "wait": 0.67
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "5",
+        "confidence": 0.57,
+        "target_confidence": 0.67,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.03,
+          "e6": 0.01,
+          "e7": 0.12,
+          "e8": 0.71,
+          "e9": 0.06,
+          "e10": 0.04,
+          "e11": 0.02
+        }
+      },
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.79,
+        "target_confidence": 0.88,
+        "probabilities": {
+          "e1": 0.02,
+          "e3": 0.06,
+          "e5": 0.92
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.49,
+        "target_confidence": 0.57,
+        "probabilities": {
+          "e2": 0.01,
+          "e4": 0.01,
+          "e6": 0.01,
+          "e7": 0.62,
+          "e8": 0.18,
+          "e9": 0.01,
+          "e10": 0.13,
+          "e11": 0.03
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.91,
+        "target_confidence": 0.86,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.01,
+          "e6": 0.02,
+          "e7": 0.89,
+          "e8": 0.08
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.66,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.73
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 3,
+    "provider": "jev_activation-vision@jev-1.14.0",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61904/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 344
+      },
+      {
+        "step": 2,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61904/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 749
+      },
+      {
+        "step": 3,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61904/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1218
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.97,
+        "target_confidence": 1.0,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.0,
+          "e5": 1.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.95,
+        "target_confidence": 0.92,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.0,
+          "e6": 0.0,
+          "e7": 0.93,
+          "e8": 0.0,
+          "e9": 0.0,
+          "e10": 0.07,
+          "e11": 0.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "4",
+        "confidence": 0.5800000000000001,
+        "target_confidence": 0.99,
+        "probabilities": {
+          "e2": 0.0,
+          "e4": 0.0,
+          "e6": 0.01,
+          "e7": 0.99,
+          "e8": 0.0
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.97,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.98
+        }
+      }
+    ],
+    "failures": []
+  },
+  {
+    "source": "transfer.jsonl.gz",
+    "task": "escape_popup",
+    "repeat": 3,
+    "provider": "vision",
+    "status": "done",
+    "passed": true,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:61910/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 606
+      },
+      {
+        "step": 2,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:61910/pages/keys.html",
+        "page_changed": true,
+        "uncovered": "pressed Escape to close \"Paris\"",
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 1416
+      }
+    ],
+    "decisions": [
+      {
+        "operation": "TYPE_TEXT",
+        "target": "3",
+        "confidence": 0.96,
+        "target_confidence": 1.0,
+        "probabilities": {
+          "e1": 0.0,
+          "e3": 0.0,
+          "e5": 1.0
+        }
+      },
+      {
+        "operation": "CLICK",
+        "target": "7",
+        "confidence": 0.77,
+        "target_confidence": 0.49,
+        "probabilities": {
+          "e2": 0.02,
+          "e4": 0.0,
+          "e6": 0.01,
+          "e7": 0.36,
+          "e8": 0.03,
+          "e9": 0.01,
+          "e10": 0.55,
+          "e11": 0.02
+        }
+      },
+      {
+        "operation": "DONE",
+        "target": null,
+        "confidence": 0.69,
+        "target_confidence": null,
+        "probabilities": {
+          "DONE": 0.75
+        }
+      }
+    ],
+    "failures": []
+  }
+]

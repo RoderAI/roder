@@ -1,0 +1,21 @@
+{
+  "source": "complex-dev.jsonl.gz",
+  "task": "complex_booking",
+  "repeat": 1,
+  "provider": "vision_activation",
+  "text_batch": {
+    "wire_index": 10,
+    "questions": [
+      "operation"
+    ],
+    "input_type": "text"
+  },
+  "image_batch": {
+    "wire_index": 11,
+    "questions": [
+      "click_target"
+    ],
+    "input_type": "text+image"
+  },
+  "same_observed_state_excluding_image_rectangles": true
+}

@@ -1,0 +1,398 @@
+{
+  "vision": {
+    "attempts": 166,
+    "passed": 152,
+    "false_green": 7,
+    "wire_calls": 612,
+    "wire_errors": 0,
+    "reported_model_calls": 612,
+    "browser_decisions": 612,
+    "input_tokens": 1188988,
+    "unknown_input_token_rows": 0,
+    "median_wall_ms": 2319.0,
+    "failures": [
+      {
+        "task": "twin_by_context",
+        "repeat": 1,
+        "status": "done",
+        "failures": [
+          "dom `window.cart ?? []` = [\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\"], expected [\"Desk Lamp\"]"
+        ]
+      },
+      {
+        "task": "frame_form",
+        "repeat": 1,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Subscribed: Ada Lovelace <ada@example.com>\""
+        ]
+      },
+      {
+        "task": "twin_by_context",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "dom `window.cart ?? []` = [\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\"], expected [\"Desk Lamp\"]"
+        ]
+      },
+      {
+        "task": "frame_form",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Subscribed: Ada Lovelace <ada@example.com>\""
+        ]
+      },
+      {
+        "task": "twin_by_context",
+        "repeat": 3,
+        "status": "done",
+        "failures": [
+          "dom `window.cart ?? []` = [\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\"], expected [\"Desk Lamp\"]"
+        ]
+      },
+      {
+        "task": "icon_by_picture",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "complex_allocation",
+        "repeat": 1,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Equipment reservation confirmed.\"",
+          "dom `window.audit.writes` = 0, expected 1",
+          "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+        ]
+      },
+      {
+        "task": "complex_allocation",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Equipment reservation confirmed.\"",
+          "dom `window.audit.writes` = 0, expected 1",
+          "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "login_form",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\"",
+          "url http://127.0.0.1:61045/pages/login.html does not end with /submit/login",
+          "title \"Sign in\" != \"Thanks\"",
+          "0 posts, expected 1: []"
+        ]
+      },
+      {
+        "task": "one_time_code_resolved",
+        "repeat": 1,
+        "status": "error",
+        "failures": [
+          "status \"error\" != \"done\"",
+          "stopped_because Some(\"The decision service gave 3 unusable replies in a row. The first: OpenAI Decisions refused required question click_target; no action executed.\")",
+          "url http://127.0.0.1:61110/pages/one-time-code.html does not end with /submit/verify",
+          "0 posts, expected 1: []"
+        ]
+      },
+      {
+        "task": "login_form",
+        "repeat": 2,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\"",
+          "url http://127.0.0.1:61653/pages/login.html does not end with /submit/login",
+          "title \"Sign in\" != \"Thanks\"",
+          "0 posts, expected 1: []"
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "one_time_code_resolved",
+        "repeat": 3,
+        "status": "error",
+        "failures": [
+          "status \"error\" != \"done\"",
+          "stopped_because Some(\"The decision service gave 3 unusable replies in a row. The first: OpenAI Decisions refused required question click_target; no action executed.\")",
+          "url http://127.0.0.1:62061/pages/one-time-code.html does not end with /submit/verify",
+          "0 posts, expected 1: []"
+        ]
+      }
+    ]
+  },
+  "vision_dom": {
+    "attempts": 166,
+    "passed": 157,
+    "false_green": 1,
+    "wire_calls": 591,
+    "wire_errors": 0,
+    "reported_model_calls": 591,
+    "browser_decisions": 591,
+    "input_tokens": 2065983,
+    "unknown_input_token_rows": 0,
+    "median_wall_ms": 2246.5,
+    "failures": [
+      {
+        "task": "icon_by_picture",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture",
+        "repeat": 2,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "complex_allocation",
+        "repeat": 1,
+        "status": "done",
+        "failures": [
+          "dom `window.result` = [\"Workshop projector\"], expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 2,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "cookie_banner_refused",
+        "repeat": 2,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "cookie_banner_refused",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      }
+    ]
+  },
+  "vision_activation": {
+    "attempts": 166,
+    "passed": 150,
+    "false_green": 2,
+    "wire_calls": 696,
+    "wire_errors": 0,
+    "reported_model_calls": 696,
+    "browser_decisions": 594,
+    "input_tokens": 2201423,
+    "unknown_input_token_rows": 0,
+    "median_wall_ms": 2386.5,
+    "failures": [
+      {
+        "task": "search_autocomplete",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "date_field",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture",
+        "repeat": 2,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "shadow_component",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "dom `window.cart` = [\"Trail Runner\",\"Trail Runner\"], expected [\"Trail Runner\"]"
+        ]
+      },
+      {
+        "task": "gate_authorized_delete",
+        "repeat": 2,
+        "status": "needs_confirmation",
+        "failures": [
+          "status \"needs_confirmation\" != \"done\"",
+          "title \"Account settings\" != \"Thanks\"",
+          "0 posts, expected 1: []"
+        ]
+      },
+      {
+        "task": "icon_by_picture",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "unlabelled_fields",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "complex_allocation",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "dom `window.result` = [\"Workshop projector\"], expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "escape_popup",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\"",
+          "stopped_because Some(\"Jev had chosen \\\"Parma\\\" 3 times on a page that looked the same each time and was about to do it again. It stopped instead of going round in circles.\")",
+          "visible text lacks \"Go clicked for Paris\""
+        ]
+      },
+      {
+        "task": "cookie_banner_refused",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 2,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "cookie_banner_refused",
+        "repeat": 2,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "cookie_banner_refused",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      }
+    ]
+  },
+  "jev_activation-vision@jev-1.14.0": {
+    "attempts": 166,
+    "passed": 165,
+    "false_green": 0,
+    "wire_calls": 701,
+    "wire_errors": 0,
+    "reported_model_calls": 701,
+    "browser_decisions": 590,
+    "input_tokens": 3819896,
+    "unknown_input_token_rows": 0,
+    "median_wall_ms": 1463.0,
+    "failures": [
+      {
+        "task": "login_form",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      }
+    ]
+  }
+}

@@ -24,24 +24,29 @@ pub(crate) struct Transport<'a>(pub &'a dyn JevDecisionTransport);
 #[async_trait]
 impl JevDecisionTransport for Transport<'_> {
     async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
-        let allowed = REMAINING
-            .try_with(|remaining| {
-                let n = remaining.get();
-                if n == 0 {
-                    false
-                } else {
-                    remaining.set(n - 1);
-                    true
-                }
-            })
-            .unwrap_or(true);
-        if !allowed {
-            return Err(JevStop::new(
-                JevStatus::BudgetExceeded,
-                "Reached the demo's model-call budget",
-            )
-            .into());
-        }
-        self.0.decide(request).await
+        self.0.decide_budgeted(request).await
     }
+}
+
+/// Shared by built-in transports and the public custom-client boundary.
+pub(crate) fn reserve() -> anyhow::Result<()> {
+    let allowed = REMAINING
+        .try_with(|remaining| {
+            let n = remaining.get();
+            if n == 0 {
+                false
+            } else {
+                remaining.set(n - 1);
+                true
+            }
+        })
+        .unwrap_or(true);
+    if !allowed {
+        return Err(JevStop::new(
+            JevStatus::BudgetExceeded,
+            "Reached the demo's model-call budget",
+        )
+        .into());
+    }
+    Ok(())
 }
