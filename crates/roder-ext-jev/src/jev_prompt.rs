@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 pub(crate) enum Profile {
     Baseline,
     Dom,
+    DomTargets,
     Literal,
     Effects,
     Criteria,
@@ -47,6 +48,10 @@ pub(crate) fn rewrite(
     history: &[Value],
     observation: &Value,
 ) {
+    if profile == Profile::DomTargets {
+        rewrite(request, Profile::Dom, history, observation);
+        return;
+    }
     if profile == Profile::Dom {
         rewrite(request, Profile::Workflow, history, observation);
         request["state"]["dom_snapshot"] = observation["dom_snapshot"].clone();
