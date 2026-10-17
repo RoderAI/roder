@@ -1,0 +1,17 @@
+{
+  "source_sha256": {
+    "crates/roder-ext-jev/tests/fixtures/evals/decisions-holdout.json": "8e9ab79d31172f1cd1e1383b67d301d8cb4a14c7c87a746fc1206bb31e81f1a7",
+    "crates/roder-ext-jev/tests/fixtures/evals/complex-browser-holdout.json": "d70bc7a1a3acfc96636a54a5314ab87ed29cee170979b11e24be40bf328fd4ab",
+    "crates/roder-ext-jev/tests/fixtures/pages/complex-browser-holdout.html": "4b0d87d801eb3ca9cef54d73011f39c45d2b0fc0560fbbf4fe6309f484672cdf",
+    "crates/roder-ext-jev/tests/fixtures/pages/decisions-holdout.html": "a59a757a4abddf39e9b1c7764c8c818d9ecada142c33a1d69d4e872f619cff77",
+    "crates/roder-ext-jev/src/jev_prompt.rs": "e51e2d2ae7664b51587a34c76b239a15f6b91ad7f0b3a9490cdcbed7c391b7d6",
+    "crates/roder-ext-jev/src/assets/dom.js": "4698de3daf950d9e040977633266c1e28dbf0cd8b2e806d1b2f6495ec2cb52df",
+    "crates/roder-ext-jev/src/assets/snapshot.js": "2f44be4524b41786b8dc400865e871cc0895e713973bec4ff197a2226caf7111",
+    "crates/roder-ext-jev/src/fixture_harness/evals/decisions_comparison.rs": "90fb2dc40958ea7916ead73e0b1cfeaae73af079a36c9a816db5c9c5afe3df27"
+  },
+  "development_binary": {
+    "sha256": "1aebea003d4f8a0993a3f2e0a79257ba5be199b9d84fdefcb5d032c09dbd26b2",
+    "retained": false,
+    "note": "Historical local executable hash only. Intermediate sources and the executable were not retained, so this development run cannot be rebuilt exactly; its complete wire requests and responses remain available. Use freeze.json for the final comparison source commit."
+  }
+}

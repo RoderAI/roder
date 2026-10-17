@@ -1,0 +1,35 @@
+{
+  "jev_dom-vision@jev-preview vs jev-vision@jev-preview": {
+    "both_pass": 16,
+    "subject_only_pass": [],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1998.0,
+    "control_median_ms_both_pass": 2029.0,
+    "median_paired_delta_ms": 73.0
+  },
+  "jev_dom-vision@jev-preview vs vision": {
+    "both_pass": 14,
+    "subject_only_pass": [
+      "complex_allocation#1",
+      "complex_allocation#2"
+    ],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1842.0,
+    "control_median_ms_both_pass": 2946.0,
+    "median_paired_delta_ms": -1289.5
+  },
+  "jev-vision@jev-preview vs vision": {
+    "both_pass": 14,
+    "subject_only_pass": [
+      "complex_allocation#1",
+      "complex_allocation#2"
+    ],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1910.5,
+    "control_median_ms_both_pass": 2946.0,
+    "median_paired_delta_ms": -1139.5
+  }
+}

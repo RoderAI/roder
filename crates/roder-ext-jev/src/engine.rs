@@ -89,7 +89,8 @@ pub struct JevDecision {
     pub choice: String,
     pub operation: String,
     pub target: Option<String>,
-    /// The operation head's confidence.
+    /// The operation head's confidence, or conservative support when an
+    /// experimental profile composes separate typed judgments for the operation.
     pub confidence: f64,
     /// The target head's confidence, for an operation that has targets.
     pub target_confidence: Option<f64>,
@@ -123,52 +124,8 @@ impl JevDecision {
     }
 }
 
-/// Chooses the next action from an observation produced by [`JevBrowser`].
-#[async_trait]
-pub trait JevDecisionClient: Send + Sync {
-    /// Whether the client can use a viewport image alongside observed actions.
-    /// When available and allowed by secret handling, the engine supplies an
-    /// inline data URL in `observation["_screenshot"]` for this decision only.
-    /// Wrapping clients should forward this capability.
-    fn uses_images(&self) -> bool {
-        false
-    }
-
-    async fn choose(
-        &self,
-        observation: &Value,
-        goal: &str,
-        history: &[Value],
-    ) -> anyhow::Result<JevDecision>;
-
-    /// [`choose`](Self::choose) with the irreversible-action gate on: the
-    /// same request also asks, for each offered action that may commit
-    /// something, whether it would do what cannot be undone, and the decision
-    /// carries the chosen action's answer in [`JevDecision::irreversible`].
-    /// The loop calls this instead of `choose` when
-    /// [`JevEngineConfig::with_irreversible_gate`] is set. The default asks
-    /// nothing, so the gate treats every such action a client without it
-    /// chooses as irreversible; a wrapping client should forward it.
-    async fn choose_gated(
-        &self,
-        observation: &Value,
-        goal: &str,
-        history: &[Value],
-    ) -> anyhow::Result<JevDecision> {
-        self.choose(observation, goal, history).await
-    }
-}
-
-/// Sends a provider-native decision request and returns its JSON response.
-/// The constructing client determines whether the wire format is TypeSafe or
-/// OpenAI Decisions; relays must preserve that provider contract.
-///
-/// Hosted runners can use this seam to route decisions through an authenticated
-/// control plane without moving provider credentials into the runner.
-#[async_trait]
-pub trait JevDecisionTransport: Send + Sync {
-    async fn decide(&self, request: &Value) -> anyhow::Result<Value>;
-}
+mod decision_client;
+pub use decision_client::{JevDecisionClient, JevDecisionTransport};
 
 /// A value generated for a fill action.
 #[derive(Debug, Clone)]

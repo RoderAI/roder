@@ -1,0 +1,375 @@
+{
+  "vision": {
+    "models": {
+      "gpt-6-luna": 12
+    },
+    "passed": 12,
+    "attempts": 12,
+    "pass_rate": 1.0,
+    "median_wall_ms": 1552.5,
+    "median_wall_ms_passed": 1552.5,
+    "browser_decisions": 27,
+    "wire_calls": 27,
+    "median_wire_latency_ms": 212,
+    "p90_wire_latency_ms": 247.6,
+    "median_decision_latency_ms": 212,
+    "median_decide_ms_per_attempt": 562.5,
+    "screenshot_captures": 27,
+    "median_screenshot_ms_per_attempt": 54.5,
+    "image_assets_sent": 0,
+    "input_tokens": 45876,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 12
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 8,
+        "correct": 8,
+        "false_done": 0,
+        "correct_rejected": 4
+      },
+      "0.95": {
+        "accepted": 7,
+        "correct": 7,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.99": {
+        "accepted": 4,
+        "correct": 4,
+        "false_done": 0,
+        "correct_rejected": 8
+      }
+    }
+  },
+  "jev@jev-1.13.0": {
+    "models": {
+      "jev-1.13.0": 12
+    },
+    "passed": 12,
+    "attempts": 12,
+    "pass_rate": 1.0,
+    "median_wall_ms": 1126.0,
+    "median_wall_ms_passed": 1126.0,
+    "browser_decisions": 27,
+    "wire_calls": 27,
+    "median_wire_latency_ms": 99,
+    "p90_wire_latency_ms": 149.4,
+    "median_decision_latency_ms": 99,
+    "median_decide_ms_per_attempt": 277.5,
+    "screenshot_captures": 0,
+    "median_screenshot_ms_per_attempt": 0.0,
+    "image_assets_sent": 0,
+    "input_tokens": 43344,
+    "output_tokens_wire": 2550,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 12
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 11,
+        "correct": 11,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.99": {
+        "accepted": 4,
+        "correct": 4,
+        "false_done": 0,
+        "correct_rejected": 8
+      }
+    }
+  },
+  "jev@jev-preview": {
+    "models": {
+      "jev-1.14.0": 12
+    },
+    "passed": 12,
+    "attempts": 12,
+    "pass_rate": 1.0,
+    "median_wall_ms": 1085.5,
+    "median_wall_ms_passed": 1085.5,
+    "browser_decisions": 27,
+    "wire_calls": 27,
+    "median_wire_latency_ms": 84,
+    "p90_wire_latency_ms": 197.8,
+    "median_decision_latency_ms": 84,
+    "median_decide_ms_per_attempt": 222.5,
+    "screenshot_captures": 0,
+    "median_screenshot_ms_per_attempt": 0.0,
+    "image_assets_sent": 0,
+    "input_tokens": 43344,
+    "output_tokens_wire": 2550,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 12
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.9": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.99": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 6
+      }
+    }
+  },
+  "jev-vision@jev-preview": {
+    "models": {
+      "jev-1.14.0": 12
+    },
+    "passed": 9,
+    "attempts": 12,
+    "pass_rate": 0.75,
+    "median_wall_ms": 1174.0,
+    "median_wall_ms_passed": 918,
+    "browser_decisions": 42,
+    "wire_calls": 42,
+    "median_wire_latency_ms": 104.0,
+    "p90_wire_latency_ms": 123.1,
+    "median_decision_latency_ms": 104.5,
+    "median_decide_ms_per_attempt": 267.0,
+    "screenshot_captures": 42,
+    "median_screenshot_ms_per_attempt": 57.5,
+    "image_assets_sent": 42,
+    "input_tokens": 159875,
+    "output_tokens_wire": 3150,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 9,
+      "blocked": 3
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 0,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.99": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      }
+    }
+  }
+}

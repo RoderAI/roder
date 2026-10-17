@@ -1,0 +1,37 @@
+{
+  "jev_dom-vision@jev-preview vs jev-vision@jev-preview": {
+    "both_pass": 9,
+    "subject_only_pass": [
+      "holdout_search#1",
+      "holdout_search#2",
+      "holdout_search#3"
+    ],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1003,
+    "control_median_ms_both_pass": 965,
+    "median_paired_delta_ms": 22
+  },
+  "jev_dom-vision@jev-preview vs vision": {
+    "both_pass": 12,
+    "subject_only_pass": [],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1230.0,
+    "control_median_ms_both_pass": 1861.0,
+    "median_paired_delta_ms": -408.0
+  },
+  "jev-vision@jev-preview vs vision": {
+    "both_pass": 9,
+    "subject_only_pass": [],
+    "control_only_pass": [
+      "holdout_search#1",
+      "holdout_search#2",
+      "holdout_search#3"
+    ],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 965,
+    "control_median_ms_both_pass": 1415,
+    "median_paired_delta_ms": -450
+  }
+}

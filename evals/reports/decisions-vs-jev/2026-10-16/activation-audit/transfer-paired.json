@@ -1,0 +1,45 @@
+{
+  "jev_activation-vision@jev-1.14.0 vs jev_dom_targets-vision@jev-1.14.0": {
+    "both_pass": 20,
+    "subject_only_pass": [
+      "escape_popup#1",
+      "escape_popup#2",
+      "escape_popup#3"
+    ],
+    "control_only_pass": [
+      "login_form#1"
+    ],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1339.0,
+    "control_median_ms_both_pass": 1283.5,
+    "median_paired_delta_ms": 30.0
+  },
+  "jev_activation-vision@jev-1.14.0 vs vision": {
+    "both_pass": 22,
+    "subject_only_pass": [
+      "icon_by_picture_twin#3"
+    ],
+    "control_only_pass": [
+      "login_form#1"
+    ],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1402.5,
+    "control_median_ms_both_pass": 1836.5,
+    "median_paired_delta_ms": -483.0
+  },
+  "jev_dom_targets-vision@jev-1.14.0 vs vision": {
+    "both_pass": 20,
+    "subject_only_pass": [
+      "icon_by_picture_twin#3"
+    ],
+    "control_only_pass": [
+      "escape_popup#1",
+      "escape_popup#2",
+      "escape_popup#3"
+    ],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1306.5,
+    "control_median_ms_both_pass": 1813.5,
+    "median_paired_delta_ms": -523.5
+  }
+}

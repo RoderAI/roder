@@ -83,9 +83,12 @@ struct RoderDeps<'a> {
 impl SessionDeps for RoderDeps<'_> {
     fn model_key(&self) -> String {
         format!(
-            "{}:{}:{:016x}:{}:{}",
+            "{}:{}:{}:{}:{}:{:016x}:{}:{}",
             decision_backend::selected(),
             env_value("JEV_DECISIONS_TEXT_ONLY").unwrap_or_default(),
+            env_value("JEV_DECISIONS_PROFILE").unwrap_or_default(),
+            env_value("JEV_IMAGES").unwrap_or_default(),
+            env_value("JEV_PROMPT_PROFILE").unwrap_or_default(),
             decision_backend::credential_revision(),
             env_value("JEV_MODEL").unwrap_or_default(),
             self.turn_model

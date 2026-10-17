@@ -1,0 +1,49 @@
+{
+  "jev_dom_targets-vision@jev-1.14.0 vs jev_dom-vision@jev-1.14.0": {
+    "both_pass": 21,
+    "subject_only_pass": [],
+    "control_only_pass": [],
+    "neither_pass": 3,
+    "subject_median_ms_both_pass": 1250,
+    "control_median_ms_both_pass": 1250,
+    "median_paired_delta_ms": -9
+  },
+  "jev_dom_targets-vision@jev-1.14.0 vs vision": {
+    "both_pass": 16,
+    "subject_only_pass": [
+      "icon_by_picture_twin#2",
+      "login_form#2",
+      "login_form#3",
+      "one_time_code_resolved#1",
+      "one_time_code_resolved#3"
+    ],
+    "control_only_pass": [
+      "escape_popup#1",
+      "escape_popup#2",
+      "escape_popup#3"
+    ],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1189.0,
+    "control_median_ms_both_pass": 1394.0,
+    "median_paired_delta_ms": -194.5
+  },
+  "jev_dom-vision@jev-1.14.0 vs vision": {
+    "both_pass": 16,
+    "subject_only_pass": [
+      "icon_by_picture_twin#2",
+      "login_form#2",
+      "login_form#3",
+      "one_time_code_resolved#1",
+      "one_time_code_resolved#3"
+    ],
+    "control_only_pass": [
+      "escape_popup#1",
+      "escape_popup#2",
+      "escape_popup#3"
+    ],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1216.0,
+    "control_median_ms_both_pass": 1394.0,
+    "median_paired_delta_ms": -193.5
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "providers": "vision,vision_dom,vision_activation,jev_activation-vision@jev-1.14.0",
+  "suites": [
+    {
+      "name": "confirmation",
+      "repeats": 3,
+      "JEV_EVAL_TASKS": "contact_form,search_autocomplete,select_dropdown,pagination,below_the_fold,twin_by_context,table_row_by_context,delayed_spa,missing_value,confirm_dialog,menu_button,styled_checkbox,date_field,icon_by_picture,unlabelled_fields,scroll_region,enter_to_search,shadow_component,frame_form,new_tab,gate_pay_now,gate_delete_account,gate_authorized_delete,gate_add_to_cart",
+      "task_ids": [
+        "contact_form",
+        "search_autocomplete",
+        "select_dropdown",
+        "pagination",
+        "below_the_fold",
+        "twin_by_context",
+        "table_row_by_context",
+        "delayed_spa",
+        "missing_value",
+        "confirm_dialog",
+        "menu_button",
+        "styled_checkbox",
+        "date_field",
+        "icon_by_picture",
+        "unlabelled_fields",
+        "scroll_region",
+        "enter_to_search",
+        "shadow_component",
+        "frame_form",
+        "new_tab",
+        "gate_pay_now",
+        "gate_delete_account",
+        "gate_authorized_delete",
+        "gate_add_to_cart"
+      ]
+    },
+    {
+      "name": "complex-dev",
+      "repeats": 2,
+      "BROWSER_EVAL_SUITE": "complex_dev",
+      "task_ids": [
+        "complex_dispatch",
+        "complex_invoice",
+        "complex_report",
+        "complex_review",
+        "complex_profile",
+        "complex_cancel",
+        "complex_booking",
+        "complex_allocation"
+      ]
+    },
+    {
+      "name": "compound-regression",
+      "repeats": 3,
+      "BROWSER_EVAL_SUITE": "complex_holdout",
+      "task_ids": [
+        "complex_holdout_1",
+        "complex_holdout_2",
+        "complex_holdout_3",
+        "complex_holdout_4",
+        "complex_holdout_5",
+        "complex_holdout_6"
+      ]
+    },
+    {
+      "name": "search-regression",
+      "repeats": 3,
+      "DECISIONS_EVAL_HOLDOUT": "1",
+      "task_ids": [
+        "holdout_cart",
+        "holdout_already",
+        "holdout_search",
+        "holdout_preferences"
+      ]
+    },
+    {
+      "name": "transfer",
+      "repeats": 3,
+      "JEV_EVAL_TASKS": "covered_target,icon_by_picture_twin,focus_handoff,escape_popup,off_origin,cookie_banner_refused,login_form,one_time_code_resolved",
+      "task_ids": [
+        "covered_target",
+        "icon_by_picture_twin",
+        "focus_handoff",
+        "escape_popup",
+        "off_origin",
+        "cookie_banner_refused",
+        "login_form",
+        "one_time_code_resolved"
+      ]
+    },
+    {
+      "name": "completion-regression",
+      "repeats": 3,
+      "BROWSER_EVAL_SUITE": "completion_dev",
+      "task_ids": [
+        "completion_city",
+        "completion_publish",
+        "completion_already_queued",
+        "completion_selection_only"
+      ]
+    },
+    {
+      "name": "completion-transfer",
+      "repeats": 3,
+      "BROWSER_EVAL_SUITE": "completion_holdout",
+      "task_ids": [
+        "completion_holdout_channel",
+        "completion_holdout_document",
+        "completion_holdout_acknowledge",
+        "completion_holdout_quantity"
+      ]
+    }
+  ],
+  "attempts_per_provider": 166,
+  "total_attempts": 664,
+  "development_task_ids": [
+    "twin_by_context",
+    "enter_to_search",
+    "frame_form",
+    "complex_allocation",
+    "escape_popup",
+    "gate_pay_now",
+    "gate_authorized_delete",
+    "login_form",
+    "missing_value"
+  ],
+  "interpretation": "All tasks were used in earlier campaigns. Nine tasks were used for native-profile development here; 49 received no browser calls with the new native profiles before this freeze. Do not claim a newly unseen task corpus. Keep failures and all declared attempts."
+}

@@ -1,0 +1,308 @@
+{
+  "vision": {
+    "models": {
+      "gpt-6-luna": 18
+    },
+    "passed": 18,
+    "attempts": 18,
+    "pass_rate": 1.0,
+    "median_wall_ms": 3208.5,
+    "median_wall_ms_passed": 3208.5,
+    "browser_decisions": 114,
+    "wire_calls": 114,
+    "median_wire_latency_ms": 325.0,
+    "p90_wire_latency_ms": 515.5,
+    "median_decision_latency_ms": 325.5,
+    "median_decide_ms_per_attempt": 1612.0,
+    "screenshot_captures": 114,
+    "median_screenshot_ms_per_attempt": 111.5,
+    "image_assets_sent": 0,
+    "input_tokens": 241104,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 18
+    },
+    "refused_questions": {
+      "select_target": 2,
+      "type_text_target": 3
+    },
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "complex_holdout_1": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_2": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_3": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_4": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_5": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_6": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 13,
+        "correct": 13,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.7": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 12
+      },
+      "0.8": {
+        "accepted": 4,
+        "correct": 4,
+        "false_done": 0,
+        "correct_rejected": 14
+      },
+      "0.9": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 18
+      },
+      "0.95": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 18
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 18
+      }
+    }
+  },
+  "jev_dom_targets-vision@jev-1.14.0": {
+    "models": {
+      "jev-1.14.0": 18
+    },
+    "passed": 18,
+    "attempts": 18,
+    "pass_rate": 1.0,
+    "median_wall_ms": 1944.0,
+    "median_wall_ms_passed": 1944.0,
+    "browser_decisions": 116,
+    "wire_calls": 116,
+    "median_wire_latency_ms": 137.0,
+    "p90_wire_latency_ms": 208.5,
+    "median_decision_latency_ms": 137.5,
+    "median_decide_ms_per_attempt": 581.0,
+    "screenshot_captures": 116,
+    "median_screenshot_ms_per_attempt": 100.5,
+    "image_assets_sent": 116,
+    "input_tokens": 874759,
+    "output_tokens_wire": 14289,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 18
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "complex_holdout_1": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_2": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_3": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_4": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_5": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_6": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.9": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.95": {
+        "accepted": 17,
+        "correct": 17,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.99": {
+        "accepted": 17,
+        "correct": 17,
+        "false_done": 0,
+        "correct_rejected": 1
+      }
+    }
+  },
+  "jev_activation-vision@jev-1.14.0": {
+    "models": {
+      "jev-1.14.0": 18
+    },
+    "passed": 18,
+    "attempts": 18,
+    "pass_rate": 1.0,
+    "median_wall_ms": 2062.5,
+    "median_wall_ms_passed": 2062.5,
+    "browser_decisions": 116,
+    "wire_calls": 134,
+    "median_wire_latency_ms": 134.0,
+    "p90_wire_latency_ms": 197.0,
+    "median_decision_latency_ms": 144.5,
+    "median_decide_ms_per_attempt": 679.5,
+    "screenshot_captures": 116,
+    "median_screenshot_ms_per_attempt": 98.5,
+    "image_assets_sent": 116,
+    "input_tokens": 902697,
+    "output_tokens_wire": 15261,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 18
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "complex_holdout_1": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_2": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_3": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_4": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_5": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "complex_holdout_6": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.9": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.95": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.99": {
+        "accepted": 18,
+        "correct": 18,
+        "false_done": 0,
+        "correct_rejected": 0
+      }
+    }
+  }
+}

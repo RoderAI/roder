@@ -7,6 +7,7 @@ mod computer;
 #[cfg(test)]
 mod experiment_tests;
 pub(crate) mod planning;
+mod semantic;
 pub use computer::{ComputerCandidate, ComputerDecision};
 use planning::Strategy;
 
@@ -22,7 +23,7 @@ use crate::http::{JsonPoster, RetryPolicy};
 use crate::usage::JevBilled;
 
 tokio::task_local! { static EVIDENCE: Value; }
-fn evidence(page: &Value, history: &[Value]) -> Value {
+fn evidence(page: &Value, history: &[Value], images: bool, semantic: bool) -> Value {
     let history = history
         .iter()
         .skip(history.len().saturating_sub(10))
@@ -45,11 +46,38 @@ fn evidence(page: &Value, history: &[Value]) -> Value {
             Value::Object(kept)
         })
         .collect::<Vec<_>>();
-    json!({"history":history,"screenshot":page["_screenshot"],"rectangles":page["actions"].as_array().into_iter().flatten().filter_map(|a|a.get("rect").map(|r|json!({"label":a["label"],"context":a["context"],"rect":r}))).collect::<Vec<_>>()})
+    let rectangles = page["actions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| {
+            a.get("rect").map(|r| {
+                let mut rectangle = json!({"label":a["label"],"context":a["context"],"rect":r});
+                if semantic {
+                    rectangle["node"] = a["node"].clone();
+                }
+                rectangle
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"history":history,"screenshot":if images {page["_screenshot"].clone()} else {Value::Null},"rectangles":rectangles,
+        "clipped_field":page["actions"].as_array().is_some_and(|actions|actions.iter().any(|a| a["kind"]=="fill" && a["value_clipped"]==true && a["value"].as_str().is_some_and(|v|!v.is_empty())))})
 }
 
 const ENDPOINT: &str = "https://api.openai.com/v1/decisions";
 pub(crate) const MODEL: &str = "gpt-6-luna";
+
+/// Browser evidence and completion policy for the native Decisions API.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DecisionsBrowserProfile {
+    /// Existing visual prompt, retained as the default and evaluation control.
+    #[default]
+    Visual,
+    /// Semantic DOM, form ownership, current values and workflow questions.
+    SemanticDom,
+    /// Semantic DOM plus clipped-field image routing and activation audits.
+    Audited,
+}
 
 /// Select browser actions with OpenAI's Decisions API, using an OpenAI API key.
 /// Text generation continues to use the browser's configured text helper.
@@ -57,6 +85,7 @@ pub struct OpenAiDecisionsClient {
     inner: JevTypeSafeDecisionClient,
     strategy: Strategy,
     transport: Arc<dyn JevDecisionTransport>,
+    images: bool,
 }
 
 impl OpenAiDecisionsClient {
@@ -69,8 +98,22 @@ impl OpenAiDecisionsClient {
     }
 
     /// Use text observations and action effects without requesting screenshots.
-    pub fn text_only(self) -> Self {
-        Self::configured(self.transport, Strategy::Effects)
+    pub fn text_only(mut self) -> Self {
+        self.images = false;
+        self
+    }
+
+    /// Select an evidence policy while preserving explicit text-only operation.
+    pub fn with_browser_profile(self, profile: DecisionsBrowserProfile) -> Self {
+        let images = self.images;
+        let strategy = match profile {
+            DecisionsBrowserProfile::Visual => Strategy::Vision,
+            DecisionsBrowserProfile::SemanticDom => Strategy::VisionDom,
+            DecisionsBrowserProfile::Audited => Strategy::VisionAudited,
+        };
+        let mut client = Self::configured(self.transport, strategy);
+        client.images = images;
+        client
     }
 
     /// Inject a transport speaking the native OpenAI Decisions wire format.
@@ -88,8 +131,17 @@ impl OpenAiDecisionsClient {
                     strategy,
                 }),
             )
-            .with_profile(crate::jev_prompt::Profile::Baseline),
+            .with_composed_transport()
+            .with_profile(match strategy {
+                Strategy::VisionDom => crate::jev_prompt::Profile::Dom,
+                Strategy::VisionAudited => crate::jev_prompt::Profile::Activation,
+                _ => crate::jev_prompt::Profile::Baseline,
+            }),
             transport,
+            images: matches!(
+                strategy,
+                Strategy::Vision | Strategy::VisionDom | Strategy::VisionAudited
+            ),
         }
     }
     fn finish(
@@ -132,7 +184,7 @@ impl OpenAiDecisionsClient {
 #[async_trait]
 impl JevDecisionClient for OpenAiDecisionsClient {
     fn uses_images(&self) -> bool {
-        self.strategy == Strategy::Vision
+        self.images
     }
 
     async fn choose(
@@ -144,7 +196,12 @@ impl JevDecisionClient for OpenAiDecisionsClient {
         self.finish(
             EVIDENCE
                 .scope(
-                    evidence(page, history),
+                    evidence(
+                        page,
+                        history,
+                        self.images,
+                        matches!(self.strategy, Strategy::VisionDom | Strategy::VisionAudited),
+                    ),
                     self.inner.choose(page, goal, history),
                 )
                 .await?,
@@ -162,7 +219,12 @@ impl JevDecisionClient for OpenAiDecisionsClient {
         self.finish(
             EVIDENCE
                 .scope(
-                    evidence(page, history),
+                    evidence(
+                        page,
+                        history,
+                        self.images,
+                        matches!(self.strategy, Strategy::VisionDom | Strategy::VisionAudited),
+                    ),
                     self.inner.choose_gated(page, goal, history),
                 )
                 .await?,
@@ -210,7 +272,8 @@ struct Adapter {
 #[async_trait]
 impl JevDecisionTransport for Adapter {
     async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
-        let response = planning::evaluate(self.transport.as_ref(), request, self.strategy).await?;
+        let transport = crate::request_budget::Transport(self.transport.as_ref());
+        let response = planning::evaluate(&transport, request, self.strategy).await?;
         normalize_response(&response).map(|mut normalized| {
             // Decisions requires at least two choices. A single observed target
             // is deterministic once the operation has been chosen by the model.

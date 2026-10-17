@@ -28,23 +28,40 @@ impl Agent {
         }
         let decision = self.config.decision.as_ref();
         let (observation, goal, history) = (&observed, &self.config.goal, &self.history);
-        let chosen = if self.config.irreversible_gate {
-            decision.choose_gated(observation, goal, history).await
-        } else {
-            decision.choose(observation, goal, history).await
-        };
-        let decision = match chosen {
+        let remaining = self
+            .config
+            .max_actions
+            .saturating_mul(2)
+            .saturating_sub(self.decisions);
+        let (chosen, requests) = crate::request_budget::scope(remaining, async {
+            if self.config.irreversible_gate {
+                decision.choose_gated(observation, goal, history).await
+            } else {
+                decision.choose(observation, goal, history).await
+            }
+        })
+        .await;
+        let mut decision = match chosen {
             Ok(decision) => decision,
             Err(error) => {
                 // An answer that failed validation was still billed.
                 if let Some(usage) = JevBilled::usage_of(&error) {
-                    self.decisions += 1;
-                    self.unusable_decisions.push(usage.clone());
+                    self.decisions = self.decisions.saturating_add(if requests > 0 {
+                        requests
+                    } else {
+                        reported_calls(usage)
+                    });
+                    self.unusable_decisions.push(counted_usage(usage, requests));
                 }
                 return Err(error);
             }
         };
-        self.decisions += 1;
+        self.decisions = self.decisions.saturating_add(if requests > 0 {
+            requests
+        } else {
+            reported_calls(&decision.usage)
+        });
+        decision.usage = counted_usage(&decision.usage, requests);
         self.unusable_streak.clear();
         self.decision_calls.push(JevDecisionRecord {
             choice: decision.choice.clone(),
@@ -60,6 +77,22 @@ impl Agent {
         });
         Ok(decision)
     }
+}
+/// Count observed component requests even when a custom client omits usage.calls.
+fn counted_usage(usage: &Value, requests: usize) -> Value {
+    if requests == 0 {
+        return usage.clone();
+    }
+    let mut usage = usage.as_object().cloned().unwrap_or_default();
+    usage.insert("calls".into(), json!(requests));
+    Value::Object(usage)
+}
+fn reported_calls(usage: &Value) -> usize {
+    usage["calls"]
+        .as_u64()
+        .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+        .unwrap_or(1)
+        .max(1)
 }
 fn may_capture(observation: &Value, secret_input: bool, history: &[Value]) -> bool {
     !secret_input

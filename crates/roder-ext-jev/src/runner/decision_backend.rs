@@ -1,6 +1,8 @@
 //! Runtime selection of the browser's decision service.
 use super::{env_value, key_from_env_or_config};
-use crate::{JevDecisionClient, JevTypeSafeDecisionClient, OpenAiDecisionsClient};
+use crate::{
+    DecisionsBrowserProfile, JevDecisionClient, JevTypeSafeDecisionClient, OpenAiDecisionsClient,
+};
 use anyhow::{Context, bail};
 use std::sync::Arc;
 
@@ -34,12 +36,28 @@ fn resolve_with(
     model: Option<String>,
 ) -> anyhow::Result<Arc<dyn JevDecisionClient>> {
     match provider {
-        "jev" => Ok(Arc::new(JevTypeSafeDecisionClient::new(
-            key("jev").with_context(|| {
-                format!("JEV_API_KEY is required for the Jev decision provider; {OTHER_BROWSERS}")
-            })?,
-            model.unwrap_or_else(|| "jev-latest".into()),
-        ))),
+        "jev" => {
+            // TypeSafe image input is a "danger zone" feature: opt-in only.
+            let images = match env_value("JEV_IMAGES").as_deref() {
+                None | Some("0") => false,
+                Some("1") => true,
+                _ => bail!("JEV_IMAGES must be 0 or 1"),
+            };
+            let profile = prompt_profile(env_value("JEV_PROMPT_PROFILE").as_deref())?;
+            Ok(Arc::new(
+                JevTypeSafeDecisionClient::new(
+                    key("jev").with_context(|| {
+                        format!(
+                            "JEV_API_KEY is required for the Jev decision provider; \
+                             {OTHER_BROWSERS}"
+                        )
+                    })?,
+                    model.unwrap_or_else(|| "jev-latest".into()),
+                )
+                .with_images(images)
+                .with_profile(profile),
+            ))
+        }
         "openai" => {
             let api_key = key("openai").with_context(|| {
                 format!(
@@ -47,7 +65,9 @@ fn resolve_with(
                      Codex sign-in is not supported; {OTHER_BROWSERS}"
                 )
             })?;
-            let client = OpenAiDecisionsClient::new(api_key);
+            let client = OpenAiDecisionsClient::new(api_key).with_browser_profile(
+                decisions_profile(env_value("JEV_DECISIONS_PROFILE").as_deref())?,
+            );
             let client = match env_value("JEV_DECISIONS_TEXT_ONLY").as_deref() {
                 None | Some("0") => client,
                 Some("1") => client.text_only(),
@@ -59,9 +79,39 @@ fn resolve_with(
     }
 }
 
+fn decisions_profile(raw: Option<&str>) -> anyhow::Result<DecisionsBrowserProfile> {
+    match raw {
+        None | Some("vision") => Ok(DecisionsBrowserProfile::Visual),
+        Some("dom") => Ok(DecisionsBrowserProfile::SemanticDom),
+        Some("activation") => Ok(DecisionsBrowserProfile::Audited),
+        _ => bail!("JEV_DECISIONS_PROFILE must be vision, dom or activation"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decisions_profiles_are_explicit_and_unknown_values_fail() {
+        assert_eq!(
+            decisions_profile(None).unwrap(),
+            DecisionsBrowserProfile::Visual
+        );
+        assert_eq!(
+            decisions_profile(Some("vision")).unwrap(),
+            DecisionsBrowserProfile::Visual
+        );
+        assert_eq!(
+            decisions_profile(Some("dom")).unwrap(),
+            DecisionsBrowserProfile::SemanticDom
+        );
+        assert_eq!(
+            decisions_profile(Some("activation")).unwrap(),
+            DecisionsBrowserProfile::Audited
+        );
+        assert!(decisions_profile(Some("typo")).is_err());
+    }
 
     #[test]
     fn openai_requires_only_its_own_key() {
@@ -179,5 +229,38 @@ mod capability_tests {
             credential_fingerprint(Some("first")),
             credential_fingerprint(None)
         );
+    }
+}
+
+/// Keep the measured candidate opt-in while broad validation continues.
+fn prompt_profile(raw: Option<&str>) -> anyhow::Result<crate::jev_prompt::Profile> {
+    use crate::jev_prompt::Profile;
+    match raw {
+        None | Some("workflow") => Ok(Profile::Workflow),
+        Some("dom") => Ok(Profile::Dom),
+        Some("dom_targets") => Ok(Profile::DomTargets),
+        Some("activation") => Ok(Profile::Activation),
+        _ => bail!("JEV_PROMPT_PROFILE must be workflow, dom, dom_targets or activation"),
+    }
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+    #[test]
+    fn dom_evidence_is_an_explicit_profile_and_unknown_profiles_fail() {
+        use crate::jev_prompt::Profile;
+        assert_eq!(prompt_profile(None).unwrap(), Profile::Workflow);
+        assert_eq!(prompt_profile(Some("workflow")).unwrap(), Profile::Workflow);
+        assert_eq!(prompt_profile(Some("dom")).unwrap(), Profile::Dom);
+        assert_eq!(
+            prompt_profile(Some("dom_targets")).unwrap(),
+            Profile::DomTargets
+        );
+        assert_eq!(
+            prompt_profile(Some("activation")).unwrap(),
+            Profile::Activation
+        );
+        assert!(prompt_profile(Some("typo")).is_err());
     }
 }

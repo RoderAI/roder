@@ -1,0 +1,463 @@
+{
+  "vision": {
+    "models": {
+      "gpt-6-luna": 24
+    },
+    "passed": 18,
+    "attempts": 24,
+    "pass_rate": 0.75,
+    "median_wall_ms": 1789.5,
+    "median_wall_ms_passed": 1836.5,
+    "browser_decisions": 71,
+    "wire_calls": 71,
+    "median_wire_latency_ms": 316,
+    "p90_wire_latency_ms": 544.2,
+    "median_decision_latency_ms": 334,
+    "median_decide_ms_per_attempt": 826.5,
+    "screenshot_captures": 42,
+    "median_screenshot_ms_per_attempt": 42.5,
+    "image_assets_sent": 42,
+    "input_tokens": 104294,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 2,
+    "statuses": {
+      "blocked": 10,
+      "done": 12,
+      "error": 2
+    },
+    "refused_questions": {
+      "click_target": 6
+    },
+    "inferred_done": 3,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "covered_target": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "focus_handoff": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "icon_by_picture_twin": {
+        "passed": 1,
+        "attempts": 3
+      },
+      "escape_popup": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "off_origin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "cookie_banner_refused": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "login_form": {
+        "passed": 1,
+        "attempts": 3
+      },
+      "one_time_code_resolved": {
+        "passed": 1,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 8,
+        "correct": 8,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.7": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 4
+      },
+      "0.9": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.95": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 9
+      }
+    },
+    "native_image_parts_sent": 42,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 71
+  },
+  "vision_dom": {
+    "models": {
+      "gpt-6-luna": 24
+    },
+    "passed": 19,
+    "attempts": 24,
+    "pass_rate": 0.7917,
+    "median_wall_ms": 2075.5,
+    "median_wall_ms_passed": 2128,
+    "browser_decisions": 78,
+    "wire_calls": 78,
+    "median_wire_latency_ms": 310.5,
+    "p90_wire_latency_ms": 605.4,
+    "median_decision_latency_ms": 311.5,
+    "median_decide_ms_per_attempt": 910.0,
+    "screenshot_captures": 57,
+    "median_screenshot_ms_per_attempt": 43.5,
+    "image_assets_sent": 57,
+    "input_tokens": 252957,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "blocked": 11,
+      "done": 13
+    },
+    "refused_questions": {
+      "click_target": 1,
+      "type_text_target": 1
+    },
+    "inferred_done": 1,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "covered_target": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "focus_handoff": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "icon_by_picture_twin": {
+        "passed": 0,
+        "attempts": 3
+      },
+      "escape_popup": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "off_origin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "cookie_banner_refused": {
+        "passed": 1,
+        "attempts": 3
+      },
+      "login_form": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "one_time_code_resolved": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 10,
+        "correct": 10,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.9": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.95": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 12
+      }
+    },
+    "native_image_parts_sent": 57,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 78
+  },
+  "vision_activation": {
+    "models": {
+      "gpt-6-luna": 24
+    },
+    "passed": 17,
+    "attempts": 24,
+    "pass_rate": 0.7083,
+    "median_wall_ms": 2029.5,
+    "median_wall_ms_passed": 2023,
+    "browser_decisions": 81,
+    "wire_calls": 83,
+    "median_wire_latency_ms": 305,
+    "p90_wire_latency_ms": 625.2,
+    "median_decision_latency_ms": 316,
+    "median_decide_ms_per_attempt": 896.5,
+    "screenshot_captures": 60,
+    "median_screenshot_ms_per_attempt": 46.5,
+    "image_assets_sent": 60,
+    "input_tokens": 267460,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "blocked": 13,
+      "done": 11
+    },
+    "refused_questions": {
+      "click_target": 2,
+      "type_text_target": 1
+    },
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "covered_target": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "focus_handoff": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "icon_by_picture_twin": {
+        "passed": 0,
+        "attempts": 3
+      },
+      "escape_popup": {
+        "passed": 2,
+        "attempts": 3
+      },
+      "off_origin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "cookie_banner_refused": {
+        "passed": 0,
+        "attempts": 3
+      },
+      "login_form": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "one_time_code_resolved": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 11,
+        "correct": 11,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 11,
+        "correct": 11,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.95": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 11
+      }
+    },
+    "native_image_parts_sent": 60,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 83
+  },
+  "jev_activation-vision@jev-1.14.0": {
+    "models": {
+      "jev-1.14.0": 24
+    },
+    "passed": 23,
+    "attempts": 24,
+    "pass_rate": 0.9583,
+    "median_wall_ms": 1314.5,
+    "median_wall_ms_passed": 1312,
+    "browser_decisions": 66,
+    "wire_calls": 77,
+    "median_wire_latency_ms": 107,
+    "p90_wire_latency_ms": 136.2,
+    "median_decision_latency_ms": 111.5,
+    "median_decide_ms_per_attempt": 334.5,
+    "screenshot_captures": 45,
+    "median_screenshot_ms_per_attempt": 39.5,
+    "image_assets_sent": 45,
+    "input_tokens": 348708,
+    "output_tokens_wire": 7769,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "blocked": 7,
+      "done": 17
+    },
+    "refused_questions": {},
+    "inferred_done": 1,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "covered_target": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "focus_handoff": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "icon_by_picture_twin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "escape_popup": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "off_origin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "cookie_banner_refused": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "login_form": {
+        "passed": 2,
+        "attempts": 3
+      },
+      "one_time_code_resolved": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 16,
+        "correct": 16,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 13,
+        "correct": 13,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.7": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 4
+      },
+      "0.8": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 4
+      },
+      "0.9": {
+        "accepted": 8,
+        "correct": 8,
+        "false_done": 0,
+        "correct_rejected": 8
+      },
+      "0.95": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 13
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 16
+      }
+    },
+    "native_image_parts_sent": 0,
+    "typesafe_image_assets_sent": 45,
+    "reported_model_calls": 77
+  }
+}

@@ -66,6 +66,7 @@ Verifier runner. Inject credentials through that service's secret management.
 | `JEV_DECISION_PROVIDER` | `openai` selects Decisions; unset or `jev` selects TypeSafe. Any other value fails. |
 | `OPENAI_API_KEY` | OpenAI API credential for Decisions. Takes precedence over `[providers.openai] api_key`. Codex/ChatGPT login is insufficient. |
 | `JEV_DECISIONS_TEXT_ONLY` | Unset or `0`: request fresh viewport images when supported and safe. `1`: text only. Other values fail for the OpenAI backend. |
+| `JEV_DECISIONS_PROFILE` | `vision` (default) retains the existing visual prompt. `dom` adds semantic DOM, form ownership and workflow evidence. `activation` additionally routes clipped-field questions and audits completion using native predicates. Other values fail. |
 | `JEV_MODEL` | TypeSafe model only; does not change Decisions' fixed `gpt-6-luna` model. |
 | `JEV_API_KEY` | Needed only when the built-in TypeSafe backend is selected; switching to Decisions does not require this key. |
 | `JEV_CDP_URL` / `JEV_CDP_PORT` | Existing Chrome connection settings; changing the decision provider does not provision a browser. |
@@ -78,6 +79,7 @@ Example for an already configured Chrome/text-helper environment:
 # OPENAI_API_KEY is supplied by the service secret manager; do not commit it.
 export JEV_DECISION_PROVIDER=openai
 export JEV_DECISIONS_TEXT_ONLY=0
+export JEV_DECISIONS_PROFILE=dom
 roder
 ```
 
@@ -102,8 +104,49 @@ server-owned relay speaking the native Decisions request/response format.
 Its `text_only()` method selects text-only operation. Wrapping clients must
 forward `uses_images()` and `choose_gated()`, and the browser adapter must implement
 `screenshot()` for visual operation. Without screenshot support, it uses text.
-Optional screenshot capture errors also fall back to text. Secret-input state,
+Optional screenshot capture errors also fall back to text. Custom browsers must
+supply a valid inline full-viewport image whose pixel coordinates match the
+observation's CSS rectangles, as the built-in Chrome browser does with device
+scale factor 1. Native Decisions sends these pixels unchanged; TypeSafe's
+280–1568 pixel fitting limits do not apply to this provider. Secret-input state,
 including short values, suppresses screenshots across built-in session calls.
+
+Embedded clients select the same evidence policy with
+`with_browser_profile(DecisionsBrowserProfile::Audited)` or
+`DecisionsBrowserProfile::SemanticDom`. Calling `text_only()` before or after
+profile selection preserves that profile and prevents image transmission.
+
+The semantic profiles omit empty redaction placeholders for secret fields and
+carry their observed `filled` state into both shared evidence and target choices.
+Secret contents stay withheld; presence is not proof of correctness. They also
+retain the bounded DOM tree, full non-secret field values, form
+ownership and offered candidates already used by the Jev DOM profile. The
+`activation` profile detects the same populated clipped fields. Since Decisions
+images belong to shared input, an `activation` decision with a fresh screenshot
+and a populated clipped field sends operation and safety questions as a text-only
+batch and conditional target questions as an independent image batch. `dom`,
+text-only and screenshot-suppressed decisions keep the initial questions in one
+combined request. Any completion audit remains a later text-only request.
+Both batches use the same observed state and run together. Single-target
+questions remain local and do not require an otherwise empty image batch.
+
+When the original decision is DONE with a usable conditional click target, a
+second text-only request asks native predicates about whether that activation
+is required, already performed and ready. The shared composition uses
+`max(0, required + ready - performed - 1) > 0.5` to recover an offered click.
+This support is derived from estimated probabilities; it is not raw Choice
+confidence or proof of correctness. Target probabilities and action gates
+remain intact. Missing prerequisites can produce an unusable answer instead
+of false completion. The check covers one offered click, not all possible goals.
+
+Provider requests, including split batches and audits, reserve the browser's
+remaining model-call budget before transmission. `model_calls` and token usage
+include the component requests. A missing, invalid or refused response cannot
+hide the other batch's reported usage or permit a partial action. Custom
+`JevDecisionClient` implementations must call the public
+`JevDecisionTransport::decide_budgeted()` boundary for every component provider
+request and aggregate token usage, including billed errors. The engine cannot
+observe arbitrary external I/O that bypasses this boundary.
 
 For Composal Verifier, follow the [migration handoff](verifier-decisions-migration.md).
 The current Vex integration explicitly constructs TypeSafe and relays through a
@@ -145,6 +188,14 @@ computer execution with a scripted response, which is not live-model proof.
 
 ## Measured optimization
 
+The [native DOM comparison](../evals/reports/decisions-vs-jev/2026-10-16/visual-dom/README.md)
+retained 664 attempts on 58 known fixtures. DOM Decisions passed 157/166 versus
+152/166 for the original visual profile, with false successes falling from seven
+to one and input tokens rising 73.8%. The combined audited profile passed 150/166
+and made no corrective clicks. These profiles remain opt-in; the result supports
+trying `dom`, while `activation` remains experimental. The report retains all
+failures, paired comparisons, raw wire data and the frozen source.
+
 The [October 8 experiment report](../evals/reports/decisions-vs-jev/2026-10-08/README.md)
 compares the original adapter, refusal handling, native prompts, complete-action
 choices, sequential choices, action-effect history, completion predicates and
@@ -158,6 +209,6 @@ requests and tool-call updates are unchanged; no new protocol capability is adve
 
 The [follow-up Jev hill-climb](../evals/reports/jev-hillclimb/2026-10-08/README.md)
 measures improvements to the default TypeSafe client against its original profile
-and this visual Decisions integration on a larger, more demanding corpus. Jev's
-form and workflow guidance is isolated from the Decisions prompt profile. Both
-continue through the same ACP tool and permission flow.
+and this visual Decisions integration on a larger, more demanding corpus. The default visual control retains its original prompt. The semantic Decisions
+profiles reuse the measured form/workflow evidence through native questions.
+Both providers continue through the same ACP tool and permission flow.

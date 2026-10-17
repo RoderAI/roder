@@ -1,0 +1,2454 @@
+{
+  "audits": 110,
+  "proposed_corrections": 3,
+  "records": [
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "pagination",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Back to basics",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.07,
+        "performed": 0.57,
+        "ready": 0.64
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "below_the_fold",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Subscribe",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.92,
+        "performed": 0.98,
+        "ready": 0.79
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "twin_by_context",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[6] Add to cart",
+        "context": "Desk Lamp",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.94,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "table_row_by_context",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[6] Edit",
+        "context": "Grace Hopper grace@example.test Call; column: Actions",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.81,
+        "performed": 0.98,
+        "ready": 0.9
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "delayed_spa",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Inbox",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.13,
+        "performed": 0.87,
+        "ready": 0.63
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "menu_button",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Back to basics",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.07,
+        "performed": 0.23,
+        "ready": 0.4
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "styled_checkbox",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Free shipping",
+        "current_value": "",
+        "role": "checkbox",
+        "checked": "true",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.87,
+        "performed": 0.99,
+        "ready": 0.97
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "icon_by_picture",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[9] delete",
+        "context": "Bob Lunch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 12
+      },
+      "probabilities": {
+        "required": 0.06,
+        "performed": 0.06,
+        "ready": 0.05
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "scroll_region",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] I agree",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 32
+      },
+      "probabilities": {
+        "required": 0.82,
+        "performed": 0.99,
+        "ready": 0.9
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "shadow_component",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Trail Runner",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.98,
+        "ready": 0.97
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "frame_form",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[5] Accept terms",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 5
+      },
+      "probabilities": {
+        "required": 0.32,
+        "performed": 0.85,
+        "ready": 0.86
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "new_tab",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Close this tab",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.13,
+        "ready": 0.84
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "gate_add_to_cart",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Add to cart",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.98,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "pagination",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Back to basics",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.07,
+        "performed": 0.43,
+        "ready": 0.59
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "below_the_fold",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Subscribe",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.91,
+        "performed": 0.98,
+        "ready": 0.83
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "twin_by_context",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[6] Add to cart",
+        "context": "Desk Lamp",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.95,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "table_row_by_context",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[6] Edit",
+        "context": "Grace Hopper grace@example.test Call; column: Actions",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.79,
+        "performed": 0.99,
+        "ready": 0.9
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "delayed_spa",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Inbox",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.12,
+        "performed": 0.79,
+        "ready": 0.64
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "menu_button",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Back to basics",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.09,
+        "performed": 0.31,
+        "ready": 0.44
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "styled_checkbox",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Free shipping",
+        "current_value": "",
+        "role": "checkbox",
+        "checked": "true",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.83,
+        "performed": 0.99,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "icon_by_picture",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[9] delete",
+        "context": "Bob Lunch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 12
+      },
+      "probabilities": {
+        "required": 0.07,
+        "performed": 0.08,
+        "ready": 0.07
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "scroll_region",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] I agree",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 32
+      },
+      "probabilities": {
+        "required": 0.81,
+        "performed": 0.98,
+        "ready": 0.88
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "shadow_component",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Trail Runner",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.98,
+        "ready": 0.97
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "frame_form",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[5] Accept terms",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 5
+      },
+      "probabilities": {
+        "required": 0.31,
+        "performed": 0.84,
+        "ready": 0.84
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "new_tab",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Close this tab",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.12,
+        "ready": 0.83
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "gate_add_to_cart",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Add to cart",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.95,
+        "performed": 0.99,
+        "ready": 0.97
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "pagination",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Back to basics",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.07,
+        "performed": 0.41,
+        "ready": 0.62
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "below_the_fold",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Subscribe",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.93,
+        "performed": 0.98,
+        "ready": 0.88
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "twin_by_context",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[6] Add to cart",
+        "context": "Desk Lamp",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.92,
+        "ready": 0.95
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "table_row_by_context",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[6] Edit",
+        "context": "Grace Hopper grace@example.test Call; column: Actions",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.81,
+        "performed": 0.98,
+        "ready": 0.9
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "delayed_spa",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Inbox",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.12,
+        "performed": 0.83,
+        "ready": 0.66
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "menu_button",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Back to basics",
+        "current_value": "",
+        "role": "link",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.07,
+        "performed": 0.28,
+        "ready": 0.4
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "styled_checkbox",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Free shipping",
+        "current_value": "",
+        "role": "checkbox",
+        "checked": "true",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.81,
+        "performed": 0.99,
+        "ready": 0.95
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "icon_by_picture",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[9] delete",
+        "context": "Bob Lunch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 12
+      },
+      "probabilities": {
+        "required": 0.08,
+        "performed": 0.05,
+        "ready": 0.06
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "scroll_region",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] I agree",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 32
+      },
+      "probabilities": {
+        "required": 0.83,
+        "performed": 0.99,
+        "ready": 0.88
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "shadow_component",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Trail Runner",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.98,
+        "ready": 0.97
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "frame_form",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[5] Accept terms",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 5
+      },
+      "probabilities": {
+        "required": 0.34,
+        "performed": 0.84,
+        "ready": 0.85
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "new_tab",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Close this tab",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.07,
+        "ready": 0.8
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "confirmation.jsonl.gz",
+      "task": "gate_add_to_cart",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Add to cart",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.94,
+        "performed": 0.98,
+        "ready": 0.97
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_dispatch",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Reserve dispatch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 14
+      },
+      "probabilities": {
+        "required": 0.88,
+        "performed": 0.97,
+        "ready": 0.52
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_invoice",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Send reminder",
+        "context": "INV-482 Orchid Works; column: Action",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.63,
+        "performed": 0.99,
+        "ready": 0.65
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_report",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Publish to team",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 9
+      },
+      "probabilities": {
+        "required": 0.98,
+        "performed": 0.99,
+        "ready": 0.88
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_review",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Acknowledge protocol",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.99,
+        "ready": 0.92
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_profile",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Save profile",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 14
+      },
+      "probabilities": {
+        "required": 0.87,
+        "performed": 0.99,
+        "ready": 0.87
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_cancel",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Cancel reservation",
+        "context": "Monday first aid",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.9,
+        "performed": 0.99,
+        "ready": 0.67
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_booking",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Confirm reservation",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 36
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.98,
+        "ready": 0.92
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_allocation",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Change selection",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 137
+      },
+      "probabilities": {
+        "required": 0.18,
+        "performed": 0.79,
+        "ready": 0.76
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_dispatch",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Reserve dispatch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 14
+      },
+      "probabilities": {
+        "required": 0.9,
+        "performed": 0.98,
+        "ready": 0.47
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_invoice",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Send reminder",
+        "context": "INV-482 Orchid Works; column: Action",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.62,
+        "performed": 0.99,
+        "ready": 0.66
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_report",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Publish to team",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 9
+      },
+      "probabilities": {
+        "required": 0.98,
+        "performed": 0.99,
+        "ready": 0.88
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_review",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Acknowledge protocol",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.99,
+        "ready": 0.92
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_profile",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Save profile",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 14
+      },
+      "probabilities": {
+        "required": 0.85,
+        "performed": 0.99,
+        "ready": 0.86
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_cancel",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Cancel reservation",
+        "context": "Monday first aid",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.93,
+        "performed": 0.99,
+        "ready": 0.66
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_booking",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Confirm reservation",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 36
+      },
+      "probabilities": {
+        "required": 0.98,
+        "performed": 0.98,
+        "ready": 0.91
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "complex-dev.jsonl.gz",
+      "task": "complex_allocation",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Change selection",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 137
+      },
+      "probabilities": {
+        "required": 0.17,
+        "performed": 0.78,
+        "ready": 0.76
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_1",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Complete transfer",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 13
+      },
+      "probabilities": {
+        "required": 0.95,
+        "performed": 0.99,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_2",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Submit request",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 0.5,
+        "performed": 0.97,
+        "ready": 0.95
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_3",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply new time",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 28
+      },
+      "probabilities": {
+        "required": 0.92,
+        "performed": 0.97,
+        "ready": 0.9
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_4",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Save archive",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 9
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.99,
+        "ready": 0.88
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_5",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Submit service case",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.85,
+        "performed": 0.99,
+        "ready": 0.78
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_6",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Schedule bulletin",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.99,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_1",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Complete transfer",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 13
+      },
+      "probabilities": {
+        "required": 0.95,
+        "performed": 0.98,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_2",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Submit request",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 0.55,
+        "performed": 0.98,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_3",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply new time",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 28
+      },
+      "probabilities": {
+        "required": 0.87,
+        "performed": 0.98,
+        "ready": 0.85
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_4",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Save archive",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 9
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.99,
+        "ready": 0.89
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_5",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Submit service case",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.87,
+        "performed": 0.99,
+        "ready": 0.82
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_6",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Schedule bulletin",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.98,
+        "ready": 0.93
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_1",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Complete transfer",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 13
+      },
+      "probabilities": {
+        "required": 0.92,
+        "performed": 0.99,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_2",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Submit request",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 0.52,
+        "performed": 0.98,
+        "ready": 0.95
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_3",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply new time",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 28
+      },
+      "probabilities": {
+        "required": 0.93,
+        "performed": 0.98,
+        "ready": 0.89
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_4",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Save archive",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 9
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.99,
+        "ready": 0.89
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_5",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Submit service case",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.91,
+        "performed": 0.98,
+        "ready": 0.84
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "compound-regression.jsonl.gz",
+      "task": "complex_holdout_6",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Schedule bulletin",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 34
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.99,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "search-regression.jsonl.gz",
+      "task": "holdout_cart",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Oak Bookend",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.66,
+        "performed": 0.99,
+        "ready": 0.92
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "search-regression.jsonl.gz",
+      "task": "holdout_already",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Oak Bookend",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.03,
+        "performed": 0.94,
+        "ready": 0.3
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "search-regression.jsonl.gz",
+      "task": "holdout_cart",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Oak Bookend",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.61,
+        "performed": 0.99,
+        "ready": 0.92
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "search-regression.jsonl.gz",
+      "task": "holdout_already",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Oak Bookend",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.97,
+        "ready": 0.22
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "search-regression.jsonl.gz",
+      "task": "holdout_cart",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Oak Bookend",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.59,
+        "performed": 0.99,
+        "ready": 0.91
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "search-regression.jsonl.gz",
+      "task": "holdout_already",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Add to cart",
+        "context": "Oak Bookend",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.94,
+        "ready": 0.19
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "icon_by_picture_twin",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[9] delete",
+        "context": "Bob Lunch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 12
+      },
+      "probabilities": {
+        "required": 0.08,
+        "performed": 0.05,
+        "ready": 0.07
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "escape_popup",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Go",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.31,
+        "ready": 0.94
+      },
+      "support": 0.6199999999999999,
+      "proposes_click": true,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "escape_popup",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Go",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.98,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "icon_by_picture_twin",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[9] delete",
+        "context": "Bob Lunch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 12
+      },
+      "probabilities": {
+        "required": 0.06,
+        "performed": 0.04,
+        "ready": 0.06
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "escape_popup",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Go",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.34,
+        "ready": 0.93
+      },
+      "support": 0.5799999999999998,
+      "proposes_click": true,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "escape_popup",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Go",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 1.0,
+        "performed": 0.97,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "icon_by_picture_twin",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[9] delete",
+        "context": "Bob Lunch",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 12
+      },
+      "probabilities": {
+        "required": 0.07,
+        "performed": 0.06,
+        "ready": 0.07
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "escape_popup",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Go",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.38,
+        "ready": 0.95
+      },
+      "support": 0.56,
+      "proposes_click": true,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "escape_popup",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[4] Go",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 4
+      },
+      "probabilities": {
+        "required": 1.0,
+        "performed": 0.98,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "transfer.jsonl.gz",
+      "task": "cookie_banner_refused",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Show more",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.83,
+        "performed": 0.93,
+        "ready": 0.86
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_city",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply city",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.95
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_publish",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Publish note",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 8
+      },
+      "probabilities": {
+        "required": 0.96,
+        "performed": 0.98,
+        "ready": 0.92
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_already_queued",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Queue another receipt",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.52,
+        "ready": 0.27
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_selection_only",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply layout",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.13,
+        "ready": 0.58
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_city",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply city",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_publish",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Publish note",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 8
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.98,
+        "ready": 0.93
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_already_queued",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Queue another receipt",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.01,
+        "performed": 0.57,
+        "ready": 0.27
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_selection_only",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply layout",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.11,
+        "ready": 0.64
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_city",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply city",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_publish",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Publish note",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 8
+      },
+      "probabilities": {
+        "required": 0.97,
+        "performed": 0.99,
+        "ready": 0.9
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_already_queued",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[1] Queue another receipt",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 1
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.51,
+        "ready": 0.24
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-regression.jsonl.gz",
+      "task": "completion_selection_only",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Apply layout",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.02,
+        "performed": 0.17,
+        "ready": 0.6
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_channel",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Send test",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.95
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_document",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Download copy",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.97
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_acknowledge",
+      "repeat": 1,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Acknowledge reading",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.98,
+        "ready": 0.89
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_channel",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Send test",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_document",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Download copy",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.96
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_acknowledge",
+      "repeat": 2,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Acknowledge reading",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.98,
+        "ready": 0.92
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_channel",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Send test",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.98,
+        "ready": 0.94
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_document",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Download copy",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 2
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.99,
+        "ready": 0.95
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    },
+    {
+      "source": "completion-transfer.jsonl.gz",
+      "task": "completion_holdout_acknowledge",
+      "repeat": 3,
+      "provider": "jev_activation-vision@jev-1.14.0",
+      "passed": true,
+      "control": {
+        "element": "[2] Acknowledge reading",
+        "current_value": "",
+        "role": "button",
+        "form": null,
+        "node": 6
+      },
+      "probabilities": {
+        "required": 0.99,
+        "performed": 0.98,
+        "ready": 0.9
+      },
+      "support": 0,
+      "proposes_click": false,
+      "wire_error": null
+    }
+  ]
+}

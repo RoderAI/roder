@@ -1,0 +1,125 @@
+{
+  "vision": {
+    "attempts": 166,
+    "passed": 160,
+    "false_green": 5,
+    "median_wall_ms": 2396.5,
+    "wire_calls": 593,
+    "input_tokens": 1134231,
+    "failures": [
+      {
+        "task": "twin_by_context",
+        "repeat": 1,
+        "status": "done",
+        "failures": [
+          "dom `window.cart ?? []` = [\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\",\"Desk Lamp\"], expected [\"Desk Lamp\"]"
+        ]
+      },
+      {
+        "task": "enter_to_search",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "url http://127.0.0.1:61591/pages/keys.html does not end with /submit/search",
+          "0 posts, expected 1: []"
+        ]
+      },
+      {
+        "task": "frame_form",
+        "repeat": 3,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Subscribed: Ada Lovelace <ada@example.com>\""
+        ]
+      },
+      {
+        "task": "complex_allocation",
+        "repeat": 1,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Equipment reservation confirmed.\"",
+          "dom `window.audit.writes` = 0, expected 1",
+          "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+        ]
+      },
+      {
+        "task": "complex_allocation",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Equipment reservation confirmed.\"",
+          "dom `window.audit.writes` = 0, expected 1",
+          "dom `window.result` = null, expected [\"Workshop projector\",\"Workshop portable speaker\"]"
+        ]
+      },
+      {
+        "task": "icon_by_picture_twin",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      }
+    ]
+  },
+  "jev_dom_targets-vision@jev-1.14.0": {
+    "attempts": 166,
+    "passed": 162,
+    "false_green": 3,
+    "median_wall_ms": 1518.5,
+    "wire_calls": 586,
+    "input_tokens": 3631732,
+    "failures": [
+      {
+        "task": "date_field",
+        "repeat": 3,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      },
+      {
+        "task": "escape_popup",
+        "repeat": 1,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Go clicked for Paris\""
+        ]
+      },
+      {
+        "task": "escape_popup",
+        "repeat": 2,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Go clicked for Paris\""
+        ]
+      },
+      {
+        "task": "escape_popup",
+        "repeat": 3,
+        "status": "done",
+        "failures": [
+          "visible text lacks \"Go clicked for Paris\""
+        ]
+      }
+    ]
+  },
+  "jev_activation-vision@jev-1.14.0": {
+    "attempts": 166,
+    "passed": 165,
+    "false_green": 0,
+    "median_wall_ms": 1577.5,
+    "wire_calls": 700,
+    "input_tokens": 3818731,
+    "failures": [
+      {
+        "task": "login_form",
+        "repeat": 1,
+        "status": "blocked",
+        "failures": [
+          "status \"blocked\" != \"done\""
+        ]
+      }
+    ]
+  }
+}

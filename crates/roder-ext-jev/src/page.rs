@@ -46,6 +46,8 @@ pub(crate) const SNAPSHOT_JS: &str = concat!(
     include_str!("assets/names.js"),
     ",reach:",
     include_str!("assets/reach.js"),
+    ",dom:",
+    include_str!("assets/dom.js"),
     ",text:",
     include_str!("assets/text.js"),
     "})"

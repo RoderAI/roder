@@ -25,6 +25,7 @@ fn facts(status: u16) -> JevPageFacts {
         http_status: Some(status),
         headings: vec!["Access Denied".into()],
         frames: Vec::new(),
+        dom_snapshot: String::new(),
     }
 }
 
