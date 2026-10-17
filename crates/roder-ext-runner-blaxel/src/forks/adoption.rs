@@ -33,7 +33,7 @@ pub struct ForkSessionOptions {
 // raw responses through receipts/errors; admin reads are discarded in memory.
 #[derive(Deserialize)]
 pub(super) struct SandboxDocument {
-    metadata: Metadata,
+    pub(super) metadata: Metadata,
     spec: Value,
     status: String,
     state: Option<String>,
@@ -42,14 +42,16 @@ pub(super) struct SandboxDocument {
 }
 
 #[derive(Deserialize)]
-struct Metadata {
-    name: String,
-    workspace: String,
-    url: Option<String>,
+pub(super) struct Metadata {
+    pub(super) name: String,
+    pub(super) workspace: String,
+    pub(super) url: Option<String>,
+    #[serde(default, rename = "externalId")]
+    pub(super) external_id: Option<String>,
 }
 
 impl SandboxDocument {
-    fn ready(&self) -> Result<bool, ForkError> {
+    pub(super) fn ready(&self) -> Result<bool, ForkError> {
         match self.status.as_str() {
             "DEPLOYED" => Ok(matches!(self.state.as_deref(), Some("RUNNING" | "STANDBY"))),
             "DEPLOYING" | "BUILDING" | "UPLOADING" => Ok(false),
@@ -57,7 +59,7 @@ impl SandboxDocument {
         }
     }
 
-    fn runtime(&self) -> Result<ForkRuntime, ForkError> {
+    pub(super) fn runtime(&self) -> Result<ForkRuntime, ForkError> {
         ForkRuntime::from_sandbox(
             &self.spec,
             self.node_generation.as_deref().unwrap_or_default(),
@@ -66,7 +68,7 @@ impl SandboxDocument {
 }
 
 impl BlaxelForkClient {
-    async fn sandbox_document(
+    pub(super) async fn sandbox_document(
         &self,
         name: &str,
         show_secrets: bool,

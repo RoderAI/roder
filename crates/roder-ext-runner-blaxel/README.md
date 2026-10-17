@@ -72,6 +72,14 @@ pins are supported. `fork_live` and `fork_snapshot` require a deterministic targ
 a generation marker and a fresh maximum lifetime of at most 24 hours.
 Credentials never follow redirects.
 
+Before delivering private original-source continuation data, use
+`observe_original_source(name, external_id)`. One non-secret GET checks the exact
+workspace/name/external ID, ready state, endpoint scope and supported runtime and
+attachments. Compare the returned endpoint/configuration to the current runner
+session immediately before delivery; the observation is not a scrub, browser
+identity or application-admission receipt. `from_workspace` constructs this client
+from an explicit source-account profile without default credential lookup.
+
 Persist the allocation intent before dispatch. Mutations are sent once: an
 `Outcome::Unknown` requires reconciling the recorded identity, and HTTP 409
 requires validating the existing resource rather than adopting it automatically.

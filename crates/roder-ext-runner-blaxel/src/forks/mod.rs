@@ -6,6 +6,7 @@
 
 mod adoption;
 mod http;
+mod original;
 mod runtime;
 mod snapshot_spec;
 mod types;
@@ -19,6 +20,7 @@ use crate::Redacted;
 
 pub(crate) use adoption::ForkAllocation;
 pub use adoption::{ForkReadiness, ForkSessionOptions};
+pub use original::OriginalSourceObservation;
 pub use runtime::ForkRuntime;
 pub use snapshot_spec::SnapshotSpec;
 
@@ -39,6 +41,11 @@ pub struct BlaxelForkClient {
 }
 
 impl BlaxelForkClient {
+    /// Reuse an explicit source-account profile without consulting default env.
+    pub fn from_workspace(profile: &crate::BlaxelWorkspace) -> Result<Self, ForkError> {
+        Self::with_base_url(profile.token.clone(), &profile.workspace, &profile.base_url)
+    }
+
     pub fn new(token: Redacted, workspace: impl Into<String>) -> Result<Self, ForkError> {
         Self::with_base_url(token, workspace, crate::config::DEFAULT_BASE_URL)
     }
