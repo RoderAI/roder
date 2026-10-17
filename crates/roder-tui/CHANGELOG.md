@@ -1,3 +1,22 @@
+## 0.3.5 (2026-10-17)
+
+### Fixes
+
+#### Keep concurrent subagent streams out of the main transcript
+
+Route background agent reasoning, messages, tools, and lifecycle events to
+independent transcripts instead of mixing their tokens and turn counters with
+the parent. Press Left with an empty composer to open an agent overview, then
+Enter to inspect one agent's read-only live transcript and Left or Escape to
+return. Approval and input requests still use the normal dialogs.
+
+#### Show rejected follow-up requests instead of silently discarding errors
+
+Report background turn-start and steering request failures in the transcript,
+retain the latest follow-up for `/retry`, and clear a stale working indicator
+when the backend confirms that the exact turn being steered has already ended.
+Late responses never reactivate completed turns or clear a newer active turn.
+
 ## 0.3.4 (2026-10-10)
 
 ### Fixes
