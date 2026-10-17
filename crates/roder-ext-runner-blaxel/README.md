@@ -137,3 +137,13 @@ without process logs, environment, a wake request or a keep-alive mutation. A 40
 can race delayed creation and does not authorize restart. Provider process state
 does not attest to browser readiness, identity, admission or control ownership.
 Default-account, paused and adopted-fork sessions refuse these operations.
+
+For worker recovery, use `adopt_original_source(&observation, &options)` after a
+scoped original-source observation. It performs another non-secret GET and
+requires the same endpoint/runtime/account and a `RUNNING` source. Missing,
+changed or standby sources fail without provisioning, waking, lifecycle updates
+or process startup. The resulting explicit-workspace session can inspect the
+retained durable command; native identity/control and current source authority
+must still be checked before private delivery. Adoption uses `Keep` cleanup and
+no standby refresh; its `close` does not delete the VM. The durable owner must
+separately reconcile authorized physical cleanup.

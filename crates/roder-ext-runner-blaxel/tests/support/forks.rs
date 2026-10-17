@@ -24,8 +24,13 @@ impl Drop for Server {
 
 impl Server {
     pub async fn start(responses: Vec<String>) -> Self {
+        Self::start_with(|_| responses).await
+    }
+
+    pub async fn start_with(responses: impl FnOnce(&str) -> Vec<String>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v0", listener.local_addr().unwrap());
+        let responses = responses(&url);
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
         let task = tokio::spawn(async move {

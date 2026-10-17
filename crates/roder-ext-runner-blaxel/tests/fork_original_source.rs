@@ -23,6 +23,7 @@ async fn original_source_observation_is_one_scoped_read_without_wake_or_secret_e
             .observe_original_source("source-one", "inherited-parent")
             .await
             .unwrap();
+        assert_eq!(observed.is_running(), state == "RUNNING");
         assert_eq!(observed.name(), "source-one");
         assert_eq!(observed.external_id(), "inherited-parent");
         assert_eq!(observed.workspace(), "snapshot-workspace");

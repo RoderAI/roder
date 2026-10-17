@@ -7,6 +7,7 @@
 mod adoption;
 mod http;
 mod original;
+mod original_session;
 mod runtime;
 mod snapshot_spec;
 mod types;
@@ -21,6 +22,7 @@ use crate::Redacted;
 pub(crate) use adoption::ForkAllocation;
 pub use adoption::{ForkReadiness, ForkSessionOptions};
 pub use original::OriginalSourceObservation;
+pub use original_session::OriginalSessionOptions;
 pub use runtime::ForkRuntime;
 pub use snapshot_spec::SnapshotSpec;
 

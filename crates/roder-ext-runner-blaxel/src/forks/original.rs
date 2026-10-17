@@ -10,6 +10,7 @@ pub struct OriginalSourceObservation {
     endpoint_url: String,
     control_base_url: String,
     runtime: ForkRuntime,
+    running: bool,
 }
 
 impl OriginalSourceObservation {
@@ -27,6 +28,9 @@ impl OriginalSourceObservation {
     }
     pub fn control_base_url(&self) -> &str {
         &self.control_base_url
+    }
+    pub fn is_running(&self) -> bool {
+        self.running
     }
     pub fn runtime(&self) -> &ForkRuntime {
         &self.runtime
@@ -55,6 +59,7 @@ impl BlaxelForkClient {
         if !document.ready()? || document.metadata.external_id.as_deref() != Some(external_id) {
             return Err(ForkError::rejected("original source identity unavailable"));
         }
+        let running = document.running();
         let runtime = document.runtime()?;
         let endpoint_url = document
             .metadata
@@ -69,6 +74,7 @@ impl BlaxelForkClient {
             endpoint_url,
             control_base_url: self.base_url.clone(),
             runtime,
+            running,
         })
     }
 }

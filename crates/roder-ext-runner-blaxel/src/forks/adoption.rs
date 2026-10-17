@@ -51,6 +51,9 @@ pub(super) struct Metadata {
 }
 
 impl SandboxDocument {
+    pub(super) fn running(&self) -> bool {
+        self.state.as_deref() == Some("RUNNING")
+    }
     pub(super) fn ready(&self) -> Result<bool, ForkError> {
         match self.status.as_str() {
             "DEPLOYED" => Ok(matches!(self.state.as_deref(), Some("RUNNING" | "STANDBY"))),
