@@ -31,6 +31,7 @@ mod policy;
 mod prompts;
 mod python_json;
 mod report;
+mod request_budget;
 mod runner;
 mod scope;
 mod secret;
@@ -49,7 +50,9 @@ use roder_api::extension::{
 use semver::Version;
 
 pub use decide::JevTypeSafeDecisionClient;
-pub use decisions::{ComputerCandidate, ComputerDecision, OpenAiDecisionsClient};
+pub use decisions::{
+    ComputerCandidate, ComputerDecision, DecisionsBrowserProfile, OpenAiDecisionsClient,
+};
 pub use engine::{
     Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
     JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,

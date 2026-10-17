@@ -28,23 +28,39 @@ impl Agent {
         }
         let decision = self.config.decision.as_ref();
         let (observation, goal, history) = (&observed, &self.config.goal, &self.history);
-        let chosen = if self.config.irreversible_gate {
-            decision.choose_gated(observation, goal, history).await
-        } else {
-            decision.choose(observation, goal, history).await
-        };
+        let remaining = self
+            .config
+            .max_actions
+            .saturating_mul(2)
+            .saturating_sub(self.decisions);
+        let (chosen, requests) = crate::request_budget::scope(remaining, async {
+            if self.config.irreversible_gate {
+                decision.choose_gated(observation, goal, history).await
+            } else {
+                decision.choose(observation, goal, history).await
+            }
+        })
+        .await;
         let decision = match chosen {
             Ok(decision) => decision,
             Err(error) => {
                 // An answer that failed validation was still billed.
                 if let Some(usage) = JevBilled::usage_of(&error) {
-                    self.decisions += 1;
+                    self.decisions = self.decisions.saturating_add(if requests > 0 {
+                        requests
+                    } else {
+                        reported_calls(usage)
+                    });
                     self.unusable_decisions.push(usage.clone());
                 }
                 return Err(error);
             }
         };
-        self.decisions += 1;
+        self.decisions = self.decisions.saturating_add(if requests > 0 {
+            requests
+        } else {
+            reported_calls(&decision.usage)
+        });
         self.unusable_streak.clear();
         self.decision_calls.push(JevDecisionRecord {
             choice: decision.choice.clone(),
@@ -60,6 +76,13 @@ impl Agent {
         });
         Ok(decision)
     }
+}
+fn reported_calls(usage: &Value) -> usize {
+    usage["calls"]
+        .as_u64()
+        .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+        .unwrap_or(1)
+        .max(1)
 }
 fn may_capture(observation: &Value, secret_input: bool, history: &[Value]) -> bool {
     !secret_input

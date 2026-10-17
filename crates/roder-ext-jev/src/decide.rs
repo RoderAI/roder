@@ -40,9 +40,15 @@ pub struct JevTypeSafeDecisionClient {
     profile: crate::jev_prompt::Profile,
     transport: Arc<dyn JevDecisionTransport>,
     images: bool,
+    composed_transport: bool,
 }
 
 impl JevTypeSafeDecisionClient {
+    /// Native adapters reserve their own leaf provider requests.
+    pub(crate) fn with_composed_transport(mut self) -> Self {
+        self.composed_transport = true;
+        self
+    }
     pub(crate) fn with_profile(mut self, profile: crate::jev_prompt::Profile) -> Self {
         self.profile = profile;
         self
@@ -67,6 +73,7 @@ impl JevTypeSafeDecisionClient {
                 RetryPolicy::default(),
             )),
             images: false,
+            composed_transport: false,
         }
     }
 
@@ -79,6 +86,7 @@ impl JevTypeSafeDecisionClient {
             profile: crate::jev_prompt::Profile::Workflow,
             transport,
             images: false,
+            composed_transport: false,
         }
     }
 }
@@ -91,12 +99,18 @@ impl JevTypeSafeDecisionClient {
         history: &[Value],
         gate: bool,
     ) -> anyhow::Result<JevDecision> {
+        let budgeted = crate::request_budget::Transport(self.transport.as_ref());
+        let transport: &dyn JevDecisionTransport = if self.composed_transport {
+            self.transport.as_ref()
+        } else {
+            &budgeted
+        };
         let image = match observation["_screenshot"].as_str() {
             Some(screenshot) if self.images => images::fit(screenshot).ok(),
             _ => None,
         };
         let imaged = Imaged {
-            inner: self.transport.as_ref(),
+            inner: transport,
             image,
             observation,
             placement: if matches!(
@@ -129,7 +143,7 @@ impl JevTypeSafeDecisionClient {
             DecisionOptions {
                 gate,
                 activation_audit: (self.profile == crate::jev_prompt::Profile::Activation)
-                    .then_some(self.transport.as_ref()),
+                    .then_some(transport),
             },
         )
         .await

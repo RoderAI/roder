@@ -70,6 +70,8 @@ async fn decisions_vs_jev() {
         ("verified", Strategy::Verified),
         ("effects", Strategy::Effects),
         ("vision", Strategy::Vision),
+        ("vision_dom", Strategy::VisionDom),
+        ("vision_activation", Strategy::VisionAudited),
         ("grounded", Strategy::Grounded),
     ];
     // A TypeSafe variant may pin its own model as `name@model` (for example
@@ -189,7 +191,7 @@ async fn decisions_vs_jev() {
                             task.expect.grade(&outcome),
                         );
                         row.telemetry = json!({"model":outcome.result.decisions.iter().rev().find_map(|d| d.model.clone()),
-                            "usage":outcome.result.usage, "dom_probes":outcome.probed.dom, "decisions":outcome.result.decisions.iter().map(|d|json!({"operation":d.operation,"target":d.target,"confidence":d.confidence,"target_confidence":d.target_confidence,"probabilities":d.probabilities})).collect::<Vec<_>>(), "actions":outcome.result.actions,
+                            "usage":outcome.result.usage, "browser_decision_attempts":outcome.watch.laps.get("decide").map(|lap|lap.calls), "dom_probes":outcome.probed.dom, "decisions":outcome.result.decisions.iter().map(|d|json!({"operation":d.operation,"target":d.target,"confidence":d.confidence,"target_confidence":d.target_confidence,"probabilities":d.probabilities})).collect::<Vec<_>>(), "actions":outcome.result.actions,
                             "decision_latency_ms":outcome.result.decisions.iter().map(|d| d.latency_ms).collect::<Vec<_>>()});
                         row
                     }

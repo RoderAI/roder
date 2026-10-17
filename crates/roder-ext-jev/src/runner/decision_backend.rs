@@ -1,6 +1,8 @@
 //! Runtime selection of the browser's decision service.
 use super::{env_value, key_from_env_or_config};
-use crate::{JevDecisionClient, JevTypeSafeDecisionClient, OpenAiDecisionsClient};
+use crate::{
+    DecisionsBrowserProfile, JevDecisionClient, JevTypeSafeDecisionClient, OpenAiDecisionsClient,
+};
 use anyhow::{Context, bail};
 use std::sync::Arc;
 
@@ -63,7 +65,9 @@ fn resolve_with(
                      Codex sign-in is not supported; {OTHER_BROWSERS}"
                 )
             })?;
-            let client = OpenAiDecisionsClient::new(api_key);
+            let client = OpenAiDecisionsClient::new(api_key).with_browser_profile(
+                decisions_profile(env_value("JEV_DECISIONS_PROFILE").as_deref())?,
+            );
             let client = match env_value("JEV_DECISIONS_TEXT_ONLY").as_deref() {
                 None | Some("0") => client,
                 Some("1") => client.text_only(),
@@ -75,9 +79,39 @@ fn resolve_with(
     }
 }
 
+fn decisions_profile(raw: Option<&str>) -> anyhow::Result<DecisionsBrowserProfile> {
+    match raw {
+        None | Some("vision") => Ok(DecisionsBrowserProfile::Visual),
+        Some("dom") => Ok(DecisionsBrowserProfile::SemanticDom),
+        Some("activation") => Ok(DecisionsBrowserProfile::Audited),
+        _ => bail!("JEV_DECISIONS_PROFILE must be vision, dom or activation"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decisions_profiles_are_explicit_and_unknown_values_fail() {
+        assert_eq!(
+            decisions_profile(None).unwrap(),
+            DecisionsBrowserProfile::Visual
+        );
+        assert_eq!(
+            decisions_profile(Some("vision")).unwrap(),
+            DecisionsBrowserProfile::Visual
+        );
+        assert_eq!(
+            decisions_profile(Some("dom")).unwrap(),
+            DecisionsBrowserProfile::SemanticDom
+        );
+        assert_eq!(
+            decisions_profile(Some("activation")).unwrap(),
+            DecisionsBrowserProfile::Audited
+        );
+        assert!(decisions_profile(Some("typo")).is_err());
+    }
 
     #[test]
     fn openai_requires_only_its_own_key() {
