@@ -1,0 +1,30 @@
+{
+  "vision": {
+    "both_pass": 159,
+    "candidate_only_pass": [
+      "twin_by_context#1",
+      "enter_to_search#2",
+      "frame_form#3",
+      "complex_allocation#1",
+      "complex_allocation#2",
+      "icon_by_picture_twin#3"
+    ],
+    "control_only_pass": [
+      "login_form#1"
+    ],
+    "median_paired_delta_ms_both_pass": -673
+  },
+  "jev_dom_targets-vision@jev-1.14.0": {
+    "both_pass": 161,
+    "candidate_only_pass": [
+      "date_field#3",
+      "escape_popup#1",
+      "escape_popup#2",
+      "escape_popup#3"
+    ],
+    "control_only_pass": [
+      "login_form#1"
+    ],
+    "median_paired_delta_ms_both_pass": 63
+  }
+}

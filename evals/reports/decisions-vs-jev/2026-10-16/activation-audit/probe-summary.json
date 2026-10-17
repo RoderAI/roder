@@ -1,0 +1,69 @@
+{
+  "wording": {
+    "baseline": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    },
+    "all_clauses": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    },
+    "checklist": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    },
+    "completion_noul": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    }
+  },
+  "modalities": {
+    "baseline": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    },
+    "aligned_refs": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    },
+    "text": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    },
+    "aligned_text": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 6,
+      "missed_done": 0
+    }
+  },
+  "joint": {
+    "compact_joint": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 5,
+      "missed_done": 0
+    },
+    "joint_refs": {
+      "requests": 52,
+      "errors": 0,
+      "false_done": 2,
+      "missed_done": 0
+    }
+  },
+  "interpretation": "Repeated judgments of correlated recorded states, not independent browser outcomes. Non-DONE is not proof the next action is correct. Other probe formats retained raw; replan mismatches excluded from matched-state validation."
+}

@@ -1,0 +1,29 @@
+{
+  "toolchain": "Rust 1.95.0",
+  "library": {
+    "initial_passed": 729,
+    "initial_failed": 3,
+    "ignored": 14,
+    "failures": [
+      "fixture_harness::autoconsent_tests::consent_js_still_refuses_a_banner_autoconsent_does_not_know",
+      "fixture_harness::settle_tests::a_combobox_fill_returns_once_suggestions_show",
+      "fixture_harness::evals::keyless::keyless_corpus_passes"
+    ],
+    "isolated_reruns": "All three passed. Keyless reran the complete 53-task corpus. Initial timing/call-count failures retained; not a clean single-pass library run.",
+    "bounded_full_rerun": {
+      "passed": 732,
+      "failed": 0,
+      "ignored": 14,
+      "RUST_MIN_STACK": 16777216,
+      "test_threads": 4,
+      "JEV_REQUIRE_CHROME": 1
+    },
+    "invocation_error": "An earlier direct-binary bounded rerun omitted Cargo config RUST_MIN_STACK and aborted with stack overflow; retained separately and corrected without source changes."
+  },
+  "integration_passed": 85,
+  "doc_passed": 1,
+  "clippy": "Package --all-targets --no-deps -- -D warnings passed. Dependency-inclusive run found three pre-existing roder-api lints; original failure retained.",
+  "format": "make fmt and make fmt-check passed",
+  "release": "changeset gate passed; knope config current",
+  "source_files_verified": 371
+}

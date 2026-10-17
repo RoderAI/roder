@@ -21,7 +21,8 @@ out = {}
 for pair in sys.argv[2:]:
     subject, control = pair.split(':')
     a, b = groups[subject], groups[control]
-    assert a.keys() == b.keys(), 'Unpaired attempts'
+    if a.keys() != b.keys():
+        raise SystemExit('Unpaired attempts')
     both = [k for k in a if a[k]['pass'] and b[k]['pass']]
     out[f'{subject} vs {control}'] = {
         'both_pass': len(both),

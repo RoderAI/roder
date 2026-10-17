@@ -1,0 +1,197 @@
+[
+  {
+    "repeat": 1,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:57590/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 400
+      },
+      {
+        "step": 2,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:57590/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 836
+      },
+      {
+        "step": 3,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:57590/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1337
+      }
+    ],
+    "audits": [
+      {
+        "required": {
+          "type": "noul",
+          "noul": 0.99
+        },
+        "performed": {
+          "type": "noul",
+          "noul": 0.31
+        },
+        "ready": {
+          "type": "noul",
+          "noul": 0.94
+        }
+      },
+      {
+        "required": {
+          "type": "noul",
+          "noul": 0.99
+        },
+        "performed": {
+          "type": "noul",
+          "noul": 0.98
+        },
+        "ready": {
+          "type": "noul",
+          "noul": 0.96
+        }
+      }
+    ]
+  },
+  {
+    "repeat": 2,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:57812/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 349
+      },
+      {
+        "step": 2,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:57812/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 783
+      },
+      {
+        "step": 3,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:57812/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1306
+      }
+    ],
+    "audits": [
+      {
+        "required": {
+          "type": "noul",
+          "noul": 0.99
+        },
+        "performed": {
+          "type": "noul",
+          "noul": 0.34
+        },
+        "ready": {
+          "type": "noul",
+          "noul": 0.93
+        }
+      },
+      {
+        "required": {
+          "type": "noul",
+          "noul": 1.0
+        },
+        "performed": {
+          "type": "noul",
+          "noul": 0.97
+        },
+        "ready": {
+          "type": "noul",
+          "noul": 0.96
+        }
+      }
+    ]
+  },
+  {
+    "repeat": 3,
+    "actions": [
+      {
+        "step": 1,
+        "action": "City",
+        "kind": "fill",
+        "text": "Paris",
+        "url": "http://127.0.0.1:58023/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City value: empty -> Paris; City expanded: false -> true; showed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 370
+      },
+      {
+        "step": 2,
+        "action": "Paris",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:58023/pages/keys.html",
+        "page_changed": true,
+        "effect": "changed City expanded: true -> false; removed 3 controls: Paris, Parma, Parla",
+        "elapsed_ms": 852
+      },
+      {
+        "step": 3,
+        "action": "Go",
+        "kind": "click",
+        "text": null,
+        "url": "http://127.0.0.1:58023/pages/keys.html",
+        "page_changed": true,
+        "effect": "nothing visible changed",
+        "elapsed_ms": 1349
+      }
+    ],
+    "audits": [
+      {
+        "required": {
+          "type": "noul",
+          "noul": 0.99
+        },
+        "performed": {
+          "type": "noul",
+          "noul": 0.38
+        },
+        "ready": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      {
+        "required": {
+          "type": "noul",
+          "noul": 1.0
+        },
+        "performed": {
+          "type": "noul",
+          "noul": 0.98
+        },
+        "ready": {
+          "type": "noul",
+          "noul": 0.96
+        }
+      }
+    ]
+  }
+]

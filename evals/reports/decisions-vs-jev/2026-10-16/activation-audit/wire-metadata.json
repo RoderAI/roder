@@ -1,0 +1,266 @@
+{
+  "confirmation.jsonl.gz": {
+    "vision": {
+      "wire_calls": 227,
+      "models": {
+        "gpt-6-luna": 227
+      },
+      "image_placement": {},
+      "image_references": 0,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_dom_targets-vision@jev-1.14.0": {
+      "wire_calls": 214,
+      "models": {
+        "jev-1.14.0": 214
+      },
+      "image_placement": {
+        "shared": 214
+      },
+      "image_references": 214,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_activation-vision@jev-1.14.0": {
+      "wire_calls": 254,
+      "models": {
+        "jev-1.14.0": 254
+      },
+      "image_placement": {
+        "shared": 215,
+        "text": 39
+      },
+      "image_references": 215,
+      "wire_errors": 0,
+      "activation_audits": 39
+    }
+  },
+  "complex-dev.jsonl.gz": {
+    "vision": {
+      "wire_calls": 82,
+      "models": {
+        "gpt-6-luna": 82
+      },
+      "image_placement": {},
+      "image_references": 0,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_dom_targets-vision@jev-1.14.0": {
+      "wire_calls": 94,
+      "models": {
+        "jev-1.14.0": 94
+      },
+      "image_placement": {
+        "shared": 92,
+        "targets": 2
+      },
+      "image_references": 98,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_activation-vision@jev-1.14.0": {
+      "wire_calls": 110,
+      "models": {
+        "jev-1.14.0": 110
+      },
+      "image_placement": {
+        "shared": 92,
+        "text": 16,
+        "targets": 2
+      },
+      "image_references": 98,
+      "wire_errors": 0,
+      "activation_audits": 16
+    }
+  },
+  "compound-regression.jsonl.gz": {
+    "vision": {
+      "wire_calls": 114,
+      "models": {
+        "gpt-6-luna": 114
+      },
+      "image_placement": {},
+      "image_references": 0,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_dom_targets-vision@jev-1.14.0": {
+      "wire_calls": 116,
+      "models": {
+        "jev-1.14.0": 116
+      },
+      "image_placement": {
+        "shared": 105,
+        "targets": 11
+      },
+      "image_references": 149,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_activation-vision@jev-1.14.0": {
+      "wire_calls": 134,
+      "models": {
+        "jev-1.14.0": 134
+      },
+      "image_placement": {
+        "shared": 105,
+        "text": 18,
+        "targets": 11
+      },
+      "image_references": 149,
+      "wire_errors": 0,
+      "activation_audits": 18
+    }
+  },
+  "search-regression.jsonl.gz": {
+    "vision": {
+      "wire_calls": 27,
+      "models": {
+        "gpt-6-luna": 27
+      },
+      "image_placement": {},
+      "image_references": 0,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_dom_targets-vision@jev-1.14.0": {
+      "wire_calls": 27,
+      "models": {
+        "jev-1.14.0": 27
+      },
+      "image_placement": {
+        "shared": 27
+      },
+      "image_references": 27,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_activation-vision@jev-1.14.0": {
+      "wire_calls": 33,
+      "models": {
+        "jev-1.14.0": 33
+      },
+      "image_placement": {
+        "shared": 27,
+        "text": 6
+      },
+      "image_references": 27,
+      "wire_errors": 0,
+      "activation_audits": 6
+    }
+  },
+  "transfer.jsonl.gz": {
+    "vision": {
+      "wire_calls": 71,
+      "models": {
+        "gpt-6-luna": 71
+      },
+      "image_placement": {},
+      "image_references": 0,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_dom_targets-vision@jev-1.14.0": {
+      "wire_calls": 63,
+      "models": {
+        "jev-1.14.0": 63
+      },
+      "image_placement": {
+        "shared": 42,
+        "text": 21
+      },
+      "image_references": 42,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_activation-vision@jev-1.14.0": {
+      "wire_calls": 76,
+      "models": {
+        "jev-1.14.0": 76
+      },
+      "image_placement": {
+        "shared": 45,
+        "text": 31
+      },
+      "image_references": 45,
+      "wire_errors": 0,
+      "activation_audits": 10
+    }
+  },
+  "completion-regression.jsonl.gz": {
+    "vision": {
+      "wire_calls": 30,
+      "models": {
+        "gpt-6-luna": 30
+      },
+      "image_placement": {},
+      "image_references": 0,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_dom_targets-vision@jev-1.14.0": {
+      "wire_calls": 30,
+      "models": {
+        "jev-1.14.0": 30
+      },
+      "image_placement": {
+        "shared": 30
+      },
+      "image_references": 30,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_activation-vision@jev-1.14.0": {
+      "wire_calls": 42,
+      "models": {
+        "jev-1.14.0": 42
+      },
+      "image_placement": {
+        "shared": 30,
+        "text": 12
+      },
+      "image_references": 30,
+      "wire_errors": 0,
+      "activation_audits": 12
+    }
+  },
+  "completion-transfer.jsonl.gz": {
+    "vision": {
+      "wire_calls": 42,
+      "models": {
+        "gpt-6-luna": 42
+      },
+      "image_placement": {},
+      "image_references": 0,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_dom_targets-vision@jev-1.14.0": {
+      "wire_calls": 42,
+      "models": {
+        "jev-1.14.0": 42
+      },
+      "image_placement": {
+        "shared": 42
+      },
+      "image_references": 42,
+      "wire_errors": 0,
+      "activation_audits": 0
+    },
+    "jev_activation-vision@jev-1.14.0": {
+      "wire_calls": 51,
+      "models": {
+        "jev-1.14.0": 51
+      },
+      "image_placement": {
+        "shared": 42,
+        "text": 9
+      },
+      "image_references": 42,
+      "wire_errors": 0,
+      "activation_audits": 9
+    }
+  }
+}
