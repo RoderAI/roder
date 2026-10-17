@@ -1155,6 +1155,42 @@ async fn providers_list_hides_auto_options_when_routing_is_disabled() {
 }
 
 #[tokio::test]
+async fn model_select_reads_previous_selection_without_loading_history() {
+    let mut builder = ExtensionRegistryBuilder::new();
+    builder.inference_engine(Arc::new(FakeInferenceEngine));
+    builder.thread_store_factory(Arc::new(FailingThreadStoreFactory));
+    let runtime =
+        Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
+    let client = LocalAppClient::new(Arc::new(app_server(runtime)));
+
+    let selected: ModelSelectResult = request(
+        &client,
+        "model/select",
+        Some(
+            serde_json::to_value(ModelSelectParams {
+                selection: ModelSelectChoice::Manual {
+                    provider: PROVIDER_MOCK.to_string(),
+                    model: Some("gpt-5.5".to_string()),
+                    reasoning: Some("medium".to_string()),
+                },
+                thread_id: Some("metadata-only-thread".to_string()),
+            })
+            .unwrap(),
+        ),
+    )
+    .await;
+
+    assert_eq!(selected.provider, PROVIDER_MOCK);
+    assert_eq!(selected.model, "gpt-5.5");
+    assert!(
+        selected
+            .model_switch_summary
+            .unwrap()
+            .contains("previous profile mock/mock")
+    );
+}
+
+#[tokio::test]
 async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
     let contexts = Arc::new(StdMutex::new(Vec::new()));
     let mut builder = ExtensionRegistryBuilder::new();

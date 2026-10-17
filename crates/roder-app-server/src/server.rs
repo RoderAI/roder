@@ -3662,11 +3662,10 @@ impl AppServer {
     async fn protocol_thread_model(&self, thread_id: &str) -> Option<ProtocolThreadModelSelection> {
         if let Some(selection) = self
             .runtime
-            .load_thread(&thread_id.to_string())
+            .load_thread_metadata(thread_id)
             .await
             .ok()
             .flatten()
-            .and_then(|snapshot| snapshot.metadata)
             .and_then(|metadata| {
                 if let Some(selection_mode) = metadata.selection_mode {
                     return Some(ProtocolThreadModelSelection::from_selection_mode(

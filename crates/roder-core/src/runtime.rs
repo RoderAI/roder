@@ -2643,9 +2643,8 @@ impl Runtime {
             return Ok(None);
         };
         Ok(store
-            .load_thread(thread_id)
+            .load_thread_metadata(thread_id)
             .await?
-            .and_then(|snapshot| snapshot.metadata)
             .and_then(|metadata| {
                 metadata
                     .selection_mode
@@ -2716,11 +2715,8 @@ impl Runtime {
         let Some(store) = &self.thread_store else {
             return Ok(());
         };
-        let Some(snapshot) = store.load_thread(thread_id).await? else {
+        let Some(mut metadata) = store.load_thread_metadata(thread_id).await? else {
             anyhow::bail!("thread not found: {thread_id}");
-        };
-        let Some(mut metadata) = snapshot.metadata else {
-            return Ok(());
         };
         let concrete = selection_mode.concrete_selection();
         metadata.provider = Some(concrete.provider);
@@ -8931,6 +8927,74 @@ mod tests {
         assert_eq!(plain_edit.description, "edit test tool");
 
         let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn model_selection_reads_and_updates_metadata_without_loading_history() {
+        let thread_root = tempfile::tempdir().unwrap();
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(SwitchCaptureEngine {
+            requests: Arc::new(StdMutex::new(Vec::new())),
+        }));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.path().to_path_buf(),
+        }));
+        let runtime = Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap();
+        let thread = runtime
+            .create_thread(Some("Metadata-only model switch".to_string()))
+            .await
+            .unwrap();
+        let dir = thread_root.path().join(&thread.thread_id);
+        // Invalid history makes any accidental full-snapshot read fail.
+        for file in ["events.jsonl", "item_events.jsonl", "extension_state.jsonl"] {
+            tokio::fs::write(dir.join(file), b"history must not be read\n")
+                .await
+                .unwrap();
+        }
+        let selection = ModelSelectionMode::manual(
+            roder_api::catalog::PROVIDER_MOCK.to_string(),
+            "gpt-5.5".to_string(),
+            Some("medium".to_string()),
+        );
+
+        runtime
+            .set_thread_selection_mode(&thread.thread_id, selection.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime
+                .selection_mode_for_thread(&thread.thread_id)
+                .await
+                .unwrap(),
+            Some(selection.clone())
+        );
+        let metadata = runtime
+            .load_thread_metadata(&thread.thread_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.selection_mode, Some(selection));
+        assert_eq!(metadata.provider, thread.provider);
+        assert_eq!(metadata.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(metadata.title, thread.title);
+        assert_eq!(metadata.workspace, thread.workspace);
+        for file in ["events.jsonl", "item_events.jsonl", "extension_state.jsonl"] {
+            assert_eq!(
+                tokio::fs::read(dir.join(file)).await.unwrap(),
+                b"history must not be read\n"
+            );
+        }
+        assert!(
+            runtime
+                .set_thread_selection_mode(
+                    &"missing-thread".to_string(),
+                    ModelSelectionMode::manual("mock", "mock", None),
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("thread not found")
+        );
     }
 
     #[tokio::test]
