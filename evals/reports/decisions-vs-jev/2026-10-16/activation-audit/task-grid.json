@@ -1,0 +1,74 @@
+{
+  "confirmation": [
+    "contact_form",
+    "search_autocomplete",
+    "select_dropdown",
+    "pagination",
+    "below_the_fold",
+    "twin_by_context",
+    "table_row_by_context",
+    "delayed_spa",
+    "missing_value",
+    "confirm_dialog",
+    "menu_button",
+    "styled_checkbox",
+    "date_field",
+    "icon_by_picture",
+    "unlabelled_fields",
+    "scroll_region",
+    "enter_to_search",
+    "shadow_component",
+    "frame_form",
+    "new_tab",
+    "gate_pay_now",
+    "gate_delete_account",
+    "gate_authorized_delete",
+    "gate_add_to_cart"
+  ],
+  "complex-dev": [
+    "complex_dispatch",
+    "complex_invoice",
+    "complex_report",
+    "complex_review",
+    "complex_profile",
+    "complex_cancel",
+    "complex_booking",
+    "complex_allocation"
+  ],
+  "compound-regression": [
+    "complex_holdout_1",
+    "complex_holdout_2",
+    "complex_holdout_3",
+    "complex_holdout_4",
+    "complex_holdout_5",
+    "complex_holdout_6"
+  ],
+  "search-regression": [
+    "holdout_cart",
+    "holdout_already",
+    "holdout_search",
+    "holdout_preferences"
+  ],
+  "transfer": [
+    "covered_target",
+    "icon_by_picture_twin",
+    "focus_handoff",
+    "escape_popup",
+    "off_origin",
+    "cookie_banner_refused",
+    "login_form",
+    "one_time_code_resolved"
+  ],
+  "completion-regression": [
+    "completion_city",
+    "completion_publish",
+    "completion_already_queued",
+    "completion_selection_only"
+  ],
+  "completion-transfer": [
+    "completion_holdout_channel",
+    "completion_holdout_document",
+    "completion_holdout_acknowledge",
+    "completion_holdout_quantity"
+  ]
+}

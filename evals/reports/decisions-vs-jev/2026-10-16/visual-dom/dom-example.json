@@ -1,0 +1,74 @@
+{
+  "source": "confirmation.jsonl.gz",
+  "task": "contact_form",
+  "repeat": 1,
+  "provider": "vision_dom",
+  "wire_index": 0,
+  "dom_snapshot": "- heading \"Contact us\" [level=1]\n- form\n  - text \"Name \"\n  - textbox \"Name\" [node=1]\n  - text \"Email \"\n  - textbox \"Email\" [node=2]\n  - text \"Message \"\n  - textbox \"Message\" [node=3]\n  - button \"Send message\" [node=4]",
+  "controls": [
+    {
+      "index": "1",
+      "node": 1,
+      "label": "Name",
+      "form": {
+        "id": 5,
+        "fields": [
+          "Name",
+          "Email",
+          "Message"
+        ],
+        "submit_buttons": [
+          "Send message"
+        ]
+      }
+    },
+    {
+      "index": "2",
+      "node": 2,
+      "label": "Email",
+      "form": {
+        "id": 5,
+        "fields": [
+          "Name",
+          "Email",
+          "Message"
+        ],
+        "submit_buttons": [
+          "Send message"
+        ]
+      }
+    },
+    {
+      "index": "3",
+      "node": 3,
+      "label": "Message",
+      "form": {
+        "id": 5,
+        "fields": [
+          "Name",
+          "Email",
+          "Message"
+        ],
+        "submit_buttons": [
+          "Send message"
+        ]
+      }
+    },
+    {
+      "index": "4",
+      "node": 4,
+      "label": "Send message",
+      "form": {
+        "id": 5,
+        "fields": [
+          "Name",
+          "Email",
+          "Message"
+        ],
+        "submit_buttons": [
+          "Send message"
+        ]
+      }
+    }
+  ]
+}

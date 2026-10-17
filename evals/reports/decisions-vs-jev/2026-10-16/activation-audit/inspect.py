@@ -20,6 +20,8 @@ for source in args.sources:
     groups = collections.defaultdict(lambda: {"wire_calls": 0, "models": collections.Counter(),
         "image_placement": collections.Counter(), "image_references": 0, "wire_errors": 0, "activation_audits": 0})
     for line in content.splitlines():
+        if not line.strip():
+            continue
         row = json.loads(line)
         provider = row["telemetry"]["provider"]
         group = groups[provider]

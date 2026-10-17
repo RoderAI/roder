@@ -1,0 +1,52 @@
+{
+  "source_commit": "50fdd040910dcfe466b31b9a96947436717643cc",
+  "rust": "1.95.0",
+  "cargo_target_dir": "/Users/pz/.cargo-target.noindex/jev-hillclimb-rust195",
+  "tests": {
+    "library_passed": 742,
+    "library_ignored_paid_live": 14,
+    "integration_passed": 88,
+    "doc_passed": 1,
+    "failed": 0,
+    "library_threads": 4,
+    "chrome_required": true
+  },
+  "clippy": "cargo clippy -p roder-ext-jev --all-targets --no-deps -- -D warnings",
+  "format": [
+    "make fmt",
+    "make fmt-check"
+  ],
+  "release": [
+    "python scripts/check-changesets.py --base origin/master",
+    "python scripts/generate-knope-config.py --check"
+  ],
+  "earlier_failure": "An earlier suite expected unbilled HTTP 401 to keep model_calls=0, but initially counted its reservation as one. Corrected before the freeze; the complete suite then passed. The earlier failure log is retained.",
+  "helpers": "Normal and optimized Python: exact frozen task grids, all-failure paired latency, blank lines, duplicate basenames, component call mismatches and binary mismatch preflight. New helper checks also run against actual native confirmation requests.",
+  "post_freeze": {
+    "base_commit": "50fdd040910dcfe466b31b9a96947436717643cc",
+    "library_passed": 742,
+    "integration_passed": 90,
+    "doc_passed": 1,
+    "failed": 0,
+    "purpose": "Expose the existing component reservation boundary to custom clients, fill omitted usage.calls from observed reservations, clarify image/split contracts, and assert completed/no-target audit request counts. No prompt or fixture retuning.",
+    "changed_source_sha256": {
+      ".changeset/decisions_semantic_audits.md": "b1ca52a12a286df01b877793529aea75679823c5b09e40b1cd0e0639e268541c",
+      "crates/roder-ext-jev/src/agent/predict.rs": "92adc6a204522fcfd60b7654cdefd5ef49e9b5718656489f248c4702177fe743",
+      "crates/roder-ext-jev/src/decisions/semantic/tests.rs": "f535a843aba23e7500b311bc0eaf486f908814b0012dbee19889b9b494c0b800",
+      "crates/roder-ext-jev/src/engine.rs": "d84f697295df48c4a6e07a483376951a00264f660746f36b12919f8b72ae21c7",
+      "crates/roder-ext-jev/src/engine/decision_client.rs": "a4ca4f2c80c61f8e2082a6ad5e49bc54542e00354b482cfd398708f8255643a6",
+      "crates/roder-ext-jev/src/request_budget.rs": "c1b39c172ad07f9fb2cf1ea1c97d3b8124d9432166996b416105ba7c47ee08bc",
+      "crates/roder-ext-jev/tests/custom_decision_budget.rs": "37be4cf4ca680b3bb0d4a4a6292111f74306245838770d782b5391fc3fba856d",
+      "docs/openai-decisions-browser.md": "297f8cc32024fa104de6e4db3b31df4e737ee63c909bdfc4598c5bf25e77f46c"
+    },
+    "checks": [
+      "full package tests with Chrome required and four threads",
+      "Clippy --all-targets --no-deps -D warnings",
+      "make fmt",
+      "make fmt-check",
+      "changeset gate",
+      "generated knope config"
+    ],
+    "earlier_test_compile_failure": "A new integration assertion initially used Option instead of the existing JevTokenCount enum; corrected before the successful complete suite. Initial compile log retained."
+  }
+}

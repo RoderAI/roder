@@ -7,6 +7,8 @@ from pathlib import Path
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('sources', nargs='+', type=Path)
 args = parser.parse_args()
+if len({source.name for source in args.sources}) != len(args.sources):
+    parser.error('Source basenames must be unique; inspect matching names separately')
 records = []
 for source in args.sources:
     opener = gzip.open if source.suffix == '.gz' else open

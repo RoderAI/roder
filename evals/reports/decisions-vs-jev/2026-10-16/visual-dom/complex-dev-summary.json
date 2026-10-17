@@ -1,0 +1,457 @@
+{
+  "vision": {
+    "models": {
+      "gpt-6-luna": 16
+    },
+    "passed": 14,
+    "attempts": 16,
+    "pass_rate": 0.875,
+    "median_wall_ms": 2929.0,
+    "median_wall_ms_passed": 2795.5,
+    "browser_decisions": 82,
+    "wire_calls": 82,
+    "median_wire_latency_ms": 333.5,
+    "p90_wire_latency_ms": 491.8,
+    "median_decision_latency_ms": 334.5,
+    "median_decide_ms_per_attempt": 1559.0,
+    "screenshot_captures": 82,
+    "median_screenshot_ms_per_attempt": 97.0,
+    "image_assets_sent": 82,
+    "input_tokens": 170998,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 16
+    },
+    "refused_questions": {
+      "click_target": 2,
+      "type_text_target": 2
+    },
+    "inferred_done": 1,
+    "false_done": 2,
+    "false_green": 2,
+    "per_task": {
+      "complex_dispatch": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_invoice": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_report": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_review": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_profile": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_cancel": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_booking": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_allocation": {
+        "passed": 0,
+        "attempts": 2
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 15,
+        "correct": 14,
+        "false_done": 1,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 14,
+        "correct": 14,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.8": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 9
+      },
+      "0.9": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 14
+      },
+      "0.95": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 14
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 14
+      }
+    },
+    "native_image_parts_sent": 82,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 82
+  },
+  "vision_dom": {
+    "models": {
+      "gpt-6-luna": 16
+    },
+    "passed": 15,
+    "attempts": 16,
+    "pass_rate": 0.9375,
+    "median_wall_ms": 3088.5,
+    "median_wall_ms_passed": 3010,
+    "browser_decisions": 93,
+    "wire_calls": 93,
+    "median_wire_latency_ms": 351,
+    "p90_wire_latency_ms": 602.0,
+    "median_decision_latency_ms": 352,
+    "median_decide_ms_per_attempt": 1783.5,
+    "screenshot_captures": 93,
+    "median_screenshot_ms_per_attempt": 84.0,
+    "image_assets_sent": 93,
+    "input_tokens": 359752,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 16
+    },
+    "refused_questions": {
+      "click_target": 1
+    },
+    "inferred_done": 0,
+    "false_done": 1,
+    "false_green": 1,
+    "per_task": {
+      "complex_dispatch": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_invoice": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_report": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_review": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_profile": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_cancel": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_booking": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_allocation": {
+        "passed": 1,
+        "attempts": 2
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 16,
+        "correct": 15,
+        "false_done": 1,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 16,
+        "correct": 15,
+        "false_done": 1,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 14,
+        "correct": 14,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.9": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 9
+      },
+      "0.95": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 12
+      },
+      "0.99": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 13
+      }
+    },
+    "native_image_parts_sent": 93,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 93
+  },
+  "vision_activation": {
+    "models": {
+      "gpt-6-luna": 16
+    },
+    "passed": 15,
+    "attempts": 16,
+    "pass_rate": 0.9375,
+    "median_wall_ms": 3193.0,
+    "median_wall_ms_passed": 3058,
+    "browser_decisions": 93,
+    "wire_calls": 111,
+    "median_wire_latency_ms": 310,
+    "p90_wire_latency_ms": 519.8,
+    "median_decision_latency_ms": 370,
+    "median_decide_ms_per_attempt": 1847.0,
+    "screenshot_captures": 93,
+    "median_screenshot_ms_per_attempt": 87.5,
+    "image_assets_sent": 93,
+    "input_tokens": 382522,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 16
+    },
+    "refused_questions": {
+      "select_target": 1
+    },
+    "inferred_done": 0,
+    "false_done": 1,
+    "false_green": 1,
+    "per_task": {
+      "complex_dispatch": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_invoice": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_report": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_review": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_profile": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_cancel": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_booking": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_allocation": {
+        "passed": 1,
+        "attempts": 2
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 16,
+        "correct": 15,
+        "false_done": 1,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 16,
+        "correct": 15,
+        "false_done": 1,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 11,
+        "correct": 11,
+        "false_done": 0,
+        "correct_rejected": 4
+      },
+      "0.9": {
+        "accepted": 6,
+        "correct": 6,
+        "false_done": 0,
+        "correct_rejected": 9
+      },
+      "0.95": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 13
+      },
+      "0.99": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 13
+      }
+    },
+    "native_image_parts_sent": 93,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 111
+  },
+  "jev_activation-vision@jev-1.14.0": {
+    "models": {
+      "jev-1.14.0": 16
+    },
+    "passed": 16,
+    "attempts": 16,
+    "pass_rate": 1.0,
+    "median_wall_ms": 2098.5,
+    "median_wall_ms_passed": 2098.5,
+    "browser_decisions": 94,
+    "wire_calls": 110,
+    "median_wire_latency_ms": 133.0,
+    "p90_wire_latency_ms": 155.0,
+    "median_decision_latency_ms": 142.5,
+    "median_decide_ms_per_attempt": 723.5,
+    "screenshot_captures": 94,
+    "median_screenshot_ms_per_attempt": 88.0,
+    "image_assets_sent": 94,
+    "input_tokens": 645858,
+    "output_tokens_wire": 12036,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 16
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "complex_dispatch": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_invoice": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_report": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_review": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_profile": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_cancel": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_booking": {
+        "passed": 2,
+        "attempts": 2
+      },
+      "complex_allocation": {
+        "passed": 2,
+        "attempts": 2
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 16,
+        "correct": 16,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 16,
+        "correct": 16,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 16,
+        "correct": 16,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.8": {
+        "accepted": 16,
+        "correct": 16,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.9": {
+        "accepted": 15,
+        "correct": 15,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.95": {
+        "accepted": 14,
+        "correct": 14,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.99": {
+        "accepted": 13,
+        "correct": 13,
+        "false_done": 0,
+        "correct_rejected": 3
+      }
+    },
+    "native_image_parts_sent": 0,
+    "typesafe_image_assets_sent": 94,
+    "reported_model_calls": 110
+  }
+}

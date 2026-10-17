@@ -107,8 +107,13 @@ python3 summarize_probes.py
 python3 inspect.py confirmation.jsonl.gz complex-dev.jsonl.gz compound-regression.jsonl.gz search-regression.jsonl.gz transfer.jsonl.gz completion-regression.jsonl.gz completion-transfer.jsonl.gz
 ```
 
-The reproduction runner refuses to overwrite existing data or logs; run it in a
-fresh copy of this directory with the existing campaign datasets/logs removed.
+The reproduction runner verifies the executable, protocol and current source bytes, sets the
+required stack size, and refuses to overwrite data or logs. Use `--output` with
+a new output directory. An independently rebuilt executable must have its own
+verified freeze if its digest differs. `task-grid.json` was derived from the
+original protocol and fixtures at the frozen source commit; summary and pooled
+validators reject substituted task IDs as well as duplicate or missing attempts.
+This later helper repair leaves the original protocol and measured data intact.
 `audits.py` separately lists every audit and proposed correction, without treating
 a proposal as proof that the browser executed it. Model calls are paid. Raw requests and responses, not expected oracle labels,
 are sent to providers. Metadata and oracle probes remain outside those requests.

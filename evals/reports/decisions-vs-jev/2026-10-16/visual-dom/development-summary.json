@@ -1,0 +1,95 @@
+{
+  "probe-blocked": {
+    "baseline": {
+      "requests": 13,
+      "errors": 0,
+      "operation_counts": {
+        "CLICK": 4,
+        "BLOCKED": 1,
+        "DONE": 7,
+        "TYPE_TEXT": 1
+      },
+      "missed_done": 1,
+      "false_done": 0
+    },
+    "exclusive": {
+      "requests": 13,
+      "errors": 0,
+      "operation_counts": {
+        "CLICK": 4,
+        "DONE": 8,
+        "TYPE_TEXT": 1
+      },
+      "missed_done": 0,
+      "false_done": 0
+    },
+    "receipt": {
+      "requests": 13,
+      "errors": 0,
+      "operation_counts": {
+        "CLICK": 4,
+        "DONE": 7,
+        "TYPE_TEXT": 1,
+        "PRESS_ENTER": 1
+      },
+      "missed_done": 1,
+      "false_done": 0
+    }
+  },
+  "probe-secret": {
+    "baseline": {
+      "requests": 3,
+      "errors": 0,
+      "operation_counts": {
+        "TYPE_TEXT": 3
+      }
+    },
+    "presence": {
+      "requests": 3,
+      "errors": 0,
+      "operation_counts": {
+        "CLICK": 3
+      }
+    }
+  },
+  "pilot-v1": {
+    "vision": {
+      "attempts": 18,
+      "passed": 12,
+      "false_green": 4,
+      "wire_archive_available": false
+    },
+    "vision_dom": {
+      "attempts": 18,
+      "passed": 16,
+      "false_green": 0,
+      "wire_archive_available": false
+    },
+    "vision_activation": {
+      "attempts": 18,
+      "passed": 13,
+      "false_green": 0,
+      "wire_archive_available": false
+    }
+  },
+  "pilot-v2": {
+    "vision": {
+      "attempts": 4,
+      "passed": 2,
+      "false_green": 0,
+      "wire_archive_available": false
+    },
+    "vision_dom": {
+      "attempts": 4,
+      "passed": 3,
+      "false_green": 0,
+      "wire_archive_available": false
+    },
+    "vision_activation": {
+      "attempts": 4,
+      "passed": 4,
+      "false_green": 0,
+      "wire_archive_available": false
+    }
+  }
+}

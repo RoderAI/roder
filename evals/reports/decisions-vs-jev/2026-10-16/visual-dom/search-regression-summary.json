@@ -1,0 +1,392 @@
+{
+  "vision": {
+    "models": {
+      "gpt-6-luna": 12
+    },
+    "passed": 12,
+    "attempts": 12,
+    "pass_rate": 1.0,
+    "median_wall_ms": 2190.0,
+    "median_wall_ms_passed": 2190.0,
+    "browser_decisions": 27,
+    "wire_calls": 27,
+    "median_wire_latency_ms": 349,
+    "p90_wire_latency_ms": 889.6,
+    "median_decision_latency_ms": 349,
+    "median_decide_ms_per_attempt": 874.5,
+    "screenshot_captures": 27,
+    "median_screenshot_ms_per_attempt": 45.0,
+    "image_assets_sent": 27,
+    "input_tokens": 45567,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 12
+    },
+    "refused_questions": {
+      "click_target": 1
+    },
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 11,
+        "correct": 11,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 7,
+        "correct": 7,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.95": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.99": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 9
+      }
+    },
+    "native_image_parts_sent": 27,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 27
+  },
+  "vision_dom": {
+    "models": {
+      "gpt-6-luna": 12
+    },
+    "passed": 12,
+    "attempts": 12,
+    "pass_rate": 1.0,
+    "median_wall_ms": 2000.0,
+    "median_wall_ms_passed": 2000.0,
+    "browser_decisions": 27,
+    "wire_calls": 27,
+    "median_wire_latency_ms": 346,
+    "p90_wire_latency_ms": 658.6,
+    "median_decision_latency_ms": 347,
+    "median_decide_ms_per_attempt": 919.0,
+    "screenshot_captures": 27,
+    "median_screenshot_ms_per_attempt": 54.5,
+    "image_assets_sent": 27,
+    "input_tokens": 82373,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 12
+    },
+    "refused_questions": {
+      "click_target": 1
+    },
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 11,
+        "correct": 11,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.8": {
+        "accepted": 10,
+        "correct": 10,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.99": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 9
+      }
+    },
+    "native_image_parts_sent": 27,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 27
+  },
+  "vision_activation": {
+    "models": {
+      "gpt-6-luna": 12
+    },
+    "passed": 12,
+    "attempts": 12,
+    "pass_rate": 1.0,
+    "median_wall_ms": 2055.0,
+    "median_wall_ms_passed": 2055.0,
+    "browser_decisions": 27,
+    "wire_calls": 31,
+    "median_wire_latency_ms": 327,
+    "p90_wire_latency_ms": 535.4,
+    "median_decision_latency_ms": 346,
+    "median_decide_ms_per_attempt": 927.0,
+    "screenshot_captures": 27,
+    "median_screenshot_ms_per_attempt": 54.5,
+    "image_assets_sent": 27,
+    "input_tokens": 86682,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 12
+    },
+    "refused_questions": {
+      "click_target": 2
+    },
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.7": {
+        "accepted": 11,
+        "correct": 11,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.95": {
+        "accepted": 7,
+        "correct": 7,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.99": {
+        "accepted": 3,
+        "correct": 3,
+        "false_done": 0,
+        "correct_rejected": 9
+      }
+    },
+    "native_image_parts_sent": 27,
+    "typesafe_image_assets_sent": 0,
+    "reported_model_calls": 31
+  },
+  "jev_activation-vision@jev-1.14.0": {
+    "models": {
+      "jev-1.14.0": 12
+    },
+    "passed": 12,
+    "attempts": 12,
+    "pass_rate": 1.0,
+    "median_wall_ms": 1260.0,
+    "median_wall_ms_passed": 1260.0,
+    "browser_decisions": 27,
+    "wire_calls": 33,
+    "median_wire_latency_ms": 115,
+    "p90_wire_latency_ms": 142.6,
+    "median_decision_latency_ms": 133,
+    "median_decide_ms_per_attempt": 344.5,
+    "screenshot_captures": 27,
+    "median_screenshot_ms_per_attempt": 43.5,
+    "image_assets_sent": 27,
+    "input_tokens": 158356,
+    "output_tokens_wire": 2874,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "done": 12
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "holdout_cart": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_already": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_search": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "holdout_preferences": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 12,
+        "correct": 12,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.7": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.9": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.95": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      },
+      "0.99": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 3
+      }
+    },
+    "native_image_parts_sent": 0,
+    "typesafe_image_assets_sent": 27,
+    "reported_model_calls": 33
+  }
+}

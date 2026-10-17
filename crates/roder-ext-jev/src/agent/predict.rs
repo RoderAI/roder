@@ -41,7 +41,7 @@ impl Agent {
             }
         })
         .await;
-        let decision = match chosen {
+        let mut decision = match chosen {
             Ok(decision) => decision,
             Err(error) => {
                 // An answer that failed validation was still billed.
@@ -51,7 +51,7 @@ impl Agent {
                     } else {
                         reported_calls(usage)
                     });
-                    self.unusable_decisions.push(usage.clone());
+                    self.unusable_decisions.push(counted_usage(usage, requests));
                 }
                 return Err(error);
             }
@@ -61,6 +61,7 @@ impl Agent {
         } else {
             reported_calls(&decision.usage)
         });
+        decision.usage = counted_usage(&decision.usage, requests);
         self.unusable_streak.clear();
         self.decision_calls.push(JevDecisionRecord {
             choice: decision.choice.clone(),
@@ -76,6 +77,15 @@ impl Agent {
         });
         Ok(decision)
     }
+}
+/// Count observed component requests even when a custom client omits usage.calls.
+fn counted_usage(usage: &Value, requests: usize) -> Value {
+    if requests == 0 {
+        return usage.clone();
+    }
+    let mut usage = usage.as_object().cloned().unwrap_or_default();
+    usage.insert("calls".into(), json!(requests));
+    Value::Object(usage)
 }
 fn reported_calls(usage: &Value) -> usize {
     usage["calls"]
