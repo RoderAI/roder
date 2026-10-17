@@ -1,0 +1,37 @@
+{
+  "jev_dom_targets-vision@jev-1.14.0 vs jev_dom-vision@jev-1.14.0": {
+    "both_pass": 15,
+    "subject_only_pass": [
+      "complex_holdout_5#1",
+      "complex_holdout_5#2",
+      "complex_holdout_5#3"
+    ],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1654,
+    "control_median_ms_both_pass": 1693,
+    "median_paired_delta_ms": -58
+  },
+  "jev_dom_targets-vision@jev-1.14.0 vs vision": {
+    "both_pass": 18,
+    "subject_only_pass": [],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1927.5,
+    "control_median_ms_both_pass": 2508.5,
+    "median_paired_delta_ms": -525.5
+  },
+  "jev_dom-vision@jev-1.14.0 vs vision": {
+    "both_pass": 15,
+    "subject_only_pass": [],
+    "control_only_pass": [
+      "complex_holdout_5#1",
+      "complex_holdout_5#2",
+      "complex_holdout_5#3"
+    ],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1693,
+    "control_median_ms_both_pass": 2106,
+    "median_paired_delta_ms": -414
+  }
+}

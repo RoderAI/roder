@@ -1,0 +1,148 @@
+{
+  "service-screen": {
+    "code_commit": "dc2ec79a",
+    "policy": "images always in target questions",
+    "sha256": "3e40d88a5bc5ad16cbb353f5f2dd40b7bd992655958e346a141a1dd7f7233b27",
+    "rows": 2,
+    "providers": {
+      "jev_dom-vision@jev-preview": {
+        "passed": 0,
+        "attempts": 1,
+        "false_green": 0
+      },
+      "jev_dom_targets-vision@jev-preview": {
+        "passed": 1,
+        "attempts": 1,
+        "false_green": 0
+      }
+    }
+  },
+  "hardened-service-screen": {
+    "code_commit": "a1e0979e",
+    "policy": "target images for every populated editable field",
+    "sha256": "c842aec8237357015ec0d54dcd415fb7b5f6aeb42500bbcb536430b049134e6e",
+    "rows": 9,
+    "providers": {
+      "vision": {
+        "passed": 3,
+        "attempts": 3,
+        "false_green": 0
+      },
+      "jev_dom-vision@jev-preview": {
+        "passed": 0,
+        "attempts": 3,
+        "false_green": 0
+      },
+      "jev_dom_targets-vision@jev-preview": {
+        "passed": 3,
+        "attempts": 3,
+        "false_green": 0
+      }
+    }
+  },
+  "hardened-date-screen": {
+    "code_commit": "a1e0979e",
+    "policy": "target images for every populated editable field",
+    "sha256": "322de4011f657285cf96f472241033a9328292a86de62b968abad3b7e89040c5",
+    "rows": 9,
+    "providers": {
+      "vision": {
+        "passed": 3,
+        "attempts": 3,
+        "false_green": 0
+      },
+      "jev_dom-vision@jev-preview": {
+        "passed": 3,
+        "attempts": 3,
+        "false_green": 0
+      },
+      "jev_dom_targets-vision@jev-preview": {
+        "passed": 3,
+        "attempts": 3,
+        "false_green": 0
+      }
+    }
+  },
+  "clipped-service-screen": {
+    "code_commit": "bd63ca50",
+    "policy": "target images only for populated fields with observed clipping",
+    "sha256": "b7440c58752765174963ce48b895c81513b6cf2a224263a1dd1501f62fe383b9",
+    "rows": 6,
+    "providers": {
+      "jev_dom-vision@jev-preview": {
+        "passed": 0,
+        "attempts": 3,
+        "false_green": 0
+      },
+      "jev_dom_targets-vision@jev-preview": {
+        "passed": 3,
+        "attempts": 3,
+        "false_green": 0
+      }
+    }
+  },
+  "clipped-six-screen": {
+    "code_commit": "bd63ca50",
+    "policy": "target images only for populated fields with observed clipping",
+    "sha256": "4899ed9aa07e0e66aa91934ad86d4d1454e7c019a4adca5448a11e4d5c92d927",
+    "rows": 36,
+    "providers": {
+      "jev_dom-vision@jev-preview": {
+        "passed": 18,
+        "attempts": 18,
+        "false_green": 0
+      },
+      "jev_dom_targets-vision@jev-preview": {
+        "passed": 18,
+        "attempts": 18,
+        "false_green": 0
+      }
+    }
+  },
+  "interrupted-confirmation": {
+    "code_commit": "dc2ec79a",
+    "policy": "images always in target questions; stopped for review hardening",
+    "sha256": "39bd9d1bc471195ff2c6229f6bc9b542c8872e81126ac4997121bcbf0039eb35",
+    "rows": 42,
+    "providers": {
+      "vision": {
+        "passed": 13,
+        "attempts": 14,
+        "false_green": 1
+      },
+      "jev_dom-vision@jev-preview": {
+        "passed": 14,
+        "attempts": 14,
+        "false_green": 0
+      },
+      "jev_dom_targets-vision@jev-preview": {
+        "passed": 13,
+        "attempts": 14,
+        "false_green": 0
+      }
+    }
+  },
+  "populated-fields-interrupted": {
+    "code_commit": "a1e0979e",
+    "policy": "target images for every populated editable field; stopped for search regression",
+    "sha256": "818076984e0d76799b07e73a938463850d294bce16ce245a430ac1ca76e008a8",
+    "rows": 101,
+    "providers": {
+      "vision": {
+        "passed": 29,
+        "attempts": 33,
+        "false_green": 3
+      },
+      "jev_dom-vision@jev-preview": {
+        "passed": 34,
+        "attempts": 34,
+        "false_green": 0
+      },
+      "jev_dom_targets-vision@jev-preview": {
+        "passed": 33,
+        "attempts": 34,
+        "false_green": 1
+      }
+    }
+  }
+}
