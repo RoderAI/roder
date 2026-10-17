@@ -89,6 +89,11 @@ impl JevTypeSafeDecisionClient {
             inner: self.transport.as_ref(),
             image,
             observation,
+            placement: if self.profile == crate::jev_prompt::Profile::DomTargets {
+                images::Placement::Targets
+            } else {
+                images::Placement::State
+            },
         };
         choose(
             observation,
@@ -142,6 +147,7 @@ struct Imaged<'a> {
     inner: &'a dyn JevDecisionTransport,
     image: Option<images::Fitted>,
     observation: &'a Value,
+    placement: images::Placement,
 }
 
 #[async_trait]
@@ -151,7 +157,7 @@ impl JevDecisionTransport for Imaged<'_> {
             None => self.inner.decide(request).await,
             Some(fitted) => {
                 let mut request = request.clone();
-                images::attach(&mut request, fitted, self.observation);
+                images::attach(&mut request, fitted, self.observation, self.placement);
                 self.inner.decide(&request).await
             }
         }

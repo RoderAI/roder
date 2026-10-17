@@ -1,5 +1,5 @@
 //! Paired live browser outcomes. Alternate provider order within each task.
-use super::{Row, TaskValues, load_tasks, run_task, validate, write_rows};
+use super::{Row, TaskValues, load_all, run_task, validate, write_rows};
 use crate::{
     JevDecisionClient, JevTypeSafeDecisionClient, OpenAiDecisionsClient, fixture_harness::Harness,
 };
@@ -48,6 +48,7 @@ async fn decisions_vs_jev() {
     let jev_variants = [
         ("jev", Profile::Baseline),
         ("jev_dom", Profile::Dom),
+        ("jev_dom_targets", Profile::DomTargets),
         ("jev_literal", Profile::Literal),
         ("jev_effects", Profile::Effects),
         ("jev_criteria", Profile::Criteria),
@@ -126,7 +127,7 @@ async fn decisions_vs_jev() {
     let tasks = if let Some(suite) = env("BROWSER_EVAL_SUITE") {
         match suite.as_str() {
             "development" => {
-                let mut tasks = load_tasks().unwrap();
+                let mut tasks = load_all().unwrap();
                 tasks.extend(super::complex_contracts::load(false));
                 tasks
             }
@@ -140,8 +141,11 @@ async fn decisions_vs_jev() {
         ))
         .unwrap()
     } else {
-        load_tasks().unwrap()
+        load_all().unwrap()
     };
+    // Apply the same checked task filter to basic, compound and regression
+    // suites, so focused model probes do not silently run the whole suite.
+    let tasks = super::select(tasks, env("JEV_EVAL_TASKS").as_deref()).unwrap();
     validate(&tasks).unwrap();
     assert!(!tasks.is_empty());
     let repeats = env("JEV_EVAL_REPEATS")

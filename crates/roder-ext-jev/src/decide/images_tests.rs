@@ -142,3 +142,66 @@ async fn a_rejected_image_request_stops_without_an_action_and_names_the_reason()
     );
     assert_eq!(server.hits(), 1);
 }
+
+#[tokio::test]
+async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operation() {
+    use crate::jev_prompt::Profile;
+    let reply = r#"{"answers":{"operation":{"choice":"DONE","confidence":1.0,"probabilities":{"CLICK":0.0,"TYPE_TEXT":0.0,"DONE":1.0,"BLOCKED":0.0}}}}"#;
+    let server = MockServer::start(vec![Reply::ok(reply), Reply::ok(reply)]).await;
+    let mut observation = page(Some(data_url(ImageFormat::Png, 1120, 780)));
+    observation["actions"] = json!([
+        {"kind":"click","node":1,"id":"click:1","label":"Submit","role":"button","rect":{"x":0,"y":0,"w":100,"h":30}},
+        {"kind":"fill","node":2,"id":"fill:2","label":"Name","role":"textbox","value":"Ada","rect":{"x":0,"y":40,"w":100,"h":30}}
+    ]);
+    observation["dom_snapshot"] = json!("- textbox Name [value=\"Ada\"]\n- button Submit");
+    for profile in [Profile::Dom, Profile::DomTargets] {
+        client(&server, true)
+            .with_profile(profile)
+            .choose_gated(&observation, "Submit Ada", &[])
+            .await
+            .unwrap();
+    }
+    let requests = server.requests();
+    let shared = &requests[0].1;
+    let scoped = &requests[1].1;
+    assert!(scoped["state"].get("viewport_screenshot").is_none());
+    assert!(scoped["state"].get("candidate_rectangles").is_none());
+    assert_eq!(scoped["assets"], shared["assets"]);
+    let key = scoped["assets"].as_object().unwrap().keys().next().unwrap();
+    let mut gates = 0;
+    for (name, original) in shared["questions"].as_object().unwrap() {
+        let mut current = scoped["questions"][name].clone();
+        if name.ends_with("_target") {
+            let instructions = current["instructions"].as_object_mut().unwrap();
+            let viewport = instructions.remove("viewport_screenshot").unwrap();
+            assert_eq!(viewport["image"], json!(key));
+            assert_eq!(viewport, shared["state"]["viewport_screenshot"]);
+            assert_eq!(
+                instructions.remove("candidate_rectangles").unwrap(),
+                shared["state"]["candidate_rectangles"]
+            );
+        }
+        if original["type"] == "noul" {
+            gates += 1;
+        }
+        assert_eq!(&current, original, "question meaning changed: {name}");
+    }
+    assert!(gates > 0);
+    assert_eq!(images_header(&server.heads()[1]).as_deref(), Some("true"));
+}
+
+#[tokio::test]
+async fn target_images_omit_the_asset_and_header_when_no_target_question_exists() {
+    let server = MockServer::start(vec![Reply::ok(DONE)]).await;
+    client(&server, true)
+        .with_profile(crate::jev_prompt::Profile::DomTargets)
+        .choose(
+            &page(Some(data_url(ImageFormat::Png, 1120, 780))),
+            "Finish",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(server.requests()[0].1.get("assets").is_none());
+    assert_eq!(images_header(&server.heads()[0]), None);
+}
