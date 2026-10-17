@@ -22,10 +22,13 @@ for r in rows:
     r.setdefault('repeat', r['telemetry'].get('repeat'))
 tasks = {r['task'] for r in rows}
 keys = [(r['task'], r['repeat'], r['telemetry']['provider']) for r in rows]
-assert len(tasks) == args.tasks, 'Unexpected task count'
-assert len(keys) == len(set(keys)), 'Duplicate attempt'
+if len(tasks) != args.tasks:
+    raise SystemExit('Unexpected task count')
+if len(keys) != len(set(keys)):
+    raise SystemExit('Duplicate attempt')
 providers = args.providers.split(',')
-assert set(keys) == {(t, n, p) for t in tasks for n in range(1, args.repeats + 1) for p in providers}, 'Incomplete paired dataset'
+if set(keys) != {(t, n, p) for t in tasks for n in range(1, args.repeats + 1) for p in providers}:
+    raise SystemExit('Incomplete paired dataset')
 
 
 def median(values):

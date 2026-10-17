@@ -1,0 +1,35 @@
+{
+  "jev_activation-vision@jev-1.14.0 vs jev_dom_targets-vision@jev-1.14.0": {
+    "both_pass": 16,
+    "subject_only_pass": [],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 2221.0,
+    "control_median_ms_both_pass": 2023.0,
+    "median_paired_delta_ms": 70.5
+  },
+  "jev_activation-vision@jev-1.14.0 vs vision": {
+    "both_pass": 14,
+    "subject_only_pass": [
+      "complex_allocation#1",
+      "complex_allocation#2"
+    ],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 2082.0,
+    "control_median_ms_both_pass": 2770.5,
+    "median_paired_delta_ms": -903.5
+  },
+  "jev_dom_targets-vision@jev-1.14.0 vs vision": {
+    "both_pass": 14,
+    "subject_only_pass": [
+      "complex_allocation#1",
+      "complex_allocation#2"
+    ],
+    "control_only_pass": [],
+    "neither_pass": 0,
+    "subject_median_ms_both_pass": 1873.0,
+    "control_median_ms_both_pass": 2770.5,
+    "median_paired_delta_ms": -945.5
+  }
+}

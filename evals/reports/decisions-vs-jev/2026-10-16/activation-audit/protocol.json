@@ -1,0 +1,46 @@
+{
+  "providers": "vision,jev_dom_targets-vision@jev-1.14.0,jev_activation-vision@jev-1.14.0",
+  "suites": [
+    {
+      "name": "confirmation",
+      "repeats": 3,
+      "JEV_EVAL_TASKS": "contact_form,search_autocomplete,select_dropdown,pagination,below_the_fold,twin_by_context,table_row_by_context,delayed_spa,missing_value,confirm_dialog,menu_button,styled_checkbox,date_field,icon_by_picture,unlabelled_fields,scroll_region,enter_to_search,shadow_component,frame_form,new_tab,gate_pay_now,gate_delete_account,gate_authorized_delete,gate_add_to_cart"
+    },
+    {
+      "name": "complex-dev",
+      "repeats": 2,
+      "BROWSER_EVAL_SUITE": "complex_dev"
+    },
+    {
+      "name": "compound-regression",
+      "repeats": 3,
+      "BROWSER_EVAL_SUITE": "complex_holdout"
+    },
+    {
+      "name": "search-regression",
+      "repeats": 3,
+      "DECISIONS_EVAL_HOLDOUT": "1"
+    },
+    {
+      "name": "transfer",
+      "repeats": 3,
+      "JEV_EVAL_TASKS": "covered_target,icon_by_picture_twin,focus_handoff,escape_popup,off_origin,cookie_banner_refused,login_form,one_time_code_resolved"
+    },
+    {
+      "name": "completion-regression",
+      "repeats": 3,
+      "BROWSER_EVAL_SUITE": "completion_dev"
+    },
+    {
+      "name": "completion-transfer",
+      "repeats": 3,
+      "BROWSER_EVAL_SUITE": "completion_holdout"
+    }
+  ],
+  "primary_metric": "Browser oracle pass, every scheduled attempt retained",
+  "false_success_metric": "false_green",
+  "holdout": "Only completion-transfer has not received paid model calls before this freeze. All earlier tasks are known regression tasks. Completion-regression received a 36-attempt development pilot.",
+  "policy": "Freeze candidate before paid completion-transfer. Do not tune against its results within this campaign. No candidate removal, changed confidence/safety thresholds, or fabricated Choice probabilities.",
+  "attempts_per_provider": 166,
+  "total_attempts": 498
+}
