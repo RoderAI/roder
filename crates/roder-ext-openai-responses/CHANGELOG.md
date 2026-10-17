@@ -1,3 +1,19 @@
+## 0.2.12 (2026-10-17)
+
+### Fixes
+
+#### Prevent long history IDs from rejecting follow-up turns after switching providers
+
+Normalize oversized response item IDs before replaying existing or compacted
+history to OpenAI or Codex. Stable, bounded IDs preserve tool-call pairing and
+WebSocket continuation while leaving saved history and SuperGrok requests intact.
+
+#### Fix switching SuperGrok threads to OpenAI or Codex
+
+Remove the incompatible reasoning status field when replaying history to OpenAI
+or Codex, including restored compacted input. Preserve saved thread history and
+the original fields when continuing with SuperGrok.
+
 ## 0.2.11 (2026-10-15)
 
 ### Fixes

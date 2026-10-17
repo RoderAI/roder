@@ -1,3 +1,13 @@
+## 0.3.9 (2026-10-17)
+
+### Fixes
+
+#### Avoid loading conversation history when switching models
+
+Read and update thread model selection through the metadata-only store API
+instead of loading and reconstructing the entire conversation. This avoids
+history-sized work when switching models or resolving a thread's selection.
+
 ## 0.3.8 (2026-10-14)
 
 ### Fixes

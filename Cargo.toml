@@ -80,12 +80,12 @@ which = "8"
 roder-api = { path = "crates/roder-api", version = "0.2.10" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.2.0" }
-roder-app-server = { path = "crates/roder-app-server", version = "0.6.4" }
+roder-app-server = { path = "crates/roder-app-server", version = "0.6.5" }
 roder-codex-auth = { path = "crates/roder-codex-auth", version = "0.1.3" }
 roder-commands = { path = "crates/roder-commands", version = "0.2.0" }
 roder-config = { path = "crates/roder-config", version = "0.2.3" }
 roder-context = { path = "crates/roder-context", version = "0.2.0" }
-roder-core = { path = "crates/roder-core", version = "0.3.8" }
+roder-core = { path = "crates/roder-core", version = "0.3.9" }
 roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.3.2" }
 roder-code-index = { path = "crates/roder-code-index", version = "0.2.0" }
 roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.2.0" }
@@ -118,7 +118,7 @@ roder-ext-memory = { path = "crates/roder-ext-memory", version = "0.2.0" }
 roder-ext-mysql-session = { path = "crates/roder-ext-mysql-session", version = "0.4.0" }
 roder-ext-notify-desktop = { path = "crates/roder-ext-notify-desktop", version = "0.2.0" }
 roder-ext-notify-terminal = { path = "crates/roder-ext-notify-terminal", version = "0.2.0" }
-roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses", version = "0.2.11" }
+roder-ext-openai-responses = { path = "crates/roder-ext-openai-responses", version = "0.2.12" }
 roder-ext-openai-chat-completions = { path = "crates/roder-ext-openai-chat-completions", version = "0.2.0" }
 roder-ext-openai-embeddings = { path = "crates/roder-ext-openai-embeddings", version = "0.2.0" }
 roder-ext-openai-images = { path = "crates/roder-ext-openai-images", version = "0.2.0" }
@@ -169,7 +169,7 @@ roder-skills = { path = "crates/roder-skills", version = "0.2.1" }
 roder-theme = { path = "crates/roder-theme", version = "0.1.0" }
 roder-tasks = { path = "crates/roder-tasks", version = "0.2.0" }
 roder-tools = { path = "crates/roder-tools", version = "0.2.3" }
-roder-tui = { path = "crates/roder-tui", version = "0.3.4" }
+roder-tui = { path = "crates/roder-tui", version = "0.3.5" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
 [profile.dev]
