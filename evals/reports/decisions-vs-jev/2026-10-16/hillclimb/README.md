@@ -1,5 +1,8 @@
 # Jev image decisions with semantic DOM evidence
 
+The subsequent [clipped-field image-routing iteration](../target-images/README.md)
+retains this campaign and evaluates a refined profile after rebasing onto master.
+
 The final candidate passed **72/72** on the 24-task
 confirmation set, compared with **65/72** for the PR's
 Baseline Jev image prompt and **67/72** for Visual Decisions.

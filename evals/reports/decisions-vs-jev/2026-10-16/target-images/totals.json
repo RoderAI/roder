@@ -1,0 +1,17 @@
+{
+  "vision": {
+    "passed": 129,
+    "attempts": 142,
+    "false_green": 5
+  },
+  "jev_dom-vision@jev-1.14.0": {
+    "passed": 135,
+    "attempts": 142,
+    "false_green": 4
+  },
+  "jev_dom_targets-vision@jev-1.14.0": {
+    "passed": 139,
+    "attempts": 142,
+    "false_green": 3
+  }
+}

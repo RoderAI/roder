@@ -1,0 +1,335 @@
+{
+  "vision": {
+    "models": {
+      "gpt-6-luna": 24
+    },
+    "passed": 19,
+    "attempts": 24,
+    "pass_rate": 0.7917,
+    "median_wall_ms": 1476.0,
+    "median_wall_ms_passed": 1488,
+    "browser_decisions": 73,
+    "wire_calls": 73,
+    "median_wire_latency_ms": 190,
+    "p90_wire_latency_ms": 254.6,
+    "median_decision_latency_ms": 194,
+    "median_decide_ms_per_attempt": 551.5,
+    "screenshot_captures": 45,
+    "median_screenshot_ms_per_attempt": 43.5,
+    "image_assets_sent": 0,
+    "input_tokens": 108722,
+    "output_tokens_wire": 0,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 2,
+    "statuses": {
+      "blocked": 9,
+      "done": 13,
+      "error": 2
+    },
+    "refused_questions": {
+      "click_target": 7
+    },
+    "inferred_done": 3,
+    "false_done": 0,
+    "false_green": 0,
+    "per_task": {
+      "covered_target": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "focus_handoff": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "icon_by_picture_twin": {
+        "passed": 2,
+        "attempts": 3
+      },
+      "escape_popup": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "off_origin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "cookie_banner_refused": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "login_form": {
+        "passed": 1,
+        "attempts": 3
+      },
+      "one_time_code_resolved": {
+        "passed": 1,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 10,
+        "correct": 10,
+        "false_done": 0,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 1
+      },
+      "0.7": {
+        "accepted": 8,
+        "correct": 8,
+        "false_done": 0,
+        "correct_rejected": 2
+      },
+      "0.8": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.9": {
+        "accepted": 5,
+        "correct": 5,
+        "false_done": 0,
+        "correct_rejected": 5
+      },
+      "0.95": {
+        "accepted": 2,
+        "correct": 2,
+        "false_done": 0,
+        "correct_rejected": 8
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 10
+      }
+    }
+  },
+  "jev_dom-vision@jev-1.14.0": {
+    "models": {
+      "jev-1.14.0": 24
+    },
+    "passed": 21,
+    "attempts": 24,
+    "pass_rate": 0.875,
+    "median_wall_ms": 1331.0,
+    "median_wall_ms_passed": 1250,
+    "browser_decisions": 63,
+    "wire_calls": 63,
+    "median_wire_latency_ms": 115,
+    "p90_wire_latency_ms": 176.8,
+    "median_decision_latency_ms": 116,
+    "median_decide_ms_per_attempt": 332.5,
+    "screenshot_captures": 42,
+    "median_screenshot_ms_per_attempt": 43.0,
+    "image_assets_sent": 42,
+    "input_tokens": 311838,
+    "output_tokens_wire": 6747,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "blocked": 6,
+      "done": 18
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 3,
+    "false_green": 3,
+    "per_task": {
+      "covered_target": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "focus_handoff": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "icon_by_picture_twin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "escape_popup": {
+        "passed": 0,
+        "attempts": 3
+      },
+      "off_origin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "cookie_banner_refused": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "login_form": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "one_time_code_resolved": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 15,
+        "false_done": 3,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 14,
+        "correct": 11,
+        "false_done": 3,
+        "correct_rejected": 4
+      },
+      "0.7": {
+        "accepted": 10,
+        "correct": 9,
+        "false_done": 1,
+        "correct_rejected": 6
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.9": {
+        "accepted": 7,
+        "correct": 7,
+        "false_done": 0,
+        "correct_rejected": 8
+      },
+      "0.95": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 15
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 15
+      }
+    }
+  },
+  "jev_dom_targets-vision@jev-1.14.0": {
+    "models": {
+      "jev-1.14.0": 24
+    },
+    "passed": 21,
+    "attempts": 24,
+    "pass_rate": 0.875,
+    "median_wall_ms": 1305.5,
+    "median_wall_ms_passed": 1250,
+    "browser_decisions": 63,
+    "wire_calls": 63,
+    "median_wire_latency_ms": 115,
+    "p90_wire_latency_ms": 208.2,
+    "median_decision_latency_ms": 116,
+    "median_decide_ms_per_attempt": 330.5,
+    "screenshot_captures": 42,
+    "median_screenshot_ms_per_attempt": 39.0,
+    "image_assets_sent": 42,
+    "input_tokens": 311838,
+    "output_tokens_wire": 6747,
+    "unknown_usage_rows": 0,
+    "wire_errors": {},
+    "errored_rows": 0,
+    "statuses": {
+      "blocked": 6,
+      "done": 18
+    },
+    "refused_questions": {},
+    "inferred_done": 0,
+    "false_done": 3,
+    "false_green": 3,
+    "per_task": {
+      "covered_target": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "focus_handoff": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "icon_by_picture_twin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "escape_popup": {
+        "passed": 0,
+        "attempts": 3
+      },
+      "off_origin": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "cookie_banner_refused": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "login_form": {
+        "passed": 3,
+        "attempts": 3
+      },
+      "one_time_code_resolved": {
+        "passed": 3,
+        "attempts": 3
+      }
+    },
+    "terminal_confidence_thresholds": {
+      "0": {
+        "accepted": 18,
+        "correct": 15,
+        "false_done": 3,
+        "correct_rejected": 0
+      },
+      "0.5": {
+        "accepted": 13,
+        "correct": 10,
+        "false_done": 3,
+        "correct_rejected": 5
+      },
+      "0.7": {
+        "accepted": 10,
+        "correct": 9,
+        "false_done": 1,
+        "correct_rejected": 6
+      },
+      "0.8": {
+        "accepted": 9,
+        "correct": 9,
+        "false_done": 0,
+        "correct_rejected": 6
+      },
+      "0.9": {
+        "accepted": 8,
+        "correct": 8,
+        "false_done": 0,
+        "correct_rejected": 7
+      },
+      "0.95": {
+        "accepted": 1,
+        "correct": 1,
+        "false_done": 0,
+        "correct_rejected": 14
+      },
+      "0.99": {
+        "accepted": 0,
+        "correct": 0,
+        "false_done": 0,
+        "correct_rejected": 15
+      }
+    }
+  }
+}
