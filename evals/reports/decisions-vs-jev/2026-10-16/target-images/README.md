@@ -85,3 +85,7 @@ JEV_PROMPT_PROFILE=dom_targets JEV_IMAGES=1 JEV_MODEL=jev-1.14.0 roder
 ## Local validation
 
 Rust **1.95.0**: `cargo test -p roder-ext-jev -- --test-threads=4` passed **722 library tests**, with 13 paid/live tests ignored, and all integration/doc tests passed. `make fmt`, `make fmt-check`, crate all-target Clippy with `-D warnings`, changeset validation and knope configuration checks passed. Real Chrome regressions cover field clipping, long-text traversal, encoded secret echoes, heading controls, styled toggles and offscreen freshness.
+
+The replay and inspection helpers also pass checks for optimized-Python failures,
+corrupt source hashes, duplicate source basenames, exclusive output creation, and
+readable plain/gzip replay output. These helper checks make no paid calls.

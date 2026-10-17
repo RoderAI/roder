@@ -8,5 +8,6 @@ freeze = json.loads((ROOT / "freeze.json").read_text())
 commit = freeze["code_commit"]
 for name, expected in freeze["source_sha256"].items():
     content = subprocess.check_output(["git", "show", commit + ":" + name], cwd=ROOT)
-    assert hashlib.sha256(content).hexdigest() == expected, name
+    if hashlib.sha256(content).hexdigest() != expected:
+        raise SystemExit(f"Source hash mismatch: {name}")
 print(f"Verified {len(freeze['source_sha256'])} source files at {commit}")
