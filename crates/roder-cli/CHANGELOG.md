@@ -1,3 +1,12 @@
+## 0.3.15 (2026-10-17)
+
+### Fixes
+
+#### Release semantic DOM browser decisions
+
+Include the new semantic DOM browser evidence and opt-in native Decisions DOM
+profile in the Roder CLI. DOM decisions retain safe viewport screenshots.
+
 ## 0.3.14 (2026-10-17)
 
 ### Fixes
