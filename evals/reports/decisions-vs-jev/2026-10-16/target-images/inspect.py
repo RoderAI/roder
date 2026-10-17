@@ -7,6 +7,13 @@ from pathlib import Path
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("sources", nargs="+", type=Path)
 args = parser.parse_args()
+if len({source.name for source in args.sources}) != len(args.sources):
+    parser.error("Source basenames must be unique; inspect matching names separately")
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
 result = {}
 for source in args.sources:
     content = gzip.open(source, "rt").read() if source.suffix == ".gz" else source.read_text()
@@ -27,7 +34,7 @@ for source in args.sources:
             if not assets:
                 group["image_placement"]["text"] += 1
                 continue
-            assert len(assets) == 1
+            require(len(assets) == 1, "Expected one fitted viewport asset")
             reference = next(iter(assets))
             state_count = json.dumps(request["state"]).count(reference)
             question_counts = {name: json.dumps(question).count(reference)
@@ -35,16 +42,16 @@ for source in args.sources:
             references = state_count + sum(question_counts.values())
             group["image_references"] += references
             if state_count:
-                assert state_count == 1 and not any(question_counts.values())
+                require(state_count == 1 and not any(question_counts.values()), "Mixed image placement")
                 group["image_placement"]["shared"] += 1
             else:
-                assert "jev_dom_targets" in provider
-                assert references > 0
-                assert all(not count or (name.endswith("_target") and
+                require("jev_dom_targets" in provider, "Unexpected scoped-image provider")
+                require(references > 0, "Unreferenced image asset")
+                require(all(not count or (name.endswith("_target") and
                     request["questions"][name]["type"] == "choice")
-                    for name, count in question_counts.items())
-                assert any("TYPE_TEXT" in e["operations"] and e.get("value")
-                           for e in request["state"]["elements"])
+                    for name, count in question_counts.items()), "Image outside a target Choice")
+                require(any("TYPE_TEXT" in e["operations"] and e.get("value")
+                           for e in request["state"]["elements"]), "Scoped image without a populated field")
                 group["image_placement"]["targets"] += 1
     result[source.name] = groups
 print(json.dumps(result, indent=2))

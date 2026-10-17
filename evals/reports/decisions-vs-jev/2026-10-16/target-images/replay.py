@@ -16,9 +16,12 @@ parser.add_argument("output", type=Path)
 parser.add_argument("--variant")
 args = parser.parse_args()
 key = os.getenv("JEV_API_KEY") or os.getenv("TYPESAFE_API_KEY")
-assert key, "Set a TypeSafe API key"
-assert not args.output.exists(), "Output must be a new file"
-with gzip.open(args.source, "rt") as source, args.output.open("x") as output:
+if not key:
+    parser.error("Set a TypeSafe API key")
+if args.output.exists():
+    parser.error("Output must be a new file")
+open_output = gzip.open if args.output.suffix == ".gz" else open
+with gzip.open(args.source, "rt") as source, open_output(args.output, "xt") as output:
     for line in source:
         original = json.loads(line)
         if args.variant and original["variant"] != args.variant:

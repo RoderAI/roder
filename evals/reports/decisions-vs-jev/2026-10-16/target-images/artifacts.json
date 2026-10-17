@@ -1,5 +1,5 @@
 {
-  "README.md": "5d2cde2f9a6122b2b29275b2bcc3be5bdde3c4600d34bcc5ee35b4cde90e5851",
+  "README.md": "5f0503467b4993127a2c09e22f3d4823a758ba1972bd85f9d5988c340c82cad1",
   "clipped-service-screen.jsonl.gz": "b7440c58752765174963ce48b895c81513b6cf2a224263a1dd1501f62fe383b9",
   "clipped-six-screen.jsonl.gz": "4899ed9aa07e0e66aa91934ad86d4d1454e7c019a4adca5448a11e4d5c92d927",
   "clipped-title.jpg": "5ca09c32bfbb6cc127c376e9001189e7977a8a08c2b458f95c88e22d45f9c38b",
@@ -16,7 +16,7 @@
   "freeze.json": "71846ab83cbb4c39a0ad77c9a25d49bb6a39f9a029e47835aa8b12b55ca3d36d",
   "hardened-date-screen.jsonl.gz": "322de4011f657285cf96f472241033a9328292a86de62b968abad3b7e89040c5",
   "hardened-service-screen.jsonl.gz": "c842aec8237357015ec0d54dcd415fb7b5f6aeb42500bbcb536430b049134e6e",
-  "inspect.py": "33293caf2419ea61d9b5a3032731ac85486d23a658164ba349b9f7aa727d83aa",
+  "inspect.py": "43ac7f802890d0726f372087e5b2e4478769744793d78378170ac3d81a6c6533",
   "interrupted-confirmation.jsonl.gz": "39bd9d1bc471195ff2c6229f6bc9b542c8872e81126ac4997121bcbf0039eb35",
   "interrupted-freeze.json": "9316f5be66a371399b252b7dc981dfb7b7f60b1556bcbfb85e54d112588128ea",
   "method.md": "f8bdad697535081335365d0ba2197008aa4c1942b77545914bc4995472ac101f",
@@ -27,7 +27,7 @@
   "replay-narrow.jsonl.gz": "dee90a50854668cb95cd7de11fa7d51b2478c7c5456270d60cd94b17ff0ad603",
   "replay-probe.jsonl.gz": "79fd1eedeb2621c3b356e2a186fd225c5c31da7b84de4a89792e1c833d2b5e87",
   "replay-scoped.jsonl.gz": "5ec477fb226efa4229c95e5b546ff7d5dc16bef17183c15f344af26c237db392",
-  "replay.py": "6a56292b1767f90f30b8040ee57b3a1efc9872dd9bb22734db918b0ba39bd61a",
+  "replay.py": "13cf4e5641269cb7c1846f59ee4d813dbc778cb6f2008600a062e34d374136e3",
   "reproduce.sh": "6c242bcfaa197072022c265b5a05aac259b746833c53c44c80ed06164eb75813",
   "search-regression-paired.json": "015b9b94f0d4c81a3a83a0c47cc3fc0954d29d16582dc6df47ef172f2ae8ac0e",
   "search-regression-summary.json": "76a7cb247a6e3f3b3bc859b466293e223c96c9ecee30e8bb23f6f3a83ad76f82",
@@ -38,6 +38,6 @@
   "transfer-paired.json": "08b8bc4e56ca22767100dea9dc46cac9a6456ea52b2c2b8da0521afda331eb78",
   "transfer-summary.json": "ed0e66c8f88add28b36dae99045c7f666ad150514c75bed180a9d1e7366f236b",
   "transfer.jsonl.gz": "a9311064074565d6335b7e8896d97e03309ec034e7067dc2675c59112630ffee",
-  "verify_source.py": "22d46c657efc380fcc439edfc464786b17957b4d9a8d2216abd8e18d94b08645",
+  "verify_source.py": "bffb38b00bee914369b20bd99ef58504dc3973ea04193a00a7dd8d6e3e7ae12c",
   "wire-metadata.json": "d0351f84c0c69060d2884950e125f11af440a7bd3ae7649d902656a3fffb7ab0"
 }
