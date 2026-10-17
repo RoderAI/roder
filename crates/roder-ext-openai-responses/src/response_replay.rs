@@ -172,7 +172,49 @@ pub(super) fn response_input_items(
         items = items[idx..].to_vec();
     }
 
+    // Normalize foreign provider output after compaction so restored windows
+    // are covered too. Call IDs must remain paired with their tool outputs.
+    if profile == ResponsesProviderProfile::OpenAi {
+        for item in &mut items {
+            if item["type"] == "reasoning"
+                && let Some(object) = item.as_object_mut()
+            {
+                object.remove("status");
+            }
+            if let Some(id) = item.get("id").and_then(Value::as_str)
+                && id.len() > 64
+            {
+                item["id"] = json!(bounded_response_item_id(id));
+            }
+        }
+    }
+
     items
+}
+
+pub(super) fn bounded_response_item_id(id: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    if id.len() <= 64 {
+        return id.to_string();
+    }
+    let prefix = id
+        .split_once('_')
+        .map(|(prefix, _)| prefix)
+        .filter(|prefix| {
+            !prefix.is_empty()
+                && prefix.len() <= 8
+                && prefix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+        .unwrap_or("item");
+    // Hash the whole ID rather than truncating: foreign IDs can share a long
+    // prefix. Determinism also preserves WebSocket history-prefix matching.
+    let digest = Sha256::digest(id.as_bytes())
+        .iter()
+        .take(24)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{prefix}_{digest}")
 }
 
 /// Extract the image `data:` URL a `view_image` tool result stashed in its

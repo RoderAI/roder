@@ -2908,6 +2908,142 @@ mod tests {
     }
 
     #[test]
+    fn switching_from_supergrok_strips_reasoning_status_for_openai_and_codex() {
+        let reasoning = json!({
+            "id": "rs_grok",
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [{"type": "summary_text", "text": "Earlier reasoning"}],
+            "encrypted_content": "opaque-state"
+        });
+        let mut expected = reasoning.clone();
+        expected.as_object_mut().unwrap().remove("status");
+
+        for provider in [PROVIDER_OPENAI, PROVIDER_CODEX] {
+            for metadata in [
+                json!({"output": [reasoning.clone()]}),
+                json!({"compacted_input": [reasoning.clone()]}),
+            ] {
+                let mut request = request();
+                request.model.provider = provider.to_string();
+                request.transcript = vec![TranscriptItem::ProviderMetadata(metadata)];
+                let original = request.transcript.clone();
+
+                let body = OpenAiResponsesEngine::map_request(&request);
+
+                assert_eq!(body["input"], json!([expected.clone()]), "{provider}");
+                assert_eq!(request.transcript, original);
+            }
+        }
+    }
+
+    #[test]
+    fn switching_from_supergrok_bounds_replayed_item_ids_without_changing_call_ids() {
+        let long_id = "tco_44cc3ea0-65b1-9fa5-93c0-d69befc56cf1_call-58bda616-7853-41ad-bfbf-c46da90bbe7e-166";
+        let reasoning = json!({
+            "id": long_id,
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [],
+            "encrypted_content": "opaque-state"
+        });
+        let call_id = "call_58bda616-7853-41ad-bfbf-c46da90bbe7e-166";
+        let call = json!({
+            "id": format!("fc_{}", "a".repeat(80)),
+            "type": "function_call",
+            "call_id": call_id,
+            "name": "echo",
+            "arguments": "{}",
+            "status": "completed"
+        });
+        let output = json!({
+            "type": "function_call_output", "call_id": call_id, "output": "ok"
+        });
+        for provider in [PROVIDER_OPENAI, PROVIDER_CODEX] {
+            for compacted in [false, true] {
+                let mut request = request();
+                request.model.provider = provider.to_string();
+                request.transcript = if compacted {
+                    vec![TranscriptItem::ProviderMetadata(json!({
+                        "compacted_input": [reasoning.clone(), call.clone(), output.clone()]
+                    }))]
+                } else {
+                    vec![
+                        TranscriptItem::ProviderMetadata(json!({
+                            "output": [reasoning.clone(), call.clone()]
+                        })),
+                        TranscriptItem::ToolResult(ToolResultRecord {
+                            id: call_id.to_string(),
+                            name: Some("echo".to_string()),
+                            result: "ok".to_string(),
+                            display_payload: None,
+                            is_error: false,
+                        }),
+                    ]
+                };
+                let original = request.transcript.clone();
+                let body = OpenAiResponsesEngine::map_request(&request);
+                let input = body["input"].as_array().unwrap();
+                assert_eq!(input.len(), 3);
+                assert!(input[0]["id"].as_str().unwrap().len() <= 64);
+                assert!(input[1]["id"].as_str().unwrap().len() <= 64);
+                assert!(input[1]["id"].as_str().unwrap().starts_with("fc_"));
+                assert_ne!(input[0]["id"], input[1]["id"]);
+                assert_eq!(input[0]["encrypted_content"], "opaque-state");
+                assert_eq!(input[1]["call_id"], call_id);
+                assert_eq!(input[2]["call_id"], call_id);
+                assert_eq!(body, OpenAiResponsesEngine::map_request(&request));
+                assert_eq!(request.transcript, original);
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_replay_ids_preserve_short_ids_and_distinguish_long_shared_prefixes() {
+        for len in [0, 63, 64] {
+            let id = "a".repeat(len);
+            assert_eq!(bounded_response_item_id(&id), id);
+        }
+        let prefix = format!("fc_{}", "a".repeat(80));
+        let first = bounded_response_item_id(&format!("{prefix}1"));
+        let second = bounded_response_item_id(&format!("{prefix}2"));
+        assert!(first.len() <= 64);
+        assert!(first.starts_with("fc_"));
+        assert_ne!(first, second);
+        assert_eq!(first, bounded_response_item_id(&first));
+        let unicode = bounded_response_item_id(&"\u{e9}".repeat(65));
+        assert!(unicode.is_ascii());
+        assert!(unicode.len() <= 64);
+    }
+
+    #[test]
+    fn supergrok_replay_preserves_reasoning_status() {
+        let reasoning = json!({
+            "id": format!("tco_{}", "a".repeat(80)),
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [],
+            "encrypted_content": "opaque-state"
+        });
+        let mut request = request();
+        request.model.provider = PROVIDER_SUPERGROK.to_string();
+        request.model.model = "grok-4.7".to_string();
+        request.transcript = vec![TranscriptItem::ProviderMetadata(
+            json!({"output": [reasoning.clone()]}),
+        )];
+
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::Xai,
+                thread_id: Some("thread-123"),
+            },
+        );
+
+        assert_eq!(body["input"], json!([reasoning]));
+    }
+
+    #[test]
     fn fireworks_replay_strips_encrypted_provider_reasoning() {
         let mut request = request();
         request.model.provider = PROVIDER_FIREWORKS.to_string();

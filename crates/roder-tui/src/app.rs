@@ -1339,6 +1339,13 @@ impl ProviderChoice {
     }
 }
 
+struct PendingTurnRequest {
+    thread_id: String,
+    method: &'static str,
+    expected_turn_id: Option<String>,
+    handle: tokio::task::JoinHandle<JsonRpcResponse>,
+}
+
 pub struct TuiApp<C = LocalAppClient>
 where
     C: AppClient,
@@ -1353,6 +1360,7 @@ where
     thread_title: Option<String>,
     thread_message_count: usize,
     active_turn_id: Option<String>,
+    pending_turn_requests: Vec<PendingTurnRequest>,
     active_turn_timer: TurnTimer,
     /// Wall-clock time of the most recently received backend event. Drives the
     /// stuck-turn watchdog that recovers from dropped completion events.
@@ -1824,6 +1832,7 @@ where
             thread_title,
             thread_message_count,
             active_turn_id: None,
+            pending_turn_requests: Vec::new(),
             active_turn_timer: TurnTimer::default(),
             last_event_at: Instant::now(),
             lagged_during_active_turn: false,
@@ -2012,6 +2021,7 @@ where
             let anim_changed =
                 self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
             self.recover_stuck_turn_if_needed(now);
+            needs_redraw |= self.finish_turn_requests_if_ready().await;
             self.stop_idle_voice_recording(now).await;
             self.finish_voice_transcription_if_ready().await;
             // Reflect the latest turn state onto the terminal's native progress
@@ -4277,7 +4287,7 @@ where
         }
         let thread_id = self.focused_thread_id().to_string();
         let params = TurnStartParams {
-            thread_id,
+            thread_id: thread_id.clone(),
             input: pending_turn_input(pending.message, pending.images),
             prompt: None,
             model_provider: None,
@@ -4289,15 +4299,21 @@ where
             task_ledger_required: false,
         };
         let client = self.client.clone();
-        tokio::spawn(async move {
-            let _ = client
+        let handle = tokio::spawn(async move {
+            client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
                     id: Some(serde_json::json!("turn/start")),
                     method: "turn/start".to_string(),
                     params: Some(serde_json::to_value(params).unwrap()),
                 })
-                .await;
+                .await
+        });
+        self.pending_turn_requests.push(PendingTurnRequest {
+            thread_id,
+            method: "turn/start",
+            expected_turn_id: None,
+            handle,
         });
     }
 
@@ -4306,27 +4322,80 @@ where
             self.queue_prepared_prompt(pending);
             return;
         };
+        self.last_user_prompt = Some(pending.clone());
         self.timeline
             .push_user(format!("steer: {}", pending.display));
         self.push_event("steer queued for active turn".to_string());
         let thread_id = self.focused_thread_id().to_string();
         let params = TurnSteerParams {
-            thread_id,
-            expected_turn_id: turn_id,
+            thread_id: thread_id.clone(),
+            expected_turn_id: turn_id.clone(),
             input: pending_turn_input(pending.message, pending.images),
             prompt: None,
         };
         let client = self.client.clone();
-        tokio::spawn(async move {
-            let _ = client
+        let handle = tokio::spawn(async move {
+            client
                 .send_request(JsonRpcRequest {
                     jsonrpc: "2.0".to_string(),
                     id: Some(serde_json::json!("turn/steer")),
                     method: "turn/steer".to_string(),
                     params: Some(serde_json::to_value(params).unwrap()),
                 })
-                .await;
+                .await
         });
+        self.pending_turn_requests.push(PendingTurnRequest {
+            thread_id,
+            method: "turn/steer",
+            expected_turn_id: Some(turn_id),
+            handle,
+        });
+    }
+
+    async fn finish_turn_requests_if_ready(&mut self) -> bool {
+        let mut changed = false;
+        let mut index = 0;
+        while index < self.pending_turn_requests.len() {
+            if !self.pending_turn_requests[index].handle.is_finished() {
+                index += 1;
+                continue;
+            }
+            let request = self.pending_turn_requests.remove(index);
+            let result = match request.handle.await {
+                Ok(response) => {
+                    decode_response::<roder_protocol::TurnStartResult>(response).map(|_| ())
+                }
+                Err(error) => Err(anyhow::anyhow!("request task failed: {error}")),
+            };
+            if let Err(error) = result {
+                let message = format!(
+                    "{} failed: {error}. Follow-up was not accepted; use /retry to resend it.",
+                    request.method
+                );
+                if request.thread_id == self.focused_thread_id() {
+                    // A steer can race completion. Only clear the exact stale
+                    // turn confirmed absent by the backend, never a newer turn.
+                    if request.expected_turn_id.is_some()
+                        && self.active_turn_id == request.expected_turn_id
+                        && error.to_string().contains("no active turn to steer")
+                    {
+                        self.active_turn_id = None;
+                        self.active_turn_timer.reset();
+                        self.working_status_override = None;
+                        self.clear_compaction_progress();
+                        self.progress.set(TerminalProgress::Error);
+                    }
+                    self.record_error(message);
+                } else if let Some(timeline) = self.team_timeline_for_thread_mut(&request.thread_id)
+                {
+                    timeline.push_error(message);
+                } else {
+                    self.record_error(format!("thread {}: {message}", request.thread_id));
+                }
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn queue_current_prompt(&mut self) -> bool {
@@ -10489,6 +10558,7 @@ mod tests {
             thread_title: None,
             thread_message_count: 0,
             active_turn_id: None,
+            pending_turn_requests: Vec::new(),
             active_turn_timer: TurnTimer::default(),
             last_event_at: Instant::now(),
             lagged_during_active_turn: false,
@@ -10700,6 +10770,7 @@ mod tests {
     #[derive(Clone)]
     struct RecordingClient {
         requests: Arc<StdMutex<Vec<JsonRpcRequest>>>,
+        response_error: Option<roder_protocol::JsonRpcError>,
         events: tokio::sync::broadcast::Sender<roder_api::events::EventEnvelope>,
         notifications: tokio::sync::broadcast::Sender<roder_protocol::JsonRpcNotification>,
     }
@@ -10710,6 +10781,7 @@ mod tests {
             let (notifications, _) = tokio::sync::broadcast::channel(16);
             Self {
                 requests: Arc::new(StdMutex::new(Vec::new())),
+                response_error: None,
                 events,
                 notifications,
             }
@@ -10741,8 +10813,11 @@ mod tests {
             JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id,
-                result: Some(serde_json::json!({ "turnId": "turn-recorded" })),
-                error: None,
+                result: self
+                    .response_error
+                    .is_none()
+                    .then(|| serde_json::json!({ "turnId": "turn-recorded" })),
+                error: self.response_error.clone(),
             }
         }
 
@@ -10831,6 +10906,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_turn_start_is_visible_and_preserves_retry_input() {
+        let mut client = RecordingClient::new();
+        client.response_error = Some(roder_protocol::JsonRpcError {
+            code: -32000,
+            message: "thread is already running".to_string(),
+            data: None,
+        });
+        let server = Arc::new(AppServer::new(Arc::new(Runtime::fake().unwrap())));
+        let mut app = test_app_with_client(client, server);
+        let pending = PendingPrompt::with_images("follow up", "follow up", Vec::new());
+        app.start_prepared_prompt(pending.clone()).await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !app.pending_turn_requests[0].handle.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(app.finish_turn_requests_if_ready().await);
+        assert!(app.pending_turn_requests.is_empty());
+        assert_eq!(app.last_user_prompt, Some(pending));
+        let text = rendered_timeline_text(&mut app);
+        assert!(text.contains("turn/start failed: thread is already running"));
+        assert!(text.contains("/retry"));
+        assert!(app.active_turn_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn rejected_steer_clears_only_its_stale_turn_and_keeps_followup_for_retry() {
+        for newer_turn in [false, true] {
+            let mut client = RecordingClient::new();
+            client.response_error = Some(roder_protocol::JsonRpcError {
+                code: -32000,
+                message: "no active turn to steer".to_string(),
+                data: None,
+            });
+            let server = Arc::new(AppServer::new(Arc::new(Runtime::fake().unwrap())));
+            let mut app = test_app_with_client(client, server);
+            app.active_turn_id = Some("finished-turn".to_string());
+            let pending = PendingPrompt::with_images("next task", "next task", Vec::new());
+            app.steer_prepared_prompt(pending.clone());
+            if newer_turn {
+                app.active_turn_id = Some("newer-turn".to_string());
+            }
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while !app.pending_turn_requests[0].handle.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+
+            assert!(app.finish_turn_requests_if_ready().await);
+            assert_eq!(
+                app.active_turn_id.as_deref(),
+                newer_turn.then_some("newer-turn")
+            );
+            assert_eq!(app.last_user_prompt, Some(pending));
+            assert!(rendered_timeline_text(&mut app).contains("turn/steer failed"));
+        }
+    }
+
+    #[tokio::test]
+    async fn accepted_turn_request_does_not_resurrect_a_completed_turn() {
+        let client = RecordingClient::new();
+        let server = Arc::new(AppServer::new(Arc::new(Runtime::fake().unwrap())));
+        let mut app = test_app_with_client(client, server);
+        app.start_prepared_prompt(PendingPrompt::with_images("hello", "hello", Vec::new()))
+            .await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !app.pending_turn_requests[0].handle.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(!app.finish_turn_requests_if_ready().await);
+        assert!(app.active_turn_id.is_none());
+        assert!(app.pending_turn_requests.is_empty());
+    }
+
+    #[tokio::test]
     async fn start_prepared_prompt_omits_model_fields_for_routeable_defaults() {
         let client = RecordingClient::new();
         let server = Arc::new(AppServer::new(Arc::new(
@@ -10874,7 +11033,7 @@ mod tests {
         assert!(rendered.contains("Remote app-server: stopped"));
     }
 
-    fn rendered_timeline_text(app: &mut TuiApp) -> String {
+    fn rendered_timeline_text<C: AppClient>(app: &mut TuiApp<C>) -> String {
         let render = app.timeline.render(app.theme, Rect::new(0, 0, 100, 200));
         rendered_text_rows(&render.text, 100, 200, render.text_scroll)
             .into_iter()
