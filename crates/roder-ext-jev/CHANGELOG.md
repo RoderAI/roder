@@ -1,3 +1,57 @@
+## 0.4.5 (2026-10-17)
+
+### Features
+
+#### Add semantic DOM evidence and completion audits to visual Decisions
+
+Select `JEV_DECISIONS_PROFILE=dom` for semantic page structure and form/workflow
+questions, or `activation` for clipped-field image routing and typed completion
+audits. Embedded clients can use `DecisionsBrowserProfile`. Text-only operation
+preserves the selected profile. Independent target and operation batches retain
+their original answers and aggregate actual usage; existing action gates apply.
+
+Secret fields report observed presence without misleading empty value placeholders.
+Component requests and audits reserve the remaining browser decision budget and
+count toward reported calls on answered and billed-error paths.
+
+Custom decision clients can reserve each component through the public
+`JevDecisionTransport::decide_budgeted()` boundary. Observed component counts
+remain available when a client omits `usage.calls`.
+
+### Fixes
+
+#### Audit pending activations before experimental Jev completion
+
+Add opt-in `JEV_PROMPT_PROFILE=activation`, extending `dom_targets` with a
+text-only completion check. Separate typed judgments assess whether the offered
+conditional click is required, already performed and ready. Conservative support
+can recover a pending click while retaining its original target probabilities
+and irreversible-action gate. Corrected operation confidence records derived
+support, and usage includes the additional request. Default behavior is unchanged.
+
+#### Opt into TypeSafe image input for Jev decisions
+
+`JEV_IMAGES=1` sends the current viewport screenshot with each hosted Jev decision, fitted to TypeSafe's limits (PNG or JPEG, 280 to 1568 px per side) and referenced from the request state, with the `TypeSafe-Danger-Zone-Images: true` header. Screenshots are suppressed around recognized secret fields, as for Decisions. Off by default; the text-only request is unchanged.
+
+#### Expose semantic DOM evidence in Jev browser results
+
+Browser results include a bounded semantic DOM tree with page hierarchy, roles,
+control states and observed node references. Secret fields and typed secrets stay
+redacted. `JEV_PROMPT_PROFILE=dom` opts into the experimental DOM-grounded Jev
+prompt; use `JEV_IMAGES=1` to evaluate it with screenshots. The default prompt
+remains Workflow. The paired eval supports image input for every Jev profile.
+
+Candidate rectangles are scaled into the fitted screenshot's pixels when the
+viewport image is resized, so visual references stay aligned.
+
+For clipped populated editable fields, `JEV_PROMPT_PROFILE=dom_targets` keeps screenshots
+in conditional target questions while selecting operations and evaluating
+irreversible actions from DOM evidence. Other pages retain shared visual evidence.
+
+DOM evidence preserves styled toggle states and controls nested in headings, and
+redacts JSON-escaped secret echoes. Offscreen DOM updates do not invalidate an
+otherwise unchanged page-level decision.
+
 ## 0.4.4 (2026-10-11)
 
 ### Fixes
