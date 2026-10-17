@@ -12,6 +12,6 @@
   "development_binary": {
     "sha256": "1aebea003d4f8a0993a3f2e0a79257ba5be199b9d84fdefcb5d032c09dbd26b2",
     "retained": false,
-    "note": "Historical local executable hash only; this binary is not distributed. Rebuild recorded sources to reproduce the experiment."
+    "note": "Historical local executable hash only. Intermediate sources and the executable were not retained, so this development run cannot be rebuilt exactly; its complete wire requests and responses remain available. Use freeze.json for the final comparison source commit."
   }
 }

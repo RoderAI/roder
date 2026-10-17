@@ -279,6 +279,11 @@
       if (value!==null) base[key]=value;
     }
     if (choice(source(e))) base.checked=String(source(e).checked);
+    // Visible input text may show only a substring of the complete DOM value.
+    // Route visual evidence by this observed condition, not by whether a field
+    // merely has a value. Never inspect a secret field's contents here.
+    if (safe(e) && field(e) && (e.scrollLeft>0 || e.scrollTop>0 ||
+        e.scrollWidth>e.clientWidth+1 || e.scrollHeight>e.clientHeight+1)) base.value_clipped=true;
     // What kind of field it is (Jev's own): a textarea and a one-line input
     // both read as "textbox" otherwise.
     if (e.tagName==='TEXTAREA') base.input_type='textarea';

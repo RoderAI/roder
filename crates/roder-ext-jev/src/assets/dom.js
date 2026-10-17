@@ -2,18 +2,20 @@
 // browser snapshots. Observation only: node refs identify existing controls;
 // only the offered action space grants an action. Never read secret values.
 (({tree,visible,safe,name,role,identity,actions,rectOf,placed}) => {
-  const lines=[], seen=new Set(), offered=new Map(); let size=0, visited=0, omitted=false;
+  const lines=[], seen=new Set(), offered=new Map(); let size=0, visited=0, omitted=false, skipped=false;
   for (const a of actions) if (a.node && !offered.has(a.node)) offered.set(a.node,a);
   const implicit={MAIN:'main',NAV:'navigation',ASIDE:'complementary',HEADER:'banner',
     FOOTER:'contentinfo',FORM:'form',DIALOG:'dialog',UL:'list',OL:'list',LI:'listitem',
     TABLE:'table',THEAD:'rowgroup',TBODY:'rowgroup',TR:'row',TH:'columnheader',TD:'cell',
     SECTION:'region',ARTICLE:'article',P:'paragraph',IMG:'img'};
-  // Keep complete strings until the Rust secret scrubber runs. Truncating or
-  // collapsing whitespace here can turn a known secret into an unmatchable echo.
-  // The whole-line budget below still bounds the snapshot without partial labels.
-  const quote=s=>JSON.stringify(String(s).toWellFormed());
+  // Keep complete short strings until secret scrubbing; omit long strings
+  // entirely. A truncated secret prefix would no longer match the scrubber.
+  const quote=s=>{ const value=String(s).toWellFormed();
+    if (value.length>160) { skipped=true; return JSON.stringify('[long text omitted]'); }
+    return JSON.stringify(value); };
   const add=(depth,line)=>{
     const text='  '.repeat(Math.min(depth,10))+'- '+line;
+    if (text.length>6000) { skipped=true; return add(depth,'[oversized DOM record omitted]'); }
     if (lines.length>=100 || size+text.length+1>6000) { omitted=true; return false; }
     lines.push(text); size+=text.length+1; return true;
   };
@@ -94,6 +96,6 @@
     }
   };
   walk(document.body,0);
-  if (omitted) lines.push('- … (DOM snapshot truncated)');
+  if (omitted || skipped) lines.push('- … (DOM snapshot truncated)');
   return lines.join('\n');
 })
