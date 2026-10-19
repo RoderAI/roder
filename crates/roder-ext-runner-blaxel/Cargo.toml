@@ -11,7 +11,7 @@ readme = "README.md"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "multipart"] }
 # Port configuration uses the published 0.2.2 runner contract. Do not force
 # consumers to upgrade their independently pinned hosted ownership stack.
 roder-api = { path = "../roder-api", version = "0.2.10" }

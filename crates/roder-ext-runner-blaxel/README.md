@@ -23,6 +23,10 @@ to TERM/KILL every descendant carrying that command's unique environment tag.
 Cancellation succeeds only after no tagged process remains; the finite
 server-side lease bounds the named supervisor as a backstop.
 
+File reads and writes preserve arbitrary bytes, including encrypted state and
+recordings. Reads request `application/octet-stream`; writes use multipart upload
+with `0600` permissions. Text decoding belongs to the caller.
+
 The provider can keep the sandbox active for a bounded interval after runner
 operations with `standby_after = "5m"`, replacing a single detached keep-alive
 lease and cancelling it on pause or close. It also supports validated Blaxel

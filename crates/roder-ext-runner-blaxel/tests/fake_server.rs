@@ -69,12 +69,30 @@ impl FakeBlaxelServer {
                 let state = state.clone();
                 let base = handler_base.clone();
                 tokio::spawn(async move {
-                    let mut buffer = vec![0_u8; 65536];
-                    let read = socket.read(&mut buffer).await.unwrap_or(0);
-                    if read == 0 {
-                        return;
+                    let mut buffer = Vec::new();
+                    loop {
+                        let mut chunk = [0_u8; 8192];
+                        let read = socket.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            return;
+                        }
+                        buffer.extend_from_slice(&chunk[..read]);
+                        assert!(buffer.len() <= 4 * 1024 * 1024);
+                        if let Some(end) = buffer.windows(4).position(|part| part == b"\r\n\r\n") {
+                            let headers =
+                                String::from_utf8_lossy(&buffer[..end]).to_ascii_lowercase();
+                            let length = headers
+                                .lines()
+                                .find_map(|line| line.strip_prefix("content-length: "))
+                                .unwrap_or("0")
+                                .parse::<usize>()
+                                .unwrap();
+                            if buffer.len() >= end + 4 + length {
+                                break;
+                            }
+                        }
                     }
-                    let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                    let request = String::from_utf8_lossy(&buffer).to_string();
                     let (status, body) = route(&state, &base, &request);
                     let response = format!(
                         "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n{body}",
@@ -176,6 +194,9 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
         path
     };
     let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+    if path.starts_with("/filesystem/") {
+        return filesystem::route(state, method, path, request);
+    }
 
     match (method, path) {
         ("POST", "/sandboxes") => {
@@ -437,30 +458,6 @@ fn route(state: &Arc<Mutex<ServerState>>, base: &str, request: &str) -> (&'stati
                 serde_json::json!({ "message": "Process killed successfully" }).to_string(),
             )
         }
-        ("PUT", _) if path.starts_with("/filesystem/") => {
-            let key = path.trim_start_matches("/filesystem/").to_string();
-            let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
-            if let Some(content) = parsed["content"].as_str() {
-                state.lock().unwrap().files.insert(key, content.to_string());
-            }
-            ("200 OK", serde_json::json!({ "message": "ok" }).to_string())
-        }
-        ("GET", _) if path.starts_with("/filesystem/") => {
-            let key = path.trim_start_matches("/filesystem/");
-            let guard = state.lock().unwrap();
-            match guard.files.get(key) {
-                Some(content) => (
-                    "200 OK",
-                    serde_json::json!({ "path": key, "content": content }).to_string(),
-                ),
-                None => ("404 Not Found", json_error("file not found")),
-            }
-        }
-        ("DELETE", _) if path.starts_with("/filesystem/") => {
-            let key = path.trim_start_matches("/filesystem/").to_string();
-            state.lock().unwrap().files.remove(&key);
-            ("200 OK", serde_json::json!({ "message": "ok" }).to_string())
-        }
         _ => ("404 Not Found", json_error("unrouted")),
     }
 }
@@ -525,3 +522,6 @@ fn process_json(name: &str, process: &FakeProcess) -> String {
     })
     .to_string()
 }
+
+#[path = "support/fake_filesystem.rs"]
+mod filesystem;

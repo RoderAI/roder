@@ -91,12 +91,6 @@ impl ProcessResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-struct FileWithContent {
-    #[serde(default)]
-    content: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
 struct Preview {
     #[serde(default)]
     spec: PreviewSpec,
@@ -282,12 +276,16 @@ impl BlaxelClient {
                 reqwest::Method::GET,
                 &format!("filesystem/{}", encode_path(path)),
             )
-            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::ACCEPT, "application/octet-stream")
             .send()
             .await
             .context("read blaxel file")?;
-        let file: FileWithContent = decode(response, "read file").await?;
-        Ok(file.content.into_bytes())
+        let response = checked(response, "read file").await?;
+        Ok(response
+            .bytes()
+            .await
+            .context("read blaxel file bytes")?
+            .to_vec())
     }
 
     pub async fn write_file(
@@ -296,16 +294,20 @@ impl BlaxelClient {
         path: &str,
         contents: &[u8],
     ) -> anyhow::Result<()> {
-        let content = String::from_utf8(contents.to_vec())
-            .context("blaxel runner only supports UTF-8 file writes")?;
-        let body = json!({ "content": content });
+        let body = reqwest::multipart::Form::new()
+            .part(
+                "file",
+                reqwest::multipart::Part::bytes(contents.to_vec()).file_name("file.bin"),
+            )
+            .text("permissions", "0600")
+            .text("path", path.to_owned());
         let response = self
             .sandbox(
                 endpoint,
                 reqwest::Method::PUT,
                 &format!("filesystem/{}", encode_path(path)),
             )
-            .json(&body)
+            .multipart(body)
             .send()
             .await
             .context("write blaxel file")?;
@@ -372,21 +374,22 @@ async fn decode<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
     action: &str,
 ) -> anyhow::Result<T> {
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        bail!(
-            "blaxel {action} failed ({status}): {}",
-            error_summary(&body)
-        );
-    }
+    let body = checked(response, action)
+        .await?
+        .text()
+        .await
+        .unwrap_or_default();
     serde_json::from_str(&body).with_context(|| format!("decode blaxel {action} response"))
 }
 
 async fn ensure_ok(response: reqwest::Response, action: &str) -> anyhow::Result<()> {
+    checked(response, action).await.map(|_| ())
+}
+
+async fn checked(response: reqwest::Response, action: &str) -> anyhow::Result<reqwest::Response> {
     let status = response.status();
     if status.is_success() {
-        return Ok(());
+        return Ok(response);
     }
     let body = response.text().await.unwrap_or_default();
     bail!(
