@@ -5,6 +5,7 @@
 //! capacity admission, ownership checks, cancellation and cleanup reconciliation.
 
 mod adoption;
+mod capture_channel;
 mod http;
 mod original;
 mod original_session;
@@ -21,6 +22,7 @@ use crate::Redacted;
 
 pub(crate) use adoption::ForkAllocation;
 pub use adoption::{ForkReadiness, ForkSessionOptions};
+pub use capture_channel::{CaptureChannel, CaptureChannelPin, CaptureChannelState};
 pub use original::OriginalSourceObservation;
 pub use original_session::OriginalSessionOptions;
 pub use runtime::ForkRuntime;

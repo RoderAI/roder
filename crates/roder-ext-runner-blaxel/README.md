@@ -108,6 +108,17 @@ scheduling. The caller must rotate/rebind browser controls, fence root cancellat
 and perform account/application eligibility checks before executing child work.
 The generic runner snapshot capability remains disabled.
 
+`observe_capture_channel` reads the exact original VM and its existing public
+`port-4330` preview, checking external identity, runtime and declared HTTP port.
+Retain `CaptureChannel::pin()` with the keyed preparation journal; after recovery,
+`recover_capture_channel` refuses workspace or route changes. The returned client
+uses a separate anonymous connection pool with no provider headers, proxy,
+redirects or automatic retries. Capture and neutral-API status reads accept only
+bounded exact receipts within the original observation deadline. They create no
+preview, dispatch no preparation/bootstrap mutation and grant no full-VM seal or
+resume authority. Product routing/header and capture-time closure qualification
+remain the caller's responsibility.
+
 ## How It Fits Into Roder
 
 Roder is an agentic software development system with a Rust CLI/TUI, a JSON-RPC app-server, SDKs, package resources, and first-party runtime extensions. This package is released as part of that workspace so downstream users can depend on the same component boundaries that Roder itself uses.
