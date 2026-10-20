@@ -183,7 +183,10 @@ impl BlaxelClient {
             .map_err(|_| anyhow::anyhow!("Invalid durable command observation"))?;
         anyhow::ensure!(metadata.name == name, "Durable command identity changed");
         Ok(match metadata.status.as_str() {
-            "running" if metadata.exit_code.is_none() => RunnerCommandObservation::Running,
+            // The sandbox API initializes exitCode to zero while a process is running.
+            "running" if matches!(metadata.exit_code, None | Some(0)) => {
+                RunnerCommandObservation::Running
+            }
             "completed" | "failed" | "killed" | "stopped" => RunnerCommandObservation::Exited {
                 exit_code: metadata.exit_code,
             },

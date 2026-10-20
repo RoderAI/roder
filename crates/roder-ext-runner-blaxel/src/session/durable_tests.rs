@@ -91,7 +91,17 @@ async fn durable_status_is_bounded_scoped_and_projects_no_logs() {
         (
             200,
             json!({"name":name,"status":"running","exitCode":0}),
+            Some(RunnerCommandObservation::Running),
+        ),
+        (
+            200,
+            json!({"name":name,"status":"running","exitCode":1}),
             Some(RunnerCommandObservation::Unknown),
+        ),
+        (
+            200,
+            json!({"name":name,"status":"completed","exitCode":0}),
+            Some(RunnerCommandObservation::Exited { exit_code: Some(0) }),
         ),
         (
             200,
