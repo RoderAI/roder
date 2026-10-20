@@ -6,21 +6,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::time::{Instant, timeout_at};
 
-use super::{BlaxelForkClient, ForkError, ForkRuntime};
+use super::ForkError;
 
-const PORT: u16 = 4330;
-const PREVIEW: &str = "port-4330";
+pub(super) const PORT: u16 = 4330;
 
 /// Public routing identity to retain with the keyed preparation journal.
 /// It contains no provider or application credential and grants no VM mutation.
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureChannelPin {
-    workspace: String,
-    source: String,
-    external_id: String,
-    origin: String,
-    request_digest: String,
+    pub(super) workspace: String,
+    pub(super) source: String,
+    pub(super) external_id: String,
+    pub(super) origin: String,
+    pub(super) preview_name: String,
+    pub(super) request_digest: String,
 }
 
 /// A bounded status client with its own credential-free connection pool.
@@ -60,101 +60,8 @@ struct Status {
     full_vm_seal: bool,
 }
 
-impl BlaxelForkClient {
-    /// Re-observe the original VM and existing preview without creating either.
-    /// Compare the returned pin to the retained journal before using its status.
-    /// This is read-only routing evidence, not preparation or bootstrap authority.
-    pub async fn observe_capture_channel(
-        &self,
-        source: &str,
-        external_id: &str,
-        expected: &ForkRuntime,
-        request_digest: &str,
-        deadline: Instant,
-    ) -> Result<CaptureChannel, ForkError> {
-        if Instant::now() >= deadline {
-            return Err(ForkError::rejected("capture channel observation expired"));
-        }
-        let work = async {
-            validate_digest(request_digest)?;
-            let original = self.observe_original_source(source, external_id).await?;
-            if !original.is_running()
-                || !original.runtime().matches(expected)
-                || !expected
-                    .ports
-                    .iter()
-                    .any(|port| port.target == PORT && port.protocol == crate::PortProtocol::Http)
-            {
-                return Err(ForkError::rejected("capture channel source is unavailable"));
-            }
-            let preview: Value = self
-                .request(
-                    reqwest::Method::GET,
-                    &format!(
-                        "sandboxes/{}/previews/{PREVIEW}",
-                        urlencoding::encode(source)
-                    ),
-                    None,
-                )
-                .await?
-                .ok_or_else(|| ForkError::rejected("capture preview is absent"))?;
-            if preview["metadata"]["name"] != PREVIEW
-                || preview["spec"]["port"] != PORT
-                || preview["spec"]["public"] != true
-                || !preview["metadata"]["workspace"].is_null()
-                    && preview["metadata"]["workspace"] != self.workspace
-            {
-                return Err(ForkError::rejected("capture preview identity changed"));
-            }
-            let origin = preview["spec"]["url"]
-                .as_str()
-                .ok_or_else(|| ForkError::rejected("capture preview URL unavailable"))?;
-            let origin = preview_origin(origin)?;
-            CaptureChannel::new(
-                CaptureChannelPin {
-                    workspace: self.workspace.clone(),
-                    source: source.into(),
-                    external_id: external_id.into(),
-                    origin,
-                    request_digest: request_digest.into(),
-                },
-                deadline,
-            )
-        };
-        timeout_at(deadline, work)
-            .await
-            .map_err(|_| ForkError::rejected("capture channel observation expired"))?
-    }
-
-    /// Reconstruct only the exact retained route, with fresh source/runtime and
-    /// preview observations. A changed URL cannot silently replace the journal.
-    pub async fn recover_capture_channel(
-        &self,
-        pin: &CaptureChannelPin,
-        expected: &ForkRuntime,
-        deadline: Instant,
-    ) -> Result<CaptureChannel, ForkError> {
-        if pin.workspace != self.workspace {
-            return Err(ForkError::rejected("capture channel workspace changed"));
-        }
-        let channel = self
-            .observe_capture_channel(
-                &pin.source,
-                &pin.external_id,
-                expected,
-                &pin.request_digest,
-                deadline,
-            )
-            .await?;
-        if channel.pin != *pin {
-            return Err(ForkError::rejected("capture channel route changed"));
-        }
-        Ok(channel)
-    }
-}
-
 impl CaptureChannel {
-    fn new(pin: CaptureChannelPin, deadline: Instant) -> Result<Self, ForkError> {
+    pub(super) fn new(pin: CaptureChannelPin, deadline: Instant) -> Result<Self, ForkError> {
         if Instant::now() >= deadline {
             return Err(ForkError::rejected("capture channel observation expired"));
         }
@@ -287,7 +194,7 @@ impl CaptureChannel {
     }
 }
 
-fn validate_digest(value: &str) -> Result<(), ForkError> {
+pub(super) fn validate_digest(value: &str) -> Result<(), ForkError> {
     if value.len() != 64
         || !value
             .bytes()
@@ -298,7 +205,7 @@ fn validate_digest(value: &str) -> Result<(), ForkError> {
     Ok(())
 }
 
-fn preview_origin(value: &str) -> Result<String, ForkError> {
+pub(super) fn preview_origin(value: &str) -> Result<String, ForkError> {
     let refused = || ForkError::rejected("invalid capture preview URL");
     let url = Url::parse(value).map_err(|_| refused())?;
     let host = url.host_str().ok_or_else(refused)?;

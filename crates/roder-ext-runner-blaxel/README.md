@@ -108,16 +108,28 @@ scheduling. The caller must rotate/rebind browser controls, fence root cancellat
 and perform account/application eligibility checks before executing child work.
 The generic runner snapshot capability remains disabled.
 
-`observe_capture_channel` reads the exact original VM and its existing public
-`port-4330` preview, checking external identity, runtime and declared HTTP port.
-Retain `CaptureChannel::pin()` with the keyed preparation journal; after recovery,
-`recover_capture_channel` refuses workspace or route changes. The returned client
-uses a separate anonymous connection pool with no provider headers, proxy,
-redirects or automatic retries. Capture and neutral-API status reads accept only
-bounded exact receipts within the original observation deadline. They create no
-preview, dispatch no preparation/bootstrap mutation and grant no full-VM seal or
-resume authority. Product routing/header and capture-time closure qualification
-remain the caller's responsibility.
+`capture_preview_intent` constructs an operation-specific preview identity from
+the keyed request digest. Retain that intent and a requested phase before
+`prepare_capture_preview`; `create_capture_preview` consumes its single-use
+permit for one non-forced POST. Unknown or cancelled creation must settle by
+`reconcile_capture_preview`, never by requesting another create permit. Create requests
+use a ten-minute TTL and no custom domain, prefix, or injected request/response
+headers. A pre-existing route causes preparation to refuse.
+
+`observe_capture_channel` checks the exact source, external identity, runtime and
+declared HTTP port before opening the operation-specific public preview. Retain
+`CaptureChannel::pin()` with the keyed journal; `recover_capture_channel` refuses
+workspace or route changes. Its separate anonymous connection pool has no
+provider headers, proxy, redirects or retries. Capture and neutral-API status
+reads accept bounded neutral receipts within the original observation deadline.
+
+`delete_capture_preview` rechecks the source and exact unchanged route through
+the control plane, independently of the stopped command API. Accepted deletion
+requires positive absence readback. `capture_preview_absent` can prove route
+absence even after the source VM is gone; it never authorizes recreation.
+These primitives grant no full-VM seal or resume authority. Callers still own
+durable first-ACK admission, resource accounting, cancellation, cleanup and
+product routing/header and capture-time closure qualification.
 
 ## How It Fits Into Roder
 

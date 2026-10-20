@@ -7,6 +7,7 @@ fn pin(origin: &str) -> CaptureChannelPin {
         source: "owned-source".into(),
         external_id: "owned-external".into(),
         origin: origin.into(),
+        preview_name: "verify-capture-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
         request_digest: "a".repeat(64),
     }
 }

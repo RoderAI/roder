@@ -21,7 +21,7 @@ fn expected() -> roder_ext_runner_blaxel::forks::ForkRuntime {
     value
 }
 fn preview() -> Value {
-    json!({"metadata":{"name":"port-4330"},"spec":{"port":4330,"public":true,"url":"https://owned.us-was-1.preview.bl.run"}})
+    json!({"metadata":{"name":"verify-capture-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"spec":{"port":4330,"public":true,"ttl":"10m","url":"https://owned.us-was-1.preview.bl.run"}})
 }
 
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn observation_and_recovery_use_exact_authenticated_reads_and_preserve_pub
         let path = if index % 2 == 0 {
             "/v0/sandboxes/source-one"
         } else {
-            "/v0/sandboxes/source-one/previews/port-4330"
+            "/v0/sandboxes/source-one/previews/verify-capture-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         };
         assert!(request.starts_with(&format!("GET {path} HTTP/1.1\r\n")));
         assert!(!request.contains("show_secrets") && !request.contains("force="));
