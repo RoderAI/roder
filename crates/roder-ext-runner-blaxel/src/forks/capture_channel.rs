@@ -10,6 +10,10 @@ use super::ForkError;
 
 pub(super) const PORT: u16 = 4330;
 
+#[path = "capture_channel/bootstrap.rs"]
+mod bootstrap;
+pub use bootstrap::{SourceApiBootstrapBinding, SourceApiBootstrapPermit};
+
 /// Public routing identity to retain with the keyed preparation journal.
 /// It contains no provider or application credential and grants no VM mutation.
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]

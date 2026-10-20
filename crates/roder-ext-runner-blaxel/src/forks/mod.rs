@@ -23,7 +23,10 @@ use crate::Redacted;
 
 pub(crate) use adoption::ForkAllocation;
 pub use adoption::{ForkReadiness, ForkSessionOptions};
-pub use capture_channel::{CaptureChannel, CaptureChannelPin, CaptureChannelState};
+pub use capture_channel::{
+    CaptureChannel, CaptureChannelPin, CaptureChannelState, SourceApiBootstrapBinding,
+    SourceApiBootstrapPermit,
+};
 pub use capture_preview::{CapturePreviewCreatePermit, CapturePreviewIntent};
 pub use original::OriginalSourceObservation;
 pub use original_session::OriginalSessionOptions;

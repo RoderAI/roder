@@ -4446,7 +4446,9 @@ version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "reqwest",
+ "ring",
  "roder-api",
  "semver",
  "serde",
