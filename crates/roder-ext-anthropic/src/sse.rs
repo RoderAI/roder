@@ -8,7 +8,8 @@ use roder_api::inference::{
 use roder_api::tools::ToolSpec;
 use serde_json::{Value, json};
 
-use crate::provider::{canonical_tool_name, extract_usage, parse_json_object};
+use crate::provider::{canonical_tool_name, parse_json_object};
+use crate::usage::extract_usage;
 
 /// Caps a single buffered frame so a stream that never sends a frame
 /// delimiter cannot grow the buffer without bound.

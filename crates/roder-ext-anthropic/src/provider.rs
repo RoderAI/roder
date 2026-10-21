@@ -3,7 +3,7 @@ use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
     AgentInferenceRequest, InferenceCapabilities, InferenceEngine, InferenceEventStream,
     InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, ModelDescriptor,
-    ProviderAuthType, TokenUsage, ToolSearchProviderVariant,
+    ProviderAuthType, ToolSearchProviderVariant,
 };
 use serde_json::{Value, json};
 
@@ -75,6 +75,9 @@ impl AnthropicEngine {
             "max_tokens": request.output.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             "stream": true,
         });
+        if let Some(tier) = request.runtime.service_tier.as_deref() {
+            body["service_tier"] = json!(tier);
+        }
         if let Some(text) = system_role_context {
             if let Some(block) = messages
                 .last_mut()
@@ -471,33 +474,6 @@ pub(crate) fn parse_json_object(raw: &str) -> Value {
         .unwrap_or_else(|| json!({}))
 }
 
-/// `prompt_tokens` counts the full prompt: uncached input plus cache writes
-/// plus cache reads, with the cache components also reported separately.
-pub(crate) fn extract_usage(value: &Value) -> Option<TokenUsage> {
-    let usage = value.get("usage")?;
-    let uncached_prompt_tokens = number_to_u32(usage.get("input_tokens")).unwrap_or_default();
-    let cache_creation_tokens =
-        number_to_u32(usage.get("cache_creation_input_tokens")).unwrap_or_default();
-    let cache_read_tokens = number_to_u32(usage.get("cache_read_input_tokens")).unwrap_or_default();
-    let prompt_tokens = uncached_prompt_tokens
-        .saturating_add(cache_creation_tokens)
-        .saturating_add(cache_read_tokens);
-    let completion_tokens = number_to_u32(usage.get("output_tokens")).unwrap_or_default();
-    Some(
-        TokenUsage::new(
-            prompt_tokens,
-            completion_tokens,
-            prompt_tokens.saturating_add(completion_tokens),
-        )
-        .with_cached_prompt_tokens(cache_read_tokens)
-        .with_cache_creation_prompt_tokens(cache_creation_tokens),
-    )
-}
-
-fn number_to_u32(value: Option<&Value>) -> Option<u32> {
-    value?.as_u64().and_then(|n| u32::try_from(n).ok())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,6 +484,20 @@ mod tests {
     use roder_api::transcript::{
         AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
     };
+
+    #[test]
+    fn maps_explicit_service_tier_without_changing_the_provider_default() {
+        let mut request = request();
+        assert!(
+            AnthropicEngine::map_request(&request)
+                .get("service_tier")
+                .is_none()
+        );
+        for tier in ["standard_only", "auto", "unsupported-tier"] {
+            request.runtime.service_tier = Some(tier.into());
+            assert_eq!(AnthropicEngine::map_request(&request)["service_tier"], tier);
+        }
+    }
 
     #[test]
     fn tool_result_images_are_sent_as_image_blocks() {
@@ -939,26 +929,6 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Anthropic API key is missing; set ANTHROPIC_API_KEY or configure it from the provider menu"
-        );
-    }
-
-    #[test]
-    fn extracts_anthropic_usage_with_cache_components() {
-        let value = json!({
-            "usage": {
-                "input_tokens": 2,
-                "cache_creation_input_tokens": 1,
-                "cache_read_input_tokens": 8,
-                "output_tokens": 7
-            }
-        });
-        assert_eq!(
-            extract_usage(&value),
-            Some(
-                TokenUsage::new(11, 7, 18)
-                    .with_cached_prompt_tokens(8)
-                    .with_cache_creation_prompt_tokens(1)
-            )
         );
     }
 
