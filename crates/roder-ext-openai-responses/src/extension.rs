@@ -13,6 +13,7 @@ pub struct OpenAiResponsesExtension {
     provider_id: String,
     base_url: String,
     headers: Vec<(String, String)>,
+    service_tier: Option<String>,
 }
 
 impl OpenAiResponsesExtension {
@@ -40,7 +41,13 @@ impl OpenAiResponsesExtension {
             provider_id: provider_id.into(),
             base_url: base_url.into(),
             headers,
+            service_tier: None,
         }
+    }
+    /// Set the default service tier for OpenAI API requests.
+    pub fn with_service_tier(mut self, service_tier: Option<String>) -> Self {
+        self.service_tier = service_tier;
+        self
     }
 }
 
@@ -61,12 +68,15 @@ impl RoderExtension for OpenAiResponsesExtension {
     }
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
-        registry.inference_engine(Arc::new(OpenAiResponsesEngine::new_with_config(
-            self.api_key.clone(),
-            self.provider_id.clone(),
-            self.base_url.clone(),
-            self.headers.clone(),
-        )));
+        registry.inference_engine(Arc::new(
+            OpenAiResponsesEngine::new_with_config(
+                self.api_key.clone(),
+                self.provider_id.clone(),
+                self.base_url.clone(),
+                self.headers.clone(),
+            )
+            .with_service_tier(self.service_tier.clone()),
+        ));
         Ok(())
     }
 }
