@@ -33,6 +33,46 @@ async fn local_backend_rejects_remote_context_before_dispatch() {
     assert!(result.is_error);
     assert!(result.text.contains("cannot target the host"));
     assert!(driver.calls.lock().await.is_empty());
+    assert!(runner.get("cua_launch_app").is_none());
+    let launch = call(
+        &registry,
+        context("a", "remote"),
+        "cua_launch_app",
+        json!({"bundle_id":"com.apple.Terminal"}),
+    )
+    .await;
+    assert!(launch.is_error);
+    assert!(driver.calls.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn launch_rejects_plan_mode_and_non_bundle_arguments_without_dispatch() {
+    let driver = Arc::new(Driver::default());
+    let registry = local_registry(driver.clone());
+    for arguments in [
+        json!({}),
+        json!({"bundle_id":""}),
+        json!({"bundle_id":"com.apple.Terminal","additional_arguments":["-c","command"]}),
+        json!({"bundle_id":"com.apple.Terminal","urls":["file:///tmp/a"]}),
+        json!({"bundle_id":"com.apple.Terminal","session":"foreign"}),
+    ] {
+        assert!(
+            call(&registry, local("launch"), "cua_launch_app", arguments)
+                .await
+                .is_error
+        );
+    }
+    assert!(
+        call(
+            &registry,
+            ToolExecutionContext::new("launch", "turn", PolicyMode::Plan),
+            "cua_launch_app",
+            json!({"bundle_id":"com.apple.Terminal"})
+        )
+        .await
+        .is_error
+    );
+    assert!(driver.calls.lock().await.is_empty());
 }
 
 // Keep the desktop generation assertions in one test: the physical desktop
@@ -111,4 +151,58 @@ async fn local_sessions_share_a_desktop_epoch_and_allow_native_unicode_typing() 
             .1["text"],
         "café 日本語"
     );
+    drop(calls);
+    // A process launch has no existing window. It must consume both this
+    // session's grounding and every other contributor's desktop generation.
+    observe(&registry, local("a")).await;
+    observe(&other_registry, local("b")).await;
+    let launched = call(
+        &registry,
+        local("a"),
+        "cua_launch_app",
+        json!({"bundle_id":"com.apple.Terminal"}),
+    )
+    .await;
+    assert!(!launched.is_error, "{}", launched.text);
+    assert_eq!(launched.data["observation"]["pid"], 10);
+    for (registry, thread) in [(&registry, "a"), (&other_registry, "b")] {
+        let stale = call(
+            registry,
+            local(thread),
+            "cua_press_key",
+            json!({"pid":10,"window_id":20,"key":"ENTER"}),
+        )
+        .await;
+        assert!(stale.is_error);
+    }
+    observe(&registry, local("a")).await;
+    assert!(
+        !call(
+            &registry,
+            local("a"),
+            "cua_press_key",
+            json!({"pid":10,"window_id":20,"key":"ENTER"})
+        )
+        .await
+        .is_error
+    );
+    driver.fail_input.store(true, Ordering::SeqCst);
+    assert!(
+        call(
+            &registry,
+            local("a"),
+            "cua_launch_app",
+            json!({"bundle_id":"com.apple.Terminal"})
+        )
+        .await
+        .is_error
+    );
+    let calls = driver.calls.lock().await;
+    let launches: Vec<_> = calls
+        .iter()
+        .filter(|(name, _)| name == "launch_app")
+        .collect();
+    assert_eq!(launches.len(), 2, "failed launches must not be retried");
+    assert_eq!(launches[0].1.as_object().unwrap().len(), 2);
+    assert_eq!(launches[0].1["bundle_id"], "com.apple.Terminal");
 }

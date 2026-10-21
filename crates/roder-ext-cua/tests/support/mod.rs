@@ -54,6 +54,11 @@ impl CuaTransport for Driver {
                 observation: json!({"windows":windows}),
                 is_error: false,
             })
+        } else if tool == "launch_app" {
+            Ok(DriverReply {
+                observation: json!({"pid":10,"bundle_id":args["bundle_id"],"windows":[{"pid":10,"window_id":20}]}),
+                is_error: self.fail_input.load(Ordering::SeqCst),
+            })
         } else {
             if self.pending_input.load(Ordering::SeqCst) {
                 drop(calls);

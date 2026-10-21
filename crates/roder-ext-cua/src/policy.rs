@@ -33,8 +33,11 @@ mod tests {
     use roder_api::tools::{ToolCall, ToolExecutionContext};
     use serde_json::json;
     #[tokio::test]
-    async fn browser_mutations_require_approval_and_plan_denies_them() {
-        for tool in crate::browser_specs::TOOLS {
+    async fn desktop_mutations_require_approval_and_plan_denies_them() {
+        for tool in crate::specs::INPUT_TOOLS
+            .iter()
+            .chain(crate::browser_specs::TOOLS)
+        {
             for mode in [PolicyMode::Default, PolicyMode::Plan, PolicyMode::Bypass] {
                 let result = CuaPolicy
                     .review_tool(PolicyReview {
