@@ -65,6 +65,9 @@ impl ToolContributor for CuaToolContributor {
             .chain(INPUT_TOOLS)
             .chain(crate::browser_specs::TOOLS)
         {
+            if *name == "launch_app" && self.shared.config.backend != CuaBackend::LocalMacos {
+                continue;
+            }
             registry.register(Arc::new(CuaTool {
                 name,
                 shared: self.shared.clone(),
@@ -171,6 +174,35 @@ impl CuaTool {
             sessions.entry(label.clone()).or_default().clone()
         };
         let mut session = session.lock().await;
+        if self.name == "launch_app" {
+            // Launch has no existing window to ground. It changes the shared
+            // desktop epoch, so every subsequent window action needs a fresh read.
+            session.grounding = None;
+            session.browser.invalidate();
+            let lease = lease.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("application launch requires the local macOS backend")
+            })?;
+            lease.begin_input();
+            arguments["session"] = json!(label);
+            let reply = self
+                .shared
+                .transport
+                .call(destination, self.name, arguments, timeout)
+                .await?;
+            let data = json!({
+                "untrusted": true,
+                "driver_version": crate::DRIVER_VERSION,
+                "observation": reply.observation,
+                "next_action": "Observe the returned exact window with cua_get_window_state before input. If no window is ready, use bounded cua_list_windows reads. No launch was retried."
+            });
+            return Ok(ToolResult {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                text: crate::render::result_text(&data),
+                data,
+                is_error: reply.is_error,
+            });
+        }
         if crate::browser_specs::TOOLS.contains(&self.name) {
             if self.name == "browser_prepare" {
                 check_grounding(

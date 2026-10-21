@@ -20,7 +20,10 @@ Only atomic input operations are exposed. Stale/foreign capture handles,
 unknown arguments, mismatched contexts and ungrounded input fail before native
 dispatch. Plan mode observes and denies input; default mode requests approval;
 Accept All and Bypass retain Roder's standard approval semantics. Every input
-is followed by a fresh window/desktop capture. Uncertain input is never retried.
+is followed by a fresh window/desktop capture. The macOS-only `cua_launch_app`
+starts an installed app by bundle ID through the pinned driver, invalidates prior
+grounding, and requires observing a returned window before input. It does not
+accept shell commands, arguments or URLs. Uncertain input is never retried.
 
 Browser controls use the same desktop session and policy: exact-window bind,
 semantic page snapshots/PNGs, profile preparation, navigation, click, Unicode

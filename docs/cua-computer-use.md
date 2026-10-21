@@ -77,6 +77,7 @@ and does not replace the agent's Cua grounding captures.
 | Tools | Operation |
 | --- | --- |
 | cua_list_apps, cua_list_windows | Discover applications and exact native windows |
+| cua_launch_app | macOS only: launch an installed bundle ID without activation; observe its returned window before input |
 | cua_get_window_state | Window PNG, accessibility tree, capture and element handles |
 | cua_get_desktop_state | Full desktop PNG and capture handle |
 | cua_click | Element or pixel click; count 1–3; left/right/middle button |
