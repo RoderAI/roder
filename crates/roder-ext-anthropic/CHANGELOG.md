@@ -1,3 +1,13 @@
+## 0.2.3 (2026-10-21)
+
+### Fixes
+
+#### Honor requested Anthropic service tiers and retain the reported tier
+
+Forward explicit runtime service-tier selection to Messages requests, allowing
+callers to enforce standard-only service. Preserve the tier reported in usage
+without assuming a default when it is absent.
+
 ## 0.2.2 (2026-10-10)
 
 ### Fixes
