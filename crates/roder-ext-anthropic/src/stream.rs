@@ -386,7 +386,7 @@ mod tests {
     fn happy_path_sse_body() -> String {
         [
             r#"event: message_start
-data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-6","stop_reason":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1,"cache_read_input_tokens":8,"output_tokens":1}}}"#,
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-6","stop_reason":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1,"cache_read_input_tokens":8,"output_tokens":1,"service_tier":"standard"}}}"#,
             r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
             r#"data: {"type":"ping"}"#,
             r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}"#,
@@ -438,7 +438,8 @@ data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"a
             InferenceEvent::Usage(
                 TokenUsage::new(11, 7, 18)
                     .with_cached_prompt_tokens(8)
-                    .with_cache_creation_prompt_tokens(1),
+                    .with_cache_creation_prompt_tokens(1)
+                    .with_service_tier(Some("standard".into())),
             ),
             InferenceEvent::ProviderMetadata(json!({
                 "id": "msg_1",
@@ -455,7 +456,8 @@ data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"a
                     "input_tokens": 2,
                     "cache_creation_input_tokens": 1,
                     "cache_read_input_tokens": 8,
-                    "output_tokens": 7
+                    "output_tokens": 7,
+                    "service_tier": "standard"
                 }
             })),
             InferenceEvent::Completed(CompletionMetadata {
