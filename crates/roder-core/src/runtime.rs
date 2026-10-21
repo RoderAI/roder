@@ -13,6 +13,7 @@ mod compaction_template;
 mod eager_tools;
 mod execution_receipts;
 mod owner_handoff;
+mod service_tier;
 mod thread_admission;
 #[path = "runtime/tool_approvals.rs"]
 mod tool_approvals;
@@ -254,7 +255,7 @@ pub struct StartTurnRequest {
     /**
      * Per-turn provider service tier (OpenAI `service_tier`, e.g.
      * `"priority"` for Fast mode). Carried to every inference round of the
-     * turn as `RuntimeHints::service_tier`; `None` keeps the provider
+     * turn as `RuntimeHints::service_tier`; `None` inherits the thread and provider
      * default. Providers without a tier concept ignore it.
      */
     pub service_tier_override: Option<String>,
@@ -262,6 +263,8 @@ pub struct StartTurnRequest {
 
 #[derive(Debug, Clone)]
 pub struct CreateThreadRequest {
+    /// Default provider service tier for this thread.
+    pub service_tier: Option<String>,
     pub title: Option<String>,
     pub workspace: String,
     pub workspace_id: Option<String>,
@@ -413,6 +416,7 @@ pub(crate) struct ThreadTurnOverrides {
     pub(crate) tool_allowlist: Vec<String>,
     pub(crate) developer_instructions: Option<String>,
     pub(crate) external_tools: Vec<roder_api::tools::ToolSpec>,
+    pub(crate) service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1594,6 +1598,7 @@ impl Runtime {
             model: None,
             selection_mode: None,
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
@@ -1754,6 +1759,7 @@ impl Runtime {
             model: Some(model),
             selection_mode: Some(selection_mode),
             tool_allowlist: req.tool_allowlist,
+            service_tier: req.service_tier,
             developer_instructions: req.developer_instructions,
             external_tools: req.external_tools,
             runner_destination,
@@ -1850,6 +1856,7 @@ impl Runtime {
                     model: None,
                     selection_mode: None,
                     tool_allowlist: Vec::new(),
+                    service_tier: None,
                     developer_instructions: None,
                     external_tools: Vec::new(),
                     runner: None,
@@ -1901,6 +1908,7 @@ impl Runtime {
                     model: member.model.clone(),
                     selection_mode: None,
                     tool_allowlist: Vec::new(),
+                    service_tier: None,
                     developer_instructions: None,
                     external_tools: Vec::new(),
                     runner: None,
@@ -2700,6 +2708,7 @@ impl Runtime {
             .load_thread_metadata(thread_id)
             .await?
             .map(|metadata| ThreadTurnOverrides {
+                service_tier: metadata.service_tier,
                 tool_allowlist: metadata.tool_allowlist,
                 developer_instructions: metadata.developer_instructions,
                 external_tools: metadata.external_tools,
@@ -3976,7 +3985,10 @@ impl Runtime {
                     speed_policy: speed_policy_decision,
                     reliability: Some(request_reliability),
                     deadline_remaining_seconds: deadline_remaining_seconds(turn_deadline),
-                    service_tier: req.service_tier_override.clone(),
+                    service_tier: req
+                        .service_tier_override
+                        .clone()
+                        .or_else(|| thread_overrides.service_tier.clone()),
                     ..RuntimeHints::default()
                 },
                 metadata: request_metadata,
@@ -6446,6 +6458,7 @@ mod tests {
                 model: Some("mock".to_string()),
                 selection_mode: None,
                 tool_allowlist: Vec::new(),
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 runner: None,
@@ -7609,6 +7622,7 @@ mod tests {
                 provider: Some(default.provider.clone()),
                 model: Some(default.model.clone()),
                 tool_allowlist: Vec::new(),
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 selection_mode: Some(ModelSelectionMode::auto(
@@ -7760,6 +7774,7 @@ mod tests {
                 provider: Some(selected.provider.clone()),
                 model: Some(selected.model.clone()),
                 tool_allowlist: Vec::new(),
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 selection_mode: Some(ModelSelectionMode::auto(
@@ -7877,6 +7892,7 @@ mod tests {
                 provider: Some(selected.provider.clone()),
                 model: Some(selected.model.clone()),
                 tool_allowlist: Vec::new(),
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 selection_mode: Some(ModelSelectionMode::manual(
@@ -8387,6 +8403,7 @@ mod tests {
                 model: None,
                 selection_mode: None,
                 tool_allowlist,
+                service_tier: None,
                 developer_instructions,
                 external_tools,
                 runner: None,
@@ -8563,6 +8580,7 @@ mod tests {
                 model: None,
                 selection_mode: None,
                 tool_allowlist: vec!["edit".to_string(), "write_file".to_string()],
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 runner: None,
@@ -9040,6 +9058,7 @@ mod tests {
                 model: None,
                 selection_mode: None,
                 tool_allowlist: Vec::new(),
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 runner: None,

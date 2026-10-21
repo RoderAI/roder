@@ -203,3 +203,12 @@ model ids.
 `item/applyPatch/progress` carries proposed file changes and the patch text while a custom-tool call is generated. `complete` reports whether the patch text is complete; execution and approval remain separate. Requested line fragments are not complete file contents. Actual changes and partial failures are reported by tool completion and `hunk/recorded`. ACP clients receive standard tool-call updates with `rawInput.patch`. See [the API reference](api.md#itemapplypatchprogress) for the payload and interruption behavior.
 
 Native manual compaction is task scoped and requires an idle task. `thread/compact` reports `reason: "turn_active"` when a turn is still running. Opaque compaction windows are persisted as provider state and are replayed intact; see the Responses recovery contract in `api.md`.
+
+## Inference service tiers
+
+`thread/start.serviceTier` persists a thread default (e.g. `"ultrafast"`).
+`thread/set_service_tier` updates it for an existing `threadId`; null clears it.
+The optional `Thread.serviceTier` field exposes the value in read/list results.
+`turn/start.serviceTier` overrides it for one turn. Turn override > thread
+setting > provider config. Updates affect subsequent turns; steering does not
+change an active turn's captured tier. See [the API reference](api.md#threadset_service_tier).

@@ -495,6 +495,7 @@ mod tests {
             id: "thread-a".to_string(),
             preview: String::new(),
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,

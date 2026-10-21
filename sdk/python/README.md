@@ -38,3 +38,19 @@ uv publish
 
 The package is published as `roder-sdk`; keep `readme = "README.md"` in
 `pyproject.toml` so PyPI shows this page on the project page.
+
+## Inference service tiers
+
+Set a persistent thread default at creation, override it for one turn, or change
+it on an existing thread. Turn overrides take precedence over the thread tier
+and provider config; thread defaults survive server restarts.
+
+```python
+async with await RoderAgent.create(
+    local={"command": "roder"}, cwd="/workspace", service_tier="ultrafast",
+) as agent:
+    await agent.send("Inspect the repo")
+    await agent.send("Use standard processing for this turn", service_tier="default")
+    await agent.set_service_tier("ultrafast")
+    await agent.set_service_tier(None)  # Restore the provider default.
+```

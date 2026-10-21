@@ -242,6 +242,9 @@ impl Runtime {
                     .as_ref()
                     .map(|metadata| metadata.tool_allowlist.clone())
                     .unwrap_or_default(),
+                service_tier: parent_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.service_tier.clone()),
                 developer_instructions,
                 external_tools: parent_metadata
                     .as_ref()
@@ -388,6 +391,9 @@ impl Runtime {
                     .as_ref()
                     .map(|metadata| metadata.tool_allowlist.clone())
                     .unwrap_or_default(),
+                service_tier: parent_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.service_tier.clone()),
                 developer_instructions: parent_metadata
                     .as_ref()
                     .and_then(|metadata| metadata.developer_instructions.clone()),

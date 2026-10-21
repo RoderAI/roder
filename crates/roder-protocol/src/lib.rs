@@ -150,6 +150,9 @@ pub struct ThreadStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Thread {
+    /// Default provider service tier for this thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
     pub id: ThreadId,
     pub preview: String,
     pub model_provider: String,
@@ -518,6 +521,9 @@ impl From<roder_api::thread::ThreadItemEvent> for ThreadItemEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStartParams {
+    /// Default provider service tier for this thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<ModelSelectChoice>,
     pub model: Option<String>,
@@ -940,6 +946,9 @@ pub struct TurnInputItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStartParams {
+    /// Default provider service tier for this turn only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
     pub thread_id: ThreadId,
     #[serde(default)]
     pub input: Vec<TurnInputItem>,
@@ -4124,6 +4133,21 @@ pub struct PendingPlanExitDescriptor {
     pub next_steps: Vec<String>,
     pub requested_at: OffsetDateTime,
     pub expires_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetServiceTierParams {
+    pub thread_id: ThreadId,
+    /// None clears the thread default. Per-turn overrides still take precedence.
+    pub service_tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSetServiceTierResult {
+    pub thread_id: ThreadId,
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

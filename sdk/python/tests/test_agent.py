@@ -110,3 +110,27 @@ async def test_agent_safe_read_only_helpers() -> None:
         "tools/list",
         "commands/list",
     ]
+
+
+@pytest.mark.anyio
+async def test_service_tiers_thread_default_turn_override_and_clear() -> None:
+    requests: list[dict[str, Any]] = []
+
+    async def handler(request: dict[str, Any]) -> dict[str, Any]:
+        requests.append(request)
+        result = ({"thread": {"id": "thread-1"}} if request["method"] == "thread/start"
+                  else {"turnId": "turn-1"} if request["method"] == "turn/start" else {})
+        return {"jsonrpc": "2.0", "id": request["id"], "result": result}
+
+    async with await RoderAgent.create(
+        transport=InMemoryTransport(handler), workspace_id="ws-1", service_tier="ultrafast",
+    ) as agent:
+        await agent.send("hello", service_tier="default")
+        await agent.send("inherit")
+        await agent.set_service_tier("flex")
+        await agent.set_service_tier(None)
+    assert requests[0]["params"]["serviceTier"] == "ultrafast"
+    assert requests[1]["params"]["serviceTier"] == "default"
+    assert "serviceTier" not in requests[2]["params"]
+    assert requests[3]["params"] == {"threadId": "thread-1", "serviceTier": "flex"}
+    assert requests[4]["params"] == {"threadId": "thread-1", "serviceTier": None}

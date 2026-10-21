@@ -288,6 +288,7 @@ async fn routing_avoids_failing_native_compaction_on_default_provider() {
             provider: Some("openai".into()),
             model: Some("gpt-5.5".into()),
             tool_allowlist: vec![],
+            service_tier: None,
             developer_instructions: None,
             external_tools: vec![],
             selection_mode: Some(ModelSelectionMode::auto(

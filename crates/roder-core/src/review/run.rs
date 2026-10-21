@@ -169,6 +169,7 @@ impl Runtime {
                     .iter()
                     .map(|name| (*name).to_string())
                     .collect(),
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 runner: None,

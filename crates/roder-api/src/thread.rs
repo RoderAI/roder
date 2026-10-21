@@ -94,6 +94,9 @@ impl ThreadUsageMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ThreadMetadata {
+    /// Default provider service tier for this thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
     pub thread_id: ThreadId,
     pub title: Option<String>,
     #[serde(deserialize_with = "deserialize_thread_workspace")]
@@ -564,6 +567,7 @@ mod tests {
             model: None,
             selection_mode: None,
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner_destination: None,
@@ -626,6 +630,7 @@ mod tests {
                 Some("low".to_string()),
             )),
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner_destination: None,

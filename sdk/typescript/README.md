@@ -60,3 +60,19 @@ Browser bundlers select a remote-only entry automatically. You can also import
 `@roderai/sdk/browser` explicitly; it exports the RPC client, WebSocket transport,
 normalized events, runs, and external-tool executor without Node process imports.
 Use the default Node entry for `RoderAgent` and local process execution.
+
+## Inference service tiers
+
+Set a persistent thread default at creation, override it for one turn, or change
+it on an existing thread. Turn overrides take precedence over the thread tier
+and provider config; thread defaults survive server restarts.
+
+```ts
+const agent = await RoderAgent.create({
+  local: { cwd: "/workspace" }, serviceTier: "ultrafast",
+});
+await agent.send("Inspect the repo");
+await agent.send("Use standard processing for this turn", { serviceTier: "default" });
+await agent.setServiceTier("ultrafast");
+await agent.setServiceTier(null); // Restore the provider default.
+```

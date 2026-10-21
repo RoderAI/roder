@@ -30,6 +30,8 @@ export interface RoderAgentOptions {
     id?: string;
     reasoning?: string;
   };
+  /** Persistent default provider service tier for a new thread, e.g. "ultrafast". */
+  serviceTier?: string;
   /** Per-thread tool filter applied on top of the server's runtime allowlist. */
   toolAllowlist?: string[];
   /** Host instructions layered under the harness system prompt on every turn. */
@@ -133,6 +135,8 @@ export class RoderAgent {
     input: string | Array<Record<string, unknown>>,
     options: {
       eventMode?: EventMode;
+      /** Override the thread/provider service tier for this turn only. */
+      serviceTier?: string;
       /**
        * Per-turn developer-authority context layered after the thread's
        * developerInstructions for this turn only. Never persisted with the
@@ -164,6 +168,7 @@ export class RoderAgent {
       const result = (await this.client.call("turn/start", {
         threadId,
         input: normalizeInput(input),
+        ...(options.serviceTier === undefined ? {} : { serviceTier: options.serviceTier }),
         ...(options.developerContext === undefined ? {} : { developerContext: options.developerContext }),
       })) as Record<string, unknown>;
       const turnId = extractId(result, "turn") ?? extractString(result, "turnId") ?? extractString(result, "id");
@@ -226,6 +231,12 @@ export class RoderAgent {
     try { await this.executor?.close(); } finally { await this.client.close(); }
   }
 
+  /** Change the persisted thread default; null restores the provider default. */
+  async setServiceTier(serviceTier: string | null): Promise<unknown> {
+    if (!this.threadId) throw new Error("setServiceTier requires a thread id");
+    return this.client.call("thread/set_service_tier", { threadId: this.threadId, serviceTier });
+  }
+
   private async startThread(): Promise<string> {
     const cwd = this.options.cwd ?? this.options.local?.cwd;
     const workspaceId = this.options.workspaceId ?? (await this.resolveWorkspaceId(cwd));
@@ -239,6 +250,7 @@ export class RoderAgent {
       model: this.options.model?.id,
       modelProvider: this.options.model?.provider,
       ...(reasoning === undefined ? {} : { reasoning }),
+      ...(this.options.serviceTier === undefined ? {} : { serviceTier: this.options.serviceTier }),
       ...(toolAllowlist === undefined ? {} : { toolAllowlist }),
       ...(instructions === undefined ? {} : { developerInstructions: instructions }),
       ...(externalTools === undefined ? {} : { externalTools }),

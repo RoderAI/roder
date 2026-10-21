@@ -1868,6 +1868,7 @@ async fn runner_bound_thread_routes_coding_tools_through_remote_runner() {
             model: None,
             selection_mode: None,
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: Some(roder_core::ThreadRunnerSelection {
@@ -2075,6 +2076,7 @@ async fn thread_runner_binding_rejects_unknown_providers_and_relative_workspaces
         model: None,
         selection_mode: None,
         tool_allowlist: Vec::new(),
+        service_tier: None,
         developer_instructions: None,
         external_tools: Vec::new(),
         runner: Some(roder_core::ThreadRunnerSelection {
@@ -2157,6 +2159,7 @@ fn unix_runner_thread_request(workspace: &std::path::Path) -> roder_core::Create
         model: None,
         selection_mode: None,
         tool_allowlist: Vec::new(),
+        service_tier: None,
         developer_instructions: None,
         external_tools: Vec::new(),
         runner: Some(roder_core::ThreadRunnerSelection {
@@ -2178,6 +2181,7 @@ fn mock_runner_thread_request(workspace: &std::path::Path) -> roder_core::Create
         model: None,
         selection_mode: None,
         tool_allowlist: Vec::new(),
+        service_tier: None,
         developer_instructions: None,
         external_tools: Vec::new(),
         runner: Some(roder_core::ThreadRunnerSelection {
