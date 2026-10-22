@@ -1,3 +1,5 @@
+#[path = "search_filter.rs"]
+mod filter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -57,6 +59,7 @@ impl ToolExecutor for GrepTool {
                         "default": ".",
                         "description": "Directory or file to search. Relative paths resolve from the workspace root; absolute paths, `~/...`, `user://...` ($HOME), and `workspace://...` are also accepted."
                     },
+                    "glob": { "type":"string", "description":"Optional file glob, applied before pagination." },
                     "regex": {
                         "type": "boolean",
                         "default": true,
@@ -130,17 +133,26 @@ impl ToolExecutor for GrepTool {
             );
         }
         let backend = backend_from_context_or_fallback(&ctx, &self.workspace, &self.backend)?;
+        let glob = args.glob.clone();
         let options = args.into_search_options()?;
         let (start, matches, metadata) = backend.grep_search(options).await?;
+        let matches = filter::filter_grep_matches(matches, glob.as_deref())?;
+        let provider_matches = matches
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
         let matches = matches
             .iter()
             .map(|line| response_format.format_line(line))
             .collect::<Vec<_>>();
         let page = page_lines(&matches, offset, limit);
         let continuation_args = page.next_offset.map(|next| {
-            json!({
+            let mut args = json!({
                 "query": query,
                 "path": path,
+                "glob": glob,
                 "regex": regex,
                 "case_sensitive": case_sensitive,
                 "word_boundary": word_boundary,
@@ -148,7 +160,11 @@ impl ToolExecutor for GrepTool {
                 "offset": next,
                 "limit": limit,
                 "response_format": response_format.as_str(),
-            })
+            });
+            if glob.is_none() {
+                args.as_object_mut().unwrap().remove("glob");
+            }
+            args
         });
         let mut text = page.text.clone();
         if let Some(args) = continuation_args.as_ref() {
@@ -167,6 +183,7 @@ impl ToolExecutor for GrepTool {
             "grep",
             continuation_args.unwrap_or(Value::Null),
         );
+        data["matches"] = json!(provider_matches);
         data["response_format"] = json!(response_format.as_str());
         merge_search_metadata(&mut data, &metadata);
         Ok(result(call, text, data, false))
@@ -260,6 +277,7 @@ impl ToolExecutor for GlobTool {
             continuation_args.unwrap_or(Value::Null),
         );
         let mut data = data;
+        data["matches"] = json!(matches.iter().skip(offset).take(limit).collect::<Vec<_>>());
         data["response_format"] = json!(response_format.as_str());
         data["retrieval_mode"] = json!("file_name");
         data["files_considered"] = json!(outcome.files_considered);
@@ -270,6 +288,7 @@ impl ToolExecutor for GlobTool {
 #[derive(Deserialize)]
 struct GrepArgs {
     query: String,
+    glob: Option<String>,
     path: Option<String>,
     regex: Option<bool>,
     case_sensitive: Option<bool>,

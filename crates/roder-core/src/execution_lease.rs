@@ -231,14 +231,14 @@ mod tests {
             arguments: "{}".into(),
         };
         runtime
-            .route_tool_call(&thread, &"turn".into(), call(), None, None)
+            .route_tool_call(&thread, &"turn".into(), call(), None, None, None)
             .await
             .unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 1);
         lease.revoke();
         assert!(
             runtime
-                .route_tool_call(&thread, &"turn".into(), call(), None, None)
+                .route_tool_call(&thread, &"turn".into(), call(), None, None, None)
                 .await
                 .unwrap_err()
                 .to_string()
@@ -290,6 +290,7 @@ mod tests {
                         name: "write_file".into(),
                         arguments: "{}".into(),
                     },
+                    None,
                     None,
                     None,
                 )
@@ -349,6 +350,7 @@ mod tests {
                         name: "write_file".into(),
                         arguments: "{}".into(),
                     },
+                    None,
                     None,
                     None,
                 )

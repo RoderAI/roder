@@ -1,6 +1,6 @@
 # Cursor AgentService bidi agent-runtime protocol
 
-Reverse-engineered from an authoritative `cursor-agent` v2026.05.28 capture
+Updated against Cursor Desktop 3.25.9 on 2026-10-21 (`extensions/cursor-agent-host/dist/main.js`, generated protobuf descriptors), and reverse-engineered from an authoritative `cursor-agent` v2026.05.28 capture
 (read + edit + shell session) via a Node `http2` interceptor. This documents the
 `agent.v1.AgentService/Run` **bidirectional streaming** RPC that drives Cursor's
 agentic tool loop, which a dedicated Roder client must speak to complete
@@ -20,8 +20,8 @@ payload is an `AgentClientMessage` (client→server) or `AgentServerMessage`
 |---|---|
 | 1 `run_request` | initial `AgentRunRequest` (prompt, model, mode) |
 | 2 `exec_client_message` | exec channel: INIT context push + tool **results** |
-| 5 `exec_client_control_message` | exec flow-control ack (`{5:{1:<empty>}}`) |
-| 3 `kv_client_message` | KV keepalive/ack (tiny, `{3:{3:<empty>}}`) |
+| 5 `exec_client_control_message` | exec flow-control stream close (`{5:{1:{1:seq}}}`) |
+| 3 `kv_client_message` | KV PUT ack (`{3:{1:seq,3:<empty>}}`) |
 | 6 `interaction_response` | replies to interactive tools (ask_question, web_search…) |
 | 7 `client_heartbeat` | keepalive |
 
@@ -30,7 +30,7 @@ payload is an `AgentClientMessage` (client→server) or `AgentServerMessage`
 | 1 `interaction_update` | model text / thinking / tool-call display / usage / turn end |
 | 2 `exec_server_message` | exec channel: read/write/shell **requests** to run on the client |
 | 5 `exec_server_control_message` | exec flow control |
-| 3 `conversation_checkpoint_update` | checkpoint |
+| 3 `conversation_checkpoint_update` | opaque `ConversationStateStructure` with blob references |
 | 4 `kv_server_message` | KV channel |
 
 ## Flow (observed)
@@ -50,7 +50,7 @@ payload is an `AgentClientMessage` (client→server) or `AgentServerMessage`
 ```
 f1  = seq           (varint, monotonic)
 oneof request:
-  f7  READ   { f1: path, f2: tool_call_id }
+  f7/f29 READ { f1:path, f2:tool_call_id, f4:offset?, f5:limit? }
   f3  WRITE  { f1: path, f2: new_content(bytes), f3: tool_call_id }
   f14 SHELL  { f1: command, f2: cwd, f3: timeout_ms, f4: tool_call_id,
                f5: simple_commands[] (repeated), f8: parse_tree, f10, f13,
@@ -60,10 +60,16 @@ oneof request:
                f14: tool_call_id }
   f4  DELETE { f1: path, f2: tool_call_id }   (confirmed from a live
                composer-2.5 capture; Roder routes it through the policy-gated
-               shell tool and mirrors an empty result)
+               shell tool and returns typed success/error)
   f10 INIT   { f2: conversation_id }     (handshake)
+  f8  LS     { f1:path, f2:ignore[], f3:tool_call_id }
+  f9  DIAGNOSTICS { f1:path, f2:tool_call_id }
+  f11 MCP    { f1:name, f2:map<string,Value> args, f3:tool_call_id,
+               f4:provider_identifier, f5:tool_name }
 f15 = message uuid
-f19 = routing { f1: session_key, f2: per-msg_key, f3: 0 }
+f19 = span_context
+f55 = accept_hook_additional_contexts (bool metadata)
+f57 = machine_id (string metadata)
 ```
 Tool-call ids are Anthropic-style `toolu_…`.
 
@@ -71,7 +77,7 @@ Tool-call ids are Anthropic-style `toolu_…`.
 
 ```
 f1 = seq            (echoes the server's seq)
-oneof result (mirrors request field number):
+oneof result (the supported native slots below match the request number):
   f7  READ result   { f1: { f1: path, f2: content(bytes), f3: total_lines, f4: file_size } }
   f3  WRITE result  { f1: { f1: path, f2: lines_added, f3: byte_size } }
   f5  SEARCH result
@@ -82,12 +88,12 @@ oneof result (mirrors request field number):
         (shapes re-verified against a cursor-agent v2026.06.12 capture):
         start:  { f4: { f1: { f1: 1 } } }
         stdout: { f1: { f1: <chunk> } }
-        exit:   { f3: { f2: cwd (non-empty), f6: duration_ms } }
+        exit:   { f3: { f1:exit_code, f2:cwd (non-empty), f6:duration_ms } }
   f10 INIT          workspace context push (see Flow step 2)
 ```
 
 cursor-agent also sets a varint field 39 on every `ExecClientMessage`
-(monotonically increasing per exec; semantics unknown). Roder does not send it
+(monotonically increasing per exec; `local_execution_time_ms` in the current schema). Roder does not send it
 and the server accepts results without it.
 
 **exec_client_control_message must echo the serviced seq**:
@@ -136,48 +142,21 @@ building the client:
   (see above; an empty ack stalls shell results).
 - **READ** results carry the raw file bytes (not Roder's line-numbered output).
 - **SEARCH** (exec field 5) covers both glob (`files_with_matches`) and grep
-  (`content`); the client walks the workspace and returns the result structures
-  above. Verified live (glob + grep return correct counts, no loop).
-- **Unknown exec variants must still be answered.** The `ExecServerMessage`
-  oneof has more request slots than read/write/shell/search, and the server
-  blocks the turn until a result with the mirrored seq + field number arrives.
-  Silently dropping an unrecognized exec frame left the stream stalled until
-  the no-progress cap killed the turn ("stuck on tool calls", observed with
-  composer-2.5). The client now decodes any unhandled slot as an Unknown exec,
-  replies with a mirrored empty result (`{1: seq, <field>: {}}`) plus the usual
-  `exec_client_control_message` ack, and surfaces the call in Roder's timeline
-  as `cursor_unsupported_tool` so the request is visible (and capturable via
-  `RODER_CURSOR_CAPTURE_FRAMES`) instead of hanging.
-- **Exec results count as progress.** Servicing an exec (including a slow tool
-  run or a user approval wait) must reset the no-progress clock; otherwise a
-  tool that takes longer than the cap ends the turn right after its result is
-  sent, before the model can continue.
-- **Heartbeats.** Send `client_heartbeat` (`AgentClientMessage{7:<empty>}`)
-  periodically; the server resets long turns without them.
-- **No overall request timeout.** A bidi turn can run for minutes; the client
-  must not impose a short `reqwest` request timeout (a 62.5s one previously
-  manifested as `error decoding response body` on any turn the model spent more
-  than ~1 minute on — affecting long edits/searches, not just shell). Stalls are
-  bounded instead by a per-read idle timeout and a "no meaningful progress" cap.
-- **SHELL** is streamed as start + stdout (`14:{1:{1:stdout}}`) + exit
-  (`14:{3:{2:cwd,6:duration_ms}}`), followed by the seq-echoing exec_control
-  ack. The cwd in the exit message must be non-empty (fall back to the
-  workspace when the request carries no cwd). Resolved: the previous
-  "shell-terminal turns emit no final answer" nuance was the empty exec_control
-  ack — with the seq echoed, the model resumes immediately after the shell
-  result and closes the turn with its final message (verified live with
-  composer-2.5: shell-terminated turn completes in seconds with a text answer).
+  (`content`); the client uses Roder's approved grep/glob results and returns the structures
+  above. Relative paths stay relative to the runtime workspace. Verified live (glob + grep return correct counts, no loop).
+- **Unknown exec variants must fail explicitly.** Use `AgentClientMessage{5:{2:{1:id,2:error,4:error_code}}}` (`ExecClientThrow`). An empty result in the request's field number is invalid for newer Pi calls: request fields 45–51 correspond to result fields 46–52. Roder sends a failure and the usual stream-close id rather than pretending the operation succeeded.
+- **Typed failures.** Read errors use result field 2; write errors field 5; delete errors field 7; grep/ls/diagnostics/MCP errors field 2. Shell execution failures retain the actual nonzero exit code, distinct from approval rejection.
+- **Structured executor results.** File content and metadata, search matches and directory entries come from `TurnToolOutcome.data`. Rendered/line-numbered tool text is for the transcript. No local filesystem or shell fallback runs inside the provider.
+- **Completion and usage.** Only a terminal turn update yields successful completion. EOF, an early Connect end-stream, and inactivity are errors. The heartbeat task is aborted on stream cancellation as well as normal exit. `TurnEndedUpdate` fields 1–5 are input, output, cache-read, cache-write, and reasoning tokens; these are retained in metadata and input/output counts are preferred over estimates.
 
-## Implications for Roder
+## Current coverage
 
-The agent loop is **same-stream**: the client keeps the Run request body open and
-writes exec results back into it; the server resumes the same response stream.
-Roder's normal per-turn inference provider cannot model this. A dedicated bidi
-client must:
-- keep the Run stream open (channel-fed request body),
-- decode `exec_server_message` read/write/shell requests,
-- execute them through Roder's tool registry + policy (provider→runtime tool
-  callback) and reply with `exec_client_message` results,
-- emit `interaction_update` text as Roder `MessageDelta`s,
-- send control/heartbeat frames to keep the session alive,
-- finish when the terminal interaction_update arrives.
+The implemented exec subset is read (7/29), write (3), delete (4), unary/streamed shell (2/14), grep/glob (5), directory listing (8), context (10), MCP invocation (11), and MCP state (36). Hosted discovery and `update_plan` dispatch were verified live with `composer-2.5`. Diagnostics (9), multiline grep, and other exec variants return explicit unsupported errors. This is a partial schema, not a claim of support for Cursor's entire agent host.
+
+## Checkpoints and KV state
+
+`AgentServerMessage.f3` carries `ConversationStateStructure`, not the similarly named inline `ConversationState`. Its root prompt messages (f1) and turns (f8) are repeated byte ids referring to the KV store. An empty state plus a stable conversation id loses context on a subsequent turn.
+
+KV requests use `KvServerMessage{1:id,2:GetBlobArgs{1:blob_id}}` or `{1:id,3:SetBlobArgs{1:blob_id,2:blob_data}}`. PUT replies are `{3:{1:id,3:{}}}`. GET replies are `{3:{1:id,2:{1:blob_data}}}`; a missing blob returns `GetBlobResult.error` (f2), containing `Error{1:message}`. A GET must never receive an empty PUT acknowledgement.
+
+Roder persists the checkpoint and blobs as opaque base64 in provider metadata. The next run sends the checkpoint as `AgentRunRequest.f1` and supplies blobs as repeated `f17 PreFetchedBlob{1:id,2:value}`. The store is limited to 64 MiB; overflow is an explicit error. Compacted Roder context starts a fresh Cursor state and imports the summary in the prompt. Live tests exercise checkpoint restoration and imported text history; TUI tests exercise file/tool results across turns.

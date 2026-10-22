@@ -33,6 +33,7 @@ struct NoopExecutor;
 impl TurnToolExecutor for NoopExecutor {
     async fn execute(&self, _call: ToolCallCompleted) -> anyhow::Result<TurnToolOutcome> {
         Ok(TurnToolOutcome {
+            data: serde_json::Value::Null,
             result: "ok".to_string(),
             is_error: false,
         })

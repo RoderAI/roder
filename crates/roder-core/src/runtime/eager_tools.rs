@@ -110,7 +110,7 @@ impl EagerTools {
         let call = call.clone();
         self.pending.spawn(async move {
             runtime
-                .route_tool_call(&thread_id, &turn_id, call, Some(&workspace), deadline)
+                .route_tool_call(&thread_id, &turn_id, call, Some(&workspace), deadline, None)
                 .await
         });
         Ok(())

@@ -1,19 +1,5 @@
-use std::path::PathBuf;
+use std::io::Write as _;
 use std::time::Duration;
-
-use bytes::Bytes;
-use futures::{Stream, StreamExt};
-use tokio::time::Instant;
-use uuid::Uuid;
-
-use roder_api::inference::ReasoningConfig;
-
-use crate::proto::{
-    ConnectFrame, CursorExecRequest, CursorHistoryMessage, CursorImage, CursorMcpTool,
-    CursorToolCall, decode_agent_server_message, decode_server_frame,
-    encode_agent_client_message_with_history, encode_cli_stream_control_frames,
-    encode_connect_frame, encode_exec_request_context_result, take_connect_frame,
-};
 
 pub const DEFAULT_AGENT_SERVICE_URL: &str = "https://agentn.global.api5.cursor.sh";
 pub const DEFAULT_AGENT_SERVICE_PATH: &str = "/agent.v1.AgentService/Run";
@@ -25,7 +11,6 @@ pub struct AgentServiceConfig {
     pub path: String,
     pub client_version: String,
     pub timeout: Duration,
-    pub idle_timeout: Duration,
 }
 
 impl Default for AgentServiceConfig {
@@ -35,236 +20,8 @@ impl Default for AgentServiceConfig {
             path: DEFAULT_AGENT_SERVICE_PATH.to_string(),
             client_version: DEFAULT_CLIENT_VERSION.to_string(),
             timeout: Duration::from_secs(60),
-            idle_timeout: Duration::from_millis(2500),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentServiceRequest {
-    pub access_token: String,
-    pub prompt: String,
-    pub model: String,
-    pub conversation_id: String,
-    pub context_frames: Vec<Vec<u8>>,
-    pub history: Vec<CursorHistoryMessage>,
-    /// Inline images attached to the current user message.
-    pub images: Vec<CursorImage>,
-    /// Roder tools advertised to the model via `AgentRunRequest.mcp_tools`.
-    pub tools: Vec<CursorMcpTool>,
-    /// Reasoning effort/thinking flags forwarded to Cursor's requested_model block.
-    pub reasoning: Option<ReasoningConfig>,
-    /// Workspace root used to respond to `request_context_args` so the model
-    /// knows where to look for files before generating text.
-    pub workspace: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub enum AgentServiceEvent {
-    Text(String),
-    Thinking(String),
-    ToolCalls(Vec<CursorToolCall>),
-    UsageFields(std::collections::BTreeMap<u32, u64>),
-    Completed(String),
-}
-
-pub struct AgentServiceStream {
-    pub request_id: String,
-    pub conversation_id: String,
-    pub events: std::pin::Pin<Box<dyn Stream<Item = anyhow::Result<AgentServiceEvent>> + Send>>,
-}
-
-pub async fn stream_agent_service(
-    config: AgentServiceConfig,
-    request: AgentServiceRequest,
-) -> anyhow::Result<AgentServiceStream> {
-    let request_id = Uuid::new_v4().to_string();
-    let conversation_id = request.conversation_id;
-    let message_id = Uuid::new_v4().to_string();
-    let mut frames = vec![encode_connect_frame(
-        &encode_agent_client_message_with_history(
-            &request.prompt,
-            &request.model,
-            &conversation_id,
-            &message_id,
-            &request.history,
-            &request.images,
-            &request.tools,
-            request.reasoning.as_ref(),
-        ),
-    )];
-    for frame in &request.context_frames {
-        frames.push(frame.clone());
-    }
-    for frame in encode_cli_stream_control_frames() {
-        frames.push(frame);
-    }
-    for (index, frame) in frames.iter().enumerate() {
-        capture_cursor_frame("send", index, frame);
-    }
-    // Channel-fed request body so the response handler can send exec results
-    // back to the server (e.g. the workspace context the model needs before it
-    // will start generating text).
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
-    for frame in &frames {
-        tx.send(Bytes::from(frame.clone())).ok();
-    }
-    let body_stream = async_stream::stream! {
-        let mut rx = rx;
-        while let Some(chunk) = rx.recv().await {
-            yield Ok::<Bytes, std::io::Error>(chunk);
-        }
-    };
-    let request_body = reqwest::Body::wrap_stream(body_stream);
-
-    let client = reqwest::Client::builder()
-        .http2_adaptive_window(true)
-        .timeout(config.timeout + config.idle_timeout)
-        .build()?;
-    let traceparent = traceparent();
-    let response = client
-        .post(format!("{}{}", config.endpoint, config.path))
-        .bearer_auth(&request.access_token)
-        .header("backend-traceparent", &traceparent)
-        .header("connect-accept-encoding", "identity")
-        .header("connect-protocol-version", "1")
-        .header("content-type", "application/connect+proto")
-        .header("traceparent", traceparent)
-        .header("user-agent", "connect-es/1.6.1")
-        .header("x-cursor-client-type", "cli")
-        .header("x-cursor-client-version", config.client_version)
-        .header("x-ghost-mode", "true")
-        .header("x-original-request-id", &request_id)
-        .header("x-request-id", &request_id)
-        .body(request_body)
-        .send()
-        .await?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Cursor AgentService returned HTTP {status}: {body}");
-    }
-
-    let timeout = config.timeout;
-    let idle_duration = config.idle_timeout;
-    let mut stream = response.bytes_stream();
-    // Clone handles needed inside the async_stream closure.
-    let tx_ctx = tx.clone();
-    let workspace_ctx = request.workspace.clone();
-    // Drop the original tx so the body stream ends when tx_ctx is dropped.
-    drop(tx);
-    let events = Box::pin(async_stream::stream! {
-        let tx = tx_ctx;
-        let workspace = workspace_ctx;
-        let mut buffer = Vec::new();
-        let hard_timeout = tokio::time::sleep(timeout);
-        let idle_timeout = tokio::time::sleep(timeout);
-        tokio::pin!(hard_timeout);
-        tokio::pin!(idle_timeout);
-        let mut idle_armed = false;
-
-        let mut done = false;
-        while !done {
-            tokio::select! {
-                _ = &mut hard_timeout => {
-                    yield Err(anyhow::anyhow!("timed out waiting for Cursor AgentService response"));
-                    done = true;
-                }
-                _ = &mut idle_timeout, if idle_armed => {
-                    yield Ok(AgentServiceEvent::Completed("idle_timeout".to_string()));
-                    done = true;
-                }
-                chunk = stream.next() => {
-                    let Some(chunk) = chunk else {
-                        yield Ok(AgentServiceEvent::Completed("end_stream".to_string()));
-                        done = true;
-                        continue;
-                    };
-                    match chunk {
-                        Ok(chunk) => buffer.extend_from_slice(&chunk),
-                        Err(err) => {
-                            yield Err(err.into());
-                            done = true;
-                            continue;
-                        }
-                    }
-                    let mut completed = None;
-                    loop {
-                        let frame = match take_connect_frame(&mut buffer) {
-                            Ok(Some(frame)) => frame,
-                            Ok(None) => break,
-                            Err(err) => {
-                                yield Err(err);
-                                done = true;
-                                break;
-                            }
-                        };
-                        match frame {
-                            ConnectFrame::Payload(payload) => {
-                                capture_cursor_frame("recv", 0, &payload);
-                                // Respond to request_context_args (field 10 of
-                                // ExecServerMessage) — the server sends this
-                                // before generating any text and will loop on
-                                // keepalives until we answer.
-                                let server_frame = decode_server_frame(&payload);
-                                if let Some(CursorExecRequest::RequestContext { id }) = server_frame.exec {
-                                    let ws = workspace.to_string_lossy().to_string();
-                                    let ctx_response = encode_exec_request_context_result(id, &ws);
-                                    let _ = tx.send(Bytes::from(encode_connect_frame(&ctx_response)));
-                                }
-                                let decoded = decode_agent_server_message(&payload);
-                                if !decoded.text.is_empty() {
-                                    idle_armed = true;
-                                    idle_timeout.as_mut().reset(Instant::now() + idle_duration);
-                                    yield Ok(AgentServiceEvent::Text(decoded.text));
-                                }
-                                if !decoded.thinking.is_empty() {
-                                    yield Ok(AgentServiceEvent::Thinking(decoded.thinking));
-                                }
-                                if !decoded.usage_fields.is_empty() {
-                                    yield Ok(AgentServiceEvent::UsageFields(decoded.usage_fields));
-                                }
-                                if !decoded.tool_calls.is_empty() {
-                                    yield Ok(AgentServiceEvent::ToolCalls(decoded.tool_calls));
-                                    completed = Some("tool_calls".to_string());
-                                    break;
-                                }
-                                if decoded.turn_ended {
-                                    completed = Some("turn_ended".to_string());
-                                    break;
-                                }
-                            }
-                            ConnectFrame::EndStream(error) => {
-                                if let Some(error) = error {
-                                    yield Err(anyhow::anyhow!("Cursor AgentService end-stream error: {error}"));
-                                    done = true;
-                                    break;
-                                }
-                                completed = Some("end_stream".to_string());
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(reason) = completed {
-                        yield Ok(AgentServiceEvent::Completed(reason));
-                        done = true;
-                    }
-                }
-            }
-        }
-    });
-
-    Ok(AgentServiceStream {
-        request_id,
-        conversation_id,
-        events,
-    })
-}
-
-fn traceparent() -> String {
-    let trace_id = Uuid::new_v4().simple().to_string();
-    let span_id = &Uuid::new_v4().simple().to_string()[..16];
-    format!("00-{trace_id}-{span_id}-01")
 }
 
 /// Env var pointing at a JSONL file. When set, every raw Cursor AgentService
@@ -279,7 +36,10 @@ pub(crate) fn capture_cursor_frame(direction: &str, index: usize, bytes: &[u8]) 
         Ok(path) if !path.is_empty() => path,
         _ => return,
     };
-    use std::io::Write as _;
+    capture_frame_at(std::path::Path::new(&path), direction, index, bytes);
+}
+
+fn capture_frame_at(path: &std::path::Path, direction: &str, index: usize, bytes: &[u8]) {
     let mut hex = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         let _ = std::fmt::Write::write_fmt(&mut hex, format_args!("{byte:02x}"));
@@ -295,7 +55,7 @@ pub(crate) fn capture_cursor_frame(direction: &str, index: usize, bytes: &[u8]) 
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
     {
         let _ = file.write_all(line.as_bytes());
     }
@@ -313,18 +73,15 @@ mod tests {
     }
 
     #[test]
-    fn capture_frame_is_noop_without_env_and_writes_jsonl_when_set() {
-        // No env var set: capture must do nothing (and must not panic).
-        unsafe { std::env::remove_var(CAPTURE_FRAMES_ENV) };
-        capture_cursor_frame("recv", 0, &[0xde, 0xad]);
-
+    fn capture_frame_appends_hex_jsonl_to_requested_path() {
         // With the env var set, frames are appended as hex JSONL lines.
         let mut path = std::env::temp_dir();
-        path.push(format!("roder-cursor-capture-{}.jsonl", Uuid::new_v4()));
-        unsafe { std::env::set_var(CAPTURE_FRAMES_ENV, &path) };
-        capture_cursor_frame("send", 3, &[0x00, 0x01, 0xff]);
-        capture_cursor_frame("recv", 0, &[0xab]);
-        unsafe { std::env::remove_var(CAPTURE_FRAMES_ENV) };
+        path.push(format!(
+            "roder-cursor-capture-{}.jsonl",
+            uuid::Uuid::new_v4()
+        ));
+        capture_frame_at(&path, "send", 3, &[0x00, 0x01, 0xff]);
+        capture_frame_at(&path, "recv", 0, &[0xab]);
 
         let contents = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);

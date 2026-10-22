@@ -21,7 +21,7 @@ Fast variants (`*-fast`) are separate catalog ids. AgentService/Run accepts the 
 
 Each proxied model reuses the same id as its native provider, so the model string sent to AgentService matches the underlying model.
 
-`cursor/claude-opus-4-8` advertises configurable reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`; default `high`), matching the native Anthropic Opus catalog entry. Note: the AgentService protobuf encoding does not yet forward the selected effort over the wire — that requires a captured Cursor model-options fixture. The other proxied models do not expose effort options.
+`cursor/claude-opus-4-8` advertises configurable reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`; default `high`), matching the native Anthropic Opus catalog entry. The selected effort is forwarded in `requested_model.params`. Reasoning options for other models come from the merged catalog.
 
 ## API Key Setup
 
@@ -76,9 +76,9 @@ The provider keeps the older discovery-trace context path behind `RODER_CURSOR_A
 
 ## Supported Surface
 
-The first provider slice supports streaming text turns, model listing for the catalog's Cursor models, and Cursor-native read-file tool requests. Token usage is estimated from streamed prompt/output text when Cursor does not return official usage fields through this AgentService path; streamed thinking text is counted separately in provider metadata so the TUI can render the `thinking` token summary.
+The native bidirectional runtime supports streaming text and reasoning, model listing, multi-turn history, and policy-approved read/write/delete/shell/search/directory-list operations. Results come from Roder's executor, including remote workspace output, structured file contents, errors, and shell exit codes. The provider never retries a denied operation against its own filesystem.
 
-Cursor AgentService is tool-capable. A traced `cursor-agent --print --model composer-2.5` run produced a Cursor-native `readToolCall`, executed the file read locally, and wrote the tool result back into the same HTTP/2 AgentService stream. Roder now decodes the observed Cursor-native `readToolCall` response shape into canonical `read_file` tool calls, routes execution through Roder's tool registry and policy system, and replays tool call/result context into the next Cursor model round.
+Usage uses Cursor's turn-end input/output token fields when available and falls back to text estimates for missing fields. Provider metadata marks estimated totals. A dropped stream or a stalled turn raises an error instead of a successful completion; heartbeats stop when the consumer drops the stream.
 
 Unsupported request features fail before the prompt is sent to Cursor:
 
@@ -96,7 +96,7 @@ Roder decodes Cursor's `agent.v1.ClientSideToolV2` tool-call frames and maps the
 
 | Cursor `tool` oneof | Cursor args | Roder tool | Roder args |
 |---|---|---|---|
-| `read_tool_call` (8) | `ReadToolArgs { path 1, offset 2, limit 3 }` | `read_file` | `{ path, offset?, limit? }` |
+| `read_tool_call` (8) | `ReadToolArgs { path 1, offset 2, limit 3 }` | `read_file` | `{ path, start_line?, limit? }` |
 | `edit_tool_call` (12) | `EditArgs { path 1, stream_content 6 }` | `write_file` | `{ path, content }` |
 | `shell_tool_call` (1) | `ShellArgs { command 1, working_directory 2 }` | `shell` | `{ command, workdir? }` |
 | `grep_tool_call` (5) | `GrepArgs { pattern 1, path 2 }` | `grep` | `{ query, path? }` |
@@ -109,51 +109,29 @@ Two request requirements were discovered as prerequisites for the agentic tool l
 
 Any unmapped Cursor-native tool is surfaced as a `cursor_unsupported_tool` call so the frame can be captured (see below) and decoded.
 
-### MCP / client-advertised tools (not surfaced by Cursor)
+### MCP / client-advertised tools
 
-`AgentRunRequest.mcp_tools` (field 4) carries `agent.v1.McpToolDefinition`s the client can advertise. Roder can map its own `ToolSpec`s into this field (`name 1`, `description 2`, `input_schema 3` as a `google.protobuf.Value`; see `encode_mcp_tools` and `proto/agent_v1.proto`), but **this does not expand a Cursor model's tool surface**.
+Cursor Desktop 3.25.9's generated schema explicitly includes `ExecServerMessage.mcp_args` (field 11) and `ExecClientMessage.mcp_result` (field 11). Earlier documentation inferred that invocation could only execute on Cursor's backend because the message name lacked an `Exec` suffix. That inference was incorrect.
 
-A live experiment (`cursor/claude-opus-4-8` with `RODER_CURSOR_CAPTURE_FRAMES`) advertised a Roder-only tool (`update_plan`) and the model reported it only had Cursor's native tools (`TodoWrite`) — no `update_plan`, and the response stream contained no `GetMcpTools`/`McpTool`/`tool_not_found` frames. Cursor controls the model's tool set server-side; `McpToolDefinition` entries without a registered `provider_identifier` (i.e. a Cursor-hosted MCP server) are ignored. The turn was unaffected (no regression).
+Roder decodes MCP argument maps as `google.protobuf.Value`, dispatches the exact tool name and arguments through its normal runtime executor, and returns text, structured content, and `is_error`. Definitions are advertised by default with `provider_identifier="roder"` and the underlying tool name. MCP state requests return the current runtime tool definitions. Live `composer-2.5` verification through the TUI exercised discovery and two `update_plan` calls, alongside native search, file creation, and read-back.
 
-Consequently Roder's tools reach Cursor models **only** through the native exec mapping above (read/write/shell/grep/glob), not through `mcp_tools`. Advertising is therefore disabled by default. The encoder, schema (`proto/agent_v1.proto`), and tests are kept for future work (provider registration, or a client-exec channel for MCP). Set `RODER_CURSOR_ADVERTISE_MCP_TOOLS=1` to send the definitions anyway (harmless, currently a no-op on Cursor's side).
-
-#### MCP server registration (investigation)
-
-Bundle analysis (`cursor-agent-worker/dist/main.js`, `agent.v1`) shows the real registration path is **`AgentRunRequest.mcp_file_system_options` (field 6)**, not `mcp_tools` (field 4):
-
-```
-McpFileSystemOptions { enabled 1, workspace_project_dir 2, mcp_descriptors 3: repeated McpDescriptor }
-McpDescriptor { server_name 1, server_identifier 2, folder_path 3, server_use_instructions 4,
-                tools 5: repeated McpToolDescriptor, plugin 7, marketplace 8, ... }
-McpToolDescriptor { tool_name 1, definition_path 2, description 3, input_schema 4: google.protobuf.Value }
-```
-
-Findings:
-
-- The model's `ToolCall` oneof has **62 server-defined slots**; the surface is fixed server-side. The only MCP bridges are `mcp_tool_call` (15, invoke), `get_mcp_tools_tool_call` (44, discover), `list_mcp_resources_tool_call` (20) and `read_mcp_resource_tool_call` (21).
-- `McpDescriptor.server_identifier` is the `provider_identifier` that `McpArgs` (an `mcp_tool_call`) must reference — which is exactly what our field-4 advertisement lacked, explaining why the model never saw `update_plan`.
-- The `folder_path` / `definition_path` / "file system options" naming indicates Cursor is a **filesystem-based MCP host**: it reads tool definitions from files on disk, and `.cursor/mcp.json` `mcpServers` is the IDE-managed config that populates these descriptors.
-
-**Resolved (bundle analysis, conclusive — no live capture required):** MCP tool *invocation is executed server-side by Cursor, never routed back to an AgentService client.** The decisive evidence is an asymmetry in the `agent.v1` schema:
-
-- MCP **resource/state** ops have explicit client-exec types — `ReadMcpResourceExecArgs`/`…ExecResult`, `ListMcpResourcesExecArgs`/`…ExecResult`, `McpStateExecArgs`/`…ExecResult` — so Cursor *does* dispatch those back to the client over the exec channel.
-- MCP **tool invocation** has **no** `*Exec*` type. `mcp_tool_call` (15) → `McpArgs`/`McpToolResult` is not an exec-serviceable op, so the client never runs it.
-
-Instead, MCP servers are registered with Cursor's **backend** via the separate `aiserver.v1` service (`SetMcpConfig`, `GetMcpConfig`, `GetAvailableMcpServers`, `StoreMcpOAuthToken`, `MarkMcpServersSeen`, …), and the AgentService backend executes an `mcp_tool_call` against the server that `provider_identifier`/`server_identifier` names. The agent worker itself contains no MCP client/transport machinery (no stdio/SSE MCP transport, no `callTool`); its `child_process`/`http2`/`net` usage is only for the worker's own AgentService connection.
-
-**Conclusion — not viable for Roder's in-process tools.** Because tool invocation is server-side and bound to a backend-registered `server_identifier`, an AgentService client like Roder cannot make a Cursor model call Roder's tool registry via MCP — neither by advertising `mcp_tools` (field 4, ignored) nor by sending `mcp_file_system_options` descriptors (field 6, which only name servers Cursor's backend already knows how to reach). The only way a Cursor model could reach Roder over MCP would be to run a real, separately-registered MCP server process that Cursor's backend connects to — which would not route through Roder's executor/policy and so defeats the purpose. **Roder's tools therefore reach Cursor models only through the native exec mapping (read/write/shell/grep/glob), which Cursor *does* round-trip to the client.** The `mcp_tools` encoder + schema are retained for reference but stay disabled by default (`RODER_CURSOR_ADVERTISE_MCP_TOOLS=1` to send anyway; a no-op on Cursor's side). The `*ExecArgs`/`*ExecResult` naming for `McpState`/`ListMcpResources`/`ReadMcpResource` hints at a client-exec path for *some* MCP ops, but the tool-invocation path is unconfirmed. Recommended next experiment: capture a live Cursor-IDE `AgentService/Run` turn with a real `.cursor/mcp.json` server configured, to learn (a) the exact `mcp_file_system_options` payload the IDE sends and (b) whether `mcp_tool_call` arrives on the exec channel for the client to execute. The schema for all of the above is recorded in `proto/agent_v1.proto`.
+Diagnostics requests receive an explicit typed error because Roder has no diagnostics executor. Multiline grep and other unmapped exec variants also fail explicitly. Unsupported variants use `ExecClientControlMessage.throw` with the original request id; request/result field numbers cannot be assumed symmetric (the current Pi tool slots differ). No empty success is fabricated.
 
 ### Image input
 
 The Cursor provider advertises `image_input: true` and uploads images inline (field numbers sourced from the Cursor app bundle's `agent.v1` protobuf schema, same as the tool mapping above):
 
 - **Current message.** Images on the latest `UserMessage` are encoded into `UserMessage.selected_context` (field 3) as `agent.v1.SelectedContext.selected_images` (field 1), each a `SelectedImage { mime_type 7, data 8 }` carrying the raw decoded bytes.
-- **History.** Images on prior user turns are replayed as `ConversationHistoryUserContent.image` (field 2) → `ConversationHistoryImageContent { data 1 (base64 string), mime_type 2 }`.
+- **History.** A native checkpoint retains prior image context. When importing Roder history into a fresh Cursor conversation, prior images are attached before the current message's images through `SelectedContext`.
 - **Capability flag.** When any inline image is present, `AgentRunRequest.client_supports_inline_images` (field 19) is set so Cursor accepts the inline bytes.
 
 Roder `InputImage`s are `data:<mime>;base64,<payload>` URLs; non-base64 / remote-URL images are skipped because Cursor's inline path needs raw bytes. The Cursor catalog models advertise `supports_images: true`.
 
-Roder reuses a stable Cursor `conversation_id` for every Roder thread and replays prior user, assistant, tool-call, and tool-result items through `UserMessageAction.conversation_history`. This keeps Cursor's backend conversation state aligned with Roder's transcript across turns, so follow-up prompts can continue from earlier tool results instead of starting a fresh Cursor conversation.
+Roder reuses a stable Cursor `conversation_id` for every Roder thread. Continuity also requires the native checkpoint: `AgentServerMessage.conversation_checkpoint_update` contains a `ConversationStateStructure` whose messages and turns reference blobs by id. Roder stores both the opaque checkpoint and KV blobs in `ProviderMetadata.cursorState`, sends the checkpoint and `pre_fetched_blobs` on the next request, and answers KV GETs with the actual bytes. A conversation id alone does not restore the prior turn.
+
+Fresh conversations without a native checkpoint import the Roder transcript as explicit JSON reference context in the initial prompt. This also handles compaction summaries and provider handoffs; old context is cleared at a compaction boundary. The hosted Composer harness ignored the former field-7 history injection in live tests, so that request path has been removed. Native continuation uses checkpoint state without duplicating this imported context.
+
+Low-level `InferenceEngine` integrators must retain and replay provider metadata along with the transcript. Roder's runtime does this automatically. Tool executors return raw structured output in `TurnToolOutcome.data`; native and MCP tool requests use the same executor and policy path. The provider uses one bidirectional transport for both text-only and tool-enabled requests.
 
 ## Model listing (live + on-disk cache)
 
@@ -174,7 +152,7 @@ RODER_CURSOR_CAPTURE_FRAMES=/tmp/cursor-frames.jsonl \
   ./bin/roder
 ```
 
-Then, with `cursor/claude-opus-4-8` (or any Cursor model) active, give a direct imperative edit instruction (for example, "Edit AGENTS.md and append a line that says hello"). Cursor's native agent attempts its native edit tool; the raw frame is recorded even though Roder currently decodes it as `cursor_unsupported_tool`. Each captured `"dir":"recv"` line that carries a tool-call payload is the fixture used to extend `decode_cursor_tool_call` in `crates/roder-ext-cursor/src/proto.rs`.
+Then, with `cursor/claude-opus-4-8` (or any Cursor model) active, give a direct imperative edit instruction (for example, "Edit AGENTS.md and append a line that says hello"). Cursor's native agent attempts its native edit tool; the raw frame is recorded even though Roder services the corresponding exec request. Each captured `"dir":"recv"` line that carries a tool-call payload is the fixture used to extend `decode_cursor_tool_call` in `crates/roder-ext-cursor/src/proto.rs`.
 
 ## Optional Overrides
 
@@ -207,3 +185,9 @@ cargo test -p roder-ext-cursor live_cursor_composer_25 -- --ignored --nocapture
 ```
 
 The live test covers both a proof-token response and a normal short-story prompt through direct AgentService API calls.
+
+The continuity live suite verifies both checkpoint restoration and importing history without a checkpoint:
+
+```sh
+RODER_CURSOR_LIVE=1 mise exec -- cargo test -p roder-ext-cursor --test live_continuity -- --ignored
+```

@@ -13,6 +13,9 @@ use serde_json::{Value, json};
 use roder_api::inference::ReasoningConfig;
 
 use crate::models::cursor_run_model_params;
+#[path = "proto_values.rs"]
+mod values;
+use values::decode_protobuf_value;
 
 const CONNECT_COMPRESSED_FLAG: u8 = 1;
 const CONNECT_END_STREAM_FLAG: u8 = 2;
@@ -43,6 +46,7 @@ pub enum ConnectFrame {
 #[derive(Debug, Clone)]
 enum ProtoValue {
     Varint(u64),
+    Fixed64(u64),
     Bytes(Vec<u8>),
 }
 
@@ -52,21 +56,16 @@ struct ProtoField {
     value: ProtoValue,
 }
 
-/// Encode an `agent.v1` client message, carrying prior turns (including
-/// assistant tool calls and tool results) as native `agent.v1.ConversationHistory`.
-/// This lets Cursor continue an agentic loop across Roder rounds: the model
-/// sees the tool calls it already made and their results, so it progresses
-/// (e.g. read -> edit) instead of re-issuing the same call. Pass an empty
-/// `history` for a fresh turn.
-pub fn encode_agent_client_message_with_history(
+/// Encode the canonical Cursor run request with native checkpoint/blob state.
+pub fn encode_agent_client_message(
     prompt: &str,
     model_id: &str,
     conversation_id: &str,
     message_id: &str,
-    history: &[CursorHistoryMessage],
     images: &[CursorImage],
     tools: &[CursorMcpTool],
     reasoning: Option<&ReasoningConfig>,
+    state: Option<&crate::state::CursorConversationState>,
 ) -> Vec<u8> {
     proto_message(vec![proto_field_bytes(
         1,
@@ -75,10 +74,10 @@ pub fn encode_agent_client_message_with_history(
             model_id,
             conversation_id,
             message_id,
-            history,
             images,
             tools,
             reasoning,
+            state,
         ),
     )])
 }
@@ -88,25 +87,24 @@ fn encode_agent_run_request(
     model_id: &str,
     conversation_id: &str,
     message_id: &str,
-    history: &[CursorHistoryMessage],
     images: &[CursorImage],
     tools: &[CursorMcpTool],
     reasoning: Option<&ReasoningConfig>,
+    state: Option<&crate::state::CursorConversationState>,
 ) -> Vec<u8> {
     // Whether any inline image bytes are present in this turn (current message
     // or replayed history). Cursor only honours inline `SelectedImage.data` /
     // `ConversationHistoryImageContent` when the client advertises support via
     // `AgentRunRequest.client_supports_inline_images` (field 19).
-    let has_inline_images = !images.is_empty()
-        || history.iter().any(
-            |item| matches!(item, CursorHistoryMessage::User { images, .. } if !images.is_empty()),
-        );
+    let has_inline_images = !images.is_empty();
     let mut fields = vec![
-        proto_field_bytes(1, Vec::new()),
         proto_field_bytes(
-            2,
-            encode_conversation_action(prompt, message_id, history, images),
+            1,
+            state
+                .map(|state| state.checkpoint.clone())
+                .unwrap_or_default(),
         ),
+        proto_field_bytes(2, encode_conversation_action(prompt, message_id, images)),
         // agent.v1.AgentRunRequest.mcp_tools (field 4) = agent.v1.McpTools.
         // Advertises Roder's tools to the Cursor model. Empty when Roder sends
         // no tools, which matches the prior empty-message encoding.
@@ -116,6 +114,9 @@ fn encode_agent_run_request(
         proto_field_varint(12, 0),
         proto_field_string(16, conversation_id),
     ];
+    if let Some(state) = state {
+        fields.extend(state.pre_fetched_blobs());
+    }
     if has_inline_images {
         // agent.v1.AgentRunRequest.client_supports_inline_images (field 19).
         fields.push(proto_field_varint(19, 1));
@@ -162,6 +163,8 @@ fn encode_mcp_tool_definition(tool: &CursorMcpTool) -> Vec<u8> {
         proto_field_string(2, &tool.description),
         // input_schema is a google.protobuf.Value (the JSON Schema object).
         proto_field_bytes(3, encode_protobuf_value(&tool.input_schema)),
+        proto_field_string(4, "roder"),
+        proto_field_string(5, &tool.name),
     ])
 }
 
@@ -225,7 +228,7 @@ pub struct CursorImage {
     pub data: Vec<u8>,
 }
 
-/// One prior conversation turn, mapped to `agent.v1.ConversationHistoryMessage`.
+/// A prior Roder transcript item used to import context into a fresh Cursor turn.
 #[derive(Debug, Clone)]
 pub enum CursorHistoryMessage {
     User {
@@ -246,12 +249,7 @@ pub enum CursorHistoryMessage {
     },
 }
 
-fn encode_conversation_action(
-    prompt: &str,
-    message_id: &str,
-    history: &[CursorHistoryMessage],
-    images: &[CursorImage],
-) -> Vec<u8> {
+fn encode_conversation_action(prompt: &str, message_id: &str, images: &[CursorImage]) -> Vec<u8> {
     // agent.v1.UserMessage { text 1, message_id 2, selected_context 3, mode 4 }
     let user_message = proto_message(vec![
         proto_field_string(1, prompt),
@@ -266,11 +264,8 @@ fn encode_conversation_action(
         // read-only, so it refused edits ("Ask mode").
         proto_field_varint(4, AGENT_MODE_AGENT),
     ]);
-    // agent.v1.UserMessageAction { user_message 1, conversation_history 7 }
-    let mut user_message_action = vec![proto_field_bytes(1, user_message)];
-    if !history.is_empty() {
-        user_message_action.push(proto_field_bytes(7, encode_conversation_history(history)));
-    }
+    // agent.v1.UserMessageAction { user_message 1 }
+    let user_message_action = vec![proto_field_bytes(1, user_message)];
     // agent.v1.ConversationAction { user_message_action 1 }
     proto_message(vec![proto_field_bytes(
         1,
@@ -302,7 +297,7 @@ impl CursorImage {
 /// Encode `agent.v1.SelectedContext { selected_images 1: repeated SelectedImage }`.
 /// Returns an empty message when there are no images so the field stays present
 /// but carries no payload.
-fn encode_selected_context(images: &[CursorImage]) -> Vec<u8> {
+pub(crate) fn encode_selected_context(images: &[CursorImage]) -> Vec<u8> {
     if images.is_empty() {
         return Vec::new();
     }
@@ -320,107 +315,6 @@ fn encode_selected_image(image: &CursorImage) -> Vec<u8> {
         proto_field_string(7, &image.mime_type),
         proto_field_bytes(8, image.data.clone()),
     ])
-}
-
-/// Encode `agent.v1.ConversationHistoryImageContent { data 1: string, mime_type 2: string }`.
-/// History images carry the data as a base64 string (not raw bytes).
-fn encode_history_image_content(image: &CursorImage) -> Vec<u8> {
-    use base64::Engine as _;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&image.data);
-    proto_message(vec![
-        proto_field_string(1, &encoded),
-        proto_field_string(2, &image.mime_type),
-    ])
-}
-
-/// Encode `agent.v1.ConversationHistory { messages 1: repeated ConversationHistoryMessage }`.
-fn encode_conversation_history(history: &[CursorHistoryMessage]) -> Vec<u8> {
-    // Group a leading assistant text with its following tool calls into a single
-    // assistant message where natural; here we emit one ConversationHistoryMessage
-    // per item, which Cursor accepts (assistant text and tool calls are separate
-    // content entries but separate messages are tolerated).
-    let mut messages = Vec::new();
-    for item in history {
-        messages.push(proto_field_bytes(1, encode_history_message(item)));
-    }
-    proto_message(messages)
-}
-
-// `agent.v1.ConversationHistoryTextContent { text 1 }`
-fn history_text_content(text: &str) -> Vec<u8> {
-    proto_message(vec![proto_field_string(1, text)])
-}
-
-fn encode_history_message(item: &CursorHistoryMessage) -> Vec<u8> {
-    match item {
-        // ConversationHistoryMessage { user 1: ConversationHistoryUserMessage }
-        // ConversationHistoryUserMessage { content 1: [ConversationHistoryUserContent] }
-        // ConversationHistoryUserContent oneof: { text 1, image 2 }
-        CursorHistoryMessage::User { text, images } => {
-            let mut content = Vec::new();
-            if !text.is_empty() || images.is_empty() {
-                // ConversationHistoryUserContent { text 1: ConversationHistoryTextContent }
-                content.push(proto_field_bytes(
-                    1,
-                    proto_message(vec![proto_field_bytes(1, history_text_content(text))]),
-                ));
-            }
-            for image in images {
-                // ConversationHistoryUserContent { image 2: ConversationHistoryImageContent }
-                content.push(proto_field_bytes(2, encode_history_image_content(image)));
-            }
-            proto_message(vec![proto_field_bytes(1, proto_message(content))])
-        }
-        // ConversationHistoryMessage { assistant 2: ConversationHistoryAssistantMessage }
-        // assistant content { text 1 }
-        CursorHistoryMessage::AssistantText(text) => proto_message(vec![proto_field_bytes(
-            2,
-            proto_message(vec![proto_field_bytes(
-                1,
-                proto_message(vec![proto_field_bytes(1, history_text_content(text))]),
-            )]),
-        )]),
-        // assistant content { tool_call 4: ConversationHistoryToolCall{ id 1, name 2, args_json 3 } }
-        CursorHistoryMessage::AssistantToolCall {
-            id,
-            name,
-            args_json,
-        } => proto_message(vec![proto_field_bytes(
-            2,
-            proto_message(vec![proto_field_bytes(
-                1,
-                proto_message(vec![proto_field_bytes(
-                    4,
-                    proto_message(vec![
-                        proto_field_string(1, id),
-                        proto_field_string(2, name),
-                        proto_field_string(3, args_json),
-                    ]),
-                )]),
-            )]),
-        )]),
-        // ConversationHistoryMessage { tool 3: ConversationHistoryToolMessage }
-        // { tool_call_id 1, tool_name 2, content 3: [ToolResultContent{ text 1 }], is_error 4 }
-        CursorHistoryMessage::ToolResult {
-            id,
-            name,
-            content,
-            is_error,
-        } => {
-            let mut tool_message = vec![
-                proto_field_string(1, id),
-                proto_field_string(2, name),
-                proto_field_bytes(
-                    3,
-                    proto_message(vec![proto_field_bytes(1, history_text_content(content))]),
-                ),
-            ];
-            if *is_error {
-                tool_message.push(proto_field_varint(4, 1));
-            }
-            proto_message(vec![proto_field_bytes(3, proto_message(tool_message))])
-        }
-    }
 }
 
 fn encode_requested_model(model_id: &str, reasoning: Option<&ReasoningConfig>) -> Vec<u8> {
@@ -720,489 +614,16 @@ fn map_cursor_native_tool(payload: &[u8]) -> Option<(&'static str, Value)> {
     None
 }
 
-// ===== Exec channel (agent.v1 AgentService bidi runtime) =====
-//
-// AgentServerMessage oneof: 1 = interaction_update, 2 = exec_server_message.
-// AgentClientMessage oneof: 1 = run_request, 2 = exec_client_message,
-//   5 = exec_client_control_message, 7 = client_heartbeat.
-// ExecServerMessage: f1 = seq; oneof request f7=READ, f3=WRITE, f14=SHELL, f10=INIT.
-// ExecClientMessage: f1 = seq; oneof result mirrors the request field number.
+#[path = "proto_exec.rs"]
+mod exec;
+pub(crate) use exec::*;
+#[path = "proto_exec_mcp.rs"]
+mod exec_mcp;
+pub(crate) use exec_mcp::*;
+#[path = "proto_exec_results.rs"]
+mod exec_results;
+pub(crate) use exec_results::*;
 
-/// A tool-execution request the server asks the client to run mid-stream.
-#[derive(Debug, Clone)]
-pub(crate) enum CursorExecRequest {
-    Read {
-        seq: u64,
-        path: String,
-        tool_call_id: String,
-    },
-    Write {
-        seq: u64,
-        path: String,
-        content: Vec<u8>,
-        tool_call_id: String,
-    },
-    /// Delete a file (exec field 4): `{ f1: path, f2: tool_call_id }`.
-    /// Wire shape confirmed from a live composer-2.5 capture (the model's
-    /// native file-deletion tool).
-    Delete {
-        seq: u64,
-        path: String,
-        tool_call_id: String,
-    },
-    Shell {
-        seq: u64,
-        command: String,
-        cwd: String,
-        tool_call_id: String,
-    },
-    /// Unified ripgrep search (exec field 5): glob (`files_with_matches`) or
-    /// grep (`content`).
-    Search {
-        seq: u64,
-        pattern: Option<String>,
-        path: String,
-        glob: Option<String>,
-        mode: String,
-        tool_call_id: String,
-    },
-    /// The server requests workspace context (`request_context_args`, field 10
-    /// of ExecServerMessage) before it will start generating text. The client
-    /// must respond with `encode_exec_request_context_result` to unblock the
-    /// model.  `id` mirrors ExecServerMessage.f1 and must be echoed back.
-    RequestContext { id: u64 },
-    /// An exec request variant Roder does not implement yet (the
-    /// `ExecServerMessage` oneof has many more slots than read/write/shell/
-    /// search). The server blocks the turn until *some* result with the
-    /// mirrored seq + field number arrives, so the client must still reply
-    /// (see `encode_exec_unknown_result`) instead of silently dropping the
-    /// frame — silence stalls the stream until the no-progress cap kills the
-    /// turn, which surfaced as "stuck on tool calls" with composer models.
-    Unknown {
-        seq: u64,
-        field_no: u32,
-        payload: Vec<u8>,
-    },
-}
-
-/// One grep match: a relative file path, a 1-based line number, and the line.
-#[derive(Debug, Clone)]
-pub(crate) struct CursorGrepMatch {
-    pub path: String,
-    pub line: u64,
-    pub text: String,
-}
-
-/// Decoded `AgentServerMessage` for the bidi runtime: model text/thinking,
-/// turn-end signal, and any exec request to service.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct CursorServerFrame {
-    pub text: String,
-    pub thinking: String,
-    pub usage_fields: BTreeMap<u32, u64>,
-    pub turn_ended: bool,
-    pub exec: Option<CursorExecRequest>,
-    /// Sequence of a `kv_server` PUT that must be acked with [`encode_kv_ack`].
-    pub kv_seq: Option<u64>,
-}
-
-pub(crate) fn decode_server_frame(payload: &[u8]) -> CursorServerFrame {
-    let interaction = decode_agent_server_message(payload);
-    let mut frame = CursorServerFrame {
-        text: interaction.text,
-        thinking: interaction.thinking,
-        usage_fields: interaction.usage_fields,
-        turn_ended: interaction.turn_ended,
-        exec: None,
-        kv_seq: None,
-    };
-    // field 2 = exec_server_message
-    if let Some(exec_bytes) = submessage(payload, 2) {
-        frame.exec = decode_exec_server(&exec_bytes);
-    }
-    // field 4 = kv_server_message (PUT of conversation state); ack by seq.
-    if let Some(kv_bytes) = submessage(payload, 4) {
-        frame.kv_seq = Some(scalar_u64(&kv_bytes, 1).unwrap_or(0));
-    }
-    frame
-}
-
-/// kv_client ack: `AgentClientMessage{ 3:{ 1:seq, 3:<empty> } }`.
-pub(crate) fn encode_kv_ack(seq: u64) -> Vec<u8> {
-    proto_message(vec![proto_field_bytes(
-        3,
-        proto_message(vec![
-            proto_field_varint(1, seq),
-            proto_field_bytes(3, Vec::new()),
-        ]),
-    )])
-}
-
-/// `ExecServerMessage` length-delimited fields that are envelope metadata, not
-/// the request oneof: f15 = message uuid, f19 = routing keys (f1 = seq is a
-/// varint and never matches the length-delimited scan).
-const EXEC_METADATA_FIELDS: [u32; 2] = [15, 19];
-
-fn decode_exec_server(bytes: &[u8]) -> Option<CursorExecRequest> {
-    let seq = scalar_u64(bytes, 1).unwrap_or(0);
-    if let Some(read) = submessage(bytes, 7) {
-        if let Some(path) = scalar_string(&read, 1) {
-            let tool_call_id = scalar_string(&read, 2).unwrap_or_default();
-            return Some(CursorExecRequest::Read {
-                seq,
-                path,
-                tool_call_id,
-            });
-        }
-        return Some(CursorExecRequest::Unknown {
-            seq,
-            field_no: 7,
-            payload: read,
-        });
-    }
-    if let Some(write) = submessage(bytes, 3) {
-        if let Some(path) = scalar_string(&write, 1) {
-            let content = submessage(&write, 2).unwrap_or_default();
-            let tool_call_id = scalar_string(&write, 3).unwrap_or_default();
-            return Some(CursorExecRequest::Write {
-                seq,
-                path,
-                content,
-                tool_call_id,
-            });
-        }
-        return Some(CursorExecRequest::Unknown {
-            seq,
-            field_no: 3,
-            payload: write,
-        });
-    }
-    if let Some(delete) = submessage(bytes, 4) {
-        if let Some(path) = scalar_string(&delete, 1) {
-            let tool_call_id = scalar_string(&delete, 2).unwrap_or_default();
-            return Some(CursorExecRequest::Delete {
-                seq,
-                path,
-                tool_call_id,
-            });
-        }
-        return Some(CursorExecRequest::Unknown {
-            seq,
-            field_no: 4,
-            payload: delete,
-        });
-    }
-    if let Some(shell) = submessage(bytes, 14) {
-        if let Some(command) = scalar_string(&shell, 1) {
-            let cwd = scalar_string(&shell, 2).unwrap_or_default();
-            let tool_call_id = scalar_string(&shell, 4).unwrap_or_default();
-            return Some(CursorExecRequest::Shell {
-                seq,
-                command,
-                cwd,
-                tool_call_id,
-            });
-        }
-        return Some(CursorExecRequest::Unknown {
-            seq,
-            field_no: 14,
-            payload: shell,
-        });
-    }
-    if let Some(search) = submessage(bytes, 5) {
-        let pattern = scalar_string(&search, 1);
-        let path = scalar_string(&search, 2).unwrap_or_default();
-        let glob = scalar_string(&search, 3);
-        let mode = scalar_string(&search, 4).unwrap_or_default();
-        let tool_call_id = scalar_string(&search, 14).unwrap_or_default();
-        return Some(CursorExecRequest::Search {
-            seq,
-            pattern,
-            path,
-            glob,
-            mode,
-            tool_call_id,
-        });
-    }
-    if submessage(bytes, 10).is_some() {
-        return Some(CursorExecRequest::RequestContext { id: seq });
-    }
-    // Any other request slot in the oneof (delete, ls, todo, MCP state, ...)
-    // that Roder does not implement yet. Still surface it so the caller can
-    // reply and keep the stream moving.
-    decode_fields_safe(bytes).into_iter().find_map(|field| {
-        let ProtoValue::Bytes(payload) = field.value else {
-            return None;
-        };
-        if EXEC_METADATA_FIELDS.contains(&field.no) {
-            return None;
-        }
-        Some(CursorExecRequest::Unknown {
-            seq,
-            field_no: field.no,
-            payload,
-        })
-    })
-}
-
-fn wrap_exec_client(exec: Vec<u8>) -> Vec<u8> {
-    // AgentClientMessage { 2: exec_client_message }
-    proto_message(vec![proto_field_bytes(2, exec)])
-}
-
-/// READ result: ExecClientMessage{ 1:seq, 7:{ 1:{ 1:path, 2:content, 3:total_lines, 4:file_size } } }
-pub(crate) fn encode_exec_read_result(
-    seq: u64,
-    path: &str,
-    content: &[u8],
-    total_lines: u64,
-) -> Vec<u8> {
-    let inner = proto_message(vec![
-        proto_field_string(1, path),
-        proto_field_bytes(2, content.to_vec()),
-        proto_field_varint(3, total_lines),
-        proto_field_varint(4, content.len() as u64),
-    ]);
-    let read = proto_message(vec![proto_field_bytes(1, inner)]);
-    wrap_exec_client(proto_message(vec![
-        proto_field_varint(1, seq),
-        proto_field_bytes(7, read),
-    ]))
-}
-
-/// WRITE result: ExecClientMessage{ 1:seq, 3:{ 1:{ 1:path, 2:lines, 3:size } } }
-pub(crate) fn encode_exec_write_result(seq: u64, path: &str, lines: u64, size: u64) -> Vec<u8> {
-    let inner = proto_message(vec![
-        proto_field_string(1, path),
-        proto_field_varint(2, lines),
-        proto_field_varint(3, size),
-    ]);
-    let write = proto_message(vec![proto_field_bytes(1, inner)]);
-    wrap_exec_client(proto_message(vec![
-        proto_field_varint(1, seq),
-        proto_field_bytes(3, write),
-    ]))
-}
-
-/// SHELL result, streamed as three ExecClientMessages with the same seq,
-/// matching an authoritative cursor-agent v2026.06.12 wire capture of a
-/// successful `wc -c` run:
-///   start:  14:{ 4:{ 1:{ 1:1 } } }
-///   stdout: 14:{ 1:{ 1:chunk } }
-///   exit:   14:{ 3:{ 2:cwd, 6:duration_ms } }
-///
-/// `cwd` must be non-empty (cursor-agent always sends the real working
-/// directory) and f6 of the exit message is the command duration in
-/// milliseconds, NOT an exit code or byte count — the capture shows f6=29 for
-/// a command that exited 0 and printed 25 bytes.
-pub(crate) fn encode_exec_shell_results(
-    seq: u64,
-    cwd: &str,
-    stdout: &str,
-    duration_ms: u64,
-) -> Vec<Vec<u8>> {
-    let shell_msg = |inner: Vec<u8>| {
-        wrap_exec_client(proto_message(vec![
-            proto_field_varint(1, seq),
-            proto_field_bytes(14, inner),
-        ]))
-    };
-    let start = shell_msg(proto_message(vec![proto_field_bytes(
-        4,
-        proto_message(vec![proto_field_bytes(
-            1,
-            proto_message(vec![proto_field_varint(1, 1)]),
-        )]),
-    )]));
-    // stdout: 14:{ 1:{ 1:chunk } }
-    let out = shell_msg(proto_message(vec![proto_field_bytes(
-        1,
-        proto_message(vec![proto_field_string(1, stdout)]),
-    )]));
-    // exit: 14:{ 3:{ 2:cwd, 6:duration_ms } }
-    let exit = shell_msg(proto_message(vec![proto_field_bytes(
-        3,
-        proto_message(vec![
-            proto_field_string(2, cwd),
-            proto_field_varint(6, duration_ms),
-        ]),
-    )]));
-    vec![start, out, exit]
-}
-
-/// Search result, `files_with_matches` (glob) mode:
-/// `2:{ 5:{ 1:{ 2:path, 3:"files_with_matches", 4:{ 1:root, 2:{ 2:{ 1:relpath*, 2:count } } } } } }`
-pub(crate) fn encode_exec_glob_result(
-    seq: u64,
-    path: &str,
-    root: &str,
-    rel_paths: &[String],
-) -> Vec<u8> {
-    let mut files: Vec<Vec<u8>> = rel_paths.iter().map(|p| proto_field_string(1, p)).collect();
-    files.push(proto_field_varint(2, rel_paths.len() as u64));
-    let f4 = proto_message(vec![
-        proto_field_string(1, root),
-        proto_field_bytes(
-            2,
-            proto_message(vec![proto_field_bytes(2, proto_message(files))]),
-        ),
-    ]);
-    let inner = proto_message(vec![
-        proto_field_string(2, path),
-        proto_field_string(3, "files_with_matches"),
-        proto_field_bytes(4, f4),
-    ]);
-    let search = proto_message(vec![proto_field_bytes(1, inner)]);
-    wrap_exec_client(proto_message(vec![
-        proto_field_varint(1, seq),
-        proto_field_bytes(5, search),
-    ]))
-}
-
-/// Search result, `content` (grep) mode:
-/// `2:{ 5:{ 1:{ 1:pattern, 2:path, 3:"content", 4:{ 1:root, 2:{ 3:{ 1:{1:relpath,2:{1:line,2:text}}*, 2:count, 3:count } } } } } }`
-pub(crate) fn encode_exec_grep_result(
-    seq: u64,
-    pattern: &str,
-    path: &str,
-    root: &str,
-    matches: &[CursorGrepMatch],
-) -> Vec<u8> {
-    let mut entries: Vec<Vec<u8>> = matches
-        .iter()
-        .map(|m| {
-            proto_field_bytes(
-                1,
-                proto_message(vec![
-                    proto_field_string(1, &m.path),
-                    proto_field_bytes(
-                        2,
-                        proto_message(vec![
-                            proto_field_varint(1, m.line),
-                            proto_field_string(2, &m.text),
-                        ]),
-                    ),
-                ]),
-            )
-        })
-        .collect();
-    entries.push(proto_field_varint(2, matches.len() as u64));
-    entries.push(proto_field_varint(3, matches.len() as u64));
-    let f4 = proto_message(vec![
-        proto_field_string(1, root),
-        proto_field_bytes(
-            2,
-            proto_message(vec![proto_field_bytes(3, proto_message(entries))]),
-        ),
-    ]);
-    let inner = proto_message(vec![
-        proto_field_string(1, pattern),
-        proto_field_string(2, path),
-        proto_field_string(3, "content"),
-        proto_field_bytes(4, f4),
-    ]);
-    let search = proto_message(vec![proto_field_bytes(1, inner)]);
-    wrap_exec_client(proto_message(vec![
-        proto_field_varint(1, seq),
-        proto_field_bytes(5, search),
-    ]))
-}
-
-/// Result for an exec request variant Roder does not implement: mirror the
-/// seq and request field number with an empty result message, matching the
-/// seq-echo convention every implemented result uses. The server treats the
-/// call as answered (rather than waiting forever on a silent client), so the
-/// turn keeps streaming instead of hanging on the tool call.
-pub(crate) fn encode_exec_unknown_result(seq: u64, field_no: u32) -> Vec<u8> {
-    wrap_exec_client(proto_message(vec![
-        proto_field_varint(1, seq),
-        proto_field_bytes(field_no, Vec::new()),
-    ]))
-}
-
-/// REQUEST-CONTEXT result: responds to `request_context_args` (field 10 of
-/// `ExecServerMessage`).  The server requires this before it will start
-/// generating model output.
-///
-/// Protobuf:
-///   `AgentClientMessage{ 2: ExecClientMessage{
-///       1: id,
-///       10: RequestContextResult{
-///           1: RequestContextSuccess{
-///               1: RequestContext{
-///                   4: RequestContextEnv{
-///                       1: os_version,
-///                       2: workspace_paths (repeated),
-///                       11: project_folder } } } } } }`
-pub(crate) fn encode_exec_request_context_result(id: u64, workspace_path: &str) -> Vec<u8> {
-    let env = proto_message(vec![
-        proto_field_string(1, "macOS"),
-        proto_field_string(2, workspace_path), // workspace_paths[]
-        proto_field_string(11, workspace_path), // project_folder
-    ]);
-    let context = proto_message(vec![proto_field_bytes(4, env)]);
-    let success = proto_message(vec![proto_field_bytes(1, context)]);
-    let result = proto_message(vec![proto_field_bytes(1, success)]);
-    wrap_exec_client(proto_message(vec![
-        proto_field_varint(1, id),
-        proto_field_bytes(10, result),
-    ]))
-}
-
-/// exec_client INIT (context handshake): `AgentClientMessage{ 2:{ 10:{ 1:{ 1:{ 2:[files] } } } } }`.
-/// Each file entry is `{ 1: path, 2: content }`. An empty list establishes the
-/// exec channel without pushing workspace files (the model reads on demand).
-///
-/// Kept as a documented encoder for the exec INIT frame (see
-/// docs/roder-cursor-agent-runtime-protocol.md): the live path responds to the
-/// server's `request_context_args` instead of proactively pushing files, so
-/// this is currently exercised only by unit tests.
-#[allow(dead_code)]
-pub(crate) fn encode_exec_init(files: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let entries: Vec<Vec<u8>> = files
-        .iter()
-        .map(|(path, content)| {
-            proto_field_bytes(
-                2,
-                proto_message(vec![
-                    proto_field_string(1, path),
-                    proto_field_bytes(2, content.clone()),
-                ]),
-            )
-        })
-        .collect();
-    let file_list = proto_message(entries);
-    let ctx = proto_message(vec![proto_field_bytes(
-        1,
-        proto_message(vec![proto_field_bytes(1, file_list)]),
-    )]);
-    wrap_exec_client(proto_message(vec![proto_field_bytes(10, ctx)]))
-}
-
-/// client_heartbeat keepalive: AgentClientMessage{ 7:<empty> }. Long turns are
-/// reset by the server without periodic heartbeats.
-pub(crate) fn encode_heartbeat() -> Vec<u8> {
-    proto_message(vec![proto_field_bytes(7, Vec::new())])
-}
-
-/// exec_client_control_message ack: AgentClientMessage{ 5:{ 1:{ 1:seq } } }.
-///
-/// The ack must echo the exec seq it acknowledges (authoritative cursor-agent
-/// capture: `0a020801` = {1:{1:1}} after servicing exec seq 1). The previous
-/// empty `{1:<empty>}` ack carried no seq, so after a *streamed* shell result
-/// the server never learned the exec was finished and did not resume the model
-/// — the turn sat "stuck on the shell tool" until the no-progress cap ended it.
-pub(crate) fn encode_exec_control(seq: u64) -> Vec<u8> {
-    proto_message(vec![proto_field_bytes(
-        5,
-        proto_message(vec![proto_field_bytes(
-            1,
-            proto_message(vec![proto_field_varint(1, seq)]),
-        )]),
-    )])
-}
-
-/// First length-delimited (sub-message / string) field with the given number.
 pub(crate) fn submessage(bytes: &[u8], no: u32) -> Option<Vec<u8>> {
     decode_fields_safe(bytes)
         .iter()
@@ -1218,7 +639,7 @@ fn tool_args(payload: &[u8], tool_no: u32) -> Option<Vec<u8>> {
 /// Decode a scalar `string`/`bytes` field as UTF-8 (lossy). Unlike
 /// [`bytes_field_as_string`] this does not apply the printable-text heuristic,
 /// because file contents and commands are read from known scalar field numbers.
-fn scalar_string(bytes: &[u8], no: u32) -> Option<String> {
+pub(crate) fn scalar_string(bytes: &[u8], no: u32) -> Option<String> {
     decode_fields_safe(bytes).iter().find_map(|field| {
         bytes_field(field, no).map(|value| String::from_utf8_lossy(value).into_owned())
     })
@@ -1317,16 +738,6 @@ fn decode_usage(bytes: &[u8]) -> BTreeMap<u32, u64> {
         .collect()
 }
 
-/// Printable strings found in a raw exec payload, used to label unsupported
-/// exec requests in the tool timeline (truncated to keep the record small).
-pub(crate) fn collect_payload_strings(payload: &[u8]) -> Vec<String> {
-    collect_utf8_strings(payload, 0)
-        .into_iter()
-        .take(8)
-        .map(|value| value.chars().take(200).collect())
-        .collect()
-}
-
 fn collect_utf8_strings(bytes: &[u8], depth: u8) -> Vec<String> {
     if depth > 5 {
         return Vec::new();
@@ -1404,12 +815,19 @@ fn decode_fields(bytes: &[u8]) -> anyhow::Result<Vec<ProtoField>> {
                 offset = end;
             }
             1 => {
+                let start = offset;
                 offset = offset
                     .checked_add(8)
                     .filter(|next| *next <= bytes.len())
                     .ok_or_else(|| {
                         anyhow::anyhow!("protobuf fixed64 field exceeds payload size")
                     })?;
+                fields.push(ProtoField {
+                    no,
+                    value: ProtoValue::Fixed64(u64::from_le_bytes(
+                        bytes[start..offset].try_into().unwrap(),
+                    )),
+                });
             }
             5 => {
                 offset = offset
@@ -1540,14 +958,14 @@ mod tests {
 
     #[test]
     fn agent_client_message_contains_prompt_and_model() {
-        let bytes = encode_agent_client_message_with_history(
+        let bytes = encode_agent_client_message(
             "hello cursor",
             "composer-2.5",
             "conv",
             "msg",
             &[],
             &[],
-            &[],
+            None,
             None,
         );
         let strings = collect_utf8_strings(&bytes, 0);
@@ -1558,14 +976,14 @@ mod tests {
 
     #[test]
     fn requested_model_fast_variant_sets_fast_param_and_wire_id() {
-        let bytes = encode_agent_client_message_with_history(
+        let bytes = encode_agent_client_message(
             "hello",
             "composer-2.5-fast",
             "conv",
             "msg",
             &[],
             &[],
-            &[],
+            None,
             None,
         );
         let strings = collect_utf8_strings(&bytes, 0);
@@ -1673,14 +1091,14 @@ mod tests {
     fn user_message_requests_agent_mode_not_ask() {
         // Regression: roder must send UserMessage.mode = AGENT_MODE_AGENT (1).
         // Sending 2 (AGENT_MODE_ASK) made Cursor run the model read-only.
-        let bytes = encode_agent_client_message_with_history(
+        let bytes = encode_agent_client_message(
             "hi",
             "claude-opus-4-8",
             "conv",
             "msg",
             &[],
             &[],
-            &[],
+            None,
             None,
         );
         let run = submessage(&bytes, 1).expect("agent run request");
@@ -1706,43 +1124,6 @@ mod tests {
     }
 
     #[test]
-    fn conversation_history_encodes_user_assistant_toolcall_and_result() {
-        let history = vec![
-            CursorHistoryMessage::AssistantToolCall {
-                id: "toolu_1".to_string(),
-                name: "read_file".to_string(),
-                args_json: r#"{"path":"AGENTS.md"}"#.to_string(),
-            },
-            CursorHistoryMessage::ToolResult {
-                id: "toolu_1".to_string(),
-                name: "read_file".to_string(),
-                content: "file body".to_string(),
-                is_error: false,
-            },
-        ];
-        let bytes = encode_agent_client_message_with_history(
-            "edit it",
-            "m",
-            "c",
-            "mid",
-            &history,
-            &[],
-            &[],
-            None,
-        );
-        // ConversationHistory lives at AgentRunRequest(1).action(2).user_message_action(1).conversation_history(7).
-        let run = submessage(&bytes, 1).unwrap();
-        let action = submessage(&run, 2).unwrap();
-        let uma = submessage(&action, 1).unwrap();
-        let conv_history = submessage(&uma, 7).expect("conversation_history present");
-        // messages(1) repeated; assert the encoded bytes carry the tool-call id, args, and result text.
-        let text = String::from_utf8_lossy(&conv_history);
-        assert!(text.contains("toolu_1"));
-        assert!(text.contains("AGENTS.md"));
-        assert!(text.contains("file body"));
-    }
-
-    #[test]
     fn advertises_roder_tools_as_mcp_tool_definitions_with_value_schema() {
         let tool = CursorMcpTool {
             name: "grep".to_string(),
@@ -1753,14 +1134,14 @@ mod tests {
                 "required": ["query"]
             }),
         };
-        let bytes = encode_agent_client_message_with_history(
+        let bytes = encode_agent_client_message(
             "find foo",
             "claude-opus-4-8",
             "conv",
             "msg",
             &[],
-            &[],
             std::slice::from_ref(&tool),
+            None,
             None,
         );
         // AgentRunRequest.mcp_tools(4).mcp_tools(1) = McpToolDefinition.
@@ -1785,8 +1166,7 @@ mod tests {
 
     #[test]
     fn omitting_tools_keeps_mcp_tools_message_empty() {
-        let bytes =
-            encode_agent_client_message_with_history("hi", "m", "c", "mid", &[], &[], &[], None);
+        let bytes = encode_agent_client_message("hi", "m", "c", "mid", &[], &[], None, None);
         let run = submessage(&bytes, 1).unwrap();
         // mcp_tools(4) is present but its repeated definition list is empty.
         let mcp_tools = submessage(&run, 4).unwrap_or_default();
@@ -1809,14 +1189,14 @@ mod tests {
             mime_type: "image/png".to_string(),
             data: b"PNGDATA".to_vec(),
         };
-        let bytes = encode_agent_client_message_with_history(
+        let bytes = encode_agent_client_message(
             "look at this",
             "claude-opus-4-8",
             "conv",
             "msg",
-            &[],
             std::slice::from_ref(&image),
             &[],
+            None,
             None,
         );
         let run = submessage(&bytes, 1).unwrap();
@@ -1841,8 +1221,7 @@ mod tests {
 
     #[test]
     fn turn_without_images_keeps_empty_selected_context_and_no_inline_flag() {
-        let bytes =
-            encode_agent_client_message_with_history("hello", "m", "c", "mid", &[], &[], &[], None);
+        let bytes = encode_agent_client_message("hello", "m", "c", "mid", &[], &[], None, None);
         let run = submessage(&bytes, 1).unwrap();
         assert_eq!(scalar_u64(&run, 19), None);
         let action = submessage(&run, 2).unwrap();
@@ -1850,47 +1229,6 @@ mod tests {
         let user_message = submessage(&uma, 1).unwrap();
         // selected_context (field 3) is present but empty (zero-length message).
         assert_eq!(submessage(&user_message, 3), Some(Vec::new()));
-    }
-
-    #[test]
-    fn history_user_image_encodes_as_image_content() {
-        let history = vec![CursorHistoryMessage::User {
-            text: "earlier".to_string(),
-            images: vec![CursorImage {
-                mime_type: "image/jpeg".to_string(),
-                data: b"JPEGDATA".to_vec(),
-            }],
-        }];
-        use base64::Engine as _;
-        let bytes = encode_agent_client_message_with_history(
-            "now",
-            "m",
-            "c",
-            "mid",
-            &history,
-            &[],
-            &[],
-            None,
-        );
-        let run = submessage(&bytes, 1).unwrap();
-        // History images also require the inline-images capability flag.
-        assert_eq!(scalar_u64(&run, 19), Some(1));
-        let action = submessage(&run, 2).unwrap();
-        let uma = submessage(&action, 1).unwrap();
-        let conv_history = submessage(&uma, 7).expect("conversation_history present");
-        let message = submessage(&conv_history, 1).unwrap();
-        let user = submessage(&message, 1).unwrap();
-        // ConversationHistoryUserContent.image(2) -> ImageContent { data 1, mime_type 2 }.
-        let image_content = submessage(&user, 2).expect("image content present");
-        let encoded = base64::engine::general_purpose::STANDARD.encode(b"JPEGDATA");
-        assert_eq!(
-            scalar_string(&image_content, 1).as_deref(),
-            Some(encoded.as_str())
-        );
-        assert_eq!(
-            scalar_string(&image_content, 2).as_deref(),
-            Some("image/jpeg")
-        );
     }
 
     #[test]

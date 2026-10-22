@@ -2,21 +2,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures::StreamExt;
 use roder_api::catalog::PROVIDER_CURSOR;
 use roder_api::extension::InferenceEngineId;
 use roder_api::inference::{
-    AgentInferenceRequest, CompletionMetadata, InferenceCapabilities, InferenceEngine,
-    InferenceEvent, InferenceEventStream, InferenceProviderContext, InferenceProviderMetadata,
-    InferenceTurnContext, MessageDelta, ModelDescriptor, ProviderAuthType, ReasoningDelta,
-    TokenUsage, ToolCallCompleted,
+    AgentInferenceRequest, InferenceCapabilities, InferenceEngine, InferenceEventStream,
+    InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext, ModelDescriptor,
+    ProviderAuthType,
 };
 use roder_api::transcript::TranscriptItem;
+#[cfg(test)]
 use serde_json::json;
 
-use crate::agentservice::{
-    AgentServiceConfig, AgentServiceEvent, AgentServiceRequest, stream_agent_service,
-};
+use crate::agentservice::AgentServiceConfig;
 use crate::auth::CursorAuthConfig;
 use crate::context::{
     CursorContextOptions, discovery_context_frames_from_env, encode_request_context_frame,
@@ -172,171 +169,73 @@ impl InferenceEngine for CursorInferenceEngine {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
 
-        // When the runtime supplies a tool executor, drive Cursor's bidirectional
-        // agent runtime: keep the Run stream open and service exec read/write/shell
-        // requests in-stream so the model completes multi-step edits in one turn.
-        if let Some(executor) = ctx.tool_executor.clone() {
-            let (prompt, history, images) = cursor_request_parts(&request);
-            let tools = cursor_mcp_tools_from_request(&request);
-            let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
-            let conversation_id = cursor_conversation_id(&ctx, &request);
-            let message_id = uuid::Uuid::new_v4().to_string();
-            let run_request = crate::proto::encode_agent_client_message_with_history(
-                &prompt,
-                &request.model.model,
-                &conversation_id,
-                &message_id,
-                &history,
-                &images,
-                &tools,
-                Some(&request.reasoning),
-            );
-            let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
-                vec![encode_request_context_frame(
-                    &CursorContextOptions::from_workspace(workspace.clone()),
-                )]
-            });
-            return crate::bidi::run_bidi_turn(
-                self.agent_service_config(),
-                crate::bidi::BidiRequest {
-                    access_token: auth.token,
-                    run_request,
-                    context_frames,
-                    workspace,
-                    tool_executor: Some(executor),
-                    usage_metadata: crate::bidi::BidiUsageMetadata {
-                        prompt_tokens: estimated_prompt_tokens,
-                        provider: PROVIDER_CURSOR.to_string(),
-                        transport: "cursor-agentservice-http2-connect-proto-bidi".to_string(),
-                        auth_source: auth.source.as_str().to_string(),
-                        thread_id: ctx.thread_id.to_string(),
-                        turn_id: ctx.turn_id.to_string(),
-                        model: request.model.model.clone(),
-                        conversation_id,
-                    },
-                },
-            )
-            .await;
-        }
-
-        let workspace_for_ctx = workspace.clone();
-        let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
-            vec![encode_request_context_frame(
-                &CursorContextOptions::from_workspace(workspace_for_ctx),
-            )]
-        });
-        let (prompt, history, images) = cursor_request_parts(&request);
+        let (prompt, history, mut images) = cursor_request_parts(&request);
         let tools = cursor_mcp_tools_from_request(&request);
         let estimated_prompt_tokens = estimate_prompt_tokens(&prompt);
         let conversation_id = cursor_conversation_id(&ctx, &request);
-        let service_stream = stream_agent_service(
+        let state = crate::state::CursorConversationState::from_transcript(
+            &request.transcript,
+            &conversation_id,
+        )?;
+        let prompt = if state.checkpoint.is_empty() {
+            let mut imported_images = history
+                .iter()
+                .flat_map(|item| match item {
+                    CursorHistoryMessage::User { images, .. } => images.clone(),
+                    _ => Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            imported_images.append(&mut images);
+            images = imported_images;
+            crate::history::import_prompt(&prompt, &history)
+        } else {
+            prompt
+        };
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let run_request = crate::proto::encode_agent_client_message(
+            &prompt,
+            &request.model.model,
+            &conversation_id,
+            &message_id,
+            &images,
+            &tools,
+            Some(&request.reasoning),
+            Some(&state),
+        );
+        let context_frames = discovery_context_frames_from_env()?.unwrap_or_else(|| {
+            vec![encode_request_context_frame(
+                &CursorContextOptions::from_workspace(workspace.clone()),
+            )]
+        });
+        crate::bidi::run_bidi_turn(
             self.agent_service_config(),
-            AgentServiceRequest {
+            crate::bidi::BidiRequest {
                 access_token: auth.token,
-                prompt,
-                model: request.model.model.clone(),
-                conversation_id,
+                run_request,
                 context_frames,
-                history,
-                images,
-                tools,
-                reasoning: Some(request.reasoning.clone()),
                 workspace,
+                tool_executor: ctx.tool_executor.clone(),
+                tools,
+                state,
+                usage_metadata: crate::bidi::BidiUsageMetadata {
+                    prompt_tokens: estimated_prompt_tokens,
+                    provider: PROVIDER_CURSOR.to_string(),
+                    transport: "cursor-agentservice-http2-connect-proto-bidi".to_string(),
+                    auth_source: auth.source.as_str().to_string(),
+                    thread_id: ctx.thread_id.to_string(),
+                    turn_id: ctx.turn_id.to_string(),
+                    model: request.model.model.clone(),
+                    conversation_id,
+                },
             },
         )
-        .await?;
-        let request_id = service_stream.request_id;
-        let conversation_id = service_stream.conversation_id;
-        let auth_source = auth.source.as_str().to_string();
-        let thread_id = ctx.thread_id.to_string();
-        let turn_id = ctx.turn_id.to_string();
-        let model = request.model.model.clone();
-        let mut service_events = service_stream.events;
-
-        Ok(Box::pin(async_stream::try_stream! {
-            let mut usage_fields = serde_json::Map::new();
-            let mut estimated_visible_output_tokens = 0_u32;
-            let mut estimated_thinking_tokens = 0_u32;
-
-            while let Some(event) = service_events.next().await {
-                match event? {
-                    AgentServiceEvent::Text(text) => {
-                        estimated_visible_output_tokens = estimated_visible_output_tokens
-                            .saturating_add(estimate_text_tokens(&text));
-                        yield InferenceEvent::MessageDelta(MessageDelta {
-                            text,
-                            phase: None,
-                        });
-                    }
-                    AgentServiceEvent::Thinking(text) => {
-                        estimated_thinking_tokens = estimated_thinking_tokens
-                            .saturating_add(estimate_text_tokens(&text));
-                        yield InferenceEvent::ReasoningDelta(ReasoningDelta { text });
-                    }
-                    AgentServiceEvent::ToolCalls(calls) => {
-                        for call in calls {
-                            estimated_visible_output_tokens = estimated_visible_output_tokens
-                                .saturating_add(estimate_text_tokens(&call.arguments));
-                            yield InferenceEvent::ToolCallCompleted(ToolCallCompleted {
-                                id: call.id,
-                                name: call.name,
-                                arguments: call.arguments,
-                            });
-                        }
-                    }
-                    AgentServiceEvent::UsageFields(fields) => {
-                        for (field, value) in fields {
-                            usage_fields.insert(format!("field_{field}"), json!(value));
-                        }
-                    }
-                    AgentServiceEvent::Completed(stop_reason) => {
-                        let completion_tokens = estimated_visible_output_tokens
-                            .saturating_add(estimated_thinking_tokens);
-                        let total_tokens = estimated_prompt_tokens.saturating_add(completion_tokens);
-                        yield InferenceEvent::Usage(TokenUsage::new(
-                            estimated_prompt_tokens,
-                            completion_tokens,
-                            total_tokens,
-                        ));
-                        yield InferenceEvent::ProviderMetadata(json!({
-                            "provider": PROVIDER_CURSOR,
-                            "transport": "cursor-agentservice-http2-connect-proto",
-                            "authSource": auth_source,
-                            "requestId": request_id,
-                            "conversationId": conversation_id,
-                            "threadId": thread_id,
-                            "turnId": turn_id,
-                            "model": model,
-                            "usage": {
-                                "input_tokens": estimated_prompt_tokens,
-                                "output_tokens": completion_tokens,
-                                "total_tokens": total_tokens,
-                                "output_tokens_details": {
-                                    "reasoning_tokens": estimated_thinking_tokens,
-                                    "visible_output_tokens": estimated_visible_output_tokens
-                                }
-                            },
-                            "usageFields": usage_fields,
-                            "usageEstimated": true,
-                            "usageSource": "chars_per_4",
-                        }));
-                        yield InferenceEvent::Completed(CompletionMetadata {
-                            stop_reason: Some(stop_reason),
-                            provider_response_id: None,
-                        });
-                        break;
-                    }
-                }
-            }
-        }))
+        .await
     }
 }
 
-/// Split a Roder inference request into the Cursor `user_message` text (system +
-/// developer + the latest user turn) and the native `ConversationHistory` (all
-/// prior turns, including the assistant tool calls and tool results from earlier
-/// Roder rounds). Replaying the tool calls/results natively lets Cursor's agent
-/// continue the loop instead of restarting and re-issuing the same tool call.
+/// Split the request into its current prompt, importable history, and images.
+/// Native Cursor continuation uses checkpoints; these records supply explicit
+/// reference context when starting a conversation without a native checkpoint.
 pub fn cursor_request_parts(
     request: &AgentInferenceRequest,
 ) -> (String, Vec<CursorHistoryMessage>, Vec<CursorImage>) {
@@ -381,6 +280,7 @@ pub fn cursor_request_parts(
                 });
             }
             TranscriptItem::ContextCompaction(compaction) => {
+                history.clear();
                 history.push(CursorHistoryMessage::User {
                     text: format!("Context summary:\n{}", compaction.summary),
                     images: Vec::new(),
@@ -425,31 +325,8 @@ fn cursor_images_from_inputs(images: &[roder_api::transcript::InputImage]) -> Ve
         .collect()
 }
 
-/// Opt-in env flag for advertising Roder tools to Cursor via
-/// `AgentRunRequest.mcp_tools`. Default OFF — see [`cursor_mcp_tools_from_request`].
-const ADVERTISE_MCP_TOOLS_ENV: &str = "RODER_CURSOR_ADVERTISE_MCP_TOOLS";
-
-/// Map Roder's advertised `ToolSpec`s into Cursor `McpToolDefinition`s.
-///
-/// IMPORTANT: this is disabled by default. A live experiment
-/// (`cursor/claude-opus-4-8`, frame capture) showed Cursor **ignores**
-/// client-advertised `mcp_tools` that carry no registered `provider_identifier`:
-/// the model's tool surface is controlled server-side (it only saw Cursor's
-/// native tools), so listing tool definitions here does not make them callable.
-/// Roder tools reach Cursor models through the native exec mapping in `bidi.rs`
-/// (read/write/shell/grep/glob), not through this field.
-///
-/// The encoder + schema are kept for future work (e.g. once provider
-/// registration or a client-exec channel for MCP is understood). Set
-/// `RODER_CURSOR_ADVERTISE_MCP_TOOLS=1` to advertise the definitions anyway
-/// (harmless but currently a no-op on Cursor's side) for experimentation.
+/// Advertise the runtime's tools through Cursor's client-side MCP channel.
 fn cursor_mcp_tools_from_request(request: &AgentInferenceRequest) -> Vec<CursorMcpTool> {
-    let enabled = std::env::var(ADVERTISE_MCP_TOOLS_ENV)
-        .map(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false);
-    if !enabled {
-        return Vec::new();
-    }
     request
         .tools
         .iter()
@@ -596,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn request_parts_replay_tool_call_and_result_as_native_history() {
+    fn request_parts_collect_tool_calls_and_results_for_history_import() {
         let mut request = request();
         request
             .transcript
@@ -647,6 +524,7 @@ mod tests {
             }),
         });
         assert!(validate_request(&request).is_ok());
+        assert_eq!(cursor_mcp_tools_from_request(&request)[0].name, "read_file");
     }
 
     #[test]

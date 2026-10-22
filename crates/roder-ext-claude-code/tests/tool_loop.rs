@@ -32,6 +32,7 @@ impl TurnToolExecutor for RecordingExecutor {
         self.calls.lock().unwrap().push(call.clone());
         if self.deny.iter().any(|name| name == &call.name) {
             return Ok(TurnToolOutcome {
+                data: serde_json::Value::Null,
                 result: format!("permission denied for {}", call.name),
                 is_error: true,
             });
@@ -45,11 +46,13 @@ impl TurnToolExecutor for RecordingExecutor {
             // resolved answers to the model. Here we stand in for that resolved
             // outcome so the test exercises the claude-code SDK -> executor path.
             return Ok(TurnToolOutcome {
+                data: serde_json::Value::Null,
                 result: "User input received:\n{\"release\":\"fix-first\"}".to_string(),
                 is_error: false,
             });
         }
         Ok(TurnToolOutcome {
+            data: serde_json::Value::Null,
             result: format!("executed {} with {}", call.name, call.arguments),
             is_error: false,
         })

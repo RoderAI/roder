@@ -3,8 +3,7 @@
 //!
 //! Reproduces the composer-2.5 "stuck on tool calls" failure offline: the
 //! server issues an exec request variant Roder does not implement and refuses
-//! to end the turn until *some* result with the mirrored seq + field number
-//! arrives. Before the Unknown-exec handling, the client silently dropped the
+//! to end the turn until a schema-defined ExecClientThrow with its id arrives. Before the Unknown-exec handling, the client silently dropped the
 //! frame and the turn hung until the no-progress cap killed it; now the client
 //! replies and the turn completes promptly.
 
@@ -33,6 +32,7 @@ impl TurnToolExecutor for RecordingExecutor {
     async fn execute(&self, call: ToolCallCompleted) -> anyhow::Result<TurnToolOutcome> {
         self.calls.lock().unwrap().push(call);
         Ok(TurnToolOutcome {
+            data: serde_json::Value::Null,
             result: "unknown tool".to_string(),
             is_error: true,
         })
@@ -71,7 +71,7 @@ fn turn_end_frame() -> Vec<u8> {
         1,
         proto_message(vec![proto_field_bytes(
             14,
-            proto_message(vec![proto_field_varint(1, 10)]),
+            proto_message(vec![proto_field_varint(1, 10), proto_field_varint(2, 4)]),
         )]),
     )]))
 }
@@ -86,17 +86,18 @@ fn connect_end_stream_frame() -> Vec<u8> {
     frame
 }
 
-/// Whether the accumulated client body contains the mirrored Unknown-exec
-/// result: `AgentClientMessage{ 2: ExecClientMessage{ 1: seq, 21: {} } }`.
-fn contains_mirrored_unknown_result(buffer: &mut Vec<u8>) -> bool {
+/// Whether the body contains ExecClientControlMessage.throw with the request id.
+fn contains_unknown_failure(buffer: &mut Vec<u8>) -> bool {
     loop {
         match crate::proto::take_connect_frame(buffer) {
             Ok(Some(crate::proto::ConnectFrame::Payload(payload))) => {
-                let Some(exec) = crate::proto::submessage(&payload, 2) else {
+                let Some(exec) = crate::proto::submessage(&payload, 5)
+                    .and_then(|control| crate::proto::submessage(&control, 2))
+                else {
                     continue;
                 };
                 if crate::proto::scalar_u64(&exec, 1) == Some(EXEC_SEQ)
-                    && crate::proto::submessage(&exec, UNKNOWN_EXEC_FIELD).is_some()
+                    && crate::proto::scalar_string(&exec, 2).is_some()
                 {
                     return true;
                 }
@@ -108,7 +109,7 @@ fn contains_mirrored_unknown_result(buffer: &mut Vec<u8>) -> bool {
 }
 
 /// Mock AgentService: one h2 stream that sends an unknown exec request and
-/// ends the turn only after the client's mirrored result arrives.
+/// ends the turn only after the client's explicit failure arrives.
 async fn run_mock_agent_service(listener: tokio::net::TcpListener) {
     let (socket, _) = listener.accept().await.expect("accept TCP");
     let mut connection = h2::server::handshake(socket).await.expect("h2 handshake");
@@ -142,7 +143,7 @@ async fn run_mock_agent_service(listener: tokio::net::TcpListener) {
         let chunk = chunk.expect("request body chunk");
         let _ = body.flow_control().release_capacity(chunk.len());
         buffer.extend_from_slice(&chunk);
-        got_reply = contains_mirrored_unknown_result(&mut buffer);
+        got_reply = contains_unknown_failure(&mut buffer);
     }
     assert!(got_reply, "client must reply to the unknown exec request");
 
@@ -175,6 +176,8 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
         access_token: "test-token".to_string(),
         run_request: proto_message(vec![proto_field_bytes(1, Vec::new())]),
         context_frames: Vec::new(),
+        tools: vec![],
+        state: Default::default(),
         workspace: std::env::temp_dir(),
         tool_executor: Some(executor.clone()),
         usage_metadata: BidiUsageMetadata {
@@ -190,7 +193,7 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
     };
 
     // Well under the 90s no-progress cap: with the fix the turn completes as
-    // soon as the server sees the mirrored reply; without it this times out.
+    // soon as the server sees the explicit failure; without it this times out.
     let events = tokio::time::timeout(Duration::from_secs(20), async {
         let mut stream = run_bidi_turn(config, request).await.expect("bidi turn");
         let mut events = Vec::new();
@@ -205,8 +208,10 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
     server.await.expect("mock server");
 
     let calls = executor.calls.lock().unwrap();
-    assert_eq!(calls.len(), 1, "unknown exec surfaces one timeline entry");
-    assert_eq!(calls[0].name, "cursor_unsupported_tool");
+    assert!(
+        calls.is_empty(),
+        "unsupported wire calls must not run a tool"
+    );
 
     assert!(
         events.iter().any(
@@ -220,14 +225,14 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
     assert!(matches!(
         &events[usage_index],
         InferenceEvent::Usage(usage)
-            if usage.prompt_tokens == 7
-                && usage.completion_tokens == 1
-                && usage.total_tokens == 8
+            if usage.prompt_tokens == 10
+                && usage.completion_tokens == 4
+                && usage.total_tokens == 14
     ));
     assert!(matches!(
         events.get(usage_index + 1),
         Some(InferenceEvent::ProviderMetadata(metadata))
-            if metadata.get("usageEstimated").and_then(|value| value.as_bool()) == Some(true)
+            if metadata.get("usageEstimated").and_then(|value| value.as_bool()) == Some(false)
                 && metadata
                     .get("usageFields")
                     .and_then(|fields| fields.get("field_1"))
@@ -239,4 +244,60 @@ async fn bidi_turn_replies_to_unknown_exec_and_completes_instead_of_hanging() {
         Some(InferenceEvent::Completed(metadata))
             if metadata.stop_reason.as_deref() == Some("turn_ended")
     ));
+}
+
+#[tokio::test]
+async fn early_end_stream_is_an_error_without_completed_event() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut connection = h2::server::handshake(socket).await.unwrap();
+        let (_, mut respond) = connection.accept().await.unwrap().unwrap();
+        let driver = tokio::spawn(async move { while connection.accept().await.is_some() {} });
+        let mut send = respond
+            .send_response(
+                http::Response::builder().status(200).body(()).unwrap(),
+                false,
+            )
+            .unwrap();
+        send.send_data(text_frame("partial response").into(), false)
+            .unwrap();
+        send.send_data(connect_end_stream_frame().into(), true)
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), driver).await;
+    });
+    let config = AgentServiceConfig {
+        endpoint: format!("http://{addr}"),
+        ..Default::default()
+    };
+    let request = BidiRequest {
+        access_token: "test".into(),
+        run_request: vec![],
+        context_frames: vec![],
+        tools: vec![],
+        state: Default::default(),
+        workspace: std::env::temp_dir(),
+        tool_executor: None,
+        usage_metadata: Default::default(),
+    };
+    let mut stream = run_bidi_turn(config, request).await.unwrap();
+    let mut got_error = false;
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .unwrap()
+    {
+        match event {
+            Ok(InferenceEvent::Completed(_)) => {
+                panic!("partial responses cannot complete successfully")
+            }
+            Err(error) => {
+                assert!(error.to_string().contains("before turn end"));
+                got_error = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(got_error);
+    server.await.unwrap();
 }

@@ -772,6 +772,8 @@ pub struct InferenceTurnContext<'a> {
 /// Result of executing one tool call via [`TurnToolExecutor`].
 #[derive(Debug, Clone)]
 pub struct TurnToolOutcome {
+    /// Structured, policy-approved tool output for provider-native wire replies.
+    pub data: serde_json::Value,
     pub result: String,
     pub is_error: bool,
 }

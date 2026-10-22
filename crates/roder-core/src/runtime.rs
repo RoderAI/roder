@@ -4894,22 +4894,21 @@ impl Runtime {
         let force_sequential = calls
             .iter()
             .any(|call| crate::agent_control_tools::is_agent_control_tool(&call.name));
-        let results =
-            if parallel && !force_sequential {
-                try_join_all(calls.into_iter().map(|call| {
-                    self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
-                }))
-                .await
-            } else {
-                let mut results = Vec::with_capacity(calls.len());
-                for call in calls {
-                    results.push(
-                        self.route_tool_call(thread_id, turn_id, call, workspace, deadline)
-                            .await?,
-                    );
-                }
-                Ok(results)
-            }?;
+        let results = if parallel && !force_sequential {
+            try_join_all(calls.into_iter().map(|call| {
+                self.route_tool_call(thread_id, turn_id, call, workspace, deadline, None)
+            }))
+            .await
+        } else {
+            let mut results = Vec::with_capacity(calls.len());
+            for call in calls {
+                results.push(
+                    self.route_tool_call(thread_id, turn_id, call, workspace, deadline, None)
+                        .await?,
+                );
+            }
+            Ok(results)
+        }?;
 
         if let Some((tool_id, _)) = &swarm_call
             && let Some(result) = results.iter().find(|result| &result.id == tool_id)
@@ -8601,6 +8600,7 @@ mod tests {
                 },
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -9848,6 +9848,7 @@ mod tests {
                 },
                 None,
                 Some(OffsetDateTime::now_utc() + Duration::seconds(1)),
+                None,
             )
             .await
             .unwrap();

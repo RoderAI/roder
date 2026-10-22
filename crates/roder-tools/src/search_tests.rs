@@ -92,6 +92,7 @@ async fn grep_paging_result_includes_continuation_text_and_data() {
     assert_eq!(result.data["continuation_tool"], "grep");
     assert_eq!(result.data["continuation_args"]["query"], "needle");
     assert_eq!(result.data["continuation_args"]["offset"], 1);
+    assert!(result.data["continuation_args"].get("glob").is_none());
 
     let _ = std::fs::remove_dir_all(root);
 }
@@ -547,4 +548,26 @@ fn test_workspace(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     path
+}
+
+#[tokio::test]
+async fn grep_glob_filters_before_pagination() {
+    let root = test_workspace("grep-glob-page");
+    std::fs::write(root.join("a.txt"), "needle ignored\n").unwrap();
+    std::fs::write(root.join("b.rs"), "needle wanted\n").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let tool = GrepTool {
+        workspace: workspace.clone(),
+        backend: Arc::new(LocalWorkspaceBackend::new(workspace)),
+    };
+    let result = tool
+        .execute(
+            context(&root),
+            call("grep", json!({"query":"needle","glob":"*.rs","limit":1})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.data["matches"], json!(["b.rs:1:needle wanted"]));
+    assert_eq!(result.data["truncated"], false);
+    std::fs::remove_dir_all(root).unwrap();
 }
