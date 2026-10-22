@@ -1295,6 +1295,7 @@ pub(crate) async fn build_runtime_from_config(
     let registry = build_default_registry(DefaultRegistryConfig {
         inference_providers,
         openai_api_key: keys.openai,
+        openai_service_tier: keys.openai_service_tier,
         openai_speech_api_key: keys.openai_speech,
         google_speech_access_token: keys.google_speech_access_token,
         google_speech_api_key: keys.google_speech_api_key,
@@ -2606,6 +2607,7 @@ struct ProviderKeys {
     openrouter_http_referer: Option<String>,
     openrouter_app_title: Option<String>,
     openrouter_routing: roder_ext_openai_responses::OpenRouterRouting,
+    openai_service_tier: Option<String>,
     fireworks: Option<String>,
     fireworks_base_url: Option<String>,
     roder_cloud: Option<String>,
@@ -2840,6 +2842,10 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.app_title.clone())
             .or_else(|| std::env::var("RODER_OPENROUTER_APP_TITLE").ok())
             .or_else(|| std::env::var("OPENROUTER_APP_TITLE").ok()),
+        openai_service_tier: cfg
+            .providers
+            .get(PROVIDER_OPENAI)
+            .and_then(|p| p.service_tier.clone()),
         openrouter_routing: cfg
             .providers
             .get(PROVIDER_OPENROUTER)
@@ -3620,6 +3626,27 @@ mod tests {
         assert!(parse_cli_options(&["--backend=unknown".into()]).is_err());
     }
 
+    #[test]
+    fn openai_ultrafast_config_reaches_resolved_provider_settings() {
+        let config: roder_config::Config = serde_json::from_value(serde_json::json!({
+            "providers": {
+                "openai": { "service_tier": "ultrafast" },
+                "openrouter": { "service_tier": "flex" }
+            }
+        }))
+        .unwrap();
+        let keys = provider_keys(&config);
+        assert_eq!(keys.openai_service_tier.as_deref(), Some("ultrafast"));
+        assert_eq!(
+            keys.openrouter_routing.service_tier.as_deref(),
+            Some("flex")
+        );
+        assert_eq!(
+            provider_keys(&roder_config::Config::default()).openai_service_tier,
+            None
+        );
+    }
+
     fn provider_keys_for_test() -> ProviderKeys {
         ProviderKeys {
             openai: None,
@@ -3650,6 +3677,7 @@ mod tests {
             openrouter_http_referer: None,
             openrouter_app_title: None,
             openrouter_routing: Default::default(),
+            openai_service_tier: None,
             fireworks: None,
             fireworks_base_url: None,
             roder_cloud: None,

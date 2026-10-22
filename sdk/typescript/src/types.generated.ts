@@ -2263,6 +2263,15 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "thread/set_service_tier",
+      "paramsType": "ThreadSetServiceTierParams",
+      "resultType": "ThreadSetServiceTierResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/set_ultra_mode",
       "paramsType": "ThreadSetUltraModeParams",
       "resultType": "ThreadSetUltraModeResult",
@@ -3094,6 +3103,7 @@ export const appServerMethods = [
   "thread/roadmap/open",
   "thread/set_agent_swarm_mode",
   "thread/set_mode",
+  "thread/set_service_tier",
   "thread/set_ultra_mode",
   "thread/start",
   "thread/state",

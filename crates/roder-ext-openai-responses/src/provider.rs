@@ -41,6 +41,8 @@ use response_tools::*;
 mod image_support;
 #[path = "openrouter_routing.rs"]
 mod openrouter_routing;
+#[path = "service_tier.rs"]
+mod service_tier;
 pub use image_support::forwards_tool_result_images;
 pub use openrouter_routing::OpenRouterRouting;
 
@@ -87,6 +89,7 @@ pub struct OpenAiResponsesEngine {
     discover_models: bool,
     refresh_in_flight: Arc<AtomicBool>,
     openrouter_routing: Option<OpenRouterRouting>,
+    service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +137,7 @@ impl OpenAiResponsesEngine {
             profile,
             discover_models: false,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            service_tier: None,
             openrouter_routing: (profile == ResponsesProviderProfile::OpenRouter)
                 .then(OpenRouterRouting::default),
         }
@@ -153,6 +157,7 @@ impl OpenAiResponsesEngine {
             profile: ResponsesProviderProfile::OpenRouter,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            service_tier: None,
             openrouter_routing: Some(OpenRouterRouting::default()),
         }
     }
@@ -176,6 +181,7 @@ impl OpenAiResponsesEngine {
             profile: ResponsesProviderProfile::Fireworks,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            service_tier: None,
             openrouter_routing: None,
         }
     }
@@ -195,6 +201,7 @@ impl OpenAiResponsesEngine {
             profile: ResponsesProviderProfile::OpenAi,
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
+            service_tier: None,
             openrouter_routing: None,
         }
     }
@@ -843,6 +850,7 @@ impl InferenceEngine for OpenAiResponsesEngine {
         if self.provider_id == PROVIDER_CODEX {
             body.as_object_mut().unwrap().remove("context_management");
         }
+        self.apply_service_tier(&mut body);
         if let Some(routing) = &self.openrouter_routing {
             routing.apply(&mut body);
         }

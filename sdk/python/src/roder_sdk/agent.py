@@ -24,6 +24,7 @@ class RoderAgent:
         workspace_id: str | None = None,
         tool_allowlist: list[str] | None = None,
         instructions: str | None = None,
+        service_tier: str | None = None,
         runner: dict[str, Any] | None = None,
         approvals: dict[str, ApprovalCallback] | None = None,
         event_mode: EventMode = "permissive",
@@ -36,6 +37,7 @@ class RoderAgent:
         self.workspace_id = workspace_id
         self.tool_allowlist = tool_allowlist
         self.instructions = instructions
+        self.service_tier = service_tier
         self.runner = runner
         self.approvals = approvals or {}
         self.event_mode: EventMode = event_mode
@@ -54,6 +56,7 @@ class RoderAgent:
         workspace_id: str | None = None,
         tool_allowlist: list[str] | None = None,
         instructions: str | None = None,
+        service_tier: str | None = None,
         runner: dict[str, Any] | None = None,
         approvals: dict[str, ApprovalCallback] | None = None,
         event_mode: EventMode = "permissive",
@@ -67,6 +70,7 @@ class RoderAgent:
             workspace_id=workspace_id,
             tool_allowlist=tool_allowlist,
             instructions=instructions,
+            service_tier=service_tier,
             runner=runner,
             approvals=approvals,
             event_mode=event_mode,
@@ -85,6 +89,7 @@ class RoderAgent:
         input: str | list[dict[str, Any]],
         *,
         developer_context: str | None = None,
+        service_tier: str | None = None,
     ) -> RoderRun:
         """
         developer_context is per-turn developer-authority context layered after
@@ -96,11 +101,21 @@ class RoderAgent:
         params: dict[str, Any] = {"threadId": thread_id, "input": _normalize_input(input)}
         if developer_context is not None:
             params["developerContext"] = developer_context
+        if service_tier is not None:
+            params["serviceTier"] = service_tier
         result = await self.client.call("turn/start", params)
         turn_id = _extract_id(result, "turn") or _extract_string(result, "turnId") or _extract_string(result, "id")
         if not turn_id:
             raise RuntimeError("turn/start response did not include a turn id")
         return RoderRun(self.client, thread_id, turn_id, event_mode=self.event_mode)
+
+    async def set_service_tier(self, service_tier: str | None) -> Any:
+        """Persist the thread default. None restores the provider default."""
+        if not self.thread_id:
+            raise RuntimeError("set_service_tier requires a thread id")
+        return await self.client.call("thread/set_service_tier", {
+            "threadId": self.thread_id, "serviceTier": service_tier,
+        })
 
     async def list_models(self) -> Any:
         return await self.client.call("model/list")
@@ -141,6 +156,8 @@ class RoderAgent:
             params["developerInstructions"] = self.instructions
         if self.runner is not None:
             params["runner"] = self.runner
+        if self.service_tier is not None:
+            params["serviceTier"] = self.service_tier
         params["workspaceId"] = workspace_id
         result = await self.client.call("thread/start", params)
         thread_id = _extract_id(result, "thread") or _extract_string(result, "threadId") or _extract_string(result, "id")

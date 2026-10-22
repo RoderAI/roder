@@ -230,6 +230,7 @@ Threads and turns:
 | `thread/state` | Read policy mode and pending plan-exit state. |
 | `thread/set_mode` | Set the live policy mode. |
 | `thread/set_agent_swarm_mode` | Enable or disable agent-swarm mode (global or per-thread). |
+| `thread/set_service_tier` | Persist or clear the default inference service tier for one thread. |
 | `thread/set_ultra_mode` | Enable or disable ultra mode (proactive multi-agent for any model). |
 | `thread/exit_plan` | Resolve a pending plan-exit request. |
 | `thread/resolve_approval` | Resolve a pending tool approval request. |
@@ -1334,6 +1335,12 @@ Response:
 
 Behavior:
 
+- Optional `serviceTier` (for example `"ultrafast"`) sets the thread's persistent
+  inference service tier. It is returned as `thread.serviceTier` by start, read,
+  and list operations and survives a server restart. Omission uses the provider
+  default. Conversation forks inherit the setting.
+
+
 - Creates a persisted runtime thread in a registered workspace/root with
   optional provider/model.
 - `workspaceId` is required. `rootId` is optional and defaults to the
@@ -1666,6 +1673,15 @@ Response:
 
 Behavior:
 
+- Optional `serviceTier` overrides the tier for this turn only. Precedence is
+  turn `serviceTier`, then persisted thread `serviceTier`, then provider config.
+  Omission or null inherits the thread setting; use `"default"` to explicitly
+  request standard processing for one turn. Provider/model support determines
+  whether a requested tier is available; the provider's reported tier is retained
+  in token usage. A request queued as same-turn steering retains the active
+  turn's captured service tier.
+
+
 - Concatenates text input blocks with newlines.
 - Uses `prompt` as a transition fallback only when text input is empty.
 - If the thread already has an active runtime turn, queues the input as
@@ -1904,6 +1920,39 @@ Response:
   "mode": "accept_edits"
 }
 ```
+
+### `thread/set_service_tier`
+
+Purpose: Set the persistent default tier for one existing thread.
+
+Request:
+
+```json
+{"threadId": "thread-123", "serviceTier": "ultrafast"}
+```
+
+Response:
+
+```json
+{"threadId": "thread-123", "serviceTier": "ultrafast"}
+```
+
+Behavior:
+
+- Applies to subsequent turns on this thread; other threads and provider config
+  are unchanged. An active turn keeps its captured tier.
+- Send `"serviceTier": null` to clear the thread default and inherit the provider
+  config. The response includes `"serviceTier": null`; thread read/list omit the
+  cleared optional field.
+- Per-turn `turn/start.serviceTier` takes precedence without changing this setting.
+- Thread metadata persists the setting across server restarts. No new lifecycle
+  notifications are emitted; use `thread/read` to retrieve the current value.
+
+Errors:
+
+- Blank strings return invalid params; unknown threads return not found.
+- Storage errors return an internal error. Provider-specific tier/model support
+  is evaluated by the inference provider when the next turn runs.
 
 ### `thread/set_ultra_mode`
 

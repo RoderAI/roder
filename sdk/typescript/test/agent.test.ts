@@ -526,3 +526,27 @@ async function eventually(assertion: () => boolean): Promise<void> {
   }
   assert.ok(assertion());
 }
+
+
+test("service tiers can be persisted per thread and overridden per turn", async () => {
+  const requests: JsonRpcRequest[] = [];
+  const agent = await RoderAgent.create({
+    transport: new InMemoryTransport(request => {
+      requests.push(request);
+      const result = request.method === "thread/start" ? {thread: {id: "thread-1"}}
+        : request.method === "turn/start" ? {turnId: "turn-1"} : {};
+      return {jsonrpc: "2.0", id: request.id, result};
+    }),
+    workspaceId: "ws-1", serviceTier: "ultrafast",
+  });
+  await agent.send("hello", {serviceTier: "default"});
+  await agent.send("inherit");
+  await agent.setServiceTier("flex");
+  await agent.setServiceTier(null);
+  assert.equal((requests[0]?.params as Record<string, unknown>).serviceTier, "ultrafast");
+  assert.equal((requests[1]?.params as Record<string, unknown>).serviceTier, "default");
+  assert.equal(Object.hasOwn(requests[2]?.params ?? {}, "serviceTier"), false);
+  assert.deepEqual(requests[3]?.params, {threadId: "thread-1", serviceTier: "flex"});
+  assert.deepEqual(requests[4]?.params, {threadId: "thread-1", serviceTier: null});
+  await agent.close();
+});

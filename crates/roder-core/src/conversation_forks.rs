@@ -201,6 +201,7 @@ impl Runtime {
             model: parent_metadata.model.clone(),
             selection_mode: parent_metadata.selection_mode.clone(),
             tool_allowlist: parent_metadata.tool_allowlist.clone(),
+            service_tier: parent_metadata.service_tier.clone(),
             developer_instructions: parent_metadata.developer_instructions.clone(),
             external_tools: parent_metadata.external_tools.clone(),
             // Local workspace forks never inherit runner bindings.

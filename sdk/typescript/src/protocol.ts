@@ -54,6 +54,8 @@ export interface Thread {
   usage?: TokenUsage;
   toolAllowlist?: string[];
   developerInstructions?: string;
+  /** Persistent thread service tier; omitted means use the provider default. */
+  serviceTier?: string;
   externalTools?: ToolSpec[];
 }
 

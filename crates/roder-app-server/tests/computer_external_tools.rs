@@ -19,6 +19,7 @@ async fn native_computer_name_collision_is_rejected_through_thread_start() {
                 root_id: Some(workspace.root_id),
                 cwd: Some(cwd),
                 tool_allowlist: None,
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Some(vec![roder_api::computer::computer_tool_spec()]),
                 mcp_auth_token: None,

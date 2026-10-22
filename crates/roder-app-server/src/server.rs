@@ -47,6 +47,7 @@ use crate::protocol_contract::{
 };
 
 mod provider_credentials;
+mod service_tier;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -611,6 +612,12 @@ impl AppServer {
             "thread/set_agent_swarm_mode" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_thread_set_agent_swarm_mode(p).await
+                })
+                .await
+            }
+            "thread/set_service_tier" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_set_service_tier(p).await
                 })
                 .await
             }
@@ -2804,6 +2811,7 @@ impl AppServer {
             cwd,
             tool_allowlist,
             developer_instructions,
+            service_tier,
             external_tools,
             mcp_auth_token,
             runner,
@@ -2868,6 +2876,7 @@ impl AppServer {
                 selection_mode: Some(requested_selection.selection_mode.clone()),
                 tool_allowlist: tool_allowlist.unwrap_or_default(),
                 developer_instructions,
+                service_tier,
                 external_tools: external_tools.unwrap_or_default(),
                 runner,
             })
@@ -3132,6 +3141,7 @@ impl AppServer {
                 model: Some(cfg.default_model.clone()),
                 selection_mode: None,
                 tool_allowlist: Vec::new(),
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Vec::new(),
                 runner: None,
@@ -3455,7 +3465,7 @@ impl AppServer {
                 instructions: self.turn_instructions(),
                 developer_context: params.developer_context,
                 task_ledger_required: params.task_ledger_required,
-                service_tier_override: None,
+                service_tier_override: params.service_tier,
             })
             .await
             .map_err(internal_error)?;

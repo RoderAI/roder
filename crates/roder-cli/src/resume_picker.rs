@@ -708,6 +708,7 @@ mod tests {
             id: id.to_string(),
             preview: title.unwrap_or("Untitled thread").to_string(),
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,

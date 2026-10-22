@@ -119,6 +119,7 @@ pub enum InferenceProviderSelection {
 pub struct DefaultRegistryConfig {
     pub inference_providers: Vec<InferenceProviderSelection>,
     pub openai_api_key: Option<String>,
+    pub openai_service_tier: Option<String>,
     pub openai_speech_api_key: Option<String>,
     pub google_speech_access_token: Option<String>,
     pub google_speech_api_key: Option<String>,
@@ -264,6 +265,7 @@ impl Default for DefaultRegistryConfig {
         Self {
             inference_providers: Vec::new(),
             openai_api_key: None,
+            openai_service_tier: None,
             openai_speech_api_key: None,
             google_speech_access_token: None,
             google_speech_api_key: None,
@@ -450,7 +452,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     let declared =
         |provider: InferenceProviderSelection| config.inference_providers.contains(&provider);
     if declared(InferenceProviderSelection::OpenAi) {
-        builder.install(OpenAiResponsesExtension::new(config.openai_api_key.clone()))?;
+        builder.install(
+            OpenAiResponsesExtension::new(config.openai_api_key.clone())
+                .with_service_tier(config.openai_service_tier.clone()),
+        )?;
     }
     if declared(InferenceProviderSelection::Anthropic) {
         builder.install(AnthropicExtension::new(config.anthropic_api_key.clone()))?;
@@ -1817,6 +1822,7 @@ mod tests {
                 InferenceProviderSelection::Xai,
             ],
             openai_api_key: Some("openai".to_string()),
+            openai_service_tier: None,
             openai_speech_api_key: None,
             google_speech_access_token: None,
             google_speech_api_key: None,
@@ -2091,6 +2097,7 @@ mod tests {
     fn undeclared_providers_stay_unregistered_even_with_keys() {
         let registry = build_default_registry(DefaultRegistryConfig {
             openai_api_key: Some("openai".to_string()),
+            openai_service_tier: None,
             anthropic_api_key: Some("anthropic".to_string()),
             gemini_api_key: Some("gemini".to_string()),
             vertex_credentials_json: Some("{}".to_string()),

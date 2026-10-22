@@ -135,6 +135,7 @@ async fn parent_thread(runtime: &Arc<Runtime>) -> ThreadId {
             model: None,
             selection_mode: None,
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,

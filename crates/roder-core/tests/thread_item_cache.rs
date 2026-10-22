@@ -145,6 +145,7 @@ fn counting_thread_snapshot(thread_id: &str) -> ThreadSnapshot {
             model: Some("mock".to_string()),
             selection_mode: None,
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner_destination: None,

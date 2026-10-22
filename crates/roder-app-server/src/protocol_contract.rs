@@ -35,6 +35,7 @@ pub(crate) fn protocol_thread_from_metadata(
         turns,
         usage: metadata.usage,
         tool_allowlist: metadata.tool_allowlist,
+        service_tier: metadata.service_tier,
         developer_instructions: metadata.developer_instructions,
         external_tools: metadata.external_tools,
         runner: metadata.runner_binding.map(|binding| ThreadRunnerParams {

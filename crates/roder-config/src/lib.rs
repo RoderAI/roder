@@ -279,8 +279,8 @@ pub struct ProviderConfig {
     /// for that model.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_routing: HashMap<String, serde_json::Map<String, serde_json::Value>>,
-    /// OpenRouter `service_tier` (`default`, `flex`, `priority`,
-    /// `ultrafast`); a per-request tier takes precedence.
+    /// OpenAI or OpenRouter `service_tier` (for example `default`, `flex`,
+    /// `priority`, `ultrafast`); a per-request tier takes precedence.
     pub service_tier: Option<String>,
 }
 

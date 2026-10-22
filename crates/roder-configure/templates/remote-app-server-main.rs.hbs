@@ -179,6 +179,8 @@ fn build_registry() -> anyhow::Result<roder_api::extension::ExtensionRegistry> {
         openai_api_key: env_nonempty("OPENAI_API_KEY")
             .or_else(|| provider_api_key(&cfg, "openai"))
             .or_else(|| provider_api_key(&cfg, "openai_responses")),
+        openai_service_tier: cfg.providers.get("openai")
+            .and_then(|provider| provider.service_tier.clone()),
         thread_dir: Some(roder_home.join("threads")),
         session_store: SessionStoreConfig::Jsonl,
         workspace: std::env::current_dir().ok(),

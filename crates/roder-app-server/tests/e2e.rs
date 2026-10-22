@@ -296,6 +296,7 @@ impl ThreadStore for FailingThreadStore {
             model: Some("mock".to_string()),
             selection_mode: None,
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner_destination: None,
@@ -1251,6 +1252,7 @@ async fn model_select_auto_stores_auto_mode_and_routes_next_turn() {
                 thread_id: thread_start.thread.id.clone(),
                 input: text_input("find refactor opportunities"),
                 prompt: None,
+                service_tier: None,
                 developer_context: None,
                 mcp_auth_token: None,
                 model_provider: None,
@@ -5761,6 +5763,7 @@ async fn thread_start_persists_tool_allowlist_and_developer_instructions() {
                 root_id: Some(workspace.root_id),
                 cwd: Some(cwd),
                 tool_allowlist: Some(vec!["edit".to_string(), "read_file".to_string()]),
+                service_tier: None,
                 developer_instructions: Some("You are embedded in a host app.".to_string()),
                 external_tools: None,
                 mcp_auth_token: None,
@@ -6113,6 +6116,7 @@ async fn runtime_drain_interrupts_pending_turn_and_reports_clean() {
                 thread_id,
                 input: text_input("must not start while runtime is quiescing"),
                 prompt: None,
+                service_tier: None,
                 developer_context: None,
                 mcp_auth_token: None,
                 model_provider: None,
@@ -6451,6 +6455,7 @@ async fn protocol_contract_turn_interrupt_without_turn_id_uses_runtime_active_tu
             model: Some("mock".to_string()),
             selection_mode: None,
             tool_allowlist: Vec::new(),
+            service_tier: None,
             developer_instructions: None,
             external_tools: Vec::new(),
             runner: None,
@@ -9312,6 +9317,7 @@ async fn start_external_tool_thread(client: &LocalAppClient) -> ThreadStartResul
                 root_id: Some(workspace.root_id),
                 cwd: Some(cwd),
                 tool_allowlist: None,
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: Some(vec![acme_lookup_external_tool()]),
                 mcp_auth_token: None,
@@ -11538,6 +11544,7 @@ async fn start_thread(client: &LocalAppClient) -> ThreadStartResult {
                 root_id: Some(workspace.root_id),
                 cwd: Some(cwd),
                 tool_allowlist: None,
+                service_tier: None,
                 developer_instructions: None,
                 external_tools: None,
                 mcp_auth_token: None,
@@ -11563,6 +11570,7 @@ async fn start_turn(client: &LocalAppClient, thread_id: &str, text: &str) -> Tur
                 thread_id: thread_id.to_string(),
                 input: text_input(text),
                 prompt: None,
+                service_tier: None,
                 developer_context: None,
                 mcp_auth_token: None,
                 model_provider: None,
@@ -11763,3 +11771,6 @@ mod goal_tests;
 
 #[path = "e2e/native_compaction.rs"]
 mod native_compaction;
+
+#[path = "service_tiers.rs"]
+mod service_tiers;
