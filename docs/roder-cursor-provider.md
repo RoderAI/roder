@@ -14,7 +14,7 @@ cursor/composer-2.5-fast
 cursor/claude-opus-4-8
 cursor/claude-sonnet-4-6
 cursor/gemini-3.1-pro-preview
-cursor/grok-4.3
+cursor/grok-4.6
 ```
 
 Fast variants (`*-fast`) are separate catalog ids. AgentService/Run accepts the bare model id (`composer-2.5`, `claude-opus-4-8`) with a `fast=true` requested-model param; Roder maps `composer-2.5-fast` automatically when encoding the protobuf request.
@@ -191,3 +191,9 @@ The continuity live suite verifies both checkpoint restoration and importing his
 ```sh
 RODER_CURSOR_LIVE=1 mise exec -- cargo test -p roder-ext-cursor --test live_continuity -- --ignored
 ```
+
+Retired Cursor models are excluded from fallback, cached, and live-discovered
+lists. Cursor rejects `grok-4.3` as deprecated (use `grok-4.5` or a currently
+listed newer Grok model); retired GPT-5.5 variants also stay hidden when present
+in older caches. This filter is specific to Cursor and does not change other
+providers' model availability.

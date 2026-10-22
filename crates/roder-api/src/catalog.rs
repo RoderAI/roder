@@ -1312,15 +1312,6 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         REASONING_HIGH,
         GEMINI_REASONING,
     ),
-    cursor_model(
-        "grok-4.3",
-        "Grok 4.3",
-        "xAI Grok 4.3 routed through Cursor's AgentService.",
-        1_000_000,
-        900_000,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
-    ),
     ModelCatalogEntry {
         id: "text-embedding-3-large",
         display_name: "Text Embedding 3 Large",
@@ -2151,7 +2142,6 @@ mod tests {
                 "gemini-3.1-pro-preview",
                 "grok-4.6",
                 "gemini-3.7-flash",
-                "grok-4.3",
             ]
         );
     }
@@ -2172,7 +2162,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
-        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 9);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 8);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
         assert_eq!(
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),
