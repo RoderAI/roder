@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 (2026-10-22)
+
+### Features
+
+#### Set inference service tiers per thread or turn
+
+Accept `serviceTier` on `thread/start` and `turn/start`, and add
+`thread/set_service_tier` to update or clear the persisted thread default.
+Turn overrides take precedence over thread settings and provider config.
+Thread read/list expose the persisted tier, and conversation forks inherit it.
+Both SDKs expose creation defaults, per-turn overrides, and a thread setter.
+
 ## 0.2.0 (2026-10-03)
 
 ### Breaking Changes
