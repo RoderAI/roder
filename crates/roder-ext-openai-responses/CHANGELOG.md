@@ -1,3 +1,14 @@
+## 0.2.13 (2026-10-22)
+
+### Features
+
+#### Configure OpenAI Ultrafast mode
+
+Set `[providers.openai] service_tier = "ultrafast"` to request Ultrafast mode
+by default. Explicit per-request service tiers take precedence. The setting
+applies to the OpenAI API provider and is also passed through generated remote
+app servers.
+
 ## 0.2.12 (2026-10-17)
 
 ### Fixes
