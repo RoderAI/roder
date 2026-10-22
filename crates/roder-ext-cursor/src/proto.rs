@@ -13,6 +13,9 @@ use serde_json::{Value, json};
 use roder_api::inference::ReasoningConfig;
 
 use crate::models::cursor_run_model_params;
+#[path = "proto_model.rs"]
+mod model;
+use model::encode_requested_model;
 #[path = "proto_values.rs"]
 mod values;
 use values::decode_protobuf_value;
@@ -315,54 +318,6 @@ fn encode_selected_image(image: &CursorImage) -> Vec<u8> {
         proto_field_string(7, &image.mime_type),
         proto_field_bytes(8, image.data.clone()),
     ])
-}
-
-fn encode_requested_model(model_id: &str, reasoning: Option<&ReasoningConfig>) -> Vec<u8> {
-    // requested_model.f3 is a repeated {key, value} param list. cursor-agent
-    // sends thinking/context/effort/fast; effort=high in particular drives the
-    // model's full agentic thoroughness (without it the model does minimal work
-    // and stops after a single read). Fast catalog ids such as
-    // `composer-2.5-fast` map to the bare wire id plus `fast=true`.
-    let (wire_model_id, fast) = cursor_run_model_params(model_id);
-    let thinking = cursor_thinking_enabled(reasoning);
-    let effort = cursor_effort_level(reasoning);
-    let param = |key: &str, value: &str| {
-        proto_field_bytes(
-            3,
-            proto_message(vec![
-                proto_field_string(1, key),
-                proto_field_string(2, value),
-            ]),
-        )
-    };
-    proto_message(vec![
-        proto_field_string(1, &wire_model_id),
-        param("thinking", if thinking { "true" } else { "false" }),
-        param("context", "300k"),
-        param("effort", &effort),
-        param("fast", if fast { "true" } else { "false" }),
-    ])
-}
-
-fn cursor_thinking_enabled(reasoning: Option<&ReasoningConfig>) -> bool {
-    match reasoning {
-        None => true,
-        Some(cfg) if !cfg.enabled => false,
-        Some(cfg) => !matches!(cfg.level.as_deref(), Some("none")),
-    }
-}
-
-fn cursor_effort_level(reasoning: Option<&ReasoningConfig>) -> String {
-    match reasoning {
-        None => "high".to_string(),
-        Some(cfg) if !cfg.enabled => "none".to_string(),
-        Some(cfg) => cfg
-            .level
-            .as_deref()
-            .filter(|level| !level.is_empty())
-            .unwrap_or("high")
-            .to_string(),
-    }
 }
 
 pub fn encode_connect_frame(payload: &[u8]) -> Vec<u8> {

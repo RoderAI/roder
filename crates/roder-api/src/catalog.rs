@@ -1286,13 +1286,35 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         STANDARD_REASONING,
     )),
     cursor_model(
-        "gemini-3.1-pro-preview",
+        "gemini-3.1-pro",
         "Gemini 3.1 Pro",
         "Google Gemini 3.1 Pro routed through Cursor's AgentService.",
-        1_048_576,
-        943_718,
+        1_000_000,
+        900_000,
         REASONING_MEDIUM,
         GEMINI_REASONING,
+    ),
+    cursor_model(
+        "gemini-4-argon",
+        "Gemini 4 Argon",
+        "Google Gemini 4 Argon routed through Cursor's AgentService for complex multi-step coding.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        &[
+            ReasoningOption {
+                effort: REASONING_LOW,
+                description: "Low Gemini thinking",
+            },
+            ReasoningOption {
+                effort: REASONING_MEDIUM,
+                description: "Medium Gemini thinking",
+            },
+            ReasoningOption {
+                effort: REASONING_HIGH,
+                description: "High Gemini thinking",
+            },
+        ],
     ),
     cursor_model(
         "grok-4.6",
@@ -2139,7 +2161,8 @@ mod tests {
                 "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-sonnet-4-6",
-                "gemini-3.1-pro-preview",
+                "gemini-3.1-pro",
+                "gemini-4-argon",
                 "grok-4.6",
                 "gemini-3.7-flash",
             ]
@@ -2162,7 +2185,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
-        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 8);
+        assert_eq!(models_for_provider(PROVIDER_CURSOR, false).len(), 9);
         assert_eq!(models_for_provider(PROVIDER_XIAOMI_MIMO, false).len(), 5);
         assert_eq!(
             models_for_provider(PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, false).len(),

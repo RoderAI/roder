@@ -13,7 +13,8 @@ cursor/composer-2.5
 cursor/composer-2.5-fast
 cursor/claude-opus-4-8
 cursor/claude-sonnet-4-6
-cursor/gemini-3.1-pro-preview
+cursor/gemini-3.1-pro
+cursor/gemini-4-argon
 cursor/grok-4.6
 ```
 
@@ -197,3 +198,14 @@ lists. Cursor rejects `grok-4.3` as deprecated (use `grok-4.5` or a currently
 listed newer Grok model); retired GPT-5.5 variants also stay hidden when present
 in older caches. This filter is specific to Cursor and does not change other
 providers' model availability.
+
+Cursor's Gemini roster includes `gemini-4-argon` (Gemini 4 Argon, 1M context,
+high effort by default) and canonical `gemini-3.1-pro` (1M context). The stale
+`gemini-3.1-pro-preview` and `gemini-3.1-pro-preview-customtools` ids are excluded
+from Cursor fallback, cached, and live-discovered lists. Other providers retain
+their own model ids. Only Gemini 4 variants actually listed by Cursor are added.
+
+Gemini 4 Argon uses `requested_model.params` with `reasoning_effort`
+(`low`/`medium`/`high`). Do not send the generic `thinking`, `context`, `effort`,
+or `fast` parameters for this registry-backed model. Both Argon and canonical
+Gemini 3.1 Pro passed live AgentService inference on 2026-10-22.
