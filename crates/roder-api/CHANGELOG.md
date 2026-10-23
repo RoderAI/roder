@@ -1,3 +1,37 @@
+## 0.2.12 (2026-10-23)
+
+### Features
+
+#### Restore reliable Cursor native tool execution
+
+Preserve structured, policy-approved results across provider-native tool loops.
+Cursor reads, searches, listings, writes, deletes, and shell replies now use the
+runtime executor's output and failures. Add current client-side MCP dispatch,
+default runtime tool discovery and MCP state replies, explicit unsupported-call
+errors, official turn-end usage, and reliable stream
+failure and heartbeat cleanup.
+
+Persist native checkpoints and KV blobs to preserve thread continuity. Serve KV
+GETs, prefetch restored blobs, and import Roder history explicitly for new Cursor
+conversations and compaction summaries. Use the same bidirectional transport for
+text-only API calls and tool-enabled turns.
+
+### Fixes
+
+#### Refresh Cursor Gemini models
+
+Add Gemini 4 Argon with a 1M-token context window and high effort by default.
+Send its registry-supported reasoning_effort parameter instead of generic legacy
+parameters that Cursor rejects for this model.
+Replace Cursor's stale Gemini 3.1 Pro preview id with gemini-3.1-pro and prevent
+preview ids from returning through discovery or older caches.
+
+#### Remove retired Cursor models from model selection
+
+Remove Cursor Grok 4.3, which the service rejects as deprecated. Prevent retired
+Cursor models and their effort/fast variants from reappearing through stale
+caches or live discovery, including the already-retired GPT-5.5 variants.
+
 ## 0.2.11 (2026-10-22)
 
 ### Features
