@@ -25,7 +25,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use roder_api::catalog::{PROVIDER_CURSOR, models_for_provider};
+use roder_api::catalog::{PROVIDER_CURSOR, built_in_models, models_for_provider};
 use roder_api::inference::{ModelDescriptor, ReasoningEffortDescriptor};
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,7 @@ const DEFAULT_MODELS_CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const AVAILABLE_MODELS_PATH: &str = "/aiserver.v1.AiService/AvailableModels";
 
 /// Base Cursor model ids that also expose a `-fast` AgentService variant.
-const CURSOR_FAST_VARIANT_BASES: &[&str] = &["composer-2.5", "gpt-5.5"];
+const CURSOR_FAST_VARIANT_BASES: &[&str] = &["composer-2.5"];
 
 /// The curated static catalog — always the authoritative base set and the
 /// fallback when the live call is unavailable.
@@ -45,9 +45,24 @@ pub fn fallback_models() -> Vec<ModelDescriptor> {
 /// models. Idempotent: skips ids already present (catalog, cache, or prior
 /// merge).
 pub fn finalize_cursor_models(mut models: Vec<ModelDescriptor>) -> Vec<ModelDescriptor> {
+    models.retain(|model| !is_retired_model(&model.id));
     models = enrich_models_from_catalog(models);
     append_fast_variants(&mut models);
     models
+}
+
+/// Filter provider-specific retirements even when stale caches or discovery
+/// still contain them. Do not apply Cursor retirements to other providers.
+fn is_retired_model(id: &str) -> bool {
+    let base = base_model_id(id);
+    // Grok 4.3 is rejected by AgentService. Gemini preview ids were replaced
+    // by gemini-3.1-pro in Cursor's live roster (checked 2026-10-22).
+    matches!(
+        base.as_str(),
+        "grok-4.3" | "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools"
+    ) || built_in_models(true)
+        .iter()
+        .any(|model| model.provider == PROVIDER_CURSOR && model.id == base && model.hidden)
 }
 
 /// Backfill curated metadata (especially reasoning options) onto models loaded
@@ -404,7 +419,7 @@ fn strip_effort_suffix(s: &str) -> Option<&str> {
 /// anything that does not look like a normal model slug, since those are not
 /// known to work on the Run path.
 fn is_appendable_base_id(base: &str) -> bool {
-    if base.is_empty() || base.contains('/') {
+    if base.is_empty() || base.contains('/') || is_retired_model(base) {
         return false;
     }
     if matches!(base, "auto" | "default") {
@@ -585,7 +600,7 @@ mod tests {
     #[test]
     fn appendable_filter_rejects_meta_and_namespaced_ids() {
         assert!(is_appendable_base_id("composer-2.5"));
-        assert!(is_appendable_base_id("gpt-5.5"));
+        assert!(!is_appendable_base_id("gpt-5.5"));
         assert!(!is_appendable_base_id("auto"));
         assert!(!is_appendable_base_id("default"));
         assert!(!is_appendable_base_id(
@@ -786,5 +801,101 @@ mod tests {
             .expect("Grok 4.6 in Cursor catalog");
         assert_eq!(grok.context_window, Some(256_000));
         assert_eq!(grok.default_reasoning.as_deref(), Some("high"));
+    }
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+    fn descriptor(id: &str) -> ModelDescriptor {
+        ModelDescriptor {
+            id: id.into(),
+            name: id.into(),
+            context_window: None,
+            default_reasoning: None,
+            supported_reasoning: vec![],
+        }
+    }
+    #[test]
+    fn stale_cached_retirements_and_variants_are_removed() {
+        let models = finalize_cursor_models(
+            [
+                "grok-4.3",
+                "grok-4.3-high-fast",
+                "gpt-5.5",
+                "gpt-5.5-fast",
+                "gpt-5.5-high",
+                "grok-4.5",
+                "grok-4.6",
+                "grok-4.7",
+            ]
+            .into_iter()
+            .map(descriptor)
+            .collect(),
+        );
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["grok-4.5", "grok-4.6", "grok-4.7"]
+        );
+    }
+    #[test]
+    fn discovery_does_not_resurrect_retired_models() {
+        let live = ["grok-4.3", "gpt-5.5-high-fast", "grok-4.7"]
+            .into_iter()
+            .map(|id| {
+                serde_json::from_value::<AvailableModel>(
+                    serde_json::json!({"serverModelName":id,"supportsAgent":true}),
+                )
+                .unwrap()
+            })
+            .collect();
+        let models = merge_live_into_catalog(live);
+        assert!(models.iter().all(|m| !is_retired_model(&m.id)));
+        assert!(models.iter().any(|m| m.id == "grok-4.7"));
+        assert!(!fallback_models().iter().any(|m| m.id == "grok-4.3"));
+    }
+}
+
+#[cfg(test)]
+mod gemini_roster_tests {
+    use super::*;
+    #[test]
+    fn gemini_roster_replaces_stale_preview_and_survives_stale_cache() {
+        let ids = [
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-preview-high",
+            "gemini-3.1-pro-preview-customtools",
+            "gemini-3.1-pro",
+            "gemini-4-argon",
+        ];
+        let cached = ids
+            .into_iter()
+            .map(|id| ModelDescriptor {
+                id: id.into(),
+                name: id.into(),
+                context_window: None,
+                default_reasoning: None,
+                supported_reasoning: vec![],
+            })
+            .collect();
+        let models = finalize_cursor_models(cached);
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["gemini-3.1-pro", "gemini-4-argon"]
+        );
+        let argon = models.iter().find(|m| m.id == "gemini-4-argon").unwrap();
+        assert_eq!(argon.context_window, Some(1_000_000));
+        assert_eq!(argon.default_reasoning.as_deref(), Some("high"));
+        assert_eq!(
+            argon
+                .supported_reasoning
+                .iter()
+                .map(|r| r.effort.as_str())
+                .collect::<Vec<_>>(),
+            ["low", "medium", "high"]
+        );
+        assert!(!is_appendable_base_id("gemini-3.1-pro-preview"));
+        assert!(!is_appendable_base_id("gemini-3.1-pro-preview-customtools"));
+        assert!(fallback_models().iter().any(|m| m.id == "gemini-4-argon"));
     }
 }

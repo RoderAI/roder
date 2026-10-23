@@ -92,6 +92,12 @@ impl ToolExecutor for ReadFileTool {
                 "response_format": response_format.as_str(),
             })
         });
+        let provider_file_size = text.len();
+        let provider_content = text
+            .split_inclusive('\n')
+            .skip(start_line - 1)
+            .take(limit)
+            .collect::<String>();
         let mut text = page.text.clone();
         if let Some(args) = continuation_args.as_ref() {
             append_continuation_instruction(&mut text, &page, "read_file", args);
@@ -101,6 +107,8 @@ impl ToolExecutor for ReadFileTool {
             text,
             json!({
                 "path": path,
+                "content": provider_content,
+                "file_size": provider_file_size,
                 "start_line": start_line,
                 "limit": limit,
                 "response_format": response_format.as_str(),
@@ -196,6 +204,7 @@ impl ToolExecutor for ListFilesTool {
             continuation_args.unwrap_or(serde_json::Value::Null),
         );
         let mut data = data;
+        data["entries"] = json!(names.iter().skip(offset).take(limit).collect::<Vec<_>>());
         data["response_format"] = json!(response_format.as_str());
         Ok(result(call, text, data, false))
     }
@@ -276,6 +285,8 @@ mod tests {
         assert!(result.text.contains("next_offset=2"));
         assert!(result.text.contains("call read_file"));
         assert!(result.text.contains("\"start_line\":3"));
+        assert_eq!(result.data["content"], "one\ntwo\n");
+        assert_eq!(result.data["file_size"], 14);
         assert_eq!(result.data["omitted_lines"], 1);
         assert_eq!(result.data["next_start_line"], 3);
         assert_eq!(result.data["continuation_tool"], "read_file");

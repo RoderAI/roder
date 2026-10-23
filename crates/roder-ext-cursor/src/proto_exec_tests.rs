@@ -34,6 +34,7 @@ fn decodes_exec_read_request_with_seq_and_tool_call_id() {
         seq,
         path,
         tool_call_id,
+        ..
     }) = decoded.exec
     else {
         panic!("expected READ exec request, got {:?}", decoded.exec);
@@ -61,6 +62,7 @@ fn decodes_exec_write_request_with_content_bytes() {
         path,
         content,
         tool_call_id,
+        ..
     }) = decoded.exec
     else {
         panic!("expected WRITE exec request, got {:?}", decoded.exec);
@@ -89,6 +91,7 @@ fn decodes_exec_shell_request() {
         command,
         cwd,
         tool_call_id,
+        ..
     }) = decoded.exec
     else {
         panic!("expected SHELL exec request, got {:?}", decoded.exec);
@@ -120,6 +123,7 @@ fn decodes_exec_search_grep_and_glob_variants() {
         glob,
         mode,
         tool_call_id,
+        ..
     }) = decoded.exec
     else {
         panic!("expected SEARCH exec request, got {:?}", decoded.exec);
@@ -168,6 +172,7 @@ fn decodes_exec_delete_request_with_path_and_tool_call_id() {
         seq,
         path,
         tool_call_id,
+        ..
     }) = decoded.exec
     else {
         panic!("expected DELETE exec request, got {:?}", decoded.exec);
@@ -190,20 +195,11 @@ fn decodes_unimplemented_exec_request_as_unknown_with_seq_and_field() {
     );
 
     let decoded = decode_server_frame(&frame);
-    let Some(CursorExecRequest::Unknown {
-        seq,
-        field_no,
-        payload,
-    }) = decoded.exec
-    else {
+    let Some(CursorExecRequest::Unknown { seq, field_no }) = decoded.exec else {
         panic!("expected UNKNOWN exec request, got {:?}", decoded.exec);
     };
     assert_eq!(seq, 47);
     assert_eq!(field_no, 21);
-    assert_eq!(
-        collect_payload_strings(&payload),
-        vec!["some/target/path".to_string()]
-    );
 }
 
 #[test]
@@ -232,15 +228,12 @@ fn malformed_known_exec_request_decodes_as_unknown_not_dropped() {
 }
 
 #[test]
-fn unknown_result_frame_mirrors_seq_and_request_field_number() {
+fn unknown_result_frame_returns_protocol_throw() {
     let frame = encode_exec_unknown_result(47, 21);
-    let exec = exec_client_body(&frame);
-    assert_eq!(scalar_u64(&exec, 1), Some(47), "seq must echo the request");
-    assert_eq!(
-        submessage(&exec, 21),
-        Some(Vec::new()),
-        "result must mirror the request field number with an empty body"
-    );
+    let control = submessage(&frame, 5).unwrap();
+    let thrown = submessage(&control, 2).unwrap();
+    assert_eq!(scalar_u64(&thrown, 1), Some(47));
+    assert!(scalar_string(&thrown, 2).unwrap().contains("21"));
 }
 
 #[test]
@@ -255,10 +248,20 @@ fn decodes_request_context_and_kv_put_frames() {
     // AgentServerMessage { 4: kv_server_message { 1: seq } } must be acked.
     let kv_frame = proto_message(vec![proto_field_bytes(
         4,
-        proto_message(vec![proto_field_varint(1, 99)]),
+        proto_message(vec![
+            proto_field_varint(1, 99),
+            proto_field_bytes(
+                3,
+                proto_message(vec![
+                    proto_field_bytes(1, vec![1, 2]),
+                    proto_field_bytes(2, b"blob".to_vec()),
+                ]),
+            ),
+        ]),
     )]);
     let decoded = decode_server_frame(&kv_frame);
     assert_eq!(decoded.kv_seq, Some(99));
+    assert_eq!(decoded.kv_put, Some((vec![1, 2], b"blob".to_vec())));
 
     let ack = encode_kv_ack(99);
     let kv_client = submessage(&ack, 3).expect("kv_client message");
@@ -271,7 +274,8 @@ fn exec_client_body(frame: &[u8]) -> Vec<u8> {
 
 #[test]
 fn read_result_frame_echoes_seq_and_carries_content_metadata() {
-    let frame = encode_exec_read_result(41, "src/main.rs", b"fn main() {}\n", 1);
+    let frame =
+        encode_exec_read_result(41, 7, "src/main.rs", b"fn main() {}\n", 1, 13, false, false);
     let exec = exec_client_body(&frame);
     assert_eq!(scalar_u64(&exec, 1), Some(41), "seq must match the request");
     let read = submessage(&exec, 7).expect("read result");
@@ -284,7 +288,7 @@ fn read_result_frame_echoes_seq_and_carries_content_metadata() {
 
 #[test]
 fn write_result_frame_echoes_seq_path_lines_and_size() {
-    let frame = encode_exec_write_result(42, "notes.txt", 3, 27);
+    let frame = encode_exec_write_result(42, "notes.txt", 3, 27, "new contents");
     let exec = exec_client_body(&frame);
     assert_eq!(scalar_u64(&exec, 1), Some(42));
     let write = submessage(&exec, 3).expect("write result");
@@ -300,7 +304,7 @@ fn shell_result_streams_start_stdout_and_exit_frames_with_one_seq() {
     //   start  {1:seq, 14:{4:{1:{1:1}}}}
     //   stdout {1:seq, 14:{1:{1:chunk}}}
     //   exit   {1:seq, 14:{3:{2:cwd, 6:duration_ms}}}
-    let frames = encode_exec_shell_results(43, "/repo", "ok\n", 29);
+    let frames = encode_exec_shell_results(43, "/repo", "ok\n", 29, 0);
     assert_eq!(frames.len(), 3, "start, stdout, exit");
     for frame in &frames {
         let exec = exec_client_body(frame);
@@ -337,6 +341,7 @@ fn glob_result_lists_relative_paths_under_requested_root() {
         ".",
         "/repo",
         &["src/lib.rs".to_string(), "src/main.rs".to_string()],
+        false,
     );
     let exec = exec_client_body(&frame);
     assert_eq!(scalar_u64(&exec, 1), Some(45));
@@ -363,7 +368,7 @@ fn grep_result_carries_line_matches_and_counts() {
         line: 7,
         text: "// TODO: fix".to_string(),
     }];
-    let frame = encode_exec_grep_result(44, "TODO", "crates", "/repo", &matches);
+    let frame = encode_exec_grep_result(44, "TODO", "crates", "/repo", &matches, false);
     let exec = exec_client_body(&frame);
     assert_eq!(scalar_u64(&exec, 1), Some(44));
     let search = submessage(&exec, 5).expect("search result");
@@ -395,4 +400,51 @@ fn request_context_result_unblocks_generation_with_workspace_env() {
         .expect("request-context env");
     assert_eq!(scalar_string(&env, 2).as_deref(), Some("/repo"));
     assert_eq!(scalar_string(&env, 11).as_deref(), Some("/repo"));
+}
+
+#[test]
+fn decodes_current_mcp_map_and_underlying_tool_name() {
+    let args = serde_json::json!({"steps":[{"done":false}],"count":1.5});
+    let mut fields = vec![
+        proto_field_string(1, "roder_wrapped"),
+        proto_field_string(5, "update_plan"),
+        proto_field_string(3, "mcp-1"),
+    ];
+    for (key, value) in args.as_object().unwrap() {
+        fields.push(proto_field_bytes(
+            2,
+            proto_message(vec![
+                proto_field_string(1, key),
+                proto_field_bytes(2, encode_protobuf_value(value)),
+            ]),
+        ));
+    }
+    let decoded = decode_server_frame(&exec_server_frame(51, 11, proto_message(fields)));
+    let Some(CursorExecRequest::Mcp {
+        name,
+        arguments,
+        tool_call_id,
+        ..
+    }) = decoded.exec
+    else {
+        panic!("MCP dispatch missing")
+    };
+    assert_eq!(name, "update_plan");
+    assert_eq!(tool_call_id, "mcp-1");
+    assert_eq!(arguments, args);
+}
+#[test]
+fn binary_write_source_is_not_discarded() {
+    let decoded = decode_server_frame(&exec_server_frame(
+        52,
+        3,
+        proto_message(vec![
+            proto_field_string(1, "image.bin"),
+            proto_field_bytes(5, vec![0, 255, 1]),
+        ]),
+    ));
+    let Some(CursorExecRequest::Write { content, .. }) = decoded.exec else {
+        panic!("write missing")
+    };
+    assert_eq!(content, vec![0, 255, 1]);
 }

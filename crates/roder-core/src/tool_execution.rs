@@ -37,6 +37,7 @@ impl Runtime {
         mut call: roder_api::inference::ToolCallCompleted,
         workspace: Option<&str>,
         deadline: Option<OffsetDateTime>,
+        provider_output: Option<&mut Option<ToolResult>>,
     ) -> anyhow::Result<ToolResultRecord> {
         let _execution_permit = self
             .execution_lease
@@ -621,13 +622,13 @@ impl Runtime {
                             Err(("workspace_execution_lease_lost", message))
                         }
                         result = &mut execution => {
-                            result.map_err(|err| ("tool_execution_failed", err.to_string()))
+                            result.map_err(|err| (tool_error_kind(&err), err.to_string()))
                         }
                     }
                 }
                 None => execution
                     .await
-                    .map_err(|err| ("tool_execution_failed", err.to_string())),
+                    .map_err(|err| (tool_error_kind(&err), err.to_string())),
             };
             match execution_result {
                 Ok(result) => result,
@@ -695,6 +696,9 @@ impl Runtime {
             .await;
         self.emit_verification_result(thread_id, turn_id, &result)
             .await;
+        if let Some(output) = provider_output {
+            *output = Some(result.clone());
+        }
         let raw_text = result.text;
         let original_line_count = raw_text.lines().count() as u64;
         let original_char_count = raw_text.chars().count() as u64;
@@ -1317,6 +1321,18 @@ fn runner_workspace_execution_lease_request(
     }
 }
 
+fn tool_error_kind(error: &anyhow::Error) -> &'static str {
+    match error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .map(std::io::Error::kind)
+    {
+        Some(std::io::ErrorKind::NotFound) => "not_found",
+        Some(std::io::ErrorKind::PermissionDenied) => "permission_denied",
+        _ => "tool_execution_failed",
+    }
+}
+
 fn tool_execution_error(tool_call: &ToolCall, kind: &str, message: String) -> ToolResult {
     ToolResult {
         id: tool_call.id.clone(),
@@ -1386,6 +1402,7 @@ impl roder_api::inference::TurnToolExecutor for RuntimeTurnToolExecutor {
             .persist_turn_item(&self.thread_id, &self.turn_id, &tool_item)
             .await?;
 
+        let mut provider_output = None;
         let record = self
             .runtime
             .route_tool_call(
@@ -1394,11 +1411,20 @@ impl roder_api::inference::TurnToolExecutor for RuntimeTurnToolExecutor {
                 call,
                 self.workspace.as_deref(),
                 self.deadline,
+                Some(&mut provider_output),
             )
             .await?;
-        Ok(roder_api::inference::TurnToolOutcome {
-            result: record.result,
-            is_error: record.is_error,
+        Ok(match provider_output {
+            Some(output) => roder_api::inference::TurnToolOutcome {
+                result: output.text,
+                data: output.data,
+                is_error: output.is_error,
+            },
+            None => roder_api::inference::TurnToolOutcome {
+                result: record.result,
+                data: serde_json::Value::Null,
+                is_error: record.is_error,
+            },
         })
     }
 

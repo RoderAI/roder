@@ -1286,13 +1286,35 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         STANDARD_REASONING,
     )),
     cursor_model(
-        "gemini-3.1-pro-preview",
+        "gemini-3.1-pro",
         "Gemini 3.1 Pro",
         "Google Gemini 3.1 Pro routed through Cursor's AgentService.",
-        1_048_576,
-        943_718,
+        1_000_000,
+        900_000,
         REASONING_MEDIUM,
         GEMINI_REASONING,
+    ),
+    cursor_model(
+        "gemini-4-argon",
+        "Gemini 4 Argon",
+        "Google Gemini 4 Argon routed through Cursor's AgentService for complex multi-step coding.",
+        1_000_000,
+        900_000,
+        REASONING_HIGH,
+        &[
+            ReasoningOption {
+                effort: REASONING_LOW,
+                description: "Low Gemini thinking",
+            },
+            ReasoningOption {
+                effort: REASONING_MEDIUM,
+                description: "Medium Gemini thinking",
+            },
+            ReasoningOption {
+                effort: REASONING_HIGH,
+                description: "High Gemini thinking",
+            },
+        ],
     ),
     cursor_model(
         "grok-4.6",
@@ -1311,15 +1333,6 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         900_000,
         REASONING_HIGH,
         GEMINI_REASONING,
-    ),
-    cursor_model(
-        "grok-4.3",
-        "Grok 4.3",
-        "xAI Grok 4.3 routed through Cursor's AgentService.",
-        1_000_000,
-        900_000,
-        REASONING_MEDIUM,
-        STANDARD_REASONING,
     ),
     ModelCatalogEntry {
         id: "text-embedding-3-large",
@@ -2148,10 +2161,10 @@ mod tests {
                 "claude-fable-5",
                 "claude-opus-4-8",
                 "claude-sonnet-4-6",
-                "gemini-3.1-pro-preview",
+                "gemini-3.1-pro",
+                "gemini-4-argon",
                 "grok-4.6",
                 "gemini-3.7-flash",
-                "grok-4.3",
             ]
         );
     }
