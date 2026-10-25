@@ -68,7 +68,7 @@ async fn initialize_advertises_the_host_browser_auth_and_authenticate_invokes_it
     assert_eq!(result["agentInfo"]["version"], "0.3.19");
     assert_eq!(result["authMethods"][0]["id"], "browser-login");
     assert_eq!(result["authMethods"][0]["name"], "Sign in");
-    assert_eq!(result["agentCapabilities"]["loadSession"], false);
+    assert_eq!(result["agentCapabilities"]["loadSession"], true);
     assert_eq!(auth.calls.load(Ordering::SeqCst), 0);
 
     let response = request(

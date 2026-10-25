@@ -10,9 +10,9 @@ use roder_app_server::acp::{
 };
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-use std::sync::Mutex;
+use std::sync::Mutex as StdMutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{build_runtime_with_config, parse_cli_options};
 
@@ -163,7 +163,8 @@ async fn run_stdio_acp(adapter: AcpAdapter<LocalAppClient>) -> anyhow::Result<()
 #[derive(Clone)]
 struct StdioAcpPeer {
     tx: mpsc::UnboundedSender<serde_json::Value>,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>>>,
+    pending:
+        Arc<StdMutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>>>,
     next_id: Arc<AtomicU64>,
 }
 
@@ -171,7 +172,7 @@ impl StdioAcpPeer {
     fn new(tx: mpsc::UnboundedSender<serde_json::Value>) -> Self {
         Self {
             tx,
-            pending: Arc::new(Mutex::new(HashMap::new())),
+            pending: Arc::new(StdMutex::new(HashMap::new())),
             next_id: Arc::new(AtomicU64::new(1)),
         }
     }
