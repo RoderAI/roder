@@ -1211,7 +1211,13 @@ struct AppServerOptions {
 pub(crate) async fn build_runtime_from_config(
     options: CliOptions,
 ) -> anyhow::Result<(Arc<Runtime>, String)> {
-    let cfg = roder_config::load_config()?;
+    build_runtime_with_config(options, roder_config::load_config()?).await
+}
+
+pub(crate) async fn build_runtime_with_config(
+    options: CliOptions,
+    cfg: roder_config::Config,
+) -> anyhow::Result<(Arc<Runtime>, String)> {
     let config_dir = roder_config::config_dir();
     let keys = provider_keys(&cfg);
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;

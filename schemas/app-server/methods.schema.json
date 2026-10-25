@@ -282,6 +282,7 @@
               "thread/set_ultra_mode",
               "thread/start",
               "thread/state",
+              "thread/unload",
               "tools/bind_executor",
               "tools/call",
               "tools/execution_read",
