@@ -183,7 +183,7 @@ async fn edit_sends_multipart_body_with_all_input_images() {
     assert!(raw.starts_with("POST /images/edits"), "{raw}");
     assert!(raw.contains("multipart/form-data"), "{raw}");
     assert!(raw.contains("name=\"model\""), "{raw}");
-    assert!(raw.contains("gpt-image-2"), "{raw}");
+    assert!(raw.contains("gpt-image-2.5-flare"), "{raw}");
     assert!(raw.contains("name=\"prompt\""), "{raw}");
     assert!(raw.contains("make it a launch graphic"), "{raw}");
     assert!(

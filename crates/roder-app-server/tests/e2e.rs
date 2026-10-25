@@ -3124,7 +3124,7 @@ async fn media_image_generation_lists_providers_generates_reads_and_attaches() {
         openai
             .image_models
             .iter()
-            .any(|model| model.id == "gpt-image-2" && model.is_default)
+            .any(|model| model.id == "gpt-image-2.5-flare" && model.is_default)
     );
 
     // Fake provider generates deterministic artifacts through public methods.

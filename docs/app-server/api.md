@@ -4568,11 +4568,11 @@ Response:
       "supportsImages": true,
       "supportsVideos": false,
       "configured": true,
-      "defaultModel": "gpt-image-2",
+      "defaultModel": "gpt-image-2.5-flare",
       "imageModels": [
         {
-          "id": "gpt-image-2",
-          "displayName": "GPT Image 2",
+          "id": "gpt-image-2.5-flare",
+          "displayName": "GPT Image 2.5 Flare",
           "provider": "openai",
           "isDefault": true,
           "legacy": false,

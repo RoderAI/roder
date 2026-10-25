@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 pub const OPENAI_IMAGES_PROVIDER_ID: &str = IMAGE_PROVIDER_OPENAI;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_MODEL: &str = "gpt-image-2";
+const DEFAULT_MODEL: &str = "gpt-image-2.5-flare";
 const ERROR_EXCERPT_LIMIT: usize = 600;
 
 /// Documented pass-through `providerOptions` keys for this provider.

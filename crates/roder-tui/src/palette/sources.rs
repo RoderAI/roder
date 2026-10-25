@@ -1383,12 +1383,12 @@ mod tests {
                 .subtitle
                 .as_deref()
                 .unwrap()
-                .contains("gpt-image-2")
+                .contains("gpt-image-2.5-flare")
         );
         assert_eq!(
             openai.action,
             PaletteAction::InsertComposerText(
-                "/imagegen --provider openai --model gpt-image-2 ".to_string()
+                "/imagegen --provider openai --model gpt-image-2.5-flare ".to_string()
             )
         );
 

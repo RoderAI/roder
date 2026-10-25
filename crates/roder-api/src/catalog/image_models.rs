@@ -63,7 +63,7 @@ const IMAGE_PROVIDERS: &[ImageProviderCatalogEntry] = &[
     ImageProviderCatalogEntry {
         id: IMAGE_PROVIDER_OPENAI,
         name: "OpenAI GPT Image",
-        default_model: "gpt-image-2",
+        default_model: "gpt-image-2.5-flare",
         base_url: "https://api.openai.com/v1",
         env_key: "OPENAI_API_KEY",
         env_aliases: &[],
@@ -89,11 +89,39 @@ const GOOGLE_IMAGE_SIZES: &[&str] = &["1K", "2K", "4K"];
 
 const IMAGE_MODELS: &[ImageModelCatalogEntry] = &[
     ImageModelCatalogEntry {
-        id: "gpt-image-2",
-        display_name: "GPT Image 2",
+        id: "gpt-image-2.5-flare",
+        display_name: "GPT Image 2.5 Flare",
         provider: IMAGE_PROVIDER_OPENAI,
         is_default: true,
         legacy: false,
+        supports_edit: true,
+        supports_multiple_outputs: true,
+        supported_aspect_ratios: &[],
+        supported_sizes: OPENAI_SIZES,
+        supported_image_sizes: &[],
+        supports_transparent_background: true,
+        supports_partial_images: false,
+    },
+    ImageModelCatalogEntry {
+        id: "gpt-image-2.5-sunburst",
+        display_name: "GPT Image 2.5 Sunburst",
+        provider: IMAGE_PROVIDER_OPENAI,
+        is_default: false,
+        legacy: false,
+        supports_edit: true,
+        supports_multiple_outputs: true,
+        supported_aspect_ratios: &[],
+        supported_sizes: OPENAI_SIZES,
+        supported_image_sizes: &[],
+        supports_transparent_background: true,
+        supports_partial_images: false,
+    },
+    ImageModelCatalogEntry {
+        id: "gpt-image-2",
+        display_name: "GPT Image 2",
+        provider: IMAGE_PROVIDER_OPENAI,
+        is_default: false,
+        legacy: true,
         supports_edit: true,
         supports_multiple_outputs: true,
         supported_aspect_ratios: &[],
@@ -229,6 +257,8 @@ mod tests {
         assert_eq!(
             openai_ids,
             vec![
+                "gpt-image-2.5-flare",
+                "gpt-image-2.5-sunburst",
                 "gpt-image-2",
                 "gpt-image-1.5",
                 "gpt-image-1",
@@ -264,7 +294,12 @@ mod tests {
     #[test]
     fn non_primary_openai_image_models_are_marked_legacy() {
         for model in image_models_for_provider(IMAGE_PROVIDER_OPENAI) {
-            assert_eq!(model.legacy, model.id != "gpt-image-2", "{}", model.id);
+            assert_eq!(
+                model.legacy,
+                !model.id.starts_with("gpt-image-2.5-"),
+                "{}",
+                model.id
+            );
         }
     }
 
@@ -305,7 +340,7 @@ mod tests {
 
     #[test]
     fn image_model_descriptor_conversion_keeps_capability_metadata() {
-        let descriptor = lookup_image_model(IMAGE_PROVIDER_OPENAI, "gpt-image-2")
+        let descriptor = lookup_image_model(IMAGE_PROVIDER_OPENAI, "gpt-image-2.5-flare")
             .unwrap()
             .descriptor();
         assert!(descriptor.is_default);

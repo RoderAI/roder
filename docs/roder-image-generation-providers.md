@@ -10,8 +10,9 @@ attached to a later turn.
 
 | Provider id | Models | Display alias | Notes |
 |-------------|--------|---------------|-------|
-| `openai` | `gpt-image-2` | GPT Image 2 | Primary GPT Image model. |
-| `openai` | `gpt-image-1.5`, `gpt-image-1`, `gpt-image-1-mini` | — | Compatibility/legacy ids. |
+| `openai` | `gpt-image-2.5-flare` | GPT Image 2.5 Flare | Default; fast everyday generation. |
+| `openai` | `gpt-image-2.5-sunburst` | GPT Image 2.5 Sunburst | Precision generation and editing. |
+| `openai` | `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`, `gpt-image-1-mini` | — | Older model ids remain explicitly selectable. |
 | `google` | `gemini-3.1-flash-image` | Nano Banana 2 | Supports aspect ratio and `1K`/`2K`/`4K` image sizes. |
 | `google` | `gemini-3-pro-image` | Nano Banana Pro | Supports aspect ratio and `1K`/`2K`/`4K` image sizes. |
 | `google` | `gemini-2.5-flash-image` | Nano Banana | Supports aspect ratio only (no `imageSize`). |
@@ -24,6 +25,13 @@ Notes on provider semantics:
   Responses API hosted `image_generation` tool is a different surface that is
   invoked through a text-capable mainline model (such as `gpt-6-sol`); Roder does
   not bridge the hosted Responses tool yet.
+- This `openai` media provider uses an OpenAI API key and API billing; it does
+  not consume Codex subscription sign-in. Codex itself supports subscription
+  image generation, but its public CLI/app-server interface in 0.164.0 has no
+  selector or effective-model metadata that verifies a specific GPT Image 2.5
+  model. This media provider does not relabel a Codex backend-default result
+  as Flare or Sunburst, use private Codex image endpoints, or automatically
+  fall back to API billing.
 - Google Nano Banana display names map to canonical Gemini API model ids as
   listed above. Generation uses `generateContent` with inline image parts, and
   all Gemini image outputs carry a SynthID watermark, which Roder records as
@@ -41,7 +49,7 @@ artifacts_dir = "~/.roder/artifacts"
 
 [media.image_generation]
 default_provider = "openai"
-default_model = "gpt-image-2"
+default_model = "gpt-image-2.5-flare"
 max_outputs = 4
 max_input_images = 16
 
@@ -87,7 +95,7 @@ default_model = "gemini-3.1-flash-image"
 ```json
 {
   "provider": "openai",
-  "model": "gpt-image-2",
+  "model": "gpt-image-2.5-sunburst",
   "prompt": "Make this screenshot look like a clean launch graphic",
   "action": "edit",
   "inputArtifacts": ["media-image-123"],
@@ -102,7 +110,8 @@ default_model = "gemini-3.1-flash-image"
 - `action` is `auto` (default), `generate`, or `edit`. With `auto`, requests
   that carry input images use the provider's edit path.
 - OpenAI options: `size` (`auto`, `1024x1024`, `1536x1024`, `1024x1536`),
-  `quality`, `outputFormat` (`png`/`jpeg`/`webp`), `background`
+  `quality` (`auto`, `low`, `medium`, `high`, `xhigh`, or `max` for GPT Image 2.5),
+  `outputFormat` (`png`/`jpeg`/`webp`), `background`
   (`transparent` supported), `outputCompression`, `moderation`, `count`, and
   the documented `providerOptions` pass-through key `user`.
 - Google options: `aspectRatio` (all Nano Banana models) and `imageSize`
@@ -116,7 +125,7 @@ default_model = "gemini-3.1-flash-image"
 ```sh
 roder media providers [--json]
 roder media models [--provider google] [--json]
-roder media generate "a tiny blue dot" --provider openai --model gpt-image-2 --size 1024x1024
+roder media generate "a tiny blue dot" --provider openai --model gpt-image-2.5-flare --size 1024x1024
 ```
 
 ## App-server and SDK
