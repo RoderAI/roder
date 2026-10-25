@@ -1,0 +1,40 @@
+{
+  "name": "@roderai/roder",
+  "version": "0.3.20",
+  "private": true,
+  "description": "Roder native coding agent CLI",
+  "license": "MIT",
+  "homepage": "https://roder.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RoderAI/roder.git",
+    "directory": "crates/roder-cli/npm"
+  },
+  "bugs": {
+    "url": "https://github.com/RoderAI/roder/issues"
+  },
+  "bin": {
+    "roder": "bin/roder.cjs"
+  },
+  "files": [
+    "bin",
+    "release.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
+}

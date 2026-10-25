@@ -8,7 +8,7 @@ never drive version bumps (`[changes] ignore_conventional_commits = true`).
 
 knope owns version bumps, per-package changelogs, git tags
 (`<package>/v<version>`), and GitHub releases. Registry publication is a
-separate explicit step for crates.io, npm, PyPI, and Homebrew.
+separate explicit step for crates.io, the SDK npm packages, and PyPI. CLI npm publication and Homebrew updates run automatically in CI.
 
 ## Documenting a change (required for every PR that touches a package)
 
@@ -66,7 +66,8 @@ Bypasses:
 3. Merging that release PR is the release gate. `release.yml` then runs
    `knope release`, tagging each released package (`<name>/v<version>`) and
    creating a GitHub release per package with its release notes.
-4. Registry publication is manual today. Before publishing, run the registry
+4. The CLI publishes to npm automatically after all three native installation checks pass.
+   SDK and other registry publication remains manual. Before publishing, run the registry
    README gate:
 
    ```sh
@@ -136,7 +137,11 @@ crate creation. Use `cargo metadata` to derive the workspace order and include
 dev-dependencies in the ordering because `cargo publish` verifies package
 tarballs with dev-dependencies resolvable from the registry.
 
-For npm:
+For the CLI npm distribution, see [Roder npm distribution](./roder-npm.md), including
+the required first publication and trusted-publisher setup. `@roderai/roder` shares
+the CLI version and is published by `release.yml` after signed binary uploads.
+
+For the SDK and edit-tools npm packages:
 
 ```sh
 cd sdk/typescript

@@ -179,6 +179,13 @@ jobs:
             fi
           )
 
+      - name: Record npm release artifact identity
+        shell: bash
+        run: |
+          python3 scripts/release_cli_npm.py manifest \
+            --artifacts dist/release --target "${{ matrix.target }}" \
+            --commit "$(git rev-parse HEAD)"
+
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
@@ -251,3 +258,15 @@ jobs:
           # PAT (or fine-grained token) with `contents: write` on the tap repo.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: bash scripts/update-homebrew-tap.sh
+
+  npm:
+    name: Publish CLI to npm
+    needs: [release, upload-release-binaries]
+    if: needs.release.outputs.cli_changed == 'true'
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/cli-npm-release.yml
+    with:
+      release_sha: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}

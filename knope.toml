@@ -40,6 +40,7 @@ changelog = "crates/roder-automations/CHANGELOG.md"
 [packages."roder"]
 versioned_files = [
     "crates/roder-cli/Cargo.toml",
+    "crates/roder-cli/npm/package.json",
     "Cargo.lock",
 ]
 changelog = "crates/roder-cli/CHANGELOG.md"

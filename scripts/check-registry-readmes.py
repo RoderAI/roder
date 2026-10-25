@@ -23,6 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 NPM_PACKAGES = [
+    REPO_ROOT / "crates/roder-cli/npm/package.json",
     REPO_ROOT / "sdk/typescript/package.json",
     REPO_ROOT / "packages/edit-tools/package.json",
 ]
