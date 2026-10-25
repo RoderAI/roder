@@ -94,6 +94,7 @@ async fn acp_initialize_advertises_stable_v1_without_optional_capabilities() {
 
     let result = response.result.expect("initialize result");
     assert_eq!(result["protocolVersion"], 1);
+    assert_eq!(result["authMethods"], serde_json::json!([]));
     assert_eq!(result["agentCapabilities"]["loadSession"], false);
     assert!(
         result["agentCapabilities"]["sessionCapabilities"]
@@ -347,3 +348,6 @@ mod full_access;
 mod cua {
     include!("acp_cua.rs");
 }
+
+#[path = "acp/auth.rs"]
+mod auth;
