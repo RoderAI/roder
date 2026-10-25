@@ -3448,7 +3448,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3497,7 +3497,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3523,7 +3523,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -4300,7 +4300,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-images"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4871,7 +4871,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5113,7 +5113,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "async-trait",
