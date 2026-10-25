@@ -22,6 +22,7 @@ pub(super) fn restore_outcomes(turns: &mut [Turn], events: &[EventEnvelope]) {
                 turn.duration_ms = None;
                 turn.error = None;
                 turn.completed_at = Some(event.timestamp.unix_timestamp());
+                turn.usage = event.usage.clone();
             }
             Some(RoderEvent::TurnFailed(event)) => {
                 turn.status = "failed".into();
@@ -53,6 +54,7 @@ mod tests {
             RoderEvent::TurnInterrupted(TurnInterrupted {
                 thread_id: "thread".into(),
                 turn_id: "stopped".into(),
+                usage: None,
                 timestamp,
             }),
             RoderEvent::TurnFailed(TurnFailed {
@@ -95,5 +97,52 @@ mod tests {
             turns[1].error,
             Some(serde_json::json!({"message": "Provider unavailable"}))
         );
+    }
+
+    #[test]
+    fn restoring_interrupted_outcome_restores_usage_from_persisted_event() {
+        let usage = roder_api::inference::TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            cached_prompt_tokens: 30,
+            cache_creation_prompt_tokens: 10,
+            ..Default::default()
+        };
+        let interruption: TurnInterrupted = serde_json::from_value(serde_json::json!({
+            "thread_id": "thread",
+            "turn_id": "stopped",
+            "usage": usage,
+            "timestamp": "1970-01-01T00:00:01Z"
+        }))
+        .unwrap();
+        let event = RoderEvent::TurnInterrupted(interruption);
+        let envelope = EventEnvelope {
+            event_id: "interruption".into(),
+            seq: 1,
+            timestamp: OffsetDateTime::UNIX_EPOCH,
+            source: EventSource::Core,
+            kind: event.kind().into(),
+            thread_id: event.thread_id().cloned(),
+            turn_id: event.turn_id().cloned(),
+            event,
+        };
+        let mut turns = vec![Turn {
+            id: "stopped".into(),
+            items: vec![],
+            items_view: "full".into(),
+            status: "completed".into(),
+            error: None,
+            started_at: Some(0),
+            completed_at: Some(1),
+            duration_ms: Some(1000),
+            usage: None,
+            finish_reason: None,
+        }];
+
+        restore_outcomes(&mut turns, &[envelope]);
+
+        assert_eq!(turns[0].status, "interrupted");
+        assert_eq!(turns[0].usage, Some(usage));
     }
 }

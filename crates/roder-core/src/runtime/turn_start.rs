@@ -157,6 +157,7 @@ impl Runtime {
             let turn_req = req;
             let thread_id_for_task = turn_req.thread_id.clone();
             let turn_id_for_task = turn_id.clone();
+            runtime.initialize_turn_usage(&turn_id).await;
             tokio::spawn(async move {
                 let result = Abortable::new(
                     runtime.run_turn(
@@ -180,6 +181,12 @@ impl Runtime {
                     .cancel_pending_external_tool_calls_for_turn(&turn_id_for_task)
                     .await;
                 let completed = matches!(&result, Ok(Ok(TurnRunOutcome::Completed)));
+                if let Err(error) = runtime
+                    .sync_turn_goal_usage(&thread_id_for_task, &turn_id_for_task)
+                    .await
+                {
+                    eprintln!("failed to finalize turn token budget: {error}");
+                }
                 let stopped_status = match &result {
                     Ok(Err(error)) => Some(crate::goals::status_after_error(error)),
                     Ok(Ok(TurnRunOutcome::Stopped)) => {
@@ -287,6 +294,7 @@ impl Runtime {
                             .emit(RoderEvent::TurnInterrupted(TurnInterrupted {
                                 thread_id: thread_id_for_task.clone(),
                                 turn_id: turn_id_for_task.clone(),
+                                usage: None,
                                 timestamp: OffsetDateTime::now_utc(),
                             }))
                             .await;
@@ -307,6 +315,7 @@ impl Runtime {
                     .release_mailbox_reservations_for_turn(&turn_id_for_task)
                     .await;
                 runtime.active_turns.write().await.remove(&turn_id_for_task);
+                runtime.turn_usage.lock().await.remove(&turn_id_for_task);
                 if let Some(drain) = runtime.turn_drains.write().await.remove(&turn_id_for_task) {
                     drain.completed.store(true, Ordering::Release);
                     drain.completed_notify.notify_waiters();

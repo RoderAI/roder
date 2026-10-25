@@ -19,6 +19,8 @@ mod thread_admission;
 mod tool_approvals;
 #[path = "runtime/turn_start.rs"]
 mod turn_start;
+#[path = "runtime/usage_accounting.rs"]
+mod usage_accounting;
 use eager_tools::EagerTools;
 #[path = "runtime/patch_progress.rs"]
 mod patch_progress;
@@ -551,6 +553,8 @@ pub struct Runtime {
     turn_admission: Mutex<()>,
     active_turns: RwLock<HashMap<TurnId, ActiveTurnHandle>>,
     turn_drains: RwLock<HashMap<TurnId, Arc<TurnDrainHandle>>>,
+    turn_usage: Mutex<HashMap<TurnId, Arc<Mutex<usage_accounting::TurnUsageAccounting>>>>,
+    thread_usage_metadata_lock: Mutex<()>,
     /// Provider cleanup handles register synchronously through the inference
     /// tool-executor context. They are intentionally separate from active turn
     /// admission so an interrupted turn can remain drainable after a follow-up
@@ -745,6 +749,8 @@ impl Runtime {
             turn_admission: Mutex::new(()),
             active_turns: RwLock::new(HashMap::new()),
             turn_drains: RwLock::new(HashMap::new()),
+            turn_usage: Mutex::new(HashMap::new()),
+            thread_usage_metadata_lock: Mutex::new(()),
             provider_turn_cleanups: std::sync::Mutex::new(HashMap::new()),
             accepting_turns: AtomicBool::new(true),
             lifecycle_persistence_failures: AtomicUsize::new(0),
@@ -3127,6 +3133,7 @@ impl Runtime {
         if usage.is_empty() {
             return Ok(());
         }
+        let _guard = self.thread_usage_metadata_lock.lock().await;
         let Some(store) = &self.thread_store else {
             return Ok(());
         };
@@ -3311,6 +3318,7 @@ impl Runtime {
             )
             .await;
             handle.abort.abort();
+            self.sync_turn_goal_usage(&thread_id, &turn_id).await?;
             if reason == TurnLifecycleReason::UserInterrupt {
                 self.goals
                     .finish_turn(
@@ -3585,7 +3593,6 @@ impl Runtime {
             VerificationGateState::new(req.message.clone(), runtime_profile);
         let mut speed_policy = SpeedPolicyState::default();
         let mut reliability = TurnReliabilityState::default();
-        let mut turn_usage = TokenUsage::default();
         // Overwritten on every inference step's Completed event so only the
         // terminal step's stop reason survives (mid-turn tool_use steps must
         // not leak onto turn/completed).
@@ -4434,14 +4441,8 @@ impl Runtime {
                         .await?;
                         return Ok(TurnRunOutcome::Stopped);
                     }
-                    InferenceEvent::Usage(usage) => {
-                        self.record_goal_token_usage(
-                            &req.thread_id,
-                            &turn_id,
-                            usage.total_tokens as i64,
-                        )
-                        .await?;
-                        turn_usage.add_assign(&usage);
+                    InferenceEvent::Usage(_) => {
+                        self.sync_turn_goal_usage(&req.thread_id, &turn_id).await?;
                     }
                     InferenceEvent::Completed(metadata) => {
                         sampling_output
@@ -4811,9 +4812,6 @@ impl Runtime {
             .await?;
         }
 
-        let completed_usage = (!turn_usage.is_empty()).then_some(turn_usage.clone());
-        self.record_thread_usage_metadata(&req.thread_id, &turn_usage)
-            .await?;
         let (cleanup, ownership) = self.await_provider_turn_cleanup(&turn_id).await;
         self.record_turn_lifecycle_with_ownership(
             req.thread_id.clone(),
@@ -4827,7 +4825,7 @@ impl Runtime {
         self.emit(RoderEvent::TurnCompleted(TurnCompleted {
             thread_id: req.thread_id.clone(),
             turn_id: turn_id.clone(),
-            usage: completed_usage,
+            usage: None,
             finish_reason: turn_finish_reason,
             timestamp: OffsetDateTime::now_utc(),
         }))
@@ -5304,7 +5302,8 @@ impl Runtime {
             .ok_or_else(|| anyhow::anyhow!("inference provider {provider:?} is not registered"))
     }
 
-    pub async fn emit(&self, event: RoderEvent) -> EventEnvelope {
+    pub async fn emit(&self, mut event: RoderEvent) -> EventEnvelope {
+        self.account_usage_event(&mut event).await;
         self.dispatch_local_hook_lifecycle(&event).await;
         if let Some(record) = Self::lifecycle_record_for_event(&event) {
             let _ = self.persist_turn_lifecycle_record(&record).await;

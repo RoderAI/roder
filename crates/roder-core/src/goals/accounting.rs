@@ -154,7 +154,8 @@ impl RuntimeGoalController {
         goal.time_used_seconds = goal.time_used_seconds.saturating_add(delta);
         enforce_budget(&mut goal);
         goal.updated_at = OffsetDateTime::now_utc();
-        self.store_goal(goal.clone()).await?;
+        self.persist_usage_goal(&goal, self.store_goal(goal.clone()))
+            .await?;
         if let Some(progress) = self.cache.lock().await.turns.get_mut(turn_id) {
             progress.seconds_accounted = seconds;
         }
@@ -196,6 +197,38 @@ impl RuntimeGoalController {
 }
 
 impl RuntimeGoalController {
+    async fn persist_usage_goal(
+        &self,
+        goal: &ThreadGoal,
+        write: impl std::future::Future<Output = anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
+        let Err(error) = write.await else {
+            return Ok(());
+        };
+        // The caller holds the mutation lock. Discard the old cached snapshot
+        // before checking whether the failed write actually reached disk.
+        if self.goal_path(&goal.thread_id).is_some() {
+            self.cache.lock().await.goals.remove(&goal.thread_id);
+        }
+        match self.load_goal(&goal.thread_id).await {
+            Ok(Some(persisted)) if persisted == *goal => {
+                eprintln!(
+                    "goal usage write reported an error after committing for thread {}: {error}",
+                    goal.thread_id
+                );
+                Ok(())
+            }
+            Ok(_) => Err(error),
+            Err(reload_error) => {
+                eprintln!(
+                    "failed to verify goal usage write for thread {}: {reload_error}",
+                    goal.thread_id
+                );
+                Err(error)
+            }
+        }
+    }
+
     pub(crate) async fn record_descendant_usage(
         &self,
         thread_id: &ThreadId,
@@ -215,8 +248,13 @@ impl RuntimeGoalController {
         goal.tokens_used = goal.tokens_used.saturating_add(tokens.max(0));
         enforce_budget(&mut goal);
         goal.updated_at = OffsetDateTime::now_utc();
-        self.store_goal(goal.clone()).await?;
+        self.persist_usage_goal(&goal, self.store_goal(goal.clone()))
+            .await?;
         self.emit_goal_updated(goal).await;
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/persistence.rs"]
+mod persistence_tests;

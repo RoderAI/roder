@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -52,9 +53,21 @@ pub struct ThreadUsageMetadata {
     pub cache_creation_prompt_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_hit_rate: Option<f64>,
+    /// Terminal turns included in the cumulative counters, persisted with those counters.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub accounted_turn_ids: BTreeSet<TurnId>,
 }
 
 impl ThreadUsageMetadata {
+    /// Adds a terminal turn's usage once, including after metadata is reloaded.
+    pub fn add_turn_token_usage(&mut self, turn_id: &TurnId, usage: &TokenUsage) -> bool {
+        if !self.accounted_turn_ids.insert(turn_id.clone()) {
+            return false;
+        }
+        self.add_token_usage(usage);
+        true
+    }
+
     pub fn add_token_usage(&mut self, usage: &TokenUsage) {
         self.prompt_tokens = self
             .prompt_tokens

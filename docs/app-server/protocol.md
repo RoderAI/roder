@@ -69,7 +69,7 @@ from the app-server process when persisted metadata is missing or invalid.
 | `item/agentMessage/delta` | Full `ThreadItemEvent` envelope with `event.type: "itemDelta"` and `delta.type: "agentMessageText"`; appends assistant text to `event.itemId`. | Recorded public item event. |
 | `item/reasoning/textDelta` | Full `ThreadItemEvent` envelope with `delta.type: "reasoningText"`; appends reasoning content to `event.itemId`. | Recorded public item event. |
 | `item/completed` | Full `ThreadItemEvent` envelope with `event.type: "itemCompleted"` and a typed `event.item`; completes the existing canonical item. Inference routing decisions complete a persisted `routingDecision` item. | Recorded public item event. |
-| `turn/completed` | `params.turn.id`; busy state clears when it matches the active turn. | Runtime turn completion. |
+| `turn/completed` | `params.turn.id`; busy state clears when it matches the active turn. Completed, failed, and interrupted turns retain observed `turn.usage` (snake_case counters). | Runtime turn completion. |
 | `turn/lifecycleUpdated` | Read `threadId`, `turnId`, and `lifecycle`; render lifecycle state independently of terminal transcript projection. | Runtime lifecycle transition. `interrupt_requested` keeps the thread running with active flag `interrupting`; terminal lifecycle states set the thread idle. |
 | `thread/status/changed` | `threadId`, `status`; sidebar status updates. `activeFlags` marks wait states such as `approvalRequired`, `userInputRequired`, and `planExitRequired`. | Runtime active/idle/wait state changes. |
 | `thread/approvalRequested` | `approvalId`, `toolId`, `toolName`, `threadId`, and `turnId`; clients should prompt and answer with `thread/resolve_approval`. | Runtime tool policy approval request. |

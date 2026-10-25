@@ -89,7 +89,7 @@ pub struct TurnRecord {
     pub runtime_profile: Option<String>,
     pub started_at_ms: Option<i64>,
     pub completed_at_ms: Option<i64>,
-    /// `running`, `completed`, `failed`, or `partial`.
+    /// `running`, `completed`, `failed`, `interrupted`, or `partial`.
     pub status: String,
     pub error_kind: Option<String>,
 }

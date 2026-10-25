@@ -78,7 +78,7 @@ impl AnalyticsStore {
     }
 
     /// Upserts a turn keyed by `(thread_id, turn_id)`. Terminal statuses
-    /// (`completed`/`failed`) are never downgraded back to `running`.
+    /// (`completed`/`failed`/`interrupted`) are never downgraded back to `running`.
     pub fn upsert_turn(&self, record: &TurnRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -92,7 +92,8 @@ impl AnalyticsStore {
                started_at_ms = COALESCE(turns.started_at_ms, excluded.started_at_ms),
                completed_at_ms = COALESCE(excluded.completed_at_ms, turns.completed_at_ms),
                status = CASE
-                 WHEN turns.status IN ('completed', 'failed') AND excluded.status = 'running'
+                 WHEN turns.status IN ('completed', 'failed', 'interrupted')
+                      AND excluded.status = 'running'
                    THEN turns.status
                  ELSE excluded.status
                END,

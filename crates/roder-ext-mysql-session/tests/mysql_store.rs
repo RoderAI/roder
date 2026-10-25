@@ -180,6 +180,7 @@ async fn runtime_sequence_restart_preserves_distinct_events_and_terminal_history
         roder_api::events::RoderEvent::TurnInterrupted(roder_api::events::TurnInterrupted {
             thread_id: thread.clone(),
             turn_id: "turn-1".into(),
+            usage: None,
             timestamp: terminal.timestamp,
         });
     terminal.kind = terminal.event.kind().to_string();

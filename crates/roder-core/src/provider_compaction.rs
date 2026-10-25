@@ -85,6 +85,7 @@ impl Runtime {
                 else {
                     return Ok(None);
                 };
+                self.begin_compaction_usage(turn_id).await;
                 let mut boundary = None;
                 let mut completed = false;
                 while let Some(event) =
@@ -105,13 +106,18 @@ impl Runtime {
                             }
                         }
                         InferenceEvent::Usage(usage) => {
-                            self.record_thread_usage_metadata(thread_id, &usage).await?;
-                            self.record_goal_token_usage(
-                                thread_id,
-                                turn_id,
-                                usage.total_tokens as i64,
-                            )
-                            .await?;
+                            if !self
+                                .record_compaction_usage(thread_id, turn_id, &usage)
+                                .await?
+                            {
+                                self.record_thread_usage_metadata(thread_id, &usage).await?;
+                                self.record_goal_token_usage(
+                                    thread_id,
+                                    turn_id,
+                                    usage.total_tokens as i64,
+                                )
+                                .await?;
+                            }
                         }
                         InferenceEvent::Completed(_) => {
                             completed = true;

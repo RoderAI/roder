@@ -22,6 +22,9 @@ use roder_tasks::BackgroundRunner;
 use time::OffsetDateTime;
 use tokio::sync::broadcast;
 
+#[cfg(test)]
+mod interrupted_tests;
+
 pub(crate) fn spawn_task_event_bridge(runtime: Arc<Runtime>, tasks: BackgroundRunner) {
     let mut task_events = tasks.subscribe();
     tokio::spawn(async move {
@@ -432,7 +435,7 @@ pub(crate) fn protocol_notifications_for_event(event: &RoderEvent) -> Vec<JsonRp
                 started_at: None,
                 completed_at: Some(event.timestamp.unix_timestamp()),
                 duration_ms: None,
-                usage: None,
+                usage: event.usage.clone(),
                 finish_reason: None,
             };
             vec![

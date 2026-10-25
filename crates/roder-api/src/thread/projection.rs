@@ -45,6 +45,7 @@ pub fn project_turns_from_events(
                 let turn =
                     ensure_turn_record(&mut turns, thread_id, &event.turn_id, event.timestamp);
                 turn.completed_at = Some(event.timestamp);
+                turn.usage = event.usage.clone();
             }
             _ => continue,
         }
