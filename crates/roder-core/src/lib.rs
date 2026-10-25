@@ -35,6 +35,7 @@ mod skills;
 mod speed_policy;
 mod subagent_traces;
 pub mod teams;
+mod thread_events;
 mod thread_item_cache;
 mod tool_execution;
 mod tool_output;

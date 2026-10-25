@@ -455,3 +455,10 @@ Weekly roadmap refresh:
   "concurrency": "forbid"
 }
 ```
+
+## Following up in an existing thread
+
+For session-local CI babysitting, one-shot reminders, or topic subscriptions that
+continue an existing conversation, use [thread events](thread-events.md). These
+agent tools run in the harness without scheduler enablement. Use automations above
+when the schedule must survive process exit and create independent run threads.

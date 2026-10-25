@@ -605,6 +605,7 @@ pub struct Runtime {
     pub(crate) thread_store: Option<Arc<dyn ThreadStore>>,
     thread_item_cache: Mutex<ThreadItemCache>,
     pub(crate) tool_registry: ToolRegistry,
+    pub(crate) thread_events: crate::thread_events::ThreadEvents,
     media_generation: Arc<crate::media_generation::MediaGenerationService>,
     pub(crate) skills: RwLock<SkillRegistry>,
     /// Lazily-started bounded dispatch of emitted events to registry
@@ -703,6 +704,7 @@ impl Runtime {
                 .with_context(|| format!("tool contributor {} failed", contributor.id()))?;
         }
         crate::agent_control_tools::contribute_agent_control_tools(&mut tool_registry)?;
+        crate::thread_events::contribute_tools(&mut tool_registry)?;
 
         let media_generation = Arc::new(crate::media_generation::MediaGenerationService::new(
             registry.media_generator_providers.clone(),
@@ -787,6 +789,7 @@ impl Runtime {
             thread_store,
             thread_item_cache: Mutex::new(ThreadItemCache::default()),
             tool_registry,
+            thread_events: crate::thread_events::ThreadEvents::default(),
             media_generation,
             skills: RwLock::new(SkillRegistry::load(SkillRegistryOptions::new(
                 PathBuf::new(),
@@ -820,6 +823,10 @@ impl Runtime {
 
     pub fn fake() -> anyhow::Result<Self> {
         Self::from_engine(Arc::new(FakeInferenceEngine))
+    }
+
+    pub(crate) fn accepting_thread_events(&self) -> bool {
+        self.accepting_turns.load(Ordering::Acquire)
     }
 
     pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<EventEnvelope> {
@@ -1828,6 +1835,7 @@ impl Runtime {
             false
         };
         if archived {
+            self.thread_events.remove_thread(thread_id).await;
             let workspace = self.config.read().await.workspace.clone();
             crate::hooks::run_lifecycle(
                 self,
@@ -2286,6 +2294,7 @@ impl Runtime {
             .lock()
             .await
             .remove(&closed.thread_id);
+        self.thread_events.remove_thread(&closed.thread_id).await;
         self.emit(RoderEvent::TeamMemberCompleted(TeamMemberCompleted {
             team_id: team_id.to_string(),
             member_id: closed.id.clone(),
@@ -3321,6 +3330,7 @@ impl Runtime {
             handle.abort.abort();
             self.sync_turn_goal_usage(&thread_id, &turn_id).await?;
             if reason == TurnLifecycleReason::UserInterrupt {
+                self.thread_events.remove_thread(&thread_id).await;
                 self.goals
                     .finish_turn(
                         &thread_id,
@@ -4890,9 +4900,10 @@ impl Runtime {
             .await;
         }
 
-        let force_sequential = calls
-            .iter()
-            .any(|call| crate::agent_control_tools::is_agent_control_tool(&call.name));
+        let force_sequential = calls.iter().any(|call| {
+            crate::agent_control_tools::is_agent_control_tool(&call.name)
+                || crate::thread_events::is_event_tool(&call.name)
+        });
         let results = if parallel && !force_sequential {
             try_join_all(calls.into_iter().map(|call| {
                 self.route_tool_call(thread_id, turn_id, call, workspace, deadline, None)

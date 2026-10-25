@@ -5674,6 +5674,17 @@ Behavior:
   not connected (`-32010`), disabled (`-32011`), rejected (`-32012`), timeout
   (`-32013`), disconnected (`-32014`), remote error (`-32015`).
 
+## Thread event subscriptions
+
+`thread/events/subscribe`, `thread/events/list`, `thread/events/cancel`, and
+`thread/events/publish` expose process-local topic subscriptions and one-shot or
+recurring timer ticks into an existing thread. See [thread events](thread-events.md)
+for request/response examples, validation limits, pending-event coalescing,
+notifications, cancellation, and persistence semantics. These methods do not
+require the durable automation scheduler to be enabled. Subscriptions stop when
+the runtime exits; [automations](automations.md) provide durable scheduled runs.
+
+
 ## Streaming and Notifications
 
 Subscribe through `LocalAppClient::subscribe_notifications()` for local clients

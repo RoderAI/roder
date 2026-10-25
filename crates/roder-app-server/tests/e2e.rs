@@ -11774,3 +11774,6 @@ mod native_compaction;
 
 #[path = "service_tiers.rs"]
 mod service_tiers;
+
+#[path = "thread_events.rs"]
+mod thread_events;

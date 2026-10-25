@@ -2129,6 +2129,42 @@
       ]
     },
     {
+      "method": "thread/events/cancel",
+      "paramsType": "ThreadEventsCancelParams",
+      "resultType": "ThreadEventsCancelResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/events/list",
+      "paramsType": "ThreadEventsListParams",
+      "resultType": "ThreadEventsListResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/events/publish",
+      "paramsType": "ThreadEventsPublishParams",
+      "resultType": "ThreadEventsPublishResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/events/subscribe",
+      "paramsType": "ThreadEventsSubscribeParams",
+      "resultType": "ThreadEventsSubscribeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/exit_plan",
       "paramsType": "ThreadExitPlanParams",
       "resultType": "ThreadExitPlanResult",

@@ -706,6 +706,15 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         NonIdempotent,
         ["context.compaction_started", "context.compaction_recorded"]
     ),
+    method_spec!("thread/events/cancel", "thread", LocalState, Idempotent),
+    method_spec!("thread/events/list", "thread", ReadOnly, Idempotent),
+    method_spec!("thread/events/publish", "thread", LocalState, NonIdempotent),
+    method_spec!(
+        "thread/events/subscribe",
+        "thread",
+        LocalState,
+        NonIdempotent
+    ),
     method_spec!("thread/exit_plan", "thread", LocalState, NonIdempotent),
     method_spec!("thread/fork", "thread", LocalState, NonIdempotent),
     method_spec!("thread/fork_status", "thread", ReadOnly, Idempotent),
