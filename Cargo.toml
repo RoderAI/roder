@@ -81,12 +81,12 @@ which = "8.0.6"
 roder-api = { path = "crates/roder-api", version = "0.2.14" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.2.1" }
-roder-app-server = { path = "crates/roder-app-server", version = "0.6.8" }
+roder-app-server = { path = "crates/roder-app-server", version = "0.6.9" }
 roder-codex-auth = { path = "crates/roder-codex-auth", version = "0.1.3" }
 roder-commands = { path = "crates/roder-commands", version = "0.2.0" }
 roder-config = { path = "crates/roder-config", version = "0.2.4" }
 roder-context = { path = "crates/roder-context", version = "0.2.0" }
-roder-core = { path = "crates/roder-core", version = "0.3.12" }
+roder-core = { path = "crates/roder-core", version = "0.3.13" }
 roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.3.2" }
 roder-code-index = { path = "crates/roder-code-index", version = "0.2.1" }
 roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.2.1" }
@@ -163,7 +163,7 @@ roder-ext-xiaomi-mimo = { path = "crates/roder-ext-xiaomi-mimo", version = "0.2.
 roder-ext-zerolang = { path = "crates/roder-ext-zerolang", version = "0.2.0" }
 roder-extension-host = { path = "crates/roder-extension-host", version = "0.6.2" }
 roder-evals = { path = "crates/roder-evals", version = "0.3.0" }
-roder-protocol = { path = "crates/roder-protocol", version = "0.3.1" }
+roder-protocol = { path = "crates/roder-protocol", version = "0.3.2" }
 roder-sandbox = { path = "crates/roder-sandbox", version = "0.2.0" }
 roder-search = { path = "crates/roder-search", version = "0.1.0" }
 roder-skills = { path = "crates/roder-skills", version = "0.2.1" }
