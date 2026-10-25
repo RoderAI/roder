@@ -89,7 +89,7 @@ roder-context = { path = "crates/roder-context", version = "0.2.0" }
 roder-core = { path = "crates/roder-core", version = "0.3.12" }
 roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.3.2" }
 roder-code-index = { path = "crates/roder-code-index", version = "0.2.1" }
-roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.2.0" }
+roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.2.1" }
 roder-edit-core = { path = "crates/roder-edit-core", version = "0.2.0" }
 roder-roadmap = { path = "crates/roder-roadmap", version = "0.2.0" }
 roder-supergrok-auth = { path = "crates/roder-supergrok-auth", version = "0.1.4" }
