@@ -1,6 +1,6 @@
 [package]
 name = "roder-ext-cua"
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 description = "Linux runner and local macOS desktop computer use through Cua Driver"
 license.workspace = true
