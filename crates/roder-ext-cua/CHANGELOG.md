@@ -1,3 +1,11 @@
+## 0.1.3 (2026-10-25)
+
+### Fixes
+
+#### Refresh PNG, notification, and textarea dependencies
+
+Update png, notify-rust, and tui-textarea to their current crates.io releases. PNG captures now treat an unbounded decoded size as too large.
+
 ## 0.1.2 (2026-10-21)
 
 ### Features
