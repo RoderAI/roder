@@ -19,7 +19,8 @@ create independent run threads; thread events continue the existing conversation
   recurring tick, `delaySeconds` for the first tick, or both. A delay without an
   interval is one-shot. Omit both to listen only for published events.
 - `list_event_subscriptions`: inspect this thread's subscriptions, remaining
-  deliveries, expiration, pending state, and last delivery error.
+  deliveries, next tick time, last admitted delivery time, expiration, pending state,
+  and last delivery error.
 - `cancel_event_subscription`: cancel this thread's `subscriptionId` and discard
   pending delivery. An already admitted turn continues normally.
 - `publish_event`: publish `topic` and `message` to all explicit subscribers in the
@@ -75,6 +76,8 @@ Response:
     "prompt": "Check CI and cancel this subscription when checks are terminal.",
     "intervalSeconds": 60,
     "remainingDeliveries": 30,
+    "nextTickAt": "2026-10-24T11:01:00Z",
+    "lastDeliveredAt": null,
     "expiresAt": "2026-10-24T12:00:00Z",
     "pending": false,
     "lastError": null
@@ -94,6 +97,10 @@ threads, quiescing runtimes, and capacity violations return `-32602` with detail
 
 Request: `{"threadId":"thread-123"}`.
 Response: `{"subscriptions":[...]}` with the same subscription shape above.
+`nextTickAt` is the timer deadline, not a promise that a busy thread can run at
+that instant. Publish-only subscriptions and one-shots already pending delivery
+have no next timer deadline. `lastDeliveredAt` records turn admission rather than
+completion. Both timestamps are RFC 3339 UTC or null.
 Expired, cancelled, and exhausted subscriptions are excluded. Unknown threads
 return an empty list.
 

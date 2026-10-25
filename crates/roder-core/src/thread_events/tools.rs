@@ -30,11 +30,11 @@ impl ToolExecutor for EventTool {
         let (description, properties, required) = match self.0 {
             "subscribe_event" => (
                 "Subscribe this thread to a runtime-local topic, optionally with a one-shot delay or recurring timer. Use only for requested follow-ups such as CI babysitting. Ticks wait until the thread is idle and preserve its context. Subscriptions expire within 24 hours and do not survive harness exit; use durable automations for unattended schedules. Cancel when finished.",
-                json!({"topic":{"type":"string"},"prompt":{"type":"string"},"delaySeconds":{"type":"integer","minimum":1,"maximum":86400},"intervalSeconds":{"type":"integer","minimum":1,"maximum":86400},"maxDeliveries":{"type":"integer","minimum":1,"maximum":1000,"default":100},"ttlSeconds":{"type":"integer","minimum":1,"maximum":86400,"default":86400}}),
+                json!({"topic":{"type":"string"},"prompt":{"type":"string"},"delaySeconds":{"type":["integer","null"],"minimum":1,"maximum":86400,"description":"First timer delay in seconds. Set intervalSeconds to null for a one-shot. Null with no interval means publish-only."},"intervalSeconds":{"type":["integer","null"],"minimum":1,"maximum":86400,"description":"Recurring timer cadence. Set to null or omit for a one-shot delay or a publish-only subscription. Do not copy the delay here for one-shot reminders."},"maxDeliveries":{"type":"integer","minimum":1,"maximum":1000,"default":100},"ttlSeconds":{"type":"integer","minimum":1,"maximum":86400,"default":86400}}),
                 vec!["topic", "prompt"],
             ),
             "list_event_subscriptions" => (
-                "List this thread's live topic and timer subscriptions, including pending delivery and last errors.",
+                "List this thread's live topic and timer subscriptions, including next tick time, last admitted delivery, pending delivery, and last errors.",
                 json!({}),
                 vec![],
             ),

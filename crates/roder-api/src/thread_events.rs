@@ -32,6 +32,12 @@ pub struct ThreadEventSubscription {
     pub prompt: String,
     pub interval_seconds: Option<u64>,
     pub remaining_deliveries: u32,
+    /// Next timer deadline; absent for publish-only subscriptions or a pending one-shot.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub next_tick_at: Option<OffsetDateTime>,
+    /// Last admitted follow-up turn, regardless of its eventual completion status.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_delivered_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
     pub pending: bool,

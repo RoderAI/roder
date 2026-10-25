@@ -43,6 +43,8 @@ async fn thread_events_api_schedules_and_cancels_same_thread_followups() {
     let created:serde_json::Value=request(&client,"thread/events/subscribe",Some(serde_json::json!({"threadId":id,"topic":"ci:167","prompt":"Check CI and cancel when green","delaySeconds":1,"maxDeliveries":1}))).await;
     let subscription_id = created["subscription"]["id"].as_str().unwrap().to_string();
     assert_eq!(created["subscription"]["threadId"], id);
+    assert!(created["subscription"]["nextTickAt"].is_string());
+    assert!(created["subscription"]["lastDeliveredAt"].is_null());
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if engine.requests.lock().await.iter().any(|r| {

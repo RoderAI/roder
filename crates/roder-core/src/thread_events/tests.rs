@@ -134,10 +134,12 @@ async fn timers_coalesce_while_busy_then_resume_same_thread_and_stop_at_limit() 
     let (runtime, mut rx, gate, _dir) = harness(true, false);
     runtime.start_turn(request("thread-1")).await.unwrap();
     received(&mut rx).await;
-    runtime
+    let created = runtime
         .subscribe_thread_event("thread-1", subscription())
         .await
         .unwrap();
+    assert!(created.next_tick_at.is_some());
+    assert!(created.last_delivered_at.is_none());
     let now = Instant::now();
     runtime
         .tick_thread_events(now + Duration::from_secs(90))
@@ -164,6 +166,12 @@ async fn timers_coalesce_while_busy_then_resume_same_thread_and_stop_at_limit() 
     );
     assert!(text.contains("Scheduled automation tick"));
     idle(&runtime, "thread-1").await;
+    let inspected = runtime.list_thread_event_subscriptions("thread-1").await;
+    assert!(inspected[0].next_tick_at.is_some());
+    assert!(inspected[0].last_delivered_at.is_some());
+    let json = serde_json::to_value(&inspected[0]).unwrap();
+    assert!(json["nextTickAt"].as_str().unwrap().ends_with('Z'));
+    assert!(json["lastDeliveredAt"].as_str().unwrap().ends_with('Z'));
     runtime
         .tick_thread_events(now + Duration::from_secs(220))
         .await;
@@ -251,7 +259,11 @@ async fn real_clock_delivers_one_shot_without_a_client_tick() {
     args.interval_seconds = None;
     args.delay_seconds = Some(1);
     runtime.subscribe_thread_event("once", args).await.unwrap();
-    assert_eq!(received(&mut rx).await.0, "once");
+    let (thread_id, delivered) = received(&mut rx).await;
+    assert_eq!(thread_id, "once");
+    let text = serde_json::to_string(&delivered.transcript).unwrap();
+    assert!(text.contains("exhausted automatically; no cancellation call is needed"));
+    assert!(!text.contains("Cancel this subscription when the work is done"));
     idle(&runtime, "once").await;
     assert!(
         runtime
@@ -403,4 +415,18 @@ async fn paused_goals_defer_timer_delivery_without_consuming_it() {
     let subscriptions = runtime.list_thread_event_subscriptions("paused").await;
     assert_eq!(subscriptions[0].remaining_deliveries, 2);
     assert!(subscriptions[0].pending);
+}
+
+#[test]
+fn scheduling_schema_distinguishes_one_shot_from_recurring_timers() {
+    use roder_api::tools::ToolRegistry;
+    let mut registry = ToolRegistry::default();
+    super::contribute_tools(&mut registry).unwrap();
+    let spec = registry.get("subscribe_event").unwrap().spec();
+    assert_eq!(
+        spec.parameters["properties"]["intervalSeconds"]["type"],
+        serde_json::json!(["integer", "null"])
+    );
+    let args:ThreadEventSubscribeRequest=serde_json::from_value(serde_json::json!({"topic":"once","prompt":"remind","delaySeconds":8,"intervalSeconds":null})).unwrap();
+    assert_eq!(args.interval_seconds, None);
 }
