@@ -218,6 +218,7 @@ Threads and turns:
 | `thread/start` | Create a thread. |
 | `thread/list` | List threads. |
 | `thread/read` | Read a thread with optional turns. |
+| `thread/unload` | Cancel and drain work, then release live resources while preserving the conversation. |
 | `thread/archive` | Archive a thread and remove it from active listings. |
 | `thread/goal/get` | Read the thread goal state. |
 | `thread/goal/set` | Create or update the thread goal state. |
@@ -1514,6 +1515,35 @@ Behavior:
   lifecycle extension records skipped while loading. Valid records remain
   readable; raw malformed payloads are not returned.
 - Returns `{"thread": null}` when the thread is unknown.
+
+### `thread/unload`
+
+Purpose: Cancel and drain a thread's active work and release its live resources
+without archiving or deleting the conversation.
+
+Request:
+
+```json
+{"threadId": "thread-123"}
+```
+
+Response:
+
+```json
+{}
+```
+
+Behavior:
+
+- Serializes with native turn admission for this thread. Other threads keep running.
+- Pauses an active goal, interrupts all active turns, and waits for terminal cleanup.
+- Closes the cached remote runner, evicts its live session and item caches, removes
+  app-server thread/model caches, and clears the thread's MCP token.
+- Leaves persisted metadata, transcript, model/provider settings, and runner
+  binding available for later native turns or ACP recovery.
+- Applies a 30-second deadline. Unknown threads return `-32002`; failed or timed-out
+  cleanup returns a server error. Backend-close failure retains the cached runner
+  so a subsequent unload can retry.
 
 ### `thread/archive`
 
@@ -6382,3 +6412,51 @@ When changing the app-server surface, update this document after checking:
 ## Session storage backends
 
 App-server thread and artifact methods are backend-neutral. The default local backend is JSONL; PostgreSQL can be selected by trusted process configuration (`[sessions]` or `RODER_SESSION_STORE=postgres`). Tenant id is not accepted in public thread or artifact method payloads; PostgreSQL tenant scope is injected by the configured session store.
+
+
+## ACP session recovery
+
+`roder acp` exposes ACP v1 over stdio. Initialization advertises `loadSession: true`
+and `sessionCapabilities: {"resume": {}, "close": {}}`. Session IDs are native
+thread IDs; durable recovery uses the configured thread store. The CLI enables
+JSONL thread persistence. Embedders using an in-memory runtime can reopen sessions
+only while their native thread data remains available.
+
+Load or resume after reconnecting and initializing:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"sessionId":"thread-123","cwd":"/absolute/project","mcpServers":[]}}
+```
+
+Load sends `session/update` notifications for persisted user/assistant messages,
+reasoning and tool calls, in conversation order, before responding with `{}`.
+Message IDs come from the native history. Tool replay includes the original call
+and its stored result. Native compaction summaries and errors are replayed as
+assistant text; native diagnostic rows have no ACP conversation equivalent.
+For native histories containing images, replay preserves their URLs as user
+resource links. No tools are re-executed during replay.
+
+Use the same parameters with `method: "session/resume"` to restore context without
+history notifications. Both operations require authentication when configured,
+reject a cwd that differs from the stored directory, and reject unsupported
+additional roots, MCP servers, or native host-executed tool bindings. A busy
+session cannot be reopened. Unknown IDs return `-32002`; invalid parameters or
+overlapping session operations return `-32602`.
+
+Close a session:
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"session/close","params":{"sessionId":"thread-123"}}
+```
+
+Close uses `thread/unload` and waits for the active prompt handler to finish
+forwarding final updates, then detaches the ACP mapping and returns `{}`. An
+interrupted prompt returns `stopReason: "cancelled"`. Pending
+permission callbacks are cancelled when the prompt terminates. The conversation
+remains on disk for a later load/resume; prompt calls against a detached ID fail
+until it is reopened. Closing an unknown or detached ACP ID returns `-32002`.
+Cleanup failures retain the mapping for retry and return a server error.
+
+These methods follow the [ACP v1 session lifecycle](https://agentclientprotocol.com/protocol/v1/session-setup).
+Session list/delete, additional roots, MCP configuration, and dynamic model
+controls remain unadvertised.

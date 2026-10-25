@@ -48,6 +48,7 @@ use crate::protocol_contract::{
 
 mod provider_credentials;
 mod service_tier;
+mod thread_unload;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -417,6 +418,13 @@ impl AppServer {
                 self.decode_and(
                     req.params,
                     |p| async move { self.handle_thread_read(p).await },
+                )
+                .await
+            }
+            "thread/unload" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_thread_unload(p).await },
                 )
                 .await
             }

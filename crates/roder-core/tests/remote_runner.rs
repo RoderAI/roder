@@ -42,6 +42,8 @@ struct MockRunnerState {
     files: Mutex<HashMap<String, Vec<u8>>>,
     created: Mutex<usize>,
     resumed: Mutex<usize>,
+    closed: Mutex<usize>,
+    close_failures_remaining: Mutex<usize>,
     commands: Mutex<Vec<RunnerCommandRequest>>,
     default_workspace: Mutex<Option<String>>,
     create_started: tokio::sync::Notify,
@@ -410,6 +412,12 @@ impl RemoteRunnerSession for MockRunnerSession {
     }
 
     async fn close(&self) -> anyhow::Result<()> {
+        *self.state.closed.lock().unwrap() += 1;
+        let mut failures = self.state.close_failures_remaining.lock().unwrap();
+        if *failures > 0 {
+            *failures -= 1;
+            anyhow::bail!("test close failure");
+        }
         Ok(())
     }
 }
@@ -2235,3 +2243,6 @@ fn temp_dir(name: &str) -> PathBuf {
     std::fs::create_dir_all(&path).unwrap();
     path
 }
+
+#[path = "remote_runner/unload.rs"]
+mod unload;

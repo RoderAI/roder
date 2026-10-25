@@ -207,3 +207,61 @@ pub(super) fn tool_kind_for_name(name: &str) -> acp::ToolKind {
         acp::ToolKind::Other
     }
 }
+
+/// Replay durable conversation items through the same ACP content and tool types as live turns.
+pub(super) fn replay_item(item: &Item) -> Vec<acp::SessionUpdate> {
+    let chunk = |id: &str, text: String| {
+        acp::ContentChunk::new(text_content(text)).message_id(acp::MessageId::new(id.to_string()))
+    };
+    match item {
+        Item::UserMessage {
+            id, text, images, ..
+        } => {
+            let mut updates = vec![acp::SessionUpdate::UserMessageChunk(chunk(
+                id,
+                text.clone(),
+            ))];
+            updates.extend(images.iter().map(|image| {
+                acp::SessionUpdate::UserMessageChunk(
+                    acp::ContentChunk::new(acp::ContentBlock::ResourceLink(
+                        acp::ResourceLink::new("Image", image.image_url.clone()),
+                    ))
+                    .message_id(acp::MessageId::new(id.clone())),
+                )
+            }));
+            updates
+        }
+        Item::AgentMessage { id, text, .. } => vec![acp::SessionUpdate::AgentMessageChunk(chunk(
+            id,
+            text.clone(),
+        ))],
+        Item::Reasoning {
+            id,
+            summary,
+            content,
+            ..
+        } => vec![acp::SessionUpdate::AgentThoughtChunk(chunk(
+            id,
+            summary
+                .iter()
+                .chain(content.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ))],
+        Item::ToolExecution { .. } => tool_call_started(item)
+            .into_iter()
+            .chain(tool_call_completed(item))
+            .collect(),
+        Item::Compaction { id, summary, .. } => vec![acp::SessionUpdate::AgentMessageChunk(chunk(
+            id,
+            summary.clone(),
+        ))],
+        Item::Error { id, message, .. } => vec![acp::SessionUpdate::AgentMessageChunk(chunk(
+            id,
+            message.clone(),
+        ))],
+        // Native diagnostics have no ACP conversation representation.
+        _ => Vec::new(),
+    }
+}

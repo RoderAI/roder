@@ -725,6 +725,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ["thread/goal/updated"]
     ),
     method_spec!("thread/list", "thread", ReadOnly, Idempotent),
+    method_spec!("thread/unload", "thread", LocalState, NonIdempotent),
     method_spec!("thread/read", "thread", ReadOnly, Idempotent),
     method_spec!("thread/remove_fork", "thread", LocalState, NonIdempotent),
     method_spec!(

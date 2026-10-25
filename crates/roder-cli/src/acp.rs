@@ -10,8 +10,9 @@ use roder_app_server::acp::{
 };
 use roder_app_server::{AppServer, LocalAppClient};
 use roder_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+use std::sync::Mutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{build_runtime_with_config, parse_cli_options};
 
@@ -184,7 +185,12 @@ impl StdioAcpPeer {
         let Some(id) = value.get("id").and_then(serde_json::Value::as_str) else {
             return;
         };
-        let Some(tx) = self.pending.lock().await.remove(id) else {
+        let Some(tx) = self
+            .pending
+            .lock()
+            .expect("ACP pending requests lock")
+            .remove(id)
+        else {
             return;
         };
         let result = if let Some(error) = value.get("error") {
@@ -214,7 +220,14 @@ impl StdioAcpPeer {
     ) -> anyhow::Result<serde_json::Value> {
         let id = format!("roder-acp-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(id.clone(), tx);
+        self.pending
+            .lock()
+            .expect("ACP pending requests lock")
+            .insert(id.clone(), tx);
+        let _pending = PendingRequest {
+            peer: self.clone(),
+            id: id.clone(),
+        };
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -222,7 +235,11 @@ impl StdioAcpPeer {
             "params": params
         });
         if let Err(err) = self.tx.send(request) {
-            let _ = self.pending.lock().await.remove(&id);
+            let _ = self
+                .pending
+                .lock()
+                .expect("ACP pending requests lock")
+                .remove(&id);
             anyhow::bail!("failed to send ACP client request: {err}");
         }
         match rx.await {
@@ -289,5 +306,43 @@ mod tests {
         let mut config = roder_config::Config::default();
         config.provider = Some(" CODEX /configured-model".into());
         assert!(uses_codex(&acp_config(config)));
+    }
+}
+
+/// Dropping a cancelled permission future must also release its response slot.
+struct PendingRequest {
+    peer: StdioAcpPeer,
+    id: String,
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        self.peer
+            .pending
+            .lock()
+            .expect("ACP pending requests lock")
+            .remove(&self.id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_permission_request_releases_pending_response() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let peer = StdioAcpPeer::new(tx);
+        let task_peer = peer.clone();
+        let task = tokio::spawn(async move {
+            task_peer
+                .request_client("session/request_permission", serde_json::json!({}))
+                .await
+        });
+        rx.recv().await.unwrap();
+        assert_eq!(peer.pending.lock().unwrap().len(), 1);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(peer.pending.lock().unwrap().is_empty());
     }
 }

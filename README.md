@@ -494,19 +494,36 @@ The response is `{ "resolved": true }` when the request was pending. Roder then 
 
 `roder acp` starts a stdio Agent Client Protocol endpoint backed by the Roder
 app-server runtime. The adapter targets the latest stable ACP v1 wire schema
-from `agent-client-protocol-schema` 0.13.6.
+from `agent-client-protocol-schema` 0.13.8.
 
 Implemented agent methods:
 
 - `initialize`
 - `session/new`
+- `session/load`
+- `session/resume`
+- `session/close`
 - `session/prompt`
 - `session/cancel`
 
-Roder advertises only baseline session support. `session/load`,
-`session/list`, `session/delete`, `session/resume`, `session/close`,
-`additionalDirectories`, and MCP-over-ACP are not advertised; calls to
-unsupported optional methods return JSON-RPC method-not-found.
+Roder advertises `loadSession` and `sessionCapabilities.resume`/`close`.
+ACP session IDs are native thread IDs. With the CLI's persistent thread store,
+`session/load` restores a conversation across process restarts and replays its
+messages, reasoning, and tools before returning. `session/resume` restores the
+same context without replay. Both require the original working directory and
+configured provider credentials.
+
+`session/close` cancels and drains ongoing work, pauses active goals, releases
+live caches and runner resources, and detaches the ACP session. It preserves
+the conversation for a later load or resume. Cleanup failures return an error
+and retain the session for retry. Recovery and close are serialized against
+prompt admission; closing also cancels unanswered permission requests.
+
+`session/list`, `session/delete`, `additionalDirectories`, model controls, and
+MCP-over-ACP remain unadvertised. Unsupported methods return JSON-RPC
+method-not-found; unsupported roots or MCP servers are rejected as invalid params.
+See [ACP session recovery](docs/app-server/api.md#acp-session-recovery) for
+wire examples and errors.
 
 Example initialize request:
 

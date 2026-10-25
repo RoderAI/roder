@@ -3,9 +3,9 @@
 //! The app-server API is Roder-specific. This module exposes a small ACP v1
 //! facade by translating ACP sessions and prompt turns onto the public
 //! app-server JSON-RPC methods. ACP cancellation is represented by the final
-//! `session/prompt` `stopReason: "cancelled"`; Roder-specific lifecycle,
-//! recovery, drain, and ownership diagnostics stay on the native app-server
-//! protocol because ACP v1 does not advertise a corresponding capability.
+//! `session/prompt` `stopReason: "cancelled"`. Load and resume restore native
+//! threads; close drains work and unloads live resources without deleting history.
+//! Detailed ownership and recovery diagnostics remain on the native protocol.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,6 +24,8 @@ use tokio::sync::Mutex;
 use crate::client::{AppClient, AppNotificationReceiver};
 
 mod auth;
+mod lifecycle;
+mod prompt;
 mod translation;
 
 pub use auth::AcpAuthentication;
@@ -37,11 +39,13 @@ pub struct AcpAdapter<C> {
     sessions: Arc<Mutex<HashMap<String, AcpSession>>>,
     authentication: Option<Arc<dyn AcpAuthentication>>,
     agent_info: acp::Implementation,
+    admission: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone)]
 struct AcpSession {
     thread_id: String,
+    active: Arc<Mutex<()>>,
 }
 
 #[async_trait]
@@ -63,6 +67,7 @@ where
             client,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             authentication: None,
+            admission: Arc::new(Mutex::new(())),
             agent_info: acp::Implementation::new("roder", env!("CARGO_PKG_VERSION")).title("Roder"),
         }
     }
@@ -99,6 +104,12 @@ where
             "initialize" => self.handle_initialize(request.params).await,
             "authenticate" => self.handle_authenticate(request.params).await,
             "session/new" => self.handle_session_new(request.params).await,
+            "session/load" => self.handle_session_reopen(request.params, peer, true).await,
+            "session/resume" => {
+                self.handle_session_reopen(request.params, peer, false)
+                    .await
+            }
+            "session/close" => self.handle_session_close(request.params).await,
             "session/prompt" => self.handle_session_prompt(request.params, peer).await,
             _ => Err(method_not_found(request.method)),
         };
@@ -120,7 +131,15 @@ where
             acp::ProtocolVersion::LATEST
         };
         let response = acp::InitializeResponse::new(protocol_version)
-            .agent_capabilities(acp::AgentCapabilities::new())
+            .agent_capabilities(
+                acp::AgentCapabilities::new()
+                    .load_session(true)
+                    .session_capabilities(
+                        acp::SessionCapabilities::new()
+                            .resume(acp::SessionResumeCapabilities::new())
+                            .close(acp::SessionCloseCapabilities::new()),
+                    ),
+            )
             .auth_methods(
                 self.authentication
                     .as_ref()
@@ -134,6 +153,7 @@ where
         &self,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, JsonRpcError> {
+        let _admission = self.admission.lock().await;
         let request: acp::NewSessionRequest = decode_params(params)?;
         if !request.cwd.is_absolute() {
             return Err(invalid_params("session/new cwd must be absolute"));
@@ -175,72 +195,10 @@ where
             thread.thread.id.clone(),
             AcpSession {
                 thread_id: thread.thread.id.clone(),
+                active: Arc::new(Mutex::new(())),
             },
         );
         serde_json::to_value(acp::NewSessionResponse::new(thread.thread.id)).map_err(internal_error)
-    }
-
-    async fn handle_session_prompt<P>(
-        &self,
-        params: Option<serde_json::Value>,
-        peer: &P,
-    ) -> Result<serde_json::Value, JsonRpcError>
-    where
-        P: AcpClientPeer,
-    {
-        let request: acp::PromptRequest = decode_params(params)?;
-        let session_id = request.session_id.to_string();
-        let session = self
-            .sessions
-            .lock()
-            .await
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| invalid_params(format!("unknown ACP session {session_id:?}")))?;
-        let input = prompt_blocks_to_turn_input(request.prompt)?;
-        let mut notifications = self.client.subscribe_notifications();
-        let started: TurnStartResult = self
-            .call(
-                "turn/start",
-                serde_json::to_value(TurnStartParams {
-                    thread_id: session.thread_id.clone(),
-                    input,
-                    prompt: None,
-                    model_provider: None,
-                    model: None,
-                    reasoning: None,
-                    service_tier: None,
-                    developer_context: None,
-                    mcp_auth_token: None,
-                    policy_mode: None,
-                    task_ledger_required: false,
-                })
-                .map_err(internal_error)?,
-            )
-            .await?;
-
-        loop {
-            let notification = notifications.recv().await.map_err(internal_error)?;
-            if !notification_matches_turn(&notification, &session.thread_id, &started.turn_id) {
-                continue;
-            }
-            if let Some(update) = acp_session_update(&session_id, &notification) {
-                peer.send_notification(update)
-                    .await
-                    .map_err(internal_error)?;
-                continue;
-            }
-            if notification.method == "thread/approvalRequested" {
-                self.handle_approval_request(&session_id, &notification, peer)
-                    .await?;
-                continue;
-            }
-            if notification.method == "turn/completed" {
-                let stop_reason = turn_completed_stop_reason(&notification);
-                return serde_json::to_value(acp::PromptResponse::new(stop_reason))
-                    .map_err(internal_error);
-            }
-        }
     }
 
     async fn handle_session_cancel(
@@ -265,70 +223,6 @@ where
         // ACP has no lifecycle/recovery session update capability. The active
         // session/prompt call observes the native terminal turn event and
         // returns its standard `stopReason: "cancelled"` response instead.
-        Ok(())
-    }
-
-    async fn handle_approval_request<P>(
-        &self,
-        session_id: &str,
-        notification: &JsonRpcNotification,
-        peer: &P,
-    ) -> Result<(), JsonRpcError>
-    where
-        P: AcpClientPeer,
-    {
-        notification_string(notification, "threadId")?;
-        let approval_id = notification_string(notification, "approvalId")?;
-        let tool_id = notification_string(notification, "toolId")?;
-        let tool_name = notification_string(notification, "toolName")?;
-        let reason = notification
-            .params
-            .get("reason")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("Roder needs permission to run this tool.");
-        let content = vec![acp::ToolCallContent::from(reason.to_string())];
-        let tool_call = acp::ToolCallUpdate::new(
-            tool_id,
-            acp::ToolCallUpdateFields::new()
-                .title(tool_name.clone())
-                .kind(tool_kind_for_name(&tool_name))
-                .status(acp::ToolCallStatus::Pending)
-                .content(content),
-        );
-        let response = peer
-            .request_permission(acp::RequestPermissionRequest::new(
-                session_id.to_string(),
-                tool_call,
-                vec![
-                    acp::PermissionOption::new(
-                        "allow_once",
-                        "Allow once",
-                        acp::PermissionOptionKind::AllowOnce,
-                    ),
-                    acp::PermissionOption::new(
-                        "reject_once",
-                        "Reject once",
-                        acp::PermissionOptionKind::RejectOnce,
-                    ),
-                ],
-            ))
-            .await
-            .map_err(internal_error)?;
-        let approved = matches!(
-            response.outcome,
-            acp::RequestPermissionOutcome::Selected(ref selected)
-                if selected.option_id.to_string() == "allow_once"
-        );
-        let _: serde_json::Value = self
-            .call(
-                "thread/resolve_approval",
-                serde_json::to_value(ThreadResolveApprovalParams {
-                    approval_id,
-                    approved,
-                })
-                .map_err(internal_error)?,
-            )
-            .await?;
         Ok(())
     }
 

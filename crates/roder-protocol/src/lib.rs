@@ -718,6 +718,13 @@ pub struct ThreadReadResult {
     pub lifecycle: TurnLifecycleSnapshot,
 }
 
+/// Release live thread resources without deleting or archiving its conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadUnloadParams {
+    pub thread_id: ThreadId,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadArchiveParams {
