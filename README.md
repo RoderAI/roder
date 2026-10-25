@@ -492,6 +492,8 @@ The response is `{ "resolved": true }` when the request was pending. Roder then 
 
 ## Agent Client Protocol
 
+For OpenClaw setup, see [Run Roder through OpenClaw ACP](docs/openclaw-acp.md).
+
 `roder acp` starts a stdio Agent Client Protocol endpoint backed by the Roder
 app-server runtime. The adapter targets the latest stable ACP v1 wire schema
 from `agent-client-protocol-schema` 0.13.8.
@@ -499,6 +501,7 @@ from `agent-client-protocol-schema` 0.13.8.
 Implemented agent methods:
 
 - `initialize`
+- `authenticate` (when the selected provider supplies a login flow)
 - `session/new`
 - `session/load`
 - `session/resume`

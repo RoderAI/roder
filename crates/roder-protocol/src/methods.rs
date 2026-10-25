@@ -725,7 +725,6 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         ["thread/goal/updated"]
     ),
     method_spec!("thread/list", "thread", ReadOnly, Idempotent),
-    method_spec!("thread/unload", "thread", LocalState, NonIdempotent),
     method_spec!("thread/read", "thread", ReadOnly, Idempotent),
     method_spec!("thread/remove_fork", "thread", LocalState, NonIdempotent),
     method_spec!(
@@ -752,6 +751,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     method_spec!("thread/set_ultra_mode", "thread", LocalState, NonIdempotent),
     method_spec!("thread/start", "thread", LocalState, NonIdempotent),
     method_spec!("thread/state", "thread", ReadOnly, Idempotent),
+    method_spec!("thread/unload", "thread", LocalState, NonIdempotent),
     method_spec!("tools/bind_executor", "tools", LocalState, NonIdempotent),
     method_spec!("tools/call", "tools", LocalState, NonIdempotent),
     method_spec!("tools/execution_read", "tools", ReadOnly, Idempotent),

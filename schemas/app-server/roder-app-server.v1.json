@@ -2297,6 +2297,15 @@
       "sideEffect": "readOnly"
     },
     {
+      "method": "thread/unload",
+      "paramsType": "ThreadUnloadParams",
+      "resultType": "ThreadUnloadResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "tools/bind_executor",
       "paramsType": "ToolsBindExecutorParams",
       "resultType": "ToolsBindExecutorResult",

@@ -443,3 +443,37 @@ async fn lifecycle_close_does_not_wait_for_an_unanswered_permission_request() {
     assert_eq!(runtime.active_turn_count().await, 0);
     assert!(!root.path().join("denied.txt").exists());
 }
+
+#[tokio::test]
+async fn lifecycle_corrupt_history_reports_server_failure_instead_of_requesting_login() {
+    let root = tempfile::tempdir().unwrap();
+    let adapter = durable_adapter(root.path(), Arc::new(Mutex::new(Vec::new())));
+    let peer = RecordingPeer::default();
+    let id = rpc(
+        &adapter,
+        &peer,
+        "session/new",
+        serde_json::json!({"cwd":root.path(),"mcpServers":[]}),
+    )
+    .await
+    .result
+    .unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    drop(adapter);
+    std::fs::write(
+        root.path().join("threads").join(&id).join("metadata.json"),
+        "invalid metadata",
+    )
+    .unwrap();
+    let adapter = durable_adapter(root.path(), Arc::new(Mutex::new(Vec::new())));
+    assert_eq!(
+        rpc(&adapter, &peer, "session/load", reopen(&id, root.path()))
+            .await
+            .error
+            .unwrap()
+            .code,
+        -32603
+    );
+}

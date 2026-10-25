@@ -327,7 +327,7 @@ impl Drop for PendingRequest {
 }
 
 #[cfg(test)]
-mod tests {
+mod peer_tests {
     use super::*;
 
     #[tokio::test]

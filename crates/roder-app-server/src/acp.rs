@@ -259,7 +259,11 @@ where
                 params: Some(params),
             })
             .await;
-        if let Some(error) = response.error {
+        if let Some(mut error) = response.error {
+            // Native server failures use -32000; ACP reserves it for auth-required.
+            if error.code == -32000 {
+                error.code = -32603;
+            }
             return Err(error);
         }
         let result = response
@@ -378,7 +382,7 @@ fn invalid_params(err: impl std::fmt::Display) -> JsonRpcError {
 fn internal_error(err: impl std::fmt::Display) -> JsonRpcError {
     let details = err.to_string();
     JsonRpcError {
-        code: -32000,
+        code: -32603,
         message: details.clone(),
         data: Some(serde_json::json!({ "details": details })),
     }
