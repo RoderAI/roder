@@ -1,6 +1,6 @@
 [tools]
 python = "3.12"
-rust = "1.95.0"
+rust = "1.99.1"
 uv = "0.11.7"
 sccache = "0.15.0"
 
@@ -31,21 +31,18 @@ SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
 # silently starts a replacement configured from whatever env it inherits.
 SCCACHE_IDLE_TIMEOUT = "0"
 
-# Homebrew lld (user-installed, macOS); mise enter ensures these bins are on
-# PATH. Missing entries are ignored, so this is inert on Linux, where lld comes
-# from the system package manager instead.
+# Homebrew lld (user-installed, macOS). Missing entries are ignored, so this is
+# inert on Linux, where lld comes from the system package manager instead.
 _.path = [
     "{{env.HOME}}/opt/homebrew/opt/lld/bin",
     "{{env.HOME}}/opt/homebrew/bin",
 ]
-# Used by local scripts; cargo uses lld from PATH via .cargo/config.toml (-fuse-ld=lld).
+# Used by local scripts. Cargo uses lld from PATH via .cargo/config.toml.
 LLD_PREFIX = "{{env.HOME}}/opt/homebrew/opt/lld"
 
 [hooks]
-# Ensure a linker is present when entering the project directory. .cargo/config.toml
-# links Linux builds through `clang -fuse-ld=lld`, so a missing lld fails every
-# build with "invalid linker name in argument '-fuse-ld=lld'". Installing it needs
-# root on Linux, so name the command instead of failing the hook.
+# Linux builds link through `clang -fuse-ld=lld`. Installing lld needs root on
+# Linux, so the hook prints the command instead of failing.
 enter = "sh scripts/ensure-lld.sh"
 
 [tasks.build]

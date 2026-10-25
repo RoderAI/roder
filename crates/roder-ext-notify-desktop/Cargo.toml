@@ -28,7 +28,7 @@ desktop = ["dep:notify-rust"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-notify-rust = { version = "4.11.7", optional = true }
+notify-rust = { version = "4.18.2", optional = true }
 roder-api.workspace = true
 semver.workspace = true
 

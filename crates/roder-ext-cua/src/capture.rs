@@ -52,7 +52,10 @@ pub(crate) fn take_capture(observation: &mut Value, session: &str) -> anyhow::Re
         bytes: 64 * 1024 * 1024,
     });
     let mut reader = decoder.read_info()?;
-    let size = reader.output_buffer_size();
+    // png 0.18 returns None when the decoded size overflows or exceeds decoder limits.
+    let Some(size) = reader.output_buffer_size() else {
+        anyhow::bail!("Cua decoded PNG exceeds 64 MiB");
+    };
     anyhow::ensure!(size <= 64 * 1024 * 1024, "Cua decoded PNG exceeds 64 MiB");
     let mut decoded = vec![0; size];
     reader.next_frame(&mut decoded)?;

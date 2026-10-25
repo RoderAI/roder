@@ -104,12 +104,12 @@ jobs:
         shell: bash
         run: |
           if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "1.95.0"
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "1.99.1"
             export PATH="${HOME}/.cargo/bin:${PATH}"
             echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
           fi
-          rustup toolchain install "1.95.0" --profile minimal
-          rustup default "1.95.0"
+          rustup toolchain install "1.99.1" --profile minimal
+          rustup default "1.99.1"
           rustup target add "${{ matrix.target }}"
 
       - name: Build Roder CLI

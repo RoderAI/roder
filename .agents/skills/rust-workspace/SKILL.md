@@ -1,17 +1,17 @@
 ---
 name: rust-workspace
-description: Runs and extends the Gode/Roder Rust workspace using mise, lld, Cargo incremental builds, and Makefile test targets. Use when adding crates or dependencies, running Rust tests, building roder-cli, or configuring local Rust tooling in this repo.
+description: Runs and extends the Gode/Roder Rust workspace using mise, lld, sccache, and Makefile test targets. Use when adding crates or dependencies, running Rust tests, building roder-cli, or configuring local Rust tooling in this repo.
 ---
 
 # Rust workspace (Gode / Roder)
 
 ## Environment
 
-Work from the repo root with **mise** active (`rust 1.95.0`, `uv`, `python`).
+Work from the repo root with **mise** active (`rust 1.99.1`, `uv`, `python`).
 
 ```sh
-cd /path/to/gode   # mise enter hook installs brew lld if missing
-mise run rust:setup   # first time: lld and nextest
+cd /path/to/gode   # mise enter hook warns if Linux lld is missing
+mise run rust:setup   # first time: lld check and nextest
 ```
 
 **First-time setup:** `mise run rust:setup` (or `make dev-deps`).
@@ -20,11 +20,15 @@ Local build acceleration (already configured; do not duplicate in per-crate file
 
 | Piece | Location |
 |-------|----------|
-| `lld` (macOS) | mise `PATH` + `.cargo/config.toml` → `clang` + `-fuse-ld=lld` |
-| Dev profiles | root `Cargo.toml` → `debug = 0`, `split-debuginfo = "unpacked"` |
-| Incremental | `.cargo/config.toml` → `incremental = true` |
+| `lld` (Linux) | `.cargo/config.toml` → `clang` + `-fuse-ld=lld` |
+| macOS linker | system `ld-prime` |
+| Dev profiles | root `Cargo.toml` → `debug = 0`, `panic = "abort"`, `split-debuginfo = "unpacked"` |
+| Incremental | off (`.cargo/config.toml` and `.mise.toml`) because the shared target dir would grow one incremental cache per worktree |
+| `sccache` | `.mise.toml` `RUSTC_WRAPPER`, shared across worktrees; do not also turn incremental back on |
 
-Do not enable `sccache` by default for local dev: it can defeat incremental rebuild behavior and make edit/build loops slower. Use `RUSTC_WRAPPER=sccache ...` only for deliberate clean/shared-cache builds.
+Measured 2026-10-24 on x86_64 Linux, `cargo build -p roder --bin roder -j 4`, sccache off, incremental off. mold 3.0.0 was faster on the old 1.95 objects (warm link 0.70s vs lld 1.30s) but slower and larger after the 1.99 upgrade (2.41s / 331MB vs lld 1.48s / 239MB). Keep lld. The edit loop is still dominated by rustc, not the linker.
+
+Do not enable nightly-only compile speedups in committed config (`-Zthreads`, Cranelift). They require nightly and Cranelift makes the dev binary slower. The experimental `wild` linker is less compatible than lld; leave it out.
 
 Optional roadmap experiments: `CARGO_TARGET_DIR=.target-roadmap-local` (gitignored).
 

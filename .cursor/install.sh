@@ -10,12 +10,12 @@ cd "$ROOT"
 ensure_rust() {
   if ! command -v rustc >/dev/null 2>&1; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
+      | sh -s -- -y --default-toolchain 1.99.1 --profile minimal
     # shellcheck disable=SC1091
     source "${HOME}/.cargo/env"
   fi
-  rustup toolchain install 1.95.0 --profile minimal
-  rustup default 1.95.0
+  rustup toolchain install 1.99.1 --profile minimal
+  rustup default 1.99.1
 }
 
 ensure_nextest() {
@@ -33,7 +33,7 @@ ensure_uv() {
   export PATH="${HOME}/.local/bin:${PATH}"
 }
 
-echo "==> Ensuring Rust 1.95.0"
+echo "==> Ensuring Rust 1.99.1"
 ensure_rust
 rustc --version
 cargo --version
