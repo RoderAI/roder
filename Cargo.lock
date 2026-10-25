@@ -3682,7 +3682,7 @@ dependencies = [
 
 [[package]]
 name = "roder-automations"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3699,7 +3699,7 @@ dependencies = [
 
 [[package]]
 name = "roder-code-index"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "ignore",
@@ -4304,7 +4304,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-memory"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
