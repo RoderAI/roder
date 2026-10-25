@@ -50,4 +50,3 @@ Roder's current ACP endpoint accepts text/resource-link prompts and bridges tool
 permissions. It does not advertise model controls, session list/delete,
 additional workspace roots, or MCP-over-ACP. Select models in Roder configuration;
 leave OpenClaw's optional MCP-server injection disabled for this agent.
-
