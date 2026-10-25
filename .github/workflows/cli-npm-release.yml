@@ -1,0 +1,171 @@
+name: Roder CLI npm
+
+on:
+  pull_request:
+    paths:
+      - 'crates/roder-cli/npm/**'
+      - 'scripts/release_cli_npm.py'
+      - 'scripts/test_release_cli_npm.py'
+      - '.github/workflows/cli-npm-release.yml'
+      - '.github/workflows/release.yml'
+  workflow_call:
+    inputs:
+      release_sha:
+        required: true
+        type: string
+      artifact_run_id:
+        default: ''
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact release commit containing npm packaging
+        required: true
+        type: string
+      artifact_run_id:
+        description: Successful Release run that built this commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test packaging and launcher without registry writes
+        run: python3 scripts/test_release_cli_npm.py
+
+  pack:
+    needs: test
+    if: inputs.release_sha != '' && github.ref == 'refs/heads/master' && github.repository == 'RoderAI/roder'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: roder-*-release
+          path: ${{ runner.temp }}/roder-artifacts
+          merge-multiple: true
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Package checksummed binaries from the exact source commit
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          python3 scripts/release_cli_npm.py pack \
+            --commit "$RELEASE_SHA" \
+            --artifacts "$RUNNER_TEMP/roder-artifacts" \
+            --output "$RUNNER_TEMP/roder-npm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roder-cli-npm
+          path: ${{ runner.temp }}/roder-npm/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  verify:
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: roder-cli-npm
+          path: ${{ runner.temp }}/roder-npm
+      - name: Install without scripts and verify the native binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global --ignore-scripts --offline --no-audit --no-fund \
+            --prefix "$RUNNER_TEMP/roder-npm-install" "$RUNNER_TEMP"/roder-npm/*.tgz
+          binary="$RUNNER_TEMP/roder-npm-install/bin/roder"
+          version="$(node -p "require('./crates/roder-cli/npm/package.json').version")"
+          test "$("$binary" --version)" = "roder $version"
+          test "$("$binary" -V)" = "roder $version"
+          "$binary" exec --help
+          if [ "$RUNNER_OS" = macOS ]; then
+            codesign --verify --strict -R=notarized --check-notarization \
+              "$RUNNER_TEMP/roder-npm-install/lib/node_modules/@roderai/roder/bin/darwin-arm64/roder"
+          fi
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    concurrency:
+      group: roder-npm-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm install --global npm@11.20.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: roder-cli-npm
+          path: ${{ runner.temp }}/roder-npm
+      - name: Publish with npm trusted publishing
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: python3 scripts/release_cli_npm.py publish --tarball "$RUNNER_TEMP"/roder-npm/*.tgz
+      - name: Verify public registry installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./crates/roder-cli/npm/package.json').version")"
+          npm install --global --ignore-scripts --no-audit --no-fund \
+            --registry=https://registry.npmjs.org \
+            --prefix "$RUNNER_TEMP/roder-npm-public" "@roderai/roder@$version"
+          test "$("$RUNNER_TEMP/roder-npm-public/bin/roder" --version)" = "roder $version"

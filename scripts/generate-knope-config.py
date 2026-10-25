@@ -148,6 +148,8 @@ def render() -> str:
         lines.append(f'[packages."{name}"]')
         lines.append("versioned_files = [")
         lines.append(f'    "{manifest.as_posix()}",')
+        if name == "roder":
+            lines.append('    "crates/roder-cli/npm/package.json",')
         lines.append('    "Cargo.lock",')
         dependency = workspace_dependencies.get(name)
         if isinstance(dependency, dict) and "path" in dependency:
