@@ -25,6 +25,19 @@ The first package publication and trusted-publisher setup require an npm account
 
 npm validates the calling workflow for reusable workflows, so automatic publication must trust `release.yml`, rather than only the child workflow that contains `npm publish`. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
+With an authenticated current npm CLI, configure those publishers directly:
+
+```sh
+npm trust github @roderai/roder --repository RoderAI/roder \
+  --file release.yml --allow-publish --yes
+npm trust github @roderai/roder --repository RoderAI/roder \
+  --file cli-npm-release.yml --allow-publish --yes
+npm trust list @roderai/roder
+```
+
+An integrity-checked no-op on an already-published version does not exercise OIDC publication. Validate the new publisher with the next versioned release before its expiry window closes.
+
+
 ## Local checks
 
 ```sh
