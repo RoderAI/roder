@@ -3543,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.3.20"
+version = "0.3.21"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3618,7 +3618,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.6.8"
+version = "0.6.9"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5076,7 +5076,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "roder-api",

@@ -1,3 +1,22 @@
+## 0.6.9 (2026-10-25)
+
+### Features
+
+#### Support Codex browser authentication through ACP
+
+Fresh ACP installations use Codex instead of mock inference. ACP clients can
+request browser sign-in through `authenticate` when Codex is selected.
+Configured providers and models remain in use.
+
+ACP initialization reports the CLI release version.
+
+#### Restore and close persistent ACP sessions
+
+Support ACP load with history replay, resume without replay, and close with turn
+drain and live resource release. Preserve persisted conversations and validate
+their workspace when reconnecting. Add native thread/unload and cancel pending
+permission callbacks during close.
+
 ## 0.6.8 (2026-10-25)
 
 ### Fixes
