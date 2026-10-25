@@ -1018,6 +1018,9 @@ pub struct TurnDeadlineExceeded {
 pub struct TurnInterrupted {
     pub thread_id: ThreadId,
     pub turn_id: TurnId,
+    /// Observed turn-total usage before interruption, if the provider reported any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
 }

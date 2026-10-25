@@ -1489,6 +1489,12 @@ Behavior:
 - Falls back to persisted thread metadata and then in-memory protocol threads.
 - Includes aggregate thread `usage` and per-turn `usage` when provider usage
   was reported; `cache_hit_rate` is `cached_prompt_tokens / prompt_tokens`.
+- Thread usage counts that thread's own work, not its descendants. Cumulative
+  metadata includes `accounted_turn_ids`, the durable set of terminal turns
+  already included in the counters; clients must not sum inherited fork history.
+- Completed, failed, and interrupted turns retain observed usage. Active-turn
+  native compaction contributes to the terminal turn total as well as thread
+  metadata. Provider usage that was never reported remains unavailable.
 - `lifecycle.records` contains the latest valid durable lifecycle record for
   each turn. A record has `threadId`, `turnId`, `state`, `cleanup`, `ownership`,
   optional `reason`, and RFC 3339 `timestamp`.
@@ -5708,13 +5714,21 @@ Inference routing decisions are emitted as completed `routingDecision` items and
 remain visible when a completed thread is read or resumed.
 
 `turn/completed` carries `threadId` and a terminal `turn` whose `status` is
-`completed`, `failed`, or `interrupted`. Completed and failed turns include
+`completed`, `failed`, or `interrupted`. All three terminal statuses include
 `turn.usage` when provider usage was reported, including `cached_prompt_tokens`,
 `cache_creation_prompt_tokens` (both subsets of `prompt_tokens`), and
 `cache_hit_rate`. Completed turns include `turn.finishReason`: the terminal
 inference step's stop reason normalized to `stop`, `length`, `toolUse`,
 `contentFilter`, or `refusal`; unknown provider stop reasons pass through
 unchanged.
+
+Usage fields are snake_case within the camelCase turn envelope. Each inference
+stream reports cumulative snapshots; only its final observed snapshot is added
+to the turn total. Separate inference rounds are added together. Thread usage
+metadata is finalized before the terminal notification, including when the turn
+is interrupted during persistence; durable turn markers prevent duplicate
+charges when persistence is retried. An interrupted notification can therefore
+carry nonzero usage without implying the requested work completed.
 
 `thread/status/changed`:
 

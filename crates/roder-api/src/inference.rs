@@ -684,6 +684,8 @@ pub enum InferenceEvent {
     HostedToolCallStarted(HostedToolCallStarted),
     HostedToolCallCompleted(HostedToolCallCompleted),
     Compaction(CompactionProgress),
+    /// Cumulative usage for this inference stream. Later snapshots replace
+    /// earlier ones; consumers add final snapshots across separate streams.
     Usage(TokenUsage),
     Completed(CompletionMetadata),
     Failed(InferenceFailure),

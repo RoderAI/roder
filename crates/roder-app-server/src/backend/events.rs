@@ -13,6 +13,9 @@ use std::sync::Arc;
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
+#[cfg(test)]
+mod interrupted_tests;
+
 pub(super) async fn emit_event(
     event: BackendEvent,
     thread_id: &str,
@@ -169,6 +172,7 @@ pub(super) async fn emit_event(
                 "interrupted" => RoderEvent::TurnInterrupted(TurnInterrupted {
                     thread_id: thread_id.into(),
                     turn_id: finished,
+                    usage: usage.take(),
                     timestamp: now,
                 }),
                 "completed" => RoderEvent::TurnCompleted(TurnCompleted {

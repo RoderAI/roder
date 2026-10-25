@@ -99,6 +99,7 @@ fn extension_authors_can_project_turns_from_raw_events() {
             RoderEvent::TurnInterrupted(TurnInterrupted {
                 thread_id: thread_id.clone(),
                 turn_id: second_turn.clone(),
+                usage: None,
                 timestamp: interrupted_at,
             }),
         ),

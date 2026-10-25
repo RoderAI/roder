@@ -36,6 +36,11 @@ use crate::trace::{
 };
 use crate::transcript::{BoundedTranscript, truncate_text};
 
+#[path = "dispatcher_usage.rs"]
+mod usage;
+
+use usage::{CancellationTraceGuard, ChildRunContext, DispatchUsage};
+
 tokio::task_local! {
     static DISPATCH_DEPTH: usize;
 }
@@ -349,25 +354,50 @@ impl InProcessDispatcher {
         let timeout_summary_request = request.clone();
         let timeout_trace_ids = trace_ids.clone();
         let timeout_parent = parent.clone();
-        let timeout_model = request.model.clone();
+        let timeout_model = request
+            .model
+            .clone()
+            .or_else(|| definition.model.clone())
+            .or_else(|| Some(self.config.default_model.clone()));
+        let usage = DispatchUsage::default();
+        let mut cancellation_guard = CancellationTraceGuard::new(
+            trace_sink.clone(),
+            trace_summary(TraceSummaryArgs {
+                trace_ids: &trace_ids,
+                parent: &parent,
+                request: &request,
+                default_role: self.config.default_agent.as_str(),
+                model: timeout_model.clone(),
+                status: SubagentTraceStatus::Cancelled,
+                started_at,
+                usage: None,
+                latest_activity: Some("cancelled".to_string()),
+                error_summary: Some("subagent cancelled".to_string()),
+                exit_reason: Some(SubagentExitReason::Cancelled),
+            }),
+            usage.clone(),
+            started_at,
+        );
         let run = DISPATCH_DEPTH.scope(depth + 1, async {
             self.run_child_loop(
-                parent_thread_id,
-                parent_turn_id,
                 request,
                 trace_sink.clone(),
-                trace_ids,
-                started_at,
                 handles,
+                ChildRunContext {
+                    parent,
+                    trace_ids,
+                    started_at,
+                    usage: usage.clone(),
+                },
             )
             .await
         });
         let result = tokio::time::timeout(Duration::from_secs(timeout), run).await;
         drop(lane_guard);
         drop(permit);
-        match result {
-            Ok(result) => result,
-            Err(_) => {
+        let result = match result {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(err)) => {
                 let summary = trace_summary(TraceSummaryArgs {
                     trace_ids: &timeout_trace_ids,
                     parent: &timeout_parent,
@@ -376,7 +406,25 @@ impl InProcessDispatcher {
                     model: timeout_model.clone(),
                     status: SubagentTraceStatus::Failed,
                     started_at,
-                    usage: None,
+                    usage: usage.snapshot(),
+                    latest_activity: Some("failed".to_string()),
+                    error_summary: Some(err.to_string()),
+                    exit_reason: Some(SubagentExitReason::Failed),
+                });
+                emit_trace_failed(trace_sink.as_deref(), summary, err.to_string()).await;
+                Err(err)
+            }
+            Err(_) => {
+                let usage = usage.snapshot();
+                let summary = trace_summary(TraceSummaryArgs {
+                    trace_ids: &timeout_trace_ids,
+                    parent: &timeout_parent,
+                    request: &timeout_summary_request,
+                    default_role: self.config.default_agent.as_str(),
+                    model: timeout_model.clone(),
+                    status: SubagentTraceStatus::Failed,
+                    started_at,
+                    usage: usage.clone(),
                     latest_activity: Some("timed out".to_string()),
                     error_summary: Some("subagent timed out".to_string()),
                     exit_reason: Some(SubagentExitReason::Timeout),
@@ -393,7 +441,7 @@ impl InProcessDispatcher {
                     agent_type: "unknown".to_string(),
                     model: timeout_model,
                     final_message: "subagent timed out".to_string(),
-                    usage: None,
+                    usage,
                     exit_reason: SubagentExitReason::Timeout,
                     transcript: None,
                     metadata: serde_json::json!({
@@ -403,19 +451,26 @@ impl InProcessDispatcher {
                     }),
                 })
             }
-        }
+        };
+        cancellation_guard.disarm();
+        result
     }
 
     async fn run_child_loop(
         &self,
-        parent_thread_id: ThreadId,
-        parent_turn_id: TurnId,
         request: SubagentRequest,
         trace_sink: Option<Arc<dyn SubagentTraceSink>>,
-        trace_ids: TraceIds,
-        started_at: Instant,
         handles: ToolExecutionHandles,
+        context: ChildRunContext,
     ) -> anyhow::Result<SubagentResult> {
+        let ChildRunContext {
+            parent,
+            trace_ids,
+            started_at,
+            usage,
+        } = context;
+        let parent_thread_id = &parent.thread_id;
+        let parent_turn_id = &parent.turn_id;
         let agent_type = request
             .subagent_type
             .clone()
@@ -455,10 +510,6 @@ impl InProcessDispatcher {
         }
         let thread_id = trace_ids.child_thread_id.clone();
         let turn_id = trace_ids.child_turn_id.clone();
-        let parent = ParentTurnRef {
-            thread_id: parent_thread_id.clone(),
-            turn_id: parent_turn_id.clone(),
-        };
         let trace_model = Some(model.clone());
         emit_trace_status_changed(
             trace_sink.as_deref(),
@@ -477,7 +528,6 @@ impl InProcessDispatcher {
         let mut model_transcript = vec![TranscriptItem::UserMessage(UserMessage::text(
             request.prompt.clone(),
         ))];
-        let mut usage = None;
         let mut final_message = String::new();
         let mut exit_reason = SubagentExitReason::MaxTurns;
         let max_turns = definition
@@ -485,6 +535,7 @@ impl InProcessDispatcher {
             .unwrap_or(self.config.default_max_turns);
 
         for _ in 0..max_turns {
+            usage.begin_step();
             let inference_request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
@@ -573,28 +624,13 @@ impl InProcessDispatcher {
                         .await;
                         tool_calls.push(call);
                     }
-                    InferenceEvent::Usage(next_usage) => usage = Some(next_usage),
+                    InferenceEvent::Usage(next_usage) => usage.observe(next_usage),
                     InferenceEvent::Completed(CompletionMetadata { stop_reason, .. }) => {
                         if stop_reason.as_deref() != Some("tool_calls") && tool_calls.is_empty() {
                             exit_reason = SubagentExitReason::Completed;
                         }
                     }
                     InferenceEvent::Failed(failure) => {
-                        let summary = trace_summary(TraceSummaryArgs {
-                            trace_ids: &trace_ids,
-                            parent: &parent,
-                            request: &request,
-                            default_role: &agent_type,
-                            model: trace_model.clone(),
-                            status: SubagentTraceStatus::Failed,
-                            started_at,
-                            usage: usage.clone(),
-                            latest_activity: Some("inference failed".to_string()),
-                            error_summary: Some(failure.message.clone()),
-                            exit_reason: Some(SubagentExitReason::Failed),
-                        });
-                        emit_trace_failed(trace_sink.as_deref(), summary, failure.message.clone())
-                            .await;
                         bail!("subagent inference failed: {}", failure.message);
                     }
                     InferenceEvent::ReasoningDelta(delta) => {
@@ -690,6 +726,7 @@ impl InProcessDispatcher {
             final_message = "subagent reached max_turns without a final message".to_string();
         }
 
+        let usage = usage.snapshot();
         let final_status = match exit_reason {
             SubagentExitReason::Completed => SubagentTraceStatus::Completed,
             SubagentExitReason::Cancelled => SubagentTraceStatus::Cancelled,

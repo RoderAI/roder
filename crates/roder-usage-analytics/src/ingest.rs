@@ -7,6 +7,9 @@ use time::OffsetDateTime;
 use crate::model::{SessionRecord, TokenUsageRecord, ToolCallRecord, TurnRecord};
 use crate::store::AnalyticsStore;
 
+#[cfg(test)]
+mod interrupted_tests;
+
 fn ms(timestamp: OffsetDateTime) -> i64 {
     (timestamp.unix_timestamp_nanos() / 1_000_000) as i64
 }
@@ -24,9 +27,9 @@ impl<'a> AnalyticsIngestor<'a> {
     }
 
     /// Projects one envelope. Unknown events are ignored. Token usage is
-    /// recorded only from terminal turn events (`TurnCompleted`/`TurnFailed`
-    /// carry the turn-total usage), so streamed per-step usage events can
-    /// never double-count a turn.
+    /// recorded only from terminal turn events (`TurnCompleted`, `TurnFailed`,
+    /// or `TurnInterrupted` carry the turn-total usage), so streamed per-step
+    /// usage events can never double-count a turn.
     pub fn ingest_event(&self, envelope: &EventEnvelope) -> anyhow::Result<()> {
         match &envelope.event {
             RoderEvent::ThreadCreated(event) => self.store.upsert_session(&SessionRecord {
@@ -106,6 +109,25 @@ impl<'a> AnalyticsIngestor<'a> {
                             .clone()
                             .unwrap_or_else(|| "unknown".to_string()),
                     ),
+                })?;
+                self.record_usage(
+                    &event.thread_id,
+                    &event.turn_id,
+                    event.usage.as_ref(),
+                    event.timestamp,
+                )
+            }
+            RoderEvent::TurnInterrupted(event) => {
+                self.store.upsert_turn(&TurnRecord {
+                    thread_id: event.thread_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    provider: None,
+                    model: None,
+                    runtime_profile: None,
+                    started_at_ms: None,
+                    completed_at_ms: Some(ms(event.timestamp)),
+                    status: "interrupted".to_string(),
+                    error_kind: None,
                 })?;
                 self.record_usage(
                     &event.thread_id,
