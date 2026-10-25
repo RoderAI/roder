@@ -492,7 +492,9 @@ The response is `{ "resolved": true }` when the request was pending. Roder then 
 
 ## Agent Client Protocol
 
-For OpenClaw setup, see [Run Roder through OpenClaw ACP](docs/openclaw-acp.md).
+For local ACPx registration and OpenClaw setup, see
+[Use Roder with ACPx and OpenClaw](docs/openclaw-acp.md). An upstream registry
+entry is not required.
 
 `roder acp` starts a stdio Agent Client Protocol endpoint backed by the Roder
 app-server runtime. The adapter targets the latest stable ACP v1 wire schema
