@@ -26,6 +26,7 @@ mod speech;
 mod stats;
 #[cfg(test)]
 mod tui_config;
+mod version;
 mod webwright;
 mod workflows;
 mod zerolang;
@@ -104,6 +105,9 @@ use tokio::sync::mpsc;
 const RODER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
+    if version::try_print_version()? {
+        return Ok(());
+    }
     // Both rustls crypto backends are compiled in (reqwest brings aws-lc-rs,
     // sqlx and the app server bring ring), so rustls cannot pick one and any
     // TLS websocket would panic. An error only means one is already set.
