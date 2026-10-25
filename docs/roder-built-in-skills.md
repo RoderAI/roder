@@ -4,6 +4,13 @@ Roder treats built-in skills as ordinary skills with a first-party source. They 
 
 ## Registry And Paths
 
+Install project skills in `.agents/skills/<name>/SKILL.md`. Roder scans this
+location from the workspace up to the project root. User skills go in
+`~/.agents/skills/<name>/SKILL.md` and receive canonical paths such as
+`user://.agents/skills/review/SKILL.md`. Roder also reads `~/.codex/skills`.
+`RODER_CONFIG_DIR` and `RODER_DATA_DIR` select Roder's configuration directory;
+they do not relocate these skill directories.
+
 Built-ins are loaded from repo-authored assets and receive canonical paths shaped like:
 
 ```text

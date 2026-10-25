@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,10 +11,12 @@ pub mod dynamic_workflows;
 pub mod hosted;
 pub mod marketplaces;
 pub mod packages;
+mod skill_registry;
 pub mod workflow_import;
 
 pub use dynamic_workflows::{DynamicWorkflowApprovalConfig, DynamicWorkflowsConfig};
 pub use marketplaces::*;
+pub use skill_registry::build_skills_registry;
 pub use workflow_import::{WorkflowScanOptions, scan_workflow_imports};
 
 pub const RODER_CONFIG_DIR_ENV: &str = "RODER_CONFIG_DIR";
@@ -1677,148 +1678,6 @@ pub fn save_skills_config_to_path(
     let mut config = load_config_file_from_path(path)?;
     config.skills = Some(skills.clone());
     save_config_file_to_path(path, &config)
-}
-
-pub fn build_skills_registry(
-    workspace: impl AsRef<Path>,
-    skills: Option<&roder_skills::SkillsConfig>,
-) -> roder_skills::SkillRegistry {
-    let workspace = workspace.as_ref();
-    let mut options = roder_skills::SkillRegistryOptions::new(workspace);
-    options.config_rules = skills
-        .map(|skills| skills.config.clone())
-        .unwrap_or_default();
-    for (root, canonical_prefix) in local_skill_roots(workspace) {
-        options
-            .roots
-            .push(roder_skills::SkillRoot::workspace(root, canonical_prefix));
-    }
-    if let Some(home) = dirs::home_dir() {
-        options.roots.push(roder_skills::SkillRoot::user(
-            home.join(".codex/skills"),
-            "user://.codex/skills",
-        ));
-    }
-    if let Ok(store) = marketplaces::load_marketplace_store() {
-        for plugin in store.installed_plugins.iter().filter(|plugin| {
-            plugin.state == roder_api::marketplace::MarketplaceInstallState::Installed
-        }) {
-            options.roots.push(roder_skills::SkillRoot::plugin(
-                plugin.variant_key.clone(),
-                PathBuf::from(&plugin.install_path).join("skills"),
-                format!("plugin://{}/skills", plugin.variant_key),
-            ));
-        }
-    }
-    let package_paths = packages::PackagePaths::standard(Some(workspace));
-    for (package_id, root, canonical_prefix) in packages::package_skill_roots(&package_paths) {
-        options.roots.push(roder_skills::SkillRoot::plugin(
-            format!("pkg-{package_id}"),
-            root,
-            canonical_prefix,
-        ));
-    }
-    roder_skills::SkillRegistry::load(options)
-}
-
-fn local_skill_roots(workspace: &Path) -> Vec<(PathBuf, String)> {
-    let workspace = absolute_path(workspace);
-    let project_root = project_root_for_skill_scan(&workspace);
-    let mut bases = Vec::new();
-    let mut current = workspace.as_path();
-    loop {
-        bases.push(current.to_path_buf());
-        if current == project_root {
-            break;
-        }
-        let Some(parent) = current.parent() else {
-            break;
-        };
-        current = parent;
-    }
-    bases.reverse();
-
-    let mut roots = Vec::new();
-    let mut seen = HashSet::new();
-    for base in bases {
-        for relative in [
-            ".agents/skills",
-            ".claude/skills",
-            ".cursor/skills",
-            ".cursor/rules",
-        ] {
-            let root = base.join(relative);
-            if !root.exists() && base != workspace {
-                continue;
-            }
-            let key = root.clone();
-            if !seen.insert(key) {
-                continue;
-            }
-            let canonical_prefix =
-                format!("workspace://{}", relative_path_string(&project_root, &root));
-            roots.push((root, canonical_prefix));
-        }
-    }
-    roots
-}
-
-fn project_root_for_skill_scan(workspace: &Path) -> PathBuf {
-    let mut cargo_root = None;
-    for ancestor in workspace.ancestors() {
-        if ancestor.join(".git").exists() {
-            return ancestor.to_path_buf();
-        }
-        if ancestor.join("Cargo.toml").exists() {
-            cargo_root = Some(ancestor.to_path_buf());
-        }
-    }
-    cargo_root.unwrap_or_else(|| workspace.to_path_buf())
-}
-
-fn absolute_path(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    }
-}
-
-fn relative_path_string(from: &Path, to: &Path) -> String {
-    if let Ok(relative) = to.strip_prefix(from) {
-        return path_to_slash_string(relative);
-    }
-
-    let from_components: Vec<_> = from.components().collect();
-    let to_components: Vec<_> = to.components().collect();
-    let common = from_components
-        .iter()
-        .zip(to_components.iter())
-        .take_while(|(left, right)| left == right)
-        .count();
-    if common == 0 {
-        return path_to_slash_string(to);
-    }
-
-    let mut relative = PathBuf::new();
-    for _ in common..from_components.len() {
-        relative.push("..");
-    }
-    for component in &to_components[common..] {
-        relative.push(component.as_os_str());
-    }
-    path_to_slash_string(&relative)
-}
-
-fn path_to_slash_string(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    if text.is_empty() {
-        ".".to_string()
-    } else {
-        text
-    }
 }
 
 fn load_config_file() -> anyhow::Result<Config> {
