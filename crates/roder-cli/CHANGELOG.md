@@ -1,3 +1,11 @@
+## 0.3.20 (2026-10-25)
+
+### Fixes
+
+#### Support version probes without a terminal
+
+`roder --version` and `roder -V` print the installed version before loading configuration or starting the terminal interface.
+
 ## 0.3.19 (2026-10-25)
 
 ### Fixes
