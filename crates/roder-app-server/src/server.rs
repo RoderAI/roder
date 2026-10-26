@@ -1,3 +1,5 @@
+#[path = "thread_mode.rs"]
+mod thread_mode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -603,7 +605,14 @@ impl AppServer {
                 })
                 .await
             }
-            "thread/state" => self.handle_thread_state().await,
+            "thread/state" => {
+                let params =
+                    serde_json::from_value(req.params.unwrap_or_else(|| serde_json::json!({})));
+                match params {
+                    Ok(params) => self.handle_thread_state(params).await,
+                    Err(error) => Err(invalid_params(error)),
+                }
+            }
             "runtime/drain" => {
                 self.decode_and(
                     req.params,
@@ -3261,44 +3270,6 @@ impl AppServer {
         Ok(rel(&self.roadmap_workspace()?, path))
     }
 
-    async fn handle_thread_state(&self) -> Result<serde_json::Value, JsonRpcError> {
-        let cfg = self.runtime.status().await;
-        let pending =
-            self.runtime
-                .pending_plan_exit()
-                .await
-                .map(|pending| PendingPlanExitDescriptor {
-                    thread_id: pending.thread_id,
-                    turn_id: pending.turn_id,
-                    request_id: pending.request_id,
-                    target_mode: pending.target_mode,
-                    plan_summary: pending.plan_summary,
-                    next_steps: pending.next_steps,
-                    requested_at: pending.requested_at,
-                    expires_at: pending.expires_at,
-                });
-        Ok(serde_json::to_value(ThreadStateResult {
-            mode: cfg.policy_mode,
-            pending_plan_exit: pending,
-        })
-        .unwrap())
-    }
-
-    async fn handle_thread_set_mode(
-        &self,
-        params: ThreadSetModeParams,
-    ) -> Result<serde_json::Value, JsonRpcError> {
-        let cfg = self
-            .runtime
-            .set_policy_mode(params.mode, params.reason)
-            .await
-            .map_err(internal_error)?;
-        Ok(serde_json::to_value(ThreadSetModeResult {
-            mode: cfg.policy_mode,
-        })
-        .unwrap())
-    }
-
     async fn handle_thread_set_agent_swarm_mode(
         &self,
         params: ThreadSetAgentSwarmModeParams,
@@ -3357,12 +3328,17 @@ impl AppServer {
             .runtime
             .resolve_pending_plan_exit(&params.request_id, params.approved)
             .await
-            .map_err(internal_error)?
-            .is_some();
-        let cfg = self.runtime.status().await;
+            .map_err(internal_error)?;
+        let mode = if let Some(pending) = &resolved {
+            self.runtime
+                .effective_policy_mode_for_thread(&pending.thread_id)
+                .await
+        } else {
+            self.runtime.status().await.policy_mode
+        };
         Ok(serde_json::to_value(ThreadExitPlanResult {
-            resolved,
-            mode: cfg.policy_mode,
+            resolved: resolved.is_some(),
+            mode,
         })
         .unwrap())
     }

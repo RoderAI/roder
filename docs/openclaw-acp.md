@@ -64,8 +64,8 @@ roder auth login codex
 When testing a source build, use its absolute executable path for the login
 command too. Other providers use their own Roder authentication or API-key setup;
 see the [provider table](../README.md#provider-quickstart). Roder owns these credentials.
-Select the model in Roder configuration; its ACP endpoint does not expose ACPx's
-`--model` control.
+Roder configuration supplies the initial model. Clients can then select a model
+through ACP's `model` config option using its advertised `provider/model` value.
 
 If the gateway uses a different `HOME`, `RODER_CONFIG_DIR` or `RODER_DATA_DIR`,
 ensure it sees the intended configuration, credentials and persistent data.
@@ -191,7 +191,7 @@ When interactive approval is unavailable, requests may be denied. The plugin's
 permission request forwarded to ACPx. Choose that policy deliberately for trusted
 unattended work. These are plugin-wide settings, not per-agent overrides.
 
-Roder supports text/resource-link prompts, streamed output, tool permissions,
+Roder supports text, image and resource-link prompts, streamed output, tool permissions,
 cancellation and persistent load/resume/close. Load replays stored conversation
 history; resume restores the same context without replay. Close cancels and
 drains active work, releases live resources and preserves the conversation.
@@ -201,10 +201,12 @@ also keep their own session records; keep both clients' state and Roder's data
 when moving or restarting a gateway. An ACPx record ID and a Roder native thread
 ID are different identifiers.
 
-Roder does not advertise dynamic model controls, session list/delete, extra
-workspace roots or MCP-over-ACP. Keep optional OpenClaw MCP injection disabled
-for Roder, including any configured `mcpServers`. If other agents need those
-plugin-wide MCP settings, use a separate OpenClaw configuration for Roder.
+Source builds containing the ACP capability expansion also support session
+listing, model/mode selection and injected stdio or streamable HTTP MCP servers.
+Restore requests must supply the same MCP tool bindings. Check the running
+binary's advertised capabilities before enabling injection; older releases reject it.
+Session deletion, extra workspace roots, audio and SSE MCP remain unsupported.
+See [ACP integration](roder-acp.md) for selection IDs, permissions and restore rules.
 
 ## Troubleshooting
 

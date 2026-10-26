@@ -3221,6 +3221,7 @@ where
 
     async fn set_policy_mode(&mut self, mode: PolicyMode, reason: &str) {
         let params = ThreadSetModeParams {
+            thread_id: None,
             mode,
             reason: Some(reason.to_string()),
         };

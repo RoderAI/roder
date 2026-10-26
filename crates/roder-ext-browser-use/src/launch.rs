@@ -216,6 +216,7 @@ pub fn server_command(
     parent_env: impl IntoIterator<Item = (String, String)>,
 ) -> McpStdioServerConfig {
     McpStdioServerConfig {
+        cwd: None,
         name: SERVER_NAME.to_string(),
         program: uvx,
         args: vec![

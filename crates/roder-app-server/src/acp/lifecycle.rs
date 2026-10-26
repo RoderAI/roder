@@ -13,9 +13,9 @@ impl<C: AppClient> AcpAdapter<C> {
         if !request.cwd.is_absolute() {
             return Err(invalid_params("session cwd must be absolute"));
         }
-        if !request.additional_directories.is_empty() || !request.mcp_servers.is_empty() {
+        if !request.additional_directories.is_empty() {
             return Err(invalid_params(
-                "additionalDirectories and mcpServers are not advertised by Roder ACP",
+                "additionalDirectories are not advertised by Roder ACP",
             ));
         }
         self.require_authentication().await?;
@@ -60,39 +60,61 @@ impl<C: AppClient> AcpAdapter<C> {
                 "cannot reopen a session with active or recovering work",
             ));
         }
-        if !thread.external_tools.is_empty() {
+        let instructions = super::config::host_instructions(request.meta.as_ref())?;
+        if instructions.is_some() && instructions != thread.developer_instructions {
             return Err(invalid_params(
-                "session requires native host external tools",
+                "host instructions differ from the stored session; start a new session",
             ));
         }
-        if replay {
-            for turn in thread.turns.unwrap_or_default() {
-                for item in turn.items {
-                    for update in super::translation::replay_item(&item) {
-                        peer.send_notification(JsonRpcNotification {
-                            jsonrpc: "2.0".into(),
-                            method: "session/update".into(),
-                            params: serde_json::to_value(acp::SessionNotification::new(
-                                id.clone(),
-                                update,
-                            ))
-                            .map_err(internal_error)?,
-                        })
-                        .await
-                        .map_err(internal_error)?;
+        let configuration = self.session_configuration(&id).await?;
+        let mcp =
+            Arc::new(super::mcp::SessionMcp::connect(request.mcp_servers, &request.cwd).await?);
+        let prepared: Result<(), JsonRpcError> = async {
+            let mut stored_tools = thread.external_tools.clone();
+            stored_tools.sort_by(|a, b| a.name.cmp(&b.name));
+            if mcp.specs() != stored_tools {
+                return Err(invalid_params(
+                    "session MCP tool bindings differ from the stored session",
+                ));
+            }
+            if replay {
+                for turn in thread.turns.unwrap_or_default() {
+                    for item in turn.items {
+                        for update in super::translation::replay_item(&item) {
+                            peer.send_notification(JsonRpcNotification {
+                                jsonrpc: "2.0".into(),
+                                method: "session/update".into(),
+                                params: serde_json::to_value(acp::SessionNotification::new(
+                                    id.clone(),
+                                    update,
+                                ))
+                                .map_err(internal_error)?,
+                            })
+                            .await
+                            .map_err(internal_error)?;
+                        }
                     }
                 }
             }
+            if let Some(existing) = existing.as_ref() {
+                existing.mcp.close().await?;
+            }
+            Ok(())
         }
-        self.sessions
-            .lock()
-            .await
-            .entry(id.clone())
-            .or_insert_with(|| AcpSession {
-                thread_id: id,
+        .await;
+        if let Err(error) = prepared {
+            let _ = mcp.close().await;
+            return Err(error);
+        }
+        self.sessions.lock().await.insert(
+            id.clone(),
+            AcpSession {
+                thread_id: id.clone(),
                 active: Arc::new(Mutex::new(())),
-            });
-        Ok(serde_json::json!({}))
+                mcp,
+            },
+        );
+        Ok(configuration)
     }
 
     pub(super) async fn handle_session_close(
@@ -123,6 +145,7 @@ impl<C: AppClient> AcpAdapter<C> {
         let _idle = tokio::time::timeout(std::time::Duration::from_secs(30), session.active.lock())
             .await
             .map_err(internal_error)?;
+        session.mcp.close().await?;
         self.sessions.lock().await.remove(&id);
         Ok(serde_json::json!({}))
     }

@@ -9960,6 +9960,7 @@ async fn thread_policy_mode_can_be_set_and_observed() {
         "thread/set_mode",
         Some(
             serde_json::to_value(ThreadSetModeParams {
+                thread_id: None,
                 mode: PolicyMode::Plan,
                 reason: Some("test".to_string()),
             })

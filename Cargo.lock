@@ -3650,6 +3650,7 @@ dependencies = [
  "roder-ext-jsonl-thread-store",
  "roder-ext-kimi-code",
  "roder-ext-knowledge-md",
+ "roder-ext-mcp",
  "roder-ext-memory",
  "roder-ext-mysql-session",
  "roder-ext-openai-embeddings",

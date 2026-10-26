@@ -15,6 +15,7 @@ mod execution_receipts;
 mod owner_handoff;
 mod service_tier;
 mod thread_admission;
+mod thread_policy;
 mod thread_unload;
 #[path = "runtime/tool_approvals.rs"]
 mod tool_approvals;
@@ -623,6 +624,7 @@ pub struct Runtime {
     /// stored value; absent threads fall back to the runtime-global
     /// `RuntimeConfig.ultra_mode` default.
     ultra_modes: RwLock<HashMap<ThreadId, bool>>,
+    thread_policy_modes: RwLock<HashMap<ThreadId, PolicyMode>>,
     /**
      * Live remote-runner sessions keyed by thread. Each per-thread mutex is
      * held across provider initialization, making the first workspace-tool
@@ -798,6 +800,7 @@ impl Runtime {
             compaction_hysteresis: crate::compaction_runtime::compaction_hysteresis_state(),
             agent_swarm_modes: RwLock::new(HashMap::new()),
             ultra_modes: RwLock::new(HashMap::new()),
+            thread_policy_modes: RwLock::new(HashMap::new()),
             runner_sessions: Arc::new(Mutex::new(HashMap::new())),
             runner_tool_execution_locks: Mutex::new(HashMap::new()),
         };
@@ -1193,8 +1196,10 @@ impl Runtime {
         }
         *pending = None;
         drop(pending);
-        self.emit_plan_exit_resolved(&current, false, self.status().await.policy_mode)
+        let mode = self
+            .effective_policy_mode_for_thread(&current.thread_id)
             .await;
+        self.emit_plan_exit_resolved(&current, false, mode).await;
         None
     }
 
@@ -1389,23 +1394,30 @@ impl Runtime {
 
         let approved = approved && !current.is_expired(OffsetDateTime::now_utc());
         let resolved_mode = if approved {
-            let mut cfg = self.config.write().await;
-            let previous_mode = cfg.policy_mode;
-            cfg.policy_mode = current.target_mode;
-            drop(cfg);
-            self.emit(RoderEvent::PolicyModeChanged(PolicyModeChanged {
-                thread_id: current.thread_id.clone(),
-                turn_id: Some(current.turn_id.clone()),
-                previous_mode,
-                new_mode: current.target_mode,
-                reason: Some("approved plan exit".to_string()),
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
-            self.auto_resolve_pending_tool_approvals().await;
-            current.target_mode
+            let previous_mode = self
+                .effective_policy_mode_for_thread(&current.thread_id)
+                .await;
+            if self.thread_policy_mode(&current.thread_id).await?.is_some() {
+                self.set_thread_policy_mode(&current.thread_id, current.target_mode)
+                    .await?;
+            } else {
+                self.config.write().await.policy_mode = current.target_mode;
+                self.emit(RoderEvent::PolicyModeChanged(PolicyModeChanged {
+                    thread_id: current.thread_id.clone(),
+                    turn_id: Some(current.turn_id.clone()),
+                    previous_mode,
+                    new_mode: current.target_mode,
+                    reason: Some("approved plan exit".to_string()),
+                    timestamp: OffsetDateTime::now_utc(),
+                }))
+                .await;
+                self.auto_resolve_pending_tool_approvals().await;
+            }
+            self.effective_policy_mode_for_thread(&current.thread_id)
+                .await
         } else {
-            self.status().await.policy_mode
+            self.effective_policy_mode_for_thread(&current.thread_id)
+                .await
         };
         self.emit_plan_exit_resolved(&current, approved, resolved_mode)
             .await;
@@ -2360,7 +2372,14 @@ impl Runtime {
         if let Some(mode) = self.teams.policy_mode_for_thread(thread_id).await {
             return mode;
         }
-        self.status().await.policy_mode
+        match self.thread_policy_mode(thread_id).await {
+            Ok(Some(mode)) => mode,
+            Ok(None) => self.status().await.policy_mode,
+            Err(error) => {
+                eprintln!("could not read thread policy for {thread_id}: {error}; using plan mode");
+                PolicyMode::Plan
+            }
+        }
     }
 
     async fn complete_team_member_turn_with_result(

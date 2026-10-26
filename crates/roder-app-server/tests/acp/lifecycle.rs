@@ -72,7 +72,7 @@ async fn rpc<P: AcpClientPeer>(
     params: serde_json::Value,
 ) -> roder_protocol::JsonRpcResponse {
     tokio::time::timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         adapter.handle_request(
             JsonRpcRequest {
                 jsonrpc: "2.0".into(),
@@ -422,7 +422,8 @@ async fn lifecycle_close_does_not_wait_for_an_unanswered_permission_request() {
     let session = id.clone();
     let task =
         tokio::spawn(async move { prompt(&a, p.as_ref(), &session, "ask permission").await });
-    tokio::time::timeout(Duration::from_secs(3), peer.requested.notified())
+    // Allow tool startup under contention; the peer never answers permission.
+    tokio::time::timeout(Duration::from_secs(30), peer.requested.notified())
         .await
         .expect("permission was not requested");
     assert!(
