@@ -558,6 +558,12 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    fn link(self) -> Style {
+        Style::default()
+            .fg(self.accent)
+            .add_modifier(Modifier::UNDERLINED)
+    }
+
     fn accent_soft(self) -> Style {
         Style::default()
             .fg(self.accent_soft)
