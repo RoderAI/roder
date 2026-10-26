@@ -91,7 +91,7 @@ async fn a_codex_sign_in_writes_with_gpt_6_sol_at_low_effort_first() {
     .await
     .unwrap()
     .unwrap();
-    assert_eq!(resolved.model, "gpt-6-sol");
+    assert_eq!(resolved.model, "gpt-6.1-sol");
     assert_eq!(resolved.source, "codex");
     assert_eq!(
         resolved.transport,
@@ -102,7 +102,7 @@ async fn a_codex_sign_in_writes_with_gpt_6_sol_at_low_effort_first() {
     assert_eq!(resolved.effort(), "low");
     assert_eq!(
         resolved.label(),
-        "gpt-6-sol effort low (codex, codex responses)"
+        "gpt-6.1-sol effort low (codex, codex responses)"
     );
 }
 
@@ -152,7 +152,7 @@ async fn an_unusable_default_sign_in_falls_through_with_a_note() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(resolved.model, "gpt-6-sol");
+    assert_eq!(resolved.model, "gpt-6.1-sol");
 }
 
 #[tokio::test]
@@ -178,7 +178,7 @@ async fn an_explicit_choice_never_falls_back() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(resolved.model, "gpt-6-sol");
+        assert_eq!(resolved.model, "gpt-6.1-sol");
         assert!(resolved.fallback.is_none() && resolved.note.is_none());
     }
 }

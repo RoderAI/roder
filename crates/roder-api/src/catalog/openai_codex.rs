@@ -134,6 +134,16 @@ pub(super) const GPT_61_SOL: ModelCatalogEntry = openai_codex_model(
     1_050_000,
 );
 
+pub(super) const GPT_61_TERRA: ModelCatalogEntry = openai_codex_model(
+    "gpt-6.1-terra",
+    "GPT-6.1 Terra",
+    "Fast computer-use and coding model with a 1M context window. $1 / $5 per 1M input/output tokens.",
+    REASONING_MEDIUM,
+    GPT_6_SOL_LUNA_REASONING,
+    1_000_000,
+    1_000_000,
+);
+
 pub(super) const GPT_6_LUNA: ModelCatalogEntry = openai_codex_model(
     "gpt-6-luna",
     "GPT-6 Luna",
