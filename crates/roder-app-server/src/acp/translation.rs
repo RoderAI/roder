@@ -16,16 +16,31 @@ pub(super) fn prompt_blocks_to_turn_input(
             acp::ContentBlock::ResourceLink(resource) => {
                 input.push(text_input(resource_link_prompt_text(resource)));
             }
-            acp::ContentBlock::Image(_)
-            | acp::ContentBlock::Audio(_)
-            | acp::ContentBlock::Resource(_) => {
+            acp::ContentBlock::Image(image) => {
+                use base64::Engine;
+                if !["image/png", "image/jpeg", "image/webp", "image/gif"]
+                    .contains(&image.mime_type.as_str())
+                {
+                    return Err(invalid_params("unsupported image MIME type"));
+                }
+                base64::engine::general_purpose::STANDARD
+                    .decode(&image.data)
+                    .map_err(invalid_params)?;
+                input.push(TurnInputItem {
+                    kind: "image".into(),
+                    text: None,
+                    path: None,
+                    image_url: Some(format!("data:{};base64,{}", image.mime_type, image.data)),
+                });
+            }
+            acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => {
                 return Err(invalid_params(
-                    "unsupported ACP prompt content type; Roder advertises only text and resource_link",
+                    "unsupported ACP prompt content type; Roder supports text, images and resource_link",
                 ));
             }
             _ => {
                 return Err(invalid_params(
-                    "unsupported future ACP prompt content type; Roder advertises only text and resource_link",
+                    "unsupported future ACP prompt content type; Roder supports text, images and resource_link",
                 ));
             }
         }

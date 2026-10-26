@@ -76,6 +76,7 @@ impl Runtime {
             self.evict_runner_session(thread_id).await;
         }
         self.thread_item_cache.lock().await.remove_thread(thread_id);
+        self.thread_policy_modes.write().await.remove(thread_id);
         Ok(())
     }
 }

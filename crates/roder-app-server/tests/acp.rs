@@ -99,12 +99,12 @@ async fn acp_initialize_advertises_stable_v1_with_session_lifecycle() {
     assert!(
         result["agentCapabilities"]["sessionCapabilities"]
             .get("list")
-            .is_none()
+            .is_some()
     );
     assert_eq!(
         result["agentCapabilities"]["promptCapabilities"],
         serde_json::json!({
-            "image": false,
+            "image": true,
             "audio": false,
             "embeddedContext": false
         })
@@ -293,7 +293,7 @@ async fn acp_rejects_unadvertised_optional_methods() {
             JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
                 id: Some(serde_json::json!("list")),
-                method: "session/list".to_string(),
+                method: "session/delete".to_string(),
                 params: Some(serde_json::json!({})),
             },
             &peer,
@@ -354,3 +354,6 @@ mod auth;
 
 #[path = "acp/lifecycle.rs"]
 mod lifecycle;
+
+#[path = "acp/capabilities.rs"]
+mod capabilities;

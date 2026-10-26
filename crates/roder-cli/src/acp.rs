@@ -154,6 +154,10 @@ async fn run_stdio_acp(adapter: AcpAdapter<LocalAppClient>) -> anyhow::Result<()
     }
     request_tasks.abort_all();
     while request_tasks.join_next().await.is_some() {}
+    adapter
+        .shutdown()
+        .await
+        .map_err(|error| anyhow::anyhow!("ACP shutdown failed: {}", error.message))?;
     drop(peer);
     drop(tx);
     writer.await??;

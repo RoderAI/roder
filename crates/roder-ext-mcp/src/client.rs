@@ -122,6 +122,35 @@ impl McpHttpClient {
         })
     }
 
+    /// Release a stateful HTTP MCP session. Stateless and non-deletable servers need no cleanup.
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        let mut session = self.session.lock().await;
+        let Some(id) = session.session_id.as_deref() else {
+            return Ok(());
+        };
+        let mut request = self
+            .http
+            .delete(&self.config.url)
+            .timeout(std::time::Duration::from_secs(3))
+            .header("Mcp-Session-Id", id)
+            .header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION);
+        if let Some(token) = self.config.resolve_auth_token() {
+            request = request.bearer_auth(token);
+        }
+        for (name, value) in &self.config.headers {
+            request = request.header(name, value);
+        }
+        let response = request.send().await?;
+        if response.status() != reqwest::StatusCode::NOT_FOUND
+            && response.status() != reqwest::StatusCode::METHOD_NOT_ALLOWED
+        {
+            response.error_for_status()?;
+        }
+        session.session_id = None;
+        session.initialized = false;
+        Ok(())
+    }
+
     /// Sends one JSON-RPC request, running the `initialize` handshake first
     /// if this client has not initialized its session yet.
     async fn request(

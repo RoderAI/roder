@@ -24,7 +24,10 @@ use tokio::sync::Mutex;
 use crate::client::{AppClient, AppNotificationReceiver};
 
 mod auth;
+mod config;
 mod lifecycle;
+mod list;
+mod mcp;
 mod prompt;
 mod translation;
 
@@ -42,10 +45,11 @@ pub struct AcpAdapter<C> {
     admission: Arc<Mutex<()>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct AcpSession {
     thread_id: String,
     active: Arc<Mutex<()>>,
+    mcp: Arc<mcp::SessionMcp>,
 }
 
 #[async_trait]
@@ -104,6 +108,9 @@ where
             "initialize" => self.handle_initialize(request.params).await,
             "authenticate" => self.handle_authenticate(request.params).await,
             "session/new" => self.handle_session_new(request.params).await,
+            "session/list" => self.handle_session_list(request.params).await,
+            "session/set_mode" => self.handle_session_mode(request.params, peer).await,
+            "session/set_config_option" => self.handle_session_config(request.params, peer).await,
             "session/load" => self.handle_session_reopen(request.params, peer, true).await,
             "session/resume" => {
                 self.handle_session_reopen(request.params, peer, false)
@@ -120,6 +127,30 @@ where
         }))
     }
 
+    /// Drain active sessions and close their MCP clients before the host transport exits.
+    pub async fn shutdown(&self) -> Result<(), JsonRpcError> {
+        let ids = self
+            .sessions
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut failure = None;
+        for id in ids {
+            if let Err(error) = self
+                .handle_session_close(Some(serde_json::json!({"sessionId":id})))
+                .await
+            {
+                failure = Some(error);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(())
+    }
+
     async fn handle_initialize(
         &self,
         params: Option<serde_json::Value>,
@@ -134,8 +165,11 @@ where
             .agent_capabilities(
                 acp::AgentCapabilities::new()
                     .load_session(true)
+                    .prompt_capabilities(acp::PromptCapabilities::new().image(true))
+                    .mcp_capabilities(acp::McpCapabilities::new().http(true))
                     .session_capabilities(
                         acp::SessionCapabilities::new()
+                            .list(acp::SessionListCapabilities::new())
                             .resume(acp::SessionResumeCapabilities::new())
                             .close(acp::SessionCloseCapabilities::new()),
                     ),
@@ -163,13 +197,11 @@ where
                 "additionalDirectories are not advertised by Roder ACP",
             ));
         }
-        if !request.mcp_servers.is_empty() {
-            return Err(invalid_params("mcpServers are not advertised by Roder ACP"));
-        }
-
         self.require_authentication().await?;
+        let instructions = config::host_instructions(request.meta.as_ref())?;
         let workspace = self.create_workspace_for_cwd(&request.cwd).await?;
-        let thread: ThreadStartResult = self
+        let mcp = Arc::new(mcp::SessionMcp::connect(request.mcp_servers, &request.cwd).await?);
+        let started: Result<ThreadStartResult, _> = self
             .call(
                 "thread/start",
                 serde_json::to_value(ThreadStartParams {
@@ -182,23 +214,55 @@ where
                     cwd: Some(request.cwd.display().to_string()),
                     tool_allowlist: None,
                     service_tier: None,
-                    developer_instructions: None,
-                    external_tools: None,
+                    developer_instructions: instructions,
+                    external_tools: Some(mcp.specs()),
                     mcp_auth_token: None,
                     runner: None,
                     ephemeral: false,
                 })
                 .map_err(internal_error)?,
             )
-            .await?;
+            .await;
+        let thread = match started {
+            Ok(thread) => thread,
+            Err(error) => {
+                let _ = mcp.close().await;
+                return Err(error);
+            }
+        };
+        let configured = async {
+            let response = self.session_configuration(&thread.thread.id).await?;
+            // Pin even the initial default so later runtime-default changes and
+            // process restarts cannot widen this session's permissions.
+            let _: roder_protocol::ThreadSetModeResult = self.call(
+                "thread/set_mode",
+                serde_json::json!({"threadId":thread.thread.id,"mode":response["modes"]["currentModeId"]}),
+            ).await?;
+            Ok::<_, JsonRpcError>(response)
+        }.await;
+        let mut response = match configured {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = self
+                    .call::<serde_json::Value>(
+                        "thread/unload",
+                        serde_json::json!({"threadId":thread.thread.id}),
+                    )
+                    .await;
+                let _ = mcp.close().await;
+                return Err(error);
+            }
+        };
         self.sessions.lock().await.insert(
             thread.thread.id.clone(),
             AcpSession {
                 thread_id: thread.thread.id.clone(),
                 active: Arc::new(Mutex::new(())),
+                mcp,
             },
         );
-        serde_json::to_value(acp::NewSessionResponse::new(thread.thread.id)).map_err(internal_error)
+        response["sessionId"] = serde_json::json!(thread.thread.id);
+        Ok(response)
     }
 
     async fn handle_session_cancel(

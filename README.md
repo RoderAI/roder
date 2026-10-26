@@ -507,7 +507,10 @@ Implemented agent methods:
 - `session/new`
 - `session/load`
 - `session/resume`
+- `session/list`
 - `session/close`
+- `session/set_mode`
+- `session/set_config_option` (model selection)
 - `session/prompt`
 - `session/cancel`
 
@@ -524,9 +527,13 @@ the conversation for a later load or resume. Cleanup failures return an error
 and retain the session for retry. Recovery and close are serialized against
 prompt admission; closing also cancels unanswered permission requests.
 
-`session/list`, `session/delete`, `additionalDirectories`, model controls, and
-MCP-over-ACP remain unadvertised. Unsupported methods return JSON-RPC
-method-not-found; unsupported roots or MCP servers are rejected as invalid params.
+Sessions expose model selection, persistent per-session permission modes, image
+input, and injected stdio or streamable HTTP MCP tools. Paseo's
+`_meta._paseo.systemPrompt` becomes durable thread developer instructions.
+See [ACP integration](docs/roder-acp.md) for the wire contract and restore rules.
+`session/delete`, audio, embedded resources, SSE MCP and `additionalDirectories`
+remain unsupported. Unsupported methods return JSON-RPC method-not-found;
+unsupported content or transports are rejected as invalid params.
 See [ACP session recovery](docs/app-server/api.md#acp-session-recovery) for
 wire examples and errors.
 

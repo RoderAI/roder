@@ -68,6 +68,13 @@ impl<C: AppClient> AcpAdapter<C> {
                     .map_err(internal_error)?;
                 continue;
             }
+            if notification.method == "thread/toolExecutionRequested" {
+                let session = session.clone();
+                approvals.push(Box::pin(async move {
+                    self.handle_mcp_call(&session, &notification, peer).await
+                }));
+                continue;
+            }
             if notification.method == "thread/approvalRequested" {
                 let session_id = session_id.clone();
                 approvals.push(Box::pin(async move {

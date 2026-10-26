@@ -1911,7 +1911,9 @@ Behavior:
 
 ### `thread/state`
 
-Purpose: Read current policy mode and any pending plan-exit request.
+Purpose: Read policy mode and any pending plan-exit request. Omit `threadId` for
+the runtime default. Supply it for an existing thread's effective mode and only
+that thread's pending plan exit. Unknown thread IDs return `-32602`.
 
 Request:
 
@@ -1938,13 +1940,18 @@ Response:
 
 ### `thread/set_mode`
 
-Purpose: Set the live policy mode.
+Purpose: Set the live runtime default, or persist one thread's mode when
+`threadId` is supplied. The thread override survives unload and process restart
+without changing other threads. Team policy restrictions still take precedence.
+Stored policy errors fail closed; scoped reads return an error rather than
+reporting a successful mode selection.
 
 Request:
 
 ```json
 {
-  "mode": "accept_edits",
+  "threadId": "thread-123",
+  "mode": "accept_all",
   "reason": "client toggle"
 }
 ```
@@ -1953,7 +1960,7 @@ Response:
 
 ```json
 {
-  "mode": "accept_edits"
+  "mode": "accept_all"
 }
 ```
 
@@ -6428,7 +6435,7 @@ App-server thread and artifact methods are backend-neutral. The default local ba
 ## ACP session recovery
 
 `roder acp` exposes ACP v1 over stdio. Initialization advertises `loadSession: true`
-and `sessionCapabilities: {"resume": {}, "close": {}}`. Session IDs are native
+and `sessionCapabilities: {"resume": {}, "close": {}, "list": {}}`. Session IDs are native
 thread IDs; durable recovery uses the configured thread store. The CLI enables
 JSONL thread persistence. Embedders using an in-memory runtime can reopen sessions
 only while their native thread data remains available.
@@ -6440,7 +6447,8 @@ Load or resume after reconnecting and initializing:
 ```
 
 Load sends `session/update` notifications for persisted user/assistant messages,
-reasoning and tool calls, in conversation order, before responding with `{}`.
+reasoning and tool calls, in conversation order, before responding with current
+`modes` and `configOptions`.
 Message IDs come from the native history. Tool replay includes the original call
 and its stored result. Native compaction summaries and errors are replayed as
 assistant text; native diagnostic rows have no ACP conversation equivalent.
@@ -6450,7 +6458,7 @@ resource links. No tools are re-executed during replay.
 Use the same parameters with `method: "session/resume"` to restore context without
 history notifications. Both operations require authentication when configured,
 reject a cwd that differs from the stored directory, and reject unsupported
-additional roots, MCP servers, or native host-executed tool bindings. A busy
+additional roots or MCP bindings that differ from the stored tool specifications. A busy
 session cannot be reopened. Unknown IDs return `-32002`; invalid parameters or
 overlapping session operations return `-32602`.
 
@@ -6469,5 +6477,6 @@ until it is reopened. Closing an unknown or detached ACP ID returns `-32002`.
 Cleanup failures retain the mapping for retry and return a server error.
 
 These methods follow the [ACP v1 session lifecycle](https://agentclientprotocol.com/protocol/v1/session-setup).
-Session list/delete, additional roots, MCP configuration, and dynamic model
-controls remain unadvertised.
+Model/mode selection, image prompts, MCP transports and host instructions are
+documented in [ACP integration](../roder-acp.md). Session deletion and additional
+roots remain unsupported.

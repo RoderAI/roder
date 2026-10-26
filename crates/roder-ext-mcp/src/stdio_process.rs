@@ -28,6 +28,7 @@ pub struct McpStdioServerConfig {
     /// Absolute path of the program to run.
     pub program: PathBuf,
     pub args: Vec<String>,
+    pub cwd: Option<PathBuf>,
     /// The child's complete environment.
     pub env: BTreeMap<String, String>,
     /// Values scrubbed from anything this client reports (stderr tails,
@@ -43,6 +44,7 @@ impl std::fmt::Debug for McpStdioServerConfig {
             .field("name", &self.name)
             .field("program", &self.program)
             .field("args", &self.args)
+            .field("cwd", &self.cwd)
             .field("env", &self.env.keys().collect::<Vec<_>>())
             .field("redact", &format_args!("[{} values]", self.redact.len()))
             .field("startup_timeout", &self.startup_timeout)
@@ -93,6 +95,9 @@ pub(crate) fn server_command(config: &McpStdioServerConfig) -> Command {
         command.args(&config.args);
         command
     };
+    if let Some(cwd) = &config.cwd {
+        command.current_dir(cwd);
+    }
     command
         .env_clear()
         .envs(&config.env)
@@ -167,6 +172,7 @@ mod tests {
 
     fn config() -> McpStdioServerConfig {
         McpStdioServerConfig {
+            cwd: None,
             name: "demo".into(),
             program: PathBuf::from("/usr/bin/true"),
             args: vec!["--mcp".into()],
