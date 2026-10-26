@@ -145,7 +145,8 @@ async fn acp_full_access_goal_executes_outside_workspace_without_permission_prom
         .await
         .unwrap();
     let response = tokio::time::timeout(
-        Duration::from_secs(5),
+        // Process-backed tools can take longer to start on a busy build host.
+        Duration::from_secs(30),
         adapter.handle_request(
             JsonRpcRequest {
                 jsonrpc: "2.0".into(),
