@@ -73,7 +73,7 @@ pub const REASONING_XHIGH: &str = "xhigh";
 pub const REASONING_MAX: &str = "max";
 pub const REASONING_ULTRA: &str = "ultra";
 
-pub const DEFAULT_MODEL_ID: &str = "gpt-6-sol";
+pub const DEFAULT_MODEL_ID: &str = "gpt-6.1-sol";
 pub const EDIT_TOOL_PATCH: &str = "patch";
 pub const EDIT_TOOL_EDIT: &str = "edit";
 
@@ -437,7 +437,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
         id: PROVIDER_OPENCODE,
         name: "OpenCode Zen",
         kind: PROVIDER_KIND_OPENCODE,
-        default_model: "gpt-6-sol",
+        default_model: "gpt-6.1-sol",
         base_url: Some("https://opencode.ai/zen/v1"),
         env_key: Some("OPENCODE_API_KEY"),
         env_aliases: &["OPENCODE_ZEN_API_KEY", "RODER_OPENCODE_API_KEY"],
@@ -538,8 +538,9 @@ const fn retired(mut model: ModelCatalogEntry) -> ModelCatalogEntry {
 }
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
+    openai_codex::GPT_61_TERRA,
     openai_codex::GPT_6_ASTRA,
-    openai_codex::GPT_6_SOL,
+    retired(openai_codex::GPT_6_SOL),
     openai_codex::GPT_61_SOL,
     openai_codex::GPT_6_LUNA,
     retired(openai_codex::GPT_56_SOL),
@@ -975,13 +976,22 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     ),
     opencode_model(
         PROVIDER_OPENCODE,
+        "gpt-6.1-sol",
+        "GPT 6.1 Sol",
+        "OpenCode Zen GPT 6.1 Sol gateway model.",
+        1_050_000,
+        REASONING_MEDIUM,
+        STANDARD_REASONING,
+    ),
+    retired(opencode_model(
+        PROVIDER_OPENCODE,
         "gpt-6-sol",
         "GPT 6 Sol",
         "OpenCode Zen GPT 6 Sol gateway model.",
         1_050_000,
         REASONING_MEDIUM,
         STANDARD_REASONING,
-    ),
+    )),
     retired(opencode_model(
         PROVIDER_OPENCODE,
         "gpt-5.5",
@@ -1118,8 +1128,9 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     openrouter::ANTHROPIC_CLAUDE_HAIKU_5_5,
     openrouter::ANTHROPIC_CLAUDE_FABLE_5_1,
     openrouter::ANTHROPIC_CLAUDE_OPUS_5,
+    openrouter::OPENAI_GPT_6_1_TERRA,
     openrouter::OPENAI_GPT_6_1_SOL,
-    openrouter::OPENAI_GPT_6_SOL,
+    retired(openrouter::OPENAI_GPT_6_SOL),
     openrouter::OPENAI_GPT_6_LUNA,
     openrouter::OPENAI_GPT_6_ASTRA,
     openrouter::GOOGLE_GEMINI_3_8_FLASH,
@@ -2036,8 +2047,8 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "gpt-6.1-terra",
                 "gpt-6-astra",
-                "gpt-6-sol",
                 "gpt-6.1-sol",
                 "gpt-6-luna",
                 "claude-opus-5-5",
@@ -2084,7 +2095,7 @@ mod tests {
                 "grok-4.7",
                 "grok-4.6",
                 "grok-composer-2.5-fast",
-                "gpt-6-sol",
+                "gpt-6.1-sol",
                 "big-pickle",
                 "mimo-v2.5-free",
                 "nemotron-3-ultra-free",
@@ -2107,8 +2118,8 @@ mod tests {
                 "anthropic/claude-haiku-5.5",
                 "anthropic/claude-fable-5.1",
                 "anthropic/claude-opus-5",
+                "openai/gpt-6.1-terra",
                 "openai/gpt-6.1-sol",
-                "openai/gpt-6-sol",
                 "openai/gpt-6-luna",
                 "openai/gpt-6-astra",
                 "google/gemini-3.8-flash",
@@ -2203,7 +2214,7 @@ mod tests {
             .iter()
             .find(|provider| provider.id == PROVIDER_CODEX)
             .expect("codex provider");
-        assert_eq!(codex_provider.default_model, "gpt-6-sol");
+        assert_eq!(codex_provider.default_model, "gpt-6.1-sol");
 
         let ids = models_for_codex(false)
             .into_iter()
@@ -2212,7 +2223,7 @@ mod tests {
 
         assert_eq!(
             ids,
-            vec!["gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"]
+            vec!["gpt-6.1-terra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]
         );
     }
 
@@ -2259,7 +2270,7 @@ mod tests {
             // GPT-6 family is offered; GPT-5.x entries stay resolvable but hidden.
             let offered = matches!(
                 id,
-                "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna" | "gpt-6.1-sol"
+                "gpt-6-astra" | "gpt-6-luna" | "gpt-6.1-sol" | "gpt-6.1-terra"
             );
             assert_eq!(model.hidden, !offered, "{id} visibility");
         };
@@ -2294,6 +2305,22 @@ mod tests {
             ],
             1_050_000,
             1_050_000,
+        );
+        assert_model(
+            "gpt-6.1-terra",
+            "GPT-6.1 Terra",
+            "Fast computer-use and coding model with a 1M context window. $1 / $5 per 1M input/output tokens.",
+            REASONING_MEDIUM,
+            &[
+                REASONING_NONE,
+                REASONING_LOW,
+                REASONING_MEDIUM,
+                REASONING_HIGH,
+                REASONING_XHIGH,
+                REASONING_MAX,
+            ],
+            1_000_000,
+            1_000_000,
         );
         assert_model(
             "gpt-6.1-sol",
@@ -2889,7 +2916,12 @@ mod tests {
             // Existing threads, profiles, and compaction policy still resolve these ids.
             assert!(lookup_model(id).is_some(), "{id} should still resolve");
         }
-        assert!(visible.contains(&"gpt-6-sol") && visible.contains(&"gpt-6.1-sol"));
+        assert!(
+            !visible.contains(&"gpt-6-sol")
+                && visible.contains(&"gpt-6.1-sol")
+                && visible.contains(&"gpt-6.1-terra")
+        );
+        assert!(lookup_model("gpt-6-sol").is_some());
     }
 
     #[test]

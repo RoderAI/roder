@@ -3862,55 +3862,26 @@ async fn providers_list_exposes_current_codex_subscription_roster_and_ultra_sele
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>(),
         vec![
+            "gpt-6.1-terra",
             "gpt-6-astra",
-            "gpt-6-sol",
+            "gpt-6.1-sol",
             "gpt-6-luna",
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.3-codex-spark",
         ]
     );
 
-    let full_gpt_56_efforts = vec![
-        REASONING_LOW,
-        REASONING_MEDIUM,
-        REASONING_HIGH,
-        REASONING_XHIGH,
-        REASONING_MAX,
-        REASONING_ULTRA,
-    ];
-    for model_id in ["gpt-5.6-sol", "gpt-5.6-terra"] {
-        let model = codex
-            .models
-            .iter()
-            .find(|model| model.id == model_id)
-            .unwrap_or_else(|| panic!("{model_id} should be listed"));
-        assert_eq!(
-            model
-                .supported_reasoning
-                .iter()
-                .map(|effort| effort.effort.as_str())
-                .collect::<Vec<_>>(),
-            full_gpt_56_efforts,
-            "{model_id} reasoning efforts"
-        );
-    }
-
-    let luna = codex
+    let terra = codex
         .models
         .iter()
-        .find(|model| model.id == "gpt-5.6-luna")
-        .expect("gpt-5.6-luna should be listed");
+        .find(|model| model.id == "gpt-6.1-terra")
+        .expect("gpt-6.1-terra should be listed");
     assert_eq!(
-        luna.supported_reasoning
+        terra
+            .supported_reasoning
             .iter()
             .map(|effort| effort.effort.as_str())
             .collect::<Vec<_>>(),
         vec![
+            REASONING_NONE,
             REASONING_LOW,
             REASONING_MEDIUM,
             REASONING_HIGH,

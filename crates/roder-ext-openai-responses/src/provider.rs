@@ -1335,7 +1335,7 @@ mod tests {
 
     #[test]
     fn gpt_6_supports_provider_native_tool_search() {
-        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-terra"] {
             assert!(openai_model_supports_tool_search(model));
         }
     }

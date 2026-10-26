@@ -25,7 +25,8 @@ OpenRouter lists several hundred routes. Roder ships a curated, tool-capable sub
 | `moonshotai/kimi-k2.6` | 262,144 | 235,929 |
 | `x-ai/grok-4.7`, `x-ai/grok-4.6` | 500,000 | 450,000 |
 | `anthropic/claude-opus-5.5`, `-sonnet-5.5`, `-haiku-5.5`, `-fable-5.1`, `-opus-5` | 1,000,000 | 900,000 |
-| `openai/gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra` | 1,050,000 | 945,000 |
+| `openai/gpt-6.1-terra` | 1,000,000 | 900,000 |
+| `openai/gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-astra` | 1,050,000 | 945,000 |
 | `google/gemini-3.8-flash`, `gemini-3.7-flash` | 1,048,576 | 943,718 |
 | `deepseek/deepseek-v4-pro-0813`, `deepseek-v4.1-flash` | 1,048,576 | 943,718 |
 | `qwen/qwen3.8-max-0902`, `qwen3.8-flash` | 1,000,000 | 900,000 |

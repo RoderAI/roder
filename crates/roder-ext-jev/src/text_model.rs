@@ -18,7 +18,7 @@ use roder_api::catalog::{
 use roder_api::inference::ModelSelection;
 
 /// The Codex-served model that writes field values by default.
-pub(crate) const CODEX_MODEL: &str = "gpt-6-sol";
+pub(crate) const CODEX_MODEL: &str = "gpt-6.1-sol";
 
 /// Providers Roder prefers for the text helper when neither the Codex
 /// sign-in nor the calling turn's own model can serve it. Ordered by how well
@@ -126,7 +126,7 @@ pub(crate) fn codex_unusable() -> &'static str {
     static NOTE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     NOTE.get_or_init(|| {
         format!(
-            "Codex sign-in unusable; sign in again with `{}` to use gpt-6-sol",
+            "Codex sign-in unusable; sign in again with `{}` to use gpt-6.1-sol",
             roder_api::cli_identity::auth_login_command("codex")
         )
     })

@@ -168,6 +168,18 @@ pub(super) const ANTHROPIC_CLAUDE_OPUS_5: ModelCatalogEntry = openrouter_model(
     EDIT_TOOL_EDIT,
 );
 
+pub(super) const OPENAI_GPT_6_1_TERRA: ModelCatalogEntry = openrouter_model(
+    "openai/gpt-6.1-terra",
+    "GPT-6.1 Terra",
+    "OpenRouter route for GPT-6.1 Terra (openai): 1M-token context, up to 128K output tokens, tool use, image input, reasoning. $1 / $5 per 1M input/output tokens.",
+    1_000_000,
+    REASONING_MEDIUM,
+    OPENROUTER_REASONING,
+    true,
+    true,
+    EDIT_TOOL_PATCH,
+);
+
 pub(super) const OPENAI_GPT_6_1_SOL: ModelCatalogEntry = openrouter_model(
     "openai/gpt-6.1-sol",
     "GPT-6.1 Sol",

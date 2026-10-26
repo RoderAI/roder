@@ -44,7 +44,7 @@ enabled = true
 router = "local"
 profile = "coding"
 baseline_provider = "codex"
-baseline_model = "gpt-6-sol"
+baseline_model = "gpt-6.1-sol"
 
 [inference_router.extension]
 objective = "cost"
@@ -56,7 +56,7 @@ reasoning = "low"
 
 [inference_router.extension.tiers.standard]
 provider = "codex"
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 reasoning = "medium"
 
 [inference_router.extension.tiers.strong]
@@ -79,15 +79,23 @@ infra = "strong"
 
 [inference_router.extension.prices."codex/gpt-6-luna"]
 input_per_million = 0.10
-output_per_million = 0.40
+cached_input_per_million = 0.01
+output_per_million = 0.50
 
-[inference_router.extension.prices."codex/gpt-6-sol"]
-input_per_million = 0.50
-output_per_million = 2.00
+[inference_router.extension.prices."codex/gpt-6.1-terra"]
+input_per_million = 1.00
+cached_input_per_million = 0.05
+output_per_million = 5.00
+
+[inference_router.extension.prices."codex/gpt-6.1-sol"]
+input_per_million = 2.00
+cached_input_per_million = 0.10
+output_per_million = 10.00
 
 [inference_router.extension.prices."codex/gpt-6-astra"]
-input_per_million = 2.00
-output_per_million = 8.00
+input_per_million = 10.00
+cached_input_per_million = 1.00
+output_per_million = 50.00
 ```
 
 Profiles can encode different business use cases. For example, an eval profile
@@ -205,7 +213,7 @@ variables when setting up the lab:
 ```sh
 RODER_ROUTING_PROVIDER=codex \
 RODER_ROUTING_SIMPLE_MODEL=gpt-6-luna \
-RODER_ROUTING_STANDARD_MODEL=gpt-6-sol \
+RODER_ROUTING_STANDARD_MODEL=gpt-6.1-sol \
 RODER_ROUTING_STRONG_MODEL=gpt-6-astra \
 scripts/roder-inference-routing-lab-setup.sh /tmp/my-routing-lab
 ```
