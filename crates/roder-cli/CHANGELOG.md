@@ -1,3 +1,9 @@
+## 0.3.22 (2026-10-26)
+
+### Fixes
+
+- Check the ACP agent's CLI version during Linux release verification so independently versioned app-server releases do not block CLI and npm publication.
+
 ## 0.3.21 (2026-10-25)
 
 ### Features
