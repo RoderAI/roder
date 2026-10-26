@@ -58,7 +58,7 @@ def smoke(binary, mode, config, data, expected_version):
         reply = request(child, messages, 1, "initialize", params)
         if mode == "acp":
             require(reply["agentInfo"]["version"] == expected_version,
-                    "ACP version does not match the release manifest")
+                    f"ACP version {reply['agentInfo']['version']} does not match CLI {expected_version}")
             return {"mode": mode, "agentInfo": reply["agentInfo"]}
         tools = request(child, messages, 2, "tools/list", {})["tools"]
         names = sorted(t["name"] for t in tools if t["name"].startswith("cua_"))
@@ -101,7 +101,7 @@ def main():
     require(highest <= (2, 35),
             f"{target} requires GLIBC {highest}; Ubuntu 22.04 supplies 2.35")
     require("GLIBC_ABI_DT_RELR" not in symbols, "DT_RELR requires a newer GLIBC loader")
-    manifest = (Path(__file__).resolve().parent.parent / "crates/roder-app-server/Cargo.toml").read_text()
+    manifest = (Path(__file__).resolve().parent.parent / "crates/roder-cli/Cargo.toml").read_text()
     expected = re.search(r'^version\s*=\s*"([^"]+)"', manifest, re.MULTILINE).group(1)
     checks = []
     with tempfile.TemporaryDirectory(prefix="roder-linux-release-") as directory:
