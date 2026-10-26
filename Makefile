@@ -13,8 +13,20 @@ VERSION ?=
 CARGO_TARGET_DIR ?= target
 CARGO_DEBUG_BIN := $(CARGO_TARGET_DIR)/debug/roder
 CARGO_RELEASE_BIN := $(CARGO_TARGET_DIR)/release/roder
+# Do not share the default sccache port (4226). A mismatched server makes every
+# compile warn, fall back to a local compile, and can write empty object files.
+export SCCACHE_SERVER_PORT ?= 4228
+# Use this repo's mise toolchain (pinned rust + sccache) even when the shell
+# PATH still points at a different wrapper.
+ifeq ($(shell command -v mise >/dev/null 2>&1 && echo yes),yes)
+  CARGO = mise -C "$(CURDIR)" exec -- cargo
+  ENSURE_SCCACHE = mise -C "$(CURDIR)" exec -- sh "$(CURDIR)/scripts/ensure-sccache-server.sh"
+else
+  CARGO = cargo
+  ENSURE_SCCACHE = sh "$(CURDIR)/scripts/ensure-sccache-server.sh"
+endif
 
-.PHONY: fmt fmt-check build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock
+.PHONY: fmt fmt-check build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock ensure-sccache
 
 # Wipe the cargo target dir. Incremental builds accumulate session artifacts
 # unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
@@ -38,7 +50,7 @@ clean-target:
 			exit 1; \
 		fi ;; \
 	esac
-	cargo clean
+	$(CARGO) clean
 
 # Drop stale target locks when no cargo/rustc is using this repo (see `make cargo-unlock-help`).
 cargo-unlock:
@@ -56,24 +68,24 @@ cargo-unlock-help:
 	@echo "  3. make cargo-unlock   # only when step 1 shows nothing"
 	@echo "rust-analyzer uses target/rust-analyzer (see .vscode/settings.json) to avoid fighting make build."
 
-CARGO_TEST ?= $(shell command -v cargo-nextest >/dev/null 2>&1 && echo "cargo nextest run" || echo "cargo test")
+CARGO_TEST ?= $(shell command -v cargo-nextest >/dev/null 2>&1 && echo "$(CARGO) nextest run" || echo "$(CARGO) test")
 
 # Unit tests only (skips integration `tests/*.rs` binaries such as app-server e2e).
 TEST_FAST_ARGS ?= --workspace --lib
 # Full workspace test; uses nextest when installed. Enables app-server e2e integration tests.
 TEST_ARGS ?= --workspace --features roder-app-server/e2e-tests
 
-build:
+build: ensure-sccache
 	@mkdir -p $(dir $(BINARY))
-	cargo build -p roder --bin roder
+	$(CARGO) build -p roder --bin roder
 	rm -f "$(BINARY)"
 	cp "$(CARGO_DEBUG_BIN)" "$(BINARY)"
 	@if [ "$$(uname)" = "Darwin" ]; then \
 		codesign -f -s - "$(BINARY)" 2>/dev/null || true; \
 	fi
 
-install:
-	cargo build --release -p roder --bin roder
+install: ensure-sccache
+	$(CARGO) build --release -p roder --bin roder
 	$(INSTALL) -d "$(BINDIR)"
 	$(INSTALL) -m 0755 "$(CARGO_RELEASE_BIN)" "$(BINDIR)/$(INSTALL_BIN)"
 	@if [ "$(LEGACY_INSTALL_BIN)" != "$(INSTALL_BIN)" ] && [ -e "$(BINDIR)/$(LEGACY_INSTALL_BIN)" ]; then \
@@ -88,7 +100,7 @@ run-existing:
 	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" "$(CURDIR)/$(BINARY)"
 
 app-server:
-	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder --bin roder -- app-server --listen "$(LISTEN)"
+	cd "$(WORKSPACE)" && RODER_PROVIDER="$(PROVIDER)" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" $(CARGO) run --manifest-path "$(CURDIR)/Cargo.toml" -p roder --bin roder -- app-server --listen "$(LISTEN)"
 
 mock-run: build
 	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" "$(CURDIR)/$(BINARY)"
@@ -98,7 +110,7 @@ mock-existing:
 	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" "$(CURDIR)/$(BINARY)"
 
 mock-app-server:
-	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" cargo run --manifest-path "$(CURDIR)/Cargo.toml" -p roder --bin roder -- app-server --listen "$(LISTEN)"
+	cd "$(WORKSPACE)" && RODER_PROVIDER="mock" RODER_MODEL="$(MODEL)" RODER_REASONING="$(REASONING)" $(CARGO) run --manifest-path "$(CURDIR)/Cargo.toml" -p roder --bin roder -- app-server --listen "$(LISTEN)"
 
 jaeger:
 	./jaeger.sh
@@ -106,13 +118,16 @@ jaeger:
 # rustfmt.toml is stable-only and identical to ComposalAI/vex's, so any
 # toolchain formats the same way. Run fmt-check before pushing (CI is off).
 fmt:
-	cargo fmt
+	$(CARGO) fmt
 
 fmt-check:
-	cargo fmt --check
+	$(CARGO) fmt --check
 
 dev-deps:
-	cargo install cargo-nextest --locked
+	$(CARGO) install cargo-nextest --locked
+
+ensure-sccache:
+	@$(ENSURE_SCCACHE)
 
 test-fast:
 	$(CARGO_TEST) $(TEST_FAST_ARGS)
