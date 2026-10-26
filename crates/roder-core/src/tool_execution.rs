@@ -604,6 +604,9 @@ impl Runtime {
             tool_execution_error(&tool_call, "runtime_ownership_lost", error.to_string())
         } else if let Some(error) = runner_workspace_execution_lease_error {
             tool_execution_error(&tool_call, "workspace_execution_lease_unavailable", error)
+        } else if crate::thread_events::is_event_tool(&tool_call.name) {
+            self.execute_event_tool(thread_id, &call, tool_call.arguments.clone())
+                .await
         } else if crate::agent_control_tools::is_agent_control_tool(&tool_call.name) {
             self.execute_agent_control_tool(thread_id, turn_id, &call, tool_call.arguments.clone())
                 .await

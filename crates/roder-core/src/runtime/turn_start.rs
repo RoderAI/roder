@@ -6,7 +6,7 @@ impl Runtime {
         req: StartTurnRequest,
     ) -> BoxFuture<'_, anyhow::Result<TurnId>> {
         Box::pin(async move {
-            self.start_turn_admitted(req, false)
+            self.start_turn_admitted(req, false, None)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("explicit turn was not admitted"))
         })
@@ -16,17 +16,61 @@ impl Runtime {
         self: &Arc<Self>,
         req: StartTurnRequest,
     ) -> BoxFuture<'_, anyhow::Result<Option<TurnId>>> {
-        self.start_turn_admitted(req, true)
+        self.start_turn_admitted(req, true, None)
+    }
+
+    pub(crate) fn start_event_turn_if_idle(
+        self: &Arc<Self>,
+        req: StartTurnRequest,
+        subscription_id: String,
+    ) -> BoxFuture<'_, anyhow::Result<Option<TurnId>>> {
+        self.start_turn_admitted(req, false, Some(subscription_id))
     }
 
     fn start_turn_admitted(
         self: &Arc<Self>,
         mut req: StartTurnRequest,
         goal_only: bool,
+        event_subscription: Option<String>,
     ) -> BoxFuture<'_, anyhow::Result<Option<TurnId>>> {
         Box::pin(async move {
             let _thread_admission = self.thread_admission(&req.thread_id).await;
             let turn_admission = self.turn_admission.lock().await;
+            let event_only = event_subscription.is_some();
+            if let Some(id) = &event_subscription {
+                if self
+                    .thread_activity(&req.thread_id)
+                    .await
+                    .active_turn_id
+                    .is_some()
+                {
+                    return Ok(None);
+                }
+                // Resolve after admission, so a just-finished user turn supplies current settings.
+                let Some(mut current) = self
+                    .thread_events
+                    .delivery_request(&req.thread_id, id)
+                    .await
+                else {
+                    return Ok(None);
+                };
+                current.message = req.message;
+                current.developer_context = req.developer_context;
+                req = current;
+                if self
+                    .thread_goal_get(&req.thread_id)
+                    .await?
+                    .is_some_and(|goal| {
+                        matches!(
+                            goal.status,
+                            roder_api::goals::ThreadGoalStatus::BudgetLimited
+                                | roder_api::goals::ThreadGoalStatus::Paused
+                        )
+                    })
+                {
+                    return Ok(None);
+                }
+            }
             let _goal_admission = if goal_only {
                 if self.has_active_turn_for_thread(&req.thread_id).await {
                     return Ok(None);
@@ -50,12 +94,22 @@ impl Runtime {
             );
             req.workspace = validate_thread_workspace(&req.workspace)?;
             let team_member = self.teams.member_for_thread(&req.thread_id).await;
+            if event_only
+                && team_member
+                    .as_ref()
+                    .is_some_and(|(_, member)| member.status == TeamMemberStatus::Closed)
+            {
+                return Ok(None);
+            }
             let cfg = self.config.read().await.clone();
             let provider = req
                 .provider_override
                 .clone()
                 .unwrap_or_else(|| cfg.default_provider.clone());
             self.engine_for(&provider)?;
+            if !event_only {
+                self.thread_events.remember(&req).await;
+            }
             let turn_id = uuid::Uuid::new_v4().to_string();
             let mut initial_mailbox_ack = None;
             if let Some((team_id, member)) = &team_member {

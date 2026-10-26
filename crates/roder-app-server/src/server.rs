@@ -1149,6 +1149,30 @@ impl AppServer {
                     Err(error) => Err(error),
                 }
             }
+            "thread/events/subscribe" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_event_subscribe(p).await
+                })
+                .await
+            }
+            "thread/events/list" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_event_list(p).await
+                })
+                .await
+            }
+            "thread/events/cancel" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_event_cancel(p).await
+                })
+                .await
+            }
+            "thread/events/publish" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_event_publish(p).await
+                })
+                .await
+            }
             "automations/create" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_automations_create(p).await

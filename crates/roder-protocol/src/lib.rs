@@ -1,3 +1,5 @@
+mod thread_events;
+pub use thread_events::*;
 pub mod agent_node;
 pub mod chrome;
 pub mod external_tools;

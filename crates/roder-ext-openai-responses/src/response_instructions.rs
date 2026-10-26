@@ -38,7 +38,10 @@ pub(super) fn response_input_items_with_options(
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            instruction_items.push(developer_context_input_message(context));
+            instruction_items.push(developer_context_input_message(
+                context,
+                &request.model.provider,
+            ));
         }
         if !instruction_items.is_empty() {
             instruction_items.extend(items);
@@ -53,7 +56,10 @@ pub(super) fn response_input_items_with_options(
         // Keep per-turn developer_context out of the stable top-level
         // `instructions` prefix so prompt-cache breakpoints survive. Render it
         // as a leading input message after instructions/system+developer.
-        let mut with_context = vec![developer_context_input_message(context)];
+        let mut with_context = vec![developer_context_input_message(
+            context,
+            &request.model.provider,
+        )];
         with_context.extend(items);
         items = with_context;
     }
@@ -102,8 +108,18 @@ pub(super) fn system_input_message(text: &str) -> Value {
     })
 }
 
-pub(super) fn developer_context_input_message(context: &str) -> Value {
-    system_input_message(&format!("Developer context (this turn):\n{context}"))
+pub(super) fn developer_context_input_message(context: &str, provider_id: &str) -> Value {
+    // The signed-in Codex endpoint accepts developer inputs but rejects system inputs.
+    let role = if provider_id == PROVIDER_CODEX {
+        "developer"
+    } else {
+        "system"
+    };
+    json!({
+        "type": "message",
+        "role": role,
+        "content": [{ "type": "input_text", "text": format!("Developer context (this turn):\n{context}") }]
+    })
 }
 
 pub(super) fn user_message_content(
@@ -126,4 +142,56 @@ pub(super) fn user_message_content(
         content.push(json!({ "type": "input_text", "text": "" }));
     }
     content
+}
+
+#[cfg(test)]
+mod context_role_tests {
+    use super::*;
+    use roder_api::inference::{
+        InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig, RuntimeHints,
+    };
+
+    #[test]
+    fn codex_turn_context_uses_developer_role_without_changing_cache_prefix() {
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "codex".into(),
+                model: "gpt-6-sol".into(),
+            },
+            instructions: InstructionBundle {
+                system: Some("stable instructions".into()),
+                developer: None,
+                developer_context: Some("scheduled follow-up provenance".into()),
+            },
+            transcript: vec![],
+            tools: vec![],
+            tool_choice: roder_api::tools::ToolChoice::Auto,
+            reasoning: ReasoningConfig::default(),
+            output: OutputConfig::default(),
+            runtime: RuntimeHints::default(),
+            metadata: Value::Null,
+        };
+        let (body, _) = OpenAiResponsesEngine::map_request_with_options(
+            &request,
+            RequestMappingOptions {
+                profile: ResponsesProviderProfile::OpenAi,
+                thread_id: Some("scheduled-thread"),
+            },
+        );
+        assert_eq!(body["input"][0]["role"], "developer");
+        assert!(
+            body["input"][0]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("scheduled follow-up provenance")
+        );
+        assert_eq!(body["instructions"], "stable instructions");
+        assert!(
+            !body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["role"] == "system")
+        );
+    }
 }

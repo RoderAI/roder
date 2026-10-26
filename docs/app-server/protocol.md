@@ -212,3 +212,9 @@ The optional `Thread.serviceTier` field exposes the value in read/list results.
 `turn/start.serviceTier` overrides it for one turn. Turn override > thread
 setting > provider config. Updates affect subsequent turns; steering does not
 change an active turn's captured tier. See [the API reference](api.md#threadset_service_tier).
+
+Thread follow-ups are available through `thread/events/subscribe`,
+`thread/events/list`, `thread/events/cancel`, and `thread/events/publish`.
+Subscriptions and timers live in the owning runtime and resume idle threads using
+normal turn/item notifications. They stop on user interruption, archive, expiry,
+or runtime exit. See [thread events](thread-events.md) for the complete contract.

@@ -40,6 +40,7 @@ mod skills;
 mod speech;
 mod stats;
 mod system_instructions;
+mod thread_events;
 pub mod transcript;
 mod vcs;
 mod webwright;

@@ -48,6 +48,7 @@ pub mod task_ledger;
 pub mod tasks;
 pub mod teams;
 pub mod thread;
+pub mod thread_events;
 pub mod tool_schema;
 pub mod tool_search_catalog;
 pub mod tools;
