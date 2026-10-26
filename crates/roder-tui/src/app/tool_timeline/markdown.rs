@@ -4,6 +4,7 @@ use ratatui::{
 };
 
 use super::super::Theme;
+use crate::transcript::links::{self, MarkdownLink};
 
 pub(super) fn markdown_lines(body: &str, base_style: Style, theme: Theme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -35,6 +36,7 @@ pub(super) fn markdown_lines(body: &str, base_style: Style, theme: Theme) -> Vec
             lines.push(Line::from(inline_spans(
                 heading,
                 base_style.add_modifier(Modifier::BOLD),
+                theme,
             )));
             continue;
         }
@@ -45,6 +47,7 @@ pub(super) fn markdown_lines(body: &str, base_style: Style, theme: Theme) -> Vec
             spans.extend(inline_spans(
                 quote,
                 base_style.add_modifier(Modifier::ITALIC),
+                theme,
             ));
             lines.push(Line::from(spans));
             continue;
@@ -52,19 +55,19 @@ pub(super) fn markdown_lines(body: &str, base_style: Style, theme: Theme) -> Vec
 
         if let Some(rest) = unordered_list_item(trimmed) {
             let mut spans = vec![Span::styled("- ".to_string(), theme.subtle())];
-            spans.extend(inline_spans(rest, base_style));
+            spans.extend(inline_spans(rest, base_style, theme));
             lines.push(Line::from(spans));
             continue;
         }
 
         if let Some((marker, rest)) = ordered_list_item(trimmed) {
             let mut spans = vec![Span::styled(marker, theme.subtle())];
-            spans.extend(inline_spans(rest, base_style));
+            spans.extend(inline_spans(rest, base_style, theme));
             lines.push(Line::from(spans));
             continue;
         }
 
-        lines.push(Line::from(inline_spans(trimmed, base_style)));
+        lines.push(Line::from(inline_spans(trimmed, base_style, theme)));
     }
 
     if body.ends_with('\n') {
@@ -98,12 +101,12 @@ fn ordered_list_item(line: &str) -> Option<(String, &str)> {
     Some((format!("{}. ", &line[..dot]), rest.trim_start()))
 }
 
-fn inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
+fn inline_spans(text: &str, base_style: Style, theme: Theme) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut rest = text;
 
     while !rest.is_empty() {
-        let Some((pos, token)) = next_token(rest) else {
+        let Some((pos, mark)) = next_mark(rest) else {
             spans.push(Span::styled(rest.to_string(), base_style));
             break;
         };
@@ -114,56 +117,100 @@ fn inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
             continue;
         }
 
-        match token {
-            "**" | "__" => {
-                if let Some(end) = rest[token.len()..].find(token) {
-                    let content = &rest[token.len()..token.len() + end];
-                    spans.push(Span::styled(
-                        content.to_string(),
-                        base_style.add_modifier(Modifier::BOLD),
-                    ));
-                    rest = &rest[token.len() + end + token.len()..];
-                } else {
+        match mark {
+            InlineMark::Token(token) => {
+                if !consume_emphasis(&mut spans, &mut rest, token, base_style) {
                     spans.push(Span::styled(token.to_string(), base_style));
                     rest = &rest[token.len()..];
                 }
             }
-            "`" => {
-                if let Some(end) = rest[1..].find('`') {
-                    let content = &rest[1..1 + end];
-                    spans.push(Span::styled(
-                        content.to_string(),
-                        base_style.add_modifier(Modifier::BOLD),
-                    ));
-                    rest = &rest[1 + end + 1..];
-                } else {
-                    spans.push(Span::styled("`".to_string(), base_style));
-                    rest = &rest[1..];
-                }
+            InlineMark::Link(link) => {
+                push_link_spans(&mut spans, &link, base_style, theme);
+                rest = &rest[link.consumed..];
             }
-            "*" | "_" => {
-                if let Some(end) = rest[token.len()..].find(token) {
-                    let content = &rest[token.len()..token.len() + end];
-                    spans.push(Span::styled(
-                        content.to_string(),
-                        base_style.add_modifier(Modifier::ITALIC),
-                    ));
-                    rest = &rest[token.len() + end + token.len()..];
-                } else {
-                    spans.push(Span::styled(token.to_string(), base_style));
-                    rest = &rest[token.len()..];
-                }
-            }
-            _ => unreachable!("unexpected inline markdown token"),
         }
     }
 
     spans
 }
 
-fn next_token(text: &str) -> Option<(usize, &'static str)> {
-    ["**", "__", "`", "*", "_"]
-        .into_iter()
-        .filter_map(|token| text.find(token).map(|index| (index, token)))
-        .min_by_key(|(index, _)| *index)
+enum InlineMark {
+    Token(&'static str),
+    Link(MarkdownLink),
+}
+
+fn next_mark(text: &str) -> Option<(usize, InlineMark)> {
+    let mut best: Option<(usize, InlineMark)> = None;
+    for token in ["**", "__", "`", "*", "_"] {
+        if let Some(index) = text.find(token) {
+            if best
+                .as_ref()
+                .is_none_or(|(best_index, _)| index < *best_index)
+            {
+                best = Some((index, InlineMark::Token(token)));
+            }
+        }
+    }
+    if let Some(index) = links::find_link_start(text) {
+        if let Some(link) = links::parse_leading_markdown_link(&text[index..]) {
+            if best
+                .as_ref()
+                .is_none_or(|(best_index, _)| index < *best_index)
+            {
+                best = Some((index, InlineMark::Link(link)));
+            }
+        }
+    }
+    best
+}
+
+fn consume_emphasis(
+    spans: &mut Vec<Span<'static>>,
+    rest: &mut &str,
+    token: &str,
+    base_style: Style,
+) -> bool {
+    let modifier = match token {
+        "**" | "__" | "`" => Modifier::BOLD,
+        "*" | "_" => Modifier::ITALIC,
+        _ => return false,
+    };
+    let Some(end) = rest[token.len()..].find(token) else {
+        return false;
+    };
+    let content = &rest[token.len()..token.len() + end];
+    spans.push(Span::styled(
+        content.to_string(),
+        base_style.add_modifier(modifier),
+    ));
+    *rest = &rest[token.len() + end + token.len()..];
+    true
+}
+
+fn push_link_spans(
+    spans: &mut Vec<Span<'static>>,
+    link: &MarkdownLink,
+    base_style: Style,
+    theme: Theme,
+) {
+    let visible = if link.label.is_empty() {
+        link.destination.as_str()
+    } else {
+        link.label.as_str()
+    };
+    let inner = if link.label.is_empty() {
+        vec![Span::styled(visible.to_string(), base_style)]
+    } else {
+        inline_spans(visible, base_style, theme)
+    };
+    if inner.is_empty() {
+        spans.push(Span::styled(
+            visible.to_string(),
+            base_style.patch(theme.link()),
+        ));
+        return;
+    }
+    for span in inner {
+        spans.push(Span::styled(span.content, span.style.patch(theme.link())));
+    }
 }

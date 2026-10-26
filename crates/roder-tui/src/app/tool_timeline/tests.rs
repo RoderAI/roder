@@ -1927,6 +1927,53 @@ fn tool_fold_state_persists_through_thread_scoped_extension_state() {
 }
 
 #[test]
+fn assistant_markdown_links_render_as_underlined_labels() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta(
+        "Read [the guide](https://example.com/guide) and `not [a](https://skip.test) link`.",
+        Some("final_answer".to_string()),
+    );
+
+    let render = timeline.render(Theme::for_dark_background(true), Rect::new(0, 0, 120, 8));
+    let line = render
+        .text
+        .lines
+        .iter()
+        .find(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.as_ref() == "the guide")
+        })
+        .expect("link label should render");
+    let visible = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(visible.contains("Read the guide"));
+    assert!(!visible.contains("https://example.com/guide"));
+    assert!(visible.contains("not [a](https://skip.test) link"));
+    let label = line
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref() == "the guide")
+        .expect("label span");
+    assert!(label.style.add_modifier.contains(Modifier::UNDERLINED));
+    assert_eq!(label.style.fg, Some(Color::Indexed(212)));
+
+    timeline.render(Theme::for_dark_background(true), Rect::new(0, 2, 120, 8));
+    let regions = timeline.interactive_regions(Rect::new(0, 2, 120, 8), "thread-a", "turn-a");
+    assert!(regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::Url(url) if url == "https://example.com/guide"
+    )));
+    assert!(!regions.iter().any(|region| matches!(
+        &region.kind,
+        RegionKind::Url(url) if url == "https://skip.test"
+    )));
+}
+
+#[test]
 fn timeline_emits_url_and_file_reference_regions_from_transcript_text() {
     let mut timeline = TimelineState::default();
     timeline.push_system("See https://example.com and crates/roder-tui/src/app.rs:42");
