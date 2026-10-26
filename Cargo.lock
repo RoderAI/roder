@@ -3543,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -5208,7 +5208,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
