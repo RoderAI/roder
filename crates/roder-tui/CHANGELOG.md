@@ -1,3 +1,54 @@
+## 0.4.0 (2026-10-27)
+
+### Breaking Changes
+
+#### Release a coherent runtime API compatibility boundary
+
+Adopt explicit shared-read/exclusive/coordinator scheduling, typed custom-provider
+capabilities, and owned worktree metadata. Rust integrators must update
+ToolExecutor implementations to execution_mode and initialize the new public
+configuration and ownership fields.
+
+Release the shared API's reverse dependency closure together so older consumers
+cannot resolve patch-compatible packages that expose incompatible API types.
+The CLI package also exports a Rust library, so its compatibility release is
+0.4.0. Existing command-line use remains supported.
+
+### Features
+
+#### Copy original responses and code blocks with the keyboard
+
+Add a `/copy` source selection mode with keyboard navigation and exact source
+copying independent of terminal wrapping. Preserve whitespace and line endings,
+keep selection stable across streaming and resizing, and report clipboard
+failures instead of displaying premature success.
+
+#### Render local transcript image previews with Kitty and Sixel
+
+Display attached, viewed, and generated local images in clipped transcript layout
+rows on supported terminals. Decode and encode images on a bounded worker, limit
+encoded input and raster sizes, reflow previews on resize, and retain metadata
+fallbacks for unsupported terminals or invalid images. Preview pixels remain
+separate from copyable message source. Multiplexers require explicit protocol
+opt-in, and Kitty cleanup removes only Roder-owned image IDs.
+Worker completions wake an idle UI, and popups suspend and clear image placements
+before drawing so pixel payloads cannot overpaint dialogs.
+Resolve local viewed-image paths against the authoritative thread workspace,
+and do not interpret remote or unknown tool origins as host filesystem paths.
+
+### Fixes
+
+#### Retain prompts through admission and recover rejected steering safely
+
+Gate queued input on pending starts, accepted receipts, unsettled settings, and
+copy mode. Retain each request's exact prompt and attachments, recover a
+definitively absent steer target once without clearing a newer turn, and preserve
+unrelated queued inputs during manual retry. Ambiguous responses never trigger
+an automatic resend. Scope queued/recoverable inputs to their original thread
+and reconcile accepted receipts against persisted lifecycle evidence.
+Keep the admission-time running lifecycle authoritative so a delayed task-start
+event cannot overwrite a subsequent interrupt request.
+
 ## 0.3.10 (2026-10-26)
 
 ### Fixes

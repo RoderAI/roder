@@ -1,6 +1,6 @@
 [package]
 name = "roder-ext-runner-blaxel"
-version = "0.2.3"
+version = "0.3.0"
 edition.workspace = true
 description.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ async-trait.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 # Port configuration uses the published 0.2.2 runner contract. Do not force
 # consumers to upgrade their independently pinned hosted ownership stack.
-roder-api = { path = "../roder-api", version = "0.2.16" }
+roder-api = { path = "../roder-api", version = "0.3.0" }
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

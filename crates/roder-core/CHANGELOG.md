@@ -1,3 +1,60 @@
+## 0.4.0 (2026-10-27)
+
+### Breaking Changes
+
+#### Release a coherent runtime API compatibility boundary
+
+Adopt explicit shared-read/exclusive/coordinator scheduling, typed custom-provider
+capabilities, and owned worktree metadata. Rust integrators must update
+ToolExecutor implementations to execution_mode and initialize the new public
+configuration and ownership fields.
+
+Release the shared API's reverse dependency closure together so older consumers
+cannot resolve patch-compatible packages that expose incompatible API types.
+The CLI package also exports a Rust library, so its compatibility release is
+0.4.0. Existing command-line use remains supported.
+
+### Features
+
+#### Run collaboration agents in durable, owned Git worktrees
+
+Add opt-in `workspace_isolation: "worktree"` to `spawn_agent`, persisting creator
+and child ownership and routing child turns and coding tools to their isolated
+checkout. Reuse owned worktrees on creation retries; refuse adoption or deletion
+of external registered worktrees. Keep successful worktrees for review and use
+non-force, path-confirmed cleanup with conservative rollback on failed starts.
+
+#### Schedule shared reads safely around exclusive tools
+
+Use one conservative execution classification for streamed reads and ordinary
+tool batches. Keep mutations exclusive and ordered, retain remote workspace
+fences, and require explicitly trusted MCP tools before accepting read-only
+scheduling hints. Scheduling never bypasses policy or workspace authorization.
+
+### Fixes
+
+#### Retain prompts through admission and recover rejected steering safely
+
+Gate queued input on pending starts, accepted receipts, unsettled settings, and
+copy mode. Retain each request's exact prompt and attachments, recover a
+definitively absent steer target once without clearing a newer turn, and preserve
+unrelated queued inputs during manual retry. Ambiguous responses never trigger
+an automatic resend. Scope queued/recoverable inputs to their original thread
+and reconcile accepted receipts against persisted lifecycle evidence.
+Keep the admission-time running lifecycle authoritative so a delayed task-start
+event cannot overwrite a subsequent interrupt request.
+
+#### Commit compaction only after completion and configure custom Responses capabilities
+
+Failed or interrupted native compaction no longer installs an incomplete history
+boundary. Retries preserve original context while reported usage remains billable.
+The same transaction boundary applies to automatic compaction in ordinary turns,
+retaining subsequent messages and eager tool-call results exactly once on replay
+and restart.
+
+Custom Responses providers can opt into V2 remote compaction and cap hosted search
+at cached results with typed provider capabilities, without changing omitted defaults.
+
 ## 0.3.15 (2026-10-26)
 
 ### Features
