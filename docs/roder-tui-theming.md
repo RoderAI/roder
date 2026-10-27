@@ -214,7 +214,7 @@ The set of recognized tokens is closed. Selectors that target unknown ids/classe
 
 | Surface     | Classes                                                                                            |
 | ----------- | -------------------------------------------------------------------------------------------------- |
-| Timeline    | `.timeline-item`, `.timeline-user`, `.timeline-assistant`, `.timeline-thinking`, `.timeline-tool`, `.timeline-system`, `.timeline-error` |
+| Timeline    | `.timeline-item`, `.timeline-user`, `.timeline-assistant`, `.timeline-thinking`, `.timeline-tool`, `.timeline-system`, `.timeline-error`, `.timeline-image` |
 | Tool        | `.tool-header`, `.tool-args`, `.tool-output`, `.tool-diff`, `.tool-status-pending`, `.tool-status-ok`, `.tool-status-error` |
 | Palette     | `.palette-source`, `.palette-item`, `.palette-item-selected`, `.palette-title`, `.palette-subtitle`, `.palette-keyword` |
 | Status line | `.segment`, `.segment-mode`, `.segment-model`, `.segment-thread`, `.segment-branch`, `.segment-usage`, `.segment-mcp` |

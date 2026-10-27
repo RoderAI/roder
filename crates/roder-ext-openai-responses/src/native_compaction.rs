@@ -1,5 +1,8 @@
 use super::*;
 use futures::StreamExt;
+#[cfg(test)]
+#[path = "native_compaction_transaction_tests.rs"]
+mod transaction_tests;
 
 pub(super) async fn compact(
     engine: &OpenAiResponsesEngine,
@@ -8,7 +11,7 @@ pub(super) async fn compact(
 ) -> anyhow::Result<Option<InferenceEventStream>> {
     // The endpoint decides model support, including newly released models and
     // custom aliases absent from Roder's catalog. Never substitute a summary.
-    if !engine.requires_native_compaction() {
+    if !engine.supports_native_compaction() {
         return Ok(None);
     }
     let key = engine.api_key.as_deref().ok_or_else(|| {
@@ -20,6 +23,7 @@ pub(super) async fn compact(
     // Compaction is its own sampling step, not the parent turn's structured
     // answer or forced tool selection. Match Codex's schema-free prompt.
     request.output = Default::default();
+    engine.apply_provider_capabilities(&mut request);
     request.tool_choice = roder_api::tools::ToolChoice::Auto;
     let (mut body, names) = OpenAiResponsesEngine::map_request_with_options(
         &request,
@@ -112,21 +116,23 @@ fn compaction_stream(
             match event? {
                 InferenceEvent::Compaction(progress) => {
                     if progress.status == "completed" && let Some(item) = progress.item.clone() {
+                        if !item.get("encrypted_content").and_then(Value::as_str).is_some_and(|value| !value.is_empty()) {
+                            Err(ProviderFailure::new(ProviderFailureKind::Protocol,"compaction boundary is missing encrypted content"))?;
+                        }
                         if boundary.as_ref().is_some_and(|prior:&Value|prior.get("id") != item.get("id") || prior.get("encrypted_content") != item.get("encrypted_content")) {
                             Err(ProviderFailure::new(ProviderFailureKind::Protocol,"compaction response contains multiple opaque boundaries"))?;
                         }
                         if boundary.is_none() {
-                            boundary = Some(item.clone());
-                            let mut window = retained.clone();
-                            window.push(item.clone());
-                            // Durable even if the stream breaks before Completed.
-                            yield InferenceEvent::ProviderMetadata(json!({"output":[item],"compacted_input":window}));
+                            boundary = Some(item);
                         }
                     }
                     yield InferenceEvent::Compaction(progress);
                 }
                 InferenceEvent::Completed(completion) => {
-                    if boundary.is_none() { Err(ProviderFailure::new(ProviderFailureKind::Protocol,"compaction completed without an opaque boundary"))?; }
+                    let item = boundary.ok_or_else(|| ProviderFailure::new(ProviderFailureKind::Protocol,"compaction completed without an opaque boundary"))?;
+                    let mut window = retained.clone();
+                    window.push(item.clone());
+                    yield InferenceEvent::ProviderMetadata(json!({"output":[item],"compacted_input":window}));
                     yield InferenceEvent::Completed(completion);
                     return;
                 }
@@ -153,6 +159,7 @@ mod tests {
             "custom",
             "Custom",
             "https://custom.example/v1",
+            Default::default(),
         );
         assert!(!engine.requires_native_compaction());
         let stream = engine
@@ -237,7 +244,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn codex_compaction_boundary_is_durable_before_disconnect() {
+    async fn codex_compaction_boundary_is_not_committed_before_disconnect() {
         let boundary = json!({"type":"compaction","id":"boundary","encrypted_content":"opaque"});
         let progress = CompactionProgress {
             status: "completed".into(),
@@ -253,12 +260,10 @@ mod tests {
         ]));
         let retained = vec![json!({"type":"message","role":"user","content":"goal"})];
         let mut stream = compaction_stream(stream, retained.clone());
-        let InferenceEvent::ProviderMetadata(metadata) = stream.next().await.unwrap().unwrap()
-        else {
-            panic!("durable window missing")
-        };
-        assert_eq!(metadata["compacted_input"], json!([retained[0], boundary]));
-        stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            stream.next().await.unwrap().unwrap(),
+            InferenceEvent::Compaction(_)
+        ));
         assert_eq!(
             stream
                 .next()
@@ -285,6 +290,7 @@ mod http_tests {
                 check_streamed_compaction(provider, model).await;
             }
         }
+        check_streamed_compaction("custom", "custom-model").await;
     }
 
     async fn check_streamed_compaction(provider: &str, model: &str) {
@@ -330,7 +336,17 @@ mod http_tests {
             assert_eq!(body["instructions"], "be helpful");
             assert_eq!(body["stream"], true);
             assert_eq!(body["store"], false);
-            assert_eq!(body["tools"][0]["name"], "echo");
+            assert!(
+                body["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|tool| tool["name"] == "echo")
+            );
+            if expected_model == "custom-model" {
+                assert_eq!(body["tools"][0]["type"], "web_search");
+                assert_eq!(body["tools"][0]["external_web_access"], false);
+            }
             assert_eq!(body["tool_choice"], "auto");
             assert!(body.get("context_management").is_none());
             assert!(body.get("max_output_tokens").is_none());
@@ -345,16 +361,33 @@ mod http_tests {
             let sse = format!("data: {done}\n\ndata: {completed}\n\n");
             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{sse}",sse.len()).as_bytes()).await.unwrap();
         });
-        let engine = OpenAiResponsesEngine::new_with_config(
-            Some("fixture-key".into()),
-            provider,
-            base,
-            vec![],
-        );
-        assert!(engine.requires_native_compaction());
+        let engine = if provider == "custom" {
+            OpenAiResponsesEngine::new_custom_provider(
+                Some("fixture-key".into()),
+                provider,
+                "Custom",
+                base,
+                ResponsesProviderCapabilities {
+                    remote_compaction: Some(RemoteCompaction::V2),
+                    external_web_access: Some(false),
+                },
+            )
+        } else {
+            OpenAiResponsesEngine::new_with_config(
+                Some("fixture-key".into()),
+                provider,
+                base,
+                vec![],
+            )
+        };
+        assert!(engine.supports_native_compaction());
+        assert_eq!(engine.requires_native_compaction(), provider != "custom");
         let mut request = crate::provider::tests::request();
         request.model.provider = provider.into();
         request.model.model = model.into();
+        if provider == "custom" {
+            request.runtime.hosted_web_search.mode = HostedWebSearchMode::Live;
+        }
         // Parent output/tool constraints must not constrain the compaction step.
         request.tool_choice = roder_api::tools::ToolChoice::Specific("echo".into());
         let mut stream = engine

@@ -12,6 +12,8 @@ pub mod dynamic_workflows;
 pub mod hosted;
 pub mod marketplaces;
 pub mod packages;
+#[cfg(test)]
+mod provider_capabilities_tests;
 pub mod workflow_import;
 
 pub use dynamic_workflows::{DynamicWorkflowApprovalConfig, DynamicWorkflowsConfig};
@@ -262,6 +264,9 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub base_url: Option<String>,
+    /// Capability overrides for a custom Responses endpoint.
+    #[serde(default)]
+    pub capabilities: roder_api::provider_capabilities::ResponsesProviderCapabilities,
     pub project_id: Option<String>,
     pub project_id_env: Option<String>,
     pub http_referer: Option<String>,

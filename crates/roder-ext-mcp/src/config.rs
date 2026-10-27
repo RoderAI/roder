@@ -46,6 +46,11 @@ pub struct McpServerConfig {
     /// When non-empty, only these remote tool names are exposed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enabled_tools: Vec<String>,
+    /// Explicitly audited remote tool names permitted to share the scheduling
+    /// barrier when the server also supplies a read-only hint. This does not
+    /// grant execution permission or bypass approvals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_read_only_tools: Vec<String>,
 }
 
 impl McpServerConfig {
@@ -58,6 +63,7 @@ impl McpServerConfig {
             tool_call_auth_mode: McpToolCallAuthMode::default(),
             headers: BTreeMap::new(),
             enabled_tools: Vec::new(),
+            trusted_read_only_tools: Vec::new(),
         }
     }
 
@@ -73,6 +79,11 @@ impl McpServerConfig {
 
     pub fn with_tool_call_auth_mode(mut self, mode: McpToolCallAuthMode) -> Self {
         self.tool_call_auth_mode = mode;
+        self
+    }
+
+    pub fn with_trusted_read_only_tools(mut self, tools: Vec<String>) -> Self {
+        self.trusted_read_only_tools = tools;
         self
     }
 
@@ -118,6 +129,10 @@ pub fn parse_mcp_servers_json(raw: &str) -> anyhow::Result<Vec<McpServerConfig>>
             continue;
         };
         let mut config = McpServerConfig::new(name, url);
+        if let Some(tools) = entry.get("trusted_read_only_tools") {
+            config.trusted_read_only_tools = serde_json::from_value(tools.clone())
+                .map_err(|error| anyhow::anyhow!("invalid trusted_read_only_tools: {error}"))?;
+        }
         if let Some(headers) = entry.get("headers").and_then(|headers| headers.as_object()) {
             for (key, header_value) in headers {
                 if let Some(header_value) = header_value.as_str() {
@@ -143,6 +158,27 @@ pub fn parse_mcp_servers_json(raw: &str) -> anyhow::Result<Vec<McpServerConfig>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_only_trust_is_explicit_and_round_trips() {
+        let configs = parse_mcp_servers_json(
+            r#"{
+            "mcpServers": {
+                "audited": {
+                    "url": "http://localhost/mcp",
+                    "trusted_read_only_tools": ["list_files"]
+                },
+                "unknown": {"url": "http://localhost/mcp"}
+            }
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(configs[0].trusted_read_only_tools, ["list_files"]);
+        assert!(configs[1].trusted_read_only_tools.is_empty());
+        let restored: McpServerConfig =
+            serde_json::from_value(serde_json::to_value(&configs[0]).unwrap()).unwrap();
+        assert_eq!(restored, configs[0]);
+    }
 
     #[test]
     fn parses_url_servers_and_skips_stdio() {

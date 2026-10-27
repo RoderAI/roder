@@ -653,6 +653,10 @@ impl AgentSwarmTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for AgentSwarmTool {
+    fn execution_mode(&self) -> roder_api::tools::ToolExecutionMode {
+        roder_api::tools::ToolExecutionMode::Coordinator
+    }
+
     fn spec(&self) -> ToolSpec {
         let roles = configured_role_catalog(&self.dispatcher.definitions());
         ToolSpec {

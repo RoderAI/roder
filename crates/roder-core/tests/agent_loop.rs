@@ -102,6 +102,12 @@ struct BlockingEchoTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for BlockingEchoTool {
+    fn execution_mode(&self) -> roder_api::tools::ToolExecutionMode {
+        // Independent echo reads deliberately rendezvous in the concurrency
+        // regression. Unknown/mutating tools retain the exclusive default.
+        roder_api::tools::ToolExecutionMode::SharedRead
+    }
+
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "echo".to_string(),

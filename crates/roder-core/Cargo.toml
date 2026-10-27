@@ -27,6 +27,7 @@ tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+roder-ext-openai-responses.workspace = true
 roder-context.workspace = true
 roder-ext-git.workspace = true
 roder-ext-knowledge-md.workspace = true

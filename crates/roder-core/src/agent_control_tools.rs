@@ -85,6 +85,7 @@ impl Runtime {
             model_provider,
             reasoning_effort,
             fork_turns,
+            workspace_isolation,
         } = args;
         let task_name = task_name.trim().to_string();
         if !valid_task_name(&task_name) || message.trim().is_empty() {
@@ -127,6 +128,7 @@ impl Runtime {
                 fork_turns,
                 agent_type,
                 message,
+                workspace_isolation.unwrap_or_default(),
             )
             .await
         {
@@ -136,6 +138,11 @@ impl Runtime {
         let Some(member) = next.members.last().cloned() else {
             return control_error(call, "spawn_failed", "spawned team member was not recorded");
         };
+        let workspace = self
+            .load_thread_metadata(&member.thread_id)
+            .await
+            .ok()
+            .flatten();
         control_ok(
             call,
             format!("spawned subagent {} as {}", task_name, member.thread_id),
@@ -145,6 +152,8 @@ impl Runtime {
                 "thread_id": member.thread_id,
                 "task_name": member.agent_path.unwrap_or(task_name),
                 "turn_id": turn_id,
+                "workspace": workspace.as_ref().map(|metadata| &metadata.workspace),
+                "workspace_fork": workspace.and_then(|metadata| metadata.workspace_fork),
                 "status": "running"
             }),
         )

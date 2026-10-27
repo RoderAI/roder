@@ -112,6 +112,11 @@ impl AgentControlToolKind {
                     "fork_turns": {
                         "type": "string",
                         "description": "Context to fork: `all` (default), `none`, or a positive integer string for the latest N turns. Full-history forks inherit the parent model, provider, and reasoning effort; agent_type remains an allowed collaboration label, but model, model_provider, and reasoning_effort overrides are rejected."
+                    },
+                    "workspace_isolation": {
+                        "type": "string",
+                        "enum": ["shared", "worktree"],
+                        "description": "Filesystem isolation, separate from fork_turns. shared (default) uses the caller's workspace. worktree creates an owned local Git checkout from committed HEAD; dirty sources and remote runners are rejected. Uncommitted changes are not copied. Completed agents retain their checkout for review; cleanup is explicit and refuses dirty worktrees."
                     }
                 },
                 "required": ["task_name", "message"],
@@ -222,6 +227,8 @@ pub(super) struct SpawnAgentArgs {
     pub(super) reasoning_effort: Option<String>,
     #[serde(default)]
     pub(super) fork_turns: Option<String>,
+    #[serde(default)]
+    pub(super) workspace_isolation: Option<roder_api::forks::AgentWorkspaceIsolation>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -371,6 +378,42 @@ mod tests {
 
         assert!(agent_type.contains("allowed with a full-history fork"));
         assert!(fork_turns.contains("agent_type remains an allowed collaboration label"));
+    }
+
+    #[test]
+    fn workspace_isolation_is_opt_in_and_independent_of_history() {
+        use roder_api::forks::AgentWorkspaceIsolation;
+        for value in [
+            json!({"task_name": "child", "message": "work"}),
+            json!({"task_name": "child", "message": "work", "workspace_isolation": null}),
+        ] {
+            let args: SpawnAgentArgs = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                args.workspace_isolation.unwrap_or_default(),
+                AgentWorkspaceIsolation::Shared
+            );
+        }
+        let args: SpawnAgentArgs = serde_json::from_value(json!({
+            "task_name": "child", "message": "work",
+            "fork_turns": "all", "workspace_isolation": "worktree",
+        }))
+        .unwrap();
+        assert_eq!(
+            args.workspace_isolation,
+            Some(AgentWorkspaceIsolation::Worktree)
+        );
+        assert!(
+            serde_json::from_value::<SpawnAgentArgs>(json!({
+                "task_name": "child", "message": "work", "workspace_isolation": "unknown",
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            AgentControlToolKind::SpawnAgent
+                .parameters()
+                .pointer("/properties/workspace_isolation/enum"),
+            Some(&json!(["shared", "worktree"]))
+        );
     }
 
     #[test]

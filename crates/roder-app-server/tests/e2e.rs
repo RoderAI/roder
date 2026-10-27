@@ -10,7 +10,7 @@ use roder_api::catalog::{
     PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_FIREWORKS, PROVIDER_MOCK,
     PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
     PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_XAI, REASONING_HIGH, REASONING_LOW,
-    REASONING_MAX, REASONING_MEDIUM, REASONING_ULTRA, REASONING_XHIGH,
+    REASONING_MAX, REASONING_MEDIUM, REASONING_NONE, REASONING_ULTRA, REASONING_XHIGH,
 };
 use roder_api::code_index::CodeIndexStatus;
 use roder_api::discovery::DiscoverySourceKind;
@@ -3861,12 +3861,7 @@ async fn providers_list_exposes_current_codex_subscription_roster_and_ultra_sele
             .iter()
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "gpt-6.1-terra",
-            "gpt-6-astra",
-            "gpt-6.1-sol",
-            "gpt-6-luna",
-        ]
+        vec!["gpt-6.1-terra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna",]
     );
 
     let terra = codex

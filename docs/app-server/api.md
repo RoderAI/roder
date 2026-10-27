@@ -33,6 +33,10 @@ The versioned public method manifest is checked in at
 `schemas/app-server/methods.schema.json`. SDK generators and integrators should
 prefer those files over scraping this prose.
 
+For agent filesystem isolation, durable fork ownership, and safe cleanup, see
+[Owned agent worktrees](agent-worktrees.md). External registered Git worktrees
+are discoverable but are not implicitly adopted or eligible for Roder cleanup.
+
 ## Transport
 
 All methods use JSON-RPC 2.0 request/response envelopes:

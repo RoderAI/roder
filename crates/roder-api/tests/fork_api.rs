@@ -8,6 +8,34 @@ use roder_api::extension::{ExtensionRegistryBuilder, ProvidedService};
 use roder_api::forks::*;
 use time::OffsetDateTime;
 
+#[test]
+fn ownership_and_agent_isolation_have_unambiguous_wire_contracts() {
+    let owner = ForkOwnership {
+        creator_thread_id: Some("parent".into()),
+        owner_thread_id: Some("child".into()),
+    };
+    let value = serde_json::to_value(&owner).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "creatorThreadId": "parent", "ownerThreadId": "child",
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<ForkOwnership>(value).unwrap(),
+        owner
+    );
+    assert_eq!(
+        AgentWorkspaceIsolation::default(),
+        AgentWorkspaceIsolation::Shared
+    );
+    assert_eq!(
+        serde_json::to_value(AgentWorkspaceIsolation::Worktree).unwrap(),
+        "worktree"
+    );
+    assert!(serde_json::from_value::<AgentWorkspaceIsolation>(serde_json::json!("copy")).is_err());
+}
+
 struct FakeForkProvider {
     id: &'static str,
 }
@@ -30,6 +58,7 @@ impl ForkProvider for FakeForkProvider {
 
     async fn create_fork(&self, request: ForkRequest) -> anyhow::Result<WorkspaceFork> {
         Ok(WorkspaceFork {
+            ownership: None,
             id: "fork-1".to_string(),
             provider_id: self.id.to_string(),
             source_workspace: request.source_workspace.clone(),
@@ -65,6 +94,7 @@ impl ForkProvider for FakeForkProvider {
 #[test]
 fn fork_types_round_trip_with_camel_case_wire_names() {
     let fork = WorkspaceFork {
+        ownership: None,
         id: "/repo/.roder/worktrees/x".to_string(),
         provider_id: "git-worktree".to_string(),
         source_workspace: PathBuf::from("/repo"),
@@ -127,6 +157,7 @@ async fn registry_registers_and_resolves_fork_providers() {
 
     let fork = provider
         .create_fork(ForkRequest {
+            ownership: None,
             source_workspace: PathBuf::from("/src"),
             name: Some("x".to_string()),
             reason: ForkReason::SubagentLane,

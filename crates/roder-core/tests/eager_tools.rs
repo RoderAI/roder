@@ -26,8 +26,8 @@ impl ToolExecutor for ProbeTool {
             parameters: json!({"type":"object","properties":{},"additionalProperties":false}),
         }
     }
-    fn supports_eager_execution(&self) -> bool {
-        true
+    fn execution_mode(&self) -> roder_api::tools::ToolExecutionMode {
+        roder_api::tools::ToolExecutionMode::SharedRead
     }
     async fn execute(&self, _: ToolExecutionContext, call: ToolCall) -> anyhow::Result<ToolResult> {
         assert!(

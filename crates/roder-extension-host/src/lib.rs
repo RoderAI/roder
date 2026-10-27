@@ -556,6 +556,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             provider.id.clone(),
             provider.name.unwrap_or(provider.id),
             provider.base_url,
+            provider.capabilities,
         )));
     }
     builder.install(LocalInferenceRouterExtension::new(
@@ -774,7 +775,11 @@ pub struct CustomInferenceProviderConfig {
     pub name: Option<String>,
     pub api_key: Option<String>,
     pub base_url: String,
+    pub capabilities: roder_api::provider_capabilities::ResponsesProviderCapabilities,
 }
+
+#[cfg(test)]
+mod custom_provider_capabilities_tests;
 
 fn known_provider_id(id: &str) -> bool {
     matches!(
@@ -1932,6 +1937,7 @@ mod tests {
                 name: Some("Local OpenAI".to_string()),
                 api_key: None,
                 base_url: "http://127.0.0.1:8080".to_string(),
+                capabilities: Default::default(),
             }],
             ..DefaultRegistryConfig::default()
         })

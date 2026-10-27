@@ -74,6 +74,23 @@ impl ToolExecutor for McpRemoteTool {
         }
     }
 
+    fn execution_mode(&self) -> roder_api::tools::ToolExecutionMode {
+        let trusted = self
+            .client
+            .config()
+            .trusted_read_only_tools
+            .iter()
+            .any(|name| name == &self.descriptor.name);
+        let read_only = self.descriptor.annotations.as_ref().is_some_and(|hints| {
+            hints.read_only_hint == Some(true) && hints.destructive_hint != Some(true)
+        });
+        if trusted && read_only {
+            roder_api::tools::ToolExecutionMode::SharedRead
+        } else {
+            roder_api::tools::ToolExecutionMode::Exclusive
+        }
+    }
+
     async fn execute(
         &self,
         ctx: ToolExecutionContext,
@@ -135,6 +152,7 @@ fn execution_client(client: &McpHttpClient, thread_id: &str) -> anyhow::Result<M
 #[cfg(test)]
 mod tests {
     use super::*;
+    use roder_api::tools::ToolExecutionMode;
 
     #[test]
     fn tool_names_follow_mcp_convention() {
@@ -142,6 +160,51 @@ mod tests {
             mcp_tool_name("vex", "list_hosted_apps"),
             "mcp__vex__list_hosted_apps"
         );
+    }
+
+    #[test]
+    fn read_annotations_require_explicit_local_trust() {
+        let config = crate::config::McpServerConfig::new("server", "http://127.0.0.1:1/mcp");
+        let descriptor: McpToolDescriptor = serde_json::from_value(serde_json::json!({
+            "name": "list",
+            "annotations": {"readOnlyHint": true}
+        }))
+        .unwrap();
+        let tool = McpRemoteTool::new(
+            McpHttpClient::new(config.clone()).unwrap(),
+            descriptor.clone(),
+        );
+        assert_eq!(tool.execution_mode(), ToolExecutionMode::Exclusive);
+
+        let trusted = config.with_trusted_read_only_tools(vec!["list".into()]);
+        let tool = McpRemoteTool::new(McpHttpClient::new(trusted.clone()).unwrap(), descriptor);
+        assert_eq!(tool.execution_mode(), ToolExecutionMode::SharedRead);
+        for annotations in [
+            serde_json::Value::Null,
+            serde_json::json!({"readOnlyHint": false}),
+            serde_json::json!({"readOnlyHint": true, "destructiveHint": true}),
+        ] {
+            let descriptor = serde_json::from_value(serde_json::json!({
+                "name": "list",
+                "annotations": annotations,
+            }))
+            .unwrap();
+            let tool = McpRemoteTool::new(McpHttpClient::new(trusted.clone()).unwrap(), descriptor);
+            assert_eq!(tool.execution_mode(), ToolExecutionMode::Exclusive);
+        }
+    }
+
+    #[test]
+    fn trusted_name_must_match_the_remote_tool_exactly() {
+        let config = crate::config::McpServerConfig::new("server", "http://127.0.0.1:1/mcp")
+            .with_trusted_read_only_tools(vec!["list".into(), "*".into()]);
+        let descriptor = serde_json::from_value(serde_json::json!({
+            "name": "delete",
+            "annotations": {"readOnlyHint": true}
+        }))
+        .unwrap();
+        let tool = McpRemoteTool::new(McpHttpClient::new(config).unwrap(), descriptor);
+        assert_eq!(tool.execution_mode(), ToolExecutionMode::Exclusive);
     }
 
     #[test]
@@ -155,5 +218,42 @@ mod tests {
         let error = execution_client(&client, "thread-without-token").unwrap_err();
 
         assert!(error.to_string().contains("requires a thread-scoped"));
+    }
+
+    #[tokio::test]
+    async fn trusted_read_only_scheduling_does_not_bypass_thread_authentication() {
+        let config = crate::config::McpServerConfig::new("server", "http://127.0.0.1:1/mcp")
+            .with_tool_call_auth_mode(McpToolCallAuthMode::ThreadScopedRequired)
+            .with_trusted_read_only_tools(vec!["list".into()]);
+        let tool = McpRemoteTool::new(
+            McpHttpClient::new(config).unwrap(),
+            serde_json::from_value(serde_json::json!({
+                "name": "list",
+                "annotations": {"readOnlyHint": true}
+            }))
+            .unwrap(),
+        );
+        assert_eq!(tool.execution_mode(), ToolExecutionMode::SharedRead);
+        let ctx = ToolExecutionContext::new(
+            "missing-thread-token",
+            "turn",
+            roder_api::policy_mode::PolicyMode::Bypass,
+        );
+        let result = tool
+            .execute(
+                ctx,
+                ToolCall {
+                    thread_id: "missing-thread-token".into(),
+                    turn_id: "turn".into(),
+                    id: "call".into(),
+                    name: tool.spec().name,
+                    arguments: serde_json::json!({}),
+                    raw_arguments: "{}".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.text.contains("requires a thread-scoped"));
     }
 }

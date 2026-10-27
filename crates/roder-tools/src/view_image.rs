@@ -46,8 +46,8 @@ struct ViewImageArgs {
 
 #[async_trait::async_trait]
 impl ToolExecutor for ViewImageTool {
-    fn supports_eager_execution(&self) -> bool {
-        true
+    fn execution_mode(&self) -> roder_api::tools::ToolExecutionMode {
+        roder_api::tools::ToolExecutionMode::SharedRead
     }
     fn spec(&self) -> ToolSpec {
         ToolSpec {

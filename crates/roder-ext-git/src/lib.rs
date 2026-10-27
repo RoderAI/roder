@@ -1,5 +1,6 @@
 mod fork_provider;
 mod git;
+mod ownership;
 mod provider;
 pub mod worktree;
 

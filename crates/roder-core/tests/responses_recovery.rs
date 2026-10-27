@@ -226,16 +226,53 @@ async fn non_retryable_typed_failures_have_one_terminal_and_stop() {
             ProviderFailureKind::InvalidRequest,
             ProviderFailureKind::Protocol,
             ProviderFailureKind::ToolSearchExhausted,
-            ProviderFailureKind::RequestTooLarge,
         ] {
             let (engine, failures, completed, event) =
                 exercise_profile(Mode::Terminal(kind), profile).await;
-            assert_eq!(engine.requests.lock().unwrap().len(), 1);
+            assert_eq!(
+                engine.requests.lock().unwrap().len(),
+                1,
+                "non-retryable {kind:?} in {profile:?}"
+            );
             assert_eq!((failures, completed), (1, 0));
             assert!(event.contains(kind.retry_cause()));
         }
     }
 }
+
+#[tokio::test]
+async fn typed_size_failures_attempt_bounded_compaction_then_have_one_terminal_and_stop() {
+    for profile in [
+        RuntimeProfile::Interactive,
+        RuntimeProfile::NonInteractive,
+        RuntimeProfile::Eval,
+    ] {
+        for kind in [
+            ProviderFailureKind::RequestTooLarge,
+            ProviderFailureKind::ContextWindowExceeded,
+        ] {
+            assert!(!kind.is_retryable(), "size recovery is not transport retry");
+            let (engine, failures, completed, event) =
+                exercise_profile(Mode::Terminal(kind), profile).await;
+            let requests = engine.requests.lock().unwrap();
+            let summary_requests = requests
+                .iter()
+                .filter(|request| request.metadata["roderCompactionSummary"] == true)
+                .count();
+            // Typed size failures have a separate two-attempt compaction budget.
+            // Each recovery tries one summary, then resubmits the parent round.
+            assert_eq!(summary_requests, 2, "{kind:?} in {profile:?}");
+            assert_eq!(
+                requests.len() - summary_requests,
+                3,
+                "{kind:?} in {profile:?}"
+            );
+            assert_eq!((failures, completed), (1, 0), "{kind:?} in {profile:?}");
+            assert!(event.contains(kind.retry_cause()), "{event}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn startup_retry_waits_for_provider_owned_cleanup() {
     let (engine, failed, completed, _) = exercise(Mode::SetupCleanup).await;

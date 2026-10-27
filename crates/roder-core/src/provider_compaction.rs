@@ -6,6 +6,9 @@ use roder_api::{
     inference::*,
     transcript::TranscriptItem,
 };
+#[cfg(test)]
+#[path = "provider_compaction_transaction_tests.rs"]
+mod transaction_tests;
 
 pub(crate) enum NativeCompactionOutcome {
     Unsupported,
@@ -98,11 +101,14 @@ impl Runtime {
                             }
                             if crate::compaction::provider_metadata_has_compaction(&metadata) {
                                 let item = TranscriptItem::ProviderMetadata(metadata);
-                                self.persist_turn_item(thread_id, turn_id, &item).await?;
-                                boundary = Some(item.clone());
-                                // Commit completed opaque state before another read
-                                // so a retry never restores the pre-compact window.
-                                request.transcript = vec![item];
+                                if boundary.as_ref().is_some_and(|prior| prior != &item) {
+                                    return Err(ProviderFailure::new(
+                                        ProviderFailureKind::Protocol,
+                                        "native compaction emitted conflicting boundaries",
+                                    )
+                                    .into());
+                                }
+                                boundary = Some(item);
                             }
                         }
                         InferenceEvent::Usage(usage) => {
@@ -130,6 +136,13 @@ impl Runtime {
                             )
                             .into());
                         }
+                        InferenceEvent::ToolCallCompleted(_) => {
+                            return Err(ProviderFailure::new(
+                                ProviderFailureKind::Protocol,
+                                "native compaction emitted an executable tool call",
+                            )
+                            .into());
+                        }
                         _ => {}
                     }
                 }
@@ -146,6 +159,10 @@ impl Runtime {
                         "native compaction completed without durable boundary",
                     )
                 })?;
+                // The candidate is not a replay boundary until the entire attempt
+                // validates. Failed attempts still bill usage, but retain history.
+                self.persist_turn_item(thread_id, turn_id, &boundary)
+                    .await?;
                 Ok(Some(vec![boundary]))
             }
             .await;
@@ -284,10 +301,8 @@ mod tests {
                 .into()));
             } else {
                 assert!(
-                    requests[1]
-                        .transcript
-                        .iter()
-                        .all(crate::compaction::is_compaction_boundary)
+                    requests[1].transcript == requests[0].transcript,
+                    "a retry must use the original uncommitted history"
                 );
                 events.push(Ok(InferenceEvent::Completed(CompletionMetadata {
                     stop_reason: Some("completed".into()),
@@ -298,7 +313,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn manual_native_compaction_uses_thread_selection_and_retries_committed_window() {
+    async fn manual_native_compaction_uses_thread_selection_and_retries_original_window() {
         let dir = tempfile::tempdir().unwrap();
         let engine = Arc::new(NativeEngine(Mutex::new(vec![])));
         let mut registry = ExtensionRegistryBuilder::new();
@@ -360,12 +375,15 @@ mod tests {
         );
         assert_eq!(engine.0.lock().unwrap().len(), 2);
         let snapshot = runtime.load_thread(&thread).await.unwrap().unwrap();
-        assert!(
+        assert_eq!(
             snapshot
                 .turns
                 .iter()
                 .flat_map(|turn| &turn.items)
-                .any(crate::compaction::is_compaction_boundary)
+                .filter(|item| crate::compaction::is_compaction_boundary(item))
+                .count(),
+            1,
+            "only the completed retry may commit"
         );
     }
 }

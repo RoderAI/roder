@@ -103,9 +103,17 @@ impl Runtime {
         id: &ForkId,
         policy: RemoveForkPolicy,
     ) -> anyhow::Result<RemoveForkResult> {
-        self.fork_provider(provider_id)?
-            .remove_fork(id, policy)
-            .await
+        let provider = self.fork_provider(provider_id)?;
+        if provider_id == DEFAULT_FORK_PROVIDER {
+            let fork = provider.resume_fork(id).await?;
+            if let Some(owner) = fork.ownership.and_then(|owner| owner.owner_thread_id) {
+                anyhow::ensure!(
+                    !self.has_active_turn_for_thread(&owner).await,
+                    "cannot remove a worktree while its owner thread {owner} has an active turn"
+                );
+            }
+        }
+        provider.remove_fork(id, policy).await
     }
 }
 
@@ -153,6 +161,7 @@ impl RemoteRunnerForkAdapter {
     fn fork_for(&self, session: &Arc<dyn RemoteRunnerSession>) -> WorkspaceFork {
         let state = session.state();
         WorkspaceFork {
+            ownership: None,
             id: state.session_id.clone(),
             provider_id: REMOTE_RUNNER_FORK_PROVIDER_ID.to_string(),
             source_workspace: self.runner_workspace.clone(),

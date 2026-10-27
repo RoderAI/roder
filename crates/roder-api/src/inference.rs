@@ -841,7 +841,9 @@ pub trait InferenceEngine: Send + Sync + 'static {
     }
 
     /// Native, opaque provider compaction. Unsupported engines return None.
-    /// The stream must publish a completed boundary and one terminal completion.
+    /// The stream publishes a candidate boundary and one terminal completion.
+    /// Hosts must stage candidates until successful terminal completion; failed
+    /// attempts may report billable usage but must not replace replay history.
     async fn compact_turn(
         &self,
         _ctx: InferenceTurnContext<'_>,

@@ -49,6 +49,7 @@ impl ForkProvider for CopyDirForkProvider {
             }
         }
         Ok(WorkspaceFork {
+            ownership: None,
             id: workspace.display().to_string(),
             provider_id: "fake-copy".to_string(),
             source_workspace: request.source_workspace,
@@ -115,6 +116,7 @@ fn runtime() -> Arc<Runtime> {
 
 fn request(source: &Path, name: &str) -> ForkRequest {
     ForkRequest {
+        ownership: None,
         source_workspace: source.to_path_buf(),
         name: Some(name.to_string()),
         reason: ForkReason::SubagentLane,
@@ -194,6 +196,7 @@ async fn remote_runner_sessions_are_representable_as_forks() {
 
     let fork = adapter
         .create_fork(ForkRequest {
+            ownership: None,
             source_workspace: workspace.clone(),
             name: Some("remote-lane".to_string()),
             reason: ForkReason::TaskLane,

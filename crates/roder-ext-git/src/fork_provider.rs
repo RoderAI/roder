@@ -13,9 +13,10 @@ use roder_api::forks::{
 };
 use time::OffsetDateTime;
 
+use crate::ownership::{lock_repository, read_owned};
 use crate::worktree::{
-    GitWorktreeForkRequest, create_worktree_fork, list_worktree_paths, remove_worktree_fork,
-    repo_root, run_git,
+    GitWorktreeForkRequest, create_worktree_fork_unlocked, list_worktree_paths,
+    remove_worktree_fork, repo_root, run_git,
 };
 
 pub const GIT_WORKTREE_FORK_PROVIDER_ID: &str = "git-worktree";
@@ -34,6 +35,7 @@ impl GitWorktreeForkProvider {
             .map(|commit| commit.trim().to_string());
         WorkspaceFork {
             id: worktree.display().to_string(),
+            ownership: None,
             provider_id: GIT_WORKTREE_FORK_PROVIDER_ID.to_string(),
             source_workspace: root.to_path_buf(),
             workspace: worktree.to_path_buf(),
@@ -101,26 +103,39 @@ impl ForkProvider for GitWorktreeForkProvider {
             fork_name: request.name.clone().unwrap_or_else(|| "fork".to_string()),
             base_dir,
         };
-        let created = tokio::task::spawn_blocking(move || create_worktree_fork(&worktree_request))
-            .await
-            .map_err(|err| anyhow::anyhow!("worktree fork task panicked: {err}"))??;
-        Ok(WorkspaceFork {
-            id: created.worktree_path.display().to_string(),
-            provider_id: GIT_WORKTREE_FORK_PROVIDER_ID.to_string(),
-            source_workspace: created.source_workspace.clone(),
-            workspace: created.worktree_path.clone(),
-            status: ForkStatus::Active,
-            provenance: ForkProvenance {
-                branch: Some(created.branch.clone()),
-                source_branch: created.source_branch.clone(),
-                source_commit: Some(created.source_commit.clone()),
-                snapshot_id: None,
-                session_id: None,
-                created_at: OffsetDateTime::now_utc(),
-            },
-            cleanup: Default::default(),
-            metadata: serde_json::json!({ "forkName": created.fork_id }),
+        tokio::task::spawn_blocking(move || {
+            let root = repo_root(&worktree_request.source_workspace)?;
+            let _lock = lock_repository(&root)?;
+            // An owner thread gets exactly one fork per repository, even if
+            // callers retry concurrently or after restarting the process.
+            if let Some(owner) = &request.ownership
+                && owner.owner_thread_id.is_some()
+            {
+                for path in list_worktree_paths(&root)? {
+                    if let Some(existing) = read_owned(&path)?
+                        && existing
+                            .ownership
+                            .as_ref()
+                            .and_then(|value| value.owner_thread_id.as_ref())
+                            == owner.owner_thread_id.as_ref()
+                    {
+                        anyhow::ensure!(
+                            existing.ownership.as_ref() == Some(owner),
+                            "fork owner already belongs to a different creator"
+                        );
+                        return Ok(existing);
+                    }
+                }
+            }
+            let created = create_worktree_fork_unlocked(
+                &worktree_request,
+                request.ownership.unwrap_or_default(),
+            )?;
+            read_owned(&created.worktree_path)?
+                .ok_or_else(|| anyhow::anyhow!("new worktree has no ownership record"))
         })
+        .await
+        .map_err(|err| anyhow::anyhow!("worktree fork task panicked: {err}"))?
     }
 
     async fn list_forks(&self, source_workspace: &Path) -> anyhow::Result<Vec<WorkspaceFork>> {
@@ -132,9 +147,10 @@ impl ForkProvider for GitWorktreeForkProvider {
                 if worktree == root {
                     continue;
                 }
-                forks.push(GitWorktreeForkProvider::fork_from_worktree(
-                    &root, &worktree,
-                ));
+                forks.push(match read_owned(&worktree)? {
+                    Some(fork) => fork,
+                    None => GitWorktreeForkProvider::fork_from_worktree(&root, &worktree),
+                });
             }
             Ok(forks)
         })
@@ -151,6 +167,7 @@ impl ForkProvider for GitWorktreeForkProvider {
                 // than guessing at provenance.
                 return Ok(WorkspaceFork {
                     id: id.clone(),
+                    ownership: None,
                     provider_id: GIT_WORKTREE_FORK_PROVIDER_ID.to_string(),
                     source_workspace: PathBuf::new(),
                     workspace: path,
@@ -168,7 +185,12 @@ impl ForkProvider for GitWorktreeForkProvider {
                 "{} is not a registered worktree of its repository",
                 path.display()
             );
-            Ok(GitWorktreeForkProvider::fork_from_worktree(&root, &path))
+            read_owned(&path)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} is an external worktree without Roder ownership; refusing to adopt",
+                    path.display()
+                )
+            })
         })
         .await
         .map_err(|err| anyhow::anyhow!("worktree resume task panicked: {err}"))?

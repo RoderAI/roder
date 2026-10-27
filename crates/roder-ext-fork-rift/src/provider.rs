@@ -26,6 +26,7 @@ impl RiftForkProvider {
 
     fn fork(&self, source: &Path, name: &str, path: String, status: ForkStatus) -> WorkspaceFork {
         WorkspaceFork {
+            ownership: None,
             id: path.clone(),
             provider_id: RIFT_FORK_PROVIDER_ID.to_string(),
             source_workspace: source.to_path_buf(),
