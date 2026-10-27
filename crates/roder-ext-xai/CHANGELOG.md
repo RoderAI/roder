@@ -1,3 +1,19 @@
+## 0.3.0 (2026-10-27)
+
+### Breaking Changes
+
+#### Release a coherent runtime API compatibility boundary
+
+Adopt explicit shared-read/exclusive/coordinator scheduling, typed custom-provider
+capabilities, and owned worktree metadata. Rust integrators must update
+ToolExecutor implementations to execution_mode and initialize the new public
+configuration and ownership fields.
+
+Release the shared API's reverse dependency closure together so older consumers
+cannot resolve patch-compatible packages that expose incompatible API types.
+The CLI package also exports a Rust library, so its compatibility release is
+0.4.0. Existing command-line use remains supported.
+
 ## 0.2.2 (2026-10-11)
 
 ### Fixes
