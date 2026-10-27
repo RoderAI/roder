@@ -192,6 +192,7 @@ impl JsonlThreadStore {
         file.write_all(&line)
             .await
             .with_context(|| format!("append item event record to {}", file_path.display()))?;
+        file.flush().await.context("flush item event record")?;
         Ok(())
     }
 }
@@ -397,6 +398,16 @@ impl ThreadStore for JsonlThreadStore {
             self.update_metadata_for_turn_item(thread_id, item, envelope.timestamp)
                 .await?;
         }
+        if matches!(
+            envelope.event,
+            RoderEvent::TurnStarted(_)
+                | RoderEvent::TranscriptItemAppended(_)
+                | RoderEvent::TurnCompleted(_)
+                | RoderEvent::TurnFailed(_)
+                | RoderEvent::TurnInterrupted(_)
+        ) {
+            crate::history::sync(dir).await?;
+        }
         Ok(())
     }
 
@@ -405,7 +416,16 @@ impl ThreadStore for JsonlThreadStore {
         thread_id: &ThreadId,
         item_event: &ThreadItemEvent,
     ) -> anyhow::Result<()> {
-        self.write_item_event(thread_id, item_event).await
+        self.write_item_event(thread_id, item_event).await?;
+        crate::history::sync(self.thread_dir(thread_id)).await
+    }
+
+    async fn read_history_page(
+        &self,
+        thread_id: &ThreadId,
+        options: roder_api::thread::ThreadHistoryReadOptions,
+    ) -> anyhow::Result<Option<roder_api::thread::ThreadHistoryPage>> {
+        crate::history::read(self.thread_dir(thread_id), thread_id.clone(), options).await
     }
 
     async fn append_extension_state(

@@ -416,6 +416,12 @@ impl AppServer {
                 )
                 .await
             }
+            "thread/history/read" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_thread_history_read(p).await
+                })
+                .await
+            }
             "thread/read" => {
                 self.decode_and(
                     req.params,
@@ -2746,7 +2752,7 @@ impl AppServer {
         thread_status_for_activity(activity.active_turn_id, activity.active_flags)
     }
 
-    async fn protocol_thread_from_metadata_with_live_status(
+    pub(crate) async fn protocol_thread_from_metadata_with_live_status(
         &self,
         metadata: roder_api::thread::ThreadMetadata,
         turns: Option<Vec<Turn>>,

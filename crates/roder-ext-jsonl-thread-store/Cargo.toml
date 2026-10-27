@@ -25,6 +25,8 @@ docs_url = ""
 anyhow.workspace = true
 async-trait.workspace = true
 roder-api.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

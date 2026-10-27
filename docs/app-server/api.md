@@ -218,6 +218,7 @@ Threads and turns:
 | `thread/start` | Create a thread. |
 | `thread/list` | List threads. |
 | `thread/read` | Read a thread with optional turns. |
+| `thread/history/read` | Read a bounded chronological item page without loading a complete snapshot. |
 | `thread/unload` | Cancel and drain work, then release live resources while preserving the conversation. |
 | `thread/archive` | Archive a thread and remove it from active listings. |
 | `thread/goal/get` | Read the thread goal state. |
@@ -1416,6 +1417,41 @@ Behavior:
 - Threads include `workspaceId`, `rootId`, and `cwd` when persisted metadata has
   workspace registry data.
 - Cursor fields are currently always null.
+
+### `thread/history/read`
+
+Read recent transcript items or an older page without hydrating a full thread.
+This is the history API for interactive clients; `thread/read` with
+`includeTurns: true` remains an explicit complete-snapshot operation.
+
+```json
+{
+  "threadId": "thread-123",
+  "limit": 160,
+  "maxBytes": 2097152
+}
+```
+
+The result is `{ "thread": { "...": "thread metadata", "turns": [] },
+"before": "opaque-cursor-or-null", "hasMore": true }`. Items and turns are
+chronological; a page can contain only part of a large turn. For older items,
+send the returned cursor as `before`. The default limits are 160 items initially
+and 120 on older pages, with a maximum of 200 and a 2 MiB serialized-item budget.
+A single oversized item is returned alone to guarantee progress.
+
+Cursors are exclusive, scoped to a thread, and opaque to clients. Merge pages by
+stable turn/item IDs, keeping newer live updates on overlap. Turn timestamps,
+status, error, usage, and finish reason are retained. An unknown thread returns
+`{ "thread": null, "before": null, "hasMore": false }`. Invalid or stale cursors
+produce an error instead of restarting from an arbitrary offset.
+
+The default JSONL store maintains a disposable SQLite projection/seek index.
+Normal reads select only the requested items; no complete thread snapshot is
+loaded or retained for paging. A missing index for an older thread is rebuilt
+by streaming committed log records once, without constructing a full snapshot.
+Subsequent reads and appends process only the indexed records or new log suffix.
+Stores and provider-specific backends without this capability report an
+explicit unsupported error; there is no full-read paging fallback.
 
 ### `thread/read`
 

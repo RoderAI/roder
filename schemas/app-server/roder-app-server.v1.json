@@ -2225,6 +2225,15 @@
       ]
     },
     {
+      "method": "thread/history/read",
+      "paramsType": "ThreadHistoryReadParams",
+      "resultType": "ThreadHistoryReadResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
       "method": "thread/list",
       "paramsType": "ThreadListParams",
       "resultType": "ThreadListResult",

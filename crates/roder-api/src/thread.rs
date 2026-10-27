@@ -14,7 +14,9 @@ use crate::inference_routing::ModelSelectionMode;
 use crate::remote_runner::{RunnerDestination, RunnerSessionState, ThreadRunnerBinding};
 use crate::transcript::{InputImage, TranscriptItem};
 
+mod history;
 mod projection;
+pub use history::*;
 pub use projection::{project_thread_item_events, project_turns_from_events};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -426,6 +428,15 @@ pub trait ThreadStore: Send + Sync {
             .and_then(|snapshot| snapshot.metadata))
     }
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>>;
+
+    /// Read bounded history without loading a complete thread snapshot.
+    async fn read_history_page(
+        &self,
+        _thread_id: &ThreadId,
+        _options: ThreadHistoryReadOptions,
+    ) -> anyhow::Result<Option<ThreadHistoryPage>> {
+        anyhow::bail!("thread store does not support bounded history pagination")
+    }
     /// Loads extension state without requiring callers to project a full thread snapshot.
     ///
     /// Stores with dedicated extension-state backing should override this method. The default

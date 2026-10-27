@@ -2131,6 +2131,42 @@ export const appServerManifest = {
       ]
     },
     {
+      "method": "thread/events/cancel",
+      "paramsType": "ThreadEventsCancelParams",
+      "resultType": "ThreadEventsCancelResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/events/list",
+      "paramsType": "ThreadEventsListParams",
+      "resultType": "ThreadEventsListResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/events/publish",
+      "paramsType": "ThreadEventsPublishParams",
+      "resultType": "ThreadEventsPublishResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
+      "method": "thread/events/subscribe",
+      "paramsType": "ThreadEventsSubscribeParams",
+      "resultType": "ThreadEventsSubscribeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/exit_plan",
       "paramsType": "ThreadExitPlanParams",
       "resultType": "ThreadExitPlanResult",
@@ -2189,6 +2225,15 @@ export const appServerManifest = {
       "notifications": [
         "thread/goal/updated"
       ]
+    },
+    {
+      "method": "thread/history/read",
+      "paramsType": "ThreadHistoryReadParams",
+      "resultType": "ThreadHistoryReadResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "idempotent",
+      "sideEffect": "readOnly"
     },
     {
       "method": "thread/list",
@@ -2297,6 +2342,15 @@ export const appServerManifest = {
       "featureGroup": "thread",
       "idempotency": "idempotent",
       "sideEffect": "readOnly"
+    },
+    {
+      "method": "thread/unload",
+      "paramsType": "ThreadUnloadParams",
+      "resultType": "ThreadUnloadResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
     },
     {
       "method": "tools/bind_executor",
@@ -3089,12 +3143,17 @@ export const appServerMethods = [
   "thread/archive",
   "thread/attach",
   "thread/compact",
+  "thread/events/cancel",
+  "thread/events/list",
+  "thread/events/publish",
+  "thread/events/subscribe",
   "thread/exit_plan",
   "thread/fork",
   "thread/fork_status",
   "thread/goal/clear",
   "thread/goal/get",
   "thread/goal/set",
+  "thread/history/read",
   "thread/list",
   "thread/read",
   "thread/remove_fork",
@@ -3107,6 +3166,7 @@ export const appServerMethods = [
   "thread/set_ultra_mode",
   "thread/start",
   "thread/state",
+  "thread/unload",
   "tools/bind_executor",
   "tools/call",
   "tools/execution_read",
