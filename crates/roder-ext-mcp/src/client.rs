@@ -17,6 +17,22 @@ pub struct McpToolDescriptor {
     pub description: Option<String>,
     #[serde(rename = "inputSchema", default)]
     pub input_schema: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<McpToolAnnotations>,
+}
+
+/// Server-provided hints, never an authorization or trust decision.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolAnnotations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_hint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destructive_hint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotent_hint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_world_hint: Option<bool>,
 }
 
 /// Result of one `tools/call`.
@@ -375,6 +391,30 @@ pub(crate) fn truncate(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_descriptor_retains_read_only_annotations() {
+        let descriptor: McpToolDescriptor = serde_json::from_value(serde_json::json!({
+            "name": "list",
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+            }
+        }))
+        .unwrap();
+        let annotations = descriptor.annotations.as_ref().unwrap();
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.destructive_hint, Some(false));
+        assert_eq!(annotations.idempotent_hint, Some(true));
+        assert_eq!(annotations.open_world_hint, Some(false));
+        assert_eq!(
+            serde_json::from_value::<McpToolDescriptor>(serde_json::to_value(&descriptor).unwrap())
+                .unwrap(),
+            descriptor
+        );
+    }
 
     #[test]
     fn parses_sse_response_body() {

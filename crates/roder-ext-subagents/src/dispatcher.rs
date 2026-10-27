@@ -983,6 +983,7 @@ fn child_tool_handles(parent: &ToolExecutionHandles) -> ToolExecutionHandles {
         // Children do not publish swarm progress (only the lead swarm does).
         swarm_progress_sink: None,
         parent_model_selection: parent.parent_model_selection.clone(),
+        execution_barrier: parent.execution_barrier.clone(),
     }
 }
 
@@ -1005,6 +1006,10 @@ async fn execute_tool(
     let mut child_ctx =
         ToolExecutionContext::new(thread_id.clone(), turn_id.clone(), PolicyMode::Default);
     child_ctx.handles = child_tool_handles(handles);
+    let _scheduling_guard = match handles.execution_barrier.as_ref() {
+        Some(barrier) => barrier.acquire(executor.execution_mode()).await,
+        None => None,
+    };
     let result = executor
         .execute(
             child_ctx,
@@ -1046,6 +1051,7 @@ mod handle_tests {
         let parent = ToolExecutionHandles {
             workspace: Some(workspace.clone()),
             process_runner: Some(process.clone()),
+            execution_barrier: Some(Arc::new(roder_api::tools::ToolExecutionBarrier::default())),
             ..ToolExecutionHandles::default()
         };
 
@@ -1060,11 +1066,19 @@ mod handle_tests {
         );
         assert!(Arc::ptr_eq(child.workspace.as_ref().unwrap(), &workspace));
         assert!(child.process_runner.is_some());
+        assert!(Arc::ptr_eq(
+            child.execution_barrier.as_ref().unwrap(),
+            parent.execution_barrier.as_ref().unwrap(),
+        ));
         // Children must not carry the parent goal controller or trace sink.
         assert!(child.goal_controller.is_none());
         assert!(child.subagent_trace_sink.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "dispatcher_scheduling_tests.rs"]
+mod scheduling_tests;
 
 #[cfg(test)]
 mod concurrency_tests {

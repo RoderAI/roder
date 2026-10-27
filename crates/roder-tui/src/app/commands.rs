@@ -7,6 +7,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
             "Create or refresh project instructions for this workspace.",
         ),
         ("clear", "Clear the visible conversation state."),
+        ("copy", "Copy original response or code source with the keyboard."),
         (
             "compact",
             "Summarize the current thread and continue with a smaller context.",
@@ -65,6 +66,7 @@ pub(super) fn built_in_command_catalog() -> Vec<CommandDescriptor> {
     .into_iter()
     .map(|(name, description)| {
         let argument_hint = match name {
+            "retry" => Some("[discard]".to_string()),
             "fork" => Some("<name> | status | remove <worktree-path>".to_string()),
             "goal" => Some("[pause|resume|edit|clear|<objective>]".to_string()),
             "snapshot" => Some("[path-or-message]".to_string()),
@@ -285,6 +287,22 @@ mod tests {
     }
 
     #[test]
+    fn copy_command_is_discoverable_and_invoked_without_expansion() {
+        let commands = built_in_command_catalog();
+        assert_eq!(
+            matching_commands(&commands, "/cop")
+                .into_iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            ["copy"]
+        );
+        assert_eq!(
+            command_invocation("/copy", &commands),
+            Some(("copy".to_owned(), String::new()))
+        );
+    }
+
+    #[test]
     fn tab_completion_inserts_command_name() {
         let commands = sample_commands();
         assert_eq!(
@@ -339,6 +357,7 @@ mod tests {
             [
                 "init",
                 "clear",
+                "copy",
                 "compact",
                 "help",
                 "fork",

@@ -22,6 +22,9 @@ use roder_api::tools::{
     ToolSpec,
 };
 use roder_core::{Runtime, RuntimeConfig, StartTurnRequest, default_instructions};
+
+#[path = "remote_runner/scheduling.rs"]
+mod scheduling;
 use roder_ext_jsonl_thread_store::store::{JsonlThreadStore, JsonlThreadStoreFactory};
 use roder_ext_runner_sprites::{
     LIVE_ENV as SPRITES_LIVE_ENV, PROVIDER_ID as SPRITES_PROVIDER_ID, SpritesRunnerProvider,
@@ -53,6 +56,8 @@ struct MockRunnerState {
     reads_started: AtomicU64,
     first_read_started: tokio::sync::Notify,
     second_read_started: tokio::sync::Notify,
+    pause_first_read: AtomicBool,
+    release_first_read: tokio::sync::Notify,
     workspace_leases_enabled: AtomicBool,
     workspace_lease_lock: Arc<tokio::sync::Mutex<()>>,
     workspace_lease_acquire_delay_ms: AtomicU64,
@@ -376,6 +381,9 @@ impl RemoteRunnerSession for MockRunnerSession {
             let read_index = self.state.reads_started.fetch_add(1, Ordering::SeqCst);
             self.state.first_read_started.notify_waiters();
             if read_index == 0 {
+                if self.state.pause_first_read.load(Ordering::SeqCst) {
+                    self.state.release_first_read.notified().await;
+                }
                 let _ = tokio::time::timeout(Duration::from_millis(250), second_read_started).await;
             } else if read_index == 1 {
                 self.state.second_read_started.notify_waiters();
@@ -1692,6 +1700,8 @@ async fn failed_runner_initialization_is_retryable_without_local_fallback() {
     let session_dir = temp_dir("runner-retry-sessions");
     let scratch = temp_dir("runner-retry-scratch");
     let provider = MockRunnerProvider::default();
+    std::fs::write(scratch.join("retry-a.txt"), "host-only sentinel a").unwrap();
+    std::fs::write(scratch.join("retry-b.txt"), "host-only sentinel b").unwrap();
     *provider.state.create_failures_remaining.lock().unwrap() = 1;
     provider.state.create_delay_ms.store(25, Ordering::SeqCst);
     let runtime = coding_tools_runtime(
@@ -1699,17 +1709,11 @@ async fn failed_runner_initialization_is_retryable_without_local_fallback() {
         scratch.clone(),
         provider.clone(),
         vec![
+            // Independent reads are eligible for concurrent initialization.
+            // Writes intentionally serialize under the exclusive default.
             tool_call_round(&[
-                (
-                    "first-write-a",
-                    "write_file",
-                    r#"{"path":"retry-a.txt","content":"remote only"}"#,
-                ),
-                (
-                    "first-write-b",
-                    "write_file",
-                    r#"{"path":"retry-b.txt","content":"remote only"}"#,
-                ),
+                ("first-read-a", "read_file", r#"{"path":"retry-a.txt"}"#),
+                ("first-read-b", "read_file", r#"{"path":"retry-b.txt"}"#),
             ]),
             final_round(),
             tool_call_round(&[(
@@ -1725,13 +1729,17 @@ async fn failed_runner_initialization_is_retryable_without_local_fallback() {
         .unwrap();
 
     let first = run_turn_collecting_tool_calls(&runtime, &metadata.thread_id, &scratch).await;
+    assert_eq!(first.len(), 2);
     assert!(
         first.iter().all(|call| call.is_error),
         "expected every concurrent caller to share the initialization error: {first:?}"
     );
     assert_eq!(*provider.state.created.lock().unwrap(), 1);
-    assert!(!scratch.join("retry-a.txt").exists());
-    assert!(!scratch.join("retry-b.txt").exists());
+    assert!(first.iter().all(|call| {
+        call.output.as_deref().is_some_and(|text| {
+            text.contains("mock runner creation failed") && !text.contains("host-only sentinel")
+        })
+    }));
     let first_state = runtime
         .load_thread(&metadata.thread_id)
         .await
@@ -1754,6 +1762,10 @@ async fn failed_runner_initialization_is_retryable_without_local_fallback() {
             .get("retry.txt")
             .cloned(),
         Some(b"remote only".to_vec())
+    );
+    assert!(
+        !scratch.join("retry.txt").exists(),
+        "retry must not write locally"
     );
 
     let _ = std::fs::remove_dir_all(session_dir);

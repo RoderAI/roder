@@ -90,6 +90,7 @@ fn calls(harness: &Harness) -> Vec<String> {
 
 fn request(source: &Path, name: &str) -> ForkRequest {
     ForkRequest {
+        ownership: None,
         source_workspace: source.to_path_buf(),
         name: Some(name.to_string()),
         reason: ForkReason::TaskLane,

@@ -21,6 +21,8 @@ use time::OffsetDateTime;
 
 #[path = "conversation_fork/goals.rs"]
 mod goals;
+#[path = "conversation_fork/ownership.rs"]
+mod ownership;
 
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git")

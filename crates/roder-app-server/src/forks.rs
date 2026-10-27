@@ -130,6 +130,7 @@ impl AppServer {
             .create_workspace_fork(
                 &provider_or_default(params.provider),
                 ForkRequest {
+                    ownership: None,
                     source_workspace: PathBuf::from(&params.source_workspace),
                     name: params.name,
                     reason: ForkReason::Other,

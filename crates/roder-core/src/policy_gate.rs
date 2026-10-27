@@ -55,9 +55,9 @@ impl PolicyGate for DefaultPolicyGate {
                 reason: format!("tool {:?} is denied by policy", call.name),
             };
         }
-        // Agent-control calls only mutate Roder's internal collaboration state. In
-        // particular, spawn_agent does not launch an OS process, despite its name.
-        // The child remains subject to the caller's inherited policy and tool filters.
+        // Agent controls manage collaboration state and may allocate an owned
+        // checkout through the fixed Git fork protocol, never an arbitrary
+        // command. Child coding tools retain the caller's policy and filters.
         if crate::agent_control_tools::is_agent_control_tool(&call.name) {
             return PolicyDecision::Allowed;
         }

@@ -17,6 +17,28 @@ pub type ForkProviderId = String;
 /// alone (e.g. the absolute worktree path for `git-worktree`).
 pub type ForkId = String;
 
+/// Durable ownership, independent of a worktree's path or branch naming.
+/// Git forks with `None` are external, unmanaged checkouts. Other providers
+/// may omit ownership when they do not support this contract.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkOwnership {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator_thread_id: Option<crate::events::ThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_thread_id: Option<crate::events::ThreadId>,
+}
+
+/// Opt-in filesystem isolation for a collaboration agent, separate from
+/// conversation-history forking. Worktrees start from committed HEAD.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWorkspaceIsolation {
+    #[default]
+    Shared,
+    Worktree,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkProviderDescriptor {
@@ -116,6 +138,8 @@ impl ForkProvenance {
 #[serde(rename_all = "camelCase")]
 pub struct ForkRequest {
     pub source_workspace: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<ForkOwnership>,
     /// User-facing fork name; providers sanitize into their naming scheme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -131,6 +155,8 @@ pub struct ForkRequest {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceFork {
     pub id: ForkId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<ForkOwnership>,
     pub provider_id: ForkProviderId,
     pub source_workspace: PathBuf,
     /// The writable workspace this fork provides.

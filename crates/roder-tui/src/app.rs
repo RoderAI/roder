@@ -20,8 +20,11 @@ mod plan_hunk_tests;
 mod plan_panel;
 mod plan_review;
 mod plugin_browser;
+mod preview_layout;
 mod processes;
 mod progress;
+mod prompt_admission;
+mod prompt_recovery;
 #[allow(dead_code)]
 mod remote;
 mod remote_node;
@@ -33,6 +36,7 @@ mod scroll_accel;
 mod shortcuts;
 #[allow(dead_code)]
 mod skills;
+mod source_copy;
 mod stream_animation;
 mod subagent_trace;
 #[cfg(test)]
@@ -129,6 +133,7 @@ use plan_panel::{
 };
 use plugin_browser::PluginBrowserState;
 use progress::{ProgressReporter, TerminalProgress};
+use prompt_admission::{PendingTurnRequest, PromptAdmission};
 use remote::{RemotePanelController, render_remote_panel_lines};
 use review_panel::{ReviewPanelState, findings_transcript};
 use roadmap_workspace::{RoadmapWorkspaceMeta, render_roadmap_workspace};
@@ -1345,13 +1350,6 @@ impl ProviderChoice {
     }
 }
 
-struct PendingTurnRequest {
-    thread_id: String,
-    method: &'static str,
-    expected_turn_id: Option<String>,
-    handle: tokio::task::JoinHandle<JsonRpcResponse>,
-}
-
 pub struct TuiApp<C = LocalAppClient>
 where
     C: AppClient,
@@ -1367,6 +1365,8 @@ where
     thread_message_count: usize,
     active_turn_id: Option<String>,
     pending_turn_requests: Vec<PendingTurnRequest>,
+    prompt_admission: PromptAdmission,
+    source_copy: source_copy::SourceCopyUi,
     active_turn_timer: TurnTimer,
     /// Wall-clock time of the most recently received backend event. Drives the
     /// stuck-turn watchdog that recovers from dropped completion events.
@@ -1729,6 +1729,7 @@ where
         } else {
             model.clone()
         };
+        let image_origin = media::ImageOrigin::from_thread(&started.thread);
         let mut app = Self::from_thread_parts(
             client,
             remote_panel_server,
@@ -1743,6 +1744,7 @@ where
             },
         )
         .await?;
+        app.timeline.set_image_origin(image_origin);
         app.workspace_id = Some(skills_workspace_id);
         app.root_id = Some(skills_root_id);
 
@@ -1840,6 +1842,8 @@ where
             thread_message_count,
             active_turn_id: None,
             pending_turn_requests: Vec::new(),
+            prompt_admission: PromptAdmission::default(),
+            source_copy: source_copy::SourceCopyUi::default(),
             active_turn_timer: TurnTimer::default(),
             last_event_at: Instant::now(),
             lagged_during_active_turn: false,
@@ -2029,6 +2033,12 @@ where
                 self.tick_streaming_animations(now, session.terminal_mut().size()?.width);
             self.recover_stuck_turn_if_needed(now);
             needs_redraw |= self.finish_turn_requests_if_ready().await;
+            needs_redraw |= self.poll_prompt_receipt().await;
+            needs_redraw |= self.poll_source_copy_completion().await;
+            needs_redraw |= self.submit_next_queued_prompt().await;
+            let images_visible = self.image_previews_visible();
+            needs_redraw |= self.timeline.set_image_previews_visible(images_visible);
+            needs_redraw |= self.timeline.update_image_previews(self.last_frame_width);
             self.stop_idle_voice_recording(now).await;
             self.finish_voice_transcription_if_ready().await;
             // Reflect the latest turn state onto the terminal's native progress
@@ -2088,6 +2098,8 @@ where
                             if self.handle_confirm_key(key).await {
                                 break;
                             }
+                        } else if self.handle_source_copy_key(key) {
+                            // Copy mode owns navigation until explicitly dismissed.
                         } else if self.agent_activity.is_open() {
                             self.agent_activity.handle_key(key);
                         } else if self.show_shortcuts_dialog {
@@ -2369,7 +2381,7 @@ where
                         }
                     }
                     Event::Paste(text) => self.handle_paste(text),
-                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Mouse(mouse) if !self.source_copy_active() => self.handle_mouse(mouse),
                     _ => {}
                 }
             }
@@ -2392,6 +2404,7 @@ where
                     Err(_) => break,
                 };
                 self.last_event_at = clock.now();
+                self.observe_prompt_admission(&envelope.event);
                 if self.route_background_agent_event(&envelope.event) {
                     needs_redraw = true;
                     continue;
@@ -3470,7 +3483,10 @@ where
                 self.run_goal_slash_command(&args).await;
             }
             "retry" => {
-                self.run_retry_slash_command().await;
+                self.run_retry_slash_command(&args).await;
+            }
+            "copy" => {
+                self.begin_source_copy();
             }
             "model" => {
                 self.run_model_slash_command(&args).await;
@@ -3734,34 +3750,6 @@ where
         if let Ok(commands) = thread_resume::commands_list(&self.client).await {
             self.command_catalog = commands::with_local_commands(commands);
         }
-    }
-
-    async fn run_retry_slash_command(&mut self) {
-        if self.active_turn_id.is_some() {
-            self.record_error(
-                "retry unavailable while a turn is running; interrupt first.".to_string(),
-            );
-            return;
-        }
-
-        let Some(pending) = self.last_user_prompt.clone() else {
-            self.record_error("nothing to retry yet.".to_string());
-            return;
-        };
-
-        let cleared = self.queued_prompts.clear();
-        if cleared > 0 {
-            let plural = if cleared == 1 { "" } else { "s" };
-            self.timeline.push_system(format!(
-                "Cleared {cleared} queued follow-up input{plural} before retry."
-            ));
-            self.push_event(format!(
-                "cleared {cleared} queued follow-up input{plural} before retry"
-            ));
-        }
-
-        self.push_event("slash command: /retry".to_string());
-        self.start_prepared_prompt(pending).await;
     }
 
     async fn run_model_slash_command(&mut self, args: &str) {
@@ -4279,132 +4267,16 @@ where
         // When persistent swarm mode is on, the swarm reminder is injected
         // server-side (see Runtime::set_agent_swarm_mode), so the displayed
         // prompt and the sent message stay identical here.
-        Some(PendingPrompt::with_images(display, message, images))
+        let mut pending = PendingPrompt::with_images(display, message, images);
+        pending.preview_paths = attachments
+            .into_iter()
+            .map(|attachment| attachment.path)
+            .collect();
+        Some(pending)
     }
 
     fn has_prepared_prompt(&self) -> bool {
         !composer_text(&self.composer).trim().is_empty() || !self.image_attachments.is_empty()
-    }
-
-    async fn start_prepared_prompt(&mut self, pending: PendingPrompt) {
-        self.last_user_prompt = Some(pending.clone());
-        self.timeline.push_user(pending.display.clone());
-        self.thread_message_count = self.thread_message_count.saturating_add(1);
-        if self.thread_title.is_none() {
-            self.thread_title = Some(truncate(&pending.display, 72));
-        }
-        let thread_id = self.focused_thread_id().to_string();
-        let params = TurnStartParams {
-            thread_id: thread_id.clone(),
-            input: pending_turn_input(pending.message, pending.images),
-            prompt: None,
-            model_provider: None,
-            model: None,
-            reasoning: None,
-            service_tier: None,
-            developer_context: None,
-            mcp_auth_token: None,
-            policy_mode: Some(self.policy_mode),
-            task_ledger_required: false,
-        };
-        let client = self.client.clone();
-        let handle = tokio::spawn(async move {
-            client
-                .send_request(JsonRpcRequest {
-                    jsonrpc: "2.0".to_string(),
-                    id: Some(serde_json::json!("turn/start")),
-                    method: "turn/start".to_string(),
-                    params: Some(serde_json::to_value(params).unwrap()),
-                })
-                .await
-        });
-        self.pending_turn_requests.push(PendingTurnRequest {
-            thread_id,
-            method: "turn/start",
-            expected_turn_id: None,
-            handle,
-        });
-    }
-
-    fn steer_prepared_prompt(&mut self, pending: PendingPrompt) {
-        let Some(turn_id) = self.active_turn_id.clone() else {
-            self.queue_prepared_prompt(pending);
-            return;
-        };
-        self.last_user_prompt = Some(pending.clone());
-        self.timeline
-            .push_user(format!("steer: {}", pending.display));
-        self.push_event("steer queued for active turn".to_string());
-        let thread_id = self.focused_thread_id().to_string();
-        let params = TurnSteerParams {
-            thread_id: thread_id.clone(),
-            expected_turn_id: turn_id.clone(),
-            input: pending_turn_input(pending.message, pending.images),
-            prompt: None,
-        };
-        let client = self.client.clone();
-        let handle = tokio::spawn(async move {
-            client
-                .send_request(JsonRpcRequest {
-                    jsonrpc: "2.0".to_string(),
-                    id: Some(serde_json::json!("turn/steer")),
-                    method: "turn/steer".to_string(),
-                    params: Some(serde_json::to_value(params).unwrap()),
-                })
-                .await
-        });
-        self.pending_turn_requests.push(PendingTurnRequest {
-            thread_id,
-            method: "turn/steer",
-            expected_turn_id: Some(turn_id),
-            handle,
-        });
-    }
-
-    async fn finish_turn_requests_if_ready(&mut self) -> bool {
-        let mut changed = false;
-        let mut index = 0;
-        while index < self.pending_turn_requests.len() {
-            if !self.pending_turn_requests[index].handle.is_finished() {
-                index += 1;
-                continue;
-            }
-            let request = self.pending_turn_requests.remove(index);
-            let result = match request.handle.await {
-                Ok(response) => {
-                    decode_response::<roder_protocol::TurnStartResult>(response).map(|_| ())
-                }
-                Err(error) => Err(anyhow::anyhow!("request task failed: {error}")),
-            };
-            if let Err(error) = result {
-                let message = format!(
-                    "{} failed: {error}. Follow-up was not accepted; use /retry to resend it.",
-                    request.method
-                );
-                if request.thread_id == self.focused_thread_id() {
-                    // A steer can race completion. Only clear the exact stale
-                    // turn confirmed absent by the backend, never a newer turn.
-                    if request.expected_turn_id.is_some()
-                        && self.active_turn_id == request.expected_turn_id
-                        && error.to_string().contains("no active turn to steer")
-                    {
-                        self.active_turn_id = None;
-                        self.active_turn_timer.reset();
-                        self.working_status_override = None;
-                        self.clear_compaction_progress();
-                        self.progress.set(TerminalProgress::Error);
-                    }
-                    self.record_error(message);
-                } else if let Some(timeline) = self.team_timeline_for_thread_mut(&request.thread_id)
-                {
-                    timeline.push_error(message);
-                } else {
-                    self.record_error(format!("thread {}: {message}", request.thread_id));
-                }
-                changed = true;
-            }
-        }
-        changed
     }
 
     fn queue_current_prompt(&mut self) -> bool {
@@ -4428,25 +4300,28 @@ where
     }
 
     fn should_queue_prepared_prompt(&self) -> bool {
-        self.active_turn_id.is_some()
+        !self.can_dispatch_prompt()
     }
 
-    fn queue_prepared_prompt(&mut self, pending: PendingPrompt) {
+    fn queue_prepared_prompt(&mut self, mut pending: PendingPrompt) {
+        pending
+            .thread_id
+            .get_or_insert_with(|| self.focused_thread_id().to_string());
         self.queued_prompts.push(pending);
-        self.push_event(queue_status(self.queued_prompts.len()));
+        self.push_event(queue_status(self.queued_prompt_count()));
     }
 
     fn can_edit_queued_prompt(&self) -> bool {
         self.timeline.focus() == TimelineFocus::Composer
             && composer_text(&self.composer).trim().is_empty()
-            && !self.queued_prompts.is_empty()
+            && self.queued_prompt_count() > 0
     }
 
     fn edit_latest_queued_prompt(&mut self) -> bool {
-        let Some(pending) = self.queued_prompts.pop_back() else {
+        let Some(index) = self.visible_queued_prompts().last().map(|(index, _)| index) else {
             return false;
         };
-        self.edit_queued_prompt(pending, None)
+        self.edit_queued_prompt_by_index(index)
     }
 
     fn edit_queued_prompt_by_index(&mut self, index: usize) -> bool {
@@ -4470,7 +4345,7 @@ where
         self.composer.insert_str(pending.message);
         self.slash_command_selection = 0;
         self.timeline.focus_composer();
-        self.push_event(queue_status(self.queued_prompts.len()));
+        self.push_event(queue_status(self.queued_prompt_count()));
         true
     }
 
@@ -4478,7 +4353,7 @@ where
         if self.queued_prompts.remove(index).is_none() {
             return false;
         }
-        self.push_event(queue_status(self.queued_prompts.len()));
+        self.push_event(queue_status(self.queued_prompt_count()));
         true
     }
 
@@ -4490,17 +4365,14 @@ where
             return false;
         };
         self.steer_prepared_prompt(pending);
-        self.push_event(queue_status(self.queued_prompts.len()));
+        self.push_event(queue_status(self.queued_prompt_count()));
         true
     }
 
-    async fn submit_next_queued_prompt(&mut self) {
-        if let Some(next) = self.queued_prompts.pop_front() {
-            self.start_prepared_prompt(next).await;
-        }
-    }
-
     fn handle_paste(&mut self, text: String) {
+        if self.source_copy_active() {
+            return;
+        }
         if self.agent_activity.is_open() {
             return;
         }
@@ -4690,13 +4562,7 @@ where
                 let Some(text) = selected_text(&self.selectable_lines, &selection) else {
                     return true;
                 };
-                tokio::spawn(async move {
-                    let _ = copy_selection_to_clipboards(text).await;
-                });
-                self.copied_helper = Some(CopiedHelper {
-                    shown_at: Instant::now(),
-                });
-                self.push_event("selection copied".to_string());
+                self.start_clipboard_copy(text);
                 true
             }
             _ => false,
@@ -4791,7 +4657,7 @@ where
         );
         let event_height = event_log_height(self.show_event_log, self.events.len());
         let attachment_height = image_attachment_height(self.image_attachments.len());
-        let queue_height = queued_prompt_height(self.queued_prompts.len());
+        let queue_height = queued_prompt_height(self.queued_prompt_count());
         let plan_height = plan_panel_height(&self.plan_panel);
         let workflow_progress_height = self.workflows.progress_height(area.width, area.height);
         let workflow_trigger_height = self
@@ -4867,6 +4733,8 @@ where
                 self.transcript(chunks[transcript_index]),
                 chunks[transcript_index],
             );
+            self.timeline
+                .render_image_previews(f, chunks[transcript_index]);
         }
 
         let mut composer_index = if event_height > 0 {
@@ -4955,6 +4823,7 @@ where
     }
 
     fn render_overlays(&mut self, f: &mut Frame<'_>, area: Rect) {
+        self.render_source_copy(f, area);
         if self.agent_activity.is_open() {
             self.agent_activity
                 .render(f, area, self.theme, self.animation_frame);
@@ -5220,7 +5089,14 @@ where
 
     fn render_queued_prompt_bar(&mut self, f: &mut Frame<'_>, area: Rect) {
         f.render_widget(self.queued_prompt_bar(), area);
-        self.last_queued_prompt_buttons = queued_prompt_buttons(area, self.queued_prompts.len());
+        let indices = self
+            .visible_queued_prompts()
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        self.last_queued_prompt_buttons = queued_prompt_buttons(area, indices.len());
+        for button in &mut self.last_queued_prompt_buttons {
+            button.index = indices[button.index];
+        }
         for button in &self.last_queued_prompt_buttons {
             let hovered = self.hovered_queued_prompt_button == Some((button.index, button.action));
             f.render_widget(Clear, button.area);
@@ -5234,18 +5110,17 @@ where
     }
 
     fn queued_prompt_bar(&self) -> Paragraph<'static> {
-        let hidden = self.queued_prompts.len().saturating_sub(3);
+        let hidden = self.queued_prompt_count().saturating_sub(3);
         let mut lines = Vec::new();
         lines.push(Line::from(vec![
             Span::styled("Queued follow-up inputs", self.theme.strong()),
             Span::styled("  enter queues while running", self.theme.subtle()),
         ]));
         lines.extend(
-            self.queued_prompts
-                .iter()
+            self.visible_queued_prompts()
                 .take(3)
                 .enumerate()
-                .map(|(index, prompt)| queued_prompt_line(index, &prompt.display, self.theme)),
+                .map(|(index, (_, prompt))| queued_prompt_line(index, &prompt.display, self.theme)),
         );
         if hidden > 0 {
             lines.push(Line::from(Span::styled(
@@ -5401,7 +5276,7 @@ where
     fn footer(&self, width: u16) -> Paragraph<'static> {
         let status = if self.active_turn_id.is_some() {
             "running"
-        } else if !self.queued_prompts.is_empty() {
+        } else if self.queued_prompt_count() > 0 {
             "queued"
         } else {
             "ready"
@@ -5458,10 +5333,10 @@ where
             vec![Span::styled(
                 format!(
                     " {status}{queue_hint}{pending_hint}{shell_hint}{voice_hint}{roadmap_hint}{goal_hint}{agents_hint}  {interaction_hint}",
-                    queue_hint = if self.queued_prompts.is_empty() {
+                    queue_hint = if self.queued_prompt_count() == 0 {
                         String::new()
                     } else {
-                        format!("  {}", queue_status(self.queued_prompts.len()))
+                        format!("  {}", queue_status(self.queued_prompt_count()))
                     },
                 ),
                 self.theme.subtle(),
@@ -8952,6 +8827,7 @@ async fn copy_to_tmux_buffer(text: &str) -> anyhow::Result<()> {
 
 async fn pipe_to_command(program: &str, args: &[&str], text: &str) -> anyhow::Result<()> {
     let mut child = Command::new(program)
+        .kill_on_drop(true)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -10568,6 +10444,8 @@ mod tests {
             thread_message_count: 0,
             active_turn_id: None,
             pending_turn_requests: Vec::new(),
+            prompt_admission: PromptAdmission::default(),
+            source_copy: source_copy::SourceCopyUi::default(),
             active_turn_timer: TurnTimer::default(),
             last_event_at: Instant::now(),
             lagged_during_active_turn: false,
@@ -10691,7 +10569,7 @@ mod tests {
         }
     }
 
-    fn test_thread_with_items(id: &str, items: Vec<Item>) -> Thread {
+    pub(super) fn test_thread_with_items(id: &str, items: Vec<Item>) -> Thread {
         Thread {
             id: id.to_string(),
             preview: String::new(),
@@ -10937,7 +10815,10 @@ mod tests {
 
         assert!(app.finish_turn_requests_if_ready().await);
         assert!(app.pending_turn_requests.is_empty());
-        assert_eq!(app.last_user_prompt, Some(pending));
+        assert_eq!(
+            app.last_user_prompt.as_ref().map(|p| &p.message),
+            Some(&pending.message)
+        );
         let text = rendered_timeline_text(&mut app);
         assert!(text.contains("turn/start failed: thread is already running"));
         assert!(text.contains("/retry"));
@@ -10974,7 +10855,10 @@ mod tests {
                 app.active_turn_id.as_deref(),
                 newer_turn.then_some("newer-turn")
             );
-            assert_eq!(app.last_user_prompt, Some(pending));
+            assert_eq!(
+                app.last_user_prompt.as_ref().map(|p| &p.message),
+                Some(&pending.message)
+            );
             assert!(rendered_timeline_text(&mut app).contains("turn/steer failed"));
         }
     }
@@ -10994,7 +10878,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(!app.finish_turn_requests_if_ready().await);
+        app.prompt_admission
+            .note_completed("thread-test", "turn-recorded");
+        assert!(app.finish_turn_requests_if_ready().await);
         assert!(app.active_turn_id.is_none());
         assert!(app.pending_turn_requests.is_empty());
     }

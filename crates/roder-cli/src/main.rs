@@ -3073,10 +3073,15 @@ fn custom_inference_providers(cfg: &roder_config::Config) -> Vec<CustomInference
                 name: Some(id),
                 api_key,
                 base_url,
+                capabilities: provider.capabilities,
             })
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "custom_provider_tests.rs"]
+mod custom_provider_tests;
 
 fn is_builtin_provider_id(id: &str) -> bool {
     matches!(
@@ -3953,6 +3958,7 @@ mod tests {
                 name: None,
                 api_key: None,
                 base_url: "http://localhost:11434/v1".to_string(),
+                capabilities: Default::default(),
             }],
         );
 

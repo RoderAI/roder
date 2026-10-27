@@ -527,6 +527,15 @@ impl Runtime {
                 return Ok(item);
             }
         }
+        // Approval and authorization above are unchanged by the scheduling
+        // hint. Hold the barrier for the entire compound operation, including
+        // remote fence acquisition and release. Coordinators must not hold a
+        // barrier across nested tool execution.
+        let scheduling_guard = if crate::tool_scheduling::is_coordinator(&tool_call.name) {
+            None
+        } else {
+            self.tool_scheduler.acquire(executor.execution_mode()).await
+        };
         // A single native tool can expand into multiple runner primitives (for
         // example, edit reads and then writes). Keep those primitives atomic
         // across threads sharing the same remote session. Providers may add a
@@ -663,6 +672,7 @@ impl Runtime {
             }
         }
         drop(runner_tool_execution_guard);
+        drop(scheduling_guard);
         let result = self
             .resolve_user_input_request(thread_id, turn_id, result)
             .await?;

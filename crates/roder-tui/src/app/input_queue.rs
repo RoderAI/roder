@@ -1,22 +1,36 @@
 use roder_api::transcript::InputImage;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_PROMPT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PendingPrompt {
+    pub client_id: u64,
+    pub thread_id: Option<String>,
     pub display: String,
     pub message: String,
     pub images: Vec<InputImage>,
+    pub preview_paths: Vec<PathBuf>,
 }
 
 impl PendingPrompt {
+    pub fn renew_client_id(&mut self) {
+        self.client_id = NEXT_PROMPT_ID.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn with_images(
         display: impl Into<String>,
         message: impl Into<String>,
         images: Vec<InputImage>,
     ) -> Self {
         Self {
+            client_id: NEXT_PROMPT_ID.fetch_add(1, Ordering::Relaxed),
+            thread_id: None,
             display: display.into(),
             message: message.into(),
             images,
+            preview_paths: Vec::new(),
         }
     }
 }
@@ -40,6 +54,14 @@ impl PromptQueue {
             return None;
         }
         Some(self.items.remove(0))
+    }
+
+    pub fn pop_front_for(&mut self, thread_id: &str) -> Option<PendingPrompt> {
+        let index = self
+            .items
+            .iter()
+            .position(|prompt| prompt.thread_id.as_deref().is_none_or(|id| id == thread_id))?;
+        Some(self.items.remove(index))
     }
 
     pub fn pop_back(&mut self) -> Option<PendingPrompt> {

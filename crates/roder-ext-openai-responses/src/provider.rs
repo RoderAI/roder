@@ -3,6 +3,9 @@ mod computer;
 use computer::*;
 #[path = "native_compaction.rs"]
 mod native_compaction;
+#[path = "provider_capabilities.rs"]
+mod provider_capabilities;
+use roder_api::provider_capabilities::{RemoteCompaction, ResponsesProviderCapabilities};
 use roder_api::provider_error::{ProviderFailure, ProviderFailureKind};
 #[path = "response_transport.rs"]
 mod response_transport;
@@ -90,6 +93,7 @@ pub struct OpenAiResponsesEngine {
     refresh_in_flight: Arc<AtomicBool>,
     openrouter_routing: Option<OpenRouterRouting>,
     service_tier: Option<String>,
+    provider_capabilities: ResponsesProviderCapabilities,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +144,7 @@ impl OpenAiResponsesEngine {
             service_tier: None,
             openrouter_routing: (profile == ResponsesProviderProfile::OpenRouter)
                 .then(OpenRouterRouting::default),
+            provider_capabilities: Default::default(),
         }
     }
 
@@ -159,6 +164,7 @@ impl OpenAiResponsesEngine {
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
             service_tier: None,
             openrouter_routing: Some(OpenRouterRouting::default()),
+            provider_capabilities: Default::default(),
         }
     }
 
@@ -179,6 +185,7 @@ impl OpenAiResponsesEngine {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             headers: Vec::new(),
             profile: ResponsesProviderProfile::Fireworks,
+            provider_capabilities: Default::default(),
             discover_models: true,
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
             service_tier: None,
@@ -191,6 +198,7 @@ impl OpenAiResponsesEngine {
         provider_id: impl Into<String>,
         display_name: impl Into<String>,
         base_url: impl Into<String>,
+        capabilities: ResponsesProviderCapabilities,
     ) -> Self {
         Self {
             api_key,
@@ -203,6 +211,7 @@ impl OpenAiResponsesEngine {
             refresh_in_flight: Arc::new(AtomicBool::new(false)),
             service_tier: None,
             openrouter_routing: None,
+            provider_capabilities: capabilities,
         }
     }
 
@@ -816,8 +825,9 @@ impl InferenceEngine for OpenAiResponsesEngine {
     async fn stream_turn(
         &self,
         _ctx: InferenceTurnContext<'_>,
-        request: AgentInferenceRequest,
+        mut request: AgentInferenceRequest,
     ) -> anyhow::Result<InferenceEventStream> {
+        self.apply_provider_capabilities(&mut request);
         validate_computer_request(&request, self.profile)?;
         let Some(api_key) = self.api_key.as_ref() else {
             // Known API-key providers name their env var; custom providers
@@ -1096,8 +1106,8 @@ fn compaction_event(item: &Value, status: &str) -> InferenceEvent {
         tokens_before: None,
         tokens_after: None,
         duration_ms: None,
-        // Always attach the opaque item so the runtime can persist a boundary
-        // even when the SSE stream aborts before response.completed.
+        // Attach the candidate for validation; compaction_stream publishes a
+        // durable replay boundary only after response.completed.
         item: Some(item.clone()),
     })
 }
@@ -1812,6 +1822,7 @@ mod tests {
             "custom-provider",
             "Custom Provider",
             "http://127.0.0.1:9",
+            Default::default(),
         );
 
         let models = tokio::time::timeout(

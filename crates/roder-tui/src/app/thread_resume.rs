@@ -93,10 +93,12 @@ where
         self.exec_session_tools.clear();
         self.stdin_tool_sessions.clear();
         self.hidden_stdin_tools.clear();
-        self.queued_prompts = PromptQueue::default();
+        self.prompt_admission.reset_rendered_thread(&thread_id);
         self.last_user_prompt = None;
         self.image_attachments.clear();
         self.timeline = TimelineState::default();
+        self.timeline
+            .set_image_origin(super::media::ImageOrigin::from_thread(&thread));
         self.resume_history = ResumeHistoryState::default();
 
         if !thread.model_provider.trim().is_empty() {

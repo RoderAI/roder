@@ -1,7 +1,10 @@
+#[cfg(test)]
+mod image_origin_tests;
 mod markdown;
 mod patch_preview;
 mod preview;
 mod render;
+mod source_copy;
 #[cfg(test)]
 mod tests;
 mod virtualization;
@@ -26,6 +29,7 @@ use roder_api::trace::{
 };
 use serde_json::Value;
 
+use super::media::{ImageOrigin, ImagePreviews, tool_image_paths};
 use super::plan_review::PlanReviewRow;
 use super::scroll_accel::{ScrollAccelState, ScrollDirection, ScrollSettings};
 use super::stream_animation::StreamAnimator;
@@ -138,6 +142,7 @@ impl std::fmt::Debug for AnimatedMessage {
 
 #[derive(Clone)]
 struct AssistantMessage {
+    source_id: crate::transcript::source_copy::SourceMessageId,
     text: String,
     phase: Option<String>,
     animator: StreamAnimator,
@@ -148,6 +153,7 @@ impl AssistantMessage {
         let mut animator = StreamAnimator::default();
         animator.push_delta(text, now);
         Self {
+            source_id: crate::transcript::source_copy::SourceMessageId::fresh(),
             text: text.to_string(),
             phase,
             animator,
@@ -159,6 +165,7 @@ impl AssistantMessage {
         let mut animator = StreamAnimator::default();
         animator.set_full_text(text.clone());
         Self {
+            source_id: crate::transcript::source_copy::SourceMessageId::fresh(),
             text,
             phase,
             animator,
@@ -272,6 +279,8 @@ pub(super) struct ToolDetail {
 #[derive(Debug, Default)]
 pub(super) struct TimelineState {
     items: Vec<TimelineItem>,
+    image_previews: ImagePreviews,
+    image_origin: ImageOrigin,
     tool_indices: HashMap<String, usize>,
     subagent_trace_indices: HashMap<SubagentTraceId, usize>,
     plan_review_indices: HashMap<String, usize>,
@@ -364,6 +373,52 @@ impl TimelineState {
         self.auto_follow = true;
         self.selected = None;
         self.push_item(TimelineItemKind::User(text.into()));
+    }
+
+    pub fn attach_images_to_last_item(
+        &mut self,
+        paths: impl IntoIterator<Item = std::path::PathBuf>,
+    ) {
+        if let Some(index) = self.items.len().checked_sub(1) {
+            self.image_previews.attach(index, paths);
+            self.invalidate_render_cache();
+        }
+    }
+
+    pub fn set_image_origin(&mut self, origin: ImageOrigin) {
+        if self.image_origin != origin {
+            // A retargeted timeline must not retain pixels decoded from its previous origin.
+            self.image_previews = ImagePreviews::default();
+            self.image_origin = origin;
+            self.invalidate_render_cache();
+        }
+    }
+
+    /// Poll image work from the update loop; rendering never opens or decodes files.
+    pub fn update_image_previews(&mut self, width: u16) -> bool {
+        let changed = self.image_previews.update(width);
+        if changed {
+            self.invalidate_render_cache();
+        }
+        changed
+    }
+
+    /// Call outside drawing before showing any overlay. Protocol payloads can otherwise
+    /// paint beyond a later Clear widget even though the buffer's cells look correct.
+    pub fn set_image_previews_visible(&mut self, visible: bool) -> bool {
+        let changed = self.image_previews.set_visible(visible);
+        if changed {
+            self.invalidate_render_cache();
+        }
+        changed
+    }
+
+    /// Render after the transcript Paragraph and before popups, using the same viewport.
+    pub fn render_image_previews(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if let Some(cache) = &self.render_cache {
+            self.image_previews
+                .render(frame, area, self.scroll_offset, &cache.row_items);
+        }
     }
 
     pub fn prepend_user(&mut self, text: impl Into<String>) {
@@ -547,6 +602,7 @@ impl TimelineState {
             return false;
         };
         self.items.remove(index);
+        self.image_previews.remove(index);
         self.invalidate_render_cache();
         shift_indices_after_removal(&mut self.tool_indices, index);
         shift_indices_after_removal(&mut self.subagent_trace_indices, index);
@@ -649,6 +705,15 @@ impl TimelineState {
                 ToolTimelineStatus::Completed
             };
             tool.output = output.filter(|text| !text.trim().is_empty());
+            if !failed {
+                let paths = tool_image_paths(
+                    &self.image_origin,
+                    &tool.entry.name,
+                    &tool.entry.arguments,
+                    tool.output.as_deref(),
+                );
+                self.image_previews.attach(index, paths);
+            }
             self.mutate_item(index);
             self.follow_live_updates_from_composer();
         }
@@ -769,6 +834,7 @@ impl TimelineState {
 
     fn prepend_item(&mut self, kind: TimelineItemKind) {
         self.items.insert(0, TimelineItem { kind });
+        self.image_previews.prepend();
         self.rebuild_item_indices();
         self.invalidate_render_cache();
     }
@@ -1561,6 +1627,8 @@ impl TimelineState {
                 last_timestamp,
                 &mut lines,
             );
+            self.image_previews
+                .append_rows(index, theme, width, &mut lines);
             if let TimelineItemKind::Tool(tool) = &item.kind {
                 last_timestamp = Some(tool.started_at);
             }
