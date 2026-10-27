@@ -1,5 +1,24 @@
 ## 0.4.0 (2026-10-27)
 
+### Highlights
+
+- Retain queued and steered prompts until admission is known. Retry rejected
+  input without clearing later follow-ups, or explicitly discard it with
+  `/retry discard`.
+- Commit explicit and automatic compaction only after successful completion,
+  preserving history on failures and retaining streamed output and eager tool
+  results exactly once across replay and restart.
+- Schedule independent reads safely around exclusive mutations while retaining
+  approvals, authentication, and remote workspace fences.
+- Configure native V2 compaction and hosted-web ceilings for custom
+  Responses-compatible providers.
+- Navigate original responses and code blocks with `/copy`, preserving source
+  whitespace instead of copying terminal wrapping.
+- Spawn coding agents in durable, Roder-owned worktrees with
+  `workspace_isolation: "worktree"` and conservative explicit cleanup.
+- Preview local attached, viewed, and generated images with bounded Kitty/Sixel
+  rendering on supported terminals, with safe text fallbacks elsewhere.
+
 ### Breaking Changes
 
 #### Release a coherent runtime API compatibility boundary
