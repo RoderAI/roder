@@ -40,6 +40,7 @@ fn temp_repo(label: &str) -> PathBuf {
 
 fn request(repo: &Path, name: &str) -> ForkRequest {
     ForkRequest {
+        ownership: None,
         source_workspace: repo.to_path_buf(),
         name: Some(name.to_string()),
         reason: ForkReason::Experiment,
@@ -186,4 +187,156 @@ async fn two_forks_have_isolated_write_sets() {
     assert!(!repo.join("b.txt").exists());
 
     let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn external_registered_worktrees_are_visible_but_never_adopted_or_removed() {
+    let repo = temp_repo("external");
+    let external = repo
+        .parent()
+        .unwrap()
+        .join(format!("external-{}", uuid::Uuid::new_v4()));
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "external",
+            external.to_str().unwrap(),
+        ],
+    );
+    let provider = GitWorktreeForkProvider;
+    let listed = provider.list_forks(&repo).await.unwrap();
+    let entry = listed
+        .iter()
+        .find(|fork| fork.workspace == external)
+        .unwrap();
+    assert!(entry.ownership.is_none());
+    assert!(
+        provider
+            .resume_fork(&entry.id)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("refusing to adopt")
+    );
+    assert!(
+        provider
+            .remove_fork(
+                &entry.id,
+                RemoveForkPolicy {
+                    confirm_workspace: external.clone()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("without Roder ownership")
+    );
+    // Naming an external checkout like one of our branches confers no ownership.
+    git(&external, &["branch", "-m", "roder/fork/impostor"]);
+    assert!(roder_ext_git::remove_worktree_fork(&repo, &external).is_err());
+    assert!(external.join("README.md").exists());
+    git(&repo, &["worktree", "remove", external.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn owned_creation_is_deduplicated_concurrently_and_survives_restart() {
+    let repo = temp_repo("owner-retry");
+    let provider = GitWorktreeForkProvider;
+    let mut first = request(&repo, "agent");
+    first.ownership = Some(roder_api::forks::ForkOwnership {
+        creator_thread_id: Some("parent".into()),
+        owner_thread_id: Some("child".into()),
+    });
+    let second = first.clone();
+    let (a, b) = tokio::join!(
+        provider.create_fork(first.clone()),
+        provider.create_fork(second)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a, b);
+    assert_eq!(provider.list_forks(&repo).await.unwrap().len(), 1);
+    assert_eq!(GitWorktreeForkProvider.resume_fork(&a.id).await.unwrap(), a);
+    // Retrying after an agent has written must reuse it, never create a
+    // second checkout or discard its work.
+    std::fs::write(a.workspace.join("kept.txt"), "keep me").unwrap();
+    assert_eq!(GitWorktreeForkProvider.create_fork(first).await.unwrap(), a);
+    assert!(
+        provider
+            .remove_fork(
+                &a.id,
+                RemoveForkPolicy {
+                    confirm_workspace: a.workspace.clone()
+                },
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(a.workspace.join("kept.txt")).unwrap(),
+        "keep me"
+    );
+    std::fs::remove_file(a.workspace.join("kept.txt")).unwrap();
+    provider
+        .remove_fork(
+            &a.id,
+            RemoveForkPolicy {
+                confirm_workspace: a.workspace.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forged_or_corrupt_record_fails_closed() {
+    let repo = temp_repo("record");
+    let provider = GitWorktreeForkProvider;
+    let fork = provider.create_fork(request(&repo, "owned")).await.unwrap();
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&fork.workspace)
+        .args(["rev-parse", "--path-format=absolute", "--git-dir"])
+        .output()
+        .unwrap();
+    let admin = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
+    let mut forged = fork.clone();
+    forged.workspace = repo.clone();
+    std::fs::write(
+        admin.join("roder-fork.json"),
+        serde_json::to_vec(&forged).unwrap(),
+    )
+    .unwrap();
+    assert!(provider.resume_fork(&fork.id).await.is_err());
+    assert!(
+        provider
+            .remove_fork(
+                &fork.id,
+                RemoveForkPolicy {
+                    confirm_workspace: fork.workspace.clone()
+                }
+            )
+            .await
+            .is_err()
+    );
+    assert!(fork.workspace.exists());
+    std::fs::write(
+        admin.join("roder-fork.json"),
+        serde_json::to_vec(&fork).unwrap(),
+    )
+    .unwrap();
+    provider
+        .remove_fork(
+            &fork.id,
+            RemoveForkPolicy {
+                confirm_workspace: fork.workspace.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(repo);
 }

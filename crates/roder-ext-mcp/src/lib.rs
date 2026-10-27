@@ -18,7 +18,9 @@ pub mod stdio;
 pub mod stdio_process;
 pub mod tool;
 
-pub use client::{McpHttpClient, McpRpcError, McpToolDescriptor, McpToolOutcome};
+pub use client::{
+    McpHttpClient, McpRpcError, McpToolAnnotations, McpToolDescriptor, McpToolOutcome,
+};
 pub use config::{McpServerConfig, McpToolCallAuthMode, parse_mcp_servers_json};
 pub use extension::McpToolsExtension;
 pub use stdio::McpStdioClient;

@@ -20,7 +20,7 @@ file in `.changeset/`:
 ```markdown
 ---
 roder-core: minor
-roder-cli: patch
+roder: patch
 ---
 
 # Short summary used in changelogs and release notes
@@ -30,8 +30,10 @@ roder-cli: patch
   `.changeset/add_mcp_streaming.md`.
 - Package names = keys in `knope.toml` (crate names; SDKs are
   `roder-sdk-typescript`, `roder-sdk-python`, `roder-edit-tools`).
-- Bump types: `major` | `minor` | `patch`. Pre-1.0, breaking changes are
-  usually `minor`, everything else `patch`.
+- Bump types: `major` | `minor` | `patch`. With this knope configuration,
+  pre-1.0 breaking changes require `major` (for example, 0.2.x to 0.3.0);
+  `minor` and `patch` both advance the final component. Include the compatible
+  reverse dependency closure when shared Rust API types change.
 - Never put non-changeset `.md` files (READMEs etc.) in `.changeset/`.
 - **Commit the changeset** — CI only counts files in the branch diff.
 
@@ -65,6 +67,8 @@ the `skip-changeset` PR label instead of a changeset.
   `CHANGELOG.md`s, and maintains the `knope/release` preview PR.
 - Merging that PR → `release.yml` runs `knope release`, tagging
   `<package>/v<version>` and creating one GitHub release per package.
-- Releases are git-only (no crates.io / npm / PyPI publication).
+- CLI npm publication and binary/Homebrew distribution run in release CI.
+  Crates.io and SDK registry publication are separate explicit steps; see
+  `docs/releases.md`.
 - Baseline tags for unreleased packages: `python3 scripts/init-release-tags.py`
   or the "Baseline release tags" workflow.

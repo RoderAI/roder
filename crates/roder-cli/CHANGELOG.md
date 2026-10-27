@@ -1,3 +1,51 @@
+## 0.4.0 (2026-10-27)
+
+### Highlights
+
+- Retain queued and steered prompts until admission is known. Retry rejected
+  input without clearing later follow-ups, or explicitly discard it with
+  `/retry discard`.
+- Commit explicit and automatic compaction only after successful completion,
+  preserving history on failures and retaining streamed output and eager tool
+  results exactly once across replay and restart.
+- Schedule independent reads safely around exclusive mutations while retaining
+  approvals, authentication, and remote workspace fences.
+- Configure native V2 compaction and hosted-web ceilings for custom
+  Responses-compatible providers.
+- Navigate original responses and code blocks with `/copy`, preserving source
+  whitespace instead of copying terminal wrapping.
+- Spawn coding agents in durable, Roder-owned worktrees with
+  `workspace_isolation: "worktree"` and conservative explicit cleanup.
+- Preview local attached, viewed, and generated images with bounded Kitty/Sixel
+  rendering on supported terminals, with safe text fallbacks elsewhere.
+
+### Breaking Changes
+
+#### Release a coherent runtime API compatibility boundary
+
+Adopt explicit shared-read/exclusive/coordinator scheduling, typed custom-provider
+capabilities, and owned worktree metadata. Rust integrators must update
+ToolExecutor implementations to execution_mode and initialize the new public
+configuration and ownership fields.
+
+Release the shared API's reverse dependency closure together so older consumers
+cannot resolve patch-compatible packages that expose incompatible API types.
+The CLI package also exports a Rust library, so its compatibility release is
+0.4.0. Existing command-line use remains supported.
+
+### Fixes
+
+#### Commit compaction only after completion and configure custom Responses capabilities
+
+Failed or interrupted native compaction no longer installs an incomplete history
+boundary. Retries preserve original context while reported usage remains billable.
+The same transaction boundary applies to automatic compaction in ordinary turns,
+retaining subsequent messages and eager tool-call results exactly once on replay
+and restart.
+
+Custom Responses providers can opt into V2 remote compaction and cap hosted search
+at cached results with typed provider capabilities, without changing omitted defaults.
+
 ## 0.3.26 (2026-10-26)
 
 ### Fixes

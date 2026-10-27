@@ -48,6 +48,15 @@ pub struct GitWorktreeFork {
 /// escape the configured base directory.
 pub fn create_worktree_fork(request: &GitWorktreeForkRequest) -> anyhow::Result<GitWorktreeFork> {
     let root = repo_root(&request.source_workspace)?;
+    let _lock = crate::ownership::lock_repository(&root)?;
+    create_worktree_fork_unlocked(request, Default::default())
+}
+
+pub(crate) fn create_worktree_fork_unlocked(
+    request: &GitWorktreeForkRequest,
+    ownership: roder_api::forks::ForkOwnership,
+) -> anyhow::Result<GitWorktreeFork> {
+    let root = repo_root(&request.source_workspace)?;
     let name = sanitize_fork_name(&request.fork_name)?;
 
     // Roder-owned state (including previously created fork worktrees under
@@ -110,14 +119,24 @@ pub fn create_worktree_fork(request: &GitWorktreeForkRequest) -> anyhow::Result<
     )
     .with_context(|| format!("create git worktree at {worktree_str}"))?;
 
-    Ok(GitWorktreeFork {
+    let created = GitWorktreeFork {
         fork_id: format!("fork-{dir_name}"),
         source_workspace: root,
         worktree_path,
         branch,
         source_branch,
         source_commit,
-    })
+    };
+    if let Err(error) = crate::ownership::record_created(&created, ownership) {
+        // This checkout was just created by us. Never leave a successful,
+        // apparently external fork when persisting ownership fails.
+        let _ = run_git(
+            &created.source_workspace,
+            &["worktree", "remove", &worktree_str],
+        );
+        return Err(error.context("persist Git fork ownership"));
+    }
+    Ok(created)
 }
 
 /// Removes a Roder-owned fork worktree.
@@ -127,6 +146,7 @@ pub fn create_worktree_fork(request: &GitWorktreeForkRequest) -> anyhow::Result<
 /// repository's worktree metadata is pruned. The fork branch is kept for
 /// provenance.
 pub fn remove_worktree_fork(source_workspace: &Path, worktree_path: &Path) -> anyhow::Result<()> {
+    let _lock = crate::ownership::lock_repository(source_workspace)?;
     let root = repo_root(source_workspace)?;
     let registered = list_worktree_paths(&root)?;
     let target = worktree_path
@@ -142,6 +162,11 @@ pub fn remove_worktree_fork(source_workspace: &Path, worktree_path: &Path) -> an
         "{} is not a registered worktree of {}; refusing to remove",
         target.display(),
         root.display()
+    );
+    ensure!(
+        crate::ownership::read_owned(&target)?.is_some(),
+        "{} is an external worktree without Roder ownership; refusing to remove",
+        target.display()
     );
 
     let target_str = target.display().to_string();

@@ -155,6 +155,10 @@ impl Runtime {
                 request.parent_thread_id
             )
         })?;
+        // Validate the history boundary before allocating a checkout. The
+        // child identity is recorded atomically with ownership at creation.
+        let seed_events = seed_events_for_child(&parent.events, request.from_turn_id.as_deref())?;
+        let child_id = uuid::Uuid::new_v4().to_string();
 
         // Materialize the workspace fork first; thread creation only
         // proceeds once an isolated workspace exists.
@@ -166,6 +170,10 @@ impl Runtime {
             .create_workspace_fork(
                 &provider_id,
                 ForkRequest {
+                    ownership: Some(roder_api::forks::ForkOwnership {
+                        creator_thread_id: Some(request.parent_thread_id.clone()),
+                        owner_thread_id: Some(child_id.clone()),
+                    }),
                     source_workspace: PathBuf::from(&parent_metadata.workspace),
                     name: Some(request.name.clone()),
                     reason: ForkReason::ConversationFork,
@@ -176,7 +184,6 @@ impl Runtime {
             .await?;
 
         let now = OffsetDateTime::now_utc();
-        let seed_events = seed_events_for_child(&parent.events, request.from_turn_id.as_deref())?;
         let mut warnings = Vec::new();
         if request.from_turn_id.is_none() && seed_events.is_empty() && !parent.events.is_empty() {
             warnings.push(
@@ -186,7 +193,6 @@ impl Runtime {
             );
         }
 
-        let child_id = uuid::Uuid::new_v4().to_string();
         let child_metadata = ThreadMetadata {
             thread_id: child_id.clone(),
             title: Some(match &parent_metadata.title {

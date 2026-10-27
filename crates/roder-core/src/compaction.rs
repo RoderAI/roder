@@ -71,7 +71,7 @@ pub(crate) fn trim_to_last_compaction_boundary(items: Vec<TranscriptItem>) -> Ve
     let Some(idx) = items.iter().rposition(is_compaction_boundary) else {
         return items;
     };
-    items[idx..].to_vec()
+    crate::runtime::turn_compaction::committed_replay(items, idx)
 }
 
 /// Local `ContextCompaction` summaries and opaque provider compaction items both
@@ -87,10 +87,12 @@ pub(crate) fn is_compaction_boundary(item: &TranscriptItem) -> bool {
 }
 
 pub(crate) fn provider_metadata_has_compaction(metadata: &serde_json::Value) -> bool {
-    metadata
-        .get("output")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|output| output.iter().any(is_provider_compaction_item))
+    ["output", "compacted_input"].iter().any(|key| {
+        metadata
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|output| output.iter().any(is_provider_compaction_item))
+    })
 }
 
 pub(crate) fn is_provider_compaction_item(item: &serde_json::Value) -> bool {

@@ -1,6 +1,6 @@
 [package]
 name = "roder-core"
-version = "0.3.15"
+version = "0.4.0"
 edition.workspace = true
 description.workspace = true
 license.workspace = true
@@ -27,6 +27,7 @@ tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+roder-ext-openai-responses.workspace = true
 roder-context.workspace = true
 roder-ext-git.workspace = true
 roder-ext-knowledge-md.workspace = true

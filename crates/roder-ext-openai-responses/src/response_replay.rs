@@ -139,6 +139,14 @@ pub(super) fn response_input_items(
                     explicit_boundary_end = items.len();
                     provider_output_call_ids.clear();
                     replayed_item_ids.clear();
+                    for item in window {
+                        if let Some(id) = item.get("id").and_then(Value::as_str) {
+                            replayed_item_ids.insert(id.to_string());
+                        }
+                        if let Some(id) = item.get("call_id").and_then(Value::as_str) {
+                            provider_output_call_ids.insert(id.to_string());
+                        }
+                    }
                     continue;
                 }
                 append_provider_output_items(

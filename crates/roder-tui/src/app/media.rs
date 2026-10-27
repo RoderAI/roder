@@ -1,5 +1,12 @@
 #![allow(dead_code)]
 
+mod image;
+mod previews;
+mod sources;
+
+pub(super) use previews::ImagePreviews;
+pub(super) use sources::{ImageOrigin, tool_image_paths};
+
 use ratatui::text::{Line, Span};
 use roder_api::media::{MediaArtifact, MediaKind, MediaPreview, MediaPreviewStrategy};
 

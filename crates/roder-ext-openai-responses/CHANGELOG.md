@@ -1,3 +1,32 @@
+## 0.3.0 (2026-10-27)
+
+### Breaking Changes
+
+#### Release a coherent runtime API compatibility boundary
+
+Adopt explicit shared-read/exclusive/coordinator scheduling, typed custom-provider
+capabilities, and owned worktree metadata. Rust integrators must update
+ToolExecutor implementations to execution_mode and initialize the new public
+configuration and ownership fields.
+
+Release the shared API's reverse dependency closure together so older consumers
+cannot resolve patch-compatible packages that expose incompatible API types.
+The CLI package also exports a Rust library, so its compatibility release is
+0.4.0. Existing command-line use remains supported.
+
+### Features
+
+#### Commit compaction only after completion and configure custom Responses capabilities
+
+Failed or interrupted native compaction no longer installs an incomplete history
+boundary. Retries preserve original context while reported usage remains billable.
+The same transaction boundary applies to automatic compaction in ordinary turns,
+retaining subsequent messages and eager tool-call results exactly once on replay
+and restart.
+
+Custom Responses providers can opt into V2 remote compaction and cap hosted search
+at cached results with typed provider capabilities, without changing omitted defaults.
+
 ## 0.2.15 (2026-10-26)
 
 ### Fixes

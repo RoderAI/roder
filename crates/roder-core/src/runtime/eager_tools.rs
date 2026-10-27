@@ -10,6 +10,7 @@ pub(super) struct EagerTools {
     scheduled: HashSet<String>,
     pending: JoinSet<anyhow::Result<ToolResultRecord>>,
     results: HashMap<String, ToolResultRecord>,
+    blocked_by_barrier: bool,
 }
 
 impl EagerTools {
@@ -32,7 +33,10 @@ impl EagerTools {
                     && runtime
                         .tool_registry
                         .get(&spec.name)
-                        .is_some_and(|executor| executor.supports_eager_execution())
+                        .is_some_and(|executor| {
+                            executor.execution_mode()
+                                == roder_api::tools::ToolExecutionMode::SharedRead
+                        })
             })
             .map(|spec| spec.name.clone())
             .collect();
@@ -41,6 +45,7 @@ impl EagerTools {
             scheduled: HashSet::new(),
             pending: JoinSet::new(),
             results: HashMap::new(),
+            blocked_by_barrier: false,
         }
     }
 
@@ -53,7 +58,13 @@ impl EagerTools {
         deadline: Option<OffsetDateTime>,
         transcript: &mut Vec<TranscriptItem>,
     ) -> anyhow::Result<()> {
-        if !self.allowed.contains(&call.name) || self.scheduled.contains(&call.id) {
+        if self.scheduled.contains(&call.id) || self.blocked_by_barrier {
+            return Ok(());
+        }
+        if !self.allowed.contains(&call.name) {
+            // Never let a later streamed read overtake an earlier mutation.
+            // Existing eager reads finish before ordinary dispatch begins.
+            self.blocked_by_barrier = true;
             return Ok(());
         }
         let mode = runtime
@@ -123,6 +134,13 @@ impl EagerTools {
         self.scheduled.contains(id)
     }
 
+    pub(super) fn results_snapshot(&self, calls: &[ToolCallCompleted]) -> Vec<ToolResultRecord> {
+        calls
+            .iter()
+            .filter_map(|call| self.results.get(&call.id).cloned())
+            .collect()
+    }
+
     pub(super) async fn poll_result(&mut self) -> anyhow::Result<()> {
         if let Some(result) = self.pending.join_next().await {
             let result = result??;
@@ -160,6 +178,7 @@ mod tests {
             scheduled: HashSet::new(),
             pending: JoinSet::new(),
             results: HashMap::new(),
+            blocked_by_barrier: false,
         };
         let read_lock = lock.clone();
         let read_started = started.clone();
@@ -225,5 +244,47 @@ mod tests {
                 .allowed
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn streamed_read_cannot_overtake_an_exclusive_call() {
+        let mut registry = roder_api::extension::ExtensionRegistryBuilder::new();
+        registry.inference_engine(Arc::new(crate::fake_provider::FakeInferenceEngine));
+        registry.tool_contributor(Arc::new(roder_tools::EchoToolContributor));
+        let runtime =
+            Arc::new(Runtime::new(registry.build().unwrap(), RuntimeConfig::default()).unwrap());
+        let spec = runtime.tool_registry.get("echo").unwrap().spec();
+        let mut eager = EagerTools::new(&runtime, &[spec], &[], true);
+        let thread_id = "thread".to_string();
+        let turn_id = "turn".to_string();
+        let context = OutputContext {
+            thread_id: &thread_id,
+            turn_id: &turn_id,
+            profile: None,
+            provider: "mock",
+            model: "mock",
+        };
+        let mut transcript = Vec::new();
+        for (id, name) in [("mutation", "unknown_mutation"), ("read", "echo")] {
+            eager
+                .schedule(
+                    &runtime,
+                    &context,
+                    &ToolCallCompleted {
+                        id: id.into(),
+                        name: name.into(),
+                        arguments: "{}".into(),
+                    },
+                    ".",
+                    None,
+                    &mut transcript,
+                )
+                .await
+                .unwrap();
+        }
+        assert!(eager.blocked_by_barrier);
+        assert!(!eager.scheduled("read"));
+        assert!(!eager.pending());
+        assert!(transcript.is_empty(), "neither deferred call was executed");
     }
 }

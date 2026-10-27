@@ -1,6 +1,6 @@
 [package]
 name = "roder-tui"
-version = "0.3.10"
+version = "0.4.0"
 edition.workspace = true
 description.workspace = true
 license.workspace = true
@@ -16,7 +16,9 @@ crossterm.workspace = true
 dirs.workspace = true
 futures.workspace = true
 ignore.workspace = true
+image.workspace = true
 ratatui.workspace = true
+ratatui-image.workspace = true
 roder-api.workspace = true
 roder-api-transcript.workspace = true
 roder-app-server.workspace = true

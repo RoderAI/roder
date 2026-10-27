@@ -542,6 +542,10 @@ mod tests {
     #[test]
     fn thread_fork_metadata_round_trips_workspace_fork_provenance() {
         let fork = crate::forks::WorkspaceFork {
+            ownership: Some(crate::forks::ForkOwnership {
+                creator_thread_id: Some("parent-thread".into()),
+                owner_thread_id: Some("fork-thread".into()),
+            }),
             id: "/repo/.roder/worktrees/parser-experiment".to_string(),
             provider_id: "git-worktree".to_string(),
             source_workspace: std::path::PathBuf::from("/repo"),

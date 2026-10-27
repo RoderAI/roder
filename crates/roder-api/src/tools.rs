@@ -20,6 +20,9 @@ use crate::remote_runner::RemoteWorkspace;
 use crate::trace::SubagentTraceSink;
 use crate::{ToolSchemaPolicy, normalize_tool_schema};
 
+mod scheduling;
+pub use scheduling::{ToolExecutionBarrier, ToolExecutionGuard};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolSpec {
     pub name: String,
@@ -151,6 +154,9 @@ pub struct ToolExecutionHandles {
     /// children inherit the live provider+model instead of process startup
     /// defaults (for example SuperGrok/grok-4.5 rather than gpt-5.5).
     pub parent_model_selection: Option<crate::inference::ModelSelection>,
+    /// Inherited by nested tool dispatchers so their concrete child operations
+    /// share the parent's resource barrier rather than recursively locking it.
+    pub execution_barrier: Option<Arc<ToolExecutionBarrier>>,
 }
 
 impl fmt::Debug for ToolExecutionHandles {
@@ -164,6 +170,7 @@ impl fmt::Debug for ToolExecutionHandles {
             .field("goal_controller", &self.goal_controller.is_some())
             .field("swarm_progress_sink", &self.swarm_progress_sink.is_some())
             .field("parent_model_selection", &self.parent_model_selection)
+            .field("execution_barrier", &self.execution_barrier.is_some())
             .finish()
     }
 }
@@ -316,15 +323,29 @@ impl ToolExecutionContext {
     }
 }
 
+/// Scheduling contract for an executor, independent of approval and authorization.
+///
+/// Only independent, side-effect-free reads may opt into `SharedRead`. Unknown
+/// tools and tools that mutate any shared state must keep the exclusive default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToolExecutionMode {
+    SharedRead,
+    #[default]
+    Exclusive,
+    /// Only delegates work; it must not access shared resources itself.
+    /// Nested concrete operations must acquire the inherited execution barrier.
+    Coordinator,
+}
+
 #[async_trait::async_trait]
 pub trait ToolExecutor: Send + Sync + 'static {
     fn spec(&self) -> ToolSpec;
 
-    /// Whether this executor is safe to start while the model is still
-    /// sampling other output items. Only independent, read-only tools opt in.
-    /// Approval, validation and workspace authorization still run normally.
-    fn supports_eager_execution(&self) -> bool {
-        false
+    /// Shared reads can overlap other reads, including during model sampling.
+    /// This is not an approval decision: validation, policy and workspace
+    /// authorization still run normally for every execution.
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Exclusive
     }
 
     async fn execute(

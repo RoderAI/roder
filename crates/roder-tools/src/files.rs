@@ -34,8 +34,8 @@ struct ReadFileTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for ReadFileTool {
-    fn supports_eager_execution(&self) -> bool {
-        true
+    fn execution_mode(&self) -> roder_api::tools::ToolExecutionMode {
+        roder_api::tools::ToolExecutionMode::SharedRead
     }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -132,8 +132,8 @@ struct ListFilesTool {
 
 #[async_trait::async_trait]
 impl ToolExecutor for ListFilesTool {
-    fn supports_eager_execution(&self) -> bool {
-        true
+    fn execution_mode(&self) -> roder_api::tools::ToolExecutionMode {
+        roder_api::tools::ToolExecutionMode::SharedRead
     }
     fn spec(&self) -> ToolSpec {
         ToolSpec {

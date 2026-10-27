@@ -894,6 +894,10 @@ mod tests {
         ));
         let now = OffsetDateTime::UNIX_EPOCH;
         let fork = WorkspaceFork {
+            ownership: Some(roder_api::forks::ForkOwnership {
+                creator_thread_id: Some("parent-thread".into()),
+                owner_thread_id: Some("fork-thread".into()),
+            }),
             id: test_workspace("parent-repo-worktree"),
             provider_id: "git-worktree".to_string(),
             source_workspace: test_workspace("parent-repo").into(),

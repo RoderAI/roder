@@ -7,6 +7,7 @@ use sampling::{
 };
 #[path = "runtime/sampling_output.rs"]
 mod sampling_output;
+pub(crate) mod turn_compaction;
 use sampling_output::{OutputContext, SamplingOutput};
 mod compaction_template;
 #[path = "runtime/eager_tools.rs"]
@@ -36,7 +37,7 @@ use std::sync::{Arc, Weak};
 
 use anyhow::Context;
 use futures::StreamExt;
-use futures::future::{AbortHandle, Abortable, BoxFuture, try_join_all};
+use futures::future::{AbortHandle, Abortable, BoxFuture};
 use roder_api::catalog::{
     EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, PROVIDER_GEMINI, REASONING_NONE, REASONING_ULTRA,
     built_in_model_profile, built_in_model_profile_for_provider, lookup_model,
@@ -641,6 +642,7 @@ pub struct Runtime {
      * tenants or independent runner sessions.
      */
     runner_tool_execution_locks: RunnerToolExecutionLockRegistry,
+    pub(crate) tool_scheduler: Arc<roder_api::tools::ToolExecutionBarrier>,
 }
 
 #[derive(Clone)]
@@ -804,6 +806,7 @@ impl Runtime {
             thread_policy_modes: RwLock::new(HashMap::new()),
             runner_sessions: Arc::new(Mutex::new(HashMap::new())),
             runner_tool_execution_locks: Mutex::new(HashMap::new()),
+            tool_scheduler: Arc::new(roder_api::tools::ToolExecutionBarrier::default()),
         };
         runtime.bus.emit(RoderEvent::RuntimeStarted(RuntimeStarted {
             timestamp: OffsetDateTime::now_utc(),
@@ -1025,14 +1028,10 @@ impl Runtime {
 
     fn lifecycle_record_for_event(event: &RoderEvent) -> Option<TurnLifecycleRecord> {
         match event {
-            RoderEvent::TurnStarted(event) => Some(TurnLifecycleRecord::new(
-                event.thread_id.clone(),
-                event.turn_id.clone(),
-                TurnLifecycleState::Running,
-                TurnCleanupState::NotRequested,
-                None,
-                event.timestamp,
-            )),
+            // Admission persists Running before returning the turn receipt.
+            // The task's later TurnStarted event must not overwrite an
+            // interrupt request received between admission and task startup.
+            RoderEvent::TurnStarted(_) => None,
             // `run_turn` persists completed turns after it has awaited a
             // registered provider cleanup handle. Do not let the generic event
             // projection overwrite that acknowledgement with an unproven state.
@@ -1120,6 +1119,7 @@ impl Runtime {
                 self.bus.clone(),
                 self.thread_store.clone(),
             )));
+        ctx.handles.execution_barrier = Some(self.tool_scheduler.clone());
         if let Some(workspace) = workspace {
             ctx = ctx.with_workspace_handle(Arc::new(ScopedFilesystem::new(workspace)));
         }
@@ -4215,11 +4215,8 @@ impl Runtime {
             let mut patch_progress = PatchProgressTracker::default();
             let mut provider_metadata = None;
             let mut provider_requests_continuation = false;
-            // Captured from mid-stream Compaction(completed) events. Codex/OpenAI
-            // sometimes abort the SSE stream after emitting the compaction item
-            // ("error decoding response body") before response.completed, so we
-            // must not rely solely on ProviderMetadata for the boundary.
-            let mut stream_compaction_item: Option<serde_json::Value> = None;
+            let mut stream_compaction = turn_compaction::TurnCompaction::new(transcript.len());
+            let stream_compaction_committed;
 
             loop {
                 let next_future = async {
@@ -4295,7 +4292,7 @@ impl Runtime {
                     )
                     .into())
                 });
-                let event = match res {
+                let mut event = match res {
                     Ok(event) => event,
                     Err(err) => {
                         drop(stream);
@@ -4348,14 +4345,21 @@ impl Runtime {
                     }
                 };
 
-                let inference_timestamp = OffsetDateTime::now_utc();
-                self.emit(RoderEvent::InferenceEventReceived(InferenceEventReceived {
-                    thread_id: req.thread_id.clone(),
-                    turn_id: turn_id.clone(),
-                    event: event.clone(),
-                    timestamp: inference_timestamp,
-                }))
-                .await;
+                let compaction_output = stream_compaction.observe(&mut event)?;
+                let defer_completion =
+                    matches!(&event, InferenceEvent::Completed(_)) && stream_compaction.pending();
+                if !defer_completion {
+                    self.emit(RoderEvent::InferenceEventReceived(InferenceEventReceived {
+                        thread_id: req.thread_id.clone(),
+                        turn_id: turn_id.clone(),
+                        event: event.clone(),
+                        timestamp: OffsetDateTime::now_utc(),
+                    }))
+                    .await;
+                }
+                if compaction_output {
+                    continue;
+                }
 
                 match event {
                     InferenceEvent::MessageDelta(delta) => {
@@ -4486,6 +4490,28 @@ impl Runtime {
                                 &mut transcript,
                             )
                             .await?;
+                        if stream_compaction.pending() {
+                            eager_tools.drain().await?;
+                        }
+                        stream_compaction_committed = stream_compaction
+                            .commit(
+                                self,
+                                &output_context,
+                                &mut provider_metadata,
+                                &mut transcript,
+                                eager_tools.results_snapshot(&tool_calls),
+                            )
+                            .await?;
+                        compacted_this_turn |= stream_compaction_committed;
+                        if stream_compaction_committed {
+                            self.emit(RoderEvent::InferenceEventReceived(InferenceEventReceived {
+                                thread_id: req.thread_id.clone(),
+                                turn_id: turn_id.clone(),
+                                event: InferenceEvent::Completed(metadata.clone()),
+                                timestamp: OffsetDateTime::now_utc(),
+                            }))
+                            .await;
+                        }
                         provider_stream_retry_attempts = 0;
                         turn_finish_reason = metadata
                             .stop_reason
@@ -4493,36 +4519,7 @@ impl Runtime {
                             .map(finish_reason_from_stop_reason);
                         break;
                     }
-                    InferenceEvent::Compaction(progress) => {
-                        // Persist the boundary as soon as the provider emits a
-                        // completed compaction item. ChatGPT Codex often aborts
-                        // the SSE stream right after ("error decoding response
-                        // body"), so waiting for ProviderMetadata loses the
-                        // boundary and every subsequent request re-compacts.
-                        if progress.status == "completed"
-                            && let Some(item) = progress.item
-                        {
-                            let already = stream_compaction_item
-                                .as_ref()
-                                .and_then(|existing| {
-                                    existing.get("id").and_then(serde_json::Value::as_str)
-                                })
-                                .zip(item.get("id").and_then(serde_json::Value::as_str))
-                                .is_some_and(|(a, b)| a == b);
-                            if !already {
-                                stream_compaction_item = Some(item.clone());
-                                let boundary = TranscriptItem::ProviderMetadata(
-                                    crate::compaction::provider_metadata_from_compaction_item(item),
-                                );
-                                self.persist_turn_item(&req.thread_id, &turn_id, &boundary)
-                                    .await?;
-                                transcript.push(boundary);
-                                transcript =
-                                    crate::compaction::trim_to_last_compaction_boundary(transcript);
-                                compacted_this_turn = true;
-                            }
-                        }
-                    }
+                    InferenceEvent::Compaction(_) => {}
                     InferenceEvent::HostedToolCallStarted(_)
                     | InferenceEvent::HostedToolCallCompleted(_) => {}
                     InferenceEvent::ToolCallStarted(call) => {
@@ -4538,7 +4535,7 @@ impl Runtime {
                             self.emit(RoderEvent::PatchProgress(progress)).await;
                         }
                     }
-                    InferenceEvent::ProviderMetadata(mut metadata) => {
+                    InferenceEvent::ProviderMetadata(metadata) => {
                         if metadata.get("kind").and_then(serde_json::Value::as_str)
                             == Some("reliability_retry_attempt")
                         {
@@ -4549,13 +4546,9 @@ impl Runtime {
                             .get("end_turn")
                             .and_then(serde_json::Value::as_bool)
                             == Some(false);
-                        if let Some(compaction_item) = stream_compaction_item.as_ref() {
-                            let _ = crate::compaction::ensure_provider_metadata_compaction(
-                                &mut metadata,
-                                compaction_item,
-                            );
-                        }
-                        if metadata.get("output").is_none() {
+                        if metadata.get("output").is_none()
+                            && metadata.get("compacted_input").is_none()
+                        {
                             let item = TranscriptItem::ProviderMetadata(metadata);
                             self.persist_turn_item(&req.thread_id, &turn_id, &item)
                                 .await?;
@@ -4742,7 +4735,10 @@ impl Runtime {
             );
             for result in results {
                 verification_gate.record_tool_result(&result);
-                transcript.push(TranscriptItem::ToolResult(result));
+                let item = TranscriptItem::ToolResult(result);
+                if !stream_compaction_committed || !transcript.contains(&item) {
+                    transcript.push(item);
+                }
                 self.persist_model_profile_segment(
                     &req.thread_id,
                     &turn_id,
@@ -4920,25 +4916,9 @@ impl Runtime {
             .await;
         }
 
-        let force_sequential = calls.iter().any(|call| {
-            crate::agent_control_tools::is_agent_control_tool(&call.name)
-                || crate::thread_events::is_event_tool(&call.name)
-        });
-        let results = if parallel && !force_sequential {
-            try_join_all(calls.into_iter().map(|call| {
-                self.route_tool_call(thread_id, turn_id, call, workspace, deadline, None)
-            }))
-            .await
-        } else {
-            let mut results = Vec::with_capacity(calls.len());
-            for call in calls {
-                results.push(
-                    self.route_tool_call(thread_id, turn_id, call, workspace, deadline, None)
-                        .await?,
-                );
-            }
-            Ok(results)
-        }?;
+        let results = self
+            .execute_scheduled_tools(thread_id, turn_id, calls, parallel, workspace, deadline)
+            .await?;
 
         if let Some((tool_id, _)) = &swarm_call
             && let Some(result) = results.iter().find(|result| &result.id == tool_id)

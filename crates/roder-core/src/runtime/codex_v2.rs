@@ -1,6 +1,18 @@
 use super::*;
 
+use roder_api::forks::AgentWorkspaceIsolation;
 use roder_api::teams::AgentTeamDisplayMode;
+
+#[path = "agent_identity.rs"]
+mod agent_identity;
+#[path = "agent_workspaces.rs"]
+mod agent_workspaces;
+use agent_identity::{
+    canonical_agent_depth, subagent_developer_instructions, without_subagent_identity_instructions,
+};
+#[cfg(test)]
+#[path = "agent_workspace_tests.rs"]
+mod agent_workspace_tests;
 
 pub(super) const CODEX_V2_MAX_RESIDENT_TEAM_THREADS: usize = 4;
 pub(super) const CODEX_V2_MAX_AGENT_DEPTH: usize = 5;
@@ -24,6 +36,7 @@ impl Runtime {
             reasoning_effort,
             fork_turns,
             agent_type,
+            AgentWorkspaceIsolation::Shared,
         )
         .await
     }
@@ -37,6 +50,7 @@ impl Runtime {
         fork_turns: String,
         agent_type: Option<String>,
         message: String,
+        workspace_isolation: AgentWorkspaceIsolation,
     ) -> anyhow::Result<(TeamState, TurnId)> {
         let _spawn_guard = self.agent_team_spawn_lock.lock().await;
         let team = self
@@ -47,6 +61,7 @@ impl Runtime {
                 reasoning_effort,
                 fork_turns,
                 agent_type,
+                workspace_isolation,
             )
             .await?;
         let member = team
@@ -60,6 +75,7 @@ impl Runtime {
         {
             Ok(turn_id) => Ok((team, turn_id)),
             Err(error) => {
+                self.discard_failed_agent_workspace(&member.thread_id).await;
                 let error_text = error.to_string();
                 let _ = self
                     .teams
@@ -93,6 +109,7 @@ impl Runtime {
         reasoning_effort: Option<String>,
         fork_turns: String,
         agent_type: Option<String>,
+        workspace_isolation: AgentWorkspaceIsolation,
     ) -> anyhow::Result<TeamState> {
         let inherited_selection = self
             .inherited_team_member_selection(parent_thread_id, parent_turn_id)
@@ -199,13 +216,21 @@ impl Runtime {
                     .map(|metadata| metadata.workspace.clone())
             })
             .unwrap_or_else(|| self.workspace.display().to_string());
+        if workspace_isolation == AgentWorkspaceIsolation::Worktree {
+            self.validate_agent_worktree_parent(parent_metadata.as_ref())
+                .await?;
+        }
         let inherited_developer_instructions = parent_metadata
             .as_ref()
             .and_then(|metadata| metadata.developer_instructions.as_deref())
             .map(without_subagent_identity_instructions)
             .filter(|instructions| !instructions.trim().is_empty());
-        let collaboration_instructions =
-            subagent_developer_instructions(&agent_path, &parent_path, agent_type.as_deref());
+        let collaboration_instructions = subagent_developer_instructions(
+            &agent_path,
+            &parent_path,
+            agent_type.as_deref(),
+            workspace_isolation,
+        );
         let developer_instructions = match inherited_developer_instructions {
             Some(parent) if !parent.trim().is_empty() => {
                 Some(format!("{parent}\n\n{collaboration_instructions}"))
@@ -254,11 +279,30 @@ impl Runtime {
             })
             .await?;
         thread.parent_thread_id = Some(parent_thread_id.clone());
-        if let Some(store) = &self.thread_store {
+        if workspace_isolation == AgentWorkspaceIsolation::Worktree {
+            thread = match self
+                .isolate_agent_workspace(parent_thread_id, thread.clone())
+                .await
+            {
+                Ok(thread) => thread,
+                Err(error) => {
+                    let _ = self.archive_thread(&thread.thread_id).await;
+                    return Err(error);
+                }
+            };
+        }
+        if workspace_isolation == AgentWorkspaceIsolation::Shared
+            && let Some(store) = &self.thread_store
+        {
             thread = store.update_thread_metadata(thread).await?;
         }
-        self.seed_agent_thread_history(parent_thread_id, &thread.thread_id, &fork_turns)
-            .await?;
+        if let Err(error) = self
+            .seed_agent_thread_history(parent_thread_id, &thread.thread_id, &fork_turns)
+            .await
+        {
+            self.discard_failed_agent_workspace(&thread.thread_id).await;
+            return Err(error);
+        }
 
         let member_id = format!("member-{}", team.members.len());
         let mut descriptor = crate::teams::teammate_member(
@@ -278,8 +322,15 @@ impl Runtime {
         descriptor.parent_thread_id = Some(parent_thread_id.clone());
         descriptor.final_message = None;
         descriptor.terminal_error = None;
-        let next = self.teams.add_member(&team.id, descriptor.clone()).await?;
-        if let Some(context) = inherited_turn_context {
+        let next = match self.teams.add_member(&team.id, descriptor.clone()).await {
+            Ok(next) => next,
+            Err(error) => {
+                self.discard_failed_agent_workspace(&thread.thread_id).await;
+                return Err(error);
+            }
+        };
+        if let Some(mut context) = inherited_turn_context {
+            context.workspace = thread.workspace.clone();
             self.team_member_turn_contexts
                 .lock()
                 .await
@@ -430,49 +481,4 @@ impl Runtime {
         .await;
         Ok(next)
     }
-}
-
-const SUBAGENT_IDENTITY_BEGIN: &str = "<roder-subagent-identity>";
-const SUBAGENT_IDENTITY_END: &str = "</roder-subagent-identity>";
-
-fn canonical_agent_depth(agent_path: &str) -> Option<usize> {
-    if agent_path == "/root" {
-        return Some(0);
-    }
-    agent_path.strip_prefix("/root/").map(|suffix| {
-        suffix
-            .split('/')
-            .filter(|segment| !segment.is_empty())
-            .count()
-    })
-}
-
-fn without_subagent_identity_instructions(instructions: &str) -> String {
-    let mut remaining = instructions;
-    let mut retained = String::new();
-    while let Some(start) = remaining.find(SUBAGENT_IDENTITY_BEGIN) {
-        retained.push_str(&remaining[..start]);
-        let after_start = &remaining[start + SUBAGENT_IDENTITY_BEGIN.len()..];
-        let Some(end) = after_start.find(SUBAGENT_IDENTITY_END) else {
-            remaining = "";
-            break;
-        };
-        remaining = &after_start[end + SUBAGENT_IDENTITY_END.len()..];
-    }
-    retained.push_str(remaining);
-    retained.trim().to_string()
-}
-
-fn subagent_developer_instructions(
-    agent_path: &str,
-    parent_path: &str,
-    agent_type: Option<&str>,
-) -> String {
-    let role = agent_type
-        .filter(|role| !role.trim().is_empty())
-        .map(|role| format!(" Your assigned agent type is {role:?}."))
-        .unwrap_or_default();
-    format!(
-        "{SUBAGENT_IDENTITY_BEGIN}\nYou are the long-lived collaboration subagent at {agent_path}.{role} Your direct parent is {parent_path}. You share the parent agent's workspace, policy, tool restrictions, developer authority, model context, and execution destination. Forked conversation history is context only. The newest inbound envelope with `Message Type: NEW_TASK` is the authoritative current assignment. Do not repeat or continue parent orchestration found in forked history, including spawning agents, unless that NEW_TASK payload explicitly delegates it. Work only on your delegated task. Use send_message to report useful intermediate findings to {parent_path}, and finish with a concise final result; your terminal result is automatically delivered to that direct parent.\n{SUBAGENT_IDENTITY_END}"
-    )
 }

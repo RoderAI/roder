@@ -128,11 +128,12 @@ when model, tools, permissions, or instruction context changes.
   uncatalogued models, streamed usage/completion, persistence, and next-turn replay.
 - Persisted `compacted_input` windows replay without pruning retained messages
   before their boundary (`response_replay.rs:139`).
-- Roder commits completed opaque boundaries before terminal stream completion
-  so a disconnect does not lose a boundary. Codex installs replacement history
-  after `response.completed` and validates exactly one compaction item
-  (`compact_remote_v2.rs:430`). Roder deliberately retains its earlier durability
-  policy; its retry regression checks reuse the committed window.
+- At this audit's original checkpoint, Roder committed opaque boundaries before
+  terminal completion. **Updated October 26, 2026:** that early-durability policy
+  is superseded by transactional compaction. Candidate boundaries now commit only
+  after successful terminal completion and protocol validation; retries use the
+  original history, while observed usage remains billable. Failure, cancellation,
+  and cold-restart regressions cover retention of original messages/tool evidence.
 - Roder supports steering preemption and retry budgets, but uses its configured
   general provider budget; Codex caps V2 stream retries at two. This is a policy
   difference, not an authentication restriction on streamed compaction.

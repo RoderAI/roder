@@ -41,6 +41,7 @@ mod tool_execution;
 mod tool_output;
 mod tool_preview;
 mod tool_result_images;
+mod tool_scheduling;
 pub mod tool_search;
 mod tool_validation;
 mod transcript;
