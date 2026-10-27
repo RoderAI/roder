@@ -274,6 +274,7 @@
               "thread/goal/clear",
               "thread/goal/get",
               "thread/goal/set",
+              "thread/history/read",
               "thread/list",
               "thread/read",
               "thread/remove_fork",

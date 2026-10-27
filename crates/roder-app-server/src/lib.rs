@@ -41,6 +41,7 @@ mod speech;
 mod stats;
 mod system_instructions;
 mod thread_events;
+mod thread_history;
 pub mod transcript;
 mod vcs;
 mod webwright;

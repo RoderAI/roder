@@ -11744,3 +11744,6 @@ mod service_tiers;
 
 #[path = "thread_events.rs"]
 mod thread_events;
+
+#[path = "thread_history.rs"]
+mod thread_history;

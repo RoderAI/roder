@@ -16,6 +16,7 @@ mod execution_receipts;
 mod owner_handoff;
 mod service_tier;
 mod thread_admission;
+mod thread_history;
 mod thread_policy;
 mod thread_unload;
 #[path = "runtime/tool_approvals.rs"]
