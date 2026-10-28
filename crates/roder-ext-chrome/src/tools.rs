@@ -97,7 +97,7 @@ fn tool_defs() -> Vec<ChromeToolDef> {
         },
         ChromeToolDef {
             name: "chrome_navigate",
-            description: "Navigate a tab to an http(s) URL (protected; needs control mode).",
+            description: "Navigate a tab to an http(s) URL (Roder Desktop: assist or control mode; paired extension: protected, needs control mode).",
             kind: "tab/navigate",
             parameters: || {
                 let mut props = tab_target();
@@ -247,7 +247,7 @@ fn tool_defs() -> Vec<ChromeToolDef> {
         },
         ChromeToolDef {
             name: "chrome_eval",
-            description: "Evaluate JavaScript in a tab (protected; needs control mode and site eval permission).",
+            description: "Evaluate JavaScript in a tab (Roder Desktop: assist or control mode; paired extension: protected, needs control mode and site eval permission).",
             kind: "page/eval",
             parameters: || {
                 let mut props = tab_target();
@@ -367,7 +367,13 @@ impl ToolExecutor for ChromeDispatchTool {
                 "Chrome tools are not enabled. Re-enable them from the /chrome panel or with roder chrome enable.",
             ));
         }
-        if let Err(reason) = guard(&self.kind, status.mode) {
+        let desktop = !status.connected;
+        let permission = if desktop {
+            crate::policy::guard_desktop(&self.kind, status.mode)
+        } else {
+            guard(&self.kind, status.mode)
+        };
+        if let Err(reason) = permission {
             return Ok(error_result(&call, reason));
         }
         if self.kind == "page/select"
@@ -375,7 +381,7 @@ impl ToolExecutor for ChromeDispatchTool {
         {
             return Ok(error_result(&call, reason));
         }
-        if !status.connected {
+        if desktop {
             if let Some(result) = desktop_cdp::execute(&self.kind, &call).await {
                 return Ok(result);
             }
