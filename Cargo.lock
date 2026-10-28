@@ -4082,7 +4082,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-chrome"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
