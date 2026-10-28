@@ -6,6 +6,7 @@ mod agent_node;
 mod automations;
 mod chrome;
 mod commands;
+mod discovery;
 mod evals;
 mod exec;
 mod exec_events;
@@ -1428,6 +1429,9 @@ pub(crate) async fn build_runtime_with_config(
         skills_config.as_ref(),
     );
     runtime.set_skills(skills_registry).await;
+    if let Err(error) = discovery::initialize(&runtime).await {
+        eprintln!("warning: discovery catalog unavailable: {error:#}");
+    }
 
     Ok((runtime, default_model))
 }

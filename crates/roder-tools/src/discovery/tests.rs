@@ -17,6 +17,30 @@ use super::*;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+struct EnvGuard {
+    name: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvGuard {
+    fn set(name: &'static str, value: &Path) -> Self {
+        let previous = std::env::var_os(name);
+        unsafe { std::env::set_var(name, value) };
+        Self { name, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+}
+
 #[test]
 fn discovery_tools_advertise_retrieval_metadata() {
     let mut registry = ToolRegistry::default();
@@ -42,10 +66,8 @@ async fn discovery_tools_list_search_read_and_record_promotion() {
     let root = temp_dir("tools");
     let state = temp_dir("state");
     write_fixture_catalog(&root);
-    unsafe {
-        std::env::set_var("RODER_DISCOVERY_CATALOG_DIR", &root);
-        std::env::set_var("RODER_DISCOVERY_STATE_DIR", &state);
-    }
+    let _catalog_env = EnvGuard::set("RODER_DISCOVERY_CATALOG_DIR", &root);
+    let _state_env = EnvGuard::set("RODER_DISCOVERY_STATE_DIR", &state);
 
     let mut registry = ToolRegistry::default();
     register(&mut registry).unwrap();
@@ -69,11 +91,82 @@ async fn discovery_tools_list_search_read_and_record_promotion() {
     .await;
     assert!(read.text.contains("\"query\""));
     assert!(state.join("discovery/promotions.json").exists());
+}
 
-    unsafe {
-        std::env::remove_var("RODER_DISCOVERY_CATALOG_DIR");
-        std::env::remove_var("RODER_DISCOVERY_STATE_DIR");
+#[tokio::test]
+async fn missing_catalog_returns_actionable_fallback_for_all_discovery_tools() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let root = temp_dir("missing-catalog").join("not-created");
+    let _catalog_env = EnvGuard::set("RODER_DISCOVERY_CATALOG_DIR", &root);
+    let mut registry = ToolRegistry::default();
+    register(&mut registry).unwrap();
+
+    for (name, arguments) in [
+        ("discovery.list", json!({})),
+        ("discovery.search", json!({ "query": "grep" })),
+        ("discovery.read", json!({ "item_id": "tool:builtin/grep" })),
+    ] {
+        let result = run(
+            &registry,
+            ToolExecutionContext::new("thread-a", "turn-a", PolicyMode::Default),
+            name,
+            arguments,
+        )
+        .await;
+        assert!(!result.is_error);
+        assert_eq!(result.data["catalogAvailable"], false);
+        assert!(result.text.contains("Do not retry"));
+        assert!(result.text.contains("already exposed tools"));
+        assert!(result.text.contains(root.to_str().unwrap()));
     }
+    assert!(!root.exists(), "missing catalogs must not be fabricated");
+
+    write_fixture_catalog(&root);
+    let result = run(
+        &registry,
+        ToolExecutionContext::new("thread-a", "turn-a", PolicyMode::Default),
+        "discovery.search",
+        json!({ "query": "grep" }),
+    )
+    .await;
+    assert!(result.text.contains("tool:builtin/grep"));
+}
+
+#[test]
+fn invalid_catalog_is_not_treated_as_unavailable() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let root = temp_dir("invalid-catalog");
+    let _catalog_env = EnvGuard::set("RODER_DISCOVERY_CATALOG_DIR", &root);
+    fs::write(root.join("index.json"), "not json").unwrap();
+    assert!(load_catalog().is_err());
+}
+
+#[test]
+fn catalog_read_error_includes_the_catalog_path() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let root = temp_dir("unreadable-catalog");
+    let _catalog_env = EnvGuard::set("RODER_DISCOVERY_CATALOG_DIR", &root);
+    fs::create_dir(root.join("index.json")).unwrap();
+    let error = load_catalog().unwrap_err();
+    assert!(format!("{error:#}").contains(root.to_str().unwrap()));
+}
+
+#[test]
+fn catalog_paths_follow_config_directory_precedence() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let root = temp_dir("directory-precedence");
+    let config = root.join("config");
+    let data = root.join("data");
+    let catalog = root.join("catalog-override");
+    let state = root.join("state-override");
+    let _config_env = EnvGuard::set("RODER_CONFIG_DIR", &config);
+    let _data_env = EnvGuard::set("RODER_DATA_DIR", &data);
+
+    assert_eq!(roder_data_dir(), Some(config));
+    let _catalog_env = EnvGuard::set("RODER_DISCOVERY_CATALOG_DIR", &catalog);
+    let _state_env = EnvGuard::set("RODER_DISCOVERY_STATE_DIR", &state);
+    assert_eq!(catalog_root().unwrap(), catalog);
+    assert_eq!(promotion_state_dir().unwrap(), state);
 }
 
 async fn run(

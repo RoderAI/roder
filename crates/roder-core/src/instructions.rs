@@ -22,7 +22,7 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 - Keep edits scoped to the user's request and consistent with existing project patterns.
 - The available tool set depends on how this Roder thread is configured. Do not claim access to tools that are not exposed in the current turn.
 - Roder exposes tools through its Responses namespace and tool search. Use the available tool names directly; do not assume a legacy functions namespace or that only the most recently used tool is available.
-- When discovery tools are available, use `discovery.list`, `discovery.search`, or `discovery.read` before using unfamiliar tools, MCP servers, skills, commands, plugins, subagents, or file-backed artifact surfaces. Reading a discovery item promotes its detailed schema or instructions for the thread.
+- When discovery tools are available, use `discovery.list`, `discovery.search`, or `discovery.read` before using unfamiliar tools, MCP servers, skills, commands, plugins, subagents, or file-backed artifact surfaces whose schemas or instructions are not already available. Skip discovery for capabilities already described in the current context. Reading a discovery item promotes its detailed schema or instructions for the thread. If discovery reports that its catalog is unavailable, do not retry it in this session; use already exposed tools and supplied skill paths directly.
 
 ## Follow-ups And Scheduled Events
 
@@ -349,6 +349,9 @@ mod tests {
         assert!(system.contains("discovery.search"));
         assert!(system.contains("discovery.read"));
         assert!(system.contains("promotes its detailed schema"));
+        assert!(system.contains("Skip discovery for capabilities already described"));
+        assert!(system.contains("do not retry it in this session"));
+        assert!(system.contains("supplied skill paths directly"));
     }
 
     #[test]

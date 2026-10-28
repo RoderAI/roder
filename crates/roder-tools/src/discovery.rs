@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::Context;
 use roder_api::discovery::{
     DiscoveryCacheStatus, DiscoveryCatalog, DiscoveryCatalogItem, DiscoveryPromotionRecord,
     DiscoveryPromotionState,
@@ -51,7 +52,9 @@ impl ToolExecutor for DiscoveryListTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let args = parse::<ListArgs>(&call)?;
-        let catalog = load_catalog()?;
+        let Some(catalog) = load_catalog()? else {
+            return unavailable_catalog(call, "discovery");
+        };
         let limit = args.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 200);
         let summaries = compact_items(&catalog, limit);
         let text = if summaries.is_empty() {
@@ -109,7 +112,9 @@ impl ToolExecutor for DiscoverySearchTool {
         if query.is_empty() {
             anyhow::bail!("query is required");
         }
-        let catalog = load_catalog()?;
+        let Some(catalog) = load_catalog()? else {
+            return unavailable_catalog(call, "discovery");
+        };
         let limit = args.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 200);
         let matches = catalog
             .groups
@@ -169,7 +174,9 @@ impl ToolExecutor for DiscoveryReadTool {
         call: ToolCall,
     ) -> anyhow::Result<ToolResult> {
         let args = parse::<ReadArgs>(&call)?;
-        let catalog = load_catalog()?;
+        let Some(catalog) = load_catalog()? else {
+            return unavailable_catalog(call, "promotion");
+        };
         let root = catalog_root()?;
         let item = find_item(&catalog, &args.item_id)?;
         let limit = args
@@ -240,13 +247,42 @@ fn parse<T: for<'de> Deserialize<'de>>(call: &ToolCall) -> anyhow::Result<T> {
     Ok(serde_json::from_value(call.arguments.clone())?)
 }
 
-fn load_catalog() -> anyhow::Result<DiscoveryCatalog> {
+fn load_catalog() -> anyhow::Result<Option<DiscoveryCatalog>> {
     let path = catalog_root()?.join("index.json");
-    Ok(serde_json::from_str(&fs::read_to_string(&path)?)?)
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not read discovery catalog {}", path.display()));
+        }
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .with_context(|| format!("invalid discovery catalog {}", path.display()))
+}
+
+fn unavailable_catalog(call: ToolCall, retrieval_mode: &str) -> anyhow::Result<ToolResult> {
+    let path = catalog_root()?.join("index.json");
+    Ok(ToolResult {
+        id: call.id,
+        name: call.name,
+        text: format!(
+            "Discovery catalog is unavailable: {} has not been initialized. \
+             Do not retry discovery in this session. Use already exposed tools and \
+             read supplied skill files directly. Restart Roder to initialize the catalog.",
+            path.display()
+        ),
+        data: json!({
+            "catalogAvailable": false,
+            "retrieval_mode": retrieval_mode,
+        }),
+        is_error: false,
+    })
 }
 
 fn catalog_root() -> anyhow::Result<PathBuf> {
-    if let Ok(path) = std::env::var("RODER_DISCOVERY_CATALOG_DIR") {
+    if let Some(path) = std::env::var_os("RODER_DISCOVERY_CATALOG_DIR") {
         return Ok(PathBuf::from(path));
     }
     if let Some(path) = roder_data_dir() {
@@ -259,7 +295,7 @@ fn catalog_root() -> anyhow::Result<PathBuf> {
 }
 
 fn promotion_state_dir() -> anyhow::Result<PathBuf> {
-    if let Ok(path) = std::env::var("RODER_DISCOVERY_STATE_DIR") {
+    if let Some(path) = std::env::var_os("RODER_DISCOVERY_STATE_DIR") {
         return Ok(PathBuf::from(path));
     }
     if let Some(path) = roder_data_dir() {
@@ -273,8 +309,8 @@ fn promotion_state_dir() -> anyhow::Result<PathBuf> {
 }
 
 fn roder_data_dir() -> Option<PathBuf> {
-    std::env::var_os("RODER_DATA_DIR")
-        .or_else(|| std::env::var_os("RODER_CONFIG_DIR"))
+    std::env::var_os("RODER_CONFIG_DIR")
+        .or_else(|| std::env::var_os("RODER_DATA_DIR"))
         .map(PathBuf::from)
 }
 
