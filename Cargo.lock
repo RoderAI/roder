@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -4561,7 +4561,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-responses"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-stream",
