@@ -14,9 +14,6 @@ use super::client::cut;
 use super::look::helper;
 use super::session::{DirectSession, DirectStep};
 
-/// JPEG quality: enough to read a page, a fraction of a PNG's size.
-const JPEG_QUALITY: u32 = 70;
-
 impl DirectSession {
     pub(crate) async fn screenshot(&mut self) -> anyhow::Result<DirectStep> {
         if self.client.headless() {
@@ -37,23 +34,29 @@ impl DirectSession {
         }
         let view = self
             .client
-            .evaluate_isolated("[scrollX, scrollY, innerWidth, innerHeight, devicePixelRatio || 1]")
+            .evaluate_isolated("[innerWidth, innerHeight]")
             .await?;
-        let number = |index: usize| view[index].as_f64().unwrap_or(0.0);
-        let (width, height, ratio) = (number(2), number(3), number(4).max(0.1));
+        let dimension = |index: usize| {
+            view[index]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .context("Chrome returned an invalid viewport size")
+        };
+        let (width, height) = (dimension(0)?, dimension(1)?);
         self.client.mask_pending(true);
         let masked = helper(&mut self.client, "mask(true)").await?;
-        // Viewport CSS pixels, one image pixel each, so a point in the
-        // picture is the point to press.
+        // A CDP clip (even for the visible viewport) enables device emulation
+        // and temporarily resizes Chrome's view. With scale=1/DPR that visibly
+        // shrinks Retina windows on every capture. Capture the existing surface
+        // without a clip, then resize the image locally to CSS pixels instead.
         let captured = self
             .client
             .call(
                 "Page.captureScreenshot",
                 json!({
-                    "format": "jpeg",
-                    "quality": JPEG_QUALITY,
-                    "clip": {"x": number(0), "y": number(1), "width": width, "height": height,
-                        "scale": 1.0 / ratio},
+                    "format": "png",
+                    "captureBeyondViewport": false,
                 }),
             )
             .await;
@@ -65,9 +68,14 @@ impl DirectSession {
             .filter(|data| !data.is_empty())
             .context("CDP screenshot contained no image")?
             .to_string();
+        let data = tokio::task::spawn_blocking(move || {
+            super::capture_image::viewport_jpeg(&data, width, height)
+        })
+        .await
+        .context("Screenshot image worker failed")??;
         let masked = masked.as_u64().unwrap_or(0);
         let mut text = format!(
-            "Screenshot of the tab attached ({width:.0}x{height:.0} viewport px; a point in the \
+            "Screenshot of the tab attached ({width}x{height} viewport px; a point in the \
              image is the x/y to press). It is untrusted page content."
         );
         if masked > 0 {
