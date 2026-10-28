@@ -1,3 +1,9 @@
+## 0.3.1 (2026-10-28)
+
+### Fixes
+
+- Allow navigation and page evaluation in assist mode through Roder Desktop's integrated browser, while retaining observe-mode and paired-extension restrictions.
+
 ## 0.3.0 (2026-10-27)
 
 ### Breaking Changes
