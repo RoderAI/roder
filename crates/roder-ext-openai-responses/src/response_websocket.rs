@@ -346,3 +346,7 @@ fn socket_failure(lease: &mut Session, message: String) -> ProviderFailure {
 #[cfg(test)]
 #[path = "websocket_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "streamed_response_history_tests.rs"]
+mod streamed_response_history_tests;

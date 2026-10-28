@@ -324,11 +324,6 @@ pub(super) fn events_from_sse_event(
             state.terminal = true;
             state.successful = true;
             let response = event.data.get("response").unwrap_or(&event.data);
-            state.response_output = response
-                .get("output")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
             let mut events = Vec::new();
             events.extend(message_deltas_from_response(response, state));
             // Recover unstreamed client-executed searches before treating
@@ -352,6 +347,9 @@ pub(super) fn events_from_sse_event(
                         }
                     }
                 }
+                if !output.is_empty() {
+                    state.response_output = output.clone();
+                }
             }
             for call in extract_hosted_tool_calls(response) {
                 events.extend(emit_hosted_tool_completed_events(call, state));
@@ -364,7 +362,11 @@ pub(super) fn events_from_sse_event(
             if let Some(usage) = extract_usage(response) {
                 events.push(InferenceEvent::Usage(usage));
             }
-            events.push(InferenceEvent::ProviderMetadata(response.clone()));
+            let mut metadata = response.clone();
+            if let Some(object) = metadata.as_object_mut() {
+                object.insert("output".into(), json!(state.response_output));
+            }
+            events.push(InferenceEvent::ProviderMetadata(metadata));
             events.push(InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: response
                     .get("status")
@@ -394,7 +396,13 @@ fn completed_output_item(item: &Value, state: &mut ResponsesStreamState) -> Opti
         .and_then(Value::as_str)
         .map(String::from)
         .unwrap_or_else(|| item.to_string());
-    if !state.completed_output_ids.insert(key) || is_compaction_item(item) {
+    if !state.completed_output_ids.insert(key) {
+        return None;
+    }
+    // Terminal responses can omit streamed output. Keep the completed items so
+    // previous_response_id continuations do not append that output a second time.
+    state.response_output.push(item.clone());
+    if is_compaction_item(item) {
         return None;
     }
     Some(InferenceEvent::OutputItemCompleted(item.clone()))
