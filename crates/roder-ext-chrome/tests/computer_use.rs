@@ -25,6 +25,7 @@ include!("support/scope.rs");
 include!("support/select.rs");
 include!("support/scripted.rs");
 include!("support/outcome.rs");
+include!("support/screenshot.rs");
 
 struct Browser {
     child: Child,
@@ -297,6 +298,7 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
     let mut direct = DirectSession::attach(&tab, Arc::new(OpenGuard), false)
         .await
         .unwrap();
+    screenshot_preserves_viewport(&mut direct, &registry).await;
     let picture = direct.run("screenshot", &json!({})).await;
     assert!(!picture.is_error, "{}", picture.text);
     assert_eq!(

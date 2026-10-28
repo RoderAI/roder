@@ -250,6 +250,10 @@ background tab keeps rendering. Its tools:
 | `navigate` | an http(s) URL in the same tab, or back, forward, reload |
 | `wait` | up to 10 s |
 
+Screenshots capture the existing viewport without a CDP clip or capture-time
+device scaling. Roder scales the returned image to CSS pixels locally, so
+Retina captures do not briefly shrink and restore the browser's page view.
+
 A result names the control it acted on by its role (its tag when it has none)
 and its quoted label: `button "Search"`. Both are page text, so they are
 scrubbed of the owner's secrets, put on one line (no line breaks, control or

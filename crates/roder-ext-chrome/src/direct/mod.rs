@@ -20,6 +20,7 @@
 
 mod act;
 mod capture;
+mod capture_image;
 mod cleanup;
 mod client;
 mod computer;
