@@ -217,19 +217,32 @@ impl Page {
         }
     }
 
-    /// What every Jev tab needs before it is read: the viewport, focus
-    /// emulation, and the Page domain for dialogs.
+    /// Keep a windowed browser's natural viewport and scale. Only a headless
+    /// browser needs Jev's fixed viewport. Device emulation on a Retina window
+    /// makes CDP screenshots temporarily resize its visible view, even without
+    /// a screenshot clip.
     pub(super) async fn prepare(&mut self) -> anyhow::Result<()> {
-        self.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({
-                "width": VIEWPORT_WIDTH,
-                "height": VIEWPORT_HEIGHT,
-                "deviceScaleFactor": 1,
-                "mobile": false,
-            }),
-        )
-        .await?;
+        let version = self
+            .connection
+            .call("Browser.getVersion", json!({}), None)
+            .await?;
+        let headless = ["product", "userAgent"].iter().any(|key| {
+            version[key]
+                .as_str()
+                .is_some_and(|value| value.contains("HeadlessChrome/"))
+        });
+        if headless {
+            self.call(
+                "Emulation.setDeviceMetricsOverride",
+                json!({
+                    "width": VIEWPORT_WIDTH,
+                    "height": VIEWPORT_HEIGHT,
+                    "deviceScaleFactor": 1,
+                    "mobile": false,
+                }),
+            )
+            .await?;
+        }
         // Keep rAF and menus rendering in an owned background tab.
         self.call(
             "Emulation.setFocusEmulationEnabled",
