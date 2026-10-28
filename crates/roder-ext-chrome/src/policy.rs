@@ -61,6 +61,25 @@ pub fn guard(kind: &str, mode: ChromePermissionMode) -> Result<(), String> {
     }
 }
 
+/// The integrated Desktop browser is owned by Roder, not a paired extension
+/// with per-site permission grants. Keep observe read-only, but allow actions
+/// in assist and control without the extension's protected-action gate.
+pub fn guard_desktop(kind: &str, mode: ChromePermissionMode) -> Result<(), String> {
+    match classify_action(kind) {
+        ChromeActionClass::Prohibited => Err(format!(
+            "browser action {kind:?} is prohibited and cannot be performed"
+        )),
+        ChromeActionClass::Interact | ChromeActionClass::Protected
+            if mode == ChromePermissionMode::Observe =>
+        {
+            Err(format!(
+                "browser action {kind:?} requires assist or control mode"
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +105,16 @@ mod tests {
     fn inspection_allowed_in_assist() {
         assert!(guard("page/snapshot", ChromePermissionMode::Assist).is_ok());
         assert_eq!(classify_action("tabs/list"), ChromeActionClass::Inspect);
+    }
+
+    #[test]
+    fn desktop_actions_are_allowed_in_assist_but_not_observe() {
+        for kind in ["tab/navigate", "page/eval", "page/click"] {
+            assert!(guard_desktop(kind, ChromePermissionMode::Assist).is_ok());
+            assert!(guard_desktop(kind, ChromePermissionMode::Control).is_ok());
+            assert!(guard_desktop(kind, ChromePermissionMode::Observe).is_err());
+        }
+        assert!(guard_desktop("page/captcha", ChromePermissionMode::Control).is_err());
+        assert!(guard("tab/navigate", ChromePermissionMode::Assist).is_err());
     }
 }

@@ -116,7 +116,7 @@ impl ChromeController for Desktop {
     fn status(&self) -> ChromeStatus {
         ChromeStatus {
             enabled: true,
-            mode: ChromePermissionMode::Control,
+            mode: ChromePermissionMode::Assist,
             ..ChromeStatus::default()
         }
     }
