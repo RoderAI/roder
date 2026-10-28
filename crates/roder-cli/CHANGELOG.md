@@ -1,3 +1,14 @@
+## 0.4.3 (2026-10-28)
+
+### Fixes
+
+#### Prevent duplicate model history in Responses continuations
+
+Keep completed streamed output when the terminal response omits its output
+items. WebSocket continuations now account for reasoning, assistant messages,
+and tool calls already held by the provider instead of resending them alongside
+`previous_response_id`.
+
 ## 0.4.2 (2026-10-28)
 
 ### Fixes
