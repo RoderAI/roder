@@ -26,6 +26,7 @@ include!("support/select.rs");
 include!("support/scripted.rs");
 include!("support/outcome.rs");
 include!("support/screenshot.rs");
+include!("support/semantic.rs");
 
 struct Browser {
     child: Child,
@@ -391,5 +392,6 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
     eprintln!(
         "PASS: navigation/state, stable refs, trusted click/type/key, missing/ambiguous targets, secret masking, DPR2 screenshot mapping, origin/out-of-bounds coordinates, right-button mask, screenshot attachment, Desktop chrome_select, Desktop and extension outcome parity, covered-target advice per tool surface"
     );
+    semantic_observations(&registry, &url).await;
     site.abort();
 }

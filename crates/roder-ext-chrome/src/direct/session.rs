@@ -222,7 +222,7 @@ impl DirectSession {
         if opened_tab.is_some() {
             self.settle().await;
         }
-        let look = look::read(&mut self.client, self.guard.as_ref(), Detail::BRIEF).await?;
+        let look = look::read(&mut self.client, self.guard.as_ref(), Detail::AFTER).await?;
         let dialogs = self.take_dialogs();
         let facts = look::facts(&look);
         let mut text = done;
