@@ -9,6 +9,7 @@
 //! executing an action ([`act`], [`fill`]) are Jev's own.
 
 mod act;
+mod capture;
 mod consent;
 mod fill;
 mod fingerprint;
@@ -18,6 +19,9 @@ mod resume;
 mod settle;
 mod tabs;
 mod uncover;
+
+#[cfg(test)]
+mod capture_tests;
 
 use std::time::Duration;
 
@@ -254,16 +258,7 @@ impl Page {
 #[async_trait]
 impl JevBrowser for Page {
     async fn screenshot(&mut self) -> anyhow::Result<Option<String>> {
-        let capture = self
-            .call(
-                "Page.captureScreenshot",
-                json!({"format":"jpeg","quality":70}),
-            )
-            .await?;
-        let data = capture["data"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Chrome returned no screenshot"))?;
-        Ok(Some(format!("data:image/jpeg;base64,{data}")))
+        self.capture_screenshot().await.map(Some)
     }
 
     async fn observe(&mut self) -> anyhow::Result<Value> {

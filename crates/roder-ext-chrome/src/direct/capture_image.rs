@@ -8,7 +8,10 @@ use image::{ImageFormat, ImageReader, imageops::FilterType};
 /// Enough to read a page, a fraction of a PNG's size.
 const JPEG_QUALITY: u8 = 70;
 
-pub(super) fn viewport_jpeg(data: &str, width: u32, height: u32) -> anyhow::Result<String> {
+/// Convert a base64 PNG of the native viewport to a base64 JPEG with the
+/// supplied CSS dimensions. Call on a blocking worker, after capture and any
+/// page-mask cleanup. Shared by direct CDP tools and Jev's own screenshot path.
+pub fn viewport_jpeg(data: &str, width: u32, height: u32) -> anyhow::Result<String> {
     anyhow::ensure!(width > 0 && height > 0, "Screenshot viewport is empty");
     let bytes = STANDARD.decode(data).context("Invalid screenshot base64")?;
     let image = ImageReader::with_format(Cursor::new(bytes), ImageFormat::Png)

@@ -322,6 +322,7 @@ mod outcome_class_tests;
 mod pointer_tests;
 mod reach_tests;
 mod region_tests;
+mod screenshot_tests;
 mod secret_tests;
 mod session_edge_tests;
 mod session_life_tests;

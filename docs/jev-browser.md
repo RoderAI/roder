@@ -139,6 +139,11 @@ page open so the result can be checked. Pass `foreground: false` for a
 background tab that is closed when the task ends; Roder never brings that one
 forward, since it may be working in the user's own browser.
 
+Windowed Chrome keeps its natural viewport and Retina scale. Screenshots capture
+that existing viewport and are scaled to CSS pixels in Roder, so capture does
+not repeatedly shrink and restore the page view. Headless Chrome retains Jev's
+fixed 1120x780 viewport.
+
 A background tab stays live because Jev turns on focus emulation for its tab.
 Measured on a windowed Chrome (`fixture_harness/hidden_tab_tests.rs`, ignored
 because it opens a window), a background tab with focus emulation reports
@@ -2201,7 +2206,7 @@ box is still what takes the click; an element with `display: contents`, which
 has no box, is visible when its parent is, and is measured by its children's
 boxes, so a card-wide link and text in such a wrapper are reached),
 not be `:disabled`, `aria-hidden` or `inert`, and have its centre inside the
-width of Jev's emulated 1120x780 viewport; above or below it is fine (see
+width of the current viewport (1120x780 in headless Chrome); above or below it is fine (see
 "Reaching controls"). Still unreachable, and reported as `observed_elements`
 low or zero rather than an error:
 

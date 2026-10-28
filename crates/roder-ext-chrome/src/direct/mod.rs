@@ -37,6 +37,7 @@ mod target;
 mod tools;
 mod unavailable;
 
+pub use capture_image::viewport_jpeg;
 pub use client::{DirectDialog, DirectTab};
 pub use guard::{DirectGuard, GateAction, GateQuery, OpenGuard, PageFacts, StopKind};
 pub use session::{DirectSession, DirectStep, DirectStop, OpenedTab};
