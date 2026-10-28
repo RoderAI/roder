@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-28",
+  "model": "gpt-6.1-sol",
+  "reasoning": "low",
+  "source_base_commit": "9f2b646700cd1a3befa449e8b8b36a0911c4f3a3",
+  "source_state": "base plus the streamed-response-history fix",
+  "credentials": "Existing Codex CLI login read internally; no token values recorded",
+  "private_trajectory_text_included": false,
+  "results": [
+    {
+      "transport": "websocket",
+      "fixture": "update-unicode",
+      "passed": true,
+      "duration_ms": 11848.51,
+      "tool_count": 3,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "websocket_requests": 4,
+      "incremental_requests": 3,
+      "failure": null
+    },
+    {
+      "transport": "websocket",
+      "fixture": "move-add-delete",
+      "passed": true,
+      "duration_ms": 16875.92,
+      "tool_count": 7,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "websocket_requests": 4,
+      "incremental_requests": 3,
+      "failure": null
+    },
+    {
+      "transport": "websocket",
+      "fixture": "compaction-smoke",
+      "passed": true,
+      "duration_ms": 10508.19,
+      "tool_count": 3,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "websocket_requests": 5,
+      "incremental_requests": 3,
+      "native_compaction": {
+        "compacted": true,
+        "estimated_before": 170,
+        "estimated_after": 918
+      },
+      "native_boundary": true,
+      "follow_up_answer": "BLUE",
+      "failure": null
+    },
+    {
+      "transport": "http",
+      "fixture": "update-unicode",
+      "passed": true,
+      "duration_ms": 17392.25,
+      "tool_count": 3,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "failure": null
+    },
+    {
+      "transport": "http",
+      "fixture": "move-add-delete",
+      "passed": true,
+      "duration_ms": 25898.18,
+      "tool_count": 7,
+      "patch_calls": 1,
+      "patch_errors": [],
+      "failure": null
+    }
+  ],
+  "limits": [
+    "Functional smoke tests do not establish a general speed or model-quality improvement.",
+    "Compaction smoke verifies continuity, not token reduction.",
+    "The deterministic localhost regression verifies actual continuation input shape."
+  ]
+}
