@@ -191,6 +191,7 @@ impl Page {
                     return Err(StaleObservation::new("Document is navigating").into());
                 }
                 Ok(mut observation) => {
+                    crate::semantic::refresh(&mut observation);
                     let read = match self.frame_text {
                         true => self.read_frames().await,
                         false => Vec::new(),

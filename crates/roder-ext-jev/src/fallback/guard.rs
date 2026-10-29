@@ -127,7 +127,7 @@ impl DirectGuard for JevGuard {
     fn scrub(&self, text: &str) -> String {
         self.secrets
             .lock()
-            .map(|secrets| secrets.scrub(text))
+            .map(|secrets| secrets.scrub_dom(text))
             .unwrap_or_else(|_| text.to_string())
     }
 

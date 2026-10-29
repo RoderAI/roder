@@ -1,7 +1,7 @@
 //! Bounded, semantic text observations for direct browser tools.
 use super::client::cut;
 use super::look::LOOK_LINES;
-use crate::observed_cut::role_of;
+use crate::semantic::one_line;
 use serde_json::{Value, json};
 
 /// Grouped structure and state, followed by bounded page text. Geometry stays
@@ -27,58 +27,14 @@ pub(crate) fn render(look: &Value) -> String {
     lines.push(view);
     let snapshot = &look["snapshot"];
     let diff = snapshot["mode"] == "diff";
-    let rows = snapshot["rows"].as_array().cloned().unwrap_or_default();
     if look["elements"].as_array().is_none_or(Vec::is_empty) {
         lines.push("Elements: none found; use a screenshot and x/y coordinates.".into());
     }
-    lines.push(if diff {
-        "Viewport changes (+ newly observed, ~ changed, - no longer observed; call look for full tree):"
-    } else {
-        "Snapshot (act by ref; indentation shows viewport hierarchy):"
-    }.into());
-    let mut parents = std::collections::HashMap::new();
-    if let Some(context) = snapshot["context"].as_array() {
-        for row in context {
-            parents.insert(row["id"].as_str().unwrap_or_default(), row);
-        }
-    }
-    for row in &rows {
-        parents.insert(row["id"].as_str().unwrap_or_default(), row);
-    }
-    let row_room = LOOK_LINES.saturating_sub(lines.len() + 20);
-    let mut output = Vec::new();
-    for row in &rows {
-        let mut parent = row["parent"].as_str();
-        let mut depth = 0;
-        while let Some(p) = parent.and_then(|key| parents.get(key)) {
-            depth += 1;
-            if depth >= 12 {
-                break;
-            }
-            parent = p["parent"].as_str();
-        }
-        if diff {
-            let prefix = if row["change"] == "added" { "+" } else { "~" };
-            let context = row["parent"]
-                .as_str()
-                .and_then(|key| parents.get(key))
-                .map(|p| format!(" (in {})", element_line(p)))
-                .unwrap_or_default();
-            output.push(format!("{prefix} {}{context}", element_line(row)));
-        } else {
-            output.push(format!("{}- {}", "  ".repeat(depth), element_line(row)));
-        }
-    }
-    if let Some(removed) = snapshot["removed"].as_array() {
-        output.extend(removed.iter().map(|row| format!("- {}", element_line(row))));
-    }
-    if diff && output.is_empty() {
-        output.push("No semantic changes.".into());
-    }
-    lines.extend(output.iter().take(row_room).cloned());
-    if snapshot["limited"] == true || output.len() > row_room {
-        lines.push("… snapshot limited; unlisted nodes are not evidence of removal. Scroll or use a screenshot.".into());
-    }
+    lines.extend(
+        crate::semantic::render(snapshot, LOOK_LINES.saturating_sub(lines.len() + 20))
+            .lines()
+            .map(str::to_string),
+    );
     if let Some(omitted) = look["omitted"].as_u64().filter(|n| *n > 0) {
         lines.push(format!(
             "… {omitted} additional elements outside the raw control listing"
@@ -88,7 +44,12 @@ pub(crate) fn render(look: &Value) -> String {
         lines.push("Page text unchanged.".into());
         return lines.join("\n");
     }
-    let text = look["text"].as_str().unwrap_or_default().trim();
+    let text = if diff {
+        snapshot["text"].as_str().unwrap_or_default()
+    } else {
+        look["text"].as_str().unwrap_or_default()
+    }
+    .trim();
     // The text gets the lines that are left, less its header and the line
     // that says it was cut.
     let room = LOOK_LINES.saturating_sub(lines.len() + 2);
@@ -101,7 +62,7 @@ pub(crate) fn render(look: &Value) -> String {
     }
     // The page script keeps only so much of the text, and the line budget
     // keeps less of it still; say when either cut some.
-    if look["text_cut"] == json!(true) || shown.len() < text.len() {
+    if (!diff && look["text_cut"] == json!(true)) || shown.len() < text.len() {
         lines.push(format!(
             "… text cut at {} chars (the page text is {} chars)",
             shown.chars().count(),
@@ -111,80 +72,6 @@ pub(crate) fn render(look: &Value) -> String {
         ));
     }
     lines.join("\n")
-}
-
-fn element_line(element: &Value) -> String {
-    // The role is the page's own word: one line, cut.
-    let mut line = format!(
-        "{} {}",
-        element["ref"].as_str().unwrap_or_default(),
-        role_of([
-            element["role"].as_str(),
-            element["type"].as_str(),
-            element["tag"].as_str(),
-        ])
-    );
-    line = line.trim_start().to_string();
-    let label = one_line(&element["label"], 80);
-    if !label.is_empty() {
-        line.push_str(&format!(" \"{label}\""));
-    }
-    if element["secret"] == json!(true) {
-        line.push_str(match element["filled"] == json!(true) {
-            true => " (secret field, filled)",
-            false => " (secret field, empty)",
-        });
-    } else if let Some(value) = element["value"].as_str() {
-        line.push_str(&format!(" = \"{}\"", one_line(&json!(value), 60)));
-    }
-    if let Some(checked) = element["checked"].as_bool() {
-        line.push_str(if checked {
-            " [checked]"
-        } else {
-            " [unchecked]"
-        });
-    }
-    if let Some(expanded) = element["expanded"].as_bool() {
-        line.push_str(if expanded {
-            " [expanded]"
-        } else {
-            " [collapsed]"
-        });
-    }
-    if element["disabled"] == json!(true) {
-        line.push_str(" [disabled]");
-    }
-    if element["draggable"] == json!(true) {
-        line.push_str(" [draggable]");
-    }
-    if element["focused"] == json!(true) {
-        line.push_str(" [focused]");
-    }
-    if let Some(level) = element["level"].as_u64() {
-        line.push_str(&format!(" [level={level}]"));
-    }
-    if let Some(options) = element["options"].as_array() {
-        let options = options
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>()
-            .join(" | ");
-        line.push_str(&format!(" options: {}", cut(&options, 160)));
-    }
-    if element["offscreen"] == json!(true) {
-        line.push_str(" offscreen");
-    }
-    line
-}
-
-fn one_line(value: &Value, chars: usize) -> String {
-    let text = value
-        .as_str()
-        .unwrap_or_default()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    cut(&text, chars)
 }
 
 #[cfg(test)]

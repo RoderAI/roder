@@ -35,6 +35,7 @@ mod request_budget;
 mod runner;
 mod scope;
 mod secret;
+mod semantic;
 mod session;
 mod space;
 mod text_helper;

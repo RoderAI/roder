@@ -37,3 +37,5 @@ pub use computer::{ComputerCdpBinding, ComputerTool, ComputerToolContributor};
 pub use extension::ChromeExtension;
 pub use policy::{ChromeActionClass, classify_action};
 pub use tools::{ChromeToolContributor, chrome_tool_specs};
+
+pub mod semantic;

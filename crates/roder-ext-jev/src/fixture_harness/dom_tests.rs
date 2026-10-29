@@ -26,11 +26,11 @@ async fn semantic_dom_keeps_hierarchy_state_refs_and_scrubs_secrets() {
         "heading \"Account\" [level=1]",
         "form \"Profile\"",
         "textbox \"Name\"",
-        "value=\"Ada\"",
+        "= \"Ada\"",
         "combobox \"Country\"",
-        "value=\"Chile\"",
+        "= \"Chile\"",
         "button \"Save\" [disabled]",
-        "expanded=false",
+        "[collapsed]",
         "status",
         "Saved account",
         "Shadow action",
@@ -54,7 +54,7 @@ async fn semantic_dom_keeps_hierarchy_state_refs_and_scrubs_secrets() {
         .iter()
         .find(|a| a["label"] == "More")
         .unwrap();
-    assert!(dom.contains(&format!("node={}", more["node"])));
+    assert!(dom.contains(&format!("{}", more["ref"].as_str().unwrap())));
     let next = page.observe().await.unwrap();
     assert_eq!(next["dom_snapshot"], observation["dom_snapshot"]);
     page.evaluate("document.querySelector('button[aria-expanded]').setAttribute('aria-expanded','true'); true").await.unwrap();
@@ -83,7 +83,7 @@ async fn semantic_dom_caps_large_pages_and_marks_omissions() {
         observed["dom_snapshot"]
             .as_str()
             .unwrap()
-            .contains("DOM snapshot truncated")
+            .contains("snapshot limited")
     );
 }
 
@@ -123,10 +123,10 @@ async fn semantic_dom_maps_controls_inside_headings_and_styled_toggle_state() {
             .unwrap();
         let line = dom
             .lines()
-            .find(|line| line.contains(&format!("node={}", action["node"])))
+            .find(|line| line.contains(&format!("{}", action["ref"].as_str().unwrap())))
             .unwrap_or_else(|| panic!("Missing {label}: {dom}"));
         if matches!(label, "Notifications" | "Daily") {
-            assert!(line.contains("checked=true"), "{line}");
+            assert!(line.contains("[checked]"), "{line}");
         }
     }
     assert!(!dom.contains("text \"Account"), "{dom}");
@@ -149,7 +149,7 @@ async fn offscreen_dom_changes_do_not_invalidate_a_page_level_decision() {
         .await
         .unwrap();
     let updated = page.observe().await.unwrap();
-    assert_ne!(updated["dom_snapshot"], observation["dom_snapshot"]);
+    assert_eq!(updated["dom_snapshot"], observation["dom_snapshot"]);
     assert!(page.fresh(&observation, None).await.unwrap());
     assert!(!page.fresh(&observation, Some(far)).await.unwrap());
 }
@@ -164,8 +164,7 @@ async fn semantic_dom_scrubs_complete_escaped_echoes_before_prompt_or_digest() {
     let mut observation = page.observe().await.unwrap();
     let escaped = serde_json::to_string(&secret).unwrap();
     assert!(
-        observation["dom_snapshot"]
-            .as_str()
+        serde_json::to_string(&observation["snapshot"])
             .unwrap()
             .contains(&escaped)
     );
@@ -225,12 +224,15 @@ async fn oversized_dom_records_do_not_hide_later_controls() {
         .find(|a| a["label"] == "Continue")
         .unwrap();
     assert!(
-        dom.contains(&format!("button \"Continue\" [node={}]", button["node"])),
+        dom.contains(&format!(
+            "{} button \"Continue\"",
+            button["ref"].as_str().unwrap()
+        )),
         "{dom}"
     );
     assert!(dom.contains("[long text omitted]"), "{dom}");
     assert!(dom.contains("[oversized DOM record omitted]"), "{dom}");
-    assert!(dom.contains("DOM snapshot truncated"));
+    assert!(dom.contains("snapshot limited"));
     assert!(dom.len() <= 6100);
 }
 

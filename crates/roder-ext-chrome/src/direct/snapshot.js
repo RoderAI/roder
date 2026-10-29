@@ -10,7 +10,10 @@
     if (!ids.has(el)) ids.set(el, `s${next++}`);
     return ids.get(el);
   };
-  const clean = (text, max = 100) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const clean = text => {
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    return value.length <= 160 ? value : '[long text omitted]';
+  };
   const roles = { MAIN: 'main', NAV: 'navigation', HEADER: 'banner', FOOTER: 'contentinfo',
     FORM: 'form', FIELDSET: 'group', DIALOG: 'dialog', UL: 'list', OL: 'list', LI: 'listitem',
     TABLE: 'table', THEAD: 'rowgroup', TBODY: 'rowgroup', TR: 'row', TH: 'columnheader', TD: 'cell' };
@@ -73,7 +76,7 @@
           ({ A: 'link', SELECT: 'combobox', TEXTAREA: 'textbox' }[el.tagName]) || el.tagName.toLowerCase(),
         label: item ? item.label : name(el) };
       if (item) {
-        for (const key of ['ref', 'value', 'secret', 'filled', 'checked', 'expanded', 'disabled', 'draggable', 'options', 'offscreen']) {
+        for (const key of ['ref', 'value', 'secret', 'filled', 'checked', 'selected', 'busy', 'expanded', 'disabled', 'draggable', 'options', 'offscreen']) {
           if (item[key] !== undefined) row[key] = item[key];
         }
       }
@@ -86,20 +89,10 @@
     const full = document.body?.innerText || '';
     let hash = 2166136261;
     for (let i = 0; i < full.length; i++) hash = Math.imul(hash ^ full.charCodeAt(i), 16777619);
-    const current = { url: page.url, title: page.title, rows, limited, hash, textLength: full.length };
-    let fullMode = opts.full || !previous || previous.url !== current.url || limited || previous.limited;
-    const old = new Map((previous?.rows || []).map(row => [row.id, row]));
-    const now = new Map(rows.map(row => [row.id, row]));
-    const changes = rows.filter(row => JSON.stringify(old.get(row.id)) !== JSON.stringify(row))
-      .map(row => ({ ...row, change: old.has(row.id) ? 'changed' : 'added' }));
-    const removed = (previous?.rows || []).filter(row => !now.has(row.id));
-    if (changes.length + removed.length > 100) fullMode = true;
-    const textChanged = !previous || previous.hash !== hash || previous.textLength !== full.length;
-    const snapshot = { mode: fullMode ? 'full' : 'diff', rows: fullMode ? rows : changes,
-      removed: fullMode ? [] : removed, context: rows.filter(row => changes.some(c => c.parent === row.id)),
-      limited, text_changed: fullMode || textChanged,
-      title_changed: !previous || previous.title !== current.title };
+    const current = { url: page.url, title: page.title, document: S.document,
+      rows, limited, text:page.text, text_cut:page.text_cut, text_hash: hash, text_length: full.length };
+    const before = opts.full ? null : previous;
     if (opts.publish) previous = current;
-    return snapshot;
+    return {...current, previous: before};
   };
 })();

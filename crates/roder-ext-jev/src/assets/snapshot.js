@@ -406,13 +406,15 @@
     every('[role="listbox"],[role="menu"]').some(x=>visible(x) && floating(x)) ||
     actions.some(a=>a.role==='option' && generic.has(cache.nodes.get(a.node)));
   for (const a of actions) if (!(a.node in guards)) guards[a.node]=cache.guard(cache.nodes.get(a.node));
-  actions.forEach((a,i)=>a.id='e'+(i+1));
+  actions.forEach((a,i)=>{a.id='e'+(i+1);if(a.node)a.ref='j'+performance.timeOrigin+'-'+a.node});
   if (scrollY+innerHeight<height-2) actions.push({id:'scroll_down',kind:'scroll',label:'Scroll down',delta:560});
   if (scrollY>0) actions.push({id:'scroll_up',kind:'scroll',label:'Scroll up',delta:-560});
   if (open) actions.push({id:'press_escape',kind:'key',key:'Escape',
     label:'Press Escape to close the open popup, menu, suggestion list or dialog'});
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
-  const dom_snapshot=parts.dom({tree,visible,safe,name,role,identity,actions,rectOf,placed});
+  const semantic=parts.dom({tree,visible,safe,name,role,identity,actions,rectOf,placed});
+  let textHash=2166136261;for(let i=0;i<pageText.length;i++)textHash=Math.imul(textHash^pageText.charCodeAt(i),16777619);
   return {url:location.href,title:document.title.toWellFormed(),w:innerWidth,h:innerHeight,text:pageText,
-    typed_values,disabled_controls,dom_snapshot,scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
+    typed_values,disabled_controls,snapshot:{...semantic,url:location.href,title:document.title,
+      document:String(performance.timeOrigin),text:pageText,text_cut:pageText.length>=6000,text_hash:textHash,text_length:pageText.length},scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
 })

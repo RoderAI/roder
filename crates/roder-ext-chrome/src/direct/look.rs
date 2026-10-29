@@ -63,6 +63,22 @@ pub(crate) async fn read(
     );
     let mut look = client.evaluate_isolated(&expression).await?;
     scrub_strings(&mut look, guard);
+    bound_text(&mut look, detail.text);
+    if look["text_cut"] != true {
+        look.as_object_mut().map(|map| map.remove("text_total"));
+    }
+    if let Some(snapshot) = look.get_mut("snapshot") {
+        let mut current = snapshot.take();
+        let previous = current
+            .as_object_mut()
+            .and_then(|map| map.remove("previous"));
+        bound_text(&mut current, detail.text);
+        let mut previous = previous;
+        if let Some(previous) = &mut previous {
+            bound_text(previous, detail.text);
+        }
+        *snapshot = crate::semantic::changes(&current, previous.as_ref().filter(|p| !p.is_null()));
+    }
     Ok(look)
 }
 
@@ -98,6 +114,17 @@ fn scrub_strings(value: &mut Value, guard: &dyn DirectGuard) {
         Value::Array(items) => items.iter_mut().for_each(|item| scrub_strings(item, guard)),
         Value::Object(map) => map.values_mut().for_each(|item| scrub_strings(item, guard)),
         _ => {}
+    }
+}
+
+// Called only after scrubbing complete records, including the private previous
+// snapshot. Keep the same excerpt limit on both sides of a diff.
+fn bound_text(value: &mut Value, limit: usize) {
+    if let Some(text) = value["text"].as_str() {
+        if text.chars().count() > limit {
+            value["text"] = json!(text.chars().take(limit).collect::<String>());
+            value["text_cut"] = json!(true);
+        }
     }
 }
 

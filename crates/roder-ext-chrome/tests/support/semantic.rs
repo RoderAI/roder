@@ -13,7 +13,7 @@ async fn semantic_observations(registry: &ToolRegistry, url: &str) {
       document.querySelector('#choose').onclick = () => {
         document.querySelector('#to').setAttribute('aria-expanded','true');
         document.querySelector('#suggestions').hidden = false;
-        document.querySelector('#suggestions').innerHTML = '<li role="option">London (all airports)</li>';
+        document.querySelector('#suggestions').innerHTML = '<li role="option" aria-selected="true">London (all airports)</li>';
       }; true"#).await;
     let full = call(registry, "chrome_page_snapshot", json!({})).await;
     assert!(full.text.contains("Snapshot (act by ref"), "{}", full.text);
@@ -38,6 +38,7 @@ async fn semantic_observations(registry: &ToolRegistry, url: &str) {
     let rows = clicked.data["page"]["snapshot"]["rows"].as_array().unwrap();
     let option = rows.iter().find(|row| row["role"] == "option").unwrap()["ref"].clone();
     assert!(option.is_string(), "options must carry real actionable refs");
+    assert!(clicked.text.contains("[selected=true]"), "{}", clicked.text);
     let typed = call(registry, "chrome_type", json!({"ref":to,"text":"London"})).await;
     assert!(!typed.is_error, "{}", typed.text);
     assert!(typed.text.contains("= \"London\""), "{}", typed.text);

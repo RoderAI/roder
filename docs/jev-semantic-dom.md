@@ -1,17 +1,35 @@
 # Semantic DOM evidence and experimental Jev prompting
 
 
-`jev_browse` tool results now include a bounded semantic DOM snapshot inside the
-untrusted page-content section. Like Codex browser snapshots, it preserves
-landmarks, forms, headings, rows and controls with their observed states instead
-of relying solely on flattened text. `node` references identify observed controls;
-they do not introduce a new action API. The tree covers the visible composed DOM,
-open shadow roots and same-origin frames, plus offered offscreen controls.
-It is capped at 100 lines / 6,000 UTF-16 code units before the truncation marker,
-with a smaller excerpt in the existing 8,000-character tool digest. Hidden content
-and secret field values are excluded, and previously typed secrets are scrubbed.
-This is an approximation of semantic DOM structure, not Chrome's full accessibility
-tree; cross-origin frames retain their existing separate read-only text path.
+Jev, Decisions and direct browser tools share a semantic row contract and Rust
+renderer (`roder-ext-chrome::semantic`). It shows landmarks, forms, headings,
+table cells, controls and observed state in a bounded viewport hierarchy. After
+an action, the next decision receives added, changed and removed rows plus new
+page-text lines; unchanged navigation and controls are omitted. An incomplete
+observation, changed document or changed URL forces a full view. Private probes
+do not advance the model-visible baseline. Full raw observations remain available
+inside the runtime for freshness checks and recovery.
+
+Native Jev capture follows the visible composed DOM, open shadow roots and
+same-origin frames. Its complete offered action map also retains offscreen
+targets. The tree is capped at 100 rows and 6,000 characters; truncation is marked,
+and missing rows in a capped view never imply removal. This approximates semantic
+structure rather than Chrome's full accessibility tree. Cross-origin frames and
+dialogs retain their separate read-only evidence.
+
+Internal `j…` refs resolve through the offered action map sent to the decision
+provider. A completed `jev_browse` handoff also reads the same tab through the
+direct tools and returns `e…` refs accepted by `jev_tab_*`, seeding the next
+manual action's diff. `page.reference_tools` identifies that tool family. Call
+`jev_tab_look` for a full current view or fresh refs. If the bounded handoff read
+cannot complete before the deadline, the native observation remains available
+and its refs continue to identify offered actions. Geometry stays in structured
+diagnostic data rather than the semantic text.
+
+The tool digest wraps page content as untrusted text. Hidden content and secret
+field values are excluded; known secrets are scrubbed before formatted labels or
+text excerpts are shortened. Overlong labels are omitted whole to avoid exposing
+an unmatched prefix of a secret.
 
 To try the experimental prompt using that evidence:
 
@@ -61,19 +79,19 @@ off. To evaluate the audit, use
 `JEV_PROMPT_PROFILE=activation JEV_IMAGES=1 JEV_MODEL=jev-1.14.0` or paired eval
 variant `jev_activation-vision@jev-1.14.0`.
 
-For example, a synthetic account page produces this shape (node IDs are illustrative):
+For example, a synthetic account page produces this shape (refs are illustrative):
 
 ```text
+Snapshot (act by ref; indentation shows viewport hierarchy):
 - main
   - heading "Account" [level=1]
   - form "Profile"
-    - textbox "Name" [node=2] [value="Ada"]
-    - combobox "Country" [node=3] [value="Chile"]
+    - j123-2 textbox "Name" = "Ada"
+    - j123-3 combobox "Country" = "Chile"
     - button "Save" [disabled]
-  - status
-    - text "Saved account"
+  - status "Saved account"
 ```
 
-Nodes link to each model request's offered target through its explicit `node`
-field. A disabled button can appear as evidence without becoming an executable
-target. This avoids turning page descriptions into permission to act.
+A disabled button can appear as evidence without becoming an executable target.
+Refs describe a target within the supplying browser backend; the offered action
+map and existing gates still determine which operations may execute.

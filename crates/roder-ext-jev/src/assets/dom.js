@@ -2,7 +2,7 @@
 // browser snapshots. Observation only: node refs identify existing controls;
 // only the offered action space grants an action. Never read secret values.
 (({tree,visible,safe,name,role,identity,actions,rectOf,placed}) => {
-  const lines=[], seen=new Set(), offered=new Map(); let size=0, visited=0, omitted=false, skipped=false;
+  const lines=[], rows=[], seen=new Set(), offered=new Map(); let size=0, visited=0, omitted=false, skipped=false;
   for (const a of actions) if (a.node && !offered.has(a.node)) offered.set(a.node,a);
   const implicit={MAIN:'main',NAV:'navigation',ASIDE:'complementary',HEADER:'banner',
     FOOTER:'contentinfo',FORM:'form',DIALOG:'dialog',UL:'list',OL:'list',LI:'listitem',
@@ -13,11 +13,11 @@
   const quote=s=>{ const value=String(s).toWellFormed();
     if (value.length>160) { skipped=true; return JSON.stringify('[long text omitted]'); }
     return JSON.stringify(value); };
-  const add=(depth,line)=>{
+  const add=(depth,line,row)=>{
     const text='  '.repeat(Math.min(depth,10))+'- '+line;
-    if (text.length>6000) { skipped=true; return add(depth,'[oversized DOM record omitted]'); }
+    if (text.length>6000) { skipped=true; return add(depth,'[oversized DOM record omitted]',{...row,role:'note',label:'[oversized DOM record omitted]'}); }
     if (lines.length>=100 || size+text.length+1>6000) { omitted=true; return false; }
-    lines.push(text); size+=text.length+1; return true;
+    lines.push(text); rows.push(row); size+=text.length+1; return true;
   };
   const onScreen=(e,r)=>{
     if (!r) return false;
@@ -46,7 +46,7 @@
     }
     return words.join(' ');
   };
-  const walk=(e,depth,quiet=false)=>{
+  const walk=(e,depth,quiet=false,parent=null)=>{
     if (!e || seen.has(e) || omitted) return;
     if (++visited>5000) { omitted=true; return; }
     seen.add(e);
@@ -55,12 +55,13 @@
     const heading=/^H[1-6]$/.test(e.tagName);
     const kind=role(e)||e.getAttribute('role')||(heading ? 'heading' : implicit[e.tagName]);
     const action=offered.get(identity(e));
-    let childDepth=depth;
-    if (kind && (inView || action)) {
+    let childDepth=depth, childParent=parent;
+    if (kind && (inView || e===tree.active())) {
       let label=(heading ? headingText(e) : name(e)) || action?.label;
       // Containers get only explicit names; their descendants supply content.
-      if (!action && ['main','navigation','complementary','banner','contentinfo','form','dialog','list','listitem','table','rowgroup','row','columnheader','cell','region','article','paragraph','status','alert'].includes(kind))
+      if (!action && ['main','navigation','complementary','banner','contentinfo','form','dialog','list','listitem','table','rowgroup','row','region','article','paragraph','status','alert'].includes(kind))
         label=e.getAttribute('aria-label') || (e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>name(e.getRootNode().getElementById?.(id) || e.ownerDocument.getElementById(id))).join(' ');
+      if (['cell','columnheader','status','alert'].includes(kind)) label=headingText(e);
       const states=[];
       if (action) states.push('node='+action.node);
       if (heading) states.push('level='+e.tagName.slice(1));
@@ -78,24 +79,37 @@
       if (safe(e) && action?.kind==='fill' && action.value) states.push('value='+quote(action.value));
       if (action?.kind==='select') states.push('value='+quote(action.current_value||''));
       if (action?.filled && !safe(e)) states.push('filled');
-      if (!add(depth,kind+(label ? ' '+quote(label) : '')+states.map(s=>' ['+s+']').join(''))) return;
-      childDepth=depth+1;
+      const row={id:'n'+identity(e),parent,role:kind,label:label ? JSON.parse(quote(label)) : ''};
+      if (action) {row.ref=action.ref;row.node=action.node;}
+      if (heading) row.level=Number(e.tagName.slice(1));
+      if (e.matches(':disabled') || e.getAttribute('aria-disabled')==='true') row.disabled=true;
+      if (e===tree.active()) row.focused=true;
+      if (checked!==null) row.checked=checked===true || checked==='true';
+      for (const attr of ['selected','expanded','busy']) {
+        const v=e.getAttribute('aria-'+attr);if (v!==null) row[attr]=v==='true';
+      }
+      if (action?.offscreen) row.offscreen=true;
+      if (!safe(e) && action) {row.secret=true;row.filled=!!action.filled;}
+      else if (action?.kind==='fill' && action.value) row.value=JSON.parse(quote(action.value));
+      else if (action?.kind==='select') row.value=JSON.parse(quote(action.current_value||''));
+      if (!add(depth,kind+(label ? ' '+quote(label) : '')+states.map(s=>' ['+s+']').join(''),row)) return;
+      childDepth=depth+1;childParent=row.id;
     }
     // Never descend into a field's initial DOM value (notably textarea).
     // Headings may contain offered links/buttons; retain them while suppressing
     // duplicate text already represented by the heading's accessible name.
     if (['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.tagName) || e.isContentEditable) return;
     const frame=tree.frameDoc(e);
-    if (frame?.body) { walk(frame.body,childDepth); return; }
+    if (frame?.body) { walk(frame.body,childDepth,false,childParent); return; }
     const children=e.shadowRoot ? e.shadowRoot.childNodes :
       e.tagName==='SLOT' && e.assignedNodes().length ? e.assignedNodes() : e.childNodes;
     for (const n of children) {
-      if (n.nodeType===1) walk(n,childDepth,quiet||heading);
-      else if (n.nodeType===3 && inView && !quiet && !heading && n.textContent.trim()) add(childDepth,'text '+quote(n.textContent));
+      if (n.nodeType===1) walk(n,childDepth,quiet||heading||['cell','columnheader','status','alert'].includes(kind),childParent);
+      else if (n.nodeType===3 && inView && !quiet && !heading && !['cell','columnheader','status','alert'].includes(kind) && n.textContent.trim()) add(childDepth,'text '+quote(n.textContent),{id:'n'+identity(n),parent:childParent,role:'text',label:JSON.parse(quote(n.textContent))});
       if (omitted) break;
     }
   };
   walk(document.body,0);
   if (omitted || skipped) lines.push('- … (DOM snapshot truncated)');
-  return lines.join('\n');
+  return {rows,limited:omitted||skipped};
 })

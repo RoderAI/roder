@@ -35,6 +35,8 @@ pub(crate) struct Agent {
     browser: Box<dyn JevBrowser>,
     config: JevEngineConfig,
     observation: Value,
+    /// Last semantic observation actually accepted by the decision driver.
+    model_snapshot: Option<Value>,
     history: Vec<Value>,
     text_calls: Vec<Value>,
     decisions: usize,
@@ -84,6 +86,7 @@ impl Agent {
             browser,
             config,
             observation: Value::Null,
+            model_snapshot: None,
             history: Vec::new(),
             text_calls: Vec::new(),
             decisions: 0,

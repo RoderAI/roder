@@ -18,6 +18,7 @@
 mod call;
 pub(crate) mod completion;
 pub(crate) mod log;
+mod observation;
 mod state;
 mod sweep;
 mod tabs;

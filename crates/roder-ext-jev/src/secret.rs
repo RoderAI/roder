@@ -79,7 +79,7 @@ impl Secrets {
     /// well as plain text and whitespace normalized by accessible-name helpers.
     /// The serializer keeps short labels whole and replaces long ones entirely,
     /// so an unmatched secret prefix cannot escape through label truncation.
-    fn scrub_dom(&self, text: &str) -> String {
+    pub(crate) fn scrub_dom(&self, text: &str) -> String {
         self.0.iter().fold(text.to_string(), |mut text, secret| {
             // ECMAScript \s includes BOM and excludes NEXT LINE (U+0085).
             let normalized = secret
@@ -134,6 +134,18 @@ impl Secrets {
         if let Some(Value::String(dom)) = observation.get_mut("dom_snapshot") {
             *dom = self.scrub_dom(dom);
         }
+        fn scrub_snapshot(secrets: &Secrets, value: &mut Value) {
+            match value {
+                Value::String(text) => *text = secrets.scrub_dom(text),
+                Value::Array(items) => items.iter_mut().for_each(|v| scrub_snapshot(secrets, v)),
+                Value::Object(map) => map.values_mut().for_each(|v| scrub_snapshot(secrets, v)),
+                _ => {}
+            }
+        }
+        if let Some(snapshot) = observation.get_mut("snapshot") {
+            scrub_snapshot(self, snapshot);
+        }
+        crate::semantic::refresh(observation);
         for key in ["disabled_controls", "typed_values"] {
             if let Some(evidence) = observation.get_mut(key) {
                 self.scrub_evidence(evidence);

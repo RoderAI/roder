@@ -265,6 +265,7 @@ fn questions(space: &ActionSpace, goal: &str) -> (Value, Vec<String>) {
                     .unwrap_or_else(|| json!("")),
             );
             for key in [
+                "ref",
                 "role",
                 "input_type",
                 "checked",
@@ -321,7 +322,7 @@ pub(crate) fn request_body(
         }
         page_view.insert(key.into(), page.get(key).cloned().unwrap_or(Value::Null));
     }
-    let body = json!({
+    let mut body = json!({
         "model": model,
         "state": {
             "date": crate::text_helper::today(today),
@@ -331,6 +332,17 @@ pub(crate) fn request_body(
         },
         "questions": questions,
     });
+    if let Some(dom) = page.get("dom_snapshot") {
+        body["state"]["dom_snapshot"] = dom.clone();
+    }
+    for key in ["dialogs", "frames"] {
+        if let Some(events) = page
+            .get(key)
+            .filter(|value| value.as_array().is_some_and(|v| !v.is_empty()))
+        {
+            body["state"][key] = events.clone();
+        }
+    }
     (body, space, operation_ids)
 }
 

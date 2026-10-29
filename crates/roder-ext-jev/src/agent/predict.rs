@@ -14,7 +14,8 @@ impl Agent {
             )
             .into());
         }
-        let mut observed = self.observation.clone();
+        let mut observed =
+            crate::semantic::for_model(&self.observation, self.model_snapshot.as_ref());
         if let Some(object) = observed.as_object_mut() {
             object.remove("_screenshot");
         }
@@ -56,6 +57,7 @@ impl Agent {
                 return Err(error);
             }
         };
+        self.model_snapshot = self.observation.get("snapshot").cloned();
         self.decisions = self.decisions.saturating_add(if requests > 0 {
             requests
         } else {

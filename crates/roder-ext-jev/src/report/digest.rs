@@ -105,7 +105,9 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
     let dom = if dom.is_empty() {
         Vec::new()
     } else {
-        let mut lines = vec!["DOM snapshot (node references are observation only):".to_string()];
+        let mut lines = vec![if data["page"]["reference_tools"]=="jev_tab_*" {
+            "Semantic observation (use refs with jev_tab_*; jev_tab_look recovers the full view):"
+        } else {"Semantic observation (refs resolve through the offered browser actions):"}.to_string()];
         lines.extend(dom.lines().map(|line| clip(&defuse(line), 250)));
         budget.take(lines, 1800, 28)
     };

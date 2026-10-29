@@ -16,7 +16,8 @@ use serde_json::{Map, Value, json};
 /// anything), `scrolled` (where a box that scrolls inside itself is: `top`,
 /// `partway` or `bottom`) and `offscreen` (present only on a control outside
 /// the viewport).
-const ELEMENT_KEYS: [&str; 9] = [
+const ELEMENT_KEYS: [&str; 10] = [
+    "ref",
     "role",
     "input_type",
     "value",
