@@ -923,6 +923,31 @@ fn final_assistant_messages_render_markdown() {
 }
 
 #[test]
+fn assistant_markdown_tables_render_as_aligned_columns() {
+    let mut timeline = TimelineState::default();
+    timeline.push_assistant_delta(
+        "Scores:\n\n| Name | Score |\n| --- | ---: |\n| Ada | 10 |\n| Grace | 7 |\n",
+        Some("final_answer".to_string()),
+    );
+
+    let lines = rendered_lines(&mut timeline);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains('│') && line.contains("Ada") && line.contains("10")),
+        "table cells should share a row, got {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains('┼')),
+        "table should draw a header rule, got {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.contains("|---")),
+        "delimiter row should not be shown raw, got {lines:?}"
+    );
+}
+
+#[test]
 fn streaming_assistant_delta_buffers_then_reveals_with_gradient() {
     let mut timeline = TimelineState::default();
     let start = Instant::now();

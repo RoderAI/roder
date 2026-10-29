@@ -115,6 +115,7 @@ use tui_textarea::TextArea;
 use self::commands::built_in_command_catalog;
 use crate::browser;
 use crate::frame_snapshot;
+use crate::palette::sources::provider_is_configured_for_picker;
 use crate::palette::{PaletteEntry, render::PaletteTheme};
 use crate::roadmap::RoadmapModeState;
 #[cfg(test)]
@@ -5391,7 +5392,14 @@ where
             }
             ProviderPopupScreen::ApiKey => " Paste API key (Enter save, Esc back) ".to_string(),
             ProviderPopupScreen::Models => {
-                " Models by provider (Enter select, Esc back) ".to_string()
+                if model_picker_hides_unconfigured(
+                    &self.model_options,
+                    Some(self.provider.as_str()),
+                ) {
+                    " Configured models (Enter select, Esc back) ".to_string()
+                } else {
+                    " Models by provider (Enter select, Esc back) ".to_string()
+                }
             }
             ProviderPopupScreen::Reasoning => {
                 " Reasoning effort (Enter select, Esc back) ".to_string()
@@ -6263,7 +6271,11 @@ where
     fn open_models_submenu(&mut self) {
         self.provider_popup_screen = ProviderPopupScreen::Models;
         self.provider_menu_filter.clear();
-        self.provider_menu_items = models_menu_items(&self.model_options, &self.provider_choices);
+        self.provider_menu_items = models_menu_items(
+            &self.model_options,
+            &self.provider_choices,
+            Some(self.provider.as_str()),
+        );
         let selected = self
             .provider_menu_items
             .iter()
@@ -9108,10 +9120,50 @@ fn settings_menu_items(
     .collect()
 }
 
+fn picker_model_visible(model: &ProviderOption, active_provider: Option<&str>) -> bool {
+    model.routing_option_id.is_some()
+        || provider_is_configured_for_picker(
+            &model.provider_auth_type,
+            model.provider_authenticated,
+        )
+        || active_provider.is_some_and(|provider_id| provider_id == model.provider_id)
+}
+
+/// Models the picker should list. Configured providers (and the active one) win
+/// so search is not buried under catalogs the user has not set up. Routing
+/// options stay. If that filter would leave no selectable model, keep the full
+/// list so a fresh install can still pick something.
+fn configured_picker_models(
+    models: &[ProviderOption],
+    active_provider: Option<&str>,
+) -> Vec<ProviderOption> {
+    let kept: Vec<ProviderOption> = models
+        .iter()
+        .filter(|model| picker_model_visible(model, active_provider))
+        .cloned()
+        .collect();
+    if kept.iter().any(|model| model.routing_option_id.is_none()) {
+        kept
+    } else {
+        models.to_vec()
+    }
+}
+
+fn model_picker_hides_unconfigured(
+    models: &[ProviderOption],
+    active_provider: Option<&str>,
+) -> bool {
+    configured_picker_models(models, active_provider).len() < models.len()
+}
+
 fn models_menu_items(
     models: &[ProviderOption],
     providers: &[ProviderChoice],
+    active_provider: Option<&str>,
 ) -> Vec<ProviderMenuItem> {
+    let visible = configured_picker_models(models, active_provider);
+    let hid_unconfigured = visible.len() < models.len();
+    let models = visible.as_slice();
     let mut items = Vec::new();
     let mut grouped_provider_ids = HashSet::new();
 
@@ -9146,6 +9198,11 @@ fn models_menu_items(
         items.extend(provider_models.into_iter().map(ProviderMenuItem::Model));
     }
 
+    if hid_unconfigured {
+        items.push(ProviderMenuItem::Section(
+            "Set up more in Providers".to_string(),
+        ));
+    }
     items.push(ProviderMenuItem::Back);
     items
 }
@@ -14202,7 +14259,7 @@ mod tests {
             test_provider_option("anthropic", "Anthropic", "claude-opus-4.1"),
         ];
 
-        let items = models_menu_items(&models, &providers);
+        let items = models_menu_items(&models, &providers, None);
 
         assert!(matches!(
             &items[0],
@@ -14287,7 +14344,7 @@ mod tests {
         model.context_window = Some(200_000);
         let models = vec![model];
 
-        let items = models_menu_items(&models, &providers);
+        let items = models_menu_items(&models, &providers, None);
 
         assert!(matches!(
             &items[0],
@@ -14299,6 +14356,83 @@ mod tests {
                 if option.provider_id == "cursor"
                     && option.model_id == "composer-2.5"
         ));
+    }
+
+    #[test]
+    fn models_menu_hides_unconfigured_providers() {
+        let providers = vec![
+            ProviderChoice {
+                provider_id: "codex".to_string(),
+                name: "Codex".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::OAuth,
+                authenticated: true,
+                auth_detail: None,
+                default_model: Some("gpt-5.5".to_string()),
+                recommended: true,
+            },
+            ProviderChoice {
+                provider_id: "openrouter".to_string(),
+                name: "OpenRouter".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::ApiKey,
+                authenticated: false,
+                auth_detail: None,
+                default_model: Some("x-ai/grok-4.6".to_string()),
+                recommended: false,
+            },
+        ];
+        let mut codex = test_provider_option("codex", "Codex", "gpt-5.5");
+        codex.provider_auth_type = ProviderAuthType::OAuth;
+        let mut openrouter = test_provider_option("openrouter", "OpenRouter", "x-ai/grok-4.6");
+        openrouter.provider_authenticated = false;
+        let mut routing = test_provider_option("openrouter", "OpenRouter", "auto-baseline");
+        routing.provider_authenticated = false;
+        routing.routing_option_id = Some("auto-coding".to_string());
+
+        assert!(model_picker_hides_unconfigured(
+            &[codex.clone(), openrouter.clone(), routing.clone()],
+            Some("codex"),
+        ));
+        let items = models_menu_items(
+            &[codex, openrouter.clone(), routing],
+            &providers,
+            Some("codex"),
+        );
+
+        assert!(items.iter().any(|item| matches!(
+            item,
+            ProviderMenuItem::Model(option) if option.model_id == "gpt-5.5"
+        )));
+        assert!(items.iter().any(|item| matches!(
+            item,
+            ProviderMenuItem::Model(option) if option.routing_option_id.as_deref() == Some("auto-coding")
+        )));
+        assert!(!items.iter().any(|item| matches!(
+            item,
+            ProviderMenuItem::Model(option) if option.model_id == "x-ai/grok-4.6"
+        )));
+        assert!(items.iter().any(|item| matches!(
+            item,
+            ProviderMenuItem::Section(label) if label == "Set up more in Providers"
+        )));
+
+        let active_only =
+            models_menu_items(&[openrouter.clone()], &providers[1..], Some("openrouter"));
+        assert!(active_only.iter().any(|item| matches!(
+            item,
+            ProviderMenuItem::Model(option) if option.model_id == "x-ai/grok-4.6"
+        )));
+
+        let fallback = models_menu_items(&[openrouter], &providers[1..], None);
+        assert!(fallback.iter().any(|item| matches!(
+            item,
+            ProviderMenuItem::Model(option) if option.model_id == "x-ai/grok-4.6"
+        )));
+        assert!(!fallback.iter().any(|item| matches!(
+            item,
+            ProviderMenuItem::Section(label) if label == "Set up more in Providers"
+        )));
     }
 
     #[test]
