@@ -47,6 +47,7 @@ impl TimelineItem {
                 let body_style = assistant_body_style(message.phase.as_deref(), theme);
                 let fade_palette = assistant_fade_palette(message.phase.as_deref());
                 let folded = fold_message_body(body, expanded || !message_folding);
+                let content_width = timeline_block_content_width(width);
                 if rendered.is_animating() {
                     let animated = message.animator.rendered_text();
                     let animated = if folded.body.len() == animated.as_str().len() {
@@ -62,7 +63,7 @@ impl TimelineItem {
                             item_style(body_style, selected, theme),
                             theme,
                             fade_palette,
-                            markdown_lines,
+                            |body, style, theme| markdown_lines(body, style, theme, content_width),
                         ),
                         theme.subtle(),
                     );
@@ -74,6 +75,7 @@ impl TimelineItem {
                         theme.subtle(),
                         item_style(body_style, selected, theme),
                         theme,
+                        content_width,
                     );
                 }
                 push_fold_notice(lines, folded.hidden_lines, theme, message_folding);
@@ -935,9 +937,10 @@ fn push_markdown_body_lines(
     marker_style: Style,
     body_style: Style,
     theme: Theme,
+    max_width: usize,
 ) {
     let marker = marker.into();
-    for (line_index, body_line) in markdown_lines(body, body_style, theme)
+    for (line_index, body_line) in markdown_lines(body, body_style, theme, max_width)
         .into_iter()
         .enumerate()
     {

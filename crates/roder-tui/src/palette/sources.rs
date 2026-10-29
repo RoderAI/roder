@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use roder_api::inference::HostedWebSearchMode;
+use roder_api::inference::{HostedWebSearchMode, ProviderAuthType};
 use roder_api::marketplace::MarketplaceDescriptor;
 use roder_api::policy_mode::PolicyMode;
 use roder_protocol::{
@@ -814,9 +814,38 @@ fn file_name_keyword(path: &str) -> String {
         .to_string()
 }
 
+/// A provider is ready for the model picker when it needs no credentials, or
+/// those credentials are already configured. Unconfigured catalogs stay out of
+/// search so the list is the models the user can actually run.
+pub fn provider_is_configured_for_picker(
+    auth_type: &ProviderAuthType,
+    authenticated: bool,
+) -> bool {
+    match auth_type {
+        ProviderAuthType::None => true,
+        ProviderAuthType::ApiKey | ProviderAuthType::OAuth => authenticated,
+    }
+}
+
+fn picker_providers(providers: &ProvidersListResult) -> Vec<&roder_protocol::ProviderDescriptor> {
+    let configured: Vec<_> = providers
+        .providers
+        .iter()
+        .filter(|provider| {
+            provider_is_configured_for_picker(&provider.auth_type, provider.authenticated)
+                || provider.id == providers.active_provider
+        })
+        .collect();
+    if configured.is_empty() {
+        providers.providers.iter().collect()
+    } else {
+        configured
+    }
+}
+
 pub fn model_source(providers: &ProvidersListResult) -> StaticPaletteSource {
     let mut entries = Vec::new();
-    for provider in &providers.providers {
+    for provider in picker_providers(providers) {
         if provider.models.is_empty() {
             let model = providers.active_model.clone();
             entries.push(model_entry(
@@ -1490,7 +1519,7 @@ mod tests {
                     description: Some("Router".to_string()),
                     auth_type: ProviderAuthType::ApiKey,
                     auth_label: Some("OPENROUTER_API_KEY".to_string()),
-                    authenticated: false,
+                    authenticated: true,
                     auth_detail: None,
                     recommended: true,
                     sort_order: 18,
@@ -1525,6 +1554,167 @@ mod tests {
             }),
             "slash-bearing OpenRouter model id should stay in the model field"
         );
+    }
+
+    #[test]
+    fn model_source_omits_unconfigured_provider_models() {
+        let source = model_source(&ProvidersListResult {
+            active_provider: "codex".to_string(),
+            active_model: "gpt-5.5".to_string(),
+            active_reasoning: "medium".to_string(),
+            selection_mode: None,
+            routing_options: Vec::new(),
+            providers: vec![
+                ProviderDescriptor {
+                    id: "codex".to_string(),
+                    name: "Codex".to_string(),
+                    description: None,
+                    auth_type: ProviderAuthType::OAuth,
+                    auth_label: None,
+                    authenticated: true,
+                    auth_detail: None,
+                    recommended: true,
+                    sort_order: 0,
+                    capabilities: InferenceCapabilities::text_only(),
+                    models: vec![ModelDescriptor {
+                        id: "gpt-5.5".to_string(),
+                        name: "GPT-5.5".to_string(),
+                        context_window: None,
+                        default_reasoning: None,
+                        supported_reasoning: Vec::new(),
+                    }],
+                },
+                ProviderDescriptor {
+                    id: "openrouter".to_string(),
+                    name: "OpenRouter".to_string(),
+                    description: None,
+                    auth_type: ProviderAuthType::ApiKey,
+                    auth_label: None,
+                    authenticated: false,
+                    auth_detail: None,
+                    recommended: false,
+                    sort_order: 1,
+                    capabilities: InferenceCapabilities::text_only(),
+                    models: vec![ModelDescriptor {
+                        id: "x-ai/grok-4.6".to_string(),
+                        name: "Grok 4.6".to_string(),
+                        context_window: None,
+                        default_reasoning: None,
+                        supported_reasoning: Vec::new(),
+                    }],
+                },
+            ],
+        });
+
+        let entries = source.entries();
+        let providers: Vec<_> = entries
+            .iter()
+            .filter_map(|entry| match &entry.action {
+                PaletteAction::SwitchModel { provider, .. } => Some(provider.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(providers, vec!["codex"]);
+    }
+
+    #[test]
+    fn model_source_keeps_active_provider_when_it_is_not_configured() {
+        let source = model_source(&ProvidersListResult {
+            active_provider: "openrouter".to_string(),
+            active_model: "x-ai/grok-4.6".to_string(),
+            active_reasoning: "medium".to_string(),
+            selection_mode: None,
+            routing_options: Vec::new(),
+            providers: vec![
+                ProviderDescriptor {
+                    id: "openai".to_string(),
+                    name: "OpenAI".to_string(),
+                    description: None,
+                    auth_type: ProviderAuthType::ApiKey,
+                    auth_label: None,
+                    authenticated: false,
+                    auth_detail: None,
+                    recommended: false,
+                    sort_order: 0,
+                    capabilities: InferenceCapabilities::text_only(),
+                    models: vec![ModelDescriptor {
+                        id: "gpt-5.5".to_string(),
+                        name: "GPT-5.5".to_string(),
+                        context_window: None,
+                        default_reasoning: None,
+                        supported_reasoning: Vec::new(),
+                    }],
+                },
+                ProviderDescriptor {
+                    id: "openrouter".to_string(),
+                    name: "OpenRouter".to_string(),
+                    description: None,
+                    auth_type: ProviderAuthType::ApiKey,
+                    auth_label: None,
+                    authenticated: false,
+                    auth_detail: None,
+                    recommended: false,
+                    sort_order: 1,
+                    capabilities: InferenceCapabilities::text_only(),
+                    models: vec![ModelDescriptor {
+                        id: "x-ai/grok-4.6".to_string(),
+                        name: "Grok 4.6".to_string(),
+                        context_window: None,
+                        default_reasoning: None,
+                        supported_reasoning: Vec::new(),
+                    }],
+                },
+            ],
+        });
+
+        let entries = source.entries();
+        let providers: Vec<_> = entries
+            .iter()
+            .filter_map(|entry| match &entry.action {
+                PaletteAction::SwitchModel { provider, .. } => Some(provider.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(providers, vec!["openrouter"]);
+    }
+
+    #[test]
+    fn model_source_shows_catalog_when_nothing_is_configured() {
+        let source = model_source(&ProvidersListResult {
+            active_provider: "missing".to_string(),
+            active_model: "gpt-5.5".to_string(),
+            active_reasoning: "medium".to_string(),
+            selection_mode: None,
+            routing_options: Vec::new(),
+            providers: vec![ProviderDescriptor {
+                id: "openai".to_string(),
+                name: "OpenAI".to_string(),
+                description: None,
+                auth_type: ProviderAuthType::ApiKey,
+                auth_label: None,
+                authenticated: false,
+                auth_detail: None,
+                recommended: false,
+                sort_order: 0,
+                capabilities: InferenceCapabilities::text_only(),
+                models: vec![ModelDescriptor {
+                    id: "gpt-5.5".to_string(),
+                    name: "GPT-5.5".to_string(),
+                    context_window: None,
+                    default_reasoning: None,
+                    supported_reasoning: Vec::new(),
+                }],
+            }],
+        });
+
+        assert!(source.entries().iter().any(|entry| {
+            entry.action
+                == PaletteAction::SwitchModel {
+                    provider: "openai".to_string(),
+                    model: "gpt-5.5".to_string(),
+                    reasoning: None,
+                }
+        }));
     }
 
     #[test]
