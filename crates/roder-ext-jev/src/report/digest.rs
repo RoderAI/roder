@@ -3,7 +3,7 @@
 //! The caller used to get one line ("done at <url> (3 actions)") and was
 //! told to read a `visible_text` it never received, so it could not see the
 //! time slots Jev had reached, nor that a page had refused access. The digest
-//! gives it, within 8,000 characters and 120 lines (Roder moves a tool output
+//! gives it, within 18,000 characters and 180 lines (Roder moves a tool output
 //! above 20,000 characters or 200 lines into a file), in this order:
 //!
 //! - a header: status, the session call and tab, today's date and time zone,
@@ -34,8 +34,8 @@ use options::options;
 use page::{frames, headings, not_clicked, page_text, reason, steps};
 
 /// The whole text.
-pub(crate) const MAX_CHARS: usize = 8_000;
-pub(crate) const MAX_LINES: usize = 120;
+pub(crate) const MAX_CHARS: usize = 18_000;
+pub(crate) const MAX_LINES: usize = 180;
 
 const STEP_LINES: usize = 12;
 const STEP_CHARS: usize = 180;
@@ -86,6 +86,15 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
     budget.spend(chars_of(&header), header.len());
     // Reserve the markers and blank lines between sections.
     budget.spend(BEGIN_PAGE.len() + END_PAGE.len() + 8, 6);
+    let findings = budget.take(fallback::findings(data), 8100, 85);
+    let evidence = text(&data["evidence"]);
+    let evidence = if evidence.is_empty() {
+        Vec::new()
+    } else {
+        let mut lines = vec!["Evidence observed during this delegation (historical; verify current state for changes):".into()];
+        lines.extend(evidence.lines().map(defuse));
+        budget.take(lines, 8300, 100)
+    };
     let reason = budget.take(reason(data), REASON_CHARS + 20, 3);
     let frames = budget.take(frames(data), FRAMES * (FRAME_CHARS + 80), 2 * FRAMES);
     let steps = budget.take(
@@ -132,6 +141,8 @@ pub(crate) fn digest(data: &Value, now: &str) -> String {
     }
     let page = [
         reason,
+        findings,
+        evidence,
         steps,
         not_clicked,
         fallback_steps,

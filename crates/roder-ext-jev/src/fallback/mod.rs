@@ -23,6 +23,7 @@
 
 pub(crate) mod guard;
 pub(crate) mod handover;
+mod history;
 pub(crate) mod model;
 mod offered;
 mod page_read;

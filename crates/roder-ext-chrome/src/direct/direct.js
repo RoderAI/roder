@@ -7,7 +7,7 @@
 // password, a one-time code, or a field masked as one) is never read: only
 // whether it holds anything.
 (() => {
-  if (window.__roderDirect?.v === 8) return;
+  if (window.__roderDirect?.v === 9) return;
   const ROLES = ['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'menuitemcheckbox','option','combobox','textbox','searchbox','slider','spinbutton','gridcell',
     'treeitem'];
@@ -19,7 +19,7 @@
     '[role="menuitem"],[role="tab"],[role="checkbox"],[role="radio"]';
   const FIELD = 'input,textarea,select,[contenteditable=""],[contenteditable="true"]';
   const GRAPHIC = 'canvas,svg,video,iframe';
-  const S = { v: 8, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
+  const S = { v: 9, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
     masks: [] };
   const refOf = el => {
     let ref = S.ids.get(el);
@@ -200,8 +200,8 @@
     found.sort((a, b) => (onscreen(b) - onscreen(a)) || (a[1].top - b[1].top) || (a[1].left - b[1].left));
     const items = found.slice(0, max).map(([el, r]) => describe(el, r, refOf(el)));
     const f = focused();
-    const full = (document.body?.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
-    const cutText = full.length > 100000;
+    const viewportText = S.viewportText();
+    const full = viewportText.text, cutText = viewportText.limited;
     return {
       url: location.href, title: document.title, http_status: status(),
       viewport: { w: innerWidth, h: innerHeight, scroll_y: Math.round(scrollY),
@@ -210,7 +210,7 @@
       elements: items, omitted: Math.max(0, found.length - max),
       // Scrub complete text before making a display excerpt in Rust. Overlong
       // records are omitted whole, never returned as an unscrubbable prefix.
-      text: cutText ? '[long page text omitted]' : full,
+      text: full, text_scope: 'viewport',
       text_cut: cutText, text_total: points(full),
     };
   };

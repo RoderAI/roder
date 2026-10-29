@@ -260,6 +260,7 @@ impl JevBrowser for ScriptedBrowser {
 pub struct DeciderLog {
     /// The fingerprint of the observation each decision was made on.
     pub seen: Vec<Value>,
+    pub evidence: Vec<Value>,
     /// Whether each decision was asked with the irreversible-action gate on.
     pub gated: Vec<bool>,
 }
@@ -353,6 +354,7 @@ impl ScriptedDecider {
         let decided = {
             let mut log = self.log.lock().unwrap();
             log.seen.push(observation["fingerprint"].clone());
+            log.evidence.push(observation["evidence"].clone());
             log.gated.push(gated);
             log.seen.len() - 1
         };

@@ -31,7 +31,7 @@ pub(crate) fn render(look: &Value) -> String {
         lines.push("Elements: none found; use a screenshot and x/y coordinates.".into());
     }
     lines.extend(
-        crate::semantic::render(snapshot, LOOK_LINES.saturating_sub(lines.len() + 20))
+        crate::semantic::render(snapshot, LOOK_LINES.saturating_sub(lines.len() + 40))
             .lines()
             .map(str::to_string),
     );

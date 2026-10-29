@@ -243,6 +243,8 @@ pub enum JevStopCause {
     /// stale, each time with nothing new on the page. `stopped_because` gives
     /// the last stale message.
     Unsettled,
+    /// An uncertain repeated click was suppressed; this does not prove completion.
+    UncertainRepeat,
 }
 
 /// Ends a run with a typed status. The loop maps any other error to

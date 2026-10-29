@@ -170,6 +170,9 @@ impl DirectSession {
             }
         }
         match name {
+            "look" if args["text_scope"] == "document" => {
+                super::look::document(&mut self.client, self.guard.as_ref(), args).await
+            }
             "look" => {
                 let look = look::read(&mut self.client, self.guard.as_ref(), Detail::FULL).await?;
                 let dialogs = self.take_dialogs();

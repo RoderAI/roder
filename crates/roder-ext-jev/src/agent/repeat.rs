@@ -5,7 +5,7 @@
 //! meant to repeat stays above 0.75. Clicking again is the costly mistake: a
 //! second item in the cart, a second mail deleted. Below
 //! [`REPEAT_CONFIDENCE`], right after a click that changed the page and on
-//! the same label, the run ends `done` without clicking in two cases:
+//! the same label, the run ends `blocked` without clicking in two cases:
 //!
 //! - the same control again, and
 //! - a twin: another control with that label, when the label names a
@@ -25,7 +25,7 @@ use crate::engine::{JevDecision, JevSuppressedClick, JevSuppressedKind};
 use crate::irreversible::names_commitment;
 use crate::session::cut;
 
-/// Below this, a repeat of the last effective click is read as DONE.
+/// Below this, a repeat of the last effective click is suppressed without claiming completion.
 pub(crate) const REPEAT_CONFIDENCE: f64 = 0.7;
 /// A label in the result is cut to this many characters.
 pub(super) const LABEL_CHARS: usize = 80;

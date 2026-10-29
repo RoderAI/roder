@@ -16,6 +16,7 @@ impl Agent {
         }
         let mut observed =
             crate::semantic::for_model(&self.observation, self.model_snapshot.as_ref());
+        observed["evidence"] = json!(self.evidence.render(&self.secrets));
         if let Some(object) = observed.as_object_mut() {
             object.remove("_screenshot");
         }

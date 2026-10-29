@@ -662,8 +662,8 @@
     "page": "mailbox.html",
     "goal": "Delete the email from Bob about the budget.",
     "expect": {
-      "status": "done",
-      "stopped": false,
+      "status": "blocked",
+      "stopped": true,
       "text_contains": [
         "Moved to trash."
       ],

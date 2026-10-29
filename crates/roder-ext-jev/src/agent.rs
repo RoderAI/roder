@@ -31,7 +31,10 @@ use crate::engine::{
 };
 use crate::secret::{self, SECRET, Secrets};
 
+mod evidence;
+
 pub(crate) struct Agent {
+    evidence: evidence::Evidence,
     browser: Box<dyn JevBrowser>,
     config: JevEngineConfig,
     observation: Value,
@@ -83,6 +86,7 @@ impl Agent {
     ) -> anyhow::Result<Self> {
         let secrets = std::mem::take(&mut config.secrets);
         let mut agent = Self {
+            evidence: evidence::Evidence::default(),
             browser,
             config,
             observation: Value::Null,
@@ -189,6 +193,9 @@ impl Agent {
         self.observation = self.browser.observe().await?;
         // A page that shows a typed secret back does not pass it on.
         self.secrets.scrub_observation(&mut self.observation);
+        if self.check_scope().is_ok() {
+            self.evidence.remember(&self.observation);
+        }
         let dialogs = self.observation["dialogs"]
             .as_array()
             .filter(|dialogs| !dialogs.is_empty())
@@ -309,9 +316,12 @@ impl Agent {
         };
         if let Some(held) = self.unsure_repeat(&action, &decision) {
             self.suppressed_click = Some(held);
-            self.status = JevStatus::Done;
-            self.elapsed();
-            return Ok(());
+            self.cause = Some(JevStopCause::UncertainRepeat);
+            return Err(JevStop::new(
+                JevStatus::Blocked,
+                "Stopped an uncertain repeated click; task completion has not been established",
+            )
+            .into());
         }
         let pair = loops::pair_of(&self.observation, &action);
         if let Some(stop) = self.pair_looped(&action, pair.as_ref()) {

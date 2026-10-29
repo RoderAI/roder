@@ -1,6 +1,10 @@
 //! One `jev_browse` call on a thread's session.
 
-use std::time::Duration;
+use crate::fallback::model::FallbackModel;
+use std::{sync::Arc, time::Duration};
+type ResolvedFallback = Result<Arc<dyn FallbackModel>, String>;
+// Spend a bounded fast-path budget before an available general model takes over.
+const FAST_PATH_ACTIONS: usize = 12;
 
 use anyhow::Context;
 use serde_json::{Value, json};
@@ -87,7 +91,15 @@ impl JevSessions {
             .with_scope(request.scope.clone())
             .with_cookie_banner_refusal(request.refuse_cookie_banners)
             .with_secrets(state.secrets.clone());
-        if let Some(actions) = request.max_actions {
+        let fallback_model = if request.fallback.mode == FallbackMode::Auto {
+            Some(deps.fallback_model(&request.fallback, thread).await)
+        } else {
+            None
+        };
+        if let Some(actions) = native_action_budget(
+            request.max_actions,
+            fallback_model.as_ref().is_some_and(Result::is_ok),
+        ) {
             config = config.with_max_actions(actions);
         }
         if request.confirm_irreversible {
@@ -169,10 +181,9 @@ impl JevSessions {
         let fallback = match &endpoint {
             Some(endpoint) => {
                 fall_back(
-                    thread,
                     state,
                     request,
-                    deps,
+                    fallback_model,
                     &driven.result,
                     endpoint,
                     started,
@@ -314,10 +325,9 @@ impl Fallback {
 /// tab and record on the session what it did (tabs it opened, secrets it
 /// typed, where it left the tab).
 async fn fall_back(
-    thread: &str,
     state: &mut SessionState,
     request: &JevRequest,
-    deps: &dyn SessionDeps,
+    resolved_model: Option<ResolvedFallback>,
     result: &JevRunResult,
     endpoint: &ChromeEndpoint,
     started: Instant,
@@ -341,9 +351,10 @@ async fn fall_back(
     let Some(tab) = state.tabs.current().cloned() else {
         return handover(Some("the session has no tab to go on in".into()));
     };
-    let model = match deps.fallback_model(settings, thread).await {
-        Ok(model) => model,
-        Err(reason) => return handover(Some(reason)),
+    let model = match resolved_model {
+        Some(Ok(model)) => model,
+        Some(Err(reason)) => return handover(Some(reason)),
+        None => return handover(Some("no automatic fallback model was resolved".into())),
     };
     let now = Instant::now();
     let mut deadline = now + settings.max_duration;
@@ -441,4 +452,20 @@ async fn verified_page(
     .ok()
     .flatten()
     .filter(|page| request.scope.allows(&page.url))
+}
+
+fn native_action_budget(explicit: Option<usize>, fallback_ready: bool) -> Option<usize> {
+    explicit.or_else(|| fallback_ready.then_some(FAST_PATH_ACTIONS))
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn fast_path_budget_requires_recovery_and_preserves_operator_limits() {
+        assert_eq!(native_action_budget(None, false), None);
+        assert_eq!(native_action_budget(None, true), Some(12));
+        assert_eq!(native_action_budget(Some(3), true), Some(3));
+        assert_eq!(native_action_budget(Some(30), true), Some(30));
+    }
 }

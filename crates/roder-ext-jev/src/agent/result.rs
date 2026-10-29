@@ -62,6 +62,7 @@ impl Agent {
                 .unwrap_or_default()
                 .to_string(),
             visible_text,
+            evidence: self.evidence.render(&self.secrets),
             actions,
             elapsed_ms: self.elapsed_ms,
             observed_elements: observed.elements.len(),

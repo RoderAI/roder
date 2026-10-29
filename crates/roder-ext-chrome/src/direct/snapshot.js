@@ -86,7 +86,7 @@
     });
     // Hash the same complete text for both brief/full reads; excerpt lengths
     // must never manufacture a text change. Store a hash, not duplicate text.
-    const full = document.body?.innerText || '';
+    const full = page.text;
     let hash = 2166136261;
     for (let i = 0; i < full.length; i++) hash = Math.imul(hash ^ full.charCodeAt(i), 16777619);
     const current = { url: page.url, title: page.title, document: S.document,

@@ -130,14 +130,21 @@ pub(super) fn steps(data: &Value) -> Vec<String> {
             }
         }
     }
-    if let Some(message) = fallback["message"]
+    out
+}
+
+/// Preserve the final prose findings before allocating room to action traces.
+pub(super) fn findings(data: &Value) -> Vec<String> {
+    let Some(message) = data["fallback"]["message"]
         .as_str()
-        .filter(|message| !message.trim().is_empty())
-    {
-        out.push(format!(
-            "The fallback's last word: {}",
-            cut(&one_line(message), 300)
-        ));
-    }
+        .filter(|text| !text.trim().is_empty())
+    else {
+        return Vec::new();
+    };
+    let mut out = vec![
+        "The fallback's findings (page-derived; check against the requested requirements):"
+            .to_string(),
+    ];
+    out.extend(message.lines().map(super::defuse));
     out
 }

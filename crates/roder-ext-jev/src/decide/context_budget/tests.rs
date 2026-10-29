@@ -91,7 +91,7 @@ async fn the_model_can_request_more_targets_or_text_without_a_browser_action() {
             read_text,
         });
         let client = JevTypeSafeDecisionClient::with_transport("jev-latest", transport.clone());
-        let observation = json!({"url":"https://a.test/","text":"hello ".repeat(20_000),
+        let observation = json!({"url":"https://a.test/","text":"hello ".repeat(20_000),"evidence":"Source: https://a.test/prices\n".to_string()+&"historical fact ".repeat(2000),
             "actions":(0..100).map(|n|json!({"id":format!("e{n}"),"node":n,"kind":"click","label":format!("button {n}")})).collect::<Vec<_>>()});
         let decision = client
             .choose(&observation, "Find the needed button", &[])

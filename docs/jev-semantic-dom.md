@@ -95,3 +95,48 @@ Snapshot (act by ref; indentation shows viewport hierarchy):
 A disabled button can appear as evidence without becoming an executable target.
 Refs describe a target within the supplying browser backend; the offered action
 map and existing gates still determine which operations may execute.
+
+## Whole-task delegations and readable text
+
+`jev_browse` accepts the entire browser task, including comparisons and follow-up
+product or detail checks. The parent assesses the returned evidence and uses
+manual tools only for facts that are missing or contradictory. A driver's DONE
+claim still requires evidence; historical observations do not prove current
+control state or authorize further actions.
+
+Within one delegation, new observed text lines are retained with their source
+URLs in a bounded `evidence` string. The driver receives it on later steps, and
+the parent receives it with the result. Repeated lines from the same source are
+omitted. Old records are evicted above 8,000 characters with an explicit omission
+notice. Secrets learned later are scrubbed again when evidence is returned.
+Hosted request paging includes retained evidence alongside current text and DOM;
+it does not bypass the request or per-question limit. The result digest allows
+18,000 characters / 180 lines, below the long-output spill thresholds.
+
+Direct browser text now describes viewport-visible text records rather than the
+beginning of `document.body.innerText`. It excludes hidden and clipped content
+and field values; values remain in the existing guarded control observations.
+Scrolling changes the text evidence even when the document itself is unchanged.
+Whole text records reach the Rust scrubber before display excerpts are cut.
+Screenshot encoding is unchanged.
+
+Fallback compaction retains up to 8,000 characters of earlier viewport text with
+source URLs after old control lists expire. Its final prose findings are retained
+up to 8,000 characters and rendered before action traces; they are not reduced to
+a short status line. Uncertain repeated clicks stop as `blocked` with
+`uncertain_repeat`, not `done`, and configured fallback can inspect completed
+effects before continuing the rest of the task in the same call.
+
+For reading tasks, `jev_tab_look` accepts `text_scope: "document"`. This reads
+rendered document text and observed HTTP(S) links across scroll positions without
+scrolling or changing the viewport-diff baseline. Hidden content and field values
+are excluded. Each response contains at most 6,000 text characters / 100 text
+lines, and `next_text_offset` identifies the next page. Restart at zero if the
+page changes. Whole records are scrubbed before pagination; the extraction cap
+is explicitly reported and is not evidence that omitted text is absent.
+
+When automatic fallback resolves successfully and `JEV_MAX_ACTIONS` is unset,
+the session gives the native decision driver 12 actions before escalation.
+An explicit operator limit wins. With no available automatic fallback, the
+engine's existing default remains. This bounds time spent on an unsuitable
+strategy while preserving the complete task within one delegation.

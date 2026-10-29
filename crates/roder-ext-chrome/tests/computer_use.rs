@@ -28,6 +28,7 @@ include!("support/outcome.rs");
 include!("support/screenshot.rs");
 include!("support/semantic.rs");
 include!("support/semantic_secrets.rs");
+include!("support/viewport.rs");
 
 struct Browser {
     child: Child,
@@ -395,5 +396,6 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
     );
     semantic_observations(&registry, &url).await;
     semantic_secrets(&registry, &browser, &url).await;
+    viewport_text(&registry, &browser, &url).await;
     site.abort();
 }

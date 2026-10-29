@@ -15,9 +15,9 @@ async fn semantic_secrets(registry: &ToolRegistry, browser: &Browser, url: &str)
     let target = tabs.data["tabs"].as_array().unwrap().iter().find(|t| t["url"] == url).unwrap()["targetId"].as_str().unwrap();
     let tab = DirectTab::Target { endpoint: browser.endpoint.clone(), target_id: target.into() };
     let mut session = DirectSession::attach(&tab, Arc::new(Hides(secret.clone())), false).await.unwrap();
-    for operation in ["look", "key"] {
-        let args = if operation == "key" { json!({"key":"Escape"}) } else { json!({}) };
-        let result = session.run(operation, &args).await;
+    for operation in ["look", "key", "document"] {
+        let args = if operation == "key" { json!({"key":"Escape"}) } else if operation == "document" {json!({"text_scope":"document"})} else { json!({}) };
+        let result = session.run(if operation=="document" {"look"} else {operation}, &args).await;
         assert!(!result.is_error, "{}", result.text);
         let public = result.data.to_string();
         assert!(!public.contains("boundary-sensitive"), "a clipped secret escaped in {operation}");

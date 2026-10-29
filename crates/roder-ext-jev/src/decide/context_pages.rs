@@ -89,7 +89,7 @@ impl<'a> Pages<'a> {
         self.shrink()
     }
     fn text_len(&self) -> usize {
-        ["text", "dom_snapshot"]
+        ["text", "dom_snapshot", "evidence"]
             .iter()
             .map(|key| self.source[*key].as_str().map_or(0, str::len))
             .max()
@@ -144,12 +144,12 @@ impl<'a> Pages<'a> {
             ),
             (
                 "read_more_text",
-                "Read next page of page text and DOM evidence",
+                "Read next page of page text, DOM and retained source evidence",
                 self.text_offset + self.bytes < self.text_len(),
             ),
             (
                 "read_previous_text",
-                "Read previous page of text and DOM evidence",
+                "Read previous page of text, DOM and retained source evidence",
                 self.text_offset > 0,
             ),
         ] {
@@ -158,7 +158,7 @@ impl<'a> Pages<'a> {
             }
         }
         view["actions"] = json!(actions);
-        for key in ["text", "dom_snapshot"] {
+        for key in ["text", "dom_snapshot", "evidence"] {
             if let Some(text) = self.source[key].as_str() {
                 view[key] = json!(slice(text, self.text_offset, self.bytes));
             }
@@ -177,6 +177,25 @@ impl<'a> Pages<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_evidence_is_bounded_and_can_be_read_without_browser_actions() {
+        let page = json!({"text":"Current page", "evidence":"Source: https://example.test\n".to_string()+&"界".repeat(8000),"actions":[]});
+        let mut pages = Pages::new(&page, &[]);
+        assert!(pages.shrink());
+        let first = pages.view();
+        assert!(first["evidence"].as_str().unwrap().len() <= 4000);
+        assert!(
+            first["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["id"] == "read_more_text")
+        );
+        assert!(pages.advance("READ_MORE_TEXT"));
+        let second = pages.view();
+        assert!(second["evidence"].as_str().unwrap().len() <= 4000);
+        assert_ne!(first["evidence"], second["evidence"]);
+    }
     #[test]
     fn pages_preserve_action_identity_and_offer_navigation_only_when_available() {
         let page = json!({"text":"路".repeat(6000),"actions":(0..40).map(|n|json!({"id":format!("e{n}"),"node":n,"kind":"click"})).collect::<Vec<_>>()});
