@@ -40,6 +40,7 @@ mod unavailable;
 
 pub use client::{DirectDialog, DirectTab};
 pub use guard::{DirectGuard, GateAction, GateQuery, OpenGuard, PageFacts, StopKind};
+pub use look::DOCUMENT_TEXT_JS;
 pub use session::{DirectSession, DirectStep, DirectStop, OpenedTab};
 pub use tools::{
     DIRECT_TOOLS, DirectBinding, DirectLease, direct_tool_specs, direct_tools, reads_only,

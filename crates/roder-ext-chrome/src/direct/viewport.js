@@ -5,11 +5,12 @@
   S.viewportText = (wholeDocument = false) => {
     const words = [], links = new Set(); let size = 0, visited = 0, limited = false;
     const excluded = 'input,textarea,select,script,style,noscript,template,[contenteditable]';
-    const read = root => {
+    const read = (root, skip = null) => {
       const doc = root.ownerDocument || document;
       const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
       const range = doc.createRange();
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (skip?.contains(node)) continue;
         if (++visited > 20000) { limited = true; break; }
         if (node.nodeType === 1) {
           if (node.shadowRoot) read(node.shadowRoot);
@@ -38,7 +39,11 @@
         words.push(value); size += value.length + 1;
       }
     };
-    if (document.body) read(document.body);
+    // Keep all rendered content, but put the page's main content before
+    // repeated global navigation when reading a complete document.
+    const main = wholeDocument && document.querySelector('main,[role="main"]');
+    if (main) read(main);
+    if (document.body) read(document.body, main || null);
     return {text: words.join('\n'), limited};
   };
 })();

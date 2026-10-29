@@ -267,9 +267,10 @@ async fn a_navigation_between_decision_and_act_is_stale() {
         .act(&button, &observation, None, Duration::from_millis(100))
         .await
         .unwrap_err();
-    assert_eq!(
-        stale_message(&error),
-        "Page changed since this decision. Observe again."
+    let diagnostic = stale_message(&error);
+    assert!(
+        diagnostic.contains("document") && diagnostic.contains("url"),
+        "{diagnostic}"
     );
     let landed = page.observe().await.unwrap();
     assert!(landed["text"].as_str().unwrap().contains("You arrived."));

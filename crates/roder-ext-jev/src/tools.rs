@@ -58,6 +58,8 @@ pub fn jev_tool_spec() -> ToolSpec {
             "type":"object",
             "required":["goal"],
             "properties":{
+                "task_kind":{"type":"string","enum":["interaction","research"],"description":"Use research for reading, fact finding and comparisons that return source evidence. It preloads document text and permits completion from retained observations. Use interaction (default) when a requested final UI state, selection or change must be verified."},
+                "requirements":{"type":"array","maxItems":12,"items":{"type":"string","minLength":1,"maxLength":500},"description":"For a task with multiple parts, list the concrete requirements to verify against source evidence before DONE. Include every requested comparison, product check and caveat. This checklist does not itself prove completion."},
                 "goal":{"type":"string","description":"What Jev should do on the page, complete and self-contained, ending in a visible stop point. Write out every detail the site will ask for: dates as YYYY-MM-DD (or 'today'), times, quantities, names. Example: 'Filter the catalogue to paperback books under $20, sort by price, and stop when the sorted list shows.'"},
                 "url":{"type":"string","description":"The http(s) page to start on. Required on the thread's first jev_browse call, when there is no page yet. After that, leave it empty (\"\") to continue on the page this thread's Jev tab is showing, or give another URL to go somewhere else; it loads in the same tab and is not reloaded if the tab is already there."},
                 "tab":{"type":"string","enum":["current","new","reset","close"],"description":"\"current\" (default): use this thread's Jev tab. \"new\": open a second tab in the session for url (the first stays open); only when you need the earlier page too, since another site loads fine in the current tab. \"reset\": close the session's tabs and start over at url. \"close\": close the session's tabs and stop; nothing is browsed."},
@@ -218,8 +220,10 @@ mod tests {
                 "authorize_irreversible",
                 "foreground",
                 "goal",
+                "requirements",
                 "success_condition",
                 "tab",
+                "task_kind",
                 "timeout_seconds",
                 "url"
             ]

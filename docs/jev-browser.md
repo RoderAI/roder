@@ -2927,3 +2927,8 @@ Where a secret can still leak:
 - A supervisor's own resolver, browser adapter or logs are outside Jev.
 - Chrome's own password manager may offer to save it on a profile Jev did
   not create (a profile Jev creates has it off).
+
+The native loop can now replan an uncertain navigation once and report stale
+fields. Explicit research tasks can use document reads and an ordered requirements
+checklist. See [Native browser recovery](jev-native-recovery.md) for the current
+completion and recovery contract.

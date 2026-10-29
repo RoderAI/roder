@@ -13,6 +13,7 @@ mod consent;
 mod fill;
 mod fingerprint;
 mod frames;
+mod freshness;
 mod open;
 mod resume;
 mod settle;
@@ -215,45 +216,19 @@ impl Page {
         }
         Err(StaleObservation::new("Page did not settle").into())
     }
-
-    /// Has the page kept the meaning the decision was made against?
-    pub(crate) async fn fresh(
-        &mut self,
-        observation: &Value,
-        action: Option<&Value>,
-    ) -> anyhow::Result<bool> {
-        if let Some(action) = action
-            && matches!(action["kind"].as_str(), Some("click") | Some("select"))
-        {
-            let Some(node) = action["node"].as_i64() else {
-                return Ok(false);
-            };
-            let current = self
-                .evaluate(&format!(
-                    "(() => {{ const c=window.__jevFast; \
-                     return c?.pageKey ? [c.pageKey(),c.guard(c.nodes.get({node}))] : null; }})()"
-                ))
-                .await?;
-            let expected = json!([
-                observation["page_key"],
-                observation["guards"]
-                    .get(node.to_string())
-                    .cloned()
-                    .unwrap_or(Value::Null),
-            ]);
-            return Ok(current == expected);
-        }
-        let marker = self
-            .evaluate_snapshot(&format!(
-                "(() => {{ const state={SNAPSHOT_JS}; return state?.marker ?? null; }})()"
-            ))
-            .await?;
-        Ok(marker == observation["marker"])
-    }
 }
 
 #[async_trait]
 impl JevBrowser for Page {
+    fn document_read_available(&self) -> bool {
+        true
+    }
+    async fn document_text(&mut self) -> anyhow::Result<Option<Value>> {
+        self.evaluate(roder_ext_chrome::direct::DOCUMENT_TEXT_JS)
+            .await
+            .map(Some)
+    }
+
     async fn screenshot(&mut self) -> anyhow::Result<Option<String>> {
         let capture = self
             .call(
@@ -269,6 +244,13 @@ impl JevBrowser for Page {
 
     async fn observe(&mut self) -> anyhow::Result<Value> {
         Page::observe(self).await
+    }
+
+    async fn fresh_document(&mut self, observation: &Value) -> anyhow::Result<bool> {
+        let current = self
+            .evaluate("[performance.timeOrigin,location.href]")
+            .await?;
+        Ok(current == json!([observation["page_key"][0], observation["url"]]))
     }
 
     async fn fresh(&mut self, observation: &Value, action: Option<&Value>) -> anyhow::Result<bool> {

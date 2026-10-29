@@ -63,6 +63,7 @@ impl Agent {
                 .to_string(),
             visible_text,
             evidence: self.evidence.render(&self.secrets),
+            recoveries: self.recovery.events.clone(),
             actions,
             elapsed_ms: self.elapsed_ms,
             observed_elements: observed.elements.len(),

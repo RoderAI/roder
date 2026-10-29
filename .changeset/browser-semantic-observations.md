@@ -37,3 +37,19 @@ Add bounded document-text reads to `jev_tab_look` for research without repeated
 scrolling. Keep secret scrubbing before pagination and the viewport baseline
 unchanged. When automatic recovery is available, use a 12-action native budget
 unless the operator sets `JEV_MAX_ACTIONS` explicitly.
+
+Offer paginated rendered document reads inside the native decision loop. Replan
+once after an uncertain repeated navigation, retaining the stricter stop for
+consequential actions. Revalidate an exact navigation target after a stale
+observation without another model call only when its identity, destination,
+context and form state remain unchanged. Record bounded field-level freshness
+and recovery diagnostics, and accept a bounded requirements checklist for
+multi-part tasks. Add a live one-tool fallback/hand-back experiment without
+changing the default fallback policy.
+
+In explicit research mode, preload bounded document text on arrival, prioritize
+main content while retaining the rest of the rendered document, and advance the
+caller checklist one requirement at a time. Record each completed requirement as
+a driver claim with its available evidence sources. Research completion checks
+document identity; interaction completion retains full observation freshness,
+and explicit success predicates still apply.

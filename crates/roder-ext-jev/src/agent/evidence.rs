@@ -45,6 +45,16 @@ impl Evidence {
             self.omitted = true;
         }
     }
+    pub(super) fn sources(&self, secrets: &Secrets) -> Vec<String> {
+        let mut sources = Vec::new();
+        for (url, _) in &self.records {
+            let url = secrets.scrub(url);
+            if !sources.contains(&url) && sources.len() < 12 {
+                sources.push(url);
+            }
+        }
+        sources
+    }
     pub(super) fn render(&self, secrets: &Secrets) -> String {
         let mut out = if self.omitted {
             "Earlier evidence omitted by the bounded history. Revisit a source if a required fact is missing.\n".to_string()

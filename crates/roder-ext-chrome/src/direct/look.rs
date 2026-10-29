@@ -12,6 +12,14 @@ pub(crate) const DIRECT_JS: &str = concat!(
     ";\n",
     include_str!("viewport.js")
 );
+/// Bounded rendered document text, before caller-owned secret scrubbing.
+/// Includes observed HTTP(S) links; never scrolls or changes the control baseline.
+pub const DOCUMENT_TEXT_JS: &str = concat!(
+    include_str!("direct.js"),
+    ";\n",
+    include_str!("viewport.js"),
+    "; (() => { const read=window.__roderDirect.viewportText(true); return {url:location.href,title:document.title,text:read.text,limited:read.limited}; })()"
+);
 const SNAPSHOT_JS: &str = include_str!("snapshot.js");
 
 /// Bound tree and page-text output, leaving room for the action outcome.
@@ -182,10 +190,7 @@ pub(crate) async fn document(
     guard: &dyn DirectGuard,
     args: &Value,
 ) -> anyhow::Result<super::session::DirectStep> {
-    let expression = format!(
-        "{DIRECT_JS}; (() => {{ const read=window.__roderDirect.viewportText(true); return {{url:location.href,title:document.title,text:read.text,limited:read.limited}}; }})()"
-    );
-    let mut page = client.evaluate_isolated(&expression).await?;
+    let mut page = client.evaluate_isolated(DOCUMENT_TEXT_JS).await?;
     scrub_strings(&mut page, guard);
     let full = page["text"].as_str().unwrap_or_default();
     let total = full.chars().count();

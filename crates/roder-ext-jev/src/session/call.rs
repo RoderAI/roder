@@ -87,6 +87,8 @@ impl JevSessions {
         }
         let models = state.models.as_ref().context("models resolved above")?;
         let mut config = JevEngineConfig::new(request.goal.clone(), models.decision.clone())
+            .with_requirements(request.requirements.clone())?
+            .with_research(request.research)
             .with_wait(Duration::from_millis(request.wait_ms))
             .with_scope(request.scope.clone())
             .with_cookie_banner_refusal(request.refuse_cookie_banners)
@@ -255,6 +257,11 @@ impl JevSessions {
             fallback.page,
         );
         value["completion_verification"] = final_check;
+        value["completion_basis"] = json!(if request.research {
+            "observed_source_evidence"
+        } else {
+            "current_ui_state"
+        });
         state.classify(&mut value);
         // The model that wrote values, which is not the one resolved when an
         // unusable Codex sign-in fell back.

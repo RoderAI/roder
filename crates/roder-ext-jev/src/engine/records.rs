@@ -166,6 +166,9 @@ pub struct JevRunResult {
     pub visible_text: String,
     /// Bounded, source-linked text observed across the delegation; untrusted page data.
     pub evidence: String,
+    /// Bounded diagnostics for rejected decisions and local recovery; values omitted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recoveries: Vec<Value>,
     pub actions: Vec<JevActionRecord>,
     pub elapsed_ms: u64,
     pub observed_elements: usize,
@@ -218,6 +221,7 @@ impl JevRunResult {
             title: String::new(),
             visible_text: String::new(),
             evidence: String::new(),
+            recoveries: Vec::new(),
             actions: Vec::new(),
             elapsed_ms: elapsed.as_millis() as u64,
             observed_elements: 0,

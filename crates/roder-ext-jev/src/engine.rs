@@ -290,6 +290,8 @@ impl std::error::Error for JevStop {}
 
 pub struct JevEngineConfig {
     pub(crate) goal: String,
+    pub(crate) research: bool,
+    pub(crate) requirements: Vec<String>,
     pub(crate) decision: Arc<dyn JevDecisionClient>,
     pub(crate) text: Option<Arc<dyn JevTextValueResolver>>,
     pub(crate) wait: Duration,
@@ -315,6 +317,8 @@ impl JevEngineConfig {
     pub fn new(goal: impl Into<String>, decision: Arc<dyn JevDecisionClient>) -> Self {
         Self {
             goal: goal.into(),
+            research: false,
+            requirements: Vec::new(),
             decision,
             text: None,
             wait: Duration::from_millis(800),
@@ -326,6 +330,27 @@ impl JevEngineConfig {
             refuse_cookie_banners: true,
             secrets: Secrets::default(),
         }
+    }
+
+    /// Research tasks collect source evidence rather than asserting a final UI
+    /// state. Read one document page on arrival; retain strict action guards.
+    pub fn with_research(mut self, research: bool) -> Self {
+        self.research = research;
+        self
+    }
+
+    /// An explicit, bounded checklist for research. Each DONE advances one
+    /// requirement; those claims remain unverified until the caller checks facts.
+    pub fn with_requirements(mut self, requirements: Vec<String>) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            requirements.len() <= 12
+                && requirements
+                    .iter()
+                    .all(|r| !r.trim().is_empty() && r.len() <= 500),
+            "requirements must contain at most 12 nonempty items of at most 500 bytes"
+        );
+        self.requirements = requirements;
+        Ok(self)
     }
 
     /// Start with the secrets an earlier run on this tab typed, so they stay
@@ -436,6 +461,17 @@ impl JevEngine {
         // A timed-out run has spent its time; the result goes without facts.
         let stopped_because = self.agent.finish(stopped_because).await;
         self.agent.result(stopped_because)
+    }
+
+    /// Eval-only bounded hand-back experiment. Keep budgets, history, scope and
+    /// gates; refresh all observations after a separate driver moved the tab.
+    #[cfg(test)]
+    pub(crate) async fn resume_after_rescue(
+        &mut self,
+        page: &Value,
+        secrets: &Secrets,
+    ) -> anyhow::Result<()> {
+        self.agent.resume_after_rescue(page, secrets).await
     }
 
     pub async fn close(&mut self) -> anyhow::Result<()> {

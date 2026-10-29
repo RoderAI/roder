@@ -316,8 +316,27 @@ pub(crate) fn request_body(
         })
         .collect::<Vec<_>>();
     let mut page_view = Map::new();
-    for key in ["url", "title", "text", "context_window", "evidence"] {
-        if matches!(key, "context_window" | "evidence") && page.get(key).is_none() {
+    for key in [
+        "url",
+        "title",
+        "text",
+        "context_window",
+        "evidence",
+        "loop_feedback",
+        "last_recovery",
+        "task_kind",
+        "task_progress",
+    ] {
+        if matches!(
+            key,
+            "context_window"
+                | "evidence"
+                | "loop_feedback"
+                | "last_recovery"
+                | "task_kind"
+                | "task_progress"
+        ) && page.get(key).is_none()
+        {
             continue;
         }
         page_view.insert(key.into(), page.get(key).cloned().unwrap_or(Value::Null));
@@ -351,6 +370,7 @@ pub(crate) fn request_body(
             body["state"][key] = events.clone();
         }
     }
+    crate::jev_prompt::research_completion(&mut body, page);
     (body, space, operation_ids)
 }
 

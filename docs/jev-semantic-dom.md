@@ -140,3 +140,6 @@ the session gives the native decision driver 12 actions before escalation.
 An explicit operator limit wins. With no available automatic fallback, the
 engine's existing default remains. This bounds time spent on an unsuitable
 strategy while preserving the complete task within one delegation.
+
+For native document reads, ordered research requirements, completion scope and
+bounded local replanning, see [Native browser recovery](jev-native-recovery.md).

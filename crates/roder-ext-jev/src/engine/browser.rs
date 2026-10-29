@@ -20,7 +20,23 @@ pub trait JevBrowser: Send {
         Ok(None)
     }
 
+    /// Whether this browser can read rendered document text without scrolling.
+    fn document_read_available(&self) -> bool {
+        false
+    }
+
+    /// Raw bounded document text; the engine scrubs complete records before paging.
+    async fn document_text(&mut self) -> anyhow::Result<Option<Value>> {
+        Ok(None)
+    }
+
     async fn observe(&mut self) -> anyhow::Result<Value>;
+
+    /// Whether the same document is still loaded. Interaction completion uses
+    /// the stronger full-observation check instead.
+    async fn fresh_document(&mut self, observation: &Value) -> anyhow::Result<bool> {
+        self.fresh(observation, None).await
+    }
 
     async fn fresh(&mut self, observation: &Value, action: Option<&Value>) -> anyhow::Result<bool>;
 

@@ -17,6 +17,13 @@ impl Agent {
         let mut observed =
             crate::semantic::for_model(&self.observation, self.model_snapshot.as_ref());
         observed["evidence"] = json!(self.evidence.render(&self.secrets));
+        self.recovery.prepare(&mut observed);
+        if self.config.research {
+            observed["task_kind"] = json!("research");
+            if let Some(requirement) = self.config.requirements.get(self.requirement) {
+                observed["task_progress"] = json!({"current_requirement":requirement,"index":self.requirement+1,"total":self.config.requirements.len(),"completed_requirements_are_driver_claims":true});
+            }
+        }
         if let Some(object) = observed.as_object_mut() {
             object.remove("_screenshot");
         }
@@ -28,8 +35,9 @@ impl Agent {
         {
             observed["_screenshot"] = json!(image);
         }
+        let goal = self.decision_goal();
         let decision = self.config.decision.as_ref();
-        let (observation, goal, history) = (&observed, &self.config.goal, &self.history);
+        let (observation, goal, history) = (&observed, &goal, &self.history);
         let remaining = self
             .config
             .max_actions

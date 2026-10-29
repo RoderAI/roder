@@ -82,8 +82,15 @@ impl Browser {
             endpoint: String::new(),
         };
         for _ in 0..200 {
-            if let Ok(port) = std::fs::read_to_string(browser.profile.join("DevToolsActivePort")) {
-                browser.endpoint = format!("http://127.0.0.1:{}", port.lines().next().unwrap());
+            if let Some(port) = std::fs::read_to_string(browser.profile.join("DevToolsActivePort"))
+                .ok()
+                .and_then(|text| {
+                    text.lines()
+                        .next()
+                        .and_then(|line| line.parse::<u16>().ok())
+                })
+            {
+                browser.endpoint = format!("http://127.0.0.1:{port}");
                 return Some(browser);
             }
             assert!(

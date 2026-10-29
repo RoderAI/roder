@@ -1271,3 +1271,6 @@ a sealed holdout and failure traces. The new fixtures grade exact saved state,
 mutation counts and forbidden side effects, including duplicate actions and
 stopping at a review screen. These evals supply field values from fixtures and
 disable fallback; they measure browser decisions, not text generation.
+
+Native document reads and bounded recovery, including explicit research workflows,
+are described in [Native browser recovery](../../docs/jev-native-recovery.md).

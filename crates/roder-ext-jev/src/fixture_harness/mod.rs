@@ -345,3 +345,5 @@ mod decisions_computer_tests;
 mod common_observation_tests;
 mod dom_tests;
 mod jev_evidence_tests;
+
+mod native_research_tests;

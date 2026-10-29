@@ -195,10 +195,16 @@ fn next(data: &Value, status: &str) -> Option<String> {
                 "Next: Check the page below against the goal; Jev's done is a judgement, not a \
                  proof.",
             );
-            if data["fallback"]["ran"] == true {
+            if data["fallback"]["ran"] == true
+                || data["completion_basis"] == "observed_source_evidence"
+            {
                 next = "Next: Assess the returned findings and evidence against the goal. Investigate only missing or contradictory facts; do not repeat completed browsing.".into();
             }
-            if data["suppressed_click"].is_object() && data["fallback"]["ran"] != true {
+            let replanned = data["recoveries"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(|r| r["kind"] == "navigation_repeat"));
+            if data["suppressed_click"].is_object() && data["fallback"]["ran"] != true && !replanned
+            {
                 next.push_str(
                     " Jev did not make one click it was unsure of (\"Not clicked\" below). If the \
                      goal needs it, make that click yourself or give Jev a goal that names that \

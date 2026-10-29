@@ -48,6 +48,7 @@ mod keyless;
 mod live;
 mod miniwob;
 mod replay_states;
+mod rescue;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
