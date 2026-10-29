@@ -1,3 +1,15 @@
+## 0.4.1 (2026-10-29)
+
+### Fixes
+
+#### Model picker lists configured providers only
+
+The TUI model menu and command-palette model search now show models from providers that are signed in or have an API key, plus the active provider and Auto routing options. Unconfigured catalogs stay out of search. Set up more from the Providers menu.
+
+#### TUI renders markdown tables as aligned columns
+
+Assistant markdown pipe tables now render as aligned grids with a header rule, instead of raw `|` rows. Tables that do not fit the transcript width fall back to labeled rows so wrapping does not smash the columns together.
+
 ## 0.4.0 (2026-10-27)
 
 ### Breaking Changes

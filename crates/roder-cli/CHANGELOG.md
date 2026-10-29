@@ -1,3 +1,11 @@
+## 0.4.4 (2026-10-29)
+
+### Fixes
+
+#### TUI renders markdown tables as aligned columns
+
+Assistant markdown pipe tables now render as aligned grids with a header rule, instead of raw `|` rows. Tables that do not fit the transcript width fall back to labeled rows so wrapping does not smash the columns together.
+
 ## 0.4.3 (2026-10-28)
 
 ### Fixes

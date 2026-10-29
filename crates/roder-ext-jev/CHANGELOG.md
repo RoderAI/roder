@@ -1,3 +1,14 @@
+## 0.5.1 (2026-10-29)
+
+### Fixes
+
+#### Keep Jev screenshots from resizing visible Chrome windows
+
+Jev now uses a windowed browser's natural viewport and display scale instead of
+forcing a fixed non-Retina viewport. Its screenshots share the direct CDP image
+normalization, keeping CSS coordinates accurate without resizing Chrome during
+capture. Headless Jev sessions retain their fixed viewport.
+
 ## 0.5.0 (2026-10-27)
 
 ### Breaking Changes

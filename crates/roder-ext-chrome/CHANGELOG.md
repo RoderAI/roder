@@ -1,3 +1,20 @@
+## 0.3.2 (2026-10-29)
+
+### Fixes
+
+#### Keep the browser viewport stable during screenshots
+
+Direct CDP screenshots no longer temporarily shrink and restore the page on
+Retina displays. Capture the existing viewport and resize the returned image
+locally, preserving one image pixel per input coordinate and secret-field masks.
+
+#### Keep Jev screenshots from resizing visible Chrome windows
+
+Jev now uses a windowed browser's natural viewport and display scale instead of
+forcing a fixed non-Retina viewport. Its screenshots share the direct CDP image
+normalization, keeping CSS coordinates accurate without resizing Chrome during
+capture. Headless Jev sessions retain their fixed viewport.
+
 ## 0.3.1 (2026-10-28)
 
 ### Fixes
