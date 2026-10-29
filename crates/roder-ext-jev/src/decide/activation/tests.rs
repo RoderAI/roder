@@ -62,8 +62,11 @@ async fn activation_correction_keeps_target_probabilities_gate_and_both_usages()
         Map::from_iter([("e1".into(), json!(1.0))])
     );
     assert_eq!(decision.irreversible, Some(0.99));
+    let mut usage = decision.usage.clone();
+    assert_eq!(usage["context_budget"]["per_question_limit"], 32000);
+    usage.as_object_mut().unwrap().remove("context_budget");
     assert_eq!(
-        decision.usage,
+        usage,
         json!({"calls":2,"input_tokens":14,"output_tokens":5})
     );
     let requests = transport.requests.lock().unwrap();

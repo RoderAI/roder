@@ -12,27 +12,33 @@
   };
   const clean = (text, max = 100) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, max);
   const roles = { MAIN: 'main', NAV: 'navigation', HEADER: 'banner', FOOTER: 'contentinfo',
-    FORM: 'form', FIELDSET: 'group', DIALOG: 'dialog', UL: 'list', OL: 'list', LI: 'listitem' };
+    FORM: 'form', FIELDSET: 'group', DIALOG: 'dialog', UL: 'list', OL: 'list', LI: 'listitem',
+    TABLE: 'table', THEAD: 'rowgroup', TBODY: 'rowgroup', TR: 'row', TH: 'columnheader', TD: 'cell' };
   const role = el => el.getAttribute('role') || (/^H[1-6]$/.test(el.tagName) ? 'heading' : roles[el.tagName]);
   const name = el => {
     const labelled = el.getAttribute('aria-labelledby');
     return clean(el.getAttribute('aria-label') || (labelled && labelled.split(/\s+/)
       .map(x => document.getElementById(x)?.innerText || '').join(' ')) ||
       (el.tagName === 'FIELDSET' ? el.querySelector('legend')?.innerText : '') ||
-      (['heading', 'alert', 'status'].includes(role(el)) ? el.innerText : ''));
+      (['heading', 'alert', 'status', 'columnheader', 'cell'].includes(role(el)) ? el.innerText : ''));
   };
   const visible = el => {
     const r = el.getBoundingClientRect(), s = getComputedStyle(el);
     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
   };
+  const inView = el => {
+    const r = el.getBoundingClientRect();
+    return visible(el) && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  };
   const semantic = 'main,nav,header,footer,form,fieldset,dialog,ul,ol,li,h1,h2,h3,h4,h5,h6,' +
     '[role=heading],[role=alert],[role=status],[role=dialog],[role=alertdialog],[role=group],' +
-    '[role=region],[role=list],[role=listitem],[role=listbox],[role=menu],[role=tablist],[role=tree]';
+    '[role=region],[role=list],[role=listitem],[role=listbox],[role=menu],[role=tablist],[role=tree],' +
+    'table,thead,tbody,tr,th,td,[role=table],[role=rowgroup],[role=row],[role=columnheader],[role=cell]';
   S.snapshot = (page, opts) => {
     const selected = new Map();
     for (const item of page.elements) {
       const el = S.nodes.get(item.ref);
-      if (el?.isConnected) selected.set(el, item);
+      if (el?.isConnected && (!item.offscreen || el === document.activeElement)) selected.set(el, item);
     }
     const nodes = new Set(selected.keys());
     let scanned = 0;
@@ -41,7 +47,7 @@
     const context = [...document.querySelectorAll(semantic)];
     for (const el of context) {
       if (++scanned > 2000) break;
-      if (['heading', 'alert', 'status'].includes(role(el)) && visible(el)) nodes.add(el);
+      if (['heading', 'alert', 'status', 'columnheader', 'cell'].includes(role(el)) && inView(el)) nodes.add(el);
     }
     for (const el of [...nodes]) {
       for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
@@ -50,7 +56,12 @@
     }
     const ordered = [...nodes].sort((a, b) => a === b ? 0 :
       a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-    const limited = ordered.length > 100 || scanned > 2000 || page.omitted > 0;
+    // The raw list prioritizes on-screen controls, so omitted off-screen ones
+    // do not make this viewport snapshot incomplete. An omitted on-screen
+    // control does: never infer removal from a capped observation.
+    const onScreenCount = page.elements.filter(item => !item.offscreen).length;
+    const controlsLimited = page.omitted > 0 && onScreenCount === page.elements.length;
+    const limited = ordered.length > 100 || scanned > 2000 || controlsLimited;
     const rows = ordered.slice(0, 100).map(el => {
       const item = selected.get(el);
       let p = el.parentElement;

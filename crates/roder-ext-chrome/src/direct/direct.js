@@ -7,7 +7,7 @@
 // password, a one-time code, or a field masked as one) is never read: only
 // whether it holds anything.
 (() => {
-  if (window.__roderDirect?.v === 5) return;
+  if (window.__roderDirect?.v === 6) return;
   const ROLES = ['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'menuitemcheckbox','option','combobox','textbox','searchbox','slider','spinbutton','gridcell',
     'treeitem'];
@@ -19,7 +19,7 @@
     '[role="menuitem"],[role="tab"],[role="checkbox"],[role="radio"]';
   const FIELD = 'input,textarea,select,[contenteditable=""],[contenteditable="true"]';
   const GRAPHIC = 'canvas,svg,video,iframe';
-  const S = { v: 5, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
+  const S = { v: 6, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
     masks: [] };
   const refOf = el => {
     let ref = S.ids.get(el);

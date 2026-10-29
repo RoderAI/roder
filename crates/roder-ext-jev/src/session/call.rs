@@ -217,6 +217,24 @@ impl JevSessions {
         }
         state.record(&request.goal, request.url.as_deref(), &recorded);
         let mut value = serde_json::to_value(&driven.result).context("serialize the JEV result")?;
+        // Keep observable context reads/budgets in session evidence without
+        // sending full decision distributions or prompts back to the parent.
+        let contexts = driven
+            .result
+            .decisions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, decision)| {
+                decision.usage.get("context_budget").map(|budget| {
+                    json!({
+                        "decision":index+1,"operation":decision.operation,"budget":budget
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        if !contexts.is_empty() {
+            value["context_budget"] = json!({"decisions":contexts});
+        }
         crate::fallback::report(
             &mut value,
             &driven.result,

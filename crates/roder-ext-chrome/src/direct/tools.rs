@@ -56,7 +56,7 @@ fn spec(prefix: &str, short: &str, place: &str) -> ToolSpec {
     let (description, parameters): (String, Value) = match short {
         "look" => (
             format!(
-                "Read {place}: address, title, a full semantic tree with actionable refs, \
+                "Read {place}: address, title, a full viewport semantic tree with actionable refs, \
                  state and page text. After actions, results show changes since the last \
                  observation; call look again for the full tree. A ref names the same element \
                  while it remains on the page. Boxes are retained in structured data; use a \

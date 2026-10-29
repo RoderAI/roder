@@ -32,9 +32,9 @@ pub(crate) fn render(look: &Value) -> String {
         lines.push("Elements: none found; use a screenshot and x/y coordinates.".into());
     }
     lines.push(if diff {
-        "Changes since last observation (+ added, ~ changed, - removed; call look for full tree):"
+        "Viewport changes (+ newly observed, ~ changed, - no longer observed; call look for full tree):"
     } else {
-        "Snapshot (act by ref; indentation shows page hierarchy):"
+        "Snapshot (act by ref; indentation shows viewport hierarchy):"
     }.into());
     let mut parents = std::collections::HashMap::new();
     if let Some(context) = snapshot["context"].as_array() {
@@ -80,7 +80,9 @@ pub(crate) fn render(look: &Value) -> String {
         lines.push("… snapshot limited; unlisted nodes are not evidence of removal. Scroll or use a screenshot.".into());
     }
     if let Some(omitted) = look["omitted"].as_u64().filter(|n| *n > 0) {
-        lines.push(format!("… {omitted} more elements not listed"));
+        lines.push(format!(
+            "… {omitted} additional elements outside the raw control listing"
+        ));
     }
     if diff && snapshot["text_changed"] == false {
         lines.push("Page text unchanged.".into());

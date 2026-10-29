@@ -6,7 +6,10 @@ async fn semantic_observations(registry: &ToolRegistry, url: &str) {
       <form aria-label="Flights"><label>To <input id="to" role="combobox" aria-expanded="false"></label>
       <ul role="listbox" aria-label="Destinations" id="suggestions" hidden></ul>
       <button type="button" id="choose">Open suggestions</button></form>
-      <p role="status" id="price">Total $770</p></main>`;
+      <p role="status" id="price">Total $770</p>
+      <table aria-label="Flat Rate"><tr><th>Box</th><th>Inside</th></tr>
+        <tr><td>Medium</td><td>11 x 8.5 x 5.5 inches</td></tr></table>
+      <div style="height:3000px"></div><button>Distant control</button></main>`;
       document.querySelector('#choose').onclick = () => {
         document.querySelector('#to').setAttribute('aria-expanded','true');
         document.querySelector('#suggestions').hidden = false;
@@ -16,6 +19,10 @@ async fn semantic_observations(registry: &ToolRegistry, url: &str) {
     assert!(full.text.contains("Snapshot (act by ref"), "{}", full.text);
     assert!(full.text.contains("form \"Flights\""), "{}", full.text);
     assert!(full.text.contains("heading \"Flight search\""), "{}", full.text);
+    assert!(full.text.contains("table \"Flat Rate\""), "{}", full.text);
+    assert!(full.text.contains("cell \"11 x 8.5 x 5.5 inches\""), "{}", full.text);
+    assert!(!full.data["page"]["snapshot"]["rows"].as_array().unwrap().iter()
+        .any(|row| row["label"] == "Distant control"));
     let page = &full.data["page"];
     let controls = page["elements"].as_array().unwrap();
     let choose = controls.iter().find(|e| e["label"] == "Open suggestions").unwrap()["ref"].clone();
@@ -45,7 +52,7 @@ async fn semantic_observations(registry: &ToolRegistry, url: &str) {
     let looked = call(registry, "chrome_page_snapshot", json!({})).await;
     assert_eq!(looked.data["page"]["snapshot"]["mode"], "full");
     assert!(looked.text.contains("= \"London\""));
-    eval(registry, "for(let i=0;i<180;i++){const b=document.createElement('button');b.textContent='Extra '+i;document.body.append(b)}; true").await;
+    eval(registry, "for(let i=0;i<180;i++){const b=document.createElement('button');b.style.cssText='position:fixed;left:0;top:0';b.textContent='Extra '+i;document.body.append(b)}; true").await;
     let limited = call(registry, "chrome_keypress", json!({"key":"Escape"})).await;
     assert_eq!(limited.data["page"]["snapshot"]["mode"], "full");
     assert_eq!(limited.data["page"]["snapshot"]["limited"], true);
