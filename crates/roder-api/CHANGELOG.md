@@ -1,3 +1,11 @@
+## 0.3.2 (2026-10-30)
+
+### Fixes
+
+#### Support DeepSeek V4.1 Flash 1017 through OpenRouter
+
+Register the exact October 17 snapshot with image and tool input, supported reasoning efforts, and client-side compaction so browser agents retain visual evidence throughout long runs.
+
 ## 0.3.1 (2026-10-27)
 
 ### Features

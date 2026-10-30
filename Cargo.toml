@@ -79,7 +79,7 @@ uuid = "1.29.0"
 wasm-bindgen = "0.2.129"
 which = "8.0.6"
 
-roder-api = { path = "crates/roder-api", version = "0.3.1" }
+roder-api = { path = "crates/roder-api", version = "0.3.2" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.3.0" }
 roder-app-server = { path = "crates/roder-app-server", version = "0.7.1" }
