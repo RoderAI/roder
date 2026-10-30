@@ -163,7 +163,7 @@ process-wide registry keyed by thread id; a subagent's thread has its own.
 Roder hands the model a tool result's text, never its data, and the text used
 to be one line ("done at <url> (3 actions)") that told the caller to read a
 `visible_text` it never received. It is now a digest of the call
-(`src/report/digest.rs`), at most 8,000 characters and 120 lines (Roder moves
+(`src/report/digest.rs`), at most 18,000 characters and 180 lines (Roder moves
 an output above 20,000 characters or 200 lines into a file):
 
 - **Header:** the status; the session call and tab; today's date, time and
@@ -558,7 +558,8 @@ text, and not sent to the decision model yet (see the docs).
 `JEV_ALLOWED_ORIGINS` ends a run `blocked` on any page outside it and is
 named in the approval request; unset, any origin goes. A call names no
 origins of its own (the per-call `allowed_origins` argument is gone).
-`JEV_MAX_ACTIONS` replaces the 60-action budget (model calls stay twice
+`JEV_MAX_ACTIONS` replaces the native action budget (12 when automatic fallback
+is available, otherwise the engine default of 60; model calls stay twice
 that), and `JEV_MAX_SECONDS` caps `timeout_seconds`. The result carries
 summed decision and text-helper `usage`, `"unknown"` where a provider did not
 report a count; a billed call whose answer could not be used counts too.
@@ -651,7 +652,9 @@ adding a model call:
 - DONE straight after a covered attempt ends the run as blocked. Nothing was
   dispatched, and the model answered DONE there at 0.67 confidence.
 - A repeat of the click that just changed the page, chosen with operation
-  confidence under 0.7, ends the run as done without clicking. The model
+  confidence under 0.7, ends the run as blocked without clicking, with cause
+  `uncertain_repeat`. This is not proof of completion; configured fallback
+  can continue unmet requirements within the same delegation. The model
   splits between that click and DONE once the page confirms the first one
   (0.43 to 0.66 across runs), while a click meant to repeat stayed above 0.75.
   The threshold was set on 13 tasks and held on the 18-task corpus in four
@@ -1268,3 +1271,6 @@ a sealed holdout and failure traces. The new fixtures grade exact saved state,
 mutation counts and forbidden side effects, including duplicate actions and
 stopping at a review screen. These evals supply field values from fixtures and
 disable fallback; they measure browser decisions, not text generation.
+
+Native document reads and bounded recovery, including explicit research workflows,
+are described in [Native browser recovery](../../docs/jev-native-recovery.md).

@@ -127,3 +127,57 @@ fn success_conditions_reject_unknown_fields_and_unbounded_strings() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn an_uncertain_repeat_recovers_inside_the_same_delegation_without_repeating_effects() {
+    use super::fallback_script::ScriptedFallback;
+    use super::fallback_tests::ceilings;
+    use super::sessions::call_falling_back;
+    use crate::fallback::FallbackMode;
+    use crate::{JevDecision, JevDecisionClient};
+    use serde_json::Value;
+    struct Repeat(PlanDecider);
+    #[async_trait::async_trait]
+    impl JevDecisionClient for Repeat {
+        async fn choose(
+            &self,
+            page: &Value,
+            goal: &str,
+            history: &[Value],
+        ) -> anyhow::Result<JevDecision> {
+            let mut decision = self.0.choose(page, goal, history).await?;
+            if !history.is_empty() {
+                decision.confidence = 0.5;
+            }
+            Ok(decision)
+        }
+    }
+    let harness = harness_or_skip!();
+    let result = call_falling_back(
+        &harness,
+        &test_sessions(),
+        "uncertain-repeat",
+        json!({"goal":"Add exactly one item", "url":harness.site.url("counter.html")}),
+        Arc::new(Repeat(PlanDecider::new(vec![
+            pick("click", "Add one"),
+            pick("click", "Add one"),
+        ]))),
+        Arc::new(ScriptedFallback::from_json(
+            json!([{"say":"DONE: Count is 1; requested effect already visible"}]),
+        )),
+        &ceilings(FallbackMode::Auto),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["status"], "done", "{result:#}");
+    assert_eq!(result["jev_status"], "blocked");
+    assert_eq!(result["fallback"]["trigger"]["kind"], "uncertain_repeat");
+    assert_eq!(result["fallback"]["ran"], true);
+    assert!(
+        result["visible_text"]
+            .as_str()
+            .unwrap()
+            .contains("Count:\n1")
+    );
+    assert_eq!(result["actions"].as_array().unwrap().len(), 1);
+}

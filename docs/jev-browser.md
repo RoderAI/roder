@@ -952,7 +952,7 @@ correctness and target confidence on twin pages before and after.
 Once a page confirms a click (a row gone, an item in the cart), the model is
 split between clicking again and DONE: live runs put the repeat at confidence
 0.43 to 0.66, while a click meant to repeat stayed above 0.75. Clicking again
-is the costly mistake, so `agent/repeat.rs` ends the run `done` without
+is the costly mistake, so `agent/repeat.rs` ends the run `blocked` without
 clicking when all of these hold:
 
 - the chosen action is a click, and the step just before it (the last action
@@ -985,9 +985,12 @@ sentence: Jev did not make one click it was unsure of; if the goal needs it,
 make that click yourself or give Jev a goal that names the control. A new call
 starts with no earlier click, so it can make that click.
 
-The cost is a goal that really needs both ("remove all Bob mails") ending
-`done` early when the model is unsure of the second delete; `suppressed_click`
-is what lets the caller see it and go on. The 0.7 threshold was set on
+An uncertain repeat is not evidence that the goal is complete. The stop cause
+is `uncertain_repeat`; automatic fallback can inspect the current state and
+continue unmet requirements inside the same delegation. It receives the retained
+source evidence and the suppressed click, with instructions not to repeat an
+already completed effect. Scope, consent, input and commitment gates still apply.
+The 0.7 threshold was set on
 same-control repeats and has not been measured on twin rows (the hosted
 service was not reachable for a live A/B), so re-check it when it is. The
 keyless corpus replays the recorded failure as `icon_by_picture_twin`: the
@@ -1881,8 +1884,8 @@ reached a results page with tonight's time slots, and the outer model saw only
 the address; for two OpenTable pages Jev had read "Access Denied", and the
 model was told the page had canvas or hover-only controls.
 
-The text is now a digest of the data (`src/report/digest.rs`), at most 8,000
-characters and 120 lines; Roder moves an output above 20,000 characters or
+The text is now a digest of the data (`src/report/digest.rs`), at most 18,000
+characters and 180 lines; Roder moves an output above 20,000 characters or
 200 lines into a file. In order:
 
 1. A header: the status, the session call and tab ("Call 2 in this thread's
@@ -1933,7 +1936,7 @@ checkbox, radio or switch `Terms [checked]` or `Terms [unchecked]`.
 
 Each section has a budget (steps 12 lines of 180 characters, session 900,
 frames two of 700, the click not made 440, headings 400, text 2,000, options
-2,200 and 40 lines, why Jev stopped 300), and what is left of the 8,000 goes to them in that order,
+2,200 and 40 lines, why Jev stopped 300), and what is left of the 18,000 goes to them in that order,
 with 900 characters held back for the text; every cut says how much it left
 out. Measured through the session layer on the fixture pages
 (`fixture_harness::digest_tests`, sizes in
@@ -2138,9 +2141,9 @@ Three checks the booking diagnosis called for, none of them a decision:
 
 | Status | Meaning | `next_step` says |
 | --- | --- | --- |
-| `done` | The model answered DONE, or the loop ended the run instead of an unsure repeat of a click that worked (`suppressed_click` says which click; see "Repeats of a click that worked"). | (none), or to make that click if the goal needs it |
+| `done` | The model answered DONE. An unsure repeated click instead ends blocked with `uncertain_repeat`. | (none), or to make that click if the goal needs it |
 | `blocked` | The model answered BLOCKED, three steps changed nothing, DONE followed a covered attempt, the run went round in circles (`stop_cause` is `looped`) or never saw the page settle (`unsettled`), the start page did not load, or a page was outside the allowed origins. After a dismissed confirm or prompt, `stopped_because` says so. All but the last two fall back (see "When Jev cannot progress"); after a fallback that ran, the status is the call's end state and Jev's own is `jev_status`. | Read the page in the result, then call again with url `""` and a narrower goal, start from a more specific page, or use another browser tool; after a hand-over, the text names the `jev_tab_*` tools to go on with instead. |
-| `budget_exceeded` | The 60-action or 120-model-call budget (or `JEV_MAX_ACTIONS` and twice that) ran out. | Split the task into smaller goals. |
+| `budget_exceeded` | The native action/request budget ran out (12 actions with automatic recovery available, otherwise 60; `JEV_MAX_ACTIONS` overrides). | Automatic fallback may continue the whole task in the same delegation; otherwise inspect unmet requirements. |
 | `timed_out` | `timeout_seconds` (or the host's deadline) ran out, in setup or the loop. | Retry with a larger `timeout_seconds`, or split the task. |
 | `needs_input` | A field needs a value nothing can supply: no text model, or the text model answered `{"text": null}` (or a blank value) because the goal lacks it. | Put every value in the goal and configure a text model. |
 | `unavailable` | A model provider was still unreachable or overloaded (a failed connection, or 408, 429, 500, 502 to 504, 520 to 524, 529) after its retries. | Wait and retry. |
@@ -2422,8 +2425,10 @@ instructions name the reason and the last steps as untrusted beside the page
 content. The model then calls the tools until it ends with DONE,
 BLOCKED, NEEDS_INPUT or NEEDS_CONFIRMATION, a rule stops it, or a ceiling is
 reached. Before each model call, tool results older than the last two page
-reads are cut to their first line and only the newest screenshot is still
-shown. Every call the provider names gets an answer in the transcript, even
+reads lose their old control lists but retain up to 8,000 characters of
+source-linked text evidence. Only the newest screenshot is still shown.
+Final prose findings retain up to 8,000 characters and take priority over
+action traces in the parent result. Every call the provider names gets an answer in the transcript, even
 one past a ceiling, which the Responses API otherwise refuses.
 
 **Can a tool drive the session's model?** Yes, in this architecture. A tool
@@ -2927,3 +2932,8 @@ Where a secret can still leak:
 - A supervisor's own resolver, browser adapter or logs are outside Jev.
 - Chrome's own password manager may offer to save it on a profile Jev did
   not create (a profile Jev creates has it off).
+
+The native loop can now replan an uncertain navigation once and report stale
+fields. Explicit research tasks can use document reads and an ordered requirements
+checklist. See [Native browser recovery](jev-native-recovery.md) for the current
+completion and recovery contract.

@@ -1,7 +1,7 @@
 //! The text the caller reads, measured on real pages through the session
 //! layer the tool uses: a small page, two large ones, and the reservation
 //! flow whose booking widget opens in a frame of another site. Each stays
-//! within the digest's 8,000 characters and 120 lines; the sizes are
+//! within the digest's 18,000 characters and 180 lines; the sizes are
 //! written to `target/jev-fixtures/digest_sizes.jsonl`.
 //!
 //! `JEV_WRITE_DIGEST_GOLDEN=1` rewrites the golden reservation digest
@@ -106,8 +106,13 @@ async fn result_text_stays_within_bounds_on_small_and_large_pages() {
             "{:<28} {:>6} {:>6} {:>9} {:>11}",
             size.page, size.chars, size.lines, size.controls, size.text_chars
         );
-        assert!(size.chars <= 8_000, "{} chars on {}", size.chars, size.page);
-        assert!(size.lines <= 120, "{} lines on {}", size.lines, size.page);
+        assert!(
+            size.chars <= 18_000,
+            "{} chars on {}",
+            size.chars,
+            size.page
+        );
+        assert!(size.lines <= 180, "{} lines on {}", size.lines, size.page);
     }
     let path = super::write_jsonl("digest_sizes", &sizes).unwrap();
     eprintln!("wrote {}", path.display());

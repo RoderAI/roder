@@ -71,7 +71,7 @@ fn clicked(log: &Mutex<BrowserLog>) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn an_unsure_delete_on_a_twin_row_ends_done_without_clicking() {
+async fn an_unsure_delete_on_a_twin_row_blocks_without_clicking() {
     let browser = ScriptedBrowser::new(bob_pages("Delete", "Delete"));
     let log = browser.log();
     // The DONE is there for a loop that clicks again; this one never asks.
@@ -80,8 +80,18 @@ async fn an_unsure_delete_on_a_twin_row_ends_done_without_clicking() {
     let result = run(browser, decider).await;
 
     assert_eq!(clicked(&log), ["e6"], "{result:#?}");
-    assert_eq!(result.status, JevStatus::Done);
-    assert_eq!(result.stopped_because, None);
+    assert_eq!(result.status, JevStatus::Blocked);
+    assert_eq!(
+        result.stop_cause,
+        Some(roder_ext_jev::JevStopCause::UncertainRepeat)
+    );
+    assert!(
+        result
+            .stopped_because
+            .as_deref()
+            .unwrap()
+            .contains("completion has not been established")
+    );
     assert_eq!(result.model_calls, 2);
     assert_eq!(result.actions.len(), 1);
     assert_eq!(result.actions[0].choice, "e6");
@@ -226,7 +236,7 @@ async fn an_unsure_delete_after_a_different_click_in_between_clicks() {
 }
 
 #[tokio::test]
-async fn an_unsure_repeat_of_the_same_control_still_ends_done() {
+async fn an_unsure_repeat_of_the_same_control_does_not_claim_completion() {
     // The older arm, unchanged: the same id and the same label.
     let browser = ScriptedBrowser::new(vec![
         mailbox("inbox-2", &[("e6", "Delete", "Bob Budget")]),
@@ -237,7 +247,7 @@ async fn an_unsure_repeat_of_the_same_control_still_ends_done() {
 
     let result = run(browser, decider).await;
 
-    assert_eq!(result.status, JevStatus::Done);
+    assert_eq!(result.status, JevStatus::Blocked);
     assert_eq!(result.model_calls, 2);
     assert_eq!(clicked(&log), ["e6"]);
     let held = result.suppressed_click.expect("the held click is reported");

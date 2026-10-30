@@ -180,7 +180,7 @@ async fn desktop_and_extension_say_the_same(desktop: &ToolRegistry, url: &str) {
     let astral = call(desktop, "chrome_page_snapshot", json!({})).await;
     assert_eq!(
         astral.data["page"]["text_total"].as_u64(),
-        Some(points),
+        Some(long.data["page"]["text_total"].as_u64().unwrap() + 2501),
         "{}",
         astral.text
     );

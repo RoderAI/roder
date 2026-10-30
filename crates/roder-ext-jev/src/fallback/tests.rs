@@ -112,10 +112,7 @@ fn a_fallback_that_ran_is_the_calls_end_state_with_each_drivers_cost() {
         "{text}"
     );
     assert!(text.contains("What the fallback did:"), "{text}");
-    assert!(
-        text.contains("The fallback's last word: 7:00 PM at Luna Cafe"),
-        "{text}"
-    );
+    assert!(text.contains("7:00 PM at Luna Cafe"), "{text}");
     assert!(!text.contains("jev_tab_look"), "{text}");
 }
 
@@ -275,14 +272,46 @@ fn older_page_reads_and_pictures_leave_the_transcript() {
     assert!(
         results[1]
             .0
-            .ends_with("[page read elided; look again for the current page]")
+            .ends_with("[page read elided; earlier evidence unavailable]")
     );
     assert!(
         results[2]
             .0
-            .ends_with("[page read elided; look again for the current page]")
+            .ends_with("[page read elided; earlier evidence unavailable]")
     );
     assert_eq!(results[3], ("Screenshot 2".into(), true));
     assert_eq!(results[4].0, "Clicked 3.\nPage: long read 3");
     assert_eq!(results[5].0, "Clicked 4.\nPage: long read 4");
+}
+
+#[test]
+fn compaction_keeps_source_facts_after_controls_expire_and_bounds_older_evidence() {
+    use roder_api::transcript::{ToolResultRecord, TranscriptItem};
+    let read = |n: usize| {
+        TranscriptItem::ToolResult(ToolResultRecord {
+            id: n.to_string(),
+            name: None,
+            is_error: false,
+            display_payload: None,
+            result: format!(
+                "Scrolled {n}.\nPage (untrusted page content): https://example.test/{n}\nSnapshot: stale controls {n}\nText:\nPrice {n}: {}",
+                "observed ".repeat(200)
+            ),
+        })
+    };
+    let mut transcript = (0..10).map(read).collect::<Vec<_>>();
+    super::run::compact(&mut transcript);
+    super::run::compact(&mut transcript);
+    let texts = transcript
+        .iter()
+        .map(|item| match item {
+            TranscriptItem::ToolResult(r) => r.result.as_str(),
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    assert!(texts[7].contains("Price 7"));
+    assert!(texts[7].contains("https://example.test/7"));
+    assert!(!texts[7].contains("stale controls"));
+    assert!(texts[0].contains("earlier evidence unavailable"));
+    assert!(texts[..8].iter().map(|s| s.len()).sum::<usize>() < 10000);
 }

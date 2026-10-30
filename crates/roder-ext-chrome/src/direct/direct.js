@@ -7,7 +7,7 @@
 // password, a one-time code, or a field masked as one) is never read: only
 // whether it holds anything.
 (() => {
-  if (window.__roderDirect?.v === 4) return;
+  if (window.__roderDirect?.v === 9) return;
   const ROLES = ['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'menuitemcheckbox','option','combobox','textbox','searchbox','slider','spinbutton','gridcell',
     'treeitem'];
@@ -19,7 +19,7 @@
     '[role="menuitem"],[role="tab"],[role="checkbox"],[role="radio"]';
   const FIELD = 'input,textarea,select,[contenteditable=""],[contenteditable="true"]';
   const GRAPHIC = 'canvas,svg,video,iframe';
-  const S = { v: 4, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
+  const S = { v: 9, nodes: new Map(), ids: new WeakMap(), next: 1, document: crypto.getRandomValues(new Uint32Array(2)).join('-'), secrets: new WeakSet(),
     masks: [] };
   const refOf = el => {
     let ref = S.ids.get(el);
@@ -30,6 +30,12 @@
   const cut = (s, n) => {
     s = String(s ?? '').replace(/\s+/g, ' ').trim();
     return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  };
+  // Keep complete bounded records until the owner has scrubbed its secrets.
+  // A prefix of an overlong secret would no longer match the scrubber.
+  const display = value => {
+    const s = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return s.length <= 160 ? s : '[long text omitted]';
   };
   const style = el => getComputedStyle(el);
   const box = el => {
@@ -71,19 +77,23 @@
   const role = el => el.getAttribute('role') || null;
   const kind = el => el.matches(GRAPHIC) ? 'graphic' : el.matches(FIELD) ? 'field' : 'control';
   const describe = (el, r, ref) => {
-    const item = { ref, tag: el.tagName.toLowerCase(), kind: kind(el), label: cut(label(el), 80) };
+    const item = { ref, tag: el.tagName.toLowerCase(), kind: kind(el), label: display(label(el)) };
     if (role(el)) item.role = role(el);
     if (el.type && el.tagName === 'INPUT') item.type = el.type;
     if (secret(el)) { item.secret = true; item.filled = !!el.value; }
     else if (el.tagName === 'SELECT') {
-      item.value = cut(el.selectedOptions?.[0]?.text, 60);
-      item.options = [...el.options].slice(0, 12).map(o => cut(o.text, 40));
+      item.value = display(el.selectedOptions?.[0]?.text);
+      item.options = [...el.options].slice(0, 12).map(o => display(o.text));
     } else if (el.matches('input,textarea') && !['checkbox', 'radio'].includes(el.type)) {
-      if (el.value) item.value = cut(el.value, 60);
-    } else if (el.isContentEditable && text(el).trim()) item.value = cut(text(el), 60);
+      if (el.value) item.value = display(el.value);
+    } else if (el.isContentEditable && text(el).trim()) item.value = display(text(el));
     if (el.checked !== undefined && ['checkbox', 'radio'].includes(el.type)) item.checked = el.checked;
-    const aria = el.getAttribute('aria-checked') || el.getAttribute('aria-selected');
+    const aria = el.getAttribute('aria-checked');
     if (aria) item.checked = aria === 'true';
+    for (const state of ['selected', 'busy']) {
+      const value = el.getAttribute('aria-' + state);
+      if (value !== null) item[state] = value === 'true';
+    }
     if (el.getAttribute('aria-expanded')) item.expanded = el.getAttribute('aria-expanded') === 'true';
     if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') item.disabled = true;
     if (el.getAttribute('draggable') === 'true') item.draggable = true;
@@ -190,18 +200,18 @@
     found.sort((a, b) => (onscreen(b) - onscreen(a)) || (a[1].top - b[1].top) || (a[1].left - b[1].left));
     const items = found.slice(0, max).map(([el, r]) => describe(el, r, refOf(el)));
     const f = focused();
-    const full = (document.body?.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
-    const keep = opts?.text || 3000;
-    const cutText = full.length > keep;
+    const viewportText = S.viewportText();
+    const full = viewportText.text, cutText = viewportText.limited;
     return {
       url: location.href, title: document.title, http_status: status(),
       viewport: { w: innerWidth, h: innerHeight, scroll_y: Math.round(scrollY),
         page_h: Math.round(document.documentElement.scrollHeight) },
-      focused: f ? cut(label(f) || f.tagName.toLowerCase(), 60) : null,
+      focused: f ? display(label(f) || f.tagName.toLowerCase()) : null,
       elements: items, omitted: Math.max(0, found.length - max),
-      // The text is cut at `keep` UTF-16 units; `text_cut` says it was, and
-      // `text_total` (only then) how many characters the whole page text has.
-      text: full.slice(0, keep), text_cut: cutText, text_total: cutText ? points(full) : undefined,
+      // Scrub complete text before making a display excerpt in Rust. Overlong
+      // records are omitted whole, never returned as an unscrubbable prefix.
+      text: full, text_scope: 'viewport',
+      text_cut: cutText, text_total: points(full),
     };
   };
   // Where a ref is on screen now, scrolled into view when it is not; at a

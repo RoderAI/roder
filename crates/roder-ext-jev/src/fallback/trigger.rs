@@ -49,6 +49,8 @@ pub(crate) enum Trigger {
     /// The page kept changing under its decisions: three went stale in a
     /// row with nothing new on the page.
     Unsettled,
+    /// An uncertain repeated click was suppressed without proving completion.
+    UncertainRepeat,
     /// The page offered nothing Jev can act on.
     NothingToActOn,
     /// The action or model-call budget ran out.
@@ -72,6 +74,9 @@ impl Trigger {
             Self::Covered => "the controls Jev tried were covered by another element",
             Self::Looped => {
                 "Jev went round in circles, repeating itself on a page that did not change"
+            }
+            Self::UncertainRepeat => {
+                "Jev suppressed an uncertain repeated click; check completed effects and continue only unmet requirements"
             }
             Self::Unsettled => {
                 "the page kept changing under Jev's decisions, so each one went stale"
@@ -100,6 +105,7 @@ pub(crate) fn trigger(result: &JevRunResult) -> Option<Trigger> {
                 JevStopCause::Covered | JevStopCause::DoneAfterCovered => Trigger::Covered,
                 JevStopCause::Looped => Trigger::Looped,
                 JevStopCause::Unsettled => Trigger::Unsettled,
+                JevStopCause::UncertainRepeat => Trigger::UncertainRepeat,
                 _ => return None,
             };
             Some(match result.observed_elements {
@@ -166,6 +172,7 @@ mod tests {
         assert_eq!(blocked(C::DoneAfterCovered), Some(Trigger::Covered));
         assert_eq!(blocked(C::Looped), Some(Trigger::Looped));
         assert_eq!(blocked(C::Unsettled), Some(Trigger::Unsettled));
+        assert_eq!(blocked(C::UncertainRepeat), Some(Trigger::UncertainRepeat));
         assert_eq!(
             trigger(&run(JevStatus::Blocked, Some(C::ModelBlocked), 0)),
             Some(Trigger::NothingToActOn)

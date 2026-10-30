@@ -72,10 +72,13 @@ impl Page {
         text: Option<&str>,
         wait: Duration,
     ) -> anyhow::Result<JevActOutcome> {
-        if !self.fresh(observation, Some(action)).await? {
-            return Err(
-                StaleObservation::new("Page changed since this decision. Observe again.").into(),
-            );
+        let changes = self.freshness_changes(observation, Some(action)).await?;
+        if !changes.is_empty() {
+            return Err(StaleObservation::new(format!(
+                "Page changed since this decision: {}. Observe again.",
+                changes.join(", ")
+            ))
+            .into());
         }
         let kind = action["kind"].as_str().unwrap_or_default();
         let mut settle = action.clone();

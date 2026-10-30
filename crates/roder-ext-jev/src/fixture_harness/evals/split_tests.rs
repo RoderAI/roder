@@ -364,3 +364,24 @@ async fn the_decoy_page_gives_a_false_done_the_split_catches() {
     assert_eq!(row["truth_ok"], true, "{row}");
     assert_eq!(row["false_green"], false, "{row}");
 }
+
+#[test]
+fn combined_goal_is_graded_when_native_finishes_without_a_fallback() {
+    let mut task = status_task("blocked");
+    let full = super::FallbackTask {
+        plan: Vec::new(),
+        expect: status_task("done").expect,
+    };
+    task.fallback = Some(full);
+    let done = outcome(
+        JevStatus::Done,
+        &[(STATUS_TEXT, json!("Sent: trail shoes"))],
+    );
+    let native = task.expect.grade(&done).marks();
+    assert!(!native.passed());
+    let combined = FallbackRow::grade(&task, &done, native);
+    assert!(!combined.ran && combined.marks.passed());
+    let blocked = outcome(JevStatus::Blocked, &[(STATUS_TEXT, json!(""))]);
+    let combined = FallbackRow::grade(&task, &blocked, task.expect.grade(&blocked).marks());
+    assert!(!combined.ran && !combined.marks.passed());
+}

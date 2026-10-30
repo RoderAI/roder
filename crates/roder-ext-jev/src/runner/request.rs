@@ -53,6 +53,8 @@ impl TabChoice {
 #[derive(Debug)]
 pub(crate) struct JevRequest {
     pub(crate) goal: String,
+    pub(crate) research: bool,
+    pub(crate) requirements: Vec<String>,
     pub(crate) success_condition: Option<crate::session::completion::Completion>,
     /// Where to load, or `None` to go on from the page the tab shows.
     pub(crate) url: Option<String>,
@@ -146,8 +148,25 @@ impl JevRequest {
         if let Some(max) = ceilings.max_seconds {
             timeout = timeout.min(max);
         }
+        let task_kind = given(args, "task_kind")
+            .map(|v| v.as_str().context("task_kind must be a string"))
+            .transpose()?;
+        let research = match task_kind {
+            None | Some("interaction") => false,
+            Some("research") => true,
+            _ => anyhow::bail!("task_kind must be interaction or research"),
+        };
+        let goal = with_requirements(goal, args.get("requirements"))?;
         Ok(Self {
-            goal: goal.into(),
+            goal,
+            research,
+            requirements: args["requirements"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|s| s.trim().to_string())
+                .collect(),
             success_condition: crate::session::completion::Completion::parse(args)?,
             url,
             tab,
@@ -400,5 +419,52 @@ mod tests {
         assert!(
             parse(json!({"url":"https://example.com","goal":"Read","foreground":"yes"})).is_err()
         );
+    }
+}
+
+/// Keep the caller's explicit checklist in the task; completeness remains an
+/// evidence judgment, never an automatic success inferred from having a list.
+fn with_requirements(goal: &str, requirements: Option<&Value>) -> anyhow::Result<String> {
+    let Some(requirements) = requirements.filter(|v| !v.is_null()) else {
+        return Ok(goal.into());
+    };
+    let items = requirements
+        .as_array()
+        .context("requirements must be an array of strings")?;
+    ensure!(
+        items.len() <= 12,
+        "requirements may contain at most 12 items"
+    );
+    let mut out = goal.to_string();
+    if !items.is_empty() {
+        out.push_str("\nRequirements checklist: verify each against observed source evidence; report missing facts rather than claiming completion.\n");
+    }
+    for (n, item) in items.iter().enumerate() {
+        let item = item
+            .as_str()
+            .context("requirements must contain strings")?
+            .trim();
+        ensure!(
+            !item.is_empty() && item.len() <= 500,
+            "each requirement must be 1–500 bytes"
+        );
+        out.push_str(&format!("{}. {}\n", n + 1, item));
+    }
+    Ok(out)
+}
+#[cfg(test)]
+mod requirement_tests {
+    use super::*;
+    #[test]
+    fn bounded_checklist_preserves_goal_and_rejects_unbounded_inputs() {
+        let text = with_requirements(
+            "Compare boxes",
+            Some(&serde_json::json!(["Compare prices", "Verify dimensions"])),
+        )
+        .unwrap();
+        assert!(text.starts_with("Compare boxes"));
+        assert!(text.contains("2. Verify dimensions"));
+        assert!(with_requirements("Read", Some(&serde_json::json!([""]))).is_err());
+        assert!(with_requirements("Read", Some(&serde_json::json!(vec!["x"; 13]))).is_err());
     }
 }

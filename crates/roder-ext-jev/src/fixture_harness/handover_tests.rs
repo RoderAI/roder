@@ -77,15 +77,17 @@ async fn the_caller_goes_on_in_the_same_tab_with_the_full_tools() {
     assert_eq!(handed["fallback"]["ran"], false, "{handed:#}");
     let tab = targets(sessions, "caller");
 
-    let look = run_tool(&tools, "caller", "jev_tab_look", json!({})).await;
-    assert!(!look.is_error, "{}", look.text);
-    assert!(
-        look.text.contains("untrusted page content"),
-        "{}",
-        look.text
-    );
-    let products = ref_of(&look, "Products");
+    assert_eq!(handed["page"]["reference_tools"], "jev_tab_*");
+    let products = handed["page"]["snapshot"]["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["label"] == "Products")
+        .unwrap()["ref"]
+        .clone();
     let hover = run_tool(&tools, "caller", "jev_tab_hover", json!({"ref": products})).await;
+    assert!(!hover.is_error, "{}", hover.text);
+    assert_eq!(hover.data["page"]["snapshot"]["mode"], "diff");
     assert!(hover.text.contains("Laptops"), "{}", hover.text);
     // A ref read before an action still names the same element after it.
     assert_eq!(ref_of(&hover, "Products"), products);
@@ -125,7 +127,7 @@ async fn the_caller_goes_on_in_the_same_tab_with_the_full_tools() {
     .unwrap();
     assert_eq!(next["session"]["tab_note"], "continued", "{next:#}");
     assert_eq!(next["status"], "done");
-    assert_eq!(next["session"]["totals"]["tab_tool_calls"], 4);
+    assert_eq!(next["session"]["totals"]["tab_tool_calls"], 3);
 
     // A thread with no Jev tab cannot reach any other tab.
     let none = run_tool(&tools, "no-tab", "jev_tab_look", json!({})).await;

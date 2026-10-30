@@ -68,13 +68,13 @@ pub(super) fn not_clicked(data: &Value) -> Vec<String> {
     let line = match held["kind"].as_str() {
         Some("twin_control") => format!(
             "Not clicked: {}, chosen{confidence} right after a click on {} that changed the page. \
-             Below {REPEAT_CONFIDENCE:.2} confidence Jev reads that as the goal being met.",
+             Below {REPEAT_CONFIDENCE:.2} confidence Jev suppresses the repeat; completion is not established.",
             named(label, &held["context"]),
             named(label, &held["previous_context"]),
         ),
         _ => format!(
             "Not clicked: {} again, chosen{confidence} right after that click changed the page. \
-             Below {REPEAT_CONFIDENCE:.2} confidence Jev reads that as the goal being met.",
+             Below {REPEAT_CONFIDENCE:.2} confidence Jev suppresses the repeat; completion is not established.",
             named(label, &held["context"]),
         ),
     };

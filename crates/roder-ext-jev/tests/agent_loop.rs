@@ -294,7 +294,7 @@ async fn done_after_a_covered_try_is_blocked_not_done() {
 }
 
 #[tokio::test]
-async fn an_unsure_repeat_of_a_click_that_worked_ends_done_without_clicking() {
+async fn an_unsure_repeat_of_a_click_that_worked_blocks_without_claiming_completion() {
     let pages = vec![
         page("shop", &[("add", "click")]),
         page("shop-with-cart", &[("add", "click")]),
@@ -305,8 +305,18 @@ async fn an_unsure_repeat_of_a_click_that_worked_ends_done_without_clicking() {
 
     let result = run(browser, config(decider), RUN_TIMEOUT).await;
 
-    assert_eq!(result.status, JevStatus::Done);
-    assert_eq!(result.stopped_because, None);
+    assert_eq!(result.status, JevStatus::Blocked);
+    assert_eq!(
+        result.stop_cause,
+        Some(roder_ext_jev::JevStopCause::UncertainRepeat)
+    );
+    assert!(
+        result
+            .stopped_because
+            .as_deref()
+            .unwrap()
+            .contains("completion has not been established")
+    );
     assert_eq!(result.model_calls, 2);
     assert_eq!(result.actions.len(), 1);
     assert_eq!(browser_log.lock().unwrap().acts.len(), 1);

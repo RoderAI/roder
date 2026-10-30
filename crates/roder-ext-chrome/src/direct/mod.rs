@@ -2,7 +2,7 @@
 //!
 //! A [`DirectSession`] attaches to one tab ([`DirectTab`]: a target of a
 //! browser's DevTools endpoint, or a page websocket) and runs the tools on
-//! it: `look` (the page's elements with refs and boxes, and its text),
+//! it: `look` (a semantic tree with stable refs and page text; geometry in data),
 //! `screenshot`, `click`, `hover`, `drag`, `type`, `key`, `scroll`, `select`,
 //! `navigate` and `wait`, all with real DevTools input. Whoever owns the tab
 //! supplies a [`DirectGuard`] with its rules (allowed origins, a gate before
@@ -30,6 +30,7 @@ pub mod devtools;
 mod guard;
 mod keys;
 mod look;
+mod look_render;
 mod mac;
 mod select;
 mod session;
@@ -40,6 +41,7 @@ mod unavailable;
 pub use capture_image::viewport_jpeg;
 pub use client::{DirectDialog, DirectTab};
 pub use guard::{DirectGuard, GateAction, GateQuery, OpenGuard, PageFacts, StopKind};
+pub use look::DOCUMENT_TEXT_JS;
 pub use session::{DirectSession, DirectStep, DirectStop, OpenedTab};
 pub use tools::{
     DIRECT_TOOLS, DirectBinding, DirectLease, direct_tool_specs, direct_tools, reads_only,

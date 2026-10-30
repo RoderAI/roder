@@ -139,7 +139,7 @@ pub enum JevSuppressedKind {
     TwinControl,
 }
 
-/// A click the loop ended the run `done` instead of making: an unsure repeat
+/// A click the loop ended the run `blocked` instead of making: an unsure repeat
 /// of a click that had just changed the page. Page text, as untrusted as the
 /// rest, scrubbed of typed secrets and cut short.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -164,6 +164,11 @@ pub struct JevRunResult {
     pub url: String,
     pub title: String,
     pub visible_text: String,
+    /// Bounded, source-linked text observed across the delegation; untrusted page data.
+    pub evidence: String,
+    /// Bounded diagnostics for rejected decisions and local recovery; values omitted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recoveries: Vec<Value>,
     pub actions: Vec<JevActionRecord>,
     pub elapsed_ms: u64,
     pub observed_elements: usize,
@@ -183,7 +188,7 @@ pub struct JevRunResult {
     /// What ended a run that stopped short of its goal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_cause: Option<JevStopCause>,
-    /// The click a `done` run ended on instead of making, when it did.
+    /// The click a blocked run ended on instead of making, when it did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suppressed_click: Option<JevSuppressedClick>,
     pub untrusted: bool,
@@ -215,6 +220,8 @@ impl JevRunResult {
             url: url.into(),
             title: String::new(),
             visible_text: String::new(),
+            evidence: String::new(),
+            recoveries: Vec::new(),
             actions: Vec::new(),
             elapsed_ms: elapsed.as_millis() as u64,
             observed_elements: 0,

@@ -4,7 +4,7 @@
 //!
 //! It opens with a look the loop takes itself, so the model's first call
 //! can already act. Each action's result carries a brief read of the page
-//! after it; older page reads are cut to their first line before each model
+//! after it; older control lists are removed while bounded text evidence is retained before each model
 //! call, and only the newest screenshot is still shown, which keeps a long
 //! fallback's requests from growing with every step. A tool the owner's
 //! rules stop (the gate, the allowed origins, an access block) ends the
@@ -16,7 +16,7 @@ use roder_api::inference::ToolCallCompleted;
 use roder_api::tools::ToolSpec;
 use roder_api::transcript::{
     AssistantMessage, ToolCallRecord, ToolResultRecord, TranscriptItem, UserMessage,
-    VIEW_IMAGE_DISPLAY_KEY, tool_display_payload,
+    tool_display_payload,
 };
 use roder_ext_chrome::direct::{DirectSession, DirectStep, OpenedTab, StopKind, tool_result};
 use serde::Serialize;
@@ -33,8 +33,7 @@ use crate::session::cut;
 
 /// The tool names the fallback model sees: the same as the hand-over's.
 pub(crate) const PREFIX: &str = "jev_tab";
-/// Tool results older than the last few page reads are cut to one line.
-const KEPT_READS: usize = 2;
+pub(crate) use super::history::compact;
 
 /// What the fallback goes on from: the goal, why Jev stopped, and Jev's run.
 #[derive(Clone, Copy)]
@@ -392,7 +391,7 @@ impl Loop<'_> {
     fn conclude(&mut self, message: &str) {
         let message = self.guard_scrub(message);
         let (verdict, rest) = verdict(&message);
-        self.outcome.message = cut(&rest, 600);
+        self.outcome.message = cut(&rest, 8000);
         let (status, reason) = match verdict {
             Verdict::Done => (JevStatus::Done, None),
             Verdict::Blocked => (JevStatus::Blocked, Some(rest)),
@@ -441,42 +440,4 @@ fn target_label(data: &Value) -> Option<String> {
         (Some(what), None) => Some(what.to_string()),
         (None, None) => None,
     }
-}
-
-/// Cut every page-bearing tool result but the last [`KEPT_READS`] to its
-/// first line, and show only the newest screenshot.
-pub(crate) fn compact(transcript: &mut [TranscriptItem]) {
-    let mut reads = 0;
-    let mut pictures = 0;
-    for item in transcript.iter_mut().rev() {
-        let TranscriptItem::ToolResult(result) = item else {
-            continue;
-        };
-        if let Some(payload) = result.display_payload.as_mut()
-            && payload.get(VIEW_IMAGE_DISPLAY_KEY).is_some()
-        {
-            pictures += 1;
-            if pictures > 1
-                && let Some(payload) = payload.as_object_mut()
-            {
-                payload.remove(VIEW_IMAGE_DISPLAY_KEY);
-                result.result = format!("{} [picture no longer shown]", first_line(&result.result));
-            }
-            continue;
-        }
-        if result.result.lines().count() <= 1 {
-            continue;
-        }
-        reads += 1;
-        if reads > KEPT_READS {
-            result.result = format!(
-                "{} [page read elided; look again for the current page]",
-                first_line(&result.result)
-            );
-        }
-    }
-}
-
-fn first_line(text: &str) -> &str {
-    text.lines().next().unwrap_or_default()
 }

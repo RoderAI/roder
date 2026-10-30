@@ -1,6 +1,10 @@
 //! One `jev_browse` call on a thread's session.
 
-use std::time::Duration;
+use crate::fallback::model::FallbackModel;
+use std::{sync::Arc, time::Duration};
+type ResolvedFallback = Result<Arc<dyn FallbackModel>, String>;
+// Spend a bounded fast-path budget before an available general model takes over.
+const FAST_PATH_ACTIONS: usize = 12;
 
 use anyhow::Context;
 use serde_json::{Value, json};
@@ -83,11 +87,21 @@ impl JevSessions {
         }
         let models = state.models.as_ref().context("models resolved above")?;
         let mut config = JevEngineConfig::new(request.goal.clone(), models.decision.clone())
+            .with_requirements(request.requirements.clone())?
+            .with_research(request.research)
             .with_wait(Duration::from_millis(request.wait_ms))
             .with_scope(request.scope.clone())
             .with_cookie_banner_refusal(request.refuse_cookie_banners)
             .with_secrets(state.secrets.clone());
-        if let Some(actions) = request.max_actions {
+        let fallback_model = if request.fallback.mode == FallbackMode::Auto {
+            Some(deps.fallback_model(&request.fallback, thread).await)
+        } else {
+            None
+        };
+        if let Some(actions) = native_action_budget(
+            request.max_actions,
+            fallback_model.as_ref().is_some_and(Result::is_ok),
+        ) {
             config = config.with_max_actions(actions);
         }
         if request.confirm_irreversible {
@@ -169,10 +183,9 @@ impl JevSessions {
         let fallback = match &endpoint {
             Some(endpoint) => {
                 fall_back(
-                    thread,
                     state,
                     request,
-                    deps,
+                    fallback_model,
                     &driven.result,
                     endpoint,
                     started,
@@ -217,6 +230,24 @@ impl JevSessions {
         }
         state.record(&request.goal, request.url.as_deref(), &recorded);
         let mut value = serde_json::to_value(&driven.result).context("serialize the JEV result")?;
+        // Keep observable context reads/budgets in session evidence without
+        // sending full decision distributions or prompts back to the parent.
+        let contexts = driven
+            .result
+            .decisions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, decision)| {
+                decision.usage.get("context_budget").map(|budget| {
+                    json!({
+                        "decision":index+1,"operation":decision.operation,"budget":budget
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        if !contexts.is_empty() {
+            value["context_budget"] = json!({"decisions":contexts});
+        }
         crate::fallback::report(
             &mut value,
             &driven.result,
@@ -226,6 +257,11 @@ impl JevSessions {
             fallback.page,
         );
         value["completion_verification"] = final_check;
+        value["completion_basis"] = json!(if request.research {
+            "observed_source_evidence"
+        } else {
+            "current_ui_state"
+        });
         state.classify(&mut value);
         // The model that wrote values, which is not the one resolved when an
         // unusable Codex sign-in fell back.
@@ -237,6 +273,7 @@ impl JevSessions {
             request.foreground,
         );
         value["session"] = view(state, &driven);
+        super::observation::publish(&mut value, state, &request, deadline).await;
         Ok(value)
     }
 }
@@ -295,10 +332,9 @@ impl Fallback {
 /// tab and record on the session what it did (tabs it opened, secrets it
 /// typed, where it left the tab).
 async fn fall_back(
-    thread: &str,
     state: &mut SessionState,
     request: &JevRequest,
-    deps: &dyn SessionDeps,
+    resolved_model: Option<ResolvedFallback>,
     result: &JevRunResult,
     endpoint: &ChromeEndpoint,
     started: Instant,
@@ -322,9 +358,10 @@ async fn fall_back(
     let Some(tab) = state.tabs.current().cloned() else {
         return handover(Some("the session has no tab to go on in".into()));
     };
-    let model = match deps.fallback_model(settings, thread).await {
-        Ok(model) => model,
-        Err(reason) => return handover(Some(reason)),
+    let model = match resolved_model {
+        Some(Ok(model)) => model,
+        Some(Err(reason)) => return handover(Some(reason)),
+        None => return handover(Some("no automatic fallback model was resolved".into())),
     };
     let now = Instant::now();
     let mut deadline = now + settings.max_duration;
@@ -422,4 +459,20 @@ async fn verified_page(
     .ok()
     .flatten()
     .filter(|page| request.scope.allows(&page.url))
+}
+
+fn native_action_budget(explicit: Option<usize>, fallback_ready: bool) -> Option<usize> {
+    explicit.or_else(|| fallback_ready.then_some(FAST_PATH_ACTIONS))
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn fast_path_budget_requires_recovery_and_preserves_operator_limits() {
+        assert_eq!(native_action_budget(None, false), None);
+        assert_eq!(native_action_budget(None, true), Some(12));
+        assert_eq!(native_action_budget(Some(3), true), Some(3));
+        assert_eq!(native_action_budget(Some(30), true), Some(30));
+    }
 }

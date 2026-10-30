@@ -44,8 +44,7 @@ fn a_twin_that_was_not_clicked_is_named_with_its_row_and_the_click_before_it() {
     assert_eq!(
         line,
         "Not clicked: \"Delete\" (in: Bob Lunch), chosen at confidence 0.60 right after a click \
-         on \"Delete\" (in: Bob Budget) that changed the page. Below 0.70 confidence Jev reads \
-         that as the goal being met."
+         on \"Delete\" (in: Bob Budget) that changed the page. Below 0.70 confidence Jev suppresses the repeat; completion is not established."
     );
     // What to do about it is Roder's own text, in the header.
     let header = text.split(BEGIN_PAGE).next().unwrap();

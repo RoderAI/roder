@@ -157,6 +157,7 @@ async fn decisions_vs_jev() {
         .map(|s| s.parse::<usize>().unwrap())
         .unwrap_or(3);
     assert!((1..=10).contains(&repeats));
+    let fallback = super::fallback_live::live_fallback().await;
     let base = Harness::start().await.expect("Chrome required");
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -178,7 +179,7 @@ async fn decisions_vs_jev() {
                     client.clone(),
                     Arc::new(TaskValues::new(&task.values)),
                     task.expect.probes().cloned().collect(),
-                    None,
+                    fallback.clone(),
                 )
                 .await;
                 let mut row = match outcome {
@@ -190,6 +191,10 @@ async fn decisions_vs_jev() {
                             &outcome,
                             task.expect.grade(&outcome),
                         );
+                        if fallback.is_some() {
+                            row.fallback =
+                                Some(super::FallbackRow::grade(&task, &outcome, row.marks));
+                        }
                         row.telemetry = json!({"model":outcome.result.decisions.iter().rev().find_map(|d| d.model.clone()),
                             "usage":outcome.result.usage, "browser_decision_attempts":outcome.watch.laps.get("decide").map(|lap|lap.calls), "dom_probes":outcome.probed.dom, "decisions":outcome.result.decisions.iter().map(|d|json!({"operation":d.operation,"target":d.target,"confidence":d.confidence,"target_confidence":d.target_confidence,"probabilities":d.probabilities})).collect::<Vec<_>>(), "actions":outcome.result.actions,
                             "decision_latency_ms":outcome.result.decisions.iter().map(|d| d.latency_ms).collect::<Vec<_>>()});

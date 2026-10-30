@@ -72,6 +72,15 @@ impl ProbedPage {
 
 #[async_trait]
 impl JevBrowser for ProbedPage {
+    fn document_read_available(&self) -> bool {
+        true
+    }
+    async fn document_text(&mut self) -> anyhow::Result<Option<Value>> {
+        self.watch
+            .time("document_read", self.page.document_text())
+            .await
+    }
+
     async fn screenshot(&mut self) -> anyhow::Result<Option<String>> {
         self.watch.time("screenshot", self.page.screenshot()).await
     }
@@ -106,6 +115,9 @@ impl JevBrowser for ProbedPage {
         Ok(observation)
     }
 
+    async fn fresh_document(&mut self, observation: &Value) -> anyhow::Result<bool> {
+        self.page.fresh_document(observation).await
+    }
     async fn fresh(&mut self, observation: &Value, action: Option<&Value>) -> anyhow::Result<bool> {
         self.watch
             .time("fresh", self.page.fresh(observation, action))

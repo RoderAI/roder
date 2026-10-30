@@ -86,11 +86,15 @@ impl FallbackRow {
     /// fallback expectation, else its own), or carry Jev alone's marks.
     pub(crate) fn grade(task: &Task, outcome: &Outcome, jev: Marks) -> Self {
         let Some((after, fallback)) = outcome.after.as_deref() else {
+            // A native driver may now complete a task formerly requiring fallback.
+            // Grade the full goal even when no fallback ran; an expected native
+            // capability stop must not count as combined task completion.
+            let graded = task.fallback.as_ref().map(|f| f.expect.grade(outcome));
             return Self {
-                marks: jev,
+                marks: graded.as_ref().map_or(jev, Graded::marks),
                 ran: false,
-                failures: Vec::new(),
-                graded: Graded::default(),
+                failures: graded.as_ref().map_or_else(Vec::new, Graded::failures),
+                graded: graded.unwrap_or_default(),
                 status: Value::Null,
                 model: String::new(),
                 actions: 0,

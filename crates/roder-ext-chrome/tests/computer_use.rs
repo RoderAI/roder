@@ -26,6 +26,9 @@ include!("support/select.rs");
 include!("support/scripted.rs");
 include!("support/outcome.rs");
 include!("support/screenshot.rs");
+include!("support/semantic.rs");
+include!("support/semantic_secrets.rs");
+include!("support/viewport.rs");
 
 struct Browser {
     child: Child,
@@ -79,8 +82,15 @@ impl Browser {
             endpoint: String::new(),
         };
         for _ in 0..200 {
-            if let Ok(port) = std::fs::read_to_string(browser.profile.join("DevToolsActivePort")) {
-                browser.endpoint = format!("http://127.0.0.1:{}", port.lines().next().unwrap());
+            if let Some(port) = std::fs::read_to_string(browser.profile.join("DevToolsActivePort"))
+                .ok()
+                .and_then(|text| {
+                    text.lines()
+                        .next()
+                        .and_then(|line| line.parse::<u16>().ok())
+                })
+            {
+                browser.endpoint = format!("http://127.0.0.1:{port}");
                 return Some(browser);
             }
             assert!(
@@ -391,5 +401,8 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
     eprintln!(
         "PASS: navigation/state, stable refs, trusted click/type/key, missing/ambiguous targets, secret masking, DPR2 screenshot mapping, origin/out-of-bounds coordinates, right-button mask, screenshot attachment, Desktop chrome_select, Desktop and extension outcome parity, covered-target advice per tool surface"
     );
+    semantic_observations(&registry, &url).await;
+    semantic_secrets(&registry, &browser, &url).await;
+    viewport_text(&registry, &browser, &url).await;
     site.abort();
 }
