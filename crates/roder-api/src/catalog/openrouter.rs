@@ -12,6 +12,10 @@
 //! roder must compact client-side at `auto_compact_token_limit` (90% of the
 //! window) instead of waiting for a server that never does it.
 
+mod deepseek_flash_1017;
+
+pub(super) use deepseek_flash_1017::DEEPSEEK_DEEPSEEK_V4_1_FLASH_1017;
+
 use super::{
     EDIT_TOOL_EDIT, EDIT_TOOL_PATCH, ModelCatalogEntry, OPENROUTER_REASONING, PROVIDER_OPENROUTER,
     REASONING_HIGH, REASONING_MEDIUM, ReasoningOption,

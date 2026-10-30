@@ -1137,6 +1137,7 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     openrouter::GOOGLE_GEMINI_3_7_FLASH,
     openrouter::DEEPSEEK_DEEPSEEK_V4_PRO_0813,
     openrouter::DEEPSEEK_DEEPSEEK_V4_1_FLASH,
+    openrouter::DEEPSEEK_DEEPSEEK_V4_1_FLASH_1017,
     openrouter::QWEN_QWEN3_8_MAX_0902,
     openrouter::QWEN_QWEN3_8_FLASH,
     openrouter::Z_AI_GLM_5_3,
@@ -2126,6 +2127,7 @@ mod tests {
                 "google/gemini-3.7-flash",
                 "deepseek/deepseek-v4-pro-0813",
                 "deepseek/deepseek-v4.1-flash",
+                "deepseek/deepseek-v4.1-flash-1017",
                 "qwen/qwen3.8-max-0902",
                 "qwen/qwen3.8-flash",
                 "z-ai/glm-5.3",
@@ -2192,7 +2194,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_SUPERGROK, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE, false).len(), 7);
         assert_eq!(models_for_provider(PROVIDER_OPENCODE_GO, false).len(), 5);
-        assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 25);
+        assert_eq!(models_for_provider(PROVIDER_OPENROUTER, false).len(), 26);
         assert_eq!(models_for_provider(PROVIDER_FIREWORKS, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_RODER_CLOUD, false).len(), 3);
         assert_eq!(models_for_provider(PROVIDER_POOLSIDE, false).len(), 2);
