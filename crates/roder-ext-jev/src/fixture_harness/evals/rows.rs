@@ -42,6 +42,14 @@ pub(crate) struct Row {
     /// them (see [`JevUsage`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) input_tokens: Option<u64>,
+    /// Dollars the decision calls cost, when the host reported every
+    /// call's cost (see [`crate::JevCallUsage::cost`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) decision_cost: Option<f64>,
+    /// The model that answered the last decision, as the host reported it
+    /// (`jev-latest` is served as a dated version).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) decision_model: Option<String>,
     pub(crate) url: String,
     /// Per-phase laps, each reading of the page (what it offered and left
     /// out, how its settle ended). Absent for a task that could not run.
@@ -197,6 +205,12 @@ impl Row {
             text_calls: result.text_calls,
             wall_ms: outcome.wall_ms,
             input_tokens: input_tokens(&result.usage),
+            decision_cost: result.usage.decision.cost,
+            decision_model: result
+                .decisions
+                .iter()
+                .rev()
+                .find_map(|decision| decision.model.clone()),
             url: result.url.clone(),
             watch: Some(outcome.watch.clone()),
             telemetry: Value::Null,
@@ -227,6 +241,8 @@ impl Row {
             text_calls: 0,
             wall_ms: 0,
             input_tokens: None,
+            decision_cost: None,
+            decision_model: None,
             url: String::new(),
             watch: None,
             telemetry: Value::Null,
@@ -311,6 +327,18 @@ pub(crate) fn table(tasks: &[Task], rows: &[Row]) -> String {
         "{passed}/{} passed, {false_green} false green\n",
         rows.len()
     ));
+    let costs = rows
+        .iter()
+        .filter_map(|row| row.decision_cost)
+        .collect::<Vec<_>>();
+    if !costs.is_empty() {
+        out.push_str(&format!(
+            "decision cost ${:.6} over the {} of {} runs that reported it\n",
+            costs.iter().sum::<f64>(),
+            costs.len(),
+            rows.len()
+        ));
+    }
     let with = rows
         .iter()
         .filter_map(|row| row.fallback.as_ref())

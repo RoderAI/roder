@@ -4,10 +4,15 @@
 //!
 //! ```text
 //! TYPESAFE_API_KEY=… cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
+//! JEV_DECISION_PROVIDER=openrouter OPENROUTER_API_KEY=… cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
 //! ```
 //!
-//! - `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key; `JEV_MODEL`
-//!   pins a model, else `jev-latest`.
+//! - `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key for TypeSafe
+//!   directly; `JEV_DECISION_PROVIDER=openrouter` sends the same requests to
+//!   OpenRouter with `OPENROUTER_API_KEY`, and `JEV_DECISION_URL` overrides
+//!   either URL. `JEV_MODEL` pins a model, else `jev-latest`. Each row
+//!   records the model that answered and, when the host reports it (as
+//!   OpenRouter does), what the decisions cost in dollars.
 //! - `JEV_EVAL_VARIANTS=a,b` turns on request variants (see [`super::variants`]).
 //! - `JEV_EVAL_TEXT=model` types values from the configured text helper
 //!   (`JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` pick it, as for
@@ -55,11 +60,11 @@ use super::{
     FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_json,
     write_rows,
 };
-use crate::decide::{ENDPOINT, JevTypeSafeDecisionClient, TypeSafeHttpTransport};
+use crate::decide::JevTypeSafeDecisionClient;
+use crate::decide::route::{HostedRoute, JevHost};
 use crate::engine::{JevDecisionTransport, JevTextValueResolver};
 use crate::fallback::model::FallbackModel;
 use crate::fixture_harness::Harness;
-use crate::http::RetryPolicy;
 use crate::text_helper::TextHelper;
 use crate::text_model::TextModel;
 
@@ -69,12 +74,12 @@ pub(super) fn env(key: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-pub(super) fn live_key() -> Option<String> {
-    env("TYPESAFE_API_KEY").or_else(|| env("JEV_API_KEY"))
+pub(super) fn live_route() -> Option<HostedRoute> {
+    HostedRoute::from_env()
 }
 
 struct LiveSetup {
-    key: String,
+    route: HostedRoute,
     model: String,
     variants: Variants,
     /// `JEV_EVAL_TEXT=model`: the text helper that types ordinary fields.
@@ -97,7 +102,9 @@ impl LiveSetup {
     /// header.
     fn label(&self) -> String {
         format!(
-            "text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}, concurrency {}",
+            "decisions {}, text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}, \
+             concurrency {}",
+            self.route.host.name(),
             self.text_model
                 .as_ref()
                 .map_or("task values".to_string(), TextModel::label),
@@ -143,11 +150,7 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
     };
     let (task, names) = setup.task(task);
     let task = &task;
-    let http: Arc<dyn JevDecisionTransport> = Arc::new(TypeSafeHttpTransport::new(
-        ENDPOINT,
-        setup.key.clone(),
-        RetryPolicy::default(),
-    ));
+    let http: Arc<dyn JevDecisionTransport> = Arc::new(setup.route.transport());
     let transport = Arc::new(VariantTransport::new(http, setup.variants.clone()));
     let decision: Arc<dyn crate::engine::JevDecisionClient> =
         if setup.variants.has(super::variants::Variant::Effect) {
@@ -250,12 +253,12 @@ fn telemetry(outcome: &Outcome, steps: &[StepTelemetry]) -> Value {
 }
 
 #[tokio::test]
-#[ignore = "live: needs TYPESAFE_API_KEY (or JEV_API_KEY), Chrome, and spends model calls"]
+#[ignore = "live: needs a Jev decision key, Chrome, and spends model calls"]
 async fn live_corpus() {
     let tasks = load_tasks().unwrap();
     validate(&tasks).unwrap();
-    let Some(key) = live_key() else {
-        eprintln!("skipping: set TYPESAFE_API_KEY (or JEV_API_KEY) to run the live tier");
+    let Some(route) = live_route() else {
+        eprintln!("skipping: set {} to run the live tier", HostedRoute::NEEDS);
         return;
     };
     let concurrency = env("JEV_EVAL_CONCURRENCY")
@@ -263,7 +266,7 @@ async fn live_corpus() {
         .unwrap_or(2)
         .max(1);
     let setup = LiveSetup {
-        key,
+        route,
         model: env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
         variants: Variants::parse(&env("JEV_EVAL_VARIANTS").unwrap_or_default()).unwrap(),
         text_model: match env("JEV_EVAL_TEXT").as_deref() == Some("model") {
@@ -354,7 +357,11 @@ mod tests {
 
     fn setup(concurrency: usize) -> LiveSetup {
         LiveSetup {
-            key: "test-key".into(),
+            route: HostedRoute {
+                host: JevHost::TypeSafe,
+                url: JevHost::TypeSafe.default_endpoint().into(),
+                key: "test-key".into(),
+            },
             model: "jev-latest".into(),
             variants: Variants::parse("").unwrap(),
             text_model: None,

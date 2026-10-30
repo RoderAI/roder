@@ -27,6 +27,7 @@ mod answer;
 mod context_budget;
 mod context_pages;
 mod hosted;
+pub(crate) mod route;
 use answer::read_answer;
 pub(crate) use answer::validate_choice;
 
@@ -35,9 +36,8 @@ pub(crate) struct DecisionOptions<'a> {
     pub activation_audit: Option<&'a dyn JevDecisionTransport>,
 }
 
-pub(crate) const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
-
-/// The same TypeSafe decision service used by the built-in `jev_browse` tool.
+/// The same TypeSafe decision service used by the built-in `jev_browse` tool,
+/// sent to TypeSafe directly or to any host serving its System One API.
 pub struct JevTypeSafeDecisionClient {
     model: String,
     profile: crate::jev_prompt::Profile,
@@ -66,15 +66,18 @@ impl JevTypeSafeDecisionClient {
         self.images = images;
         self
     }
+    /// TypeSafe's own System One API.
     pub fn new(key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::at(route::TYPESAFE_ENDPOINT, key, model)
+    }
+
+    /// The same System One body sent to `url`, such as OpenRouter's
+    /// `https://openrouter.ai/api/v1/systemone`, with `key` as the bearer.
+    pub fn at(url: &str, key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
             profile: crate::jev_prompt::Profile::Workflow,
-            transport: Arc::new(TypeSafeHttpTransport::new(
-                ENDPOINT,
-                key,
-                RetryPolicy::default(),
-            )),
+            transport: Arc::new(TypeSafeHttpTransport::new(url, key, RetryPolicy::default())),
             images: false,
             composed_transport: false,
         }

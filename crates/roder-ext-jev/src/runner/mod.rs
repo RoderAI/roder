@@ -41,13 +41,6 @@ pub(crate) const NO_TAB_YET: &str = "Nothing was browsed: this thread has no Jev
      the http(s) page to start on, such as the site's search or listing page for the goal; \
      later calls can then leave url empty.";
 
-fn key_from_env_or_config() -> Option<String> {
-    std::env::var("JEV_API_KEY")
-        .ok()
-        .filter(|key| !key.trim().is_empty())
-        .or_else(|| roder_config::provider_api_key("jev"))
-}
-
 pub(crate) fn env_value(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()
@@ -71,7 +64,7 @@ pub(crate) async fn resolve_text_model(
     text_model::resolve(explicit, turn_model, &RoderKeys, &RoderCodexSignIn).await
 }
 
-/// Roder's own models and browser: `JEV_API_KEY`, the text helper resolved
+/// Roder's own models and browser: the decision provider's key, the text helper resolved
 /// from the turn's model, the Chrome [`chrome::ensure`] finds or starts, and
 /// Roder's inference engines for the fallback.
 struct RoderDeps<'a> {
@@ -83,8 +76,9 @@ struct RoderDeps<'a> {
 impl SessionDeps for RoderDeps<'_> {
     fn model_key(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{:016x}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{:016x}:{}:{}",
             decision_backend::selected(),
+            env_value("JEV_DECISION_URL").unwrap_or_default(),
             env_value("JEV_DECISIONS_TEXT_ONLY").unwrap_or_default(),
             env_value("JEV_DECISIONS_PROFILE").unwrap_or_default(),
             env_value("JEV_IMAGES").unwrap_or_default(),

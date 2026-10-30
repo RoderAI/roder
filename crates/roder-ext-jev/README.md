@@ -73,8 +73,11 @@ notice is `third-party/duckduckgo-autoconsent/`.
   model (`JEV_FALLBACK=auto`, the default), or handed to the caller as the
   `jev_tab_*` tools.
 
-Requires `JEV_API_KEY`, or `JEV_DECISION_PROVIDER=openai` with an OpenAI API key
-(see [OpenAI Decisions](../../docs/openai-decisions-browser.md)). Decisions uses
+Requires `JEV_API_KEY` (TypeSafe directly), `JEV_DECISION_PROVIDER=openrouter`
+with `OPENROUTER_API_KEY` (the same Jev requests through OpenRouter's
+`/api/v1/systemone`, text only), or `JEV_DECISION_PROVIDER=openai` with an
+OpenAI API key (see [OpenAI Decisions](../../docs/openai-decisions-browser.md)).
+`JEV_DECISION_URL` overrides the URL of either Jev route. Decisions uses
 native questions, action-effect history and fresh screenshots when available;
 `JEV_DECISIONS_TEXT_ONLY=1` disables screenshots. Recognized secret fields and
 previously typed secrets suppress capture. In Roder's default policy mode each goal needs approval
@@ -1105,12 +1108,23 @@ is `#[ignore]`d and skips without a key:
 
 ```sh
 TYPESAFE_API_KEY=… cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
+JEV_DECISION_PROVIDER=openrouter OPENROUTER_API_KEY=… \
+  cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
 TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
   cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
 ```
 
-- `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key; `JEV_MODEL` pins
-  a model version, else `jev-latest`.
+- `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key for TypeSafe
+  directly; `JEV_DECISION_PROVIDER=openrouter` sends the same requests to
+  OpenRouter with `OPENROUTER_API_KEY`, and `JEV_DECISION_URL` overrides
+  either URL. The route is part of the pinned setup. `JEV_MODEL` pins a model
+  version, else `jev-latest`. The live sessions, MiniWoB++ and comparison
+  tiers take the same route.
+- Each row records `decision_model` (the model that answered, e.g. the dated
+  version behind `jev-latest`) and `decision_cost` in dollars when the host
+  reported every call's cost (OpenRouter does; TypeSafe directly does not).
+  The tally has `mean_cost` per task, and the summary `decision_cost`,
+  `costed_runs` and `served_models`.
 - Field values come from each task's `values`, so a run measures the decision
   model alone; `JEV_EVAL_TEXT=model` uses the configured text helper instead
   (`JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` pick it), except for a

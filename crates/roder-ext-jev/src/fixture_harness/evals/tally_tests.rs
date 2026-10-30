@@ -20,6 +20,8 @@ fn run(task: &str, verdict_ok: bool, truth_ok: bool, steps: usize) -> Run<'_> {
         marks: Marks::new(verdict_ok, truth_ok),
         steps,
         input_tokens: Some(1000 * steps as u64),
+        cost: None,
+        model: None,
     }
 }
 
@@ -93,6 +95,35 @@ fn runs_that_reported_no_tokens_do_not_pull_the_median_down() {
         tally([one])
     };
     assert_eq!(none["a"].median_input_tokens, None);
+}
+
+#[test]
+fn decision_cost_and_served_models_are_summed_over_the_runs_that_reported_them() {
+    let mut first = run("a", true, true, 3);
+    first.cost = Some(0.0002);
+    first.model = Some("typesafe/jev-1.14-20261014");
+    let mut second = run("a", true, true, 3);
+    second.cost = Some(0.0004);
+    second.model = Some("typesafe/jev-1.14-20261014");
+    let unpriced = run("b", true, true, 3);
+    let conclusion = conclude(&[first, second, unpriced], pin(), pin(), &settings(1), None);
+    assert!((conclusion.tasks["a"].mean_cost.unwrap() - 0.0003).abs() < 1e-12);
+    assert_eq!(conclusion.tasks["b"].mean_cost, None);
+    assert!((conclusion.decision_cost.unwrap() - 0.0006).abs() < 1e-12);
+    assert_eq!(conclusion.costed_runs, 2);
+    assert_eq!(
+        conclusion.served_models.iter().collect::<Vec<_>>(),
+        ["typesafe/jev-1.14-20261014"]
+    );
+    let report = conclusion.report();
+    assert!(
+        report.contains("decision cost: $0.000600 over 2 runs"),
+        "{report}"
+    );
+    assert!(
+        report.contains("served by: typesafe/jev-1.14-20261014"),
+        "{report}"
+    );
 }
 
 fn baseline(task: &str, n: usize, pass: usize) -> Baseline {

@@ -118,6 +118,14 @@ recorded as `[secret]`.
 
 `JEV_MODEL` selects the TypeSafe decision model and defaults to `jev-latest`.
 
+`JEV_DECISION_PROVIDER=openrouter` sends the same System One requests to
+OpenRouter (`https://openrouter.ai/api/v1/systemone`) with `OPENROUTER_API_KEY`
+(or `[providers.openrouter] api_key`) as the bearer token; `jev` (the default)
+is TypeSafe directly and `openai` is OpenAI Decisions. `JEV_DECISION_URL`
+replaces the URL of either Jev route, for a proxy or a test server. The
+OpenRouter route is text only: `JEV_IMAGES=1` fails there. OpenRouter reports
+each call's dollar `cost`, which the run's `usage` carries.
+
 `JEV_IMAGES=1` opts into TypeSafe image input (a TypeSafe "danger zone"
 feature, off by default): each decision attaches the current viewport screenshot
 when capture and fitting succeed; otherwise it proceeds from text. The screenshot
@@ -1292,7 +1300,8 @@ values read from the final document just before the engine closes the tab.
   in `cargo test` and also pins the trace that plan produces.
 - The live tier (`live_corpus`, `#[ignore]`d) sends the task's goal to the
   hosted model through the real transport, graded by the same outcome checks.
-  It needs `TYPESAFE_API_KEY` (or `JEV_API_KEY`). With `jev-latest`
+  It needs `TYPESAFE_API_KEY` (or `JEV_API_KEY`), or
+  `JEV_DECISION_PROVIDER=openrouter` with `OPENROUTER_API_KEY`. With `jev-latest`
   (answering as `jev-1.13.0`) the 18 tasks passed in all five runs with task
   values (two before the decision request carried the date, three after).
   With `JEV_EVAL_TEXT=model` they passed in one run; in the other, the
@@ -1410,9 +1419,11 @@ green; the plan that types and presses Enter on the same page posts and
 passes. The page is not in `tasks.json` because its plan would fail it.
 
 Each row also carries `repeat` (from 1), `input_tokens` when every call
-reported them, and `watch`, which the eval harness records from outside the
-loop (it wraps the browser, the decision client and the text helper, and
-changes nothing they send):
+reported them, `decision_model` (the model that answered) and
+`decision_cost` (dollars, when the host reported every call's cost), and
+`watch`, which the eval harness records from outside the loop (it wraps the
+browser, the decision client and the text helper, and changes nothing they
+send):
 
 - `looks`, one per reading of the page: the `offered` actions, the
   `omitted_actions` the snapshot left out (past its caps, hidden or not
@@ -1748,7 +1759,9 @@ rather than running without the limit:
   fallback".
 
 `usage` sums the run's token usage per kind of call:
-`{"decision": {"calls", "input_tokens", "output_tokens"}, "text": {...}}`.
+`{"decision": {"calls", "input_tokens", "output_tokens"}, "text": {...}}`,
+plus `cost` in dollars for a kind whose every call reported one (OpenRouter
+does).
 The decision service reports `input_tokens` and `output_tokens`, and the
 OpenAI-shaped text helper `prompt_tokens` and `completion_tokens`; each is
 read under either name. A count that any call did not report is `"unknown"`,

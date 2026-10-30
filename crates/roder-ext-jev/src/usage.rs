@@ -5,6 +5,9 @@
 //! `completion_tokens`. Each is read under both names. A sum is only as good
 //! as its parts, so a count any call left out is `"unknown"`, never a 0 that
 //! would read as free; a run that made no calls of a kind used 0.
+//!
+//! A host that bills in dollars (OpenRouter) reports `cost` too; it is summed
+//! only when every call reported it, and left out otherwise.
 
 use serde::{Serialize, Serializer};
 use serde_json::Value;
@@ -26,11 +29,15 @@ impl Serialize for JevTokenCount {
 }
 
 /// One kind of model call, summed over a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct JevCallUsage {
     pub calls: usize,
     pub input_tokens: JevTokenCount,
     pub output_tokens: JevTokenCount,
+    /// Dollars, when at least one call was made and every call reported
+    /// its cost.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
 }
 
 impl JevCallUsage {
@@ -39,6 +46,7 @@ impl JevCallUsage {
         let mut calls = 0usize;
         let mut input = Some(0);
         let mut output = Some(0);
+        let mut cost = Some(0.0);
         for usage in usages {
             let nested = usage["calls"]
                 .as_u64()
@@ -51,18 +59,22 @@ impl JevCallUsage {
             output = output
                 .zip(count(usage, &["output_tokens", "completion_tokens"]))
                 .map(add);
+            cost = cost
+                .zip(usage["cost"].as_f64().filter(|dollars| dollars.is_finite()))
+                .map(|(total, dollars)| total + dollars);
         }
         let known = |total: Option<u64>| total.map_or(JevTokenCount::Unknown, JevTokenCount::Known);
         Self {
             calls,
             input_tokens: known(input),
             output_tokens: known(output),
+            cost: cost.filter(|_| calls > 0),
         }
     }
 }
 
 /// Decision and text-helper usage for a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct JevUsage {
     pub decision: JevCallUsage,
     pub text: JevCallUsage,
@@ -196,6 +208,25 @@ mod tests {
         let text = JevCallUsage::sum(&[json!({"prompt_tokens": 7, "completion_tokens": 4})]);
         assert_eq!(text.input_tokens, JevTokenCount::Known(7));
         assert_eq!(text.output_tokens, JevTokenCount::Known(4));
+    }
+
+    #[test]
+    fn cost_is_summed_only_when_every_call_reported_it() {
+        let billed = [
+            json!({"input_tokens": 100, "cost": 0.000013}),
+            json!({"input_tokens": 50, "cost": 0.000007}),
+        ];
+        let usage = JevCallUsage::sum(&billed);
+        assert!((usage.cost.unwrap() - 0.00002).abs() < 1e-12);
+        assert_eq!(serde_json::to_value(usage).unwrap()["calls"], 2);
+        let partial = JevCallUsage::sum(&[json!({"cost": 0.1}), json!({"input_tokens": 3})]);
+        assert_eq!(partial.cost, None);
+        assert!(serde_json::to_value(partial).unwrap().get("cost").is_none());
+        // Merged usage (an audited decision) keeps its cost.
+        let merged = serde_json::to_value(usage).unwrap();
+        let again = JevCallUsage::sum(&[merged, json!({"cost": 0.00001})]);
+        assert_eq!(again.calls, 3);
+        assert!((again.cost.unwrap() - 0.00003).abs() < 1e-12);
     }
 
     #[test]

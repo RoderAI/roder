@@ -9,7 +9,7 @@
 //! three runs still stands against a run of five. It is all offline logic;
 //! the live tier only feeds it rows.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use super::grade::Marks;
 use super::pin::{BASELINE_FILE, Pin};
 use super::rows::Row;
+
+mod baseline;
+pub(crate) use baseline::{Baseline, Comparison};
 
 /// The most runs per task `JEV_EVAL_N` accepts: it multiplies a billed run.
 pub(crate) const MAX_REPEATS: usize = 20;
@@ -67,6 +70,10 @@ pub(crate) struct Run<'a> {
     pub(crate) marks: Marks,
     pub(crate) steps: usize,
     pub(crate) input_tokens: Option<u64>,
+    /// Dollars the run's decisions cost, when the host reported it.
+    pub(crate) cost: Option<f64>,
+    /// The model that answered, as the host reported it.
+    pub(crate) model: Option<&'a str>,
 }
 
 impl<'a> From<&'a Row> for Run<'a> {
@@ -76,6 +83,8 @@ impl<'a> From<&'a Row> for Run<'a> {
             marks: row.marks,
             steps: row.steps,
             input_tokens: row.input_tokens,
+            cost: row.decision_cost,
+            model: row.decision_model.as_deref(),
         }
     }
 }
@@ -94,6 +103,10 @@ pub(crate) struct TaskTally {
     /// Over the runs that reported tokens; absent when none did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) median_input_tokens: Option<f64>,
+    /// Mean decision dollars over the runs that reported a cost; absent
+    /// when none did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) mean_cost: Option<f64>,
 }
 
 /// Every task of a run, by id.
@@ -122,10 +135,15 @@ pub(crate) fn tally<'a>(runs: impl IntoIterator<Item = Run<'a>>) -> Tally {
                         .filter_map(|run| run.input_tokens.map(|tokens| tokens as f64))
                         .collect(),
                 ),
+                mean_cost: mean(runs.iter().filter_map(|run| run.cost).collect()),
             };
             (task.to_string(), tally)
         })
         .collect()
+}
+
+fn mean(values: Vec<f64>) -> Option<f64> {
+    (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
 }
 
 fn median(mut values: Vec<f64>) -> Option<f64> {
@@ -141,12 +159,20 @@ fn median(mut values: Vec<f64>) -> Option<f64> {
 /// A run's tally as the rows of a table, one task a line.
 pub(crate) fn table(tally: &Tally) -> String {
     let mut out = format!(
-        "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13}\n",
-        "task", "runs", "pass", "verdict", "truth", "false_green", "steps", "input_tokens"
+        "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13} {:>10}\n",
+        "task",
+        "runs",
+        "pass",
+        "verdict",
+        "truth",
+        "false_green",
+        "steps",
+        "input_tokens",
+        "mean_cost"
     );
     for (task, tally) in tally {
         out.push_str(&format!(
-            "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13}\n",
+            "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13} {:>10}\n",
             task,
             tally.runs,
             tally.passed,
@@ -157,111 +183,12 @@ pub(crate) fn table(tally: &Tally) -> String {
             tally
                 .median_input_tokens
                 .map_or("-".to_string(), |tokens| format!("{tokens}")),
+            tally
+                .mean_cost
+                .map_or("-".to_string(), |dollars| format!("${dollars:.6}")),
         ));
     }
     out
-}
-
-/// The numbers of an earlier run, and the pin they were taken at.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Baseline {
-    pub(crate) pin: Pin,
-    /// Runs per task.
-    pub(crate) n: usize,
-    pub(crate) tasks: Tally,
-}
-
-impl Baseline {
-    /// `None` when there is no file; a file that does not parse is an error,
-    /// not an absent baseline.
-    pub(crate) fn load(path: &Path) -> anyhow::Result<Option<Self>> {
-        let raw = match std::fs::read_to_string(path) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-        };
-        serde_json::from_str(&raw)
-            .map(Some)
-            .with_context(|| format!("parse {}", path.display()))
-    }
-
-    pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-        }
-        let mut text = serde_json::to_string_pretty(self)?;
-        text.push('\n');
-        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))
-    }
-
-    /// This baseline against a run whose pin at its start was `pin`.
-    pub(crate) fn compare(&self, now: &Tally, pin: &Pin) -> Comparison {
-        let mut comparison = Comparison::default();
-        for (name, was, is) in [
-            ("corpus", &self.pin.corpus, &pin.corpus),
-            ("model", &self.pin.model, &pin.model),
-            ("setup", &self.pin.setup, &pin.setup),
-        ] {
-            if was != is {
-                comparison.notes.push(format!(
-                    "{name} differs from the baseline's ({was} -> {is}); the counts may not compare"
-                ));
-            }
-        }
-        for (task, is) in now {
-            let Some(was) = self.tasks.get(task) else {
-                comparison.new.push(task.clone());
-                continue;
-            };
-            let worse = worse(was, is);
-            if !worse.is_empty() {
-                comparison
-                    .regressions
-                    .push(format!("{task}: {}", worse.join(", ")));
-            } else if is.passed * was.runs > was.passed * is.runs {
-                comparison.improved.push(format!(
-                    "{task}: passed {}/{} -> {}/{}",
-                    was.passed, was.runs, is.passed, is.runs
-                ));
-            }
-        }
-        comparison
-    }
-}
-
-/// How a task's rates got worse since the baseline; empty when they did not.
-/// Rates, compared across as products, so runs of unequal count compare.
-fn worse(was: &TaskTally, is: &TaskTally) -> Vec<String> {
-    let mut worse = Vec::new();
-    for (name, before, now) in [
-        ("passed", was.passed, is.passed),
-        ("verdict_ok", was.verdict_ok, is.verdict_ok),
-        ("truth_ok", was.truth_ok, is.truth_ok),
-    ] {
-        if now * was.runs < before * is.runs {
-            worse.push(format!("{name} {before}/{} -> {now}/{}", was.runs, is.runs));
-        }
-    }
-    if is.false_green * was.runs > was.false_green * is.runs {
-        worse.push(format!(
-            "false_green {}/{} -> {}/{}",
-            was.false_green, was.runs, is.false_green, is.runs
-        ));
-    }
-    worse
-}
-
-/// A run set against a baseline.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct Comparison {
-    /// Tasks whose pass, verdict, truth or false-green rate got worse.
-    pub(crate) regressions: Vec<String>,
-    pub(crate) improved: Vec<String>,
-    /// Tasks the baseline has no numbers for.
-    pub(crate) new: Vec<String>,
-    /// Ways the two runs were not measuring the same thing.
-    pub(crate) notes: Vec<String>,
 }
 
 /// What the environment asked of this run.
@@ -286,6 +213,14 @@ pub(crate) struct Conclusion {
     /// What moved between the two reads of the pin: a mid-run edit.
     pub(crate) drift: Vec<String>,
     pub(crate) tasks: Tally,
+    /// Decision dollars summed over the runs that reported a cost, and how
+    /// many did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) decision_cost: Option<f64>,
+    pub(crate) costed_runs: usize,
+    /// Every model the host reported answering, such as the dated version
+    /// behind `jev-latest`.
+    pub(crate) served_models: BTreeSet<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) comparison: Option<Comparison>,
     /// Why a requested baseline was not saved.
@@ -311,6 +246,7 @@ pub(crate) fn conclude(
     saved: Option<&Baseline>,
 ) -> Conclusion {
     let tasks = tally(runs.iter().copied());
+    let costs = runs.iter().filter_map(|run| run.cost).collect::<Vec<_>>();
     let drift = start.drift(&end);
     let comparison = saved.map(|saved| saved.compare(&tasks, &start));
     let mut refused = Vec::new();
@@ -341,6 +277,12 @@ pub(crate) fn conclude(
         end,
         drift,
         tasks,
+        decision_cost: costs.iter().copied().reduce(|a, b| a + b),
+        costed_runs: costs.len(),
+        served_models: runs
+            .iter()
+            .filter_map(|run| run.model.map(str::to_string))
+            .collect(),
         comparison,
         refused,
         save: None,
@@ -415,6 +357,22 @@ impl Conclusion {
             pin.setup,
             table(&self.tasks)
         );
+        if !self.served_models.is_empty() {
+            out.push_str(&format!(
+                "served by: {}\n",
+                self.served_models
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if let Some(dollars) = self.decision_cost {
+            out.push_str(&format!(
+                "decision cost: ${dollars:.6} over {} runs\n",
+                self.costed_runs
+            ));
+        }
         if !self.drift.is_empty() {
             out.push_str(&format!(
                 "MID-RUN EDIT: {}. These numbers describe no one tree.\n",
