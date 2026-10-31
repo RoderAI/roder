@@ -5,9 +5,18 @@
 //! with no controls, which sent callers hunting for canvas widgets. Here the
 //! main document's HTTP status, its title, its text and its address are read
 //! for the marks such pages carry. Detection and honest reporting only: Jev
-//! never tries to get around a block.
+//! never tries to get around a block. A 401 that shows no challenge asks for
+//! a sign-in rather than refusing automation: it ends the run `needs_login`
+//! (see [`crate::wall`]), not `access_denied`.
+//!
+//! Some of these pages clear themselves: a challenge that runs its check and
+//! moves on (Cloudflare's "Just a moment...") or a 503 a busy site serves
+//! while it retries. [`may_clear`] names those, and the loop watches such a
+//! page for a while before it believes it (see `agent::look`).
 
 use reqwest::Url;
+
+use crate::engine::JevStatus;
 
 /// What kind of refusal a page is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +24,8 @@ pub(crate) enum BlockKind {
     Forbidden,
     RateLimited,
     Challenge,
+    /// HTTP 401 with no challenge: the site wants a sign-in.
+    Unauthorized,
 }
 
 /// A page that refused automated access, with the evidence for it.
@@ -31,13 +42,22 @@ impl AccessBlock {
             BlockKind::Forbidden => "The site refused automated access",
             BlockKind::RateLimited => "The site rate-limited automated access",
             BlockKind::Challenge => "The site showed a check for automated access",
+            BlockKind::Unauthorized => "The site asked for a sign-in",
         };
         format!("{what} ({})", self.evidence)
+    }
+
+    /// The status a run stopped by this page ends with.
+    pub(crate) fn status(&self) -> JevStatus {
+        match self.kind {
+            BlockKind::Unauthorized => JevStatus::NeedsLogin,
+            _ => JevStatus::AccessDenied,
+        }
     }
 }
 
 /// Phrases a refusal page shows, lower-cased, with the kind each implies.
-const MARKERS: [(&str, BlockKind); 7] = [
+const MARKERS: [(&str, BlockKind); 8] = [
     ("access denied", BlockKind::Forbidden),
     ("unusual traffic", BlockKind::RateLimited),
     ("too many requests", BlockKind::RateLimited),
@@ -45,6 +65,7 @@ const MARKERS: [(&str, BlockKind); 7] = [
     ("are you a robot", BlockKind::Challenge),
     ("captcha", BlockKind::Challenge),
     ("checking your browser", BlockKind::Challenge),
+    ("just a moment", BlockKind::Challenge),
 ];
 
 /// Only the start of the text is read: a refusal page says it at once, and
@@ -59,7 +80,8 @@ const TEXT_CHARS: usize = 600;
 /// `/sorry/` address, the path search engines put their traffic check
 /// under, counts only with more to show for it: a refusal status, a marker
 /// in the page's opening text, or nothing to act on. Any site may have a
-/// `/sorry/out-of-stock` page.
+/// `/sorry/out-of-stock` page. A 503 is a refusal only with a marker and
+/// nothing to act on: most are a site that is down, not one that refuses.
 pub(crate) fn classify(
     status: Option<u16>,
     url: &str,
@@ -102,6 +124,7 @@ pub(crate) fn classify(
             let kind = match (code, found) {
                 (_, Some((_, BlockKind::Challenge))) => BlockKind::Challenge,
                 (429, _) | (_, Some((_, BlockKind::RateLimited))) => BlockKind::RateLimited,
+                (401, _) => BlockKind::Unauthorized,
                 _ => BlockKind::Forbidden,
             };
             let evidence = match found {
@@ -110,12 +133,25 @@ pub(crate) fn classify(
             };
             Some(AccessBlock { kind, evidence })
         }
+        Some(503) if controls == 0 => in_title.or(in_text).map(|(marker, kind)| AccessBlock {
+            kind: *kind,
+            evidence: format!("HTTP 503, {}", quoted(marker)),
+        }),
         _ if controls == 0 => in_title.map(|(marker, kind)| AccessBlock {
             kind: *kind,
             evidence: with_status(status, quoted(marker)),
         }),
         _ => None,
     }
+}
+
+/// Whether a page that offers nothing to act on may clear itself, and is
+/// worth watching before it is believed: a challenge, under any status, or
+/// a 503, the status a busy site or a bot check serves while it retries.
+/// A plain 403 "Access Denied" or a 429 stays as it is.
+pub(crate) fn may_clear(status: Option<u16>, block: Option<&AccessBlock>, controls: usize) -> bool {
+    controls == 0
+        && (status == Some(503) || block.is_some_and(|block| block.kind == BlockKind::Challenge))
 }
 
 fn with_status(status: Option<u16>, evidence: String) -> String {
@@ -147,6 +183,28 @@ mod tests {
         // A 403 with nothing to act on needs no marker.
         let bare = classify(Some(403), "https://a.test/", "", "Forbidden", 0).unwrap();
         assert_eq!(bare.evidence, "HTTP 403, nothing to act on");
+    }
+
+    /// A 401 asks for a sign-in: `needs_login`, unless it shows a challenge.
+    #[test]
+    fn classify_a_401_as_a_sign_in_unless_it_shows_a_challenge() {
+        let bare = classify(Some(401), "https://a.test/", "", "", 0).unwrap();
+        assert_eq!(bare.kind, BlockKind::Unauthorized);
+        assert_eq!(bare.status(), JevStatus::NeedsLogin);
+        assert_eq!(
+            bare.reason(),
+            "The site asked for a sign-in (HTTP 401, nothing to act on)"
+        );
+        let denied = classify(Some(401), "https://a.test/", "Access Denied", "", 0).unwrap();
+        assert_eq!(denied.kind, BlockKind::Unauthorized);
+        let captcha = classify(Some(401), "https://a.test/", "", "Solve the captcha", 0).unwrap();
+        assert_eq!(captcha.kind, BlockKind::Challenge);
+        assert_eq!(captcha.status(), JevStatus::AccessDenied);
+        // A 401 sign-in form to fill is a page to act on.
+        assert_eq!(
+            classify(Some(401), "https://a.test/", "Sign in", "", 3),
+            None
+        );
     }
 
     #[test]
@@ -206,6 +264,50 @@ mod tests {
             let block = classify(status, "https://s.test/sorry/index", "", text, controls);
             assert_eq!(block.map(|block| block.kind), Some(BlockKind::Challenge));
         }
+    }
+
+    /// A 503 refuses only with a marker and nothing to act on.
+    #[test]
+    fn classify_a_503_only_with_a_marker_and_nothing_to_act_on() {
+        let moment = classify(
+            Some(503),
+            "https://a.test/",
+            "Just a moment...",
+            "Checking your browser before accessing a.test.",
+            0,
+        )
+        .unwrap();
+        assert_eq!(moment.kind, BlockKind::Challenge);
+        assert_eq!(moment.evidence, "HTTP 503, \"Just a moment...\"");
+        let in_text = classify(Some(503), "https://a.test/", "", "Verify you are human", 0);
+        assert_eq!(in_text.map(|block| block.kind), Some(BlockKind::Challenge));
+        // A site that is down is not refusing anyone.
+        let down = "Service temporarily unavailable. Please try again shortly.";
+        assert_eq!(
+            classify(Some(503), "https://a.test/", "Service Unavailable", down, 0),
+            None
+        );
+        assert_eq!(
+            classify(Some(503), "https://a.test/", "Just a moment...", "", 4),
+            None
+        );
+    }
+
+    /// A challenge with nothing to act on, or a bare 503, is watched; a
+    /// plain refusal or a page with controls is not.
+    #[test]
+    fn only_challenges_and_503s_with_nothing_to_act_on_may_clear() {
+        let challenge = classify(Some(403), "https://a.test/", "Just a moment...", "", 0);
+        assert!(may_clear(Some(403), challenge.as_ref(), 0));
+        let title = classify(None, "https://a.test/", "Checking your browser", "", 0);
+        assert!(may_clear(None, title.as_ref(), 0));
+        assert!(may_clear(Some(503), None, 0));
+        let denied = classify(Some(403), "https://a.test/", "Access Denied", "", 0);
+        assert!(!may_clear(Some(403), denied.as_ref(), 0));
+        let limited = classify(Some(429), "https://a.test/", "", "Slow down", 0);
+        assert!(!may_clear(Some(429), limited.as_ref(), 0));
+        assert!(!may_clear(Some(503), None, 2));
+        assert!(!may_clear(Some(200), None, 0));
     }
 
     #[test]

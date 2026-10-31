@@ -29,7 +29,12 @@ fn longest_error_run(errors: &[bool]) -> usize {
 
 #[test]
 fn a_first_handoff_is_marked_and_is_not_an_error() {
-    for status in ["needs_input", "needs_confirmation", "access_denied"] {
+    for status in [
+        "needs_input",
+        "needs_login",
+        "needs_confirmation",
+        "access_denied",
+    ] {
         let mut last = None;
         let (error, class) = finish(&mut last, data(status, "https://a.test/", "why"));
         assert!(!error, "{status}");
@@ -198,7 +203,12 @@ fn every_other_status_keeps_its_meaning_and_gains_nothing() {
 
 #[test]
 fn a_handoff_status_the_session_did_not_mark_is_still_an_error() {
-    for status in ["needs_input", "needs_confirmation", "access_denied"] {
+    for status in [
+        "needs_input",
+        "needs_login",
+        "needs_confirmation",
+        "access_denied",
+    ] {
         assert!(
             is_error(&data(status, "https://a.test/", "why")),
             "{status}"
@@ -211,7 +221,12 @@ fn a_handoff_status_the_session_did_not_mark_is_still_an_error() {
 
 #[test]
 fn the_text_the_caller_reads_is_the_same_with_or_without_the_class() {
-    for status in ["needs_input", "needs_confirmation", "access_denied"] {
+    for status in [
+        "needs_input",
+        "needs_login",
+        "needs_confirmation",
+        "access_denied",
+    ] {
         let mut plain = data(status, "https://a.test/form", "no value for \"Name\"");
         plain["actions"] = json!([]);
         plain["visible_text"] = json!("Contact us");

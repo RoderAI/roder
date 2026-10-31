@@ -312,11 +312,14 @@ async fn keyless_session_corpus_passes() {
 }
 
 #[tokio::test]
-#[ignore = "live: needs TYPESAFE_API_KEY (or JEV_API_KEY), Chrome, and spends model calls"]
+#[ignore = "live: needs a Jev decision key, Chrome, and spends model calls"]
 async fn live_session_corpus() {
     let tasks = load().unwrap();
-    let Some(key) = super::live::live_key() else {
-        eprintln!("skipping: set TYPESAFE_API_KEY (or JEV_API_KEY) to run the live tier");
+    let Some(route) = super::live::live_route() else {
+        eprintln!(
+            "skipping: set {} to run the live tier",
+            crate::decide::route::HostedRoute::NEEDS
+        );
         return;
     };
     let model = super::live::env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into());
@@ -327,13 +330,7 @@ async fn live_session_corpus() {
     let mut passed = 0;
     for task in &tasks {
         let harness = base.with_new_site().await;
-        let failures = run(&harness, task, |_| {
-            Arc::new(crate::decide::JevTypeSafeDecisionClient::new(
-                key.clone(),
-                model.clone(),
-            ))
-        })
-        .await;
+        let failures = run(&harness, task, |_| Arc::new(route.client(model.clone()))).await;
         passed += usize::from(failures.is_empty());
         eprintln!(
             "{:<28} {} {}",

@@ -45,10 +45,22 @@ notice is `third-party/duckduckgo-autoconsent/`.
 - Page content is untrusted: a `done` result is an agent claim to be checked
   against the observed page, which the result text shows (see
   [The result](#the-result)).
-- A site that refuses automated access (HTTP 401, 403 or 429, a challenge
+- A site that refuses automated access (HTTP 403 or 429, a challenge
   or "unusual traffic" page) ends the call `access_denied` before any
   decision, with the evidence. Jev only reports it; it never tries to get
-  around a block.
+  around a block. A challenge or a 503 with nothing to act on is first
+  watched for up to 12 s, since many clear themselves, and the run goes on
+  from the page they lead to.
+- A file an action downloads (a link to a CSV, an export button) is saved
+  under `<temp>/jev-downloads`, counts as the action's effect, and its text
+  shows on the next read; the result lists it under `downloads` with where
+  it was saved. Saving the same file again changes nothing.
+- A sign-in Jev cannot make (a password or one-time code the goal does not
+  give, a `blocked` stop on a sign-in or single sign-on page, an HTTP 401
+  with nothing to act on) ends the call `needs_login` with a typed `wall`:
+  its `kind` (`password`, `one_time_code` or `sign_in`), the page's
+  `origin` and the labels of the `fields` it asked for (see
+  [Sign-in walls](#sign-in-walls)).
 - Frames of another origin (a booking or payment widget) are read, never
   acted in: their text reaches the model and the result, their buttons are
   not offered (`JEV_FRAME_TEXT=0` turns the read off).
@@ -57,24 +69,43 @@ notice is `third-party/duckduckgo-autoconsent/`.
   refuses the consent platforms it knows, and Jev's own `consent.js` a clear
   banner it does not. An irreversible-action gate, off by default
   (`JEV_CONFIRM_IRREVERSIBLE=1`), ends a run `needs_confirmation` before a
-  purchase, payment, send, publish or delete unless the call sets
-  `authorize_irreversible`. Neither adds a model call, and the gate off, the
+  purchase, payment, send, publish, delete or password change unless the
+  call sets `authorize_irreversible`, and before a download the goal rules
+  out whatever it sets. Neither adds a model call, and the gate off, the
   decision request is byte-for-byte unchanged.
+- The text model is also Jev's consultant (`JEV_CONSULT=0` turns it off).
+  When Jev is about to repeat, unsure, the click it just made, which the
+  repeat guard would stop, one text call asks whether to go ahead, or what
+  to act on instead. That call lets a feed's second "Load more" through,
+  but never a repeated commitment or a twin. Two more tiers are off by default because they did not help
+  when measured. `JEV_CONSULT_BELOW=0.55` consults before any step under that
+  call confidence and may act on another control, which is still gated.
+  `JEV_LIGHT_RECOVERIES=2` gives a stalled run that many one-step recoveries
+  before the fallback. The consultant is never offered a cookie-banner
+  choice. Its calls count as text calls (see
+  [Second opinions](../../docs/jev-browser.md#second-opinions-the-consult-and-light-recovery)).
 - Password and one-time-code fields can be typed into. What such a field
   holds is never read (the observation says only whether it is filled), and
   what Jev types there is recorded as `[secret]` and scrubbed from what the
-  page shows afterwards.
+  page shows afterwards, as typed, percent-encoded (a GET form's address)
+  or JSON-escaped.
 - A target covered by a popover, menu, picker or dialog (one Jev opened
   itself, or any laid over the page) is uncovered first: Escape, the layer's
   own close control, or a press outside it, then the action goes ahead in
-  the same step (see [Uncovering a target](#uncovering-a-target)).
+  the same step (see [Uncovering a target](#uncovering-a-target)). A target
+  under a band fixed to the window (an anchored ad, a sticky footer) is
+  scrolled clear of it, or pressed from the keyboard where the page cannot
+  scroll, and nothing in the band is pressed.
 - When Jev cannot progress, Roder's full browser tools go on in the same tab
   (see [Fallback](#fallback)): inside the call, driven by the session's
   model (`JEV_FALLBACK=auto`, the default), or handed to the caller as the
   `jev_tab_*` tools.
 
-Requires `JEV_API_KEY`, or `JEV_DECISION_PROVIDER=openai` with an OpenAI API key
-(see [OpenAI Decisions](../../docs/openai-decisions-browser.md)). Decisions uses
+Requires `JEV_API_KEY` (TypeSafe directly), `JEV_DECISION_PROVIDER=openrouter`
+with `OPENROUTER_API_KEY` (the same Jev requests through OpenRouter's
+`/api/v1/systemone`, text only), or `JEV_DECISION_PROVIDER=openai` with an
+OpenAI API key (see [OpenAI Decisions](../../docs/openai-decisions-browser.md)).
+`JEV_DECISION_URL` overrides the URL of either Jev route. Decisions uses
 native questions, action-effect history and fresh screenshots when available;
 `JEV_DECISIONS_TEXT_ONLY=1` disables screenshots. Recognized secret fields and
 previously typed secrets suppress capture. In Roder's default policy mode each goal needs approval
@@ -85,8 +116,8 @@ can supply such values through a `JevTextValueResolver` instead (an opaque
 reference in, the value out at execution), which keeps them out of the goal,
 the requests and the trace. Without a resolver, the text helper takes a
 password or code only when it is written in the goal word for word; a
-one-time code is rarely known in advance, so the run ends `needs_input`
-naming the field.
+one-time code is rarely known in advance, so the run ends `needs_login` at a
+`one_time_code` wall naming the field.
 
 See [`docs/jev-browser.md`](https://github.com/RoderAI/roder/blob/master/docs/jev-browser.md)
 for configuration and known limitations.
@@ -115,8 +146,8 @@ process-wide registry keyed by thread id; a subagent's thread has its own.
   `cdp.rs` has no reader task, so an idle socket would queue events unread
   and leave dialogs unanswered; each call opens a new connection,
   re-attaches (`Page::resume`) and sets each tab up again (viewport, focus
-  emulation, the Page domain, the quiet clock, autoconsent for later
-  documents), since those end with the DevTools session. Measured under
+  emulation, the Page domain, the quiet clock and the Network domain,
+  autoconsent for later documents), since those end with the DevTools session. Measured under
   300 ms on the fixture page (the suite's test asserts only a 2 s ceiling,
   since its tests run in parallel on one shared Chrome). Every page already open at that
   point is recorded as seen: a tab the user opened from Jev's tab between
@@ -277,7 +308,7 @@ cookies and page state, as `JEV_FALLBACK` says (`src/fallback/`):
   out; or the run ended `error` because the decision service kept sending
   replies Jev could not use (`stop_cause` `decision_unusable`, trigger kind
   `decision_unusable`). That is the only `error` that falls back. Never after
-  `needs_input`, `needs_confirmation`, `access_denied`, a page that did not
+  `needs_input`, `needs_login`, `needs_confirmation`, `access_denied`, a page that did not
   load, a page outside the allowed origins, a confirm or prompt Jev declined,
   a provider failure (unreachable, a refused key, billing or access, a rate
   limit), any other error or a timeout: a different driver does not fix
@@ -367,6 +398,20 @@ close …") and the action goes ahead in the same step, with no model call. A
 cookie or consent banner is left to banner refusal, and a layer that stayed
 is not tried again in the run.
 
+A band fixed to the window (fixed or sticky, smaller than half the window and
+at one of its edges: an anchored ad, a sticky footer, a chat bubble; not a
+cookie or consent bar, which is left to banner refusal) is not dismissed: `band.js` classes it, and the target is scrolled to the centre,
+start and end of what scrolls it until a point is its own
+(`uncovered: "scrolled it clear of …"`). Where none is (a page that cannot
+scroll), the target is focused and pressed with the key its semantics answer
+to (Enter or Space), typed into, or chosen by script, after its guard and
+what covers it are checked again right before the key, so a menu or dialog
+that focus opened over it, or a control focus repurposed, gets no key. Enter
+in a field (PRESS_ENTER) takes the same check. Nothing in the band is
+pressed; a dialog, menu, popover or full-window cover is never pressed
+through, by pointer or by keyboard (after fastbrowse's `route_around` and
+`keys_reach`, MIT).
+
 Escape (and Enter) are now sent without a native key code: Escape's Windows
 code 27 sent as macOS's native code opened Chrome's "About Chrome" page from
 a shown tab, which the fallback fixtures found by counting Chrome's tabs.
@@ -375,16 +420,58 @@ a shown tab, which the fallback fixtures found by counting Chrome's tabs.
 
 - **Access blocks (`block.rs`).** After the first observation the browser
   describes the page (`JevBrowser::describe`, a default method: Jev's `Page`
-  reads the navigation's `responseStatus` and the visible headings with
-  `describe.js`). A 401, 403 or 429 with a refusal phrase ("Access Denied",
-  "unusual traffic", "verify you are human", "captcha", …) or nothing to act
-  on, a `cdn-cgi/challenge` address, a `/sorry/` address with a refusal
+  reads the visible headings with `describe.js`, and the HTTP status its
+  committed document was served with from the Network events, so a file the
+  page linked to or a script that shadows `performance` does not change
+  it). A 403 or 429 with a refusal phrase ("Access Denied",
+  "unusual traffic", "verify you are human", "captcha", "just a moment", …)
+  or nothing to act on, a 503 with such a phrase and nothing to act on, a
+  `cdn-cgi/challenge` address, a `/sorry/` address with a refusal
   status, a marker or nothing to act on (an ordinary `/sorry/out-of-stock`
   page is not one), or a page with
   nothing to act on whose title carries such a phrase ends the call
   `access_denied` before any decision. A page that loaded and merely mentions
   a captcha is not one. A `blocked` run whose final page is one is renamed
-  too. Detection and honest reporting only.
+  too. A 401 is a sign-in, not a refusal: with nothing to act on and no
+  challenge it ends the call `needs_login` with a `sign_in` wall. Detection
+  and honest reporting only.
+- **Pages that clear themselves (`agent/look.rs`).** Before it is
+  classified, an opening page that may clear itself (a challenge, or a 503,
+  with nothing to act on: `block::may_clear`) is read again each time it
+  changes (`JevBrowser::wait_for_change`) and at least once a second, for up
+  to 12 s, until it no longer looks like one. A plain 403 or a 429 is not
+  waited on. A start page that still shows nothing after the empty-page
+  reads, served without an error status, is loaded once more
+  (`JevBrowser::reload`, a fresh GET of its address, never a reload that
+  could post a form again); never after an action. Both follow fastbrowse's
+  `outwait` and `settle_blank_opening` (MIT).
+
+## Sign-in walls
+
+`wall.rs` (from fastbrowse's `credential_field` and `wall_kind`) turns a run
+that stopped short at a sign-in into `needs_login`, on the page's own
+evidence and never on a guess:
+
+- **A credential the goal lacks.** The text resolver had no value for a
+  password or one-time-code field, or for a field in the same form as one
+  (the account name). A field for a new password (labelled new, confirm,
+  repeat, create, …), or any field of a form that holds one (a sign-up or
+  a password change), is a value the caller gives: still `needs_input`.
+- **A `blocked` stop on a wall.** The final page has an empty password or
+  code field and names a sign-in (its title, a heading, or a control such
+  as "Sign in" or "Verify"), or its title or a heading names a sign-in and
+  it offers a control to make one ("Continue with Google", "Sign in with
+  SSO"). A header's "Sign in" link on an ordinary page is not a wall. A page
+  outside the allowed origins or one that did not load stays `blocked`.
+- **An HTTP 401** with nothing to act on (see above).
+
+`JevRunResult.wall` (`JevWall`) says what the wall asks for: `kind`
+`password` if any field is a password, `one_time_code` if all are codes,
+else `sign_in`; the page's `origin`; and up to eight `fields` (labels), as
+untrusted and as scrubbed as the page text. `stopped_because` starts
+"Sign-in required at <origin>: the page asks for …". It is a handoff, like
+`needs_input`, and never falls back: the next step is for the user to sign
+in in the tab (or give the code), then call again with url "".
 - **An empty first look is read again.** A page with nothing to act on and
   under 20 characters of text (a document that committed before it rendered)
   is read up to three more times over about 2.6 s before any decision, and a
@@ -393,8 +480,12 @@ a shown tab, which the fallback fixtures found by counting Chrome's tabs.
 - **Frames Jev cannot reach (`page/frames.rs`).** Up to two frames of
   another origin, at least 200 by 100 pixels, shown and on screen, are read
   on every observation: one in the page's process through an isolated
-  world, one in another process (another site, or a sandboxed frame) by
-  attaching to its target for one evaluate. Their text, 700 characters each,
+  world, one in another process (another site, or a sandboxed frame) on the
+  session Chrome attached to it when it appeared (`Target.setAutoAttach`,
+  kept by `cdp/frames.rs`). Each frame's read has a 5 s deadline, and a
+  frame of another process that missed it gets 0.5 s on later reads for
+  30 s, so an advertisement whose renderer stopped answering costs one
+  observation 5 s, not every observation 30 s. Their text, 700 characters each,
   is added to the page text as `[frame <origin>] …` lines within its 6,000
   characters (the page's own text is cut first), so the decision model can
   see a booking panel, and to the result. Their controls are not offered,
@@ -413,8 +504,14 @@ has the reasoning and measurements.
 
 **Settling.** `track.js`, `settle.js` and `ready.js` replace upstream's
 two-frame or 50 ms settle with a quiet clock kept inside the page: a read waits
-for 200 ms without mutation or input and for no visible loading indicator
-(ignored after 1.5 s), capped at 2.5 s, a cap also held on the Rust side. A
+for 200 ms without mutation or input and for no visible loading indicator the
+page declares (`aria-busy`, a progressbar or an unvalued `progress`, never a
+class or id name; ignored after 1.5 s), capped at 2.5 s, a cap also held on
+the Rust side. When the page is quiet but unchanged since the input, and a
+fetch or XHR request the input started is still open (each tab enables the
+Network domain, and `cdp.rs` keeps the open requests), the settle waits for
+the response and then for quiet again, within the same cap, and reports
+`reason: "response"`. A
 poll that runs late after a renderer stall looks once more before it trusts
 the clock. After input, a step costs at least 200 ms (before: about 30 ms), and
 a page that never goes quiet pays the cap on every step and on open. Opening a
@@ -467,6 +564,19 @@ only a combobox fill 200 ms. A popup that never opens costs the 1.2 s.
   counted and reported as `omitted.options`.
 - The freshness marker uses on-screen actions only, and guards are computed
   only for the actions kept.
+- `snapshot.js` and `context.js` are installed once per document under a
+  read-only global with a random per-process key. They are registered with
+  `Page.addScriptToEvaluateOnNewDocument`, or installed lazily when a call
+  throws the not-installed sentinel. Each read then sends a short call, not
+  about 70 KB of source.
+- Within one snapshot (and `context.js` on its result), whether an element
+  shows, its name and its cursor are read once and reused; a microtask queued
+  as the snapshot starts empties those caches when the call ends, so later
+  scripts read the page as it is.
+- Guards keep their structured fields, with a digest of the text around the
+  control as the last entry. The page key's form state and the marker's
+  title, page text, disabled controls and on-screen actions are digests too.
+  Freshness diagnostics still name the field that changed.
 - `context.js` adds an optional `context` naming the card, row, section or
   table column of controls that read alike, and the section of an offscreen
   control. The marker is built before it runs, and `fresh()` never runs it.
@@ -539,8 +649,12 @@ only a combobox fill 200 ms. A popup that never opens costs the 1.2 s.
   not reached. Upstream walked the document only.
 
 **Tabs (`page/tabs.rs`).** After every action settles, Jev lists the
-browser's targets once and adopts the newest page one of its tabs opened
-(`target="_blank"`, `window.open`). It repeats the tab setup and reads that
+browser's targets and adopts the newest page one of its tabs opened
+(`target="_blank"`, `window.open`). It looks once, unless act.js read the
+click as opening a new window (a link or submit naming `_blank`, a control
+saying it opens a new tab or window, an inline `window.open` handler): then it
+looks again for up to 5 s, so a tab a page opens after a fetch or a timer is
+followed on the click that opened it, not clicked for again. It repeats the tab setup and reads that
 tab from then on, recording `opened_tab` on the step; the run moves to it only
 once that setup succeeds. A tab that closes itself returns the run to its
 opener. The page records its tabs in a ledger its owner reads after the
@@ -552,7 +666,16 @@ open.
 ("went to …", "Size value: Small -> Large", "showed 2 controls: …",
 "nothing visible changed"), next to `page_changed`; controls are paired by
 node only within one document. It is on `JevActionRecord` and in the result
-text, and not sent to the decision model yet (see the docs).
+text, and not sent to the decision model yet (see the docs). After a
+navigation it names an HTTP status of 400 or more ("HTTP 404: destination did
+not load successfully"). A click on an option, checkbox, radio or switch that
+set no value (no address, label, value, checked or selected state changed,
+and no field shows the choice) says "… set no value", and the stall rule
+counts it as a step that changed nothing; an autocomplete pick that leaves the
+typed text as it was counts as set. An action that set nothing names the
+fields the snapshot marks `blocking` (required and empty, or
+`aria-invalid`), only its own form's when its control is in one: "nothing
+visible changed; fields the form still needs: 1 control: Return".
 
 **Operator limits (`scope.rs`, `runner/ceilings.rs`, `usage.rs`).**
 `JEV_ALLOWED_ORIGINS` ends a run `blocked` on any page outside it and is
@@ -594,16 +717,17 @@ creates starts with the password manager off.
 
 **Statuses.** A run that stops early says why: `budget_exceeded` (60 actions
 or 120 model calls), `timed_out`, `needs_input` (no text model, the text
-helper's `{"text": null}`, or a password or code the goal does not hold;
-the reason names the field), `unavailable` (a provider still failing after its
-retries) or `error`, where upstream raises and Jev used to report `ready`;
-with the gate on, `needs_confirmation`; `access_denied` for a site that
-refused automated access.
+helper's `{"text": null}`; the reason names the field), `needs_login` (a
+sign-in Jev cannot make, with a typed `wall`; see
+[Sign-in walls](#sign-in-walls)), `unavailable` (a provider still failing
+after its retries) or `error`, where upstream raises and Jev used to report
+`ready`; with the gate on, `needs_confirmation`; `access_denied` for a site
+that refused automated access.
 `blocked` also covers a start page that did not load. The tool result adds a
 fixed `next_step` sentence for every status but `done`. Statuses serialize in
 snake case.
 
-**Handoffs.** `needs_input`, `needs_confirmation` and `access_denied` hand a
+**Handoffs.** `needs_input`, `needs_login`, `needs_confirmation` and `access_denied` hand a
 decision to the caller, so they are not failed tool calls: the tool result's
 `is_error` is false and its data has `outcome_class: "handoff"`, which keeps a
 caller working through them from tripping Roder's five-errors-in-a-row stop.
@@ -646,6 +770,21 @@ model but not progress; the loop records them on the step before them. A run
 that ends `blocked` after a dismissed confirm or prompt says so in
 `stopped_because`, telling the caller to take that step itself. No dialog
 controls are offered to the model.
+
+**Downloads (`page/downloads.rs`, `cdp/navigation.rs`).** A link to a file
+or a button that saves one leaves the page as it was, so the click read as
+doing nothing and the model clicked the export again until the stall rule
+stopped it. Each tab Jev prepares has the browser save its context's
+downloads into `<temp>/jev-downloads` and announce them; after an action's
+settle Jev waits for the files it started (up to 1.5 s for an unresolved
+navigation to turn into one, 10 s for a file to be saved), moves each to
+`kept/<guid>/<name>`, and the next observation reports it as `downloads`
+and a line before the page text with the start of a readable file's text.
+Each distinct file (name and content) counts in the fingerprint, so the
+step changed the page; the same file saved again does not, and its copy is
+deleted. Steps carry `JevActionRecord.downloads`, the result
+`JevRunResult.downloads`, and the tool text lists the files with where they
+were saved.
 
 **Stopping (`agent.rs`).** Two rules found by the live eval corpus, neither
 adding a model call:
@@ -712,23 +851,38 @@ corpus test fails if any task ends on one of these two causes.
 **Irreversible-action gate (`irreversible.rs`), opt-in.** Off unless
 `JEV_CONFIRM_IRREVERSIBLE=1` or `JevEngineConfig::with_irreversible_gate`.
 On, the same decision request also carries one Noul per action that may
-commit something: every `PRESS_ENTER` target, then each click whose label
-holds a commitment word as a whole word (`pay`, `order`, `checkout`,
-`send`, `submit`, `delete`, `confirm`, `cancel` and 14 more), at most 8.
-Each is keyed `irreversible_click_<index>` or `irreversible_enter_<index>`
-and asks whether that element "would make a purchase or payment, send a
-message, publish, delete, or make another change that cannot be undone";
-it names the element by index and carries neither the goal nor the page.
-When the chosen action is on the shortlist and its answer is above 0.5, or
-missing or invalid (the gate fails closed), the run ends
-`needs_confirmation` with nothing dispatched and `stopped_because` naming
-the control, unless the call set `authorize_irreversible` and the call
-confidence is at least 0.90. A call that sets it needs approval even in
-accept-all mode. The shortlist, the question shape and both thresholds
-(fastbrowse's) are unvalidated against the hosted model: the service
-answered HTTP 402 while this was built. fastbrowse asks about every click
-in a second request; this asks about a shortlist in the same one, so a
-committing control whose label has none of the words is not gated.
+commit something (`irreversible/shortlist.rs`): every `PRESS_ENTER`
+target; then each click whose label, or the last segment of whose link
+(`/mail/unsubscribe`), holds a commitment word as a whole word (`pay`,
+`order`, `checkout`, `send`, `submit`, `delete`, `confirm`, `cancel` and 23
+more, and 51 of the same in German, French, Spanish, Portuguese, Italian
+and Dutch: `bestellen`, `commander`, `comprar`...); then each click that
+names one only by the heading or row it sits under ("Yes, I'm sure" under
+"Delete the Atlas project?"), agrees (`yes`, `sure`), pauses something
+that is not playback, or is a button posting its form; at most 8, the
+stronger evidence first. Play, pause, mute and the like are never asked
+about unless they or their heading name a committed noun ("Pause my
+subscription"). Each question is keyed `irreversible_click_<index>` or
+`irreversible_enter_<index>`, and quotes the element's label, where it
+sits, where a link goes and the form a submit sends
+(`irreversible/question.rs`, after fastbrowse's `irreversible_question`);
+the snapshot gives actions `href`, `download` and `submits` for it, set
+after the freshness marker. When the chosen action is on the shortlist and
+its answer is above 0.5, or missing or invalid (the gate fails closed; a
+click shortlisted only by its address, heading, row or form that the cap
+left unasked is dispatched instead), the
+run ends `needs_confirmation` with nothing dispatched and `stopped_because`
+naming the control, unless the call set `authorize_irreversible` and the
+call confidence is at least 0.90. Two stops need no answer about the
+action: a submit or Enter in a form that sets a new password stops the
+same way, never asked about; and a click the page says saves a file (a
+`download` attribute, or a link to a `.zip`, `.exe`, `.csv`, `.docx`...)
+stops when one more Noul, `downloads_forbidden`, says the goal rules out
+downloading, authorized or not. A call that sets `authorize_irreversible`
+needs approval even in accept-all mode. The thresholds are fastbrowse's.
+fastbrowse asks about every click in a second request; this asks about a
+shortlist in the same one, so a committing control none of that evidence
+names is not gated.
 
 **Cookie banners (`autoconsent/`, `refuse.js`, `consent.js`,
 `page/consent.rs`), on by default.** Off with `JEV_REFUSE_COOKIE_BANNERS=0`
@@ -794,9 +948,13 @@ row end the run `blocked`. Upstream checks only the centre, and treats a
 covered target as a stale page. act.js also names what took the click (its
 label, text or tag; a field's value is never read), `Covered::with_cover` keeps
 that apart from the fixed message, and the loop records it, scrubbed of typed
-secrets, on one line and cut to 100 characters, as `covered_by` on the step. The
-digest and the fallback's brief show it as page text; the decision request does
-not carry it. A scroll box is scrolled by script, by four
+secrets, on one line and cut to 100 characters, as `covered_by` on the step. It
+also lists up to eight controls the cover offers to press (the buttons and links
+of the layer hit, or of an open dialog beside a bare backdrop), kept by
+`Covered::with_controls` and recorded, tidied and cut to 60 characters each, as
+`covered_controls`. The digest and the fallback's brief show both as page text
+("covered by \"Members-only offer\", which offers \"No thanks, take me to the
+shop\""); the decision request carries neither. A scroll box is scrolled by script, by four
 fifths of its height and at least 320 px, and a box that did not move is a
 refused step. Enter focuses its field (without selecting it) and sends a
 key press with `\r`; Escape goes to whatever has focus. Upstream had
@@ -835,11 +993,19 @@ prompt change. Three operations appear only when offered:
 `PRESS_ENTER` (target: the field Jev typed into), plus a `PRESS_ESCAPE`
 control. The state carries today's
 `date` first, in fastbrowse's words ("2026-09-27 (Sunday). In one month:
-October 2026; in two months: November 2026"); live corpus runs with it passed
-18/18 three times, like the two without, though the mean call confidence was
-0.78 against 0.80. Each operation offers at most 255 targets. `prompts.json`,
-`choose_request.json` and `action_space.json` were re-recorded for these;
-`fingerprint.json` is still upstream's output.
+October 2026; in two months: November 2026"); live corpus runs with the
+date passed 18/18 three times, like the two without, though the mean call
+confidence was 0.78 against 0.80. The next seven days with their weekdays
+go to the field writer only, as in fastbrowse: in the decision request they
+drew BLOCKED on `delayed_spa`'s one-control opening in 6 of 400 requests,
+against 0 of 450 without. NEXT_ACTION
+also has a form's mode (its tab, trip or account type, category) chosen
+before any value is typed, since switching it clears the fields, and
+requested filters set before submitting where the form offers them
+(fastbrowse 0.4.2); `trip_mode_first` in the eval corpus is a form whose mode
+tab rebuilds its fields. Each operation offers at most 255 targets.
+`prompts.json`, `choose_request.json` and `action_space.json` were
+re-recorded for these; `fingerprint.json` is still upstream's output.
 
 **Text helper.** The field context adds the same `date` after `goal`, the
 field's `input_type` and `context`, a native date or time field's ISO
@@ -848,7 +1014,16 @@ field's `input_type` and `context`, a native date or time field's ISO
 kind, context and current value (1,000 characters each), so a value can be
 copied from a textarea and a field placed in its form. `field_context.json` and
 `field_text_requests.json` were re-recorded for the date and again for
-`other_fields`.
+`other_fields`. TEXT_VALUE tells it that a day named relative to today
+("tomorrow", "next Friday") is the first matching day of the date's next
+seven days, and to write a date as a date, never as a weekday: with the list
+alone, `trip_mode_first` (a goal with an explicit date four days out) had
+"Monday" or "next Monday" typed into its Depart field in 3 of 11 live runs,
+and 0 of 12 with that clause. On a native date field asked for "tomorrow", "next Monday" and
+"the coming Friday" as of each day of one week, the default writer
+(`inception/mercury-2.5`) gave 42 right of 42 with the list against 34 of 42
+without it, 7 of them a wrong day (`relative_dates_live`, an ignored test in
+`text_helper/live_tests.rs`).
 
 **Text helper transport.** Upstream only speaks chat-completions. With a
 ChatGPT/Codex sign-in, Roder's default writer is GPT-6 Sol at low reasoning
@@ -863,7 +1038,33 @@ provider list, and the result's `text_model` names that model with a
 `JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` (`none`, `low`, `medium`,
 `high`) pick the model and effort on either path; upstream's
 `TEXT_MODEL_REASONING=none` shape is the `none` of the chat path, which the
-recorded `field_text_requests.json` still pins.
+recorded `field_text_requests.json` still pins. To OpenRouter (by host) the chat
+body also carries `provider: {"sort": "latency", "require_parameters":
+true}`: only endpoints that honour every parameter sent, so
+`response_format` is never a hint, and the fastest of them. A model with no
+such endpoint (OpenRouter answers 404: `reasoning` is sent to non-reasoning
+models such as Llama 3.3, DeepSeek V3 or GPT-4.1 mini too) is asked again
+without `require_parameters`, which then stays off for the run. A chat reply that
+ran into its 1,024-token cap (`finish_reason: length`) is asked once more
+with four times the cap; a second cut is no value, and both calls are billed
+and counted. A Markdown code fence around or after the reply's object is
+taken off before the reply is checked: the default writer ended about one
+reply in eight with a stray "```" after an intact object, which used to end
+the run as an error.
+
+**Form fill from one call** (Jev's own, after fastbrowse's form writer).
+Upstream asks for each field alone. When the first empty field of a `<form>`
+with other empty text fields is chosen, Jev asks once for all of them
+(FORM_VALUES, `{"fields": [{"id", "text"}]}`), types the chosen one, and keeps
+the rest for the steps whose decisions choose those fields, typed only while
+the field is the same node, reads the same and is still empty, and dropped
+once a button or link click, Enter or a key runs (it may submit the form or
+show what it rejected). A form with a
+password or one-time-code field is never batched; an email, phone or web
+address the goal does not hold is dropped from the reply; anything left out,
+changed or failed goes back to one call per field. On the live corpus with the
+text model, text calls fell from 122 to 93 and on the form tasks the median
+wall time from 5.6 s to 4.3 s (see `docs/jev-browser.md`).
 
 **Tab.** A foreground task's tab is shown when it is created, before the page
 loads, and again whenever a later call goes back to it; upstream's port showed
@@ -886,6 +1087,11 @@ reply, after that one resend, is an unusable reply ("Invalid TypeSafe
 response; no action executed.") that the loop asks about again, and a
 rejection (any 4xx but 401) carries its trimmed body. A reply sent as
 server-sent events is read to its end and reduced to its final `response`.
+A hosted Jev batch answered with a 5xx twice in a row is asked one question
+at a time within the retries it had left; if that still fails and the request
+was large (above about 8k estimated tokens), the step is asked again without
+its off-screen targets, then paged smaller, and `usage.context_budget.shed`
+counts it. A choice with one option is answered locally and not sent.
 
 **Secret fields (`secret.rs`, `agent/typing.rs`).** A value typed into a
 password or one-time-code field is recorded as `[secret]` (no length) on the
@@ -895,18 +1101,28 @@ for such a field runs in the page and returns only whether the text stayed,
 and a refusal does not quote the field. The loop also replaces the typed
 value (4 characters or more) with `[secret]` in everything it reads from the
 page afterwards (address, title, text, labels, values, contexts, dialogs,
-refusals, `stopped_because`), for a page that shows it back. Such fields are
-left out of the text helper's `other_fields`. The text helper answers for a
-secret field only with a value written in the goal; anything else ends the
-run `needs_input` naming the field. The irreversible-action gate treats
+refusals, `stopped_because`), for a page that shows it back. It is found in
+every form a page or an address carries it in (from fastbrowse's
+`Redactor`): as typed, with its whitespace collapsed, percent-encoded as a
+form submission or `encodeURIComponent` writes it (`%20` or `+` for a
+space), and JSON-escaped (with and without `\uXXXX`), so a GET form's
+`password=p%40ss+word%26` is scrubbed too. Overlapping matches become one
+`[secret]`, a value inside an existing `[secret]` is left (scrubbing twice
+changes nothing), and the host of an address on the origin the secret was
+typed on keeps its name (a password that is an ordinary word does not blank
+out the site's host). Such fields are left out of the text helper's
+`other_fields`. The text helper answers for a secret field only with a value
+written in the goal; anything else ends the run `needs_login` at the wall
+(see [Sign-in walls](#sign-in-walls)). The irreversible-action gate treats
 Enter in, or a submit click after, a filled password like any listed
 action.
 
 **Public API.** New `JevOriginScope`, `JevUsage`, `JevCallUsage`,
 `JevTokenCount` and `JevBilled`; `JevEngineConfig::with_max_actions`, `with_max_duration` and
 `with_scope`; `JevRunResult.usage`; `JevActionRecord.opened_tab` and
-`effect`. New `Covered` error (`with_cover`, `cover`); `JevActionRecord.covered`,
-`covered_by`,
+`effect`. New `Covered` error (`with_cover`, `cover`, `with_controls`,
+`controls`) and `COVER_CONTROLS`; `JevActionRecord.covered`, `covered_by`,
+`covered_controls`,
 `target_confidence`, `refused` and `dialogs`; `JevDecision.target_confidence`,
 `model` and `call_confidence()`; `JevDecisionRecord.target_confidence` and
 `model`. `JevBrowser::act` returns the new `JevActOutcome`, and an
@@ -914,7 +1130,7 @@ observation may carry `dialogs` (the new `JevDialog`).
 `JevBrowser::activate` and `JevEngine::activate` are gone: the built-in
 runner shows its tab when it creates it, and a hosted browser shows its own.
 `JevStatus` is `#[non_exhaustive]`, serializes in snake case and gains
-`BudgetExceeded`, `TimedOut`, `NeedsInput`, `Unavailable`, `Error` and
+`BudgetExceeded`, `TimedOut`, `NeedsInput`, `NeedsLogin` (with `JevRunResult.wall`, a `JevWall` of `JevWallKind`), `Unavailable`, `Error` and
 `NeedsConfirmation`; the new `JevStop` error lets a hosted client, transport
 or resolver end a run with one of them. `JevStopCause::DecisionUnusable` is
 the cause of a run that ended on unusable decision replies (the one `error` that
@@ -929,7 +1145,8 @@ and `with_cookie_banner_refusal(bool)` (on unless given `false`); `JevDecisionCl
 `JevBrowser::refuse_cookie_banner`, both provided methods (a client that
 keeps the default asks nothing, so the gate stops at every shortlisted
 action it chooses; a browser that keeps it refuses nothing);
-`JevDecision.irreversible` and `JevDecisionRecord.irreversible`; and the
+`JevDecision.irreversible` and `JevDecisionRecord.irreversible`, and
+`downloads_forbidden` on both (a struct literal of either must set it); and the
 tool's `authorize_irreversible` argument. For the fallback:
 `JevRunResult.stop_cause` and the `JevStopCause` enum,
 `JevActOutcome.uncovered` and `JevActionRecord.uncovered`, and
@@ -972,9 +1189,17 @@ async fn run_hosted(
 The browser adapter owns navigation, action execution, screenshots, video,
 and tracing. Its `act` returns a `JevActOutcome`, refused when the page did
 not keep the action's effect, and its observations may list the JavaScript
-dialogs it answered under `dialogs`; the loop records both on the step. A text resolver may return an opaque value reference for the
+dialogs it answered under `dialogs` and the files the action downloaded
+under `downloads` (`JevDownload`s); the loop records them on the step. Two
+default methods help on opening pages: `reload` (load a blank start page
+once more) and `wait_for_change` (wait for a page that may clear itself to
+move on). A text resolver may return an opaque value reference for the
 browser supervisor to resolve at execution time, keeping secret material out
-of JEV observations and results. `JevTypeSafeDecisionClient::with_transport`
+of JEV observations and results. A resolver may also implement
+`resolve_form` to write several empty fields of one form from one call
+(`JevFormValues`, by action id); the default answers `None` and keeps one
+`resolve` per field, and a form with a secret field is never offered.
+`JevTypeSafeDecisionClient::with_transport`
 also lets a hosted runner send the upstream request through its own
 authenticated relay while the extension retains question construction and
 response validation.
@@ -1047,6 +1272,12 @@ today's date as a booking page shows it ("Mon, Sep 28, 2026").
 | `gate_delete_account` | the gate stops before Delete account; keyless, with no valid answer (fails closed) |
 | `gate_authorized_delete` | an authorized, confident run gets past the gate; the delete is posted |
 | `gate_add_to_cart` | a harmless Add to cart is not asked about and goes through with the gate on |
+| `gate_unsubscribe_link` | a one-click unsubscribe link labelled "Stop these emails" is asked about by its address and stops the run, unfollowed |
+| `gate_yes_im_sure` | a dialog's "Yes, I'm sure" is asked about by its heading; the delete is not posted (live, the model already stops at Delete project) |
+| `gate_bestellen` | a German checkout's Bestellen stops the run like Place order |
+| `gate_change_password` | the Save of a form that sets a new password stops the run though the model calls it harmless |
+| `gate_download_read_only` | a `.zip` link on a read-only task stops the run (live, reading the page and answering `done` passes too) |
+| `gate_playback_controls` | play, pause and mute under "Publish your podcast" are never stopped |
 | `cookie_banner_refusal_off` | refusal turned off: a consent banner covers the target, `blocked` |
 | `cookie_banner_refused` | by default, `consent.js` clicks the banner's Reject all, uncovering the target, with no model call |
 | `cookie_accept_only` | a banner that only offers Accept is left alone |
@@ -1055,10 +1286,17 @@ today's date as a booking page shows it ("Mon, Sep 28, 2026").
 | `cookie_platform_off` | refusal turned off: nothing injected, the platform's banner covers the target |
 | `login_form` | a username and a password from the resolver, submitted by Enter; graded on the POST |
 | `one_time_code_resolved` | a one-time code from the resolver, typed and posted |
-| `one_time_code_missing` | no code anywhere: `needs_input` naming the field, nothing typed |
+| `one_time_code_missing` | no code anywhere: `needs_login` at a `one_time_code` wall, nothing typed |
+| `password_wall` | a sign-in whose password the goal lacks: `needs_login` at a `password` wall, nothing posted |
+| `sso_wall` | a single sign-on page with only provider buttons: `needs_login` at a `sign_in` wall, no fallback |
+| `secret_in_get_address` | a password with `@`, a space, `&` and a quote sent by a GET form is scrubbed from the address and the page's percent-encoded and JSON echoes |
 | `reserve_wrong_neighbourhood` | results mixing neighbourhoods, one slot label on every card: the slot is taken in a Mission card, and nothing is reserved |
 | `access_denied_page` | a page served 403 "Access Denied" ends `access_denied` with no decision |
+| `csv_export_link`, `csv_export_button` | a link to a CSV attachment and a button that saves a blob: the click counts as a change, the file's text shows on the next read, and the run ends done |
+| `challenge_clears` | a bot check served 403 with nothing to act on moves on after 3 s: Jev waits it out and acts on the page it leads to |
+| `unavailable_then_ok` | a start page served 503 that reloads itself after 2 s is waited out |
 | `empty_first_look` | a page that commits blank and renders 700 ms later is read again, not judged blocked |
+| `frame_stuck_ad`, `frame_stuck_beside_widget` | an advertisement frame whose renderer stops answering costs the first read 5 s and later ones 0.5 s, so the page's own button, and a live order-status frame beside it, are still read within the minute (each read took 30 s before) |
 | `popover_escape`, `popover_button`, `popover_outside` | a date picker Jev opened stays open over the results; Jev closes it (Escape, its Close button, a press outside) and takes the slot in the same step |
 | `popover_icon_fallback` | a picker only an unlabelled icon closes: Jev stops blocked; the fallback closes it and takes the slot |
 | `canvas_fallback` | a button drawn on a canvas, pressed by the fallback at its coordinates |
@@ -1080,8 +1318,16 @@ that names its targets by label (`ref_of`, `at`). The `gate_` tasks turn the gat
 (`confirm_irreversible`, `authorize_irreversible` in `tasks.json`), the
 `_off` cookie tasks turn refusal off (`refuse_cookie_banners: false`; every
 other task runs with it on, autoconsent injected), and a plan step may give
-the gate's answer as `irreversible`. A task's expected POST may name
-`secret_fields`, whose values a failure never quotes.
+the gate's answer as `irreversible` and whether the goal rules out
+downloading as `downloads_forbidden`. A task's expected POST may name
+`secret_fields`, whose values a failure never quotes. The ten `mock_*`
+tasks are fastbrowse's multi-step mock-site work (a sign-in and basket, an
+order the shop rejects until its postcode is corrected, a six-item cart, a
+send that fails with 503 behind a thank-you page, a hidden instruction, a
+honeypot field, a consent banner and a delayed modal, an infinite feed, a
+pager to exhaust, and a wizard rejected for a choice two steps back), each
+graded on what the site holds; `evals/early_stops.rs` checks every one of
+their graders fails a run that stops short and says DONE.
 
 **Keyless tier.** Runs in `cargo test` with no model key: the scripted plan,
 the real agent loop, the real page scripts and real Chrome. It checks the
@@ -1105,12 +1351,23 @@ is `#[ignore]`d and skips without a key:
 
 ```sh
 TYPESAFE_API_KEY=… cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
+JEV_DECISION_PROVIDER=openrouter OPENROUTER_API_KEY=… \
+  cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
 TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
   cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
 ```
 
-- `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key; `JEV_MODEL` pins
-  a model version, else `jev-latest`.
+- `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key for TypeSafe
+  directly; `JEV_DECISION_PROVIDER=openrouter` sends the same requests to
+  OpenRouter with `OPENROUTER_API_KEY`, and `JEV_DECISION_URL` overrides
+  either URL. The route is part of the pinned setup. `JEV_MODEL` pins a model
+  version, else `jev-latest`. The live sessions, MiniWoB++ and comparison
+  tiers take the same route.
+- Each row records `decision_model` (the model that answered, e.g. the dated
+  version behind `jev-latest`) and `decision_cost` in dollars when the host
+  reported every call's cost (OpenRouter does; TypeSafe directly does not).
+  The tally has `mean_cost` per task, and the summary `decision_cost`,
+  `costed_runs` and `served_models`.
 - Field values come from each task's `values`, so a run measures the decision
   model alone; `JEV_EVAL_TEXT=model` uses the configured text helper instead
   (`JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` pick it), except for a
@@ -1155,7 +1412,12 @@ TYPESAFE_API_KEY=… JEV_EVAL_VARIANTS=goal_in_state,handoff_nouls \
 - `JEV_EVAL_STRICT=1` fails the test on a mid-run edit of the tree, on any
   false green, and then on any failed run; with a baseline it fails on any
   task whose pass, `verdict_ok`, `truth_ok` or false-green rate got worse
-  than the baseline's instead, so tasks known to fail do not hold a run up.
+  than the baseline's instead, so tasks known to fail do not hold a run up,
+  and on any task doing more work: median decision or text calls up by more
+  than a quarter and at least one call, or median input tokens or mean
+  decision cost up by more than a quarter (`MORE WORK` in the report; a task
+  that now passes more often is exempt). Wall time is recorded and never
+  gates.
 - The baseline is `tests/fixtures/evals/live-baseline.json`, or the file
   `JEV_EVAL_BASELINE` names. `JEV_EVAL_SAVE_BASELINE=1` writes this run's
   tally there with the commit, a hash of the crate's sources and fixtures,
@@ -1183,12 +1445,17 @@ or `live-<unix seconds>.jsonl`). A row has:
   whose scripted fallback missed what the task expects of it or never ran
   (`after fallback: …` in the failure);
 - `repeat` (the run's number, from 1), `failures`, the status, steps, model
-  calls, wall time and `input_tokens` when every call reported them;
+  calls, text calls, wall time and `input_tokens` when every call reported
+  them, and on live rows `transient_ms`, the part of the wall time the
+  decision requests lost to transient provider failures (failed attempts
+  that could be retried, and the waits before each retry), which the
+  summary's `work` line also totals apart;
 - `watch`: `looks`, one per reading of the page, with the `offered` count,
   `omitted_actions` (what the snapshot left out) and the `settle` before it
   (`reason` and `waited_ms`, as the page reported them); `laps`, calls and
   milliseconds in `settle`, `snapshot`, `fresh`, `act`, `banner`,
-  `describe`, `screenshot`, `decide` and `text`; and `run_ms` against
+  `describe`, `screenshot`, `reload`, `interstitial` (waiting for a page
+  that may clear itself), `decide` and `text`; and `run_ms` against
   `attributed_ms`, the laps summed. Nothing in it reaches the decision
   request, and it holds counts and timings, never page text.
 

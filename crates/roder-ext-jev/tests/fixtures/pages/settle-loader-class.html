@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Loader classes</title>
+  <style>
+    .skeleton-layout { padding: 12px; border: 1px solid #ddd; }
+    .loader-button__text { font: inherit; padding: 6px 12px; }
+  </style>
+</head>
+<body>
+  <!-- Nothing here is loading: a design system named its button and its
+       layout after loaders. Only the names say so; the page is idle. -->
+  <main class="skeleton-layout" id="page-loading-shell">
+    <h1>Loader classes</h1>
+    <button type="button" class="loader-button__text" id="show">Show note</button>
+    <div class="spinner-free" id="note">Nothing yet</div>
+  </main>
+  <script>
+    document.getElementById('show').addEventListener('click', () => {
+      document.getElementById('note').textContent = 'Note shown';
+    });
+  </script>
+</body>
+</html>

@@ -27,10 +27,13 @@ impl Agent {
                 page_changed: entry["page_changed"].as_bool(),
                 covered: entry["covered"].as_bool().unwrap_or_default(),
                 covered_by: entry["covered_by"].as_str().map(str::to_string),
+                covered_controls: serde_json::from_value(entry["covered_controls"].clone())
+                    .unwrap_or_default(),
                 refused: entry["refused"].as_str().map(str::to_string),
                 uncovered: entry["uncovered"].as_str().map(str::to_string),
                 dialogs: serde_json::from_value(entry["dialogs"].clone()).unwrap_or_default(),
                 opened_tab: entry["opened_tab"] == json!(true),
+                downloads: serde_json::from_value(entry["downloads"].clone()).unwrap_or_default(),
                 effect: entry["effect"].as_str().map(str::to_string),
                 elapsed_ms: entry["elapsed_ms"].as_u64().unwrap_or_default(),
                 choice: entry["choice"].as_str().unwrap_or_default().to_string(),
@@ -64,7 +67,7 @@ impl Agent {
             visible_text,
             evidence: self.evidence.render(&self.secrets),
             recoveries: self.recovery.events.clone(),
-            actions,
+            actions: actions.clone(),
             elapsed_ms: self.elapsed_ms,
             observed_elements: observed.elements.len(),
             omitted: omitted(&self.observation, &observed),
@@ -86,8 +89,17 @@ impl Agent {
                 .then_some(self.cause)
                 .flatten(),
             suppressed_click: self.suppressed_click.clone(),
+            wall: self.wall.clone(),
             untrusted: true,
             controls: controls(&self.observation),
+            // Each distinct file once: a step that saved one again lists it
+            // `repeated`.
+            downloads: actions
+                .iter()
+                .flat_map(|action| &action.downloads)
+                .filter(|download| !download.repeated)
+                .cloned()
+                .collect(),
             page: self.page_facts(),
             typed_secrets: self.secrets.clone(),
         }

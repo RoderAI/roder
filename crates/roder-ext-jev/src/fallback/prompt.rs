@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::page_read::page_for;
 use super::trigger::Trigger;
-use crate::agent::tidy_cover;
+use crate::agent::{offers, tidy_cover};
 use crate::engine::JevRunResult;
 use crate::session::cut;
 
@@ -112,7 +112,10 @@ pub(crate) fn opening(
                 step.push_str(&format!(" with \"{}\"", cut(text, 40)));
             }
             if action.covered {
-                step.push_str(&covered_note(action.covered_by.as_deref()));
+                step.push_str(&covered_note(
+                    action.covered_by.as_deref(),
+                    &action.covered_controls,
+                ));
             } else if action.page_changed == Some(false) {
                 step.push_str(" (nothing visible changed)");
             }
@@ -155,10 +158,11 @@ pub(crate) fn opening(
 
 /// The note on a step whose target was covered: what covered it, when the
 /// page named it. The name is page text, tidied and cut by `tidy_cover`.
-fn covered_note(cover: Option<&str>) -> String {
+fn covered_note(cover: Option<&str>, controls: &[String]) -> String {
+    let offers = offers(controls.iter().map(String::as_str));
     match cover.and_then(tidy_cover) {
-        Some(cover) => format!(" (covered by \"{cover}\"; nothing was pressed)"),
-        None => " (covered; nothing was pressed)".to_string(),
+        Some(cover) => format!(" (covered by \"{cover}\"{offers}; nothing was pressed)"),
+        None => format!(" (covered{offers}; nothing was pressed)"),
     }
 }
 

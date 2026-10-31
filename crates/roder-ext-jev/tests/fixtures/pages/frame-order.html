@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Order status</title></head>
+<body>
+  <!-- An order status widget served from the other loopback host. -->
+  <h2 id="order"></h2>
+  <p>Arrives Tuesday by 6 PM</p>
+  <script>
+    const number = new URLSearchParams(location.search).get('order') || '0';
+    document.getElementById('order').textContent = 'Order ' + number + ' · Shipped';
+  </script>
+</body>
+</html>

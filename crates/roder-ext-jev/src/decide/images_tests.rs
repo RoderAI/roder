@@ -152,9 +152,14 @@ async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operati
     let mut observation = page(Some(data_url(ImageFormat::Png, 1120, 780)));
     observation["actions"] = json!([
         {"kind":"click","node":1,"id":"click:1","label":"Submit","role":"button","rect":{"x":0,"y":0,"w":100,"h":30}},
-        {"kind":"fill","node":2,"id":"fill:2","label":"Name","role":"textbox","value":"Ada","value_clipped":true,"rect":{"x":0,"y":40,"w":100,"h":30}}
+        {"kind":"fill","node":2,"id":"fill:2","label":"Name","role":"textbox","value":"Ada","value_clipped":true,"rect":{"x":0,"y":40,"w":100,"h":30}},
+        // A second target of each kind, so the target choices are asked
+        // (a single option is answered locally) and carry the image.
+        {"kind":"click","node":3,"id":"click:3","label":"Cancel","role":"button","rect":{"x":0,"y":80,"w":100,"h":30}},
+        {"kind":"fill","node":4,"id":"fill:4","label":"Email","role":"textbox","rect":{"x":0,"y":120,"w":100,"h":30}}
     ]);
-    observation["dom_snapshot"] = json!("- textbox Name [value=\"Ada\"]\n- button Submit");
+    observation["dom_snapshot"] =
+        json!("- textbox Name [value=\"Ada\"]\n- button Submit\n- button Cancel\n- textbox Email");
     for profile in [Profile::Dom, Profile::DomTargets] {
         client(&server, true)
             .with_profile(profile)
@@ -179,12 +184,14 @@ async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operati
     assert_eq!(scoped["assets"], shared["assets"]);
     let key = scoped["assets"].as_object().unwrap().keys().next().unwrap();
     let mut gates = 0;
+    let mut imaged = 0;
     for (name, original) in shared["questions"].as_object().unwrap() {
         let mut current = scoped["questions"][name].clone();
         if name.ends_with("_target") {
             let instructions = current["instructions"].as_object_mut().unwrap();
             let viewport = instructions.remove("viewport_screenshot").unwrap();
             assert_eq!(viewport["image"], json!(key));
+            imaged += 1;
             assert_eq!(viewport, shared["state"]["viewport_screenshot"]);
             assert_eq!(
                 instructions.remove("candidate_rectangles").unwrap(),
@@ -197,6 +204,7 @@ async fn target_images_preserve_dom_choices_and_gate_without_imaging_the_operati
         assert_eq!(&current, original, "question meaning changed: {name}");
     }
     assert!(gates > 0);
+    assert_eq!(imaged, 2, "both target choices carry the image");
     assert_eq!(images_header(&server.heads()[1]).as_deref(), Some("true"));
     // A populated field alone must not remove shared visual evidence.
     assert_eq!(&requests[2].1, shared);

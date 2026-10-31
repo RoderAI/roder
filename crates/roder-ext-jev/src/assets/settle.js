@@ -1,18 +1,24 @@
 // Wait inside the page until it has finished reacting (jev-owned; diverges
-// from upstream's two-frame settle, and the loading-indicator list and the
-// suggestion and popup rules follow fastbrowse's snapshot.js and page.py,
-// MIT). Needs track.js first. Resolves once the document is past `loading`,
-// the quiet clock has run for QUIET ms and no loading indicator shows in the
-// viewport; indicators stop counting after `loadingMs`, and `capMs` bounds
-// the whole wait. Two kinds of input promise more than quiet can show, so
+// from upstream's two-frame settle, and the suggestion and popup rules follow
+// fastbrowse's snapshot.js and page.py, MIT). Needs track.js first. Resolves
+// once the document is past `loading`, the quiet clock has run for QUIET ms
+// and no loading indicator shows in the viewport; indicators stop counting
+// after `loadingMs`, and `capMs` bounds the whole wait. An indicator is what
+// the page declares (aria-busy, a progressbar, an indeterminate <progress>),
+// never a guess from class or id names, which held every step on pages whose
+// buttons or layout carry `loader` or `skeleton` in a class. With `fresh`,
+// quiet counts from this call rather than from the last change: the page has
+// just been told its request answered, and the handler may not have run.
+// Two kinds of input promise more than quiet can show, so
 // for up to EXPECT ms quiet is not enough: a fill into a field that offers
 // suggestions (a combobox, a search field, aria-autocomplete, or one that
 // controls or owns another element) returns as soon as it lists options
 // other than those shown before the text was typed (see track.js),
 // and a click on a control that announced a popup waits for it to expand or
-// for the element it controls to show. Resolves with why it stopped and how
-// long it waited.
-(({action, capMs, loadingMs}) => new Promise(resolve => {
+// for the element it controls to show. Resolves with why it stopped, how
+// long it waited, and whether the document is `unchanged` since the last
+// input (so the settle can wait on a request that input started).
+(({action, capMs, loadingMs, fresh}) => new Promise(resolve => {
   const QUIET=200, POLL=50, EXPECT=1200;
   const state=window.__jevFast, start=performance.now();
   const field=action ? state.nodes.get(action.node) : null;
@@ -21,9 +27,7 @@
   const suggests=action?.kind==='fill' && !!field && (field.getAttribute('role')==='combobox' ||
     field.type==='search' || !!field.getAttribute('aria-autocomplete') || owned().length>0);
   const announced=action?.kind==='click' && !!action.announced && !!field;
-  const LOADING='[aria-busy="true"],[role="progressbar"],progress:not([value]),' +
-    ['spinner','loading','loader','skeleton','shimmer']
-      .flatMap(name=>[`[class*="${name}" i]`,`[id*="${name}" i]`]).join(',');
+  const LOADING='[aria-busy="true"],[role="progressbar"],progress:not([value])';
   const showing=e=>{
     if (!e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) return false;
     const r=e.getBoundingClientRect();
@@ -45,7 +49,8 @@
   // the settle from ever seeing quiet.
   let due=start, polled=false, recheck=false;
   const schedule=ms=>{ due=performance.now()+ms; setTimeout(poll,ms); };
-  const done=(reason,waited)=>resolve({reason, waited_ms:Math.round(waited)});
+  const done=(reason,waited)=>resolve({reason, waited_ms:Math.round(waited),
+    unchanged:state.lastInput!==undefined && state.lastDom<=state.lastInput});
   const poll=()=>{
     polled=true;
     const now=performance.now(), waited=now-start;
@@ -54,7 +59,7 @@
     if (suggests && listed()) return done('listbox',waited);
     const expecting=waited<EXPECT && (suggests || (announced && !opened()));
     const ready=document.readyState!=='loading';
-    const quietFor=now-state.lastMutation;
+    const quietFor=now-(fresh ? Math.max(state.lastMutation,start) : state.lastMutation);
     const quiet=ready && quietFor>=QUIET && !stalled && !expecting;
     if (quiet && (waited>=loadingMs || ![...document.querySelectorAll(LOADING)].some(showing)))
       return done('quiet',waited);

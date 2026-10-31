@@ -11,6 +11,7 @@
 mod act;
 mod capture;
 mod consent;
+mod downloads;
 mod fill;
 mod fingerprint;
 mod frames;
@@ -18,6 +19,7 @@ mod freshness;
 mod open;
 mod resume;
 mod settle;
+mod snapshot;
 mod tabs;
 mod uncover;
 
@@ -32,9 +34,11 @@ use serde_json::{Value, json};
 use crate::cdp::Connection;
 use crate::engine::{JevActOutcome, JevBrowser, JevDialog, JevPageFacts, StaleObservation};
 use fingerprint::fingerprint_with_frames;
+#[cfg(test)]
+pub(crate) use frames::{FRAME_READ, FRAME_RETRY};
 pub(crate) use open::{LoadFailed, close_target, create_target};
 pub(crate) use resume::TabsGone;
-use settle::{NAVIGATED, TRACK_JS, is_navigation};
+use settle::{NAVIGATED, is_navigation};
 pub(crate) use tabs::{OwnedTab, TabLedger};
 use tabs::{SharedLedger, Tab};
 
@@ -87,6 +91,8 @@ pub(crate) struct Page {
     ledger: SharedLedger,
     /// Read the text of frames of another origin (see `frames`).
     frame_text: bool,
+    /// The files the run's actions downloaded (see `downloads`).
+    downloads: downloads::Downloads,
 }
 
 impl Page {
@@ -164,7 +170,10 @@ impl Page {
                     error
                 }
             })?;
-        if result.get("exceptionDetails").is_some() {
+        if let Some(details) = result.get("exceptionDetails") {
+            if snapshot::is_uninstalled(details) {
+                return Err(snapshot::Uninstalled.into());
+            }
             return Err(StaleObservation::new("Document changed during evaluation").into());
         }
         Ok(result["result"]["value"].clone())
@@ -177,21 +186,26 @@ impl Page {
     pub(crate) async fn settle(&mut self) -> Option<Value> {
         let action = self.after_input.take()?;
         let settled = self.settle_page(Some(&action)).await;
-        self.follow_popup().await;
+        self.follow_popup(action["opens"] == json!(true)).await;
+        let mark = self.connection.take_navigation_mark();
+        self.await_downloads(mark).await;
         Some(settled)
     }
 
     /// Read the page: settle any pending input, snapshot, then fingerprint.
-    /// The snapshot also (re)installs the quiet clock, for a document that
-    /// loaded before it was registered. Dialogs answered since the last read
+    /// The snapshot is a short call on the scripts the document installed
+    /// once (see `snapshot`), and also (re)installs the quiet clock, for a
+    /// document that loaded before it was registered. Dialogs answered since the last read
     /// are added as `dialogs` and as lines before the page text, after the
     /// fingerprint is taken: a dismissed confirm is news for the model but
-    /// not a change to the page, so it cannot hide a stall.
+    /// not a change to the page, so it cannot hide a stall. Files the input
+    /// downloaded are added the same way, as `downloads`, but each distinct
+    /// one counts in the fingerprint: saving it was the action's effect
+    /// (see `downloads`).
     pub(crate) async fn observe(&mut self) -> anyhow::Result<Value> {
         self.settle().await;
-        let snapshot = format!("{TRACK_JS}\n({CONTEXT_JS})({SNAPSHOT_JS})");
         for attempt in 0..OBSERVE_ATTEMPTS {
-            match self.evaluate_snapshot(&snapshot).await {
+            match self.read(snapshot::Read::Observe).await {
                 Ok(Value::Null) => {
                     return Err(StaleObservation::new("Document is navigating").into());
                 }
@@ -207,6 +221,7 @@ impl Page {
                     let fingerprint = fingerprint_with_frames(&observation, &read);
                     frames::add_frames(&mut observation, read);
                     observation["fingerprint"] = json!(fingerprint);
+                    self.downloads.report(&mut observation);
                     add_dialogs(&mut observation, self.connection.take_dialogs());
                     self.add_opened_tab(&mut observation);
                     return Ok(observation);
@@ -270,13 +285,35 @@ impl JevBrowser for Page {
         Page::refuse_cookie_banner(self).await
     }
 
+    /// The HTTP status is the one the browser's Network events gave the
+    /// committed document (see `cdp::navigation`); the document's own
+    /// navigation entry, which its scripts can shadow, only stands in for
+    /// a document loaded before Jev followed the tab.
     async fn describe(&mut self) -> anyhow::Result<Option<JevPageFacts>> {
         let facts = self.evaluate(DESCRIBE_JS).await?;
-        Ok(serde_json::from_value(facts).ok())
+        let Ok(mut facts) = serde_json::from_value::<JevPageFacts>(facts) else {
+            return Ok(None);
+        };
+        let session = self.tab().session.clone();
+        if let Some(status) = self.connection.document_status(&session) {
+            facts.http_status = Some(status);
+        }
+        Ok(Some(facts))
+    }
+
+    /// A fresh GET of the address, never `Page.reload`: a document a form
+    /// posted would be posted again.
+    async fn reload(&mut self, url: &str) -> anyhow::Result<bool> {
+        self.goto(url).await.map(|()| true)
+    }
+
+    async fn wait_for_change(&mut self, within: Duration) -> anyhow::Result<()> {
+        Page::wait_for_change(self, within).await
     }
 }
 
-/// The main document's HTTP status and visible headings.
+/// The main document's HTTP status as its navigation entry reports it, and
+/// its visible headings.
 const DESCRIBE_JS: &str = include_str!("assets/describe.js");
 
 /// Page text cap, as `snapshot.js` applies it.
@@ -370,7 +407,7 @@ mod tests {
         assert!(SNAPSHOT_JS.contains("checkVisibility"));
         // The press re-check drops the guard's last entry as the text around
         // the control, so that entry must stay last.
-        assert!(SNAPSHOT_JS.contains("cut(scope?.innerText||'',6000).toWellFormed()];"));
+        assert!(SNAPSHOT_JS.contains("scope ? scopes.get(scope) : digest('')];"));
         assert!(act::ACT_JS.contains("tree.hit(x,y)"));
         assert!(SNAPSHOT_JS.contains("document.elementFromPoint(x,y)"));
         assert!(SNAPSHOT_JS.contains("shadowRoot?.elementFromPoint"));

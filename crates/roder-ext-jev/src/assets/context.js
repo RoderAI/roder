@@ -5,8 +5,9 @@
 // and controls in a table get their column. The rules and their guards follow
 // fastbrowse's snapshot.js (MIT), reimplemented here. Every control of the
 // top document also gets a `section` (Jev's own): the nearest visible heading
-// before it, for the result the caller reads. Neither the decision model nor
-// the step fingerprint sees it.
+// before it, for the result the caller reads and the irreversible-action
+// gate's questions; neither the decision operation nor the step fingerprint
+// sees it.
 (state => {
   if (!state) return state;
   const cache=window.__jevFast, visible=cache.visible, labelOf=cache.name;
@@ -18,6 +19,10 @@
     return (/[\uD800-\uDBFF]$/.test(t) ? t.slice(0,-1) : t).toWellFormed()+'…';
   };
   const squash=s=>(s||'').replace(/\s+/g,' ').trim();
+  // A title's or a scope's text, read once for this run: every twin of a
+  // group walks the same ancestors, and every control the same titles.
+  const texts=new Map();
+  const textOf=e=>{ if (!texts.has(e)) texts.set(e,e.innerText||''); return texts.get(e); };
   const firstLine=text=>(text||'').split('\n').map(squash).find(Boolean)||'';
   const baseLabel=a=>String(a.label).split(' → ')[0];
   const HEADINGS='h1,h2,h3,h4,h5,h6,[role="heading"],legend,caption,th,dt,summary';
@@ -40,7 +45,7 @@
   const sectionOf=(scope,e,label,nearest=true)=>{
     let first='', before='';
     for (const title of titles(scope)) {
-      const text=firstLine(title.innerText);
+      const text=firstLine(textOf(title));
       if (!text || text===label || title.contains(e) || !reaches(title,e)) continue;
       first ||= text;
       if (title.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) before=text;
@@ -57,7 +62,7 @@
     // is cut out as whole words: a day "2" must not turn "October 2026" into
     // "October 0 6". A short row reads whole ("Bob Lunch"); otherwise its
     // first line, or its first `depth` lines.
-    const lines=(scope.innerText||'').split('\n').map(squash)
+    const lines=textOf(scope).split('\n').map(squash)
       .filter(line=>line && !repeated.has(line))
       .map(line=>squash((' '+line+' ').split(' '+label+' ').join(' '))).filter(Boolean);
     const whole=lines.join(' ');
@@ -213,7 +218,7 @@
   // each control the last one before it (by binary search) that does not
   // hold it and does not read as its label.
   const heads=[...document.querySelectorAll('h1,h2,h3,h4,[role="heading"],legend')]
-    .filter(h=>visible(h)).map(h=>[h,clip(firstLine(h.innerText))]).filter(([,t])=>t);
+    .filter(h=>visible(h)).map(h=>[h,clip(firstLine(textOf(h)))]).filter(([,t])=>t);
   const before=(h,e)=>!!(h.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING);
   // A heading names what follows it in its own branch: the largest ancestor
   // of the heading that does not hold the control. When that branch holds a

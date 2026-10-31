@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Late reports</title></head>
+<body>
+  <h1>Late reports</h1>
+  <!-- Reports that open in a new tab only after a fetch or a timer, as an
+       export or a signed download link does: the tab arrives `delay` ms
+       (default 2000) after the click, well after the page has settled.
+       One button says it opens a new tab, one calls window.open from its
+       own inline handler, and Refresh opens nothing. window.opens counts the
+       windows opened, so a second click on a click read as a no-op shows. -->
+  <p>The quarterly report is ready.</p>
+  <button type="button" id="say">Open the report in a new tab</button>
+  <button type="button" onclick="setTimeout(() => { window.opens++; window.open('report.html?name=export'); }, delay)">Export the report</button>
+  <button type="button" onclick="window.refreshes = (window.refreshes || 0) + 1">Refresh</button>
+  <script>
+    window.opens = 0;
+    const delay = Number(new URLSearchParams(location.search).get('delay') || 2000);
+    document.getElementById('say').addEventListener('click', () => {
+      setTimeout(() => { window.opens++; window.open('report.html?name=late'); }, delay);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Message us</title></head>
+<body>
+  <!-- After fastbrowse's mock /message (MIT): the server fails the send, but
+       the page a careless template renders still thanks the sender. The
+       fixture site answers every POST 200, so the failure is staged here:
+       the form is posted to /submit/message (the request the grader sees),
+       and the page then shows the reply such a server renders, its words
+       saying sent and its reference saying error 503. Nothing was delivered,
+       so a run that reports it delivered believed the page. -->
+  <h1>Message us</h1>
+  <p>Send the team a message.</p>
+  <form id="message">
+    <p><label for="email">Email</label> <input id="email" name="email" type="email"></p>
+    <p><label for="body">Message</label> <textarea id="body" name="body"></textarea></p>
+    <button type="submit">Send message</button>
+  </form>
+  <script>
+    document.getElementById('message').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await fetch('/submit/message', { method: 'POST', body: new URLSearchParams(new FormData(event.target)) });
+      window.delivered = false;
+      document.title = 'Thank you';
+      document.body.innerHTML =
+        '<h1>Thank you</h1><p>Thanks for getting in touch. Your message has been sent.</p>' +
+        '<p><small>Reference: unavailable (error 503 Service Unavailable)</small></p>';
+    });
+  </script>
+</body>
+</html>

@@ -8,9 +8,12 @@
 //! - `settle`: the wait for the last input's effects, the page's own
 //!   `{reason, waited_ms}` kept per look;
 //! - `snapshot`: reading the page after it;
-//! - `fresh`, `act`, `banner`, `describe`, `screenshot`: the other browser
-//!   calls the loop makes, each as a whole (an action that settles inside
-//!   itself, or refuses a banner, counts that time to its own phase);
+//! - `fresh`, `act`, `banner`, `describe`, `screenshot`, `reload`: the
+//!   other browser calls the loop makes, each as a whole (an action that
+//!   settles inside itself, or refuses a banner, counts that time to its
+//!   own phase);
+//! - `interstitial`: the waits for an opening page that may clear itself
+//!   (a challenge, a 503) to move on;
 //! - `decide` and `text`: the waits for the decision service and the text
 //!   helper.
 //!
@@ -26,7 +29,9 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::engine::{JevDecision, JevDecisionClient, JevTextValue, JevTextValueResolver};
+use crate::engine::{
+    JevDecision, JevDecisionClient, JevFormValues, JevTextValue, JevTextValueResolver,
+};
 
 /// One phase's calls and wall time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -38,7 +43,8 @@ pub(crate) struct Lap {
 /// How a settle ended: the page's own `{reason, waited_ms}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Settled {
-    /// `quiet`, `listbox`, `cap`, or `unanswered` when the page gave none.
+    /// `quiet`, `listbox`, `response` (it waited on a request the input
+    /// started), `cap`, or `unanswered` when the page gave none.
     pub(crate) reason: String,
     pub(crate) waited_ms: u64,
 }
@@ -214,6 +220,16 @@ impl JevTextValueResolver for TimedText {
         self.watch
             .time("text", self.inner.resolve(field_context))
             .await
+    }
+
+    /// A resolver that answers one field at a time made no call.
+    async fn resolve_form(&self, form_context: &Value) -> anyhow::Result<Option<JevFormValues>> {
+        let started = Instant::now();
+        let result = self.inner.resolve_form(form_context).await;
+        if !matches!(result, Ok(None)) {
+            self.watch.add("text", started.elapsed());
+        }
+        result
     }
 }
 

@@ -1,4 +1,5 @@
-//! Following tabs an action opens (`tabs.html`, `report.html`).
+//! Following tabs an action opens (`tabs.html`, `late-tab.html`,
+//! `report.html`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -97,6 +98,77 @@ async fn the_loop_records_the_new_tab_and_carries_on_there() {
             .is_none()
     );
     // Both tabs were closed with the run.
+    assert_eq!(harness.settled_page_targets(before).await, before);
+}
+
+/// A report that opens in a new tab only after a timer (`late-tab.html`):
+/// the click that announced it, by saying it opens a new tab or by calling
+/// `window.open` from its own handler, waits for the tab and follows it. One
+/// look after the settle saw nothing, so the click read as a no-op and was
+/// made again, opening a second tab.
+#[tokio::test]
+async fn a_tab_opened_after_a_delay_is_followed_on_the_click_that_opened_it() {
+    let harness = harness_or_skip!();
+    let before = harness.page_targets().await;
+    for (label, delay, name) in [
+        ("Open the report in a new tab", 1000, "LATE"),
+        ("Export the report", 2500, "EXPORT"),
+    ] {
+        let mut page = harness
+            .open(&format!("late-tab.html?delay={delay}"))
+            .await
+            .unwrap();
+        let observation = page.observe().await.unwrap();
+        let (_, opened) = act_on(&mut page, &observation, "click", label, None)
+            .await
+            .unwrap();
+        assert_eq!(opened["opened_tab"], json!(true), "{label}: {opened:#}");
+        assert_eq!(opened["title"], json!(format!("Report {name}")), "{label}");
+        page.close().await.unwrap();
+    }
+    assert_eq!(harness.settled_page_targets(before).await, before);
+}
+
+/// Only a click expected to open a window waits for one: Refresh, which
+/// opens nothing, looks once and goes on.
+#[tokio::test]
+async fn a_click_that_opens_no_window_does_not_wait_for_one() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("late-tab.html").await.unwrap();
+    let observation = page.observe().await.unwrap();
+    let started = std::time::Instant::now();
+    let (_, after) = act_on(&mut page, &observation, "click", "Refresh", None)
+        .await
+        .unwrap();
+    let took = started.elapsed();
+    assert!(after.get("opened_tab").is_none(), "{after:#}");
+    assert!(took < Duration::from_secs(2), "{took:?}");
+    assert_eq!(page.evaluate("window.refreshes").await.unwrap(), json!(1));
+    page.close().await.unwrap();
+}
+
+/// In the loop: one click opens the late report and the run carries on in
+/// its tab, with no second click on the opener.
+#[tokio::test]
+async fn the_loop_follows_a_late_tab_without_clicking_twice() {
+    let harness = harness_or_skip!();
+    let before = harness.page_targets().await;
+    let decider = Arc::new(PlanDecider::new(vec![
+        pick("click", "Open the report in a new tab"),
+        pick("click", "Approve report"),
+    ]));
+    let result = harness
+        .run(
+            "late-tab.html?delay=2000",
+            decider,
+            None,
+            Duration::from_secs(30),
+        )
+        .await;
+    assert_eq!(result.status, JevStatus::Done, "{result:#?}");
+    assert_eq!(result.actions.len(), 2, "{result:#?}");
+    assert!(result.actions[0].opened_tab, "{result:#?}");
+    assert!(result.visible_text.contains("Report approved."));
     assert_eq!(harness.settled_page_targets(before).await, before);
 }
 

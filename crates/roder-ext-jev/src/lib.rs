@@ -42,6 +42,7 @@ mod text_helper;
 mod text_model;
 mod tools;
 mod usage;
+mod wall;
 
 use std::sync::Arc;
 
@@ -55,11 +56,12 @@ pub use decisions::{
     ComputerCandidate, ComputerDecision, DecisionsBrowserProfile, OpenAiDecisionsClient,
 };
 pub use engine::{
-    Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
-    JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
-    JevEngineConfig, JevFrameText, JevOmitted, JevPageFacts, JevRunResult, JevStatus, JevStop,
-    JevStopCause, JevSuppressedClick, JevSuppressedKind, JevTextValue, JevTextValueResolver,
-    StaleObservation,
+    CONSULT_BELOW, Covered, JevActOutcome, JevActionRecord, JevBrowser, JevConsultAnswer,
+    JevConsultant, JevControl, JevDecision, JevDecisionClient, JevDecisionRecord,
+    JevDecisionTransport, JevDialog, JevDownload, JevEngine, JevEngineConfig, JevFormValues,
+    JevFrameText, JevOmitted, JevPageFacts, JevRunResult, JevStatus, JevStop, JevStopCause,
+    JevSuppressedClick, JevSuppressedKind, JevTextValue, JevTextValueResolver, JevWall,
+    JevWallKind, LIGHT_RECOVERIES, StaleObservation,
 };
 pub use scope::JevOriginScope;
 pub use tools::{JevToolContributor, jev_tool_spec};

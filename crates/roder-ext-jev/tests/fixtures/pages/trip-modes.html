@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Flights</title></head>
+<body>
+  <h1>Search flights</h1>
+  <!-- The trip type is the form's mode: choosing it rebuilds the form, so
+       anything typed before it is gone. A run that types first and picks
+       the mode after has to type every value again. -->
+  <div role="tablist" aria-label="Trip type">
+    <button type="button" role="tab" id="one" aria-selected="true">One way</button>
+    <button type="button" role="tab" id="round" aria-selected="false">Round trip</button>
+  </div>
+  <form method="post" action="/submit/flights" id="search"></form>
+  <script>
+    const form = document.getElementById('search');
+    const field = (id, label) =>
+      `<p><label for="${id}">${label}</label> <input id="${id}" name="${id}" autocomplete="off"></p>`;
+    function render(trip) {
+      form.innerHTML =
+        `<input type="hidden" name="trip" value="${trip}">` +
+        field('from', 'From') + field('to', 'To') + field('depart', 'Depart') +
+        (trip === 'round' ? field('return', 'Return') : '') +
+        `<p><label><input type="checkbox" name="nonstop"> Nonstop only</label></p>` +
+        `<button type="submit">Search</button>`;
+      for (const tab of document.querySelectorAll('[role=tab]')) {
+        tab.setAttribute('aria-selected', String(tab.id === trip));
+      }
+    }
+    document.getElementById('one').addEventListener('click', () => render('one'));
+    document.getElementById('round').addEventListener('click', () => render('round'));
+    render('one');
+  </script>
+</body>
+</html>

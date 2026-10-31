@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::TaskValues;
-use crate::engine::{JevStop, JevTextValue, JevTextValueResolver};
+use crate::engine::{JevFormValues, JevStop, JevTextValue, JevTextValueResolver};
 use crate::usage::{JevBilled, JevCallUsage};
 
 /// The task's own values for its secret fields, when it holds one for the
@@ -47,6 +47,11 @@ impl JevTextValueResolver for Supervised {
             return self.secrets.resolve(field_context).await;
         }
         self.text.resolve(field_context).await
+    }
+
+    /// A form call never lists a secret field, so it goes to the model.
+    async fn resolve_form(&self, form_context: &Value) -> anyhow::Result<Option<JevFormValues>> {
+        self.text.resolve_form(form_context).await
     }
 }
 
@@ -119,6 +124,29 @@ impl JevTextValueResolver for Recorded {
                     crate::engine::JevStatus::Unavailable => "unavailable",
                     _ => "error",
                 },
+                usage: JevBilled::usage_of(error).cloned().unwrap_or(Value::Null),
+                source: self.failing_source.into(),
+            },
+        };
+        self.calls.lock().unwrap().push(call);
+        result
+    }
+
+    async fn resolve_form(&self, form_context: &Value) -> anyhow::Result<Option<JevFormValues>> {
+        let started = Instant::now();
+        let result = self.inner.resolve_form(form_context).await;
+        let latency_ms = started.elapsed().as_millis() as u64;
+        let call = match &result {
+            Ok(None) => return result,
+            Ok(Some(written)) => Call {
+                latency_ms,
+                status: "ok",
+                usage: written.usage.clone(),
+                source: written.model.clone(),
+            },
+            Err(error) => Call {
+                latency_ms,
+                status: "error",
                 usage: JevBilled::usage_of(error).cloned().unwrap_or(Value::Null),
                 source: self.failing_source.into(),
             },

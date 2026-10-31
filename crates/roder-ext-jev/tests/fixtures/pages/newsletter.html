@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Newsletter</title>
+  <style>
+    .trap { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <!-- After fastbrowse's mock /gate (MIT): a sign-up with a field no person
+       sees. The trap is moved off-screen rather than hidden, as most
+       honeypots are, so it is still in the document a run reads; a run that
+       fills every input reveals itself by filling it, and the grader reads
+       the posted `website` field. -->
+  <h1>Newsletter</h1>
+  <p>Sign up for the newsletter.</p>
+  <form method="post" action="/submit/newsletter">
+    <p><label for="email">Email</label> <input id="email" name="email" type="email"></p>
+    <div class="trap" aria-hidden="true">
+      <label for="website">Website</label>
+      <input id="website" name="website" tabindex="-1" autocomplete="off">
+    </div>
+    <button type="submit">Sign up</button>
+  </form>
+</body>
+</html>

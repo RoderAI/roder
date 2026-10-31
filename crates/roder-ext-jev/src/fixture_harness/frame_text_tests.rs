@@ -1,11 +1,16 @@
 //! Frames Jev reads but cannot act in (`page/frames.rs`), and what a page
 //! says of itself besides its observation (`describe`): a booking widget
-//! served from another site, a sandboxed frame in the page's own process,
-//! frames too small or hidden to read, and a page's HTTP status.
+//! served from another site, a frame of another origin in the page's own
+//! process, a sandboxed frame, frames too small or hidden to read, the
+//! sessions Chrome keeps for frames of another process, a frame whose
+//! renderer stops answering, and a page's HTTP status.
+
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
 use crate::engine::JevBrowser;
+use crate::page::{FRAME_READ, FRAME_RETRY};
 
 fn frames(observation: &Value) -> Vec<(String, String)> {
     observation["frames"]
@@ -184,5 +189,98 @@ async fn frame_text_can_be_turned_off() {
     page.set_frame_text(false);
     let observation = page.observe().await.unwrap();
     assert!(frames(&observation).is_empty(), "{observation:#}");
+    page.close().await.unwrap();
+}
+
+/// Observe `page`, timed.
+async fn timed_observe(page: &mut crate::page::Page) -> (Value, Duration) {
+    let started = Instant::now();
+    let observation = page.observe().await.unwrap();
+    (observation, started.elapsed())
+}
+
+#[tokio::test]
+async fn a_frame_of_another_process_is_read_on_the_session_it_was_given() {
+    let harness = harness_or_skip!();
+    let mut page = harness
+        .open("frame-stuck.html?ad=none&order=4417")
+        .await
+        .unwrap();
+    let mut observation = page.observe().await.unwrap();
+    for _ in 0..20 {
+        if !frames(&observation).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        observation = page.observe().await.unwrap();
+    }
+    let read = frames(&observation);
+    assert_eq!(read.len(), 1, "{observation:#}");
+    assert!(read[0].0.starts_with("http://localhost:"), "{read:?}");
+    assert!(read[0].1.contains("Order 4417 · Shipped"), "{read:?}");
+    // Chrome attached the frame once; every read uses that session.
+    let sessions = page.frame_sessions();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    let again = page.observe().await.unwrap();
+    assert_eq!(frames(&again), read);
+    assert_eq!(page.frame_sessions(), sessions);
+    // The frame goes, and its session with it.
+    page.evaluate("document.getElementById('order').remove()")
+        .await
+        .unwrap();
+    let gone = page.observe().await.unwrap();
+    assert!(frames(&gone).is_empty(), "{gone:#}");
+    assert!(page.frame_sessions().is_empty());
+    page.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_frame_that_stops_answering_costs_its_deadline_once_then_the_short_one() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("frame-stuck.html").await.unwrap();
+    // The advertisement starts spinning 50 ms after it loads.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(page.frame_sessions().len(), 1);
+    let (observation, first) = timed_observe(&mut page).await;
+    assert!(frames(&observation).is_empty(), "{observation:#}");
+    assert!(offers(&observation, "Subscribe"), "{observation:#}");
+    assert!(
+        first >= FRAME_READ && first < FRAME_READ + Duration::from_secs(3),
+        "first read took {first:?}"
+    );
+    for _ in 0..2 {
+        let (observation, later) = timed_observe(&mut page).await;
+        assert!(frames(&observation).is_empty(), "{observation:#}");
+        assert!(
+            later >= FRAME_RETRY && later < FRAME_RETRY + Duration::from_secs(2),
+            "a later read took {later:?}"
+        );
+    }
+    page.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_live_frame_is_read_beside_one_that_stops_answering() {
+    let harness = harness_or_skip!();
+    let mut page = harness
+        .open("frame-stuck.html?ad=sandboxed&order=4417")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (observation, first) = timed_observe(&mut page).await;
+    assert!(first < FRAME_READ + Duration::from_secs(3), "{first:?}");
+    let read = frames(&observation);
+    assert_eq!(read.len(), 1, "{observation:#}");
+    assert!(read[0].1.contains("Order 4417 · Shipped"), "{read:?}");
+    assert!(
+        observation["text"]
+            .as_str()
+            .unwrap()
+            .contains("Order 4417 · Shipped"),
+        "{observation:#}"
+    );
+    let (again, later) = timed_observe(&mut page).await;
+    assert_eq!(frames(&again), read);
+    assert!(later < FRAME_RETRY + Duration::from_secs(2), "{later:?}");
     page.close().await.unwrap();
 }

@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Feed</title></head>
+<body>
+  <!-- After fastbrowse's mock /feed (MIT): a list that grows a batch of 20 at
+       a time, on scroll or on the button, to 60 items and an explicit end.
+       Each batch waits on a real request (this server's `delay` query) and
+       reads its body, as a page reading JSON does, so a click is answered
+       over the network. The opening line states the total,
+       which is not the same as having loaded it. -->
+  <h1>Feed</h1>
+  <p>Showing <span id="count">20</span> of 60 items.</p>
+  <ul id="items"></ul>
+  <p id="end"></p>
+  <p><button id="more" type="button">Load more</button></p>
+  <!-- A site's footer, tall enough that centring the button in the window
+       does not reach the scroll trigger: a click loads one batch, and a
+       scroll to the bottom loads one more. -->
+  <footer style="min-height: 1200px; border-top: 1px solid #ccc">
+    <p><a href="#about">About</a> | <a href="#help">Help</a> | <a href="#privacy">Privacy</a></p>
+  </footer>
+  <script>
+    const TOTAL = 60;
+    const BATCH = 20;
+    const list = document.getElementById('items');
+    const add = (from, to) => {
+      for (let n = from; n <= to; n++) {
+        const item = document.createElement('li');
+        item.textContent = `Feed item ${n}`;
+        list.append(item);
+      }
+    };
+    add(1, BATCH);
+    let shown = BATCH;
+    let loading = false;
+    async function more() {
+      if (loading || shown >= TOTAL) return;
+      loading = true;
+      await (await fetch(`feed.html?delay=400&after=${shown}`)).text();
+      const next = Math.min(TOTAL, shown + BATCH);
+      add(shown + 1, next);
+      shown = next;
+      document.getElementById('count').textContent = String(shown);
+      if (shown >= TOTAL) {
+        document.getElementById('end').textContent = `End of list. ${TOTAL} items.`;
+        document.getElementById('more').disabled = true;
+      }
+      loading = false;
+    }
+    document.getElementById('more').addEventListener('click', more);
+    window.addEventListener('scroll', () => {
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) more();
+    });
+  </script>
+</body>
+</html>

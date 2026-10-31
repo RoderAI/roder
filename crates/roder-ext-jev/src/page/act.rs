@@ -19,14 +19,15 @@ use anyhow::bail;
 use serde_json::{Value, json};
 
 use super::Page;
+use super::uncover::Reach;
 use crate::engine::{Covered, JevActOutcome, StaleObservation};
 
 pub(super) const ACT_JS: &str = include_str!("../assets/act.js");
-const SELECT_JS: &str = include_str!("../assets/select.js");
+pub(super) const SELECT_JS: &str = include_str!("../assets/select.js");
 pub(super) const FRAME_JS: &str = include_str!("../assets/frame.js");
 /// Focuses an observed text field for Enter without selecting its text;
 /// whether it holds focus, or null when it is gone or hidden.
-const FOCUS_JS: &str = "(a => { const c=window.__jevFast, e=c?.nodes.get(a.node); \
+pub(super) const FOCUS_JS: &str = "(a => { const c=window.__jevFast, e=c?.nodes.get(a.node); \
     if (!c?.tree || !e?.isConnected || !e.checkVisibility()) return null; \
     if (c.tree.active()!==e) e.focus({preventScroll:true}); return c.tree.active()===e; })";
 /// Scrolls an observed box inside itself by four fifths of its height, and
@@ -80,6 +81,9 @@ impl Page {
             ))
             .into());
         }
+        // Inputs before this action (a refused banner, an uncovered layer
+        // between reads) are not its own.
+        self.connection.take_navigation_mark();
         let kind = action["kind"].as_str().unwrap_or_default();
         let mut settle = action.clone();
         let outcome = match kind {
@@ -88,7 +92,7 @@ impl Page {
                 JevActOutcome::done()
             }
             "scroll" if action["node"].is_i64() => self.scroll_region(action).await?,
-            "enter" => self.press_enter(action).await?,
+            "enter" => self.press_enter(action, observation).await?,
             "key" => {
                 self.press_key("Escape").await?;
                 JevActOutcome::done()
@@ -127,11 +131,23 @@ impl Page {
     }
 
     /// Press Enter in the observed text field, focused first if focus left
-    /// it. A field that is gone, or will not take focus, is not pressed.
-    async fn press_enter(&mut self, action: &Value) -> anyhow::Result<JevActOutcome> {
+    /// it. A field that is gone, or will not take focus, is not pressed, and
+    /// neither is one that changed or that something other than a band
+    /// fixed to the window covers once focused: Enter would get around it
+    /// (see `keys_reach`).
+    async fn press_enter(
+        &mut self,
+        action: &Value,
+        observation: &Value,
+    ) -> anyhow::Result<JevActOutcome> {
         let focused = self.evaluate(&format!("({FOCUS_JS})({action})")).await?;
         match focused.as_bool() {
             Some(true) => {
+                let guard = observation["guards"]
+                    .get(action["node"].to_string())
+                    .map(control_state)
+                    .unwrap_or(Value::Null);
+                self.keys_reach(action, &guard).await?;
                 self.press_key("Enter").await?;
                 Ok(JevActOutcome::done())
             }
@@ -147,13 +163,14 @@ impl Page {
     /// No native key code is sent: native codes are the platform's, and
     /// Escape's Windows code 27 sent as macOS's native code opened Chrome's
     /// "About Chrome" page from a shown tab. Escape, which types nothing,
-    /// goes as a `rawKeyDown`.
+    /// goes as a `rawKeyDown`. Space is `" "`, as the DOM names it.
     pub(super) async fn press_key(&mut self, key: &str) -> anyhow::Result<()> {
-        let (kind, text, code) = match key {
-            "Enter" => ("keyDown", "\r", 13),
-            _ => ("rawKeyDown", "", 27),
+        let (kind, text, code, name) = match key {
+            "Enter" => ("keyDown", "\r", 13, "Enter"),
+            " " => ("keyDown", " ", 32, "Space"),
+            _ => ("rawKeyDown", "", 27, "Escape"),
         };
-        let mut down = json!({"type": kind, "key": key, "code": key,
+        let mut down = json!({"type": kind, "key": key, "code": name,
             "windowsVirtualKeyCode": code});
         if !text.is_empty() {
             down["text"] = json!(text);
@@ -162,7 +179,7 @@ impl Page {
         self.call("Input.dispatchKeyEvent", down).await?;
         self.call(
             "Input.dispatchKeyEvent",
-            json!({"type": "keyUp", "key": key, "code": key, "windowsVirtualKeyCode": code}),
+            json!({"type": "keyUp", "key": key, "code": name, "windowsVirtualKeyCode": code}),
         )
         .await
         .map(|_| ())
@@ -188,15 +205,45 @@ impl Page {
              if (a.kind==='select') p.chosen=({SELECT_JS})(a); \
              else if (p.scrolled) await ({FRAME_JS})(); }} return p; }})({action})"
         );
+        let guard = observation["guards"]
+            .get(action["node"].to_string())
+            .map(control_state)
+            .unwrap_or(Value::Null);
         let mut hit = self.evaluate_async(&hit_test).await?;
-        // A target under a popover, menu or dialog: dismiss that first, and
-        // go ahead in the same step when the target is free (see `uncover`).
+        // A target under a band fixed to the window is scrolled clear of it,
+        // or pressed from the keyboard; one under a popover, menu or dialog
+        // has that dismissed first. Either goes ahead in the same step when
+        // the target is free (see `uncover`).
         let mut uncovered = None;
-        if hit["covered"] == json!(true)
-            && let Some(how) = self.uncover(action).await?
-        {
-            uncovered = Some(how);
-            hit = self.evaluate_async(&hit_test).await?;
+        if hit["covered"] == json!(true) {
+            match self.route_around(action, &hit_test).await? {
+                Reach::Clear(clear) => {
+                    uncovered = Some(match hit["by"].as_str() {
+                        Some(by) => format!(
+                            "scrolled it clear of \"{}\"",
+                            by.chars().take(60).collect::<String>()
+                        ),
+                        None => "scrolled it clear of a band fixed to the window".to_string(),
+                    });
+                    hit = clear;
+                }
+                Reach::Keyboard => {
+                    // Enter on a link naming `_blank` opens its tab as a
+                    // click does: the settle waits for it the same way.
+                    if hit["opens"] == json!(true) {
+                        settle["opens"] = json!(true);
+                    }
+                    return self
+                        .through_keys(action, &guard, hit["by"].as_str(), text, settle)
+                        .await;
+                }
+                Reach::Cover => {
+                    if let Some(how) = self.uncover(action).await? {
+                        uncovered = Some(how);
+                        hit = self.evaluate_async(&hit_test).await?;
+                    }
+                }
+            }
         }
         let point = target_point(&hit)?;
         let outcome = |mut outcome: JevActOutcome| {
@@ -209,10 +256,9 @@ impl Page {
         if hit["announced"] == json!(true) {
             settle["announced"] = json!(true);
         }
-        let guard = observation["guards"]
-            .get(action["node"].to_string())
-            .map(control_state)
-            .unwrap_or(Value::Null);
+        if hit["opens"] == json!(true) {
+            settle["opens"] = json!(true);
+        }
         let point = match hit["hidden"] == json!(true) {
             true => self.press_at(point).await?,
             false => self.press(action, &guard, point).await?,
@@ -298,7 +344,7 @@ impl Page {
 
 /// A guard without its last entry, the text of the row or form around the
 /// control: the control's identity, name, value and ARIA state.
-fn control_state(guard: &Value) -> Value {
+pub(super) fn control_state(guard: &Value) -> Value {
     match guard.as_array() {
         Some(guard) => Value::Array(guard[..guard.len().saturating_sub(1)].to_vec()),
         None => Value::Null,
@@ -307,9 +353,16 @@ fn control_state(guard: &Value) -> Value {
 
 /// The point act.js found, or why there is none: covered, or a stale page.
 /// A target that is covered carries the name act.js read off what covers it.
-fn target_point(hit: &Value) -> anyhow::Result<Point> {
+pub(super) fn target_point(hit: &Value) -> anyhow::Result<Point> {
     if hit["covered"] == json!(true) {
-        let covered = Covered::new("Another element covers the target; nothing was clicked.");
+        let controls = hit["controls"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string);
+        let covered = Covered::new("Another element covers the target; nothing was clicked.")
+            .with_controls(controls);
         return Err(match hit["by"].as_str() {
             Some(cover) => covered.with_cover(cover),
             None => covered,
@@ -321,7 +374,7 @@ fn target_point(hit: &Value) -> anyhow::Result<Point> {
 
 /// What select.js reported: a choice the page kept, one it put back, or
 /// none made at all.
-fn select_outcome(action: &Value, chosen: &Value) -> anyhow::Result<JevActOutcome> {
+pub(super) fn select_outcome(action: &Value, chosen: &Value) -> anyhow::Result<JevActOutcome> {
     if chosen.is_null() {
         bail!("Dropdown execution was not confirmed; inspect before retrying.");
     }
@@ -374,6 +427,25 @@ mod tests {
         }
         // A hit that is a point has no cover, whatever else it carries.
         assert!(target_point(&json!({"x": 1, "y": 2, "by": "x"})).is_ok());
+    }
+
+    #[test]
+    fn a_covered_hit_carries_what_its_cover_offers_to_press() {
+        let hit = json!({"covered": true, "by": "Offer",
+            "controls": ["Join", "", 7, "No thanks, take me to the shop"]});
+        let error = target_point(&hit).unwrap_err();
+        let covered = error.downcast_ref::<Covered>().expect("covered");
+        assert_eq!(
+            covered.controls(),
+            ["Join", "No thanks, take me to the shop"]
+        );
+        let bare = target_point(&json!({"covered": true})).unwrap_err();
+        assert!(
+            bare.downcast_ref::<Covered>()
+                .unwrap()
+                .controls()
+                .is_empty()
+        );
     }
 
     #[test]

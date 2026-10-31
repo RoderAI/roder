@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Checkout - Mock Shop</title></head>
+<body>
+  <!-- The form opens with the account's saved delivery details, whose
+       postcode the shop rejects. Every attempt is posted to /submit/checkout;
+       a rejected one is kept in `mock.rejected`, and an accepted one becomes
+       an order in `mock.orders`. -->
+  <nav><a href="mock-shop.html">Shop</a> | <a href="mock-basket.html">Basket</a></nav>
+  <h1>Checkout</h1>
+  <p id="total"></p>
+  <p>Saved delivery details are filled in below.</p>
+  <div id="problems" role="alert"></div>
+  <form id="checkout">
+    <p><label for="name">Full name</label> <input id="name" name="name" value="Grace Hopper"></p>
+    <p><label for="postcode">Postcode</label> <input id="postcode" name="postcode" value="SW1A1"></p>
+    <button type="submit">Place order</button>
+  </form>
+  <script>
+    if (!JSON.parse(sessionStorage.getItem('mock.user') || 'null')) {
+      location.replace('mock-login.html?next=mock-checkout.html');
+    }
+    const PRICES = {
+      kettle: 34.50, toaster: 41.00, mug: 8.75, grinder: 89.99, scale: 19.20, thermometer: 12.40, press: 27.00,
+      filter: 4.60, beans: 11.50, roaster: 210.00, jug: 15.30, tray: 9.95, cloth: 6.20, tap: 52.75,
+    };
+    const cart = JSON.parse(sessionStorage.getItem('mock.cart') || '[]');
+    const total = cart.reduce((sum, id) => sum + (PRICES[id] || 0), 0).toFixed(2);
+    document.getElementById('total').textContent = `Basket total GBP ${total}.`;
+    document.getElementById('checkout').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const name = document.getElementById('name').value.trim();
+      const postcode = document.getElementById('postcode').value.trim().toUpperCase();
+      await fetch('/submit/checkout', { method: 'POST', body: new URLSearchParams({ name, postcode, total }) });
+      const problems = [];
+      if (!cart.length) problems.push('Your basket is empty.');
+      if (!name) problems.push('A full name is required.');
+      if (!/^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$/.test(postcode)) {
+        problems.push('That postcode is not a valid UK postcode.');
+      }
+      if (problems.length) {
+        const rejected = JSON.parse(sessionStorage.getItem('mock.rejected') || '[]');
+        rejected.push(postcode);
+        sessionStorage.setItem('mock.rejected', JSON.stringify(rejected));
+        document.getElementById('problems').innerHTML =
+          problems.map((problem) => `<p><strong>${problem}</strong></p>`).join('');
+        return;
+      }
+      const orders = JSON.parse(sessionStorage.getItem('mock.orders') || '[]');
+      orders.push({ name, postcode, items: cart, total });
+      sessionStorage.setItem('mock.orders', JSON.stringify(orders));
+      sessionStorage.setItem('mock.cart', '[]');
+      location.href = 'mock-order.html';
+    });
+  </script>
+</body>
+</html>

@@ -13,6 +13,13 @@ pub(super) const QUESTION_LIMIT: usize = 32_000;
 const REQUEST_RESERVE: usize = 4096;
 const QUESTION_RESERVE: usize = 2048;
 
+/// A request whose state plus largest question is estimated above this is
+/// large enough that the service shedding it with 5xx answers is a reason to
+/// ask again smaller. About 8k tokens at three bytes each: fastbrowse found
+/// the gateway answered nearly every request under 10k tokens, but a 27k
+/// one only four times in ten.
+pub(super) const SHED_ABOVE: usize = 24_000;
+
 #[derive(Debug)]
 pub(super) struct TooLarge;
 impl std::fmt::Display for TooLarge {
@@ -79,6 +86,15 @@ pub(super) fn estimate(request: &Value, image_cost: usize) -> (usize, usize) {
         state + questions.iter().sum::<usize>() + REQUEST_RESERVE,
         state + questions.iter().max().copied().unwrap_or(0) + QUESTION_RESERVE,
     )
+}
+
+/// Whether the last request sent, as `reports` recorded it, was large enough
+/// to ask again smaller (see [`SHED_ABOVE`]).
+pub(super) fn sheddable(reports: &[Value]) -> bool {
+    reports
+        .last()
+        .and_then(|report| report["estimated_max_question_tokens"].as_u64())
+        .is_some_and(|tokens| tokens as usize > SHED_ABOVE)
 }
 
 pub(super) struct Bounded<'a> {

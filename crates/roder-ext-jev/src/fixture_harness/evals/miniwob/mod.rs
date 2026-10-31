@@ -41,9 +41,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, bail, ensure};
 use serde::Deserialize;
 
-use super::live::{env, live_key};
+use super::live::{env, live_route};
 use super::text_sources::Recorded;
-use crate::decide::JevTypeSafeDecisionClient;
+use crate::decide::route::HostedRoute;
 use crate::engine::{JevDecisionClient, JevTextValueResolver};
 use crate::fixture_harness::{Harness, target_dir};
 use crate::text_helper::TextHelper;
@@ -201,6 +201,7 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
             timeout: setup.timeout,
             decision: &setup.decision,
             text: &text,
+            consultant: Some(setup.text.clone()),
             fallback: setup.fallback.as_ref(),
         };
         let mut attempt = 0;
@@ -250,18 +251,13 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
 
 /// The production client, or with `JEV_EVAL_VARIANTS=effect` (the only
 /// variant MiniWoB honours) one that sends each recent action's effect.
-fn decision_client(key: String, model: String) -> Arc<dyn JevDecisionClient> {
+fn decision_client(route: &HostedRoute, model: String) -> Arc<dyn JevDecisionClient> {
     let variants = super::variants::Variants::parse(&env("JEV_EVAL_VARIANTS").unwrap_or_default())
         .expect("JEV_EVAL_VARIANTS");
     if !variants.has(super::variants::Variant::Effect) {
-        return Arc::new(JevTypeSafeDecisionClient::new(key, model));
+        return Arc::new(route.client(model));
     }
-    let http = crate::decide::TypeSafeHttpTransport::new(
-        crate::decide::ENDPOINT,
-        key,
-        crate::http::RetryPolicy::default(),
-    );
-    super::effect_variant::client(model, Arc::new(http))
+    super::effect_variant::client(model, Arc::new(route.transport()), false)
 }
 
 #[tokio::test]
@@ -279,8 +275,8 @@ async fn miniwob_corpus() {
         "{} is not a miniwob-plusplus checkout",
         dir.display()
     );
-    let Some(key) = live_key() else {
-        eprintln!("skipping: set TYPESAFE_API_KEY (or JEV_API_KEY)");
+    let Some(route) = live_route() else {
+        eprintln!("skipping: set {}", HostedRoute::NEEDS);
         return;
     };
     let text_model = crate::runner::resolve_text_model(None)
@@ -298,7 +294,7 @@ async fn miniwob_corpus() {
     let path = dir.join(format!("miniwob-{stamp}.jsonl"));
     let setup = Setup {
         site: StaticSite::start(root).await.unwrap(),
-        decision: decision_client(key, model.clone()),
+        decision: decision_client(&route, model.clone()),
         fallback: super::fallback_live::live_fallback().await,
         text: Arc::new(TextHelper::new(text_model)),
         max_steps: env_number("JEV_MINIWOB_MAX_STEPS", 25usize).max(1),

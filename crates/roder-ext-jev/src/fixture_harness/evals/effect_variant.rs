@@ -24,8 +24,14 @@ tokio::task_local! {
 pub(crate) fn client(
     model: String,
     transport: Arc<dyn JevDecisionTransport>,
+    shadow_gate: bool,
 ) -> Arc<dyn JevDecisionClient> {
     let inner = JevTypeSafeDecisionClient::with_transport(model, Arc::new(Carry { transport }));
+    let inner = if shadow_gate {
+        inner.with_shadow_gate()
+    } else {
+        inner
+    };
     Arc::new(Effects { inner })
 }
 

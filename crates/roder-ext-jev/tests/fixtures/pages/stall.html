@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Stall</title></head>
+<body>
+  <!-- A control that does nothing beside one that moves the task on, and a
+       commitment: the consult and light-recovery tests. -->
+  <h1>Application</h1>
+  <p id="status">Not sent yet.</p>
+  <button type="button" id="refresh">Refresh status</button>
+  <button type="button" id="continue">Continue</button>
+  <button type="button" id="delete">Delete application</button>
+  <button type="button" id="cart">Add to cart</button>
+  <script>
+    window.continued = 0;
+    window.deleted = false;
+    window.carted = 0;
+    document.getElementById('cart').addEventListener('click', () => {
+      window.carted += 1;
+      document.getElementById('status').textContent = `In cart: ${window.carted}.`;
+    });
+    document.getElementById('continue').addEventListener('click', () => {
+      window.continued += 1;
+      document.getElementById('status').textContent = `Continued ${window.continued}.`;
+    });
+    document.getElementById('delete').addEventListener('click', () => {
+      window.deleted = true;
+      document.getElementById('status').textContent = 'Deleted.';
+    });
+  </script>
+</body>
+</html>

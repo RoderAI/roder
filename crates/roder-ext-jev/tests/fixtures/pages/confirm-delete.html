@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Projects</title></head>
+<body>
+  <h1>Projects</h1>
+  <!-- "Delete project" only opens a dialog; "Yes, I'm sure" is what
+       deletes, and its label names nothing: only the dialog's heading
+       does. With the gate on, an unauthorized run must stop before it. -->
+  <ul>
+    <li>Atlas <button type="button" onclick="document.getElementById('confirm').hidden = false">Delete project</button></li>
+  </ul>
+  <div id="confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden
+       style="position: fixed; inset: 20% 20% auto; padding: 16px; background: #fff; border: 1px solid #333">
+    <h2 id="confirm-title">Delete the Atlas project?</h2>
+    <p>Its files and history go with it.</p>
+    <form method="post" action="/submit/delete-project">
+      <input type="hidden" name="project" value="atlas">
+      <button type="button" onclick="document.getElementById('confirm').hidden = true">Keep it</button>
+      <button type="submit">Yes, I'm sure</button>
+    </form>
+  </div>
+</body>
+</html>

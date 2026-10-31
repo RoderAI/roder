@@ -11,7 +11,7 @@ impl Page {
             .await?
             .is_empty())
     }
-    pub(super) async fn freshness_changes(
+    pub(crate) async fn freshness_changes(
         &mut self,
         observation: &Value,
         action: Option<&Value>,
@@ -59,11 +59,7 @@ impl Page {
             ));
             return Ok(changed);
         }
-        let marker = self
-            .evaluate_snapshot(&format!(
-                "(() => {{ const state={SNAPSHOT_JS}; return state?.marker ?? null; }})()"
-            ))
-            .await?;
+        let marker = self.read(super::snapshot::Read::Marker).await?;
         Ok(changes(
             &observation["marker"],
             &marker,

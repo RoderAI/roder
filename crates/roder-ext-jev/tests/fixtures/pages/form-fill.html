@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign up</title></head>
+<body>
+  <h1>Sign up</h1>
+  <!-- Another form's field is never written with the sign-up's. -->
+  <form method="get" action="/submit/search">
+    <label>Search <input type="text" name="q"></label>
+    <button type="submit">Go</button>
+  </form>
+  <!-- Typing an email copies it into Confirm email, so a value written for
+       that field earlier no longer belongs to an empty field. -->
+  <form method="post" action="/submit/signup">
+    <label>Name <input type="text" name="name"></label>
+    <label>Email <input type="email" name="email" id="email"></label>
+    <label>Confirm email <input type="email" name="confirm" id="confirm"></label>
+    <label>Phone <input type="tel" name="phone"></label>
+    <button type="submit">Sign up</button>
+  </form>
+  <script>
+    document.getElementById('email').addEventListener('input', event => {
+      document.getElementById('confirm').value = event.target.value;
+    });
+  </script>
+</body>
+</html>

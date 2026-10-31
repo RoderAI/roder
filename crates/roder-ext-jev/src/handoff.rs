@@ -1,11 +1,11 @@
 //! Handoffs are outcomes, not failed tool calls.
 //!
-//! A run that ends `needs_input`, `needs_confirmation` or `access_denied`
-//! has done what it should: it found something only the caller can settle (a
-//! value the goal lacks, the user's say-so for an action that cannot be
-//! undone, a site that refused automated access) and said so, with nothing
-//! dispatched. Roder's runtime counts every tool result with `is_error` set
-//! toward its stop after five in a row, so reporting each of these as an
+//! A run that ends `needs_input`, `needs_login`, `needs_confirmation` or
+//! `access_denied` has done what it should: it found something only the
+//! caller can settle (a value the goal lacks, a sign-in only the user can
+//! make, the user's say-so for an action that cannot be undone, a site that
+//! refused automated access) and said so, with nothing dispatched. Roder's
+//! runtime counts every tool result with `is_error` set toward its stop after five in a row, so reporting each of these as an
 //! error made a caller that was working through legitimate handoffs (a
 //! missing field, then a confirmation, then another site's refusal) look like
 //! one that was failing.
@@ -34,7 +34,12 @@ pub(crate) const HANDOFF: &str = "handoff";
 pub(crate) const REPEATED_HANDOFF: &str = "repeated_handoff";
 
 /// The statuses that hand a decision to the caller.
-const STATUSES: [&str; 3] = ["needs_input", "needs_confirmation", "access_denied"];
+const STATUSES: [&str; 4] = [
+    "needs_input",
+    "needs_login",
+    "needs_confirmation",
+    "access_denied",
+];
 
 /// What a handoff said: enough to tell whether the next one is the same.
 ///

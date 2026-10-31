@@ -271,7 +271,12 @@ async fn blocked_and_the_rest_stay_failed_tool_calls() {
     }
     // A handoff status the session did not classify is not trusted: it is
     // an error, as every non-done status was.
-    for status in ["needs_input", "needs_confirmation", "access_denied"] {
+    for status in [
+        "needs_input",
+        "needs_login",
+        "needs_confirmation",
+        "access_denied",
+    ] {
         let result = result_of(json!({"status": status, "url": "https://a.test/"}));
         assert!(result.is_error, "{status}");
     }

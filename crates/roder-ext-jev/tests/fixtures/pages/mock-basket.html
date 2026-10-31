@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Your basket - Mock Shop</title></head>
+<body>
+  <nav><a href="mock-shop.html">Shop</a> | <a href="mock-basket.html">Basket</a></nav>
+  <h1>Your basket</h1>
+  <ul id="items"></ul>
+  <p id="subtotal"></p>
+  <p><a href="mock-checkout.html">Go to checkout</a> | <a href="mock-shop.html">Continue shopping</a></p>
+  <script>
+    if (!JSON.parse(sessionStorage.getItem('mock.user') || 'null')) {
+      location.replace('mock-login.html?next=mock-basket.html');
+    }
+    const PRODUCTS = {
+      kettle: ['Blue Kettle', 34.50], toaster: ['Chrome Toaster', 41.00], mug: ['Stoneware Mug', 8.75],
+      grinder: ['Burr Grinder', 89.99], scale: ['Kitchen Scale', 19.20], thermometer: ['Milk Thermometer', 12.40],
+      press: ['French Press', 27.00], filter: ['Paper Filters', 4.60], beans: ['House Beans', 11.50],
+      roaster: ['Drum Roaster', 210.00], jug: ['Serving Jug', 15.30], tray: ['Drip Tray', 9.95],
+      cloth: ['Bar Cloth', 6.20], tap: ['Water Tap', 52.75],
+    };
+    function render() {
+      const cart = JSON.parse(sessionStorage.getItem('mock.cart') || '[]');
+      const list = document.getElementById('items');
+      list.replaceChildren();
+      cart.forEach((id, index) => {
+        const item = document.createElement('li');
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => {
+          cart.splice(index, 1);
+          sessionStorage.setItem('mock.cart', JSON.stringify(cart));
+          render();
+        });
+        item.append(`${(PRODUCTS[id] || [id])[0]} `, remove);
+        list.append(item);
+      });
+      if (!cart.length) list.innerHTML = '<li>Nothing yet.</li>';
+      const subtotal = cart.reduce((sum, id) => sum + (PRODUCTS[id] || [id, 0])[1], 0);
+      document.getElementById('subtotal').textContent = `Subtotal: GBP ${subtotal.toFixed(2)}`;
+    }
+    render();
+  </script>
+</body>
+</html>

@@ -6,10 +6,18 @@
 //! `verdict_ok`, `truth_ok` and false greens per task, and a baseline saved
 //! from an earlier run (with the [`Pin`] it was taken at) turns "49 of 52" into
 //! "these tasks got worse". The comparison is on rates, so a baseline of
-//! three runs still stands against a run of five. It is all offline logic;
-//! the live tier only feeds it rows.
+//! three runs still stands against a run of five.
+//!
+//! It also gates on the work a run did, as fastbrowse's release gate does
+//! (CHANGELOG 0.6.0): a task whose median decision calls, text calls or
+//! input tokens, or mean decision cost, rose past [`WORK_BOUND`](baseline::WORK_BOUND) over the
+//! baseline's has done more work, even when it still passes. Wall time
+//! moves with the machine's and the provider's load rather than with the
+//! build, so it is recorded and never gates, and the part of it lost to
+//! transient provider failures is reported on its own (see [`Work`]). It is
+//! all offline logic; the live tier only feeds it rows.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
@@ -18,6 +26,14 @@ use serde::{Deserialize, Serialize};
 use super::grade::Marks;
 use super::pin::{BASELINE_FILE, Pin};
 use super::rows::Row;
+
+mod baseline;
+mod work;
+#[cfg(test)]
+mod work_tests;
+pub(crate) use baseline::{Baseline, Comparison};
+pub(crate) use work::Work;
+use work::number;
 
 /// The most runs per task `JEV_EVAL_N` accepts: it multiplies a billed run.
 pub(crate) const MAX_REPEATS: usize = 20;
@@ -66,7 +82,19 @@ pub(crate) struct Run<'a> {
     pub(crate) task: &'a str,
     pub(crate) marks: Marks,
     pub(crate) steps: usize,
+    /// Decision calls the run made.
+    pub(crate) model_calls: usize,
+    /// Text-helper calls the run made.
+    pub(crate) text_calls: usize,
     pub(crate) input_tokens: Option<u64>,
+    /// Dollars the run's decisions cost, when the host reported it.
+    pub(crate) cost: Option<f64>,
+    /// The model that answered, as the host reported it.
+    pub(crate) model: Option<&'a str>,
+    pub(crate) wall_ms: u64,
+    /// Of `wall_ms`, what transient provider failures cost, where a hosted
+    /// transport ran.
+    pub(crate) transient_ms: Option<u64>,
 }
 
 impl<'a> From<&'a Row> for Run<'a> {
@@ -75,7 +103,13 @@ impl<'a> From<&'a Row> for Run<'a> {
             task: &row.task,
             marks: row.marks,
             steps: row.steps,
+            model_calls: row.model_calls,
+            text_calls: row.text_calls,
             input_tokens: row.input_tokens,
+            cost: row.decision_cost,
+            model: row.decision_model.as_deref(),
+            wall_ms: row.wall_ms,
+            transient_ms: row.transient_ms,
         }
     }
 }
@@ -91,9 +125,26 @@ pub(crate) struct TaskTally {
     pub(crate) truth_ok: usize,
     pub(crate) false_green: usize,
     pub(crate) median_steps: f64,
+    /// Decision calls per run; absent in a baseline saved before calls were
+    /// tallied, which the work gate then leaves alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_model_calls: Option<f64>,
+    /// Text-helper calls per run, as `median_model_calls`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_text_calls: Option<f64>,
     /// Over the runs that reported tokens; absent when none did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) median_input_tokens: Option<f64>,
+    /// Mean decision dollars over the runs that reported a cost; absent
+    /// when none did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) mean_cost: Option<f64>,
+    /// Recorded, never gated: it moves with load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_wall_ms: Option<f64>,
+    /// Over the runs whose transport reported it; absent when none did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_transient_ms: Option<f64>,
 }
 
 /// Every task of a run, by id.
@@ -117,15 +168,28 @@ pub(crate) fn tally<'a>(runs: impl IntoIterator<Item = Run<'a>>) -> Tally {
                 false_green: count(|marks| marks.false_green),
                 median_steps: median(runs.iter().map(|run| run.steps as f64).collect())
                     .unwrap_or_default(),
+                median_model_calls: median(runs.iter().map(|run| run.model_calls as f64).collect()),
+                median_text_calls: median(runs.iter().map(|run| run.text_calls as f64).collect()),
                 median_input_tokens: median(
                     runs.iter()
                         .filter_map(|run| run.input_tokens.map(|tokens| tokens as f64))
+                        .collect(),
+                ),
+                mean_cost: mean(runs.iter().filter_map(|run| run.cost).collect()),
+                median_wall_ms: median(runs.iter().map(|run| run.wall_ms as f64).collect()),
+                median_transient_ms: median(
+                    runs.iter()
+                        .filter_map(|run| run.transient_ms.map(|ms| ms as f64))
                         .collect(),
                 ),
             };
             (task.to_string(), tally)
         })
         .collect()
+}
+
+fn mean(values: Vec<f64>) -> Option<f64> {
+    (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
 }
 
 fn median(mut values: Vec<f64>) -> Option<f64> {
@@ -141,12 +205,24 @@ fn median(mut values: Vec<f64>) -> Option<f64> {
 /// A run's tally as the rows of a table, one task a line.
 pub(crate) fn table(tally: &Tally) -> String {
     let mut out = format!(
-        "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13}\n",
-        "task", "runs", "pass", "verdict", "truth", "false_green", "steps", "input_tokens"
+        "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>6} {:>5} {:>13} {:>10} {:>8} {:>9}\n",
+        "task",
+        "runs",
+        "pass",
+        "verdict",
+        "truth",
+        "false_green",
+        "steps",
+        "calls",
+        "text",
+        "input_tokens",
+        "mean_cost",
+        "wall_ms",
+        "transient"
     );
     for (task, tally) in tally {
         out.push_str(&format!(
-            "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13}\n",
+            "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>6} {:>5} {:>13} {:>10} {:>8} {:>9}\n",
             task,
             tally.runs,
             tally.passed,
@@ -154,114 +230,17 @@ pub(crate) fn table(tally: &Tally) -> String {
             tally.truth_ok,
             tally.false_green,
             tally.median_steps,
+            number(tally.median_model_calls),
+            number(tally.median_text_calls),
+            number(tally.median_input_tokens),
             tally
-                .median_input_tokens
-                .map_or("-".to_string(), |tokens| format!("{tokens}")),
+                .mean_cost
+                .map_or("-".to_string(), |dollars| format!("${dollars:.6}")),
+            number(tally.median_wall_ms),
+            number(tally.median_transient_ms),
         ));
     }
     out
-}
-
-/// The numbers of an earlier run, and the pin they were taken at.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Baseline {
-    pub(crate) pin: Pin,
-    /// Runs per task.
-    pub(crate) n: usize,
-    pub(crate) tasks: Tally,
-}
-
-impl Baseline {
-    /// `None` when there is no file; a file that does not parse is an error,
-    /// not an absent baseline.
-    pub(crate) fn load(path: &Path) -> anyhow::Result<Option<Self>> {
-        let raw = match std::fs::read_to_string(path) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-        };
-        serde_json::from_str(&raw)
-            .map(Some)
-            .with_context(|| format!("parse {}", path.display()))
-    }
-
-    pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-        }
-        let mut text = serde_json::to_string_pretty(self)?;
-        text.push('\n');
-        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))
-    }
-
-    /// This baseline against a run whose pin at its start was `pin`.
-    pub(crate) fn compare(&self, now: &Tally, pin: &Pin) -> Comparison {
-        let mut comparison = Comparison::default();
-        for (name, was, is) in [
-            ("corpus", &self.pin.corpus, &pin.corpus),
-            ("model", &self.pin.model, &pin.model),
-            ("setup", &self.pin.setup, &pin.setup),
-        ] {
-            if was != is {
-                comparison.notes.push(format!(
-                    "{name} differs from the baseline's ({was} -> {is}); the counts may not compare"
-                ));
-            }
-        }
-        for (task, is) in now {
-            let Some(was) = self.tasks.get(task) else {
-                comparison.new.push(task.clone());
-                continue;
-            };
-            let worse = worse(was, is);
-            if !worse.is_empty() {
-                comparison
-                    .regressions
-                    .push(format!("{task}: {}", worse.join(", ")));
-            } else if is.passed * was.runs > was.passed * is.runs {
-                comparison.improved.push(format!(
-                    "{task}: passed {}/{} -> {}/{}",
-                    was.passed, was.runs, is.passed, is.runs
-                ));
-            }
-        }
-        comparison
-    }
-}
-
-/// How a task's rates got worse since the baseline; empty when they did not.
-/// Rates, compared across as products, so runs of unequal count compare.
-fn worse(was: &TaskTally, is: &TaskTally) -> Vec<String> {
-    let mut worse = Vec::new();
-    for (name, before, now) in [
-        ("passed", was.passed, is.passed),
-        ("verdict_ok", was.verdict_ok, is.verdict_ok),
-        ("truth_ok", was.truth_ok, is.truth_ok),
-    ] {
-        if now * was.runs < before * is.runs {
-            worse.push(format!("{name} {before}/{} -> {now}/{}", was.runs, is.runs));
-        }
-    }
-    if is.false_green * was.runs > was.false_green * is.runs {
-        worse.push(format!(
-            "false_green {}/{} -> {}/{}",
-            was.false_green, was.runs, is.false_green, is.runs
-        ));
-    }
-    worse
-}
-
-/// A run set against a baseline.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct Comparison {
-    /// Tasks whose pass, verdict, truth or false-green rate got worse.
-    pub(crate) regressions: Vec<String>,
-    pub(crate) improved: Vec<String>,
-    /// Tasks the baseline has no numbers for.
-    pub(crate) new: Vec<String>,
-    /// Ways the two runs were not measuring the same thing.
-    pub(crate) notes: Vec<String>,
 }
 
 /// What the environment asked of this run.
@@ -286,6 +265,16 @@ pub(crate) struct Conclusion {
     /// What moved between the two reads of the pin: a mid-run edit.
     pub(crate) drift: Vec<String>,
     pub(crate) tasks: Tally,
+    /// The run's work across every task.
+    pub(crate) work: Work,
+    /// Decision dollars summed over the runs that reported a cost, and how
+    /// many did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) decision_cost: Option<f64>,
+    pub(crate) costed_runs: usize,
+    /// Every model the host reported answering, such as the dated version
+    /// behind `jev-latest`.
+    pub(crate) served_models: BTreeSet<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) comparison: Option<Comparison>,
     /// Why a requested baseline was not saved.
@@ -311,6 +300,7 @@ pub(crate) fn conclude(
     saved: Option<&Baseline>,
 ) -> Conclusion {
     let tasks = tally(runs.iter().copied());
+    let costs = runs.iter().filter_map(|run| run.cost).collect::<Vec<_>>();
     let drift = start.drift(&end);
     let comparison = saved.map(|saved| saved.compare(&tasks, &start));
     let mut refused = Vec::new();
@@ -341,6 +331,13 @@ pub(crate) fn conclude(
         end,
         drift,
         tasks,
+        work: Work::of(runs),
+        decision_cost: costs.iter().copied().reduce(|a, b| a + b),
+        costed_runs: costs.len(),
+        served_models: runs
+            .iter()
+            .filter_map(|run| run.model.map(str::to_string))
+            .collect(),
         comparison,
         refused,
         save: None,
@@ -372,8 +369,9 @@ impl Conclusion {
     /// Why `JEV_EVAL_STRICT=1` fails this run; empty means it holds. A
     /// mid-run edit, a false green and a run that produced no rows always
     /// fail it. Against a baseline it
-    /// fails on a task getting worse, since some tasks are known to fail;
-    /// with none, on any run that failed.
+    /// fails on a task getting worse, since some tasks are known to fail,
+    /// and on a task doing more work than [`WORK_BOUND`](baseline::WORK_BOUND) allows over the
+    /// baseline's; with none, on any run that failed.
     pub(crate) fn strict_failures(&self) -> Vec<String> {
         let mut failures = Vec::new();
         if self.tasks.is_empty() {
@@ -389,12 +387,20 @@ impl Conclusion {
             failures.push(format!("{} false green runs", self.false_green_runs));
         }
         match &self.comparison {
-            Some(comparison) => failures.extend(
-                comparison
-                    .regressions
-                    .iter()
-                    .map(|regression| format!("worse than the baseline: {regression}")),
-            ),
+            Some(comparison) => {
+                failures.extend(
+                    comparison
+                        .regressions
+                        .iter()
+                        .map(|regression| format!("worse than the baseline: {regression}")),
+                );
+                failures.extend(
+                    comparison
+                        .work
+                        .iter()
+                        .map(|work| format!("more work than the baseline: {work}")),
+                );
+            }
             None if self.failed_runs > 0 => {
                 failures.push(format!("{} failed runs", self.failed_runs));
             }
@@ -415,6 +421,23 @@ impl Conclusion {
             pin.setup,
             table(&self.tasks)
         );
+        out.push_str(&self.work.line());
+        if !self.served_models.is_empty() {
+            out.push_str(&format!(
+                "served by: {}\n",
+                self.served_models
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if let Some(dollars) = self.decision_cost {
+            out.push_str(&format!(
+                "decision cost: ${dollars:.6} over {} runs\n",
+                self.costed_runs
+            ));
+        }
         if !self.drift.is_empty() {
             out.push_str(&format!(
                 "MID-RUN EDIT: {}. These numbers describe no one tree.\n",
@@ -424,6 +447,7 @@ impl Conclusion {
         if let Some(comparison) = &self.comparison {
             for (heading, lines) in [
                 ("REGRESSION", &comparison.regressions),
+                ("MORE WORK", &comparison.work),
                 ("improved", &comparison.improved),
                 ("note", &comparison.notes),
             ] {
@@ -434,7 +458,7 @@ impl Conclusion {
             if !comparison.new.is_empty() {
                 out.push_str(&format!("no baseline for: {}\n", comparison.new.join(", ")));
             }
-            if comparison.regressions.is_empty() {
+            if comparison.regressions.is_empty() && comparison.work.is_empty() {
                 out.push_str("no regressions vs baseline\n");
             }
         }

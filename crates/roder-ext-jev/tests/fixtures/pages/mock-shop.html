@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Shop - Mock Shop</title></head>
+<body>
+  <!-- Fourteen products, six to a page. Every page this tab opened is kept in
+       `mock.pages`, so a run that says it browsed every page is graded on the
+       pages it opened. -->
+  <nav><a href="mock-shop.html">Shop</a> | <a href="mock-basket.html">Basket</a></nav>
+  <h1>Shop</h1>
+  <p id="where"></p>
+  <ul id="items"></ul>
+  <p id="pages">Pages: </p>
+  <script>
+    const PRODUCTS = [
+      ['kettle', 'Blue Kettle', 34.50], ['toaster', 'Chrome Toaster', 41.00],
+      ['mug', 'Stoneware Mug', 8.75], ['grinder', 'Burr Grinder', 89.99],
+      ['scale', 'Kitchen Scale', 19.20], ['thermometer', 'Milk Thermometer', 12.40],
+      ['press', 'French Press', 27.00], ['filter', 'Paper Filters', 4.60],
+      ['beans', 'House Beans', 11.50], ['roaster', 'Drum Roaster', 210.00],
+      ['jug', 'Serving Jug', 15.30], ['tray', 'Drip Tray', 9.95],
+      ['cloth', 'Bar Cloth', 6.20], ['tap', 'Water Tap', 52.75],
+    ];
+    const PER_PAGE = 6;
+    const pages = Math.ceil(PRODUCTS.length / PER_PAGE);
+    const asked = parseInt(new URLSearchParams(location.search).get('page') || '1', 10) || 1;
+    const page = Math.min(pages, Math.max(1, asked));
+    const seen = JSON.parse(sessionStorage.getItem('mock.pages') || '[]');
+    seen.push(page);
+    sessionStorage.setItem('mock.pages', JSON.stringify(seen));
+    document.getElementById('where').textContent = `Page ${page} of ${pages}.`;
+    const list = document.getElementById('items');
+    for (const [id, name, price] of PRODUCTS.slice((page - 1) * PER_PAGE, page * PER_PAGE)) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = `mock-product.html?id=${id}`;
+      link.textContent = name;
+      item.append(link, ` - GBP ${price.toFixed(2)}`);
+      list.append(item);
+    }
+    const pager = document.getElementById('pages');
+    for (let n = 1; n <= pages; n++) {
+      const link = document.createElement('a');
+      link.href = `mock-shop.html?page=${n}`;
+      link.textContent = String(n);
+      pager.append(link, ' ');
+    }
+  </script>
+</body>
+</html>

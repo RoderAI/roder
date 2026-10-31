@@ -128,6 +128,19 @@ impl JevBrowser for ProbedPage {
         self.watch.time("describe", self.page.describe()).await
     }
 
+    async fn reload(&mut self, url: &str) -> anyhow::Result<bool> {
+        self.watch
+            .time("reload", self.page.goto(url))
+            .await
+            .map(|()| true)
+    }
+
+    async fn wait_for_change(&mut self, within: Duration) -> anyhow::Result<()> {
+        self.watch
+            .time("interstitial", self.page.wait_for_change(within))
+            .await
+    }
+
     async fn act(
         &mut self,
         action: &Value,

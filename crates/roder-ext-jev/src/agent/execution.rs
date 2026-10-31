@@ -1,11 +1,33 @@
 //! One bounded native decision and its observed execution.
 use super::*;
+
+/// How long the browser may take to say the status a navigation landed on.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl Agent {
+    /// The HTTP status of the document an action led to, best effort: only
+    /// when it is another document than `previous`, since a page that
+    /// changed in place keeps the status it loaded with.
+    async fn landed_status(&mut self, previous: &Value) -> Option<u16> {
+        if effects::same_document(previous, &self.observation) {
+            return None;
+        }
+        tokio::time::timeout(STATUS_TIMEOUT, self.browser.describe())
+            .await
+            .ok()?
+            .ok()??
+            .http_status
+    }
+
     pub(super) async fn tick(&mut self) -> anyhow::Result<()> {
-        let decision = self.predict().await?;
+        // A step a light recovery named is taken in place of a decision.
+        let (decision, directed) = match self.directed.take() {
+            Some(decision) => (decision, true),
+            None => (self.predict().await?, false),
+        };
         let previous = self.observation.clone();
         let steps = self.history.len();
-        match self.act(decision.clone()).await {
+        match self.act(decision.clone(), directed).await {
             Err(error) if error.is::<StaleObservation>() && self.history.len() == steps => {
                 self.recovery.record(
                     "stale_decision",
@@ -13,7 +35,7 @@ impl Agent {
                     self.elapsed_ms,
                 );
                 if self.revalidate_navigation(&previous, &decision).await? {
-                    self.act(decision).await
+                    self.act(decision, directed).await
                 } else {
                     Err(error)
                 }
@@ -22,7 +44,7 @@ impl Agent {
         }
     }
 
-    async fn act(&mut self, decision: JevDecision) -> anyhow::Result<()> {
+    async fn act(&mut self, decision: JevDecision, directed: bool) -> anyhow::Result<()> {
         let selected = decision.choice.clone();
         // A page that showed nothing yet is read again once before a
         // BLOCKED about it is believed; the next decision sees what came.
@@ -77,7 +99,30 @@ impl Agent {
         let Some(action) = action else {
             return Err(StaleObservation::new("Chosen action is no longer observed").into());
         };
-        if let Some(held) = self.unsure_repeat(&action, &decision) {
+        // A step a recovery named was the consultant's already.
+        let consult::Verdict {
+            action,
+            decision,
+            endorsed,
+            swapped,
+        } = match directed {
+            true => consult::Verdict {
+                action,
+                decision,
+                endorsed: true,
+                swapped: false,
+            },
+            false => self.consult_before_acting(action, decision).await,
+        };
+        let selected = decision.choice.clone();
+        // A repeat the consultant endorsed goes ahead, unless its control
+        // commits or adds something, or it is a twin.
+        let held = self.unsure_repeat(&action, &decision).filter(|held| {
+            !(endorsed
+                && held.kind == JevSuppressedKind::SameControl
+                && consult::repeatable(&action))
+        });
+        if let Some(held) = held {
             self.suppressed_click = Some(held);
             if self.retry_navigation(&action, &decision).await? {
                 return Ok(());
@@ -112,9 +157,10 @@ impl Agent {
         let text = written.as_ref().map(|written| written.value.clone());
         let secret = secret::is_secret(&action);
         if secret && let Some(text) = &text {
-            self.secrets.remember(text);
+            let url = self.observation["url"].as_str();
+            self.secrets.remember_at(text, url);
         }
-        let (covered, refused, uncovered, cover) = match self
+        let (covered, refused, uncovered, (cover, offers)) = match self
             .browser
             .act(
                 &action,
@@ -126,19 +172,26 @@ impl Agent {
         {
             // A refusal is recorded and the run goes on: the next decision
             // sees the page as it stands.
-            Ok(outcome) => (false, outcome.refused, outcome.uncovered, None),
+            Ok(outcome) => (
+                false,
+                outcome.refused,
+                outcome.uncovered,
+                (None, Vec::new()),
+            ),
             // Nothing was dispatched, but the attempt is a step that changed
             // nothing: a target that stays covered stalls the run instead of
             // paying for a decision per retry until the model-call budget.
             Err(error) if error.is::<Covered>() => {
-                let cover = error
+                let named = error
                     .downcast_ref::<Covered>()
-                    .and_then(|covered| self.cover_name(covered));
-                (true, None, None, cover)
+                    .map(|covered| (self.cover_name(covered), self.cover_controls(covered)))
+                    .unwrap_or_default();
+                (true, None, None, named)
             }
             Err(error) => return Err(error),
         };
         self.pending_text = None;
+        self.form_fill.acted(&action, &self.observation);
         self.elapsed();
 
         // Record execution before observing: a stale observation afterwards
@@ -164,12 +217,21 @@ impl Agent {
             "covered": covered,
             // What covered it, as the page names it (not sent to the model).
             "covered_by": cover,
+            // What it offers to press, as the page names it (not sent either).
+            "covered_controls": (!offers.is_empty()).then_some(offers),
             "refused": refused.map(|reason| self.secrets.scrub(&reason)),
             "uncovered": uncovered.map(|how| self.secrets.scrub(&how)),
             "text_helper": written.as_ref().map(|written| written.model.clone()),
             "text_latency_ms": written.as_ref().map_or(0, |written| written.latency_ms),
             "operation": decision.operation,
             "target": decision.target,
+            // Who chose it: Jev, the consultant in Jev's place, or a light
+            // recovery (see `consult` and `recovery`).
+            "decided_by": match (directed, swapped) {
+                (true, _) => "recovery",
+                (false, true) => "consult",
+                (false, false) => "jev",
+            },
             "page_changed": Value::Null,
             "effect": Value::Null,
             "url": self.observation["url"],
@@ -187,13 +249,25 @@ impl Agent {
         // A refused cookie banner may be recorded after this step.
         let step = self.history.len() - 1;
         self.observe().await?;
+        let landing = effects::Landing {
+            status: self.landed_status(&previous).await,
+            // A covered choice was never clicked.
+            chosen: (!covered && effects::chooses(&action)).then_some(&action),
+            form: Some(&action["form"]["id"]).filter(|id| !id.is_null()),
+        };
+        let effect = effects::effect(&previous, &self.observation, landing);
         let elapsed = self.elapsed();
         if let Some(entry) = self.history.get_mut(step) {
             // A covered target may have been scrolled into view first; that
             // is not the action taking effect.
             entry["page_changed"] =
                 json!(!covered && self.observation["fingerprint"] != previous["fingerprint"]);
-            entry["effect"] = json!(effects::effect(&previous, &self.observation));
+            entry["effect"] = json!(effect.summary);
+            // A choice that set nothing did not take: the stall rule counts
+            // it as a step that changed nothing (see `effects`).
+            if landing.chosen.is_some() {
+                entry["set_something"] = json!(effect.set_something);
+            }
             entry["text_added"] = json!(effects::text_added(&previous, &self.observation));
             entry["url"] = self.observation["url"].clone();
             entry["elapsed_ms"] = json!(elapsed);

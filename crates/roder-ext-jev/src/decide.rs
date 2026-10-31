@@ -4,8 +4,9 @@
 //! base request body and validation rules are pinned by upstream fixtures. The
 //! hosted Jev client adds measured browser evidence and workflow guidance through
 //! `jev_prompt`; other backends can explicitly retain the base request.
-//! Jev's state also carries today's date (see [`crate::text_helper::today`]):
-//! "next month" and "the next Monday" mean nothing without it.
+//! Jev's state also carries today's date and the next two months (see
+//! [`crate::text_helper::today_brief`]): "next month" means nothing without
+//! it. The list of the next seven days goes to the field writer alone.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,7 +17,7 @@ use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
 
 use crate::engine::{JevDecision, JevDecisionClient, JevDecisionTransport};
-use crate::http::{JsonPoster, PostFailure, RetryPolicy};
+use crate::http::RetryPolicy;
 use crate::irreversible;
 use crate::prompts::{NEXT_ACTION, TARGET};
 use crate::space::{ActionSpace, action_space};
@@ -24,29 +25,44 @@ use crate::usage::JevBilled;
 
 mod activation;
 mod answer;
+mod asking;
 mod context_budget;
 mod context_pages;
 mod hosted;
+pub(crate) mod route;
 use answer::read_answer;
 pub(crate) use answer::validate_choice;
+pub(crate) use asking::TypeSafeHttpTransport;
 
 pub(crate) struct DecisionOptions<'a> {
     pub gate: bool,
+    /// Ask the gate's questions without reading their answers (the
+    /// `irreversible_nouls` eval variant); `gate` wins when both are set.
+    pub shadow_gate: bool,
     pub activation_audit: Option<&'a dyn JevDecisionTransport>,
 }
 
-pub(crate) const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
-
-/// The same TypeSafe decision service used by the built-in `jev_browse` tool.
+/// The same TypeSafe decision service used by the built-in `jev_browse` tool,
+/// sent to TypeSafe directly or to any host serving its System One API.
 pub struct JevTypeSafeDecisionClient {
     model: String,
     profile: crate::jev_prompt::Profile,
     transport: Arc<dyn JevDecisionTransport>,
     images: bool,
     composed_transport: bool,
+    shadow_gate: bool,
 }
 
 impl JevTypeSafeDecisionClient {
+    /// Ask the irreversible-action gate's questions in every request, gate
+    /// on or off, without reading their answers: the `irreversible_nouls`
+    /// eval variant records them on the way back.
+    #[cfg(test)]
+    pub(crate) fn with_shadow_gate(mut self) -> Self {
+        self.shadow_gate = true;
+        self
+    }
+
     /// Native adapters reserve their own leaf provider requests.
     pub(crate) fn with_composed_transport(mut self) -> Self {
         self.composed_transport = true;
@@ -66,17 +82,21 @@ impl JevTypeSafeDecisionClient {
         self.images = images;
         self
     }
+    /// TypeSafe's own System One API.
     pub fn new(key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::at(route::TYPESAFE_ENDPOINT, key, model)
+    }
+
+    /// The same System One body sent to `url`, such as OpenRouter's
+    /// `https://openrouter.ai/api/v1/systemone`, with `key` as the bearer.
+    pub fn at(url: &str, key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
             profile: crate::jev_prompt::Profile::Workflow,
-            transport: Arc::new(TypeSafeHttpTransport::new(
-                ENDPOINT,
-                key,
-                RetryPolicy::default(),
-            )),
+            transport: Arc::new(TypeSafeHttpTransport::new(url, key, RetryPolicy::default())),
             images: false,
             composed_transport: false,
+            shadow_gate: false,
         }
     }
 
@@ -90,6 +110,7 @@ impl JevTypeSafeDecisionClient {
             transport,
             images: false,
             composed_transport: false,
+            shadow_gate: false,
         }
     }
 }
@@ -141,56 +162,6 @@ impl JevDecisionTransport for Imaged<'_> {
                 self.inner.decide(&request).await
             }
         }
-    }
-}
-
-/// The hosted decision service, over one pooled client for the whole run.
-pub(crate) struct TypeSafeHttpTransport {
-    url: String,
-    key: String,
-    http: JsonPoster,
-}
-
-impl TypeSafeHttpTransport {
-    pub(crate) fn new(url: impl Into<String>, key: impl Into<String>, policy: RetryPolicy) -> Self {
-        Self {
-            url: url.into(),
-            key: key.into(),
-            http: JsonPoster::new(policy),
-        }
-    }
-}
-
-#[async_trait]
-impl JevDecisionTransport for TypeSafeHttpTransport {
-    async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
-        let headers = match images::has_assets(request) {
-            true => vec![(images::IMAGES_HEADER, "true".to_string())],
-            false => Vec::new(),
-        };
-        self.http
-            .post_with(&self.url, &self.key, &headers, request)
-            .await
-            .map_err(|failure| {
-                let message = match &failure {
-                    PostFailure::Connection => {
-                        "Model connection failed; no action executed.".to_string()
-                    }
-                    PostFailure::Status(status, None) => {
-                        format!("Model provider returned HTTP {status}; no action executed.")
-                    }
-                    PostFailure::Status(status, Some(detail)) => format!(
-                        "Model provider returned HTTP {status} ({detail}); no action executed."
-                    ),
-                    PostFailure::InvalidBody => {
-                        "Invalid TypeSafe response; no action executed.".to_string()
-                    }
-                    PostFailure::Failed(detail) => {
-                        format!("Model provider failed ({detail}); no action executed.")
-                    }
-                };
-                failure.stop_decision(message)
-            })
     }
 }
 
@@ -344,7 +315,7 @@ pub(crate) fn request_body(
     let mut body = json!({
         "model": model,
         "state": {
-            "date": crate::text_helper::today(today),
+            "date": crate::text_helper::today_brief(today),
             "page": Value::Object(page_view),
             "elements": space.elements.clone(),
             "recent_actions": recent,
@@ -391,11 +362,14 @@ pub(crate) async fn choose(
     options: DecisionOptions<'_>,
 ) -> anyhow::Result<(JevDecision, ActionSpace)> {
     let (mut body, space, operation_ids) = request_body(page, goal, history, model, today);
-    let asked = if options.gate {
-        irreversible::add_questions(&mut body)
+    let asked = if options.gate || options.shadow_gate {
+        irreversible::add_questions(&mut body, &space, goal)
     } else {
         Vec::new()
     };
+    // A shadow gate asks the same questions and reads nothing back: the
+    // caller records and strips their answers.
+    let asked = if options.gate { asked } else { Vec::new() };
     let started = Instant::now();
     let result = transport.decide(&body).await?;
     let usage = result.get("usage").cloned().unwrap_or_else(|| json!({}));
@@ -432,6 +406,7 @@ pub(crate) async fn choose(
         &answer.operation,
         answer.target.as_deref(),
     );
+    let downloads_forbidden = irreversible::downloads_probability(&result["answers"], &asked);
     Ok((
         JevDecision {
             choice: answer.choice,
@@ -444,6 +419,7 @@ pub(crate) async fn choose(
             usage,
             model: result["model"].as_str().map(str::to_string),
             irreversible,
+            downloads_forbidden,
         },
         space,
     ))
@@ -456,6 +432,8 @@ mod gate_tests;
 pub(crate) mod images;
 #[cfg(test)]
 mod images_tests;
+#[cfg(test)]
+pub(crate) mod shed_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

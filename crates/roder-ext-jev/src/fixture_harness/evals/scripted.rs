@@ -51,6 +51,10 @@ pub(crate) struct Step {
     /// about this step's target; absent is no valid answer, which the gate
     /// treats as irreversible.
     irreversible: Option<f64>,
+    /// With the gate on and a click on offer that saves a file, the answer
+    /// whether the goal rules out downloading; absent is no valid answer,
+    /// which rules out a click that saves a file.
+    downloads_forbidden: Option<f64>,
     /// The call confidence the model reports for this step; absent is 1.0.
     /// Below 0.7, a repeat of the click just made ends the run `done`.
     confidence: Option<f64>,
@@ -104,11 +108,12 @@ impl Step {
             }
             return Ok(());
         }
-        if self
-            .irreversible
-            .is_some_and(|probability| !(0.0..=1.0).contains(&probability))
+        if [self.irreversible, self.downloads_forbidden]
+            .into_iter()
+            .flatten()
+            .any(|probability| !(0.0..=1.0).contains(&probability))
         {
-            bail!("irreversible must be a probability");
+            bail!("irreversible and downloads_forbidden must be probabilities");
         }
         if self.any.is_empty() {
             return self.target().map(|_| ());
@@ -120,6 +125,7 @@ impl Step {
             if !alternative.any.is_empty()
                 || alternative.repeat != 1
                 || alternative.irreversible.is_some()
+                || alternative.downloads_forbidden.is_some()
                 || alternative.confidence.is_some()
             {
                 bail!("`any` alternatives are single targets");
@@ -219,6 +225,7 @@ impl JevDecisionClient for StepDecider {
             usage: json!({}),
             model: None,
             irreversible: None,
+            downloads_forbidden: None,
         })
     }
 
@@ -230,10 +237,9 @@ impl JevDecisionClient for StepDecider {
         history: &[Value],
     ) -> anyhow::Result<JevDecision> {
         let mut decision = self.choose(observation, goal, history).await?;
-        decision.irreversible = self
-            .plan
-            .get(chosen(history))
-            .and_then(|step| step.irreversible);
+        let step = self.plan.get(chosen(history));
+        decision.irreversible = step.and_then(|step| step.irreversible);
+        decision.downloads_forbidden = step.and_then(|step| step.downloads_forbidden);
         Ok(decision)
     }
 }

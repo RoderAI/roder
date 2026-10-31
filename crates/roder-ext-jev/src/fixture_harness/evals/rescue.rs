@@ -1,16 +1,14 @@
 //! Measure a one-tool Terra rescue followed by the same native engine, with
 //! unchanged budgets, rules and graders. This experiment does not change defaults.
 use super::*;
-use crate::{JevDecisionClient, JevTypeSafeDecisionClient, OpenAiDecisionsClient};
+use crate::{JevDecisionClient, OpenAiDecisionsClient};
 use serde_json::json;
 
 #[tokio::test]
 #[ignore = "live bounded rescue experiment; both API keys, Codex sign-in and Chrome"]
 async fn bounded_rescue_handback() {
     let env = crate::runner::env_value;
-    let jev = env("JEV_API_KEY")
-        .or_else(|| env("TYPESAFE_API_KEY"))
-        .expect("Jev key");
+    let jev = super::live::live_route().expect("Jev decision key");
     let openai = env("OPENAI_API_KEY").expect("OpenAI key");
     let model = fallback_live::live_fallback()
         .await
@@ -26,9 +24,9 @@ async fn bounded_rescue_handback() {
         (
             "jev",
             Arc::new(
-                JevTypeSafeDecisionClient::new(jev, "jev-latest")
+                jev.client("jev-latest")
                     .with_profile(crate::jev_prompt::Profile::Activation)
-                    .with_images(true),
+                    .with_images(jev.host.takes_images()),
             ),
         ),
     ];

@@ -1,12 +1,25 @@
 //! What an action visibly did, as one line for the step's history.
 //!
 //! `page_changed` only says that the fingerprint moved; the effect says how:
-//! the address it went to, the controls whose label, value or state changed
-//! (at most four), and the controls it showed or removed. It compares the
-//! on-screen actions of the observations before and after, one entry per
-//! node, and a control whose node was replaced (a redraw, a picker's copy of
-//! a field) is matched by its role and label when exactly one earlier control
-//! had them. The rules follow fastbrowse's effects.py (MIT), reimplemented.
+//! the address it went to (and an HTTP status of 400 or more it landed on),
+//! the controls whose label, value or state changed (at most four), and the
+//! controls it showed or removed. It compares the on-screen actions of the
+//! observations before and after, one entry per node, and a control whose
+//! node was replaced (a redraw, a picker's copy of a field) is matched by
+//! its role and label when exactly one earlier control had them. The rules
+//! follow fastbrowse's effects.rs (MIT), reimplemented.
+//!
+//! An effect also says whether the action set something: the address, or a
+//! control's label, value, checked or selected state, changed (a menu only
+//! opening or closing does not count). A choice clicked (an option, a
+//! checkbox, a radio) that set nothing did not take, and the stall rule
+//! counts it as a step that changed nothing; a field that now shows the
+//! choice counts as set, since an autocomplete pick can leave the typed
+//! text exactly as it was. An action that set nothing names the fields its
+//! form still needs (`blocking` in the snapshot: required and empty, or
+//! marked invalid), since a refused submit says why only in the fields it
+//! marks: its own form's fields when its control is in a form, every
+//! blocking field on the page when it is not.
 //!
 //! The effect is recorded on the step and on [`crate::JevActionRecord`], and
 //! the tool result shows it to the caller. It is not sent to the decision
@@ -22,6 +35,53 @@ use serde_json::Value;
 const SHOWN: usize = 4;
 /// How long a named value or label may be.
 const TEXT_CHARS: usize = 60;
+
+/// The roles whose click chooses a value, so it should leave some value,
+/// selection or address changed.
+const SETTING_ROLES: [&str; 6] = [
+    "option",
+    "checkbox",
+    "radio",
+    "switch",
+    "menuitemradio",
+    "menuitemcheckbox",
+];
+
+/// The summary of an action that changed nothing.
+pub(crate) const NOTHING: &str = "nothing visible changed";
+
+/// What an action did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Effect {
+    pub(crate) summary: String,
+    /// The address, or a control's label, value, checked or selected state,
+    /// changed, or a field now shows the choice clicked.
+    pub(crate) set_something: bool,
+}
+
+/// What the step knows beyond its two observations.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Landing<'a> {
+    /// The main document's HTTP status, read when the action led to another
+    /// document.
+    pub(crate) status: Option<u16>,
+    /// The choice the action clicked (see [`chooses`]), whose label a field
+    /// may now show.
+    pub(crate) chosen: Option<&'a Value>,
+    /// The id of the form the action's control belongs to (the snapshot's
+    /// `form.id`), if it does: only that form's fields are named as still
+    /// needed. Without one, every blocking field on the page is.
+    pub(crate) form: Option<&'a Value>,
+}
+
+/// Whether clicking `action` chooses a value: an option, checkbox, radio,
+/// switch or checkable menu item.
+pub(crate) fn chooses(action: &Value) -> bool {
+    action["kind"] == "click"
+        && action["role"]
+            .as_str()
+            .is_some_and(|role| SETTING_ROLES.contains(&role))
+}
 
 /// One control as the effect compares it.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +127,28 @@ impl Control {
             label,
         })
     }
+
+    /// Whether this field now shows `choice` (already [`plain`]), whole or
+    /// as the start of it ("London" for "London, United Kingdom"): its
+    /// value, or a combobox's label. A secret's "filled" shows nothing.
+    fn shows(&self, choice: &str) -> bool {
+        if SETTING_ROLES.contains(&self.role.as_str()) {
+            return false;
+        }
+        let secret = matches!(self.state[1].1.as_str(), "filled" | "empty");
+        let value = if secret {
+            String::new()
+        } else {
+            plain(&self.state[1].1)
+        };
+        let label = match self.role.as_str() {
+            "combobox" => plain(&self.label),
+            _ => String::new(),
+        };
+        [value, label]
+            .iter()
+            .any(|shown| !shown.is_empty() && choice.contains(shown.as_str()))
+    }
 }
 
 /// The on-screen controls of an observation, first action per node, in order.
@@ -88,12 +170,37 @@ fn controls(observation: &Value) -> Vec<Control> {
     list
 }
 
+/// The fields marked `blocking`, first action per node, offscreen ones too:
+/// a required field above the button just pressed is still needed. With
+/// `form`, only that form's: a required field of another form (a footer's
+/// newsletter box) is not why this one did nothing.
+fn blocking(observation: &Value, form: Option<&Value>) -> Vec<Control> {
+    let mut seen = Vec::new();
+    let mut list = Vec::new();
+    for action in observation["actions"].as_array().into_iter().flatten() {
+        if action["blocking"] != Value::Bool(true)
+            || form.is_some_and(|form| action["form"]["id"] != *form)
+        {
+            continue;
+        }
+        let Some(control) = Control::of(action) else {
+            continue;
+        };
+        if !seen.contains(&control.node) {
+            seen.push(control.node);
+            list.push(control);
+        }
+    }
+    list
+}
+
 /// What changed from `before` to `after`, or "nothing visible changed".
-pub(crate) fn effect(before: &Value, after: &Value) -> String {
+pub(crate) fn effect(before: &Value, after: &Value, landing: Landing<'_>) -> Effect {
     let old = controls(before);
     let new = controls(after);
     let mut parts = Vec::new();
-    if before["url"] != after["url"] {
+    let navigated = before["url"] != after["url"];
+    if navigated {
         parts.push(format!(
             "went to {}",
             short(after["url"].as_str().unwrap_or_default())
@@ -101,6 +208,11 @@ pub(crate) fn effect(before: &Value, after: &Value) -> String {
     }
     if after["opened_tab"] == Value::Bool(true) {
         parts.push("opened a new tab, now active".to_string());
+    }
+    if let Some(status) = landing.status.filter(|status| *status >= 400) {
+        parts.push(format!(
+            "HTTP {status}: destination did not load successfully"
+        ));
     }
     // Node ids count from one in every document, so after a navigation or
     // on another tab the same id names an unrelated control: there, controls
@@ -124,6 +236,7 @@ pub(crate) fn effect(before: &Value, after: &Value) -> String {
         .map(|control| control.node)
         .collect::<Vec<_>>();
     let mut changes = Vec::new();
+    let mut setting = false;
     // Old and new nodes paired by role and label rather than by node.
     let mut paired = Vec::new();
     for now in &new {
@@ -149,6 +262,8 @@ pub(crate) fn effect(before: &Value, after: &Value) -> String {
                     short(a),
                     short(b)
                 ));
+                // A menu opening or closing is not a value set.
+                setting |= *name != "expanded";
             }
         }
     }
@@ -174,16 +289,39 @@ pub(crate) fn effect(before: &Value, after: &Value) -> String {
     if !removed.is_empty() {
         parts.push(format!("removed {}", listed(&removed)));
     }
-    if parts.is_empty() {
-        return "nothing visible changed".into();
+    if let Some(chosen) = landing.chosen.and_then(Control::of) {
+        let choice = plain(&chosen.label);
+        setting |= new.iter().any(|control| control.shows(&choice));
+        // A menu that closed is visible, but the choice did not take.
+        if !setting && !navigated && !parts.is_empty() {
+            parts.push(format!("{} set no value", short(&chosen.label)));
+        }
     }
-    parts.join("; ")
+    let mut summary = match parts.is_empty() {
+        true => NOTHING.to_string(),
+        false => parts.join("; "),
+    };
+    // A submit the form refuses moves nothing or reopens a picker, and says
+    // why only in the fields it marks.
+    if !(navigated || setting) {
+        let needed = blocking(after, landing.form);
+        if !needed.is_empty() {
+            summary.push_str(&format!(
+                "; fields the form still needs: {}",
+                listed(&needed.iter().collect::<Vec<_>>())
+            ));
+        }
+    }
+    Effect {
+        summary,
+        set_something: navigated || setting,
+    }
 }
 
 /// Whether both observations read the same document: the same
 /// `performance.timeOrigin` (the page key's first entry) and no new tab. An
 /// observation without a page key (a hosted browser's) is compared by URL.
-fn same_document(before: &Value, after: &Value) -> bool {
+pub(crate) fn same_document(before: &Value, after: &Value) -> bool {
     if after["opened_tab"] == Value::Bool(true) {
         return false;
     }
@@ -224,6 +362,11 @@ fn squash(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Squashed and lower-cased, as a choice and what a field shows compare.
+fn plain(text: &str) -> String {
+    squash(text).to_lowercase()
+}
+
 fn short(text: &str) -> String {
     let text = squash(text);
     if text.is_empty() {
@@ -258,173 +401,4 @@ pub(crate) fn text_added(before: &Value, after: &Value) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn page(url: &str, actions: Value) -> Value {
-        json!({"url": url, "actions": actions})
-    }
-
-    #[test]
-    fn nothing_changed_says_so() {
-        let before = page(
-            "https://a.test/",
-            json!([
-                {"node": 1, "kind": "click", "role": "button", "label": "Retry", "value": ""},
-            ]),
-        );
-        assert_eq!(effect(&before, &before.clone()), "nothing visible changed");
-    }
-
-    #[test]
-    fn a_navigation_and_shown_and_removed_controls_are_named() {
-        let before = page(
-            "https://a.test/list",
-            json!([
-                {"node": 1, "kind": "click", "role": "link", "label": "Open report", "value": ""},
-                {"node": 2, "kind": "click", "role": "link", "label": "Help", "value": ""},
-            ]),
-        );
-        let after = page(
-            "https://a.test/report",
-            json!([
-                {"node": 2, "kind": "click", "role": "link", "label": "Help", "value": ""},
-                {"node": 3, "kind": "click", "role": "button", "label": "Approve", "value": ""},
-                {"node": 4, "kind": "click", "role": "button", "label": "Reject", "value": ""},
-                // Offscreen controls and scroll boxes are not news.
-                {"node": 5, "kind": "click", "role": "button", "label": "Far", "offscreen": true},
-            ]),
-        );
-        assert_eq!(
-            effect(&before, &after),
-            "went to https://a.test/report; showed 2 controls: Approve, Reject; \
-             removed 1 control: Open report"
-        );
-    }
-
-    #[test]
-    fn value_and_state_changes_are_listed_up_to_four() {
-        let before = page(
-            "https://a.test/",
-            json!([
-                {"node": 1, "kind": "fill", "role": "textbox", "label": "Name", "value": ""},
-                {"node": 1, "kind": "click", "role": "textbox", "label": "Open Name", "value": ""},
-                {"node": 2, "kind": "select", "role": "combobox", "label": "Size → Small",
-                 "current_value": "Small"},
-                {"node": 2, "kind": "select", "role": "combobox", "label": "Size → Large",
-                 "current_value": "Small"},
-                {"node": 3, "kind": "click", "role": "checkbox", "label": "Gift", "checked": "false"},
-                {"node": 4, "kind": "click", "role": "button", "label": "Menu", "expanded": "false"},
-                {"node": 5, "kind": "click", "role": "button", "label": "Count 1", "value": ""},
-            ]),
-        );
-        let after = page(
-            "https://a.test/",
-            json!([
-                {"node": 1, "kind": "fill", "role": "textbox", "label": "Name", "value": "Ada"},
-                {"node": 2, "kind": "select", "role": "combobox", "label": "Size → Small",
-                 "current_value": "Large"},
-                {"node": 3, "kind": "click", "role": "checkbox", "label": "Gift", "checked": "true"},
-                {"node": 4, "kind": "click", "role": "button", "label": "Menu", "expanded": "true"},
-                {"node": 5, "kind": "click", "role": "button", "label": "Count 2", "value": ""},
-            ]),
-        );
-        assert_eq!(
-            effect(&before, &after),
-            "changed Name value: empty -> Ada; Size value: Small -> Large; \
-             Gift checked: false -> true; Menu expanded: false -> true and 1 more"
-        );
-    }
-
-    #[test]
-    fn a_secret_field_is_reported_filled_never_by_its_value() {
-        let field = |filled: bool| {
-            page(
-                "https://a.test/",
-                json!([{"node": 1, "kind": "fill", "role": "textbox", "label": "Password",
-                        "value": "", "input_type": "password", "filled": filled}]),
-            )
-        };
-        assert_eq!(
-            effect(&field(false), &field(true)),
-            "changed Password value: empty -> filled"
-        );
-    }
-
-    #[test]
-    fn a_replaced_control_is_matched_by_its_role_and_label() {
-        let before = page(
-            "https://a.test/",
-            json!([
-                {"node": 1, "kind": "fill", "role": "combobox", "label": "From", "value": "Lon"},
-            ]),
-        );
-        let after = page(
-            "https://a.test/",
-            json!([
-                {"node": 9, "kind": "fill", "role": "combobox", "label": "From", "value": "London"},
-            ]),
-        );
-        assert_eq!(effect(&before, &after), "changed From value: Lon -> London");
-    }
-
-    /// After a navigation, node 1 is another document's first control: it is
-    /// not the old node 1 with a new label.
-    #[test]
-    fn node_ids_are_not_paired_across_documents() {
-        let mut before = page(
-            "https://a.test/cart",
-            json!([
-                {"node": 1, "kind": "click", "role": "button", "label": "Checkout", "value": ""},
-                {"node": 2, "kind": "click", "role": "link", "label": "Help", "value": ""},
-            ]),
-        );
-        before["page_key"] = json!([1000.5, "https://a.test/cart"]);
-        let mut after = page(
-            "https://a.test/pay",
-            json!([
-                {"node": 1, "kind": "fill", "role": "textbox", "label": "Card", "value": ""},
-                {"node": 2, "kind": "click", "role": "link", "label": "Help", "value": "x"},
-            ]),
-        );
-        after["page_key"] = json!([2000.25, "https://a.test/pay"]);
-        assert_eq!(
-            effect(&before, &after),
-            "went to https://a.test/pay; changed Help value: empty -> x; \
-             showed 1 control: Card; removed 1 control: Checkout"
-        );
-        // A tab the action opened is another document too.
-        let tabbed = page(
-            "https://a.test/cart",
-            json!([
-                {"node": 1, "kind": "click", "role": "button", "label": "Print", "value": ""},
-            ]),
-        );
-        let mut opened = tabbed.clone();
-        opened["opened_tab"] = json!(true);
-        opened["actions"][0]["label"] = json!("Close");
-        assert_eq!(
-            effect(&tabbed, &opened),
-            "opened a new tab, now active; showed 1 control: Close; removed 1 control: Print"
-        );
-        // The same document keeps pairing by node.
-        let mut same = before.clone();
-        same["actions"][0]["label"] = json!("Checkout (2)");
-        assert_eq!(
-            effect(&before, &same),
-            "changed Checkout label: Checkout -> Checkout (2)"
-        );
-    }
-
-    #[test]
-    fn a_new_tab_is_named() {
-        let before = page("https://a.test/list", json!([]));
-        let mut after = page("https://a.test/report", json!([]));
-        after["opened_tab"] = json!(true);
-        assert_eq!(
-            effect(&before, &after),
-            "went to https://a.test/report; opened a new tab, now active"
-        );
-    }
-}
+mod tests;

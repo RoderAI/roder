@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Support portal</title>
+  <style>
+    body { font: 14px sans-serif; margin: 12px; }
+    #consent { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000; background: #111; color: #fff; padding: 1rem; }
+    #modal { display: none; position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .6); }
+    #modal > div { margin: 20vh auto; width: 20rem; background: #fff; padding: 1rem; }
+  </style>
+</head>
+<body>
+  <!-- After fastbrowse's mock /portal (MIT): a consent banner on arrival and
+       a modal 1.2 s later over the whole page, the form behind both. The
+       banner sits above the modal, as a consent platform's does. Accepting
+       sets the form's `consent` field, so the POST shows it was accepted. -->
+  <div id="consent">This site uses cookies. <button id="accept" type="button">Accept all</button></div>
+  <div id="modal"><div><p>A moment of your time? Tell us how we are doing.</p>
+    <button id="dismiss" type="button">Dismiss</button></div></div>
+  <h1>Support portal</h1>
+  <form action="/submit/portal" method="post" id="request">
+    <input type="hidden" name="consent" id="consent-field" value="">
+    <p><label for="topic">Request</label> <input id="topic" name="topic"></p>
+    <button type="submit">Send request</button>
+  </form>
+  <script>
+    document.getElementById('accept').addEventListener('click', () => {
+      document.getElementById('consent-field').value = 'accepted';
+      document.getElementById('consent').remove();
+    });
+    setTimeout(() => { document.getElementById('modal').style.display = 'block'; }, 1200);
+    document.getElementById('dismiss').addEventListener('click', () => {
+      document.getElementById('modal').remove();
+    });
+  </script>
+</body>
+</html>

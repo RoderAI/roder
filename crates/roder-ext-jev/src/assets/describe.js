@@ -1,6 +1,9 @@
 // What the page shows besides its observation (Jev's own): the main
-// document's HTTP status as the navigation reports it, and the visible
-// headings (h1 to h3 and role=heading), at most 12 of 80 characters each.
+// document's HTTP status as its navigation entry reports it, and the
+// visible headings (h1 to h3 and role=heading), at most 12 of 80 characters
+// each. The status the browser's Network events gave the committed
+// document replaces this one when Jev saw it load (`cdp/navigation.rs`): a
+// page script can shadow `performance`.
 (() => {
   const nav=performance.getEntriesByType('navigation')[0];
   const status=nav && nav.responseStatus>0 ? nav.responseStatus : null;

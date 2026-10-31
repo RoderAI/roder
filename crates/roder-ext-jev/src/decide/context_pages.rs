@@ -2,6 +2,8 @@
 //! executing anything. Original action IDs survive reindexing each page.
 use serde_json::{Value, json};
 
+const OFFSCREEN_RULE: &str = "Controls outside the viewport were left out of this request to keep it small. Absence from this list is not absence from the page: scroll to bring them into view.";
+
 pub(super) struct Pages<'a> {
     source: &'a Value,
     history: &'a [Value],
@@ -15,6 +17,8 @@ pub(super) struct Pages<'a> {
     reads: usize,
     retried: bool,
     read_history: Vec<Value>,
+    /// Targets left out because they lie outside the viewport.
+    offscreen_omitted: usize,
 }
 fn end(text: &str, start: usize, bytes: usize) -> usize {
     let mut end = (start + bytes).min(text.len());
@@ -48,6 +52,7 @@ impl<'a> Pages<'a> {
             reads: 0,
             retried: false,
             read_history: Vec::new(),
+            offscreen_omitted: 0,
         }
     }
     pub fn history(&self) -> Vec<Value> {
@@ -88,6 +93,21 @@ impl<'a> Pages<'a> {
         self.retried = true;
         self.shrink()
     }
+    /// Ask again smaller after the service shed a large request: first
+    /// without the targets outside the viewport, then paged as an oversized
+    /// request is, halving the page each time it is shed again.
+    pub fn shed(&mut self) -> bool {
+        let before = self.targets.len();
+        if self.offscreen_omitted == 0 {
+            self.targets.retain(|action| action["offscreen"] != true);
+            self.offscreen_omitted = before - self.targets.len();
+            if self.offscreen_omitted > 0 {
+                self.offset = 0;
+                return true;
+            }
+        }
+        self.shrink()
+    }
     fn text_len(&self) -> usize {
         ["text", "dom_snapshot", "evidence"]
             .iter()
@@ -120,7 +140,15 @@ impl<'a> Pages<'a> {
     }
     pub fn view(&self) -> Value {
         if !self.paged {
-            return self.source.clone();
+            let mut view = self.source.clone();
+            if self.offscreen_omitted > 0 {
+                let mut actions = self.targets.clone();
+                actions.extend(self.controls.iter().cloned());
+                view["actions"] = json!(actions);
+                view["context_window"] = json!({"offscreen_targets_omitted":self.offscreen_omitted,
+                    "rule":OFFSCREEN_RULE});
+            }
+            return view;
         }
         let mut view = self.source.clone();
         let mut actions = self
@@ -170,6 +198,9 @@ impl<'a> Pages<'a> {
             "targets_total":self.targets.len(),"text_start_utf8_byte":self.text_offset,"text_page_bytes":self.bytes,
             "text_total_utf8_bytes":self.text_len(),
             "rule":"This is a bounded observation, not the whole page. READ_MORE_TARGETS or READ_MORE_TEXT requests more evidence without changing the site. Absence from this page is not absence from the website. Do not claim DONE without current evidence for every requirement. Only offered targets are actionable."});
+        if self.offscreen_omitted > 0 {
+            view["context_window"]["offscreen_targets_omitted"] = json!(self.offscreen_omitted);
+        }
         view
     }
 }
@@ -210,5 +241,41 @@ mod tests {
         assert!(pages.advance("READ_PREVIOUS_TARGETS"));
         assert_eq!(pages.view()["actions"][0]["id"], "e0");
         assert!(!pages.advance("CLICK"));
+    }
+    #[test]
+    fn a_shed_request_drops_offscreen_targets_first_then_pages() {
+        let mut actions = (0..40)
+            .map(|n| json!({"id":format!("e{n}"),"node":n,"kind":"click","offscreen":n >= 10}))
+            .collect::<Vec<_>>();
+        for action in &mut actions[..10] {
+            action.as_object_mut().unwrap().remove("offscreen");
+        }
+        actions.push(json!({"id":"scroll_down","kind":"scroll","label":"Scroll down"}));
+        let page = json!({"text":"Shelf","actions":actions});
+        let mut pages = Pages::new(&page, &[]);
+        assert!(pages.shed());
+        let onscreen = pages.view();
+        let ids = onscreen["actions"].as_array().unwrap();
+        assert_eq!(
+            ids.len(),
+            11,
+            "ten on-screen targets and the scroll control"
+        );
+        assert_eq!(ids.last().unwrap()["id"], "scroll_down");
+        assert_eq!(onscreen["context_window"]["offscreen_targets_omitted"], 30);
+        assert!(onscreen["context_window"].get("targets_start").is_none());
+        assert!(pages.shed());
+        assert_eq!(pages.view()["context_window"]["targets_shown"], 10);
+        assert_eq!(pages.view()["context_window"]["text_page_bytes"], 4000);
+
+        let all_onscreen = json!({"text":"Shelf","actions":[{"id":"e1","node":1,"kind":"click"}]});
+        let mut pages = Pages::new(&all_onscreen, &[]);
+        assert!(pages.shed());
+        assert!(pages.view()["context_window"]["targets_start"].is_number());
+        assert!(
+            pages.view()["context_window"]
+                .get("offscreen_targets_omitted")
+                .is_none()
+        );
     }
 }

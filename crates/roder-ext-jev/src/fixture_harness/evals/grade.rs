@@ -15,7 +15,7 @@ use super::Outcome;
 #[serde(deny_unknown_fields)]
 pub(crate) struct Expect {
     /// The final status as the result serialises it: `done`, `blocked`,
-    /// `budget_exceeded`, `timed_out`, `needs_input`, `unavailable`,
+    /// `budget_exceeded`, `timed_out`, `needs_input`, `needs_login`, `unavailable`,
     /// `error`, `needs_confirmation` or `access_denied`; or a list of
     /// statuses any of which passes, where the task's intent allows more
     /// than one honest ending.
@@ -23,6 +23,9 @@ pub(crate) struct Expect {
     /// Whether the run ended with a `stopped_because` reason.
     pub(crate) stopped: Option<bool>,
     pub(crate) stopped_because_contains: Option<String>,
+    /// The kind of the sign-in wall a `needs_login` run reports: `password`,
+    /// `one_time_code` or `sign_in`.
+    pub(crate) wall: Option<String>,
     pub(crate) url_ends_with: Option<String>,
     pub(crate) title: Option<String>,
     #[serde(default)]
@@ -155,6 +158,7 @@ impl Expect {
                     "budget_exceeded",
                     "timed_out",
                     "needs_input",
+                    "needs_login",
                     "unavailable",
                     "error",
                     "needs_confirmation",
@@ -225,6 +229,16 @@ impl Expect {
                     "stopped_because {:?} lacks {needle:?}",
                     result.stopped_because
                 ),
+            );
+        }
+        if let Some(kind) = &self.wall {
+            let actual = result
+                .wall
+                .as_ref()
+                .and_then(|wall| serde_json::to_value(wall.kind).ok());
+            claim(
+                actual == Some(json!(kind)),
+                format!("wall {actual:?} != {kind:?}"),
             );
         }
         if let Some(suffix) = &self.url_ends_with {

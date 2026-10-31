@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Products</title>
+  <style>
+    body { font: 14px sans-serif; margin: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 260px); gap: 12px; }
+    .card { border: 1px solid #ccc; padding: 8px; }
+    .card h3, .card p { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <!-- Six products whose buttons all read "Add to cart" and turn into
+       "Remove" once added, as a storefront's inventory does; the cart lives
+       in `cart.six` in sessionStorage and its link counts it. Six adds in a
+       row change the page every time, so none is a stall. -->
+  <header><a id="cart" href="cart-six-cart.html">Cart (0)</a></header>
+  <h1>Products</h1>
+  <section class="grid" id="grid"></section>
+  <script>
+    const PRODUCTS = [
+      ['Daypack', '$29.99', 'Carries a laptop and a lunch.'],
+      ['Bike Light', '$9.99', 'Three modes and a USB charger.'],
+      ['Crew T-Shirt', '$15.99', 'Soft cotton in slate grey.'],
+      ['Fleece Jacket', '$49.99', 'Midweight and warm.'],
+      ['Rain Hat', '$7.99', 'Folds into a pocket.'],
+      ['Red T-Shirt', '$15.99', 'Bright red, relaxed fit.'],
+    ];
+    const held = () => JSON.parse(sessionStorage.getItem('cart.six') || '[]');
+    function render() {
+      const cart = held();
+      document.getElementById('cart').textContent = `Cart (${cart.length})`;
+      const grid = document.getElementById('grid');
+      grid.replaceChildren();
+      for (const [name, price, blurb] of PRODUCTS) {
+        const card = document.createElement('article');
+        card.className = 'card';
+        card.innerHTML = `<h3></h3><p class="price"></p><p></p>`;
+        card.querySelector('h3').textContent = name;
+        card.querySelector('.price').textContent = price;
+        card.querySelector('p:last-child').textContent = blurb;
+        const button = document.createElement('button');
+        button.type = 'button';
+        const added = cart.includes(name);
+        button.textContent = added ? 'Remove' : 'Add to cart';
+        button.addEventListener('click', () => {
+          const now = held().filter((item) => item !== name);
+          if (!added) now.push(name);
+          sessionStorage.setItem('cart.six', JSON.stringify(now));
+          render();
+        });
+        card.append(button);
+        grid.append(card);
+      }
+    }
+    render();
+  </script>
+</body>
+</html>

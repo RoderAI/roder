@@ -27,12 +27,15 @@ use serde_json::{Value, json};
 use crate::effects;
 use crate::engine::{
     Covered, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevPageFacts, JevStatus,
-    JevStop, JevStopCause, JevSuppressedClick, JevTextValue, StaleObservation,
+    JevStop, JevStopCause, JevSuppressedClick, JevSuppressedKind, JevTextValue, JevWall,
+    StaleObservation,
 };
 use crate::secret::{self, SECRET, Secrets};
 
+mod consult;
 mod evidence;
 mod execution;
+mod form_fill;
 mod recovery;
 mod research;
 mod workflow;
@@ -58,6 +61,8 @@ pub(crate) struct Agent {
     status: JevStatus,
     started_at: Instant,
     elapsed_ms: u64,
+    /// Values written for the empty fields of a form, kept for their steps.
+    form_fill: form_fill::FormFill,
     /// A value already written for a field whose action had to be retried.
     pending_text: Option<(Value, JevTextValue)>,
     /// Why the run ended before its loop started (a start page outside the
@@ -75,6 +80,14 @@ pub(crate) struct Agent {
     suppressed_click: Option<JevSuppressedClick>,
     /// What the caps on a run going round in circles remember.
     watch: loops::LoopWatch,
+    /// The fill the text resolver had no value for, when one ended the run.
+    missing_field: Option<Value>,
+    /// The sign-in wall a `needs_login` run stopped at.
+    wall: Option<JevWall>,
+    /// The consults and light recoveries made so far (see `consult`).
+    consults: consult::Consults,
+    /// The step a light recovery named, taken next in place of a decision.
+    directed: Option<JevDecision>,
 }
 
 /// The kind of a history entry recording a refused cookie banner: not a
@@ -110,6 +123,7 @@ impl Agent {
             status: JevStatus::Ready,
             started_at: Instant::now(),
             elapsed_ms: 0,
+            form_fill: form_fill::FormFill::default(),
             pending_text: None,
             stopped_before: None,
             secrets,
@@ -118,13 +132,17 @@ impl Agent {
             cause: None,
             suppressed_click: None,
             watch: loops::LoopWatch::default(),
+            missing_field: None,
+            wall: None,
+            consults: consult::Consults::default(),
+            directed: None,
         };
         agent.observe().await?;
-        agent.look_again_while_empty().await?;
+        agent.look_at_opening().await?;
         if let Err(error) = agent.check_scope() {
             agent.stopped_before = Some(agent.fail(&error));
-        } else if let Some(reason) = agent.refused_access().await {
-            agent.stop(JevStatus::AccessDenied);
+        } else if let Some(reason) = agent.stop_refused() {
+            agent.elapsed();
             agent.stopped_before = Some(reason);
         }
         Ok(agent)
@@ -159,7 +177,13 @@ impl Agent {
         }
         while !self.status.stopped() {
             match self.tick().await {
-                Ok(()) => {}
+                Ok(()) => {
+                    // A stall gets its light recoveries before it stands.
+                    if self.status == JevStatus::Blocked {
+                        let reason = self.cause.map(stall_reason).unwrap_or_default();
+                        self.light_recovery(reason).await;
+                    }
+                }
                 Err(error) if error.is::<StaleObservation>() => {
                     // The page moved under the decision; observe and choose again.
                     self.status = JevStatus::Ready;
@@ -184,7 +208,16 @@ impl Agent {
                         return Some(reason);
                     }
                 }
-                Err(error) => return Some(self.fail(&error)),
+                Err(error) => {
+                    // Going round in circles is a stall too.
+                    if self.cause == Some(JevStopCause::Looped)
+                        && JevStop::status_of(&error) == JevStatus::Blocked
+                        && self.light_recovery(&error.to_string()).await
+                    {
+                        continue;
+                    }
+                    return Some(self.fail(&error));
+                }
             }
         }
         self.dismissed_dialog()
@@ -222,11 +255,37 @@ impl Agent {
         {
             entry["opened_tab"] = json!(true);
         }
+        self.record_downloads();
         if let Some(label) = refused {
             self.record_cookie_banner(&self.secrets.scrub(&label));
         }
         self.offer_research().await?;
         Ok(())
+    }
+
+    /// Record the files the last action downloaded on its step, as the
+    /// observation lists them, with page-supplied text scrubbed.
+    fn record_downloads(&mut self) {
+        let Some(downloads) = self.observation["downloads"]
+            .as_array()
+            .filter(|downloads| !downloads.is_empty())
+        else {
+            return;
+        };
+        let mut downloads = downloads.clone();
+        for download in &mut downloads {
+            for key in ["name", "url", "path"] {
+                if let Some(text) = download[key].as_str() {
+                    download[key] = json!(self.secrets.scrub(text));
+                }
+            }
+        }
+        if let Some(entry) = self.history.last_mut() {
+            match entry["downloads"].as_array_mut() {
+                Some(recorded) => recorded.extend(downloads),
+                None => entry["downloads"] = Value::Array(downloads),
+            }
+        }
     }
 
     /// The last action the model chose.
@@ -285,7 +344,8 @@ impl Agent {
 }
 
 /// Upstream's stall rule: three consecutive executed actions, none of them a
-/// wait, none of which changed the page.
+/// wait, none of which changed the page. A choice that set no value (see
+/// `effects`) counts as unchanged even when its page redrew.
 /// A refused cookie banner is not an action the model chose, so it neither
 /// counts nor breaks the run of three. Nor does a wait after which the page
 /// was the same: it is skipped, so no-ops with such waits between them are
@@ -293,23 +353,44 @@ impl Agent {
 /// own, see `loops`.) A wait that changed the page breaks the run.
 /// Which rule stalled the run: three covered attempts in a row, or any
 /// three that changed nothing.
+///
+/// A light recovery spends the evidence: only the steps after the one it
+/// marked `stall_reset` count (see `recovery`).
 fn stalled(history: &[Value]) -> Option<JevStopCause> {
-    let recent = history
-        .iter()
-        .rev()
+    let recent = since_recovery(history)
         .filter(chosen)
         .filter(|entry| !loops::idle_wait(entry) && entry["kind"] != "read_document")
         .take(3)
         .collect::<Vec<_>>();
     let stalled = recent.len() == 3
         && recent.iter().all(|entry| {
-            entry["page_changed"] == json!(false) && entry["kind"].as_str() != Some("wait")
+            // A choice that set no value changed the page (a menu closed)
+            // but did not take.
+            (entry["page_changed"] == json!(false) || entry["set_something"] == json!(false))
+                && entry["kind"].as_str() != Some("wait")
         });
     let covered = recent.iter().all(|entry| entry["covered"] == json!(true));
     match (stalled, covered) {
         (false, _) => None,
         (true, true) => Some(JevStopCause::Covered),
         (true, false) => Some(JevStopCause::Stalled),
+    }
+}
+
+/// The history back to the last step a light recovery spent the stall
+/// evidence at, newest first.
+fn since_recovery(history: &[Value]) -> impl Iterator<Item = &Value> {
+    history
+        .iter()
+        .rev()
+        .take_while(|entry| entry["stall_reset"] != json!(true))
+}
+
+/// What a stall cause tells the consultant.
+fn stall_reason(cause: JevStopCause) -> &'static str {
+    match cause {
+        JevStopCause::Covered => "its last three attempts found their target covered",
+        _ => "its last three actions changed nothing on the page",
     }
 }
 
@@ -320,7 +401,8 @@ mod opt_in;
 mod predict;
 mod repeat;
 mod result;
-pub(crate) use cover::tidy_cover;
+pub(crate) use consult::configure as configure_consult;
+pub(crate) use cover::{offers, tidy_cover};
 pub(crate) use repeat::REPEAT_CONFIDENCE;
 pub(crate) use result::{controls, omitted};
 #[cfg(test)]

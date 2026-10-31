@@ -85,6 +85,7 @@ impl Agent {
             usage: decision.usage.clone(),
             model: decision.model.clone(),
             irreversible: decision.irreversible,
+            downloads_forbidden: decision.downloads_forbidden,
         });
         Ok(decision)
     }

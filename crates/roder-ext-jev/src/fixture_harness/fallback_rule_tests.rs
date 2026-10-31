@@ -391,15 +391,23 @@ async fn the_gate_stops_a_press_into_another_sites_frame() {
 }
 
 /// A control under a modal backdrop is not pressed by keyboard either:
-/// Tab then Enter (or Space) would get around what covers it. The live
-/// corpus found the fallback doing exactly that.
+/// moving focus to it and pressing Enter (or Space) would get around what
+/// covers it. The live corpus found the fallback doing exactly that. The
+/// policy is the one Jev's own keyboard route keeps (`page/uncover.rs`):
+/// keys press a control only where nothing but a band fixed to the window
+/// covers it, checked right before each key; the fallback, stricter,
+/// refuses under any cover. Jev gives up at once here: three covered clicks
+/// would have it press the bare backdrop to dismiss it, which moves the
+/// page's focus starting point past "Buy now", and the fallback's Tab would
+/// then leave the document instead of focusing the button, so Enter pressed
+/// nothing and the rule went untested.
 #[tokio::test]
 async fn a_covered_control_is_not_pressed_by_keyboard() {
     let harness = harness_or_skip!();
     let result = fall_back(
         &harness,
         "covered.html",
-        json!([{"click": "Buy now", "repeat": 3}]),
+        json!([{"blocked": true}]),
         json!([
             {"tool": "key", "args": {"key": "Tab"}},
             {"tool": "key", "args": {"key": "Enter"}},

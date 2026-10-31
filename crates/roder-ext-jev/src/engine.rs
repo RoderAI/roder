@@ -8,7 +8,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -16,10 +15,12 @@ use crate::agent::Agent;
 use crate::prompts::MAX_STEPS;
 use crate::scope::JevOriginScope;
 use crate::secret::Secrets;
-pub use covered::Covered;
+pub use crate::wall::{JevWall, JevWallKind};
+pub use consultant::{CONSULT_BELOW, JevConsultAnswer, JevConsultant, LIGHT_RECOVERIES};
+pub use covered::{COVER_CONTROLS, Covered};
 pub use records::{
-    JevActionRecord, JevControl, JevDecisionRecord, JevFrameText, JevOmitted, JevPageFacts,
-    JevRunResult, JevSuppressedClick, JevSuppressedKind,
+    JevActionRecord, JevControl, JevDecisionRecord, JevDownload, JevFrameText, JevOmitted,
+    JevPageFacts, JevRunResult, JevSuppressedClick, JevSuppressedKind,
 };
 
 /// A stale observation means the browser changed after JEV made its decision.
@@ -48,9 +49,10 @@ pub struct JevActOutcome {
     /// Why the page did not keep what the action asked for: a select it put
     /// back, or a fill whose text did not stay in the field.
     pub refused: Option<String>,
-    /// The target was covered by a popover, menu or dialog, and the browser
-    /// dismissed it first (how: Escape, its close control, or a press
-    /// outside it) before acting.
+    /// The target was covered, and the browser got past what covered it
+    /// before acting (how: Escape, a popover's close control or a press
+    /// outside it; scrolling it clear of a band fixed to the window; or
+    /// the keyboard, where the band still covers it).
     pub uncovered: Option<String>,
 }
 
@@ -106,6 +108,11 @@ pub struct JevDecision {
     /// when it was not asked, or its answer was missing or invalid; the gate
     /// treats an action it applies to with no answer as irreversible.
     pub irreversible: Option<f64>,
+    /// With the gate on and a click on offer that saves a file, P(the goal
+    /// rules out downloading), asked in the same request. `None` when it
+    /// was not asked, or its answer was missing or invalid; the gate then
+    /// treats a chosen click that saves a file as ruled out.
+    pub downloads_forbidden: Option<f64>,
 }
 
 impl JevDecision {
@@ -127,30 +134,8 @@ impl JevDecision {
 mod decision_client;
 pub use decision_client::{JevDecisionClient, JevDecisionTransport};
 
-/// A value generated for a fill action.
-#[derive(Debug, Clone)]
-pub struct JevTextValue {
-    pub value: String,
-    pub model: String,
-    pub latency_ms: u64,
-    pub usage: Value,
-}
-
-/// Resolves a fill value from JEV's field context.
-///
-/// The preferred source for a password or one-time code (the field
-/// context's `field.input_type` is `password` or `one-time-code`):
-/// supervisors may return an opaque value reference and resolve it only
-/// while executing the browser action, so the secret never enters the goal,
-/// the decision request, the text model or the JEV trace. Whatever is
-/// returned for a secret field is recorded as `[secret]`. A resolver with
-/// no value should fail with [`JevStop`] and [`JevStatus::NeedsInput`],
-/// naming the field; Roder's own text helper does, and never types a
-/// password or code that is not written in the goal.
-#[async_trait]
-pub trait JevTextValueResolver: Send + Sync {
-    async fn resolve(&self, field_context: &Value) -> anyhow::Result<JevTextValue>;
-}
+mod text_values;
+pub use text_values::{JevFormValues, JevTextValue, JevTextValueResolver};
 
 /// Where a run stands. Every status but `Ready` ends it; `Ready` is only seen
 /// mid-run. New statuses may be added as something comes to produce them.
@@ -175,6 +160,11 @@ pub enum JevStatus {
     /// A field needs a value nothing can supply: no text model, or the text
     /// model found none in the goal.
     NeedsInput,
+    /// The run reached a sign-in it cannot complete: a password or one-time
+    /// code (or a field of their form) the goal gives no value for, a
+    /// `blocked` stop on a page that shows a sign-in wall, or an HTTP 401
+    /// with nothing to act on. The result's `wall` says what it asks for.
+    NeedsLogin,
     /// A model provider stayed unreachable or overloaded through its retries.
     Unavailable,
     /// Anything else that ended the run early.
@@ -183,9 +173,9 @@ pub enum JevStatus {
     /// may not be undone (see [`JevEngineConfig::with_irreversible_gate`]);
     /// `stopped_because` names the control. Nothing was dispatched.
     NeedsConfirmation,
-    /// The site refused automated access: an HTTP 401, 403 or 429 page, a
-    /// challenge or "unusual traffic" wall, or an "Access Denied" page with
-    /// nothing to act on. Found on the first observation, it ends the run
+    /// The site refused automated access: an HTTP 403 or 429 page, a 401
+    /// that shows a challenge, a challenge or "unusual traffic" wall, or an
+    /// "Access Denied" page with nothing to act on. Found on the first observation, it ends the run
     /// before any decision; `stopped_because` gives the evidence. Jev only
     /// reports it and never tries to get around it.
     AccessDenied,
@@ -311,6 +301,8 @@ pub struct JevEngineConfig {
     /// Secrets typed by earlier runs on the same tab, scrubbed from this
     /// run's page reads too.
     pub(crate) secrets: Secrets,
+    /// The second opinion on unsure steps and stalls (see `consultant`).
+    pub(crate) consult: consultant::Consult,
 }
 
 impl JevEngineConfig {
@@ -329,6 +321,7 @@ impl JevEngineConfig {
             irreversible_authorized: false,
             refuse_cookie_banners: true,
             secrets: Secrets::default(),
+            consult: consultant::Consult::default(),
         }
     }
 
@@ -479,5 +472,6 @@ impl JevEngine {
     }
 }
 
+mod consultant;
 mod covered;
 mod records;

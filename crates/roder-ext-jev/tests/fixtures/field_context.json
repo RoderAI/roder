@@ -16,7 +16,7 @@
   },
   "context": {
     "goal": "Find one-way flights from Zurich to London on 2026-09-28 in economy.",
-    "date": "2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026",
+    "date": "2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026. Next seven days: Monday 2026-09-28, Tuesday 2026-09-29, Wednesday 2026-09-30, Thursday 2026-10-01, Friday 2026-10-02, Saturday 2026-10-03, Sunday 2026-10-04",
     "field": {
       "label": "Where to?",
       "role": "searchbox",

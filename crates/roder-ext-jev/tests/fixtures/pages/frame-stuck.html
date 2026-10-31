@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Weekly digest</title>
+  <style>
+    body { font: 15px sans-serif; margin: 24px; }
+    iframe { border: 1px solid #ccc; display: block; margin-top: 16px; }
+    #ad { width: 300px; height: 250px; }
+    #order { width: 420px; height: 160px; }
+  </style>
+</head>
+<body>
+  <!-- A page with an advertisement frame whose renderer stops answering:
+       once loaded, its script spins (`?ad=stuck`, served from the other
+       loopback host, so it runs in its own process; `?ad=sandboxed`, a
+       sandboxed srcdoc frame, also isolated). `?order=<n>` adds an order
+       status frame from the other host, live, to read beside the stuck ad.
+       Subscribe works in the page itself. -->
+  <h1>Weekly digest</h1>
+  <p>Get the week's top stories every Friday.</p>
+  <button id="subscribe" type="button">Subscribe</button>
+  <p id="status" role="status"></p>
+  <iframe id="order" title="Order status" hidden></iframe>
+  <iframe id="ad" title="Advertisement"></iframe>
+  <script>
+    const query = new URLSearchParams(location.search);
+    const otherHost = () => {
+      const url = new URL(location.href);
+      url.hostname = url.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+      return url.origin;
+    };
+    const spin = "addEventListener('load',()=>setTimeout(()=>{const end=Date.now()+120000;while(Date.now()<end){}},50))";
+    const ad = document.getElementById('ad');
+    if (query.get('ad') === 'sandboxed') {
+      ad.sandbox = 'allow-scripts';
+      ad.srcdoc = '<p>Advertisement: Spring sale</p><script>' + spin + '<\/script>';
+    } else if (query.get('ad') !== 'none') {
+      ad.src = otherHost() + '/pages/frame-stuck-ad.html';
+    } else {
+      ad.hidden = true;
+    }
+    if (query.get('order')) {
+      const order = document.getElementById('order');
+      order.src = otherHost() + '/pages/frame-order.html?order=' + encodeURIComponent(query.get('order'));
+      order.hidden = false;
+    }
+    document.getElementById('subscribe').addEventListener('click', () => {
+      window.subscribed = true;
+      document.getElementById('status').textContent = 'Subscribed to the weekly digest';
+    });
+  </script>
+</body>
+</html>

@@ -21,10 +21,7 @@ async fn decisions_vs_jev() {
     let openai = env("OPENAI_API_KEY")
         .or_else(|| roder_config::provider_api_key("openai"))
         .expect("OpenAI key required");
-    let jev = env("JEV_API_KEY")
-        .or_else(|| env("TYPESAFE_API_KEY"))
-        .or_else(|| roder_config::provider_api_key("jev"))
-        .expect("Jev key required");
+    let jev = super::live::live_route().expect("Jev decision key required");
     use crate::decisions::{DecisionsHttp, planning::Strategy};
     let wire = Arc::new(Recorded {
         inner: Arc::new(DecisionsHttp {
@@ -36,11 +33,7 @@ async fn decisions_vs_jev() {
         reverse,
     });
     let jev_wire = Arc::new(Recorded {
-        inner: Arc::new(crate::decide::TypeSafeHttpTransport::new(
-            crate::decide::ENDPOINT,
-            jev,
-            crate::http::RetryPolicy::default(),
-        )),
+        inner: Arc::new(jev.transport()),
         records: wire.records.clone(),
         reverse,
     });

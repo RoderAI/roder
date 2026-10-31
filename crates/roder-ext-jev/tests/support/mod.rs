@@ -391,6 +391,7 @@ impl ScriptedDecider {
             usage: self.usage.clone(),
             model: None,
             irreversible: None,
+            downloads_forbidden: None,
         })
     }
 }

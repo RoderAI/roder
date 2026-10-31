@@ -179,6 +179,19 @@ fn outcome(data: &Value, status: &str) -> String {
         "budget_exceeded" => format!("Result: Jev ran out of its action budget ({spent})."),
         "timed_out" => format!("Result: the call ran out of time ({spent})."),
         "needs_input" => format!("Result: a field needs a value the goal does not give ({spent})."),
+        "needs_login" => {
+            let wants = match data["wall"]["kind"].as_str() {
+                Some("password") => "a password",
+                Some("one_time_code") => "a one-time code",
+                _ => "a sign-in",
+            };
+            let origin = text(&data["wall"]["origin"]);
+            let at = match origin.is_empty() {
+                true => String::new(),
+                false => format!(" at {}", cut(&one_line(origin), 120)),
+            };
+            format!("Result: the site wants {wants}{at} that Jev cannot give ({spent}).")
+        }
         "needs_confirmation" => {
             format!("Result: Jev stopped before an action that may not be undone ({spent}).")
         }

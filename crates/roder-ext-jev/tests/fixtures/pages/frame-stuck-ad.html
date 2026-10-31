@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Advertisement</title></head>
+<body>
+  <!-- An advertisement whose script spins for two minutes once the frame
+       has loaded, so its renderer answers nothing in that time. -->
+  <p>Advertisement: Spring sale, 20% off</p>
+  <script>
+    addEventListener('load', () => setTimeout(() => {
+      const end = Date.now() + 120000;
+      while (Date.now() < end) {}
+    }, 50));
+  </script>
+</body>
+</html>

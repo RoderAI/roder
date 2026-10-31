@@ -7,7 +7,7 @@ use super::{
     FRAME_CHARS, FRAMES, HEADING_CHARS, JOINED_LINE, NOT_CLICKED_CHARS, REASON_CHARS, SHORT_LINE,
     STEP_CHARS, STEP_LINES, TEXT_LINE_CHARS, clip, cut, keep, one_line, text,
 };
-use crate::agent::{REPEAT_CONFIDENCE, tidy_cover};
+use crate::agent::{REPEAT_CONFIDENCE, offers, tidy_cover};
 
 pub(super) fn reason(data: &Value) -> Vec<String> {
     let who = match data["fallback"]["ran"] == Value::Bool(true) {
@@ -99,10 +99,19 @@ fn step(action: &Value) -> String {
         outcome.push(format!("it was covered; Jev {}", one_line(how)));
     }
     if action["covered"] == Value::Bool(true) {
-        outcome.push(match covered_by(action) {
-            Some(cover) => format!("covered by \"{cover}\"; nothing was done"),
-            None => "covered by another element; nothing was done".to_string(),
-        });
+        outcome.push(format!(
+            "covered by {}{}; nothing was done",
+            covered_by(action).map_or("another element".to_string(), |cover| format!(
+                "\"{cover}\""
+            )),
+            offers(
+                action["covered_controls"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+            )
+        ));
     }
     if let Some(refused) = action["refused"].as_str() {
         outcome.push(format!("the page refused it: {}", one_line(refused)));
@@ -116,6 +125,13 @@ fn step(action: &Value) -> String {
     }
     if action["opened_tab"] == Value::Bool(true) {
         outcome.push("opened a new tab".into());
+    }
+    for download in action["downloads"].as_array().into_iter().flatten() {
+        let name = cut(&one_line(text(&download["name"])), 60);
+        outcome.push(match download["repeated"] == Value::Bool(true) {
+            true => format!("saved \"{name}\" again, the same file"),
+            false => format!("downloaded \"{name}\""),
+        });
     }
     if let Some(effect) = action["effect"]
         .as_str()

@@ -4,10 +4,15 @@
 //!
 //! ```text
 //! TYPESAFE_API_KEY=… cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
+//! JEV_DECISION_PROVIDER=openrouter OPENROUTER_API_KEY=… cargo test -p roder-ext-jev live_corpus -- --ignored --nocapture
 //! ```
 //!
-//! - `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key; `JEV_MODEL`
-//!   pins a model, else `jev-latest`.
+//! - `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is the decision key for TypeSafe
+//!   directly; `JEV_DECISION_PROVIDER=openrouter` sends the same requests to
+//!   OpenRouter with `OPENROUTER_API_KEY`, and `JEV_DECISION_URL` overrides
+//!   either URL. `JEV_MODEL` pins a model, else `jev-latest`. Each row
+//!   records the model that answered and, when the host reports it (as
+//!   OpenRouter does), what the decisions cost in dollars.
 //! - `JEV_EVAL_VARIANTS=a,b` turns on request variants (see [`super::variants`]).
 //! - `JEV_EVAL_TEXT=model` types values from the configured text helper
 //!   (`JEV_TEXT_MODEL` and `JEV_TEXT_MODEL_REASONING` pick it, as for
@@ -26,7 +31,11 @@
 //!   all tasks once before any twice, and prints a tally per task.
 //! - `JEV_EVAL_STRICT=1` fails the test on a mid-run edit of the tree (see
 //!   [`super::pin`]), on any false green, and then on any failed run, or,
-//!   when a baseline exists, on any task whose rates got worse than its.
+//!   when a baseline exists, on any task whose rates got worse than its or
+//!   whose median calls, tokens or cost rose past the work bound (see
+//!   [`super::tally`]). Each row records `transient_ms`, the time its
+//!   decision requests lost to transient provider failures, apart from the
+//!   wall time it is part of.
 //! - The baseline is `tests/fixtures/evals/live-baseline.json`, or the file
 //!   `JEV_EVAL_BASELINE` names. `JEV_EVAL_SAVE_BASELINE=1` writes this run's
 //!   tally and pin there, if the run was `JEV_EVAL_N=3` or more over the whole
@@ -50,16 +59,16 @@ use serde_json::{Value, json};
 use super::pin::Pin;
 use super::tally::{self, Baseline, Run, Settings};
 use super::text_sources::{Recorded, Supervised};
-use super::variants::{StepTelemetry, VariantTransport, Variants};
+use super::variants::{StepTelemetry, Variant, VariantTransport, Variants};
 use super::{
-    FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_json,
-    write_rows,
+    FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task_consulting, table, validate,
+    write_json, write_rows,
 };
-use crate::decide::{ENDPOINT, JevTypeSafeDecisionClient, TypeSafeHttpTransport};
-use crate::engine::{JevDecisionTransport, JevTextValueResolver};
+use crate::decide::JevTypeSafeDecisionClient;
+use crate::decide::route::{HostedRoute, JevHost};
+use crate::engine::{JevConsultant, JevDecisionTransport, JevTextValueResolver};
 use crate::fallback::model::FallbackModel;
 use crate::fixture_harness::Harness;
-use crate::http::RetryPolicy;
 use crate::text_helper::TextHelper;
 use crate::text_model::TextModel;
 
@@ -69,16 +78,20 @@ pub(super) fn env(key: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-pub(super) fn live_key() -> Option<String> {
-    env("TYPESAFE_API_KEY").or_else(|| env("JEV_API_KEY"))
+pub(super) fn live_route() -> Option<HostedRoute> {
+    HostedRoute::from_env()
 }
 
 struct LiveSetup {
-    key: String,
+    route: HostedRoute,
     model: String,
     variants: Variants,
     /// `JEV_EVAL_TEXT=model`: the text helper that types ordinary fields.
     text_model: Option<TextModel>,
+    /// The consultant on unsure steps and stalls: the configured text
+    /// model, as `jev_browse` has it, whatever types the fields; none with
+    /// `JEV_CONSULT=0` or no text model.
+    consultant: Option<TextModel>,
     /// Every task with the irreversible-action gate on.
     confirm_irreversible: bool,
     /// Every task that does not set it with cookie-banner refusal off.
@@ -97,10 +110,22 @@ impl LiveSetup {
     /// header.
     fn label(&self) -> String {
         format!(
-            "text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}, concurrency {}",
+            "decisions {}, text {}, consult {}, fallback {}, variants {:?}, gate {}, \
+             cookie refusal {}, concurrency {}",
+            self.route.host.name(),
             self.text_model
                 .as_ref()
                 .map_or("task values".to_string(), TextModel::label),
+            self.consultant
+                .as_ref()
+                .map_or("off".to_string(), |model| format!(
+                    "{} below {} recoveries {}",
+                    model.label(),
+                    env("JEV_CONSULT_BELOW")
+                        .unwrap_or_else(|| crate::engine::CONSULT_BELOW.to_string()),
+                    env("JEV_LIGHT_RECOVERIES")
+                        .unwrap_or_else(|| crate::engine::LIGHT_RECOVERIES.to_string()),
+                )),
             self.fallback
                 .as_ref()
                 .map_or("off".to_string(), |model| model.label()),
@@ -143,21 +168,29 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
     };
     let (task, names) = setup.task(task);
     let task = &task;
-    let http: Arc<dyn JevDecisionTransport> = Arc::new(TypeSafeHttpTransport::new(
-        ENDPOINT,
-        setup.key.clone(),
-        RetryPolicy::default(),
-    ));
-    let transport = Arc::new(VariantTransport::new(http, setup.variants.clone()));
-    let decision: Arc<dyn crate::engine::JevDecisionClient> =
-        if setup.variants.has(super::variants::Variant::Effect) {
-            super::effect_variant::client(setup.model.clone(), transport.clone())
+    let hosted = Arc::new(setup.route.transport());
+    let http: Arc<dyn JevDecisionTransport> = hosted.clone();
+    // A task that turns the gate on itself reads the gate's answers, so
+    // they are not shadows to strip.
+    let variants = if task.confirm_irreversible {
+        setup.variants.without(Variant::IrreversibleNouls)
+    } else {
+        setup.variants.clone()
+    };
+    let shadow = variants.has(Variant::IrreversibleNouls);
+    let transport = Arc::new(VariantTransport::new(http, variants));
+    let decision: Arc<dyn crate::engine::JevDecisionClient> = if setup.variants.has(Variant::Effect)
+    {
+        super::effect_variant::client(setup.model.clone(), transport.clone(), shadow)
+    } else {
+        let client =
+            JevTypeSafeDecisionClient::with_transport(setup.model.clone(), transport.clone());
+        Arc::new(if shadow {
+            client.with_shadow_gate()
         } else {
-            Arc::new(JevTypeSafeDecisionClient::with_transport(
-                setup.model.clone(),
-                transport.clone(),
-            ))
-        };
+            client
+        })
+    };
     let helper = setup
         .text_model
         .as_ref()
@@ -171,13 +204,18 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
     };
     let resolver: Arc<dyn JevTextValueResolver> = text.clone();
     let probes = task.expect.probes().cloned().collect();
-    let mut row = match run_task(
+    let consultant = setup
+        .consultant
+        .as_ref()
+        .map(|model| Arc::new(TextHelper::new(model.clone())) as Arc<dyn JevConsultant>);
+    let mut row = match run_task_consulting(
         &harness,
         task,
         decision,
         resolver,
         probes,
         setup.fallback.clone(),
+        consultant,
     )
     .await
     {
@@ -196,11 +234,19 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
                     .map_or("task-values".to_string(), |helper| helper.current().label())
             );
             row.telemetry["text"] = text.report();
+            // Every text-model call, consults and recoveries included, and
+            // what the consults and light recoveries did.
+            row.telemetry["text_usage"] = json!(outcome.result.usage.text);
+            row.telemetry["recoveries"] = json!(outcome.result.recoveries);
+            row.telemetry["stop_cause"] = json!(outcome.result.stop_cause);
+            row.telemetry["fallback_trigger"] =
+                json!(crate::fallback::trigger::trigger(&outcome.result));
             row
         }
         Err(error) => Row::errored(task, "live", &error),
     };
     row.repeat = repeat;
+    row.transient_ms = Some(hosted.transient().as_millis() as u64);
     row
 }
 
@@ -250,12 +296,12 @@ fn telemetry(outcome: &Outcome, steps: &[StepTelemetry]) -> Value {
 }
 
 #[tokio::test]
-#[ignore = "live: needs TYPESAFE_API_KEY (or JEV_API_KEY), Chrome, and spends model calls"]
+#[ignore = "live: needs a Jev decision key, Chrome, and spends model calls"]
 async fn live_corpus() {
     let tasks = load_tasks().unwrap();
     validate(&tasks).unwrap();
-    let Some(key) = live_key() else {
-        eprintln!("skipping: set TYPESAFE_API_KEY (or JEV_API_KEY) to run the live tier");
+    let Some(route) = live_route() else {
+        eprintln!("skipping: set {} to run the live tier", HostedRoute::NEEDS);
         return;
     };
     let concurrency = env("JEV_EVAL_CONCURRENCY")
@@ -263,7 +309,7 @@ async fn live_corpus() {
         .unwrap_or(2)
         .max(1);
     let setup = LiveSetup {
-        key,
+        route,
         model: env("JEV_MODEL").unwrap_or_else(|| "jev-latest".into()),
         variants: Variants::parse(&env("JEV_EVAL_VARIANTS").unwrap_or_default()).unwrap(),
         text_model: match env("JEV_EVAL_TEXT").as_deref() == Some("model") {
@@ -274,6 +320,12 @@ async fn live_corpus() {
                     .expect("JEV_EVAL_TEXT=model but no text model is configured"),
             ),
             false => None,
+        },
+        consultant: match crate::runner::switch("JEV_CONSULT", env("JEV_CONSULT").as_deref(), true)
+            .unwrap()
+        {
+            false => None,
+            true => crate::runner::resolve_text_model(None).await.unwrap(),
         },
         confirm_irreversible: crate::runner::switch(
             "JEV_EVAL_CONFIRM_IRREVERSIBLE",
@@ -354,10 +406,15 @@ mod tests {
 
     fn setup(concurrency: usize) -> LiveSetup {
         LiveSetup {
-            key: "test-key".into(),
+            route: HostedRoute {
+                host: JevHost::TypeSafe,
+                url: JevHost::TypeSafe.default_endpoint().into(),
+                key: "test-key".into(),
+            },
             model: "jev-latest".into(),
             variants: Variants::parse("").unwrap(),
             text_model: None,
+            consultant: None,
             confirm_irreversible: false,
             no_cookie_banner_refusal: false,
             fallback: None,

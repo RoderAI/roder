@@ -148,6 +148,7 @@ impl Page {
             autoconsent: false,
             ledger: Default::default(),
             frame_text: super::frames::frame_text_on(),
+            downloads: Default::default(),
         };
         page.record_tabs();
         let mut page = page;
@@ -250,7 +251,10 @@ impl Page {
         )
         .await?;
         // Dialogs are only reported, and so answered, with the Page domain on.
-        self.call("Page.enable", json!({})).await.map(|_| ())
+        self.call("Page.enable", json!({})).await?;
+        self.allow_downloads().await;
+        self.follow_frames().await;
+        Ok(())
     }
 
     /// Turn focus emulation off or on again, to measure a hidden tab.

@@ -40,6 +40,19 @@ fn a_wait_or_a_change_keeps_the_run_going() {
 }
 
 #[test]
+fn a_choice_that_set_no_value_counts_as_unchanged() {
+    // An option click that only closed its menu changed the page, but did
+    // not take.
+    let untaken = || json!({"kind": "click", "page_changed": true, "set_something": false});
+    let taken = || json!({"kind": "click", "page_changed": true, "set_something": true});
+    assert_eq!(
+        stalled(&[untaken(), entry("click", Some(false)), untaken()]),
+        Some(JevStopCause::Stalled)
+    );
+    assert!(stalled(&[untaken(), taken(), untaken()]).is_none());
+}
+
+#[test]
 fn a_wait_that_changed_nothing_is_skipped_not_counted() {
     // Three no-ops with waits that changed nothing between them are still a
     // run of three; the waits are neither a no-op of the three nor a break.
@@ -107,6 +120,25 @@ fn a_refused_cookie_banner_neither_counts_nor_breaks_a_stall() {
         ])
         .is_none()
     );
+}
+
+#[test]
+fn a_light_recovery_spends_the_stall_evidence() {
+    // The step a recovery marked and everything before it no longer count.
+    let mut marked = entry("click", Some(false));
+    marked["stall_reset"] = json!(true);
+    let mut history = vec![
+        entry("click", Some(false)),
+        entry("click", Some(false)),
+        marked.clone(),
+        entry("click", Some(false)),
+        entry("click", Some(false)),
+    ];
+    assert!(stalled(&history).is_none());
+    history.push(entry("click", Some(false)));
+    assert_eq!(stalled(&history), Some(JevStopCause::Stalled));
+    assert_eq!(since_recovery(&history).count(), 3);
+    assert_eq!(since_recovery(&[marked]).count(), 0);
 }
 
 #[test]

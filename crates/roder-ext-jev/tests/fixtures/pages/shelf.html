@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Long shelf</title>
+  <style>
+    body { font: 14px sans-serif; margin: 0 16px; }
+    .item { height: 64px; border-bottom: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <!-- One search field, so typing has a single target, and ?n=N products
+       (default 110) in one column, so most of their buttons are below the
+       fold. Each click is counted in window.added. -->
+  <h1>Long shelf</h1>
+  <input type="search" aria-label="Search the shelf" placeholder="Search the shelf">
+  <div id="shelf"></div>
+  <script>
+    const n = Number(new URLSearchParams(location.search).get('n') || 110);
+    const shelf = document.getElementById('shelf');
+    window.added = [];
+    for (let i = 0; i < n; i++) {
+      shelf.insertAdjacentHTML('beforeend',
+        `<div class="item">Product ${i}: a hand-finished ceramic mug ` +
+        `<button type="button" data-item="${i}">Add product ${i} to the basket</button></div>`);
+    }
+    shelf.addEventListener('click', (event) => {
+      const item = event.target.closest('button')?.dataset.item;
+      if (item !== undefined) window.added.push(Number(item));
+    });
+  </script>
+</body>
+</html>

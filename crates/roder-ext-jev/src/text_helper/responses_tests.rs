@@ -2,6 +2,7 @@
 
 use std::sync::Mutex;
 
+use super::Ask;
 use super::responses::{CodexToken, request_body as responses_body, value_format};
 use super::*;
 use crate::http::tests::{MockServer, Reply, fast_policy};
@@ -63,6 +64,7 @@ fn codex_with(
         http: JsonPoster::new(fast_policy()),
         codex: auth,
         codex_base_url: server.url.trim_end_matches("/v1/systemone").to_string(),
+        unroutable: Default::default(),
     }
 }
 
@@ -121,7 +123,7 @@ fn value(text: Option<&str>) -> String {
 #[test]
 fn the_request_is_the_responses_mapping_of_the_same_prompt() {
     let context = json!({"goal": "Fly to Zurich", "field": {"label": "City"}});
-    let body = responses_body(&context, "gpt-6-sol", Effort::Low);
+    let body = responses_body(Ask::Field, &context, "gpt-6-sol", Effort::Low);
     assert_eq!(body["model"], "gpt-6-sol");
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
@@ -157,7 +159,7 @@ fn the_request_is_the_responses_mapping_of_the_same_prompt() {
     assert_eq!(schema["required"], json!(["text"]));
     assert_eq!(schema["additionalProperties"], json!(false));
     assert_eq!(
-        responses_body(&context, "gpt-6-sol", Effort::None)["reasoning"],
+        responses_body(Ask::Field, &context, "gpt-6-sol", Effort::None)["reasoning"],
         json!({"effort": "none"})
     );
 }

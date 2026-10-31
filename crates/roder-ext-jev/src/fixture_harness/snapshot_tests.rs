@@ -126,3 +126,57 @@ async fn a_visible_checkbox_is_still_offered_itself() {
     assert_eq!(newsletter.len(), 1, "{newsletter:#?}");
     assert_eq!(newsletter[0]["checked"], "false");
 }
+
+/// What one read learns of an element (whether it shows, its name) is
+/// reused only within that read: a later script on the cached helpers, and
+/// the next read, see the page as it is by then.
+#[tokio::test]
+async fn names_and_visibility_are_reused_only_within_one_read() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("basic.html").await.unwrap();
+    page.evaluate("document.body.innerHTML = '<button id=\"b\" aria-label=\"Save\">x</button>'")
+        .await
+        .unwrap();
+    assert!(find(&page.observe().await.unwrap(), "click", "Save").is_some());
+    page.evaluate("b.setAttribute('aria-label','Send'); b.style.visibility='hidden'")
+        .await
+        .unwrap();
+    let helpers = page
+        .evaluate("(c => [c.name(b), c.visible(b)])(window.__jevFast)")
+        .await
+        .unwrap();
+    assert_eq!(helpers, json!(["Send", false]));
+    page.evaluate("b.style.visibility=''").await.unwrap();
+    let observation = page.observe().await.unwrap();
+    assert!(
+        find(&observation, "click", "Send").is_some(),
+        "{observation:#}"
+    );
+    assert!(
+        find(&observation, "click", "Save").is_none(),
+        "{observation:#}"
+    );
+    page.close().await.ok();
+}
+
+/// A page that removed `queueMicrotask` before the first read is still
+/// observed, with nothing reused: a later script on the helpers sees the
+/// page as it is.
+#[tokio::test]
+async fn a_page_without_queue_microtask_is_still_observed() {
+    let harness = harness_or_skip!();
+    let mut page = harness.open("basic.html").await.unwrap();
+    page.evaluate(concat!(
+        "delete window.__jevFast; window.queueMicrotask = undefined;",
+        "document.body.innerHTML = '<button id=\"b\" aria-label=\"Save\">x</button>'"
+    ))
+    .await
+    .unwrap();
+    assert!(find(&page.observe().await.unwrap(), "click", "Save").is_some());
+    page.evaluate("b.setAttribute('aria-label','Send')")
+        .await
+        .unwrap();
+    let name = page.evaluate("window.__jevFast.name(b)").await.unwrap();
+    assert_eq!(name, json!("Send"));
+    page.close().await.ok();
+}
